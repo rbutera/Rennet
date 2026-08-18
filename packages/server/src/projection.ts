@@ -1,0 +1,348 @@
+// The R19 recipient-specific projection (issue #380). A frame-boundary codec: it
+// maps between the PRIVATE contract (host-absolute paths, what a loopback client
+// sees) and the PUBLIC projection (repo references, what a token-bearing REMOTE
+// client sees). It is NOT a fork of dispatch — dispatch, the stores, and the
+// private contract are untouched. The listener calls it only for `projected`
+// connections; loopback connections never touch this module.
+//
+// Outbound (server→remote): structural host-path fields become `repoReference`
+// objects (`{repoKey, displayName, relativePath?}`); then a blanket scrub replaces
+// any lingering known-root or home-dir prefix in every remaining string with a
+// display token. Model-authored prose (ask-stream deltas) is NEVER scrubbed — it is
+// the model's text, and the docs say so (R31/R32 honesty).
+//
+// Inbound (remote→server): a command's host-path input arrives as a `repoKey` (or a
+// repo reference) and is resolved back to the host path via the connection's root
+// table. An unresolvable reference is a typed `invalid_input`, never a guessed path.
+
+import { realpathSync } from "node:fs";
+import { basename, sep } from "node:path";
+import { escapePath } from "@rennet/core";
+import type { CommandName, ProjectProcessEvent, RepoReference } from "@rennet/protocol";
+
+/** A repository the server may name outbound / accept inbound, in both path forms + its key. */
+interface RootEntry {
+  /** The path as the stores hold it (a project path, a review's repository root). */
+  readonly hostPath: string;
+  /** `realpathSync(hostPath)` when it resolves, else `hostPath` — the store key is derived from this. */
+  readonly realPath: string;
+  /** `escapePath(realPath)` — the snapshot-store repo key; stable + off-machine-meaningless. */
+  readonly repoKey: string;
+  /** A human label (basename, disambiguated on collision). */
+  readonly displayName: string;
+}
+
+export interface ProjectionContext {
+  /** Every known root, longest `hostPath`/`realPath` first so a nested repo matches before its parent. */
+  readonly roots: readonly RootEntry[];
+  /** The user's home directory, substituted with `~` in free text. */
+  readonly homeDir: string;
+  /** `repoKey` → the host path to resolve inbound references to. */
+  readonly byRepoKey: ReadonlyMap<string, string>;
+}
+
+/** Thrown when an inbound reference names a repo the server does not know; becomes `rpcError invalid_input`. */
+export class ProjectionResolveError extends Error {
+  constructor(reference: string) {
+    super(`unknown repository reference: ${reference}`);
+    this.name = "ProjectionResolveError";
+  }
+}
+
+function tryRealpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Build the projection context from the host roots the server could emit (the
+ * dispatch-granted roots ∪ every stored project path) and the home dir. Cheap
+ * enough to rebuild per request, so it always reflects the current project set.
+ */
+export function buildProjectionContext(
+  hostRoots: Iterable<string>,
+  homeDir: string,
+): ProjectionContext {
+  const seen = new Set<string>();
+  const entries: RootEntry[] = [];
+  const nameCounts = new Map<string, number>();
+  for (const hostPath of hostRoots) {
+    if (!hostPath || seen.has(hostPath)) continue;
+    seen.add(hostPath);
+    const realPath = tryRealpath(hostPath);
+    const repoKey = escapePath(realPath);
+    const name = basename(hostPath) || hostPath;
+    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+    entries.push({ hostPath, realPath, repoKey, displayName: name });
+  }
+  // Disambiguate colliding basenames with a short parent segment, so two repos both
+  // named `web` read as `web` and `app/web` rather than an ambiguous pair.
+  const disambiguated = entries.map((entry) =>
+    (nameCounts.get(entry.displayName) ?? 0) > 1
+      ? { ...entry, displayName: shortLabel(entry.hostPath) }
+      : entry,
+  );
+  const byRepoKey = new Map<string, string>();
+  for (const entry of disambiguated)
+    if (!byRepoKey.has(entry.repoKey)) byRepoKey.set(entry.repoKey, entry.hostPath);
+  // Longest first: a repo nested under another must match its own root, not the parent's.
+  const roots = [...disambiguated].sort((a, b) => b.hostPath.length - a.hostPath.length);
+  return { roots, homeDir, byRepoKey };
+}
+
+/** The last two path segments (`parent/name`), for disambiguating a colliding basename. */
+function shortLabel(path: string): string {
+  const parts = path.split(sep).filter(Boolean);
+  return parts.slice(-2).join("/") || path;
+}
+
+/** Does `path` equal `root` or sit under it? Returns the matched root form when so. */
+function matchRoot(path: string, entry: RootEntry): string | null {
+  for (const root of [entry.realPath, entry.hostPath]) {
+    if (path === root) return root;
+    if (path.startsWith(root + sep)) return root;
+  }
+  return null;
+}
+
+/**
+ * Project a host-absolute path to a repo reference. A path under a known root keeps
+ * its repo-relative tail as `relativePath`. An UNKNOWN path still never leaks: it is
+ * referenced by its own escaped key + basename (a remote client cannot resolve it
+ * inbound — correct, it is not a project it can act on — but no host path crosses).
+ */
+export function toRepoReference(absPath: string, ctx: ProjectionContext): RepoReference {
+  for (const entry of ctx.roots) {
+    const root = matchRoot(absPath, entry);
+    if (root === null) continue;
+    const rel = absPath === root ? undefined : absPath.slice(root.length + 1);
+    return {
+      repoKey: entry.repoKey,
+      displayName: entry.displayName,
+      ...(rel ? { relativePath: rel } : {}),
+    };
+  }
+  const realPath = tryRealpath(absPath);
+  return { repoKey: escapePath(realPath), displayName: basename(absPath) || absPath };
+}
+
+/** Substitute known roots (→ `<displayName>`) and the home dir (→ `~`) in one string. */
+export function scrubRoots(text: string, ctx: ProjectionContext): string {
+  let out = text;
+  for (const entry of ctx.roots) {
+    for (const root of [entry.realPath, entry.hostPath]) {
+      if (root) out = out.split(root).join(`<${entry.displayName}>`);
+    }
+  }
+  if (ctx.homeDir) out = out.split(ctx.homeDir).join("~");
+  return out;
+}
+
+/** Deep-scrub every string in a value; a safety net that catches any host path a structural pass missed. */
+function scrubDeep(value: unknown, ctx: ProjectionContext): unknown {
+  if (typeof value === "string") return scrubRoots(value, ctx);
+  if (Array.isArray(value)) return value.map((item) => scrubDeep(item, ctx));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value)) out[key] = scrubDeep(val, ctx);
+    return out;
+  }
+  return value;
+}
+
+// ── Structural projectors (host-path fields → repo references) ────────────────
+
+function projectProvenance(
+  provenance: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  return {
+    ...provenance,
+    root: toRepoReference(String(provenance.root), ctx),
+    commonDir: toRepoReference(String(provenance.commonDir), ctx),
+  };
+}
+
+function projectPatchset(
+  patchset: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  return {
+    ...patchset,
+    repository: projectProvenance(patchset.repository as Record<string, unknown>, ctx),
+  };
+}
+
+function projectReview(
+  review: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  return {
+    ...review,
+    repositoryRoot: toRepoReference(String(review.repositoryRoot), ctx),
+    patchsets: (review.patchsets as Record<string, unknown>[]).map((ps) =>
+      projectPatchset(ps, ctx),
+    ),
+  };
+}
+
+function projectProject(
+  project: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  const included = project.includedRepoPaths as string[] | undefined;
+  return {
+    ...project,
+    path: toRepoReference(String(project.path), ctx),
+    openPath: toRepoReference(String(project.openPath), ctx),
+    ...(included ? { includedRepoPaths: included.map((p) => toRepoReference(p, ctx)) } : {}),
+  };
+}
+
+function projectDiscovery(
+  discovery: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  return {
+    ...discovery,
+    path: toRepoReference(String(discovery.path), ctx),
+    repos: (discovery.repos as Record<string, unknown>[]).map((repo) => ({
+      ...repo,
+      path: toRepoReference(String(repo.path), ctx),
+    })),
+  };
+}
+
+function projectSummary(
+  summary: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  return { ...summary, path: toRepoReference(String(summary.path), ctx) };
+}
+
+/**
+ * Project a command's OUTPUT for a projected connection. Key-driven over the known
+ * structural surface (the design Context inventory): every command that returns a
+ * `review`/`project`/`projects`/`discovery`/`repos`/`path` shape is covered without
+ * enumerating them, then a blanket scrub catches any free-text straggler.
+ */
+export function projectCommandOutput(
+  _command: CommandName,
+  output: unknown,
+  ctx: ProjectionContext,
+): unknown {
+  let projected: unknown = output;
+  if (output && typeof output === "object" && !Array.isArray(output)) {
+    const o = { ...(output as Record<string, unknown>) };
+    if (o.review && typeof o.review === "object")
+      o.review = projectReview(o.review as Record<string, unknown>, ctx);
+    if (o.project && typeof o.project === "object")
+      o.project = projectProject(o.project as Record<string, unknown>, ctx);
+    if (Array.isArray(o.projects))
+      o.projects = (o.projects as Record<string, unknown>[]).map((p) => projectProject(p, ctx));
+    if (o.discovery && typeof o.discovery === "object")
+      o.discovery = projectDiscovery(o.discovery as Record<string, unknown>, ctx);
+    if (Array.isArray(o.repos))
+      o.repos = (o.repos as Record<string, unknown>[]).map((s) => projectSummary(s, ctx));
+    // `repository.choose` returns a top-level host `path` string (nullable).
+    if (typeof o.path === "string") o.path = toRepoReference(o.path, ctx);
+    projected = o;
+  }
+  return scrubDeep(projected, ctx);
+}
+
+/** Project a progress event: the processed-repo summary's `path`, and scrub note/detail. */
+export function projectProgressEvent(
+  event: ProjectProcessEvent,
+  ctx: ProjectionContext,
+): ProjectProcessEvent {
+  return scrubDeep(
+    (() => {
+      if (event.kind === "repo-done")
+        return {
+          ...event,
+          summary: projectSummary(event.summary as unknown as Record<string, unknown>, ctx),
+        };
+      if (event.kind === "done")
+        return {
+          ...event,
+          repos: event.repos.map((s) =>
+            projectSummary(s as unknown as Record<string, unknown>, ctx),
+          ),
+        };
+      return event;
+    })(),
+    ctx,
+  ) as ProjectProcessEvent;
+}
+
+// ── Inbound resolution (repo references → host paths) ─────────────────────────
+
+/** Command → the input field(s) carrying a HOST path a projected client references. Others are repo-relative. */
+export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  "repository.choose": ["path"],
+  "review.capture": ["repoPath"],
+  "review.openPr": ["repoPath"],
+  "review.checkFreshness": ["repoPath"],
+  "review.regenerate": ["repoPath"],
+  "review.canvases": ["repoPath"],
+  "project.discover": ["path"],
+  "settings.guidance": ["repoPath"],
+  "settings.setRepoVisibility": ["repoPath"],
+  "settings.setRepoLocus": ["repoPath"],
+  "settings.resetRepoValue": ["repoPath"],
+  "settings.pinRepoValue": ["repoPath"],
+};
+
+/**
+ * Input fields named `path` that are REPO-RELATIVE (a file inside the diff), NOT host
+ * paths — so they pass through untouched. Maintained beside the host-path table so
+ * the drift test (`projection.test.ts`) can force any NEW `path` field to be
+ * classified into one list or the other, rather than silently leaking.
+ */
+export const INBOUND_REPO_RELATIVE_PATH_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  "review.setDisposition": ["path"],
+  "canvas.disposition": ["path"],
+  "review.uiEvidence": ["path"],
+  "review.refine": ["path"],
+  "review.openInEditor": ["path"],
+};
+
+/** Extract a repoKey from an inbound value that is either the key string or a `{repoKey}` reference. */
+function referenceKey(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as { repoKey?: unknown }).repoKey === "string"
+  ) {
+    return (value as { repoKey: string }).repoKey;
+  }
+  return null;
+}
+
+/**
+ * Resolve a projected command's host-path inputs back to real host paths. A missing
+ * field is left absent (optional inputs stay optional); a present-but-unresolvable
+ * reference throws `ProjectionResolveError` (→ `invalid_input`), never a guess.
+ */
+export function resolveCommandInput(
+  command: CommandName,
+  input: unknown,
+  ctx: ProjectionContext,
+): unknown {
+  const fields = INBOUND_HOST_PATH_FIELDS[command];
+  if (!fields || !input || typeof input !== "object") return input;
+  const out = { ...(input as Record<string, unknown>) };
+  for (const field of fields) {
+    if (!(field in out) || out[field] === undefined) continue;
+    const key = referenceKey(out[field]);
+    const hostPath = key === null ? undefined : ctx.byRepoKey.get(key);
+    if (!hostPath) throw new ProjectionResolveError(String(key ?? out[field]));
+    out[field] = hostPath;
+  }
+  return out;
+}

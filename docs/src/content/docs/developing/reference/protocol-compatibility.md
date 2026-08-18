@@ -84,6 +84,10 @@ path. There is no fallback path, no degraded mode, no re-probing mid-session. A
 feature the peer does not advertise is simply off. Document each key here as it is
 added.
 
+| Feature key | Advertised when | Meaning |
+|---|---|---|
+| `serverRequests` | always, on current daemons | The daemon can send `serverRequest` frames and understands `serverResponse` (see the [frame vocabulary](#the-frame-vocabulary)). A client that reads this flag as true may register an `onServerRequest` handler; one that does not never sees a server-initiated request. No product flow raises one yet — the flag reserves the capability so a future client negotiates it once, at handshake. |
+
 ## Inbound decoders are tolerant
 
 Every session frame schema is a default (non-strict) Zod object: it **strips
@@ -111,18 +115,45 @@ of accreting forever.
 
 ## The frame vocabulary
 
-A future transport serializes these frames and nothing else. Each is one arm of
+The transport serializes these frames and nothing else. Each is one arm of
 the `sessionFrame` discriminated union, keyed on `type`.
 
 | Frame | Direction | Carries |
 |---|---|---|
-| `hello` | client → server | `clientId`, `clientType`, `protocolVersion` |
+| `hello` | client → server | `clientId`, `clientType`, `protocolVersion`, optional `deviceToken` |
 | `serverInfo` | server → client | `version`, `protocolVersion`, `minCompatibleProtocolVersion`, `features` |
 | `request` | client → server | `requestId`, `command` (validated against the registry), `input` |
 | `response` | server → client | `requestId`, `output` |
 | `rpcError` | server → client | `requestId`, `code`, `message`, optional `details` |
 | `progressEvent` | server → client | `commandId`, `event` (the existing `ProjectProcessEvent`) |
 | `askStreamEvent` | server → client | `reviewId`, `event` (the existing `ReviewAskStreamEvent`) |
+| `serverRequest` | server → client | `serverRequestId`, `kind`, `payload` |
+| `serverResponse` | client → server | `serverRequestId`, `payload` |
+| `serverRequestResolved` | server → client | `serverRequestId` |
+
+`hello.deviceToken` is the append-only field a remote client presents to prove it
+was paired; a loopback client omits it. It carries the raw device token, which the
+daemon checks against its hashed device store. See
+[remote access](/using/guide/remote-access/) for pairing.
+
+The last three frames are the server-initiated request pair plus its cleanup
+frame. Until now every exchange was client-driven; these let the server ask a
+specific connection a question and await an answer:
+
+- `serverRequest` opens the ask — `kind` names what is being asked, `payload`
+  carries its data, and `serverRequestId` correlates the reply.
+- `serverResponse` is the client's answer, echoing `serverRequestId`.
+- `serverRequestResolved` tells the client the ask is settled (answered, timed
+  out, or the turn ended) so it never leaves a stale prompt on screen.
+
+They are additive: `serverRequest`/`serverResponse`/`serverRequestResolved` are
+three new arms of the `sessionFrame` union, so an older peer that never sends or
+handles them is unaffected. **There is no product consumer yet.** The wire
+contract and the listener/bridge plumbing (an `askConnection` helper on the
+server, an `onServerRequest` seam on the client) exist and are pinned by tests, so
+the first client that needs a turn-time question — a mobile client, per the app
+server plan — builds against a fixed contract instead of inventing one. A peer
+that does not advertise the feature flag below never receives these frames.
 
 `rpcError.code` is a small known set (`invalid_input`, `command_failed`,
 `incompatible_protocol`, `unknown_command`) unioned with `string`, so the field
@@ -132,8 +163,9 @@ never forked or copied.
 
 ## Where this fits
 
-Phase 0 of the [app server plan](/developing/reference/app-server-plan/) writes
-this discipline down before any transport exists, so every later phase inherits
-it instead of retrofitting it. Nothing executes these frames yet; the WebSocket
-transport that will (phase 2) serializes them unchanged or amends them under the
-append-only rule above.
+Phase 0 of the [app server plan](/developing/reference/app-server-plan/) wrote
+this discipline down before any transport existed, so every later phase inherited
+it instead of retrofitting it. The WebSocket transport now serializes these
+frames; every frame added since — including the server-request trio above — obeys
+the append-only rule, so a daemon and a client built from different commits still
+interoperate.

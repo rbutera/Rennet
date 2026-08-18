@@ -176,6 +176,7 @@ import {
   resolveEditorExecutables,
 } from "./open-in-editor";
 import { createOrchestratorTurnRunner, resolveOrchestratorHarnessSelection } from "./orchestrator";
+import { PairingStore } from "./pairing-store";
 import {
   createProactiveRehydration,
   PROACTIVE_REHYDRATION_COMMAND_ID,
@@ -1670,6 +1671,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // (wireframe #15). A plain document at `~/.rennet/config.json`, sibling to the
   // project snapshot store; holds the reviewer's scheme, never a repo fact.
   const configStore = new FileConfigStore(defaultGlobalConfigPath());
+  // The device pairing store (issue #380): server-side secret store for remote
+  // device tokens (hashed at rest in `~/.rennet/devices.json`). Shared between the
+  // `pairing.*` commands (below) and the WS listener's handshake token check.
+  const pairingStore = new PairingStore();
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -1791,6 +1796,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const dispatch = createDispatch({
     service,
     allowedRoots,
+    pairing: pairingStore,
     orchestratorTurn,
     publishPort,
     submitPullRequest,

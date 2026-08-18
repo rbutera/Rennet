@@ -136,12 +136,15 @@ for the engineering model behind that behaviour.
 
 ## What stays on this Mac
 
-Rennet has no backend. Review state, reading progress, local discussion, and the
-full Rennet structure stay in local application storage. Material selected for a
-model turn can leave the machine through the harness and provider you use. Rennet
-records the exact text it handed to each model, and only labels context **sent**
-when that record matches what it assembled — it never claims a model saw nothing
-extra.
+Rennet has no hosted backend — no server of ours holds your work. Review state,
+reading progress, local discussion, and the full Rennet structure stay in local
+application storage. Material selected for a model turn can leave the machine
+through the harness and provider you use. Rennet records the exact text it handed
+to each model, and only labels context **sent** when that record matches what it
+assembled — it never claims a model saw nothing extra. If you
+[review from another device](/using/guide/remote-access/), it reaches the daemon
+on this Mac directly over your own private network, not through any Rennet
+server.
 
 GitHub naturally receives the review only when you sign it. If GitHub is
 unavailable, local reading still works for material already on disk, but posting
