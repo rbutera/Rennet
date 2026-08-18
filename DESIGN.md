@@ -14,8 +14,10 @@ colors:
   dark-line: "#2d333b"
   blue-light: "#396f96"
   blue-dark: "#8bbddd"
-  amber-light: "#a86125"
+  amber-light: "#8f4e14"
   amber-dark: "#dda664"
+  amber-on-inverse-light: "#e0a45f"
+  amber-on-inverse-dark: "#8f4e14"
   green-light: "#41745b"
   green-dark: "#88bc9b"
 typography:
@@ -106,8 +108,11 @@ Monochrome carries the identity. Functional color explains review state:
 
 - **Review blue** (`#396f96` light / `#8bbddd` dark): links, information, selection, and review
   structure.
-- **Decision amber** (`#a86125` / `#dda664`): reconstructed decisions, disagreement, and blast
-  radius.
+- **Decision amber** (`#8f4e14` light / `#dda664` dark): reconstructed decisions, disagreement,
+  and blast radius. Amber text on an inverse surface (a band whose lightness flips against the
+  scheme) uses the surface-tuned variants `#e0a45f` (light scheme, dark band) and `#8f4e14` (dark
+  scheme, cream band). All four are one decision-amber role, chosen so amber text meets WCAG AA
+  (≥4.5:1) on the surface it sits on.
 - **Evidence green** (`#41745b` / `#88bc9b`): additions, current repository state, and verified
   evidence.
 
