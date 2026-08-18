@@ -34,6 +34,12 @@ const SCREENS = [
   { f: '16-command-palette.png', n: 'Command palette', tag: 'Cross-cutting', p: 'Command-K, the keyboard spine. Every action a named, remappable command — and now a Navigate group on every screen (Go to project…, Open review…, Back / Forward, Go to Draft / Paper, Open Settings) with recent locations on an empty query. The retired claims lens is gone from the offered set.', feats: [] },
   { f: '17-flow-overview.png', n: 'Flow overview', tag: 'The map', p: 'The forward journey as one map: two entry points (your local work toward Make PR, a teammate’s PR into review), one draft, one signed paper, and the material legend. The journey map; frame 18 is the navigation structure that binds it.', feats: [] },
   { f: '18-navigation-model.png', n: 'Navigation model', tag: 'Navigation model', p: 'New (v4.0) — the model this version is named for. The structure map: the hybrid spine (title-bar breadcrumb for “where am I”, a left nav rail with back/forward for “how did I get here”, the palette for “where can I go”), the full destination tree with every place tagged peer / child / overlay, the tab-vs-crumb-vs-overlay law, the history keys (⌘[ / ⌘]), one-review-at-a-time, and the patchset trail. Pure wayfinding: it adds reachable places and never a gate.', feats: [] },
+  { f: '19-mobile-pairing.png', n: 'Mobile · connect & pair', tag: 'Mobile', p: 'Phase 6 gate (#382). First run to paired: the desk mints the QR (pairing.mint), the phone scans or types the one-time code (pairing.exchange) and lands on the connections list — multiple daemons, harness disclosure, revocable device token. Tailscale-first, no relay; an unreachable daemon degrades to its last replica.', feats: [] },
+  { f: '20-mobile-review-list.png', n: 'Mobile · review list & kickoff', tag: 'Mobile', p: 'Home. Reviews across projects and daemons; running and needs-you pinned, freshness a row fact. Kickoff covers both loops: paste / share-sheet a PR link (review.openPr) or capture your own branch pre-submit (review.capture) — the same end-to-end loop as desktop.', feats: [] },
+  { f: '21-mobile-review-detail.png', n: 'Mobile · review detail & digest', tag: 'Mobile', p: 'The canvas digest read path at phone width: delta digest counts, delta rows, then one finding at a time — claim, size-ceilinged hunk, one-tap agree / disagree / discuss, proposal adjudication inline. Full canvas a tap away; a 40-file raw diff never renders here.', feats: [] },
+  { f: '22-mobile-ask.png', n: 'Mobile · live turn & ask', tag: 'Mobile', p: 'The typed live stream with return-to-tail, a visible Stop, and explicit interrupt-vs-queue send semantics. An ask is chips + optional free text in one review.ask reply. Reattach after backgrounding is the normal case (onAskStream rebind, #389).', feats: [] },
+  { f: '23-mobile-publish.png', n: 'Mobile · sign & post', tag: 'Mobile', p: 'The headline: preview → Face-ID-confirmed sign → posted, from anywhere. The paper shows exactly what appears under Rai’s name; outcome stated truthfully with the real URL; own-branch flow ends the same way (draft body → sign → idempotent PR).', feats: [] },
+  { f: '24-mobile-notifications.png', n: 'Mobile · pushes & deep links', tag: 'Mobile', p: 'The closed notification taxonomy made visible: six events push, each carrying its substance and deep-linking to the decision surface; the ask push is answerable from the shade. Presence-aware delivery decided daemon-side; everything else stays in-app.', feats: [] },
 ];
 
 const CALLS = [
@@ -135,11 +141,11 @@ const html = `<style>
 </style>
 
 <header class="hero"><div class="wrap">
-  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v4.0</p>
-  <h1>The whole app, one scroll — now with a way to move through it.</h1>
-  <p class="lede">Twenty-one screens in flow order. v4.0 is v3.3 plus a coherent navigation model: a hybrid wayfinding spine — a title-bar breadcrumb for “where am I,” a slim left nav rail with back/forward (⌘[ / ⌘]) for “how did I get here,” and the command palette’s Navigate group for “where can I go.” Back from a review lands on project detail, its real home. The review’s right side is now one unified, chat-style conversation (an icon per ask type, line-anchored messages that read as replies) that gives the orchestrator a home. The patchset gets a title-bar chip and trail; Settings goes orbital; and a new frame 18 draws the whole structure — peers, children, overlays, and the history. Pure wayfinding, no gates.</p>
+  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v4.1</p>
+  <h1>The whole app, one scroll — desktop, and now the phone.</h1>
+  <p class="lede">Twenty-seven screens in flow order. v4.1 adds the mobile set (frames 19–24, the phase 6 gate’s wireframe pass, #382): pairing, review list + kickoff, the digest read path, live turn + ask, sign &amp; post, and the push taxonomy — every phone screen naming the protocol commands and event topics it consumes. v4.0 was v3.3 plus a coherent navigation model: a hybrid wayfinding spine — a title-bar breadcrumb for “where am I,” a slim left nav rail with back/forward (⌘[ / ⌘]) for “how did I get here,” and the command palette’s Navigate group for “where can I go.” Back from a review lands on project detail, its real home. The review’s right side is now one unified, chat-style conversation (an icon per ask type, line-anchored messages that read as replies) that gives the orchestrator a home. The patchset gets a title-bar chip and trail; Settings goes orbital; and a new frame 18 draws the whole structure — peers, children, overlays, and the history. Pure wayfinding, no gates.</p>
   <div class="meta">
-    <span>21 screens</span><span>breadcrumb + nav rail</span><span>back/forward · ⌘[ ⌘]</span>
+    <span>27 screens</span><span>mobile set (19–24)</span><span>breadcrumb + nav rail</span><span>back/forward · ⌘[ ⌘]</span>
     <span>unified chat panel</span><span>palette Navigate group</span><span>patchset trail</span><span>settings orbital</span><span>one review at a time</span><span>no gates</span>
   </div>
 </div></header>
@@ -168,7 +174,7 @@ ${(() => {
   </section>
 </main>
 
-<footer><div class="wrap">Rennet wireframes v4.0 &middot; v3.3 plus a coherent navigation model &middot; HTML sources in wireframes/src, iterable further.</div></footer>`;
+<footer><div class="wrap">Rennet wireframes v4.1 &middot; the mobile set (phase 6 gate) &middot; v3.3 plus a coherent navigation model &middot; HTML sources in wireframes/src, iterable further.</div></footer>`;
 
 writeFileSync(OUT, html);
 const kb = Math.round(Buffer.byteLength(html) / 1024);
