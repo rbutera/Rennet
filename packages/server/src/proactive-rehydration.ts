@@ -53,9 +53,9 @@ import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet
  *  - "Don't fight the user": we only keep warm what is ALREADY built — a repo with no
  *    snapshot manifest is skipped, never cold-built in the background. The existing
  *    coordinator already bounds work to one pass at a time at the newest tip.
- *  - "Be visible": the pass narrates on the SAME `rennet:progress` push the processing
- *    screen uses, under a stable command id, reusing `ProjectProcessEvent`. No new
- *    protocol/preload surface; a renderer indicator is a one-line follow-up.
+ *  - "Be visible": the pass narrates on the SAME progress push the processing screen
+ *    uses (now WS `progressEvent` frames, #378), under a stable command id, reusing
+ *    `ProjectProcessEvent`. No new protocol surface; a renderer indicator is a one-line follow-up.
  */
 
 /** The stable push id background rehydration narration is streamed under. */
@@ -108,7 +108,7 @@ export interface StartRepoRehydrationDeps {
   readonly explicitBaseRef?: string | undefined;
   readonly store: ProjectSnapshotStore;
   readonly generator: ProjectSnapshotGenerator;
-  /** Push a background narration event (the app broadcasts it on `rennet:progress`). */
+  /** Push a background narration event (the server fans it to every WS client, #378). */
   readonly narrate: (event: ProjectProcessEvent) => void;
   /** A resolve/build error — logged, never thrown into the watcher. */
   readonly onError?: (error: unknown) => void;

@@ -1,0 +1,15 @@
+{
+  "name": "rennet-client",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/client/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:client"],
+  "targets": {
+    "build": { "command": "pnpm exec tsc -p packages/client/tsconfig.json" },
+    "lint": {
+      "command": "pnpm exec eslint packages/client/src --max-warnings=0 && pnpm exec biome check packages/client/src"
+    },
+    "typecheck": { "command": "pnpm exec tsc -p packages/client/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run packages/client/src" }
+  }
+}
