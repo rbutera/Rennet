@@ -24,8 +24,8 @@ import type {
   RennetBridge,
   ReviewAskStreamEvent,
 } from "@rennet/protocol";
-import type { BridgeLifecycleEvent, CapturedServerInfo } from "./ws-bridge";
 import type { ReplicaStore, StoredReplica, TokenStore } from "./stores";
+import type { BridgeLifecycleEvent, CapturedServerInfo } from "./ws-bridge";
 
 /** The subset of a bridge the supervisor drives — `WsRennetBridge` satisfies it. */
 export interface SupervisedBridge {
@@ -227,12 +227,8 @@ export class ConnectionSupervisor implements RennetBridge {
   // ── Resubscribe registry (issue #389, client half) ────────────────────────
 
   onAskStream(reviewId: string, listener: AskListener): () => void {
-    return this.#register(
-      this.#askRegistry,
-      this.#askBridgeUnsub,
-      reviewId,
-      listener,
-      (bridge) => bridge.onAskStream(reviewId, listener),
+    return this.#register(this.#askRegistry, this.#askBridgeUnsub, reviewId, listener, (bridge) =>
+      bridge.onAskStream(reviewId, listener),
     );
   }
 
