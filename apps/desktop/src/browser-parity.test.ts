@@ -2,7 +2,7 @@ import { WsRennetBridge } from "@rennet/client";
 import { commandDefinitions } from "@rennet/protocol";
 import { startWsListener, type WsListener } from "@rennet/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { BROWSER_SHELL_INTERCEPTS } from "./browser/shell-intercepts";
+import { BROWSER_SHELL_INTERCEPTS, composeBrowserInvoke } from "./browser/shell-intercepts";
 
 // The parity inventory (issue #381, design D6). The truthful parity axis is the WIRE:
 // both shells share `WsRennetBridge`, so a per-command UI-driving test would test the ui
@@ -18,8 +18,12 @@ import { BROWSER_SHELL_INTERCEPTS } from "./browser/shell-intercepts";
 
 type Dispatch = Parameters<typeof startWsListener>[0]["dispatch"];
 
-function invoke(bridge: WsRennetBridge, name: string, input: unknown): Promise<unknown> {
-  return (bridge.invoke as unknown as (n: string, i: unknown) => Promise<unknown>)(name, input);
+function invoke(
+  composedInvoke: ReturnType<typeof composeBrowserInvoke>,
+  name: string,
+  input: unknown,
+): Promise<unknown> {
+  return (composedInvoke as unknown as (n: string, i: unknown) => Promise<unknown>)(name, input);
 }
 
 const bridges: WsRennetBridge[] = [];
@@ -45,10 +49,14 @@ describe("browser-shell parity inventory (#381)", () => {
       initialBackoffMs: 10,
     });
     bridges.push(bridge);
+    const composedInvoke = composeBrowserInvoke(
+      bridge.invoke.bind(bridge),
+      () => "/tmp/rennet-browser-parity",
+    );
 
     const commands = Object.keys(commandDefinitions);
     for (const command of commands) {
-      await invoke(bridge, command, {});
+      await invoke(composedInvoke, command, {});
     }
     expect(seen.sort()).toEqual([...commands].sort());
   });

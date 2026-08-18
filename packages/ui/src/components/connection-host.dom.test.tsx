@@ -6,6 +6,7 @@
 // add-daemon flow exchanges a pairing code through a temporary bridge and persists the
 // tokened daemon, and a throwing localStorage degrades to the default without crashing.
 import type { CommandName, RennetBridge } from "@rennet/protocol";
+import { StrictMode } from "react";
 import { describe, expect, it, type Mock, vi } from "vitest";
 import { mount, waitFor } from "../test/dom";
 import { ConnectionHost, type ConnectionTarget } from "./connection-host";
@@ -35,6 +36,57 @@ describe("ConnectionHost (#381)", () => {
 
     expect(createBridge).toHaveBeenCalledWith(LOCAL);
     expect(getByLabelText(/Connected to This machine/)).toBeTruthy();
+  });
+
+  it("hydrates the default target with a saved token for the same authority", async () => {
+    globalThis.localStorage.setItem(
+      "rennet.daemons",
+      JSON.stringify({
+        daemons: [
+          {
+            id: "daemon:served-origin",
+            label: "Served origin",
+            host: "rennet.tailnet.ts.net",
+            port: 7411,
+            deviceToken: "served-origin-token",
+          },
+        ],
+      }),
+    );
+    const bridge = stubBridge();
+    const createBridge = vi.fn(() => bridge);
+    const servedOrigin: ConnectionTarget = {
+      id: "local",
+      label: "This server",
+      host: "rennet.tailnet.ts.net",
+      port: 7411,
+    };
+
+    mount(<ConnectionHost createBridge={createBridge} defaultTarget={servedOrigin} />);
+
+    await waitFor(() =>
+      expect(createBridge).toHaveBeenCalledWith({
+        ...servedOrigin,
+        deviceToken: "served-origin-token",
+      }),
+    );
+  });
+
+  it("does not leak or retain the closed render-pass bridge under StrictMode", async () => {
+    const discarded = stubBridge();
+    const live = stubBridge();
+    const createBridge = vi.fn().mockReturnValueOnce(discarded).mockReturnValue(live);
+
+    mount(
+      <StrictMode>
+        <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(createBridge).toHaveBeenCalledTimes(2));
+    expect(discarded.close).toHaveBeenCalledTimes(1);
+    expect(live.close).not.toHaveBeenCalled();
+    await waitFor(() => expect(live.invoke).toHaveBeenCalled());
   });
 
   it("switches to a saved daemon by remounting against a new bridge and closing the old", async () => {
@@ -69,6 +121,9 @@ describe("ConnectionHost (#381)", () => {
       expect(createBridge).toHaveBeenCalledWith(expect.objectContaining({ id: "daemon:remote-1" })),
     );
     expect(local.close).toHaveBeenCalled();
+    expect(JSON.parse(globalThis.localStorage.getItem("rennet.daemons") ?? "{}").activeId).toBe(
+      "daemon:remote-1",
+    );
   });
 
   it("adds a daemon by exchanging the pairing code and persisting the tokened target", async () => {
@@ -125,5 +180,70 @@ describe("ConnectionHost (#381)", () => {
     } finally {
       globalThis.localStorage.getItem = original;
     }
+  });
+
+  it("silently ignores a stored daemon with an invalid endpoint", async () => {
+    globalThis.localStorage.setItem(
+      "rennet.daemons",
+      JSON.stringify({
+        daemons: [
+          {
+            id: "daemon:corrupt",
+            label: "Corrupt daemon",
+            host: "example.com",
+            port: 70_000,
+            deviceToken: "bad-token",
+          },
+        ],
+        activeId: "daemon:corrupt",
+      }),
+    );
+    const bridge = stubBridge();
+    const createBridge = vi.fn(() => bridge);
+    const { getByLabelText, queryByText, user } = mount(
+      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
+    );
+
+    await waitFor(() => expect(createBridge).toHaveBeenCalledWith(LOCAL));
+    await user.click(getByLabelText(/Switch daemon/));
+    expect(queryByText("Corrupt daemon")).toBeNull();
+  });
+
+  it("rejects an out-of-range port without leaving the pairing form busy", async () => {
+    const bridge = stubBridge();
+    const createBridge = vi.fn(() => bridge);
+    const { getByLabelText, getByPlaceholderText, getByRole, getByText, user } = mount(
+      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
+    );
+
+    await user.click(getByLabelText(/Switch daemon/));
+    await user.click(getByText(/Add a daemon/));
+    await user.type(getByPlaceholderText(/or host:port/), "host:70000");
+    await user.type(getByPlaceholderText(/8 characters/), "ABCD2345");
+    await user.click(getByText(/Pair and add/));
+
+    expect(getByRole("alert").textContent).toContain("Enter a host");
+    expect((getByText("Pair and add") as HTMLButtonElement).disabled).toBe(false);
+    expect(createBridge).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the pairing busy state when temporary bridge construction throws", async () => {
+    const bridge = stubBridge();
+    const createBridge = vi.fn((target: ConnectionTarget) => {
+      if (target.id.startsWith("pairing:")) throw new Error("bridge construction failed");
+      return bridge;
+    });
+    const { getByLabelText, getByPlaceholderText, getByRole, getByText, user } = mount(
+      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
+    );
+
+    await user.click(getByLabelText(/Switch daemon/));
+    await user.click(getByText(/Add a daemon/));
+    await user.type(getByPlaceholderText(/or host:port/), "host:7411");
+    await user.type(getByPlaceholderText(/8 characters/), "ABCD2345");
+    await user.click(getByText(/Pair and add/));
+
+    expect(getByRole("alert").textContent).toContain("bridge construction failed");
+    expect((getByText("Pair and add") as HTMLButtonElement).disabled).toBe(false);
   });
 });

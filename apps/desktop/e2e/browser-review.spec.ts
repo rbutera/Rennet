@@ -36,10 +36,30 @@ async function stopDaemon(child: ChildProcess, claimPath: string): Promise<void>
     // no claim / already gone
   }
   child.kill("SIGTERM");
-  const deadline = Date.now() + 3_000;
-  while (existsSync(claimPath) && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  if (await waitForExit(child, 3_000)) return;
+
+  child.kill("SIGKILL");
+  const killed = await waitForExit(child, 3_000);
+  throw new Error(
+    killed
+      ? "daemon child did not exit within 3s of SIGTERM; escalated to SIGKILL"
+      : "daemon child did not exit after SIGTERM and SIGKILL",
+  );
+}
+
+async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return new Promise((resolveExit) => {
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolveExit(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolveExit(false);
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
 }
 
 test("adds a project and opens a review from a served browser tab", async ({ page }) => {
@@ -98,9 +118,12 @@ test("adds a project and opens a review from a served browser tab", async ({ pag
     await expect(page.getByRole("tab", { name: "Canvases" })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole("tab", { name: "Files" })).toBeVisible();
   } finally {
-    await stopDaemon(daemon, claimPath);
-    rmSync(repository, { recursive: true, force: true });
-    rmSync(userData, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
+    try {
+      await stopDaemon(daemon, claimPath);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+      rmSync(userData, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   }
 });

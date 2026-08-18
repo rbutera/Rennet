@@ -3,7 +3,7 @@ import type { RennetBridge } from "@rennet/protocol";
 import { ConnectionHost, type ConnectionTarget } from "@rennet/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BROWSER_SHELL_INTERCEPT_NAMES } from "./shell-intercepts";
+import { composeBrowserInvoke } from "./shell-intercepts";
 
 // The browser shell (issue #381, design D4/D5). A tab served by the daemon is a full peer
 // of the desktop app: it mounts the SAME `ConnectionHost` over the SAME `packages/ui`. The
@@ -21,6 +21,7 @@ const DEFAULT_TARGET: ConnectionTarget = {
   id: "local",
   label: "This server",
   host: location.hostname,
+  port: location.port ? Number(location.port) : undefined,
 };
 
 /** The WS authority for a target: the serving origin for the default, else the saved host[:port]. */
@@ -38,18 +39,7 @@ function createBridge(target: ConnectionTarget): RennetBridge & { close?(): void
     deviceToken: target.deviceToken,
   });
   const wsInvoke = wsBridge.invoke.bind(wsBridge);
-  const invoke: RennetBridge["invoke"] = async (name, input) => {
-    // The ONLY shell interception is the allowlist's `repository.choose` (design D5/D6).
-    if (
-      BROWSER_SHELL_INTERCEPT_NAMES.has(name) &&
-      (input as { path?: string }).path === undefined
-    ) {
-      const path = window.prompt("Absolute path to a repository on the daemon's machine:");
-      if (!path) return { path: null } as never;
-      return wsInvoke("repository.choose", { path }) as never;
-    }
-    return wsInvoke(name, input);
-  };
+  const invoke: RennetBridge["invoke"] = composeBrowserInvoke(wsInvoke);
   return {
     invoke,
     onProgress: wsBridge.onProgress.bind(wsBridge),

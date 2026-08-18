@@ -1,3 +1,5 @@
+import type { RennetBridge } from "@rennet/protocol";
+
 // The browser shell's command-interception allowlist (issue #381, design D5/D6).
 //
 // Both shells share `WsRennetBridge`, so the transport drops no command — every wire
@@ -16,3 +18,21 @@ export const BROWSER_SHELL_INTERCEPTS = {
 export const BROWSER_SHELL_INTERCEPT_NAMES: ReadonlySet<string> = new Set(
   Object.keys(BROWSER_SHELL_INTERCEPTS),
 );
+
+export function composeBrowserInvoke(
+  wsInvoke: RennetBridge["invoke"],
+  promptForRepository = () =>
+    window.prompt("Absolute path to a repository on the daemon's machine:"),
+): RennetBridge["invoke"] {
+  return async (name, input) => {
+    if (
+      BROWSER_SHELL_INTERCEPT_NAMES.has(name) &&
+      (input as { path?: string }).path === undefined
+    ) {
+      const path = promptForRepository();
+      if (!path) return { path: null } as never;
+      return wsInvoke("repository.choose", { path }) as never;
+    }
+    return wsInvoke(name, input);
+  };
+}

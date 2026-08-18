@@ -39,6 +39,34 @@ const DEFAULT_STORAGE_KEY = "rennet.daemons";
 
 interface StoredDaemons {
   readonly daemons: readonly ConnectionTarget[];
+  readonly activeId?: string;
+}
+
+function endpointKey(target: Pick<ConnectionTarget, "host" | "port">): string | null {
+  if (target.host.length === 0 || target.host.trim() !== target.host) return null;
+  if (
+    target.port !== undefined &&
+    (!Number.isInteger(target.port) || target.port < 1 || target.port > 65_535)
+  ) {
+    return null;
+  }
+  try {
+    const authority = target.port === undefined ? target.host : `${target.host}:${target.port}`;
+    const url = new URL(`ws://${authority}`);
+    if (
+      url.hostname.length === 0 ||
+      url.username.length > 0 ||
+      url.password.length > 0 ||
+      url.pathname !== "/" ||
+      url.search.length > 0 ||
+      url.hash.length > 0
+    ) {
+      return null;
+    }
+    return `${url.hostname.toLowerCase()}:${target.port ?? ""}`;
+  } catch {
+    return null;
+  }
 }
 
 /** A saved daemon must carry a token — an untokened remote is useless (it could only pair). */
@@ -50,28 +78,38 @@ function isStoredTarget(value: unknown): value is ConnectionTarget {
     typeof t.label === "string" &&
     typeof t.host === "string" &&
     typeof t.deviceToken === "string" &&
-    (t.port === undefined || typeof t.port === "number")
+    (t.port === undefined || typeof t.port === "number") &&
+    endpointKey(t as Pick<ConnectionTarget, "host" | "port">) !== null
   );
 }
 
 /** Read the saved remote daemons. A bad/absent blob degrades to none, no migration ceremony. */
-function readStoredDaemons(storageKey: string): readonly ConnectionTarget[] {
+function readStoredDaemons(storageKey: string): StoredDaemons {
   try {
     const raw = globalThis.localStorage?.getItem(storageKey);
-    if (!raw) return [];
+    if (!raw) return { daemons: [] };
     const parsed = JSON.parse(raw) as StoredDaemons;
-    if (!parsed || !Array.isArray(parsed.daemons)) return [];
-    return parsed.daemons.filter(isStoredTarget);
+    if (!parsed || !Array.isArray(parsed.daemons)) return { daemons: [] };
+    const daemons = parsed.daemons.filter(isStoredTarget);
+    const activeId =
+      typeof parsed.activeId === "string" && daemons.some((target) => target.id === parsed.activeId)
+        ? parsed.activeId
+        : undefined;
+    return { daemons, activeId };
   } catch {
-    return [];
+    return { daemons: [] };
   }
 }
 
-function persistDaemons(storageKey: string, daemons: readonly ConnectionTarget[]): void {
+function persistDaemons(
+  storageKey: string,
+  daemons: readonly ConnectionTarget[],
+  activeId: string,
+): void {
   try {
     globalThis.localStorage?.setItem(
       storageKey,
-      JSON.stringify({ daemons } satisfies StoredDaemons),
+      JSON.stringify({ daemons, activeId } satisfies StoredDaemons),
     );
   } catch {
     return;
@@ -83,20 +121,25 @@ function parseHostPort(raw: string): { host: string; port?: number } | null {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
   const colon = trimmed.lastIndexOf(":");
-  if (colon === -1) return { host: trimmed };
+  if (colon === -1) {
+    const endpoint = { host: trimmed };
+    return endpointKey(endpoint) === null ? null : endpoint;
+  }
   const host = trimmed.slice(0, colon);
   const portText = trimmed.slice(colon + 1);
   const port = Number.parseInt(portText, 10);
-  if (host.length === 0 || !Number.isInteger(port) || port <= 0 || String(port) !== portText) {
+  const endpoint = { host, port };
+  if (String(port) !== portText || endpointKey(endpoint) === null) {
     return null;
   }
-  return { host, port };
+  return endpoint;
 }
 
 export function ConnectionHost({ createBridge, defaultTarget, storageKey }: ConnectionHostProps) {
   const key = storageKey ?? DEFAULT_STORAGE_KEY;
-  const [saved, setSaved] = useState<readonly ConnectionTarget[]>(() => readStoredDaemons(key));
-  const [activeId, setActiveId] = useState(defaultTarget.id);
+  const [initial] = useState(() => readStoredDaemons(key));
+  const [saved, setSaved] = useState<readonly ConnectionTarget[]>(initial.daemons);
+  const [activeId, setActiveId] = useState(initial.activeId ?? defaultTarget.id);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addLabel, setAddLabel] = useState("");
@@ -105,28 +148,47 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  const allTargets = useMemo(() => [defaultTarget, ...saved], [defaultTarget, saved]);
-  const activeTarget = allTargets.find((t) => t.id === activeId) ?? defaultTarget;
+  const hydratedDefault = useMemo(() => {
+    if (defaultTarget.deviceToken) return defaultTarget;
+    const authority = endpointKey(defaultTarget);
+    const matchingSaved =
+      authority === null ? undefined : saved.find((target) => endpointKey(target) === authority);
+    return matchingSaved
+      ? { ...defaultTarget, deviceToken: matchingSaved.deviceToken }
+      : defaultTarget;
+  }, [defaultTarget, saved]);
+  const allTargets = useMemo(() => [hydratedDefault, ...saved], [hydratedDefault, saved]);
+  const activeTarget = allTargets.find((target) => target.id === activeId) ?? hydratedDefault;
 
-  // One bridge per active connection; a switch closes the old one and builds the new.
-  const bridge = useMemo(() => createBridge(activeTarget), [createBridge, activeTarget]);
-  useEffect(() => () => bridge.close?.(), [bridge]);
+  const [activeBridge, setActiveBridge] = useState<{
+    readonly target: ConnectionTarget;
+    readonly bridge: ReturnType<BridgeFactory>;
+  } | null>(null);
+  useEffect(() => {
+    const bridge = createBridge(activeTarget);
+    setActiveBridge({ target: activeTarget, bridge });
+    return () => bridge.close?.();
+  }, [activeTarget, createBridge]);
+  const bridge = activeBridge?.target === activeTarget ? activeBridge.bridge : null;
 
-  const switchTo = useCallback((id: string) => {
-    setActiveId(id);
-    setSwitcherOpen(false);
-  }, []);
+  const switchTo = useCallback(
+    (id: string) => {
+      setActiveId(id);
+      persistDaemons(key, saved, id);
+      setSwitcherOpen(false);
+    },
+    [key, saved],
+  );
 
   const removeDaemon = useCallback(
     (id: string) => {
-      setSaved((current) => {
-        const next = current.filter((t) => t.id !== id);
-        persistDaemons(key, next);
-        return next;
-      });
-      setActiveId((current) => (current === id ? defaultTarget.id : current));
+      const next = saved.filter((target) => target.id !== id);
+      const nextActiveId = activeId === id ? defaultTarget.id : activeId;
+      setSaved(next);
+      setActiveId(nextActiveId);
+      persistDaemons(key, next, nextActiveId);
     },
-    [key, defaultTarget.id],
+    [activeId, defaultTarget.id, key, saved],
   );
 
   const submitAdd = useCallback(async () => {
@@ -146,13 +208,14 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
     // Exchange the code through a TEMPORARY tokenless bridge (a pairing-only connection).
     // Its only legal command is `pairing.exchange`; the returned token makes the saved
     // daemon a projected connection on every future attach.
-    const temp = createBridge({
-      id: `pairing:${Date.now()}`,
-      label,
-      host: parsed.host,
-      port: parsed.port,
-    });
+    let temp: ReturnType<BridgeFactory> | undefined;
     try {
+      temp = createBridge({
+        id: `pairing:${Date.now()}`,
+        label,
+        host: parsed.host,
+        port: parsed.port,
+      });
       const result = await temp.invoke("pairing.exchange", { code, deviceName: label });
       const target: ConnectionTarget = {
         id: `daemon:${result.deviceId}`,
@@ -163,7 +226,7 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
       };
       setSaved((current) => {
         const next = [...current.filter((t) => t.id !== target.id), target];
-        persistDaemons(key, next);
+        persistDaemons(key, next, target.id);
         return next;
       });
       setAdding(false);
@@ -177,7 +240,7 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
         error instanceof Error ? error.message : "Pairing failed. Check the code and host.",
       );
     } finally {
-      temp.close?.();
+      temp?.close?.();
       setAddBusy(false);
     }
   }, [addHost, addCode, addLabel, createBridge, key]);
@@ -281,7 +344,7 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
           </div>
         ) : null}
       </div>
-      <RennetApp key={activeId} bridge={bridge} />
+      {bridge ? <RennetApp key={activeId} bridge={bridge} /> : null}
     </div>
   );
 }

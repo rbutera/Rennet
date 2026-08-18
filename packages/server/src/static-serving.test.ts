@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startWsListener, type WsListener, type WsListenerDeps } from "./ws-listener";
 
@@ -47,6 +47,14 @@ describe("daemon static UI serving (#381)", () => {
     expect(await res.text()).toContain("<title>Rennet</title>");
   });
 
+  it("serves index.html when uiDist is relative", async () => {
+    const uiDist = fixtureUi();
+    const base = await start(relative(process.cwd(), uiDist));
+    const res = await fetch(`${base}/`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("<title>Rennet</title>");
+  });
+
   it("serves a nested asset with its content type", async () => {
     const base = await start(fixtureUi());
     const res = await fetch(`${base}/assets/app.js`);
@@ -60,6 +68,20 @@ describe("daemon static UI serving (#381)", () => {
     // Encoded so the client does not normalise it away before it reaches the daemon.
     const res = await fetch(`${base}/%2e%2e/%2e%2e/etc/hosts`);
     expect(res.status).toBe(404);
+  });
+
+  it("refuses an in-root symlink that points outside uiDist", async () => {
+    const uiDist = fixtureUi();
+    const outside = mkdtempSync(join(tmpdir(), "rennet-ui-outside-"));
+    dirs.push(outside);
+    const secret = join(outside, "secret.txt");
+    writeFileSync(secret, "outside secret");
+    symlinkSync(secret, join(uiDist, "leak.txt"));
+
+    const base = await start(uiDist);
+    const res = await fetch(`${base}/leak.txt`);
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("outside secret");
   });
 
   it("404s an asset that does not exist", async () => {
