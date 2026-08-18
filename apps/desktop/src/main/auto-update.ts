@@ -1,4 +1,7 @@
-import { autoUpdater, BrowserWindow, ipcMain } from "electron";
+import { spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
+import { app, autoUpdater, BrowserWindow, ipcMain } from "electron";
 import { updateElectronApp } from "update-electron-app";
 
 /** MAIN → renderer push AND renderer → MAIN invoke (replay) channel for readiness. */
@@ -38,6 +41,56 @@ export function createUpdateReadiness(broadcast: (info: UpdateReadyInfo) => void
   };
 }
 
+/** Numeric x.y.z compare; true when `a` is strictly newer than `b`. */
+function semverGt(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
+  }
+  return false;
+}
+
+/**
+ * Squirrel.Windows stages a downloaded update as a SIBLING `app-<version>`
+ * directory and, from then on, answers every later `checkForUpdates` with
+ * "update-not-available" — the comparison runs against the newest STAGED
+ * version, not the running one. So `update-downloaded` fires exactly once, in
+ * whichever run performed the staging; if the badge push was missed there (a
+ * wedged renderer, a crash, a headless run — all observed on the lancelot test
+ * bed, 2026-08-19), no later event ever comes and the badge never shows.
+ *
+ * This detects that state at boot: when a sibling app dir carries a strictly
+ * newer version than the running one, the update is already downloaded and
+ * ready, and the readiness cache can say so without any updater event.
+ * Returns the newest staged version, or null (non-Squirrel layouts, macOS —
+ * where Squirrel.Mac applies on relaunch instead of staging siblings — and any
+ * read failure: best-effort, never throws).
+ */
+export function stagedNewerVersion(
+  execPath: string,
+  runningVersion: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (platform !== "win32") return null;
+  try {
+    const appDir = dirname(execPath);
+    if (!/^app-\d+\.\d+\.\d+$/.test(basename(appDir))) return null;
+    let best: string | null = null;
+    for (const entry of readdirSync(resolve(appDir, ".."))) {
+      const match = /^app-(\d+\.\d+\.\d+)$/.exec(entry);
+      if (!match?.[1]) continue;
+      const version = match[1];
+      if (semverGt(version, runningVersion) && (best === null || semverGt(version, best))) {
+        best = version;
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
 // Wire the Electron-maintained update client: update-electron-app polls
 // update.electronjs.org, which resolves this repo's public GitHub Releases and
 // serves the newest build. No Rennet backend is involved. `notifyUser: false`
@@ -54,7 +107,14 @@ export function createUpdateReadiness(broadcast: (info: UpdateReadyInfo) => void
 export function startAutoUpdate(
   isTrustedUrl: (value: string) => boolean,
   logger: Console = console,
+  detectStaged: () => string | null = () => stagedNewerVersion(process.execPath, app.getVersion()),
 ): void {
+  // Whether THIS run saw the live update-downloaded event. When readiness was
+  // seeded from a previously staged update instead, electron's quitAndInstall
+  // may no-op (its internal downloaded flag is unset), so apply falls back to
+  // respawning the Squirrel stub - which always launches the newest staged
+  // version - and quitting.
+  let liveDownloadSeen = false;
   const readiness = createUpdateReadiness((info) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.webContents.isDestroyed()) window.webContents.send(UPDATE_READY_CHANNEL, info);
@@ -72,12 +132,27 @@ export function startAutoUpdate(
   // fires from the renderer's explicit confirm.
   ipcMain.on(UPDATE_APPLY_CHANNEL, (event) => {
     if (!event.senderFrame || !isTrustedUrl(event.senderFrame.url)) return;
+    if (!liveDownloadSeen && process.platform === "win32") {
+      const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
+      if (existsSync(stub)) {
+        spawn(stub, [], { detached: true, stdio: "ignore" }).unref();
+        app.quit();
+        return;
+      }
+    }
     autoUpdater.quitAndInstall();
   });
 
   autoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
+    liveDownloadSeen = true;
     readiness.markDownloaded(releaseName);
   });
+  // A previous run may already have staged the update (see stagedNewerVersion) —
+  // in that state no update-downloaded will ever fire again, so seed readiness
+  // from disk. Windows exist later than this call; the preload's replay invoke
+  // delivers the cached state to every renderer as it loads.
+  const staged = detectStaged();
+  if (staged) readiness.markDownloaded(staged);
   autoUpdater.on("error", (error) => {
     logger.error("[auto-update] updater error (ignored):", error?.message ?? error);
   });
