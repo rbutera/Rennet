@@ -127,15 +127,26 @@ function isLoopbackAddress(address: string | undefined): boolean {
   return LOOPBACK_ADDRESSES.has(address) || address.startsWith("127.");
 }
 
-/** The Host-header allowlist for a non-loopback bind: the configured host, its literals, and localhost. */
+/** A bare IPv4/IPv6 literal (not a DNS name). Loose but sufficient: it only needs to reject hostnames. */
+function isIpLiteral(host: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+}
+
+/**
+ * The Host-header allowlist for a non-loopback bind (design D6, DNS-rebinding guard).
+ * A DNS-rebinding attack always presents a hostNAME (the attacker's domain), never a
+ * raw IP, so allowing IP-literal Host headers is safe and is what lets a remote client
+ * reach a `0.0.0.0` / specific-IP bind by address. A hostname is allowed only when it
+ * exactly matches the configured host, or is localhost.
+ */
 function isHostAllowed(hostHeader: string | undefined, listenHost: string): boolean {
   if (!hostHeader) return false;
   // Strip the port; IPv6 literals arrive bracketed as `[::1]:port`.
   const host = hostHeader.startsWith("[")
     ? hostHeader.slice(1, hostHeader.indexOf("]"))
     : (hostHeader.split(":")[0] ?? "");
-  const allowed = new Set([listenHost, "localhost", "127.0.0.1", "::1"]);
-  return allowed.has(host);
+  if (host === "localhost" || host === listenHost) return true;
+  return isIpLiteral(host);
 }
 
 type ConnectionClass = "private" | "projected" | "pairing-only";

@@ -32,8 +32,8 @@
 
 ## 6. Remote e2e + positive control
 
-- [ ] 6.1 Node-level contract test per design D10: non-loopback bind (env-permitting, else skip-with-message), pair, exchange, token-bearing client drives capture→canvases→disposition on a fixture repo, frame sweep for homedir + fixture-root absolutes.
-- [ ] 6.2 Positive control: injected leak makes the sweep fail (prove red).
+- [x] 6.1 Node-level contract test per design D10: non-loopback bind (env-permitting, else skip-with-message), pair, exchange, token-bearing client drives capture→canvases→disposition on a fixture repo, frame sweep for homedir + fixture-root absolutes.
+- [x] 6.2 Positive control: injected leak makes the sweep fail (prove red).
 - [ ] 6.3 `NX_DAEMON=false pnpm check` green; Playwright e2e untouched, failure set per baseline.
 
 ## 7. Docs (same change)
