@@ -36,15 +36,22 @@ describe("daemon.json claim lifecycle (#379)", () => {
     writeDaemonFile(dir, info());
     expect(existsSync(daemonFilePath(dir))).toBe(true);
     expect(readDaemonFile(dir)).toEqual(info());
-    removeDaemonFile(dir);
+    removeDaemonFile(dir, 4321);
     expect(existsSync(daemonFilePath(dir))).toBe(false);
     expect(readDaemonFile(dir)).toBeNull();
   });
 
   it("removing an absent claim is a no-op (idempotent shutdown)", () => {
     const dir = make();
-    expect(() => removeDaemonFile(dir)).not.toThrow();
-    removeDaemonFile(dir);
+    expect(() => removeDaemonFile(dir, 4321)).not.toThrow();
+    removeDaemonFile(dir, 4321);
+  });
+
+  it("a late old owner cannot remove a newer daemon's claim", () => {
+    const dir = make();
+    writeDaemonFile(dir, info({ pid: 222, wsPort: 41_000 }));
+    expect(removeDaemonFile(dir, 111)).toBe(false);
+    expect(readDaemonFile(dir)).toEqual(info({ pid: 222, wsPort: 41_000 }));
   });
 
   it("a fresh start overwrites a stale claim (dead pid → new process)", () => {

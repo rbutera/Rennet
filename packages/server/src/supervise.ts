@@ -7,7 +7,7 @@
 // shell restarts, the CLI reports — this module only returns the verdict.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdirSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import {
   checkProtocolCompatibility,
@@ -56,6 +56,9 @@ export async function findHealthyDaemon(dataDir: string): Promise<DaemonVerdict>
 
   const identity = await probeHealth(claim.wsPort);
   if (!identity) return { kind: "stale", claim };
+  if (identity.pid !== claim.pid || identity.wsPort !== claim.wsPort) {
+    return { kind: "stale", claim };
+  }
 
   const compatibility = checkProtocolCompatibility(
     { version: PROTOCOL_VERSION, minCompatible: MIN_COMPATIBLE_PROTOCOL_VERSION },
@@ -90,11 +93,16 @@ export function spawnDaemon(options: SpawnDaemonOptions): ChildProcess {
   const args = [options.entryPath, "--data-dir", options.dataDir];
   if (options.serverVersion) args.push("--server-version", options.serverVersion);
 
-  const child = spawn(options.execPath, args, {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-    env: { ...(options.env ?? process.env), ELECTRON_RUN_AS_NODE: "1" },
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(options.execPath, args, {
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      env: { ...(options.env ?? process.env), ELECTRON_RUN_AS_NODE: "1" },
+    });
+  } finally {
+    closeSync(logFd);
+  }
   child.unref();
   return child;
 }

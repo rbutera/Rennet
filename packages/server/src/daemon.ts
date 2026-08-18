@@ -8,6 +8,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { createRennetServer } from "./create-server";
 import { type DaemonInfo, removeDaemonFile, writeDaemonFile } from "./daemon-file";
@@ -41,24 +42,22 @@ export function resolveDaemonConfig(
   argv: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
 ): DaemonConfig {
-  const dataDirArg = readFlag(argv, "--data-dir");
-  const versionArg = readFlag(argv, "--server-version");
-  const dataDir = dataDirArg ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+  const { values } = parseArgs({
+    args: [...argv],
+    allowPositionals: false,
+    strict: true,
+    options: {
+      "data-dir": { type: "string" },
+      "server-version": { type: "string" },
+    },
+  });
+  const dataDir =
+    values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
   return {
     dataDir,
-    serverVersion: versionArg ?? env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
+    serverVersion: values["server-version"] ?? env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
     env,
   };
-}
-
-/** Read `--flag value` or `--flag=value` from argv; undefined if absent. */
-function readFlag(argv: readonly string[], flag: string): string | undefined {
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === flag) return argv[i + 1];
-    if (arg?.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
-  }
-  return undefined;
 }
 
 /** The GitHub egress transport for a daemon: Node's global `fetch` (no Electron `net`). */
@@ -115,7 +114,7 @@ export async function runDaemon(
     if (stopped) return;
     stopped = true;
     server.shutdown();
-    removeDaemonFile(config.dataDir);
+    removeDaemonFile(config.dataDir, process.pid);
   };
 
   if (options.installSignalHandlers !== false) {

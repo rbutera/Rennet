@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { readDaemonFile } from "./daemon-file";
+import { type CliIo, runCli as runSourceCli } from "./cli";
+import { type DaemonInfo, readDaemonFile, removeDaemonFile, writeDaemonFile } from "./daemon-file";
 
 // End-to-end proof of the `rennet` CLI managing a REAL out-of-process daemon (#379, task
 // 5.2): spawn `serve`, `status` reports it running, a command travels the same WS wire the
@@ -19,7 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const bundle = resolve(here, "../dist/rennet.cjs");
 
 /** Run a CLI subcommand to completion; resolve its exit code + captured stdout/stderr. */
-function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+function runBundledCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise) => {
     execFile("node", [bundle, ...args], (error, stdout, stderr) => {
       const code = error && typeof error.code === "number" ? error.code : error ? 1 : 0;
@@ -104,7 +105,7 @@ describe("rennet CLI ↔ real daemon lifecycle (#379)", () => {
     const claim = await poll(() => readDaemonFile(dataDir));
     expect(claim.pid).toBeGreaterThan(0);
 
-    const running = await runCli(["status", "--data-dir", dataDir]);
+    const running = await runBundledCli(["status", "--data-dir", dataDir]);
     expect(running.code).toBe(0);
     expect(running.stdout).toContain("running");
     expect(running.stdout).toContain(`port ${claim.wsPort}`);
@@ -113,13 +114,154 @@ describe("rennet CLI ↔ real daemon lifecycle (#379)", () => {
     const bootstrap = await invokeOverWire(claim.wsPort, "app.bootstrap", {});
     expect(bootstrap).toHaveProperty("repositoryPresent");
 
-    const stopped = await runCli(["stop", "--data-dir", dataDir]);
+    const stopped = await runBundledCli(["stop", "--data-dir", dataDir]);
     expect(stopped.code).toBe(0);
     expect(stopped.stdout).toContain("stopped");
 
-    const gone = await runCli(["status", "--data-dir", dataDir]);
+    const gone = await runBundledCli(["status", "--data-dir", dataDir]);
     expect(gone.code).toBe(1);
     expect(gone.stdout).toContain("not running");
     expect(readDaemonFile(dataDir)).toBeNull();
   }, 30_000);
+});
+
+describe("rennet CLI argument and daemon-identity handling", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeDir(): string {
+    const dir = mkdtempSync(resolve(tmpdir(), "rennet-cli-unit-"));
+    dirs.push(dir);
+    return dir;
+  }
+
+  function captureIo(): { io: CliIo; out: string[]; err: string[] } {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
+  }
+
+  function claim(overrides: Partial<DaemonInfo> = {}): DaemonInfo {
+    return {
+      pid: 4321,
+      wsPort: 51_234,
+      protocolVersion: PROTOCOL_VERSION,
+      version: "1.2.3",
+      startedAt: "2026-08-18T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  it.each([["serve"], ["status"], ["stop"]])(
+    "%s rejects a missing --data-dir value with exit 2 and usage",
+    async (subcommand) => {
+      const captured = captureIo();
+      const code = await runSourceCli(
+        [subcommand, "--data-dir"],
+        captured.io,
+        {},
+        {
+          probe: vi.fn(),
+          kill: vi.fn(),
+        },
+      );
+      expect(code).toBe(2);
+      expect(captured.err.at(-1)).toBe(`Usage: rennet ${subcommand} [--data-dir <dir>]`);
+    },
+  );
+
+  it("rejects unknown subcommand options with exit 2 and usage", async () => {
+    const captured = captureIo();
+    const code = await runSourceCli(
+      ["status", "--bogus"],
+      captured.io,
+      {},
+      {
+        probe: vi.fn(),
+        kill: vi.fn(),
+      },
+    );
+    expect(code).toBe(2);
+    expect(captured.err.at(-1)).toBe("Usage: rennet status [--data-dir <dir>]");
+  });
+
+  it("serve reports an existing verified daemon without starting or rewriting it", async () => {
+    const dir = makeDir();
+    const existing = claim();
+    writeDaemonFile(dir, existing);
+    const captured = captureIo();
+    const code = await runSourceCli(
+      ["serve", "--data-dir", dir],
+      captured.io,
+      {},
+      {
+        probe: async () => ({
+          kind: "healthy",
+          claim: existing,
+          identity: {
+            ...existing,
+            minCompatibleProtocolVersion: PROTOCOL_VERSION,
+          },
+        }),
+        kill: vi.fn(),
+      },
+    );
+    expect(code).toBe(1);
+    expect(captured.err).toContain(
+      `already running (pid ${existing.pid}, port ${existing.wsPort})`,
+    );
+    expect(readDaemonFile(dir)).toEqual(existing);
+  });
+
+  it("stop removes a stale claim without signalling its reused pid", async () => {
+    const dir = makeDir();
+    const stale = claim();
+    writeDaemonFile(dir, stale);
+    const kill = vi.fn();
+    const captured = captureIo();
+    const code = await runSourceCli(
+      ["stop", "--data-dir", dir],
+      captured.io,
+      {},
+      {
+        probe: async () => ({ kind: "stale", claim: stale }),
+        kill,
+      },
+    );
+    expect(code).toBe(0);
+    expect(kill).not.toHaveBeenCalled();
+    expect(readDaemonFile(dir)).toBeNull();
+    expect(captured.out).toContain(
+      `removed stale pidfile (pid ${stale.pid} was not a verified daemon)`,
+    );
+  });
+
+  it("stop signals a health-verified claim and only removes that pid's claim", async () => {
+    const dir = makeDir();
+    const running = claim();
+    writeDaemonFile(dir, running);
+    const kill = vi.fn(() => {
+      removeDaemonFile(dir, running.pid);
+    });
+    const code = await runSourceCli(
+      ["stop", "--data-dir", dir],
+      captureIo().io,
+      {},
+      {
+        probe: async () => ({
+          kind: "healthy",
+          claim: running,
+          identity: {
+            ...running,
+            minCompatibleProtocolVersion: PROTOCOL_VERSION,
+          },
+        }),
+        kill,
+      },
+    );
+    expect(code).toBe(0);
+    expect(kill).toHaveBeenCalledWith(running.pid, "SIGTERM");
+  });
 });

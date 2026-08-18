@@ -8,7 +8,8 @@
 // It reuses the exact supervision helpers the desktop shell uses — no reimplemented
 // protocol-compat or claim logic to drift.
 
-import { resolveDaemonConfig, runDaemon } from "./daemon";
+import { parseArgs } from "node:util";
+import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon } from "./supervise";
 
@@ -20,6 +21,18 @@ export interface CliIo {
 const defaultIo: CliIo = {
   out: (line) => process.stdout.write(`${line}\n`),
   err: (line) => process.stderr.write(`${line}\n`),
+};
+
+export interface CliDeps {
+  readonly probe: typeof findHealthyDaemon;
+  readonly kill: (pid: number, signal: "SIGTERM") => void;
+}
+
+const defaultDeps: CliDeps = {
+  probe: findHealthyDaemon,
+  kill: (pid, signal) => {
+    process.kill(pid, signal);
+  },
 };
 
 const HELP = [
@@ -38,15 +51,25 @@ export async function runCli(
   argv: readonly string[],
   io: CliIo = defaultIo,
   env: NodeJS.ProcessEnv = process.env,
+  deps: CliDeps = defaultDeps,
 ): Promise<number> {
   const [subcommand, ...rest] = argv;
   switch (subcommand) {
     case "serve":
-      return serve(rest, io, env);
     case "status":
-      return status(rest, io, env);
-    case "stop":
-      return stop(rest, io, env);
+    case "stop": {
+      let dataDir: string;
+      try {
+        dataDir = parseDataDir(rest, env);
+      } catch (error) {
+        io.err(`rennet ${subcommand}: ${error instanceof Error ? error.message : String(error)}`);
+        io.err(`Usage: rennet ${subcommand} [--data-dir <dir>]`);
+        return 2;
+      }
+      if (subcommand === "serve") return serve(dataDir, io, env, deps);
+      if (subcommand === "status") return status(dataDir, io, deps);
+      return stop(dataDir, io, deps);
+    }
     case "-h":
     case "--help":
       io.out(HELP);
@@ -61,9 +84,33 @@ export async function runCli(
   }
 }
 
+function parseDataDir(argv: readonly string[], env: NodeJS.ProcessEnv): string {
+  const { values } = parseArgs({
+    args: [...argv],
+    allowPositionals: false,
+    strict: true,
+    options: { "data-dir": { type: "string" } },
+  });
+  return values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+}
+
 /** Run the daemon in the foreground; resolves never (the process lives until a signal). */
-async function serve(argv: readonly string[], io: CliIo, env: NodeJS.ProcessEnv): Promise<number> {
-  const config = resolveDaemonConfig(argv, env);
+async function serve(
+  dataDir: string,
+  io: CliIo,
+  env: NodeJS.ProcessEnv,
+  deps: CliDeps,
+): Promise<number> {
+  const verdict = await deps.probe(dataDir);
+  if (verdict.kind === "healthy") {
+    io.err(`already running (pid ${verdict.identity.pid}, port ${verdict.identity.wsPort})`);
+    return 1;
+  }
+  const config = {
+    dataDir,
+    serverVersion: env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
+    env,
+  };
   const daemon = await runDaemon(config);
   io.out(
     `rennet daemon listening on 127.0.0.1:${daemon.info.wsPort} (pid ${daemon.info.pid}, v${daemon.info.version})`,
@@ -76,9 +123,8 @@ async function serve(argv: readonly string[], io: CliIo, env: NodeJS.ProcessEnv)
 }
 
 /** Read the claim, probe it, and print an honest verdict. Exit 0 only when running + compatible. */
-async function status(argv: readonly string[], io: CliIo, env: NodeJS.ProcessEnv): Promise<number> {
-  const { dataDir } = resolveDaemonConfig(argv, env);
-  const verdict = await findHealthyDaemon(dataDir);
+async function status(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> {
+  const verdict = await deps.probe(dataDir);
   switch (verdict.kind) {
     case "healthy":
       io.out(
@@ -104,19 +150,28 @@ async function status(argv: readonly string[], io: CliIo, env: NodeJS.ProcessEnv
 }
 
 /** SIGTERM the claimed pid and wait (bounded) for the claim to clear. No prompt. */
-async function stop(argv: readonly string[], io: CliIo, env: NodeJS.ProcessEnv): Promise<number> {
-  const { dataDir } = resolveDaemonConfig(argv, env);
-  const claim = readDaemonFile(dataDir);
-  if (!claim) {
+async function stop(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> {
+  const verdict = await deps.probe(dataDir);
+  if (verdict.kind === "absent") {
     io.out("not running");
     return 0;
   }
+  if (verdict.kind === "stale") {
+    const removed = removeDaemonFile(dataDir, verdict.claim.pid);
+    io.out(
+      removed
+        ? `removed stale pidfile (pid ${verdict.claim.pid} was not a verified daemon)`
+        : `stale pidfile changed before removal (pid ${verdict.claim.pid} was not signalled)`,
+    );
+    return 0;
+  }
+  const claim = verdict.claim;
   try {
-    process.kill(claim.pid, "SIGTERM");
+    deps.kill(claim.pid, "SIGTERM");
   } catch (error) {
     // ESRCH: the pid is already gone — the claim is stale. Clear it and report success.
     if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-      removeDaemonFile(dataDir);
+      removeDaemonFile(dataDir, claim.pid);
       io.out(`removed stale pidfile (pid ${claim.pid} was already gone)`);
       return 0;
     }
@@ -126,7 +181,7 @@ async function stop(argv: readonly string[], io: CliIo, env: NodeJS.ProcessEnv):
   // The daemon removes daemon.json on clean shutdown; poll for that as the done signal.
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    if (!readDaemonFile(dataDir)) {
+    if (readDaemonFile(dataDir)?.pid !== claim.pid) {
       io.out(`stopped (pid ${claim.pid})`);
       return 0;
     }

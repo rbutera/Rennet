@@ -176,7 +176,21 @@ app.whenReady().then(async () => {
   // effects it used to receive from the shell (net→global fetch; the repo dialog moves to
   // the renderer picker forwarded as `repository.choose`'s `path`). Persistence is unchanged:
   // the daemon opens the same rennet.sqlite / projects.json / threads under `dataDir`.
-  const wsPort = await ensureDaemon(app.getPath("userData"));
+  const dataDir = app.getPath("userData");
+  let wsPort: number;
+  try {
+    wsPort = await ensureDaemon(dataDir);
+  } catch (error) {
+    const cause = (error instanceof Error ? error.message : String(error))
+      .replace(/\s+/g, " ")
+      .trim();
+    dialog.showErrorBox(
+      "Rennet daemon failed to start",
+      `Cause: ${cause}\nLog: ${join(dataDir, "daemon.log")}`,
+    );
+    app.quit();
+    return;
+  }
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });

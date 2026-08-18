@@ -50,11 +50,14 @@ export function readDaemonFile(dataDir: string): DaemonInfo | null {
   }
 }
 
-/** Remove the claim; a missing file is not an error (idempotent clean shutdown). */
-export function removeDaemonFile(dataDir: string): void {
+/** Remove the claim only while it still belongs to `expectedPid`. */
+export function removeDaemonFile(dataDir: string, expectedPid: number): boolean {
+  const claim = readDaemonFile(dataDir);
+  if (claim?.pid !== expectedPid) return false;
   try {
     unlinkSync(daemonFilePath(dataDir));
+    return true;
   } catch {
-    // ENOENT (already gone) or a race with another launcher — nothing to do.
+    return false;
   }
 }

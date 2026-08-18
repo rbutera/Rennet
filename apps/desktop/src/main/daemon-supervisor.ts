@@ -7,7 +7,15 @@
 // existing lazy crash recovery.
 
 import { join, resolve } from "node:path";
-import { findHealthyDaemon, readDaemonFile, spawnDaemon, waitForHealthy } from "@rennet/server";
+import {
+  type DaemonInfo,
+  type DaemonVerdict,
+  findHealthyDaemon,
+  readDaemonFile,
+  type SpawnDaemonOptions,
+  spawnDaemon,
+  waitForHealthy,
+} from "@rennet/server";
 import { app } from "electron";
 
 /**
@@ -22,12 +30,30 @@ export function resolveServerBundle(): string {
   return resolve(__dirname, "../server/index.cjs");
 }
 
-/** Wait (bounded) for a daemon at `dataDir` to stop publishing its claim after a SIGTERM. */
-async function waitForClaimGone(dataDir: string, timeoutMs = 5_000): Promise<void> {
+/** Wait (bounded) for the signalled daemon to stop owning the claim after SIGTERM. */
+async function waitForClaimGone(
+  dataDir: string,
+  expectedPid: number,
+  readClaim: (dataDir: string) => DaemonInfo | null,
+  timeoutMs = 5_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (readDaemonFile(dataDir) && Date.now() < deadline) {
+  while (readClaim(dataDir)?.pid === expectedPid && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 100));
   }
+}
+
+export interface DaemonSupervisorDeps {
+  readonly probe: (dataDir: string) => Promise<DaemonVerdict>;
+  readonly spawn: (options: SpawnDaemonOptions) => unknown;
+  readonly waitForHealthy: typeof waitForHealthy;
+  readonly kill: (pid: number, signal: "SIGTERM") => void;
+  readonly readClaim: (dataDir: string) => DaemonInfo | null;
+  readonly execPath: string;
+  readonly entryPath: string;
+  readonly serverVersion: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly warn: (message: string) => void;
 }
 
 /**
@@ -35,34 +61,52 @@ async function waitForClaimGone(dataDir: string, timeoutMs = 5_000): Promise<voi
  * needed. The spawn runs the Electron binary as Node (`ELECTRON_RUN_AS_NODE`, detached,
  * logging to `<dataDir>/daemon.log`) so the packaged app needs no system Node.
  */
-export async function ensureDaemon(dataDir: string): Promise<number> {
-  const verdict = await findHealthyDaemon(dataDir);
+export async function ensureDaemon(
+  dataDir: string,
+  overrides: Partial<DaemonSupervisorDeps> = {},
+): Promise<number> {
+  const deps: DaemonSupervisorDeps = {
+    probe: findHealthyDaemon,
+    spawn: spawnDaemon,
+    waitForHealthy,
+    kill: (pid, signal) => {
+      process.kill(pid, signal);
+    },
+    readClaim: readDaemonFile,
+    execPath: process.execPath,
+    entryPath: resolveServerBundle(),
+    serverVersion: app.getVersion(),
+    env: process.env,
+    warn: console.warn,
+    ...overrides,
+  };
+  const verdict = await deps.probe(dataDir);
   if (verdict.kind === "healthy") return verdict.identity.wsPort;
 
   if (verdict.kind === "incompatible") {
     // D3/D10: the shell owns the newer bundle, so it restarts — no ceremony, just a log.
-    console.warn(
+    deps.warn(
       `rennet: daemon protocol ${verdict.identity.protocolVersion} is incompatible (${verdict.reason}); restarting the bundled daemon`,
     );
     try {
-      process.kill(verdict.claim.pid, "SIGTERM");
+      deps.kill(verdict.claim.pid, "SIGTERM");
     } catch {
       // Already gone — the next spawn overwrites the stale claim.
     }
-    await waitForClaimGone(dataDir);
+    await waitForClaimGone(dataDir, verdict.claim.pid, deps.readClaim);
   }
 
-  const spawnEnv: NodeJS.ProcessEnv = { ...process.env };
+  const spawnEnv: NodeJS.ProcessEnv = { ...deps.env };
   // The daemon resolves its own data dir from `--data-dir` (spawnDaemon passes it), so the
   // shell's RENNET_USER_DATA override must not double-apply from the inherited env.
   delete spawnEnv.RENNET_USER_DATA;
-  spawnDaemon({
+  deps.spawn({
     dataDir,
-    execPath: process.execPath,
-    entryPath: resolveServerBundle(),
-    serverVersion: app.getVersion(),
+    execPath: deps.execPath,
+    entryPath: deps.entryPath,
+    serverVersion: deps.serverVersion,
     env: spawnEnv,
   });
-  const healthy = await waitForHealthy(dataDir);
+  const healthy = await deps.waitForHealthy(dataDir);
   return healthy.identity.wsPort;
 }

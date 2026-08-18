@@ -4,9 +4,13 @@
   "sourceRoot": "packages/server/src",
   "projectType": "library",
   "tags": ["scope:rennet", "layer:server"],
+  "namedInputs": {
+    "serverCliBuildScript": ["{workspaceRoot}/scripts/build-server-cli.mjs"]
+  },
   "targets": {
     "build": {
       "command": "pnpm exec tsc -p packages/server/tsconfig.json && node scripts/build-server-cli.mjs",
+      "inputs": ["default", "^production", { "input": "serverCliBuildScript" }],
       "outputs": ["{projectRoot}/dist"],
       "cache": true
     },
