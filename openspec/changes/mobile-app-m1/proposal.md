@@ -12,7 +12,7 @@ Phase 6's design pass (#382, closed) and its [mobile plan](../../../docs/src/con
   - Review detail (wireframe 21, all three screens): delta digest, finding detail with one-tap dispositions and proposal adjudication, and the **full sequence canvas** — the whole review readable at phone width, virtualized.
   - Notification handling (wireframe 24): push permission flow, deep-link routing per the ideation taxonomy, notification settings screen, clear-attention-on-view.
 - **Daemon-side attention/notification planner** (the ideation doc's six-event taxonomy): per-client presence tracking, per-event in-app-vs-push decision (a client focused on the review gets the live event only), push delivery via the Expo push service (an outbound daemon call, consistent with no-inbound-relay), deep-link payloads, attention flags cleared on view.
-- **Protocol growth (additive, COMPAT-tagged; the projection grows — never a side channel):** a push-token registration command for a paired device, and a presence frame the client sends — the M0 presence seam goes live when the daemon advertises support.
+- **Protocol growth (additive, COMPAT-tagged; the projection grows — never a side channel):** a push-token registration command for a paired device; a presence frame the client sends (the M0 presence seam goes live when the daemon advertises support); and an additive optional `attention?: { needsYou, running }` summary on the projected review, sourced from the daemon's attention system (pending-ask/attention flags → `needsYou`; live turn/handoff → `running`) so a cold-open review list is truthful about needs-you before any push arrives. Absent ⇒ a pre-attention daemon, and the app falls back to deriving needs-you from the flagged queue plus live events.
 - **Toolchain:** `@nx/expo` at the workspace's exact Nx version (23.1.0) with inferred targets inspected before any manual target config; Expo SDK and RN deps admitted per the dependency standard.
 - Out of M1 (lands M2, per the plan): live turn streaming UI, ask answering, notification answer-actions, publish flow, kickoff from PR link / share sheet.
 
@@ -30,7 +30,7 @@ Phase 6's design pass (#382, closed) and its [mobile plan](../../../docs/src/con
 ## Impact
 
 - New `apps/mobile` (Expo) in the pnpm workspace + Nx graph; new dev dependency `@nx/expo@23.1.0`; Expo SDK/RN dependency set per the dependency standard; `apps/mobile` may import `client`, `protocol`, `types` only.
-- `packages/server`: attention planner, presence consumption, push-token store (SQLite, `~/.rennet`), Expo push egress; `packages/protocol`: additive command(s) + presence frame, COMPAT-tagged, projected schemas regenerated.
+- `packages/server`: attention planner, presence consumption, push-token store (SQLite, `~/.rennet`), Expo push egress; `packages/protocol`: additive command(s) + presence/attention frames + an additive optional `attention` summary on the projected review, COMPAT-tagged, projected schemas regenerated.
 - `packages/client`: presence transmission gated on daemon capability advertisement.
 - Docs same-change: mobile guide start (`using/`), architecture-overview client row, protocol-compatibility entry for the additions, delivery-order.
 - Issues: advances #383 (M1 of its plan). Acceptance: mobile-plan M1 list (pair over Tailscale, replica-instant list, whole review readable, backgrounded push with deep link + presence suppression).

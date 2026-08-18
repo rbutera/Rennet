@@ -2873,10 +2873,25 @@ export const projectedPatchsetSchema = patchsetSchema.extend({
   repository: projectedRepositoryProvenanceSchema,
 });
 
+/**
+ * COMPAT (attention, additive): a per-review attention summary sourced from the
+ * daemon's attention system (not the review pipeline). `needsYou` is true when an
+ * attention family is active for the review (e.g. a pending ask); `running` is true
+ * while a turn/handoff is live. Optional: absent means the daemon predates the
+ * attention capability, and a client falls back to deriving these from the flagged
+ * queue plus live session events. Never accepted inbound.
+ */
+export const projectedReviewAttentionSchema = z.object({
+  needsYou: z.boolean(),
+  running: z.boolean(),
+});
+export type ProjectedReviewAttention = z.infer<typeof projectedReviewAttentionSchema>;
+
 /** Projected `review`: `repositoryRoot` becomes a reference and patchsets are projected. */
 export const projectedReviewSchema = reviewSchema.extend({
   repositoryRoot: repoReferenceSchema,
   patchsets: z.array(projectedPatchsetSchema).min(1),
+  attention: projectedReviewAttentionSchema.optional(),
 });
 
 /** Projected `project`: `path`/`openPath`/`includedRepoPaths` become references. */

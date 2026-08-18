@@ -2,7 +2,7 @@
 
 ## 1. Protocol additions (additive, COMPAT-tagged)
 
-- [x] 1.1 `device.registerPush` command (token-bearing connections only; set/replace/delete push token per device) + `presence` client frame (focused/visible/deviceClass + focused review); daemon advertises `attention` capability in handshake; protocol-compatibility doc entry. (Also added the additive `attentionEvent` server→client frame and `attention.acknowledge` command — the live-event + clear wire the specs require. No R19 public-schema fixture changes: the additions carry no host paths, so `publicProjectionSchemas` is unchanged.)
+- [x] 1.1 `device.registerPush` command (token-bearing connections only; set/replace/delete push token per device) + `presence` client frame (focused/visible/deviceClass + focused review); daemon advertises `attention` capability in handshake; protocol-compatibility doc entry. (Also added the additive `attentionEvent` server→client frame and `attention.acknowledge` command — the live-event + clear wire the specs require. R19 projection grown per the #383 ruling: an additive optional `attention?: { needsYou, running }` on `projectedReviewSchema`, sourced from the daemon's attention registry (`AttentionRegistry.needsYou` + the review's live `pendingPatchsetId`) in `projection.ts`, gated on the attention capability; `public-schema/projected-review.json` regenerated, `attention` non-required so old daemons/clients interoperate.)
 - [x] 1.2 `packages/client`: transmit presence only when the daemon advertises `attention`; re-send current presence on every reconnect; unit tests both ways (delta spec scenarios) in `connection-supervisor.test.ts`.
 
 ## 2. Daemon attention system (`packages/server`)

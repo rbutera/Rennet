@@ -43,6 +43,11 @@ The home list SHALL aggregate reviews across all paired daemons, pin running and
 - **WHEN** any review has a pending ask or attention flag
 - **THEN** its row is pinned above the recency groups with a needs-you badge
 
+#### Scenario: cold open is truthful about needs-you
+
+- **WHEN** the app opens against an attention-capable daemon and a review has a mid-turn ask that no push has yet delivered
+- **THEN** the projected review's additive `attention.needsYou` (sourced from the daemon's attention system) pins the row on the first paint, and against a daemon that predates the capability the app falls back to deriving needs-you from the flagged queue plus live events
+
 ### Requirement: The whole review is readable on the phone
 
 Review detail SHALL lead with the delta digest (new / resolved / carried counts and rows), open findings one at a time (claim, hunk, one-tap agree/disagree/discuss, proposal adjudication), and SHALL render the full sequence canvas — every cohort, finding, and hunk in reading order — virtualized so it stays responsive to the last line. The digest is the entry point, never a boundary; no screen refers the user to a desktop to finish reading.

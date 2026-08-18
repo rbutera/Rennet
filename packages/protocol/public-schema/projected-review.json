@@ -642,6 +642,22 @@
         "beyondAsks"
       ],
       "additionalProperties": false
+    },
+    "attention": {
+      "type": "object",
+      "properties": {
+        "needsYou": {
+          "type": "boolean"
+        },
+        "running": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "needsYou",
+        "running"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
