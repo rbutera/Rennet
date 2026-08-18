@@ -167,6 +167,7 @@ import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
 import { createLiveComposeBundle } from "./handoff-compose-live";
+import { InFlightReviews } from "./in-flight-reviews";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
@@ -1694,6 +1695,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // in `~/.rennet/push-tokens.sqlite`. Shared between `device.registerPush` (set/delete),
   // the attention planner (list + dead-token cleanup), and revoke (delete stops pushes).
   const pushTokenStore = new PushTokenStore();
+  // Which reviews have a model turn in flight (#383 batch) — the real source of projected
+  // `attention.running`, marked by dispatch and read by the projection context below.
+  const inFlightReviews = new InFlightReviews();
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -1833,10 +1837,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     // `attention.acknowledge` clears + broadcasts through the live listener (late-bound).
     acknowledgeAttention: (selector) => wsListener?.acknowledgeAttention(selector) ?? 0,
-    // Raise attention (review-finished this pass) through the live listener (late-bound).
-    raiseAttention: (event) => {
-      wsListener?.raiseAttention(event);
-    },
+    // Raise attention through the live listener (late-bound); returns the raised item's id so a
+    // caller can clear exactly it (e.g. clearing ask-pending when its turn settles).
+    raiseAttention: (event) => wsListener?.raiseAttention(event)?.id,
+    // A review-scoped turn marks its review running for the duration (#383 batch) — the real
+    // source of the projected `attention.running`, read by the listener's projection context.
+    inFlightReviews,
     orchestratorTurn,
     publishPort,
     submitPullRequest,
@@ -2240,7 +2246,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         roots.add(project.openPath);
         for (const repoPath of project.includedRepoPaths ?? []) roots.add(repoPath);
       }
-      return buildProjectionContext(roots, homedir());
+      // `reviewIsRunning` feeds the projected review's `attention.running` (#383 batch); the
+      // listener adds `reviewNeedsYou` from its own attention registry when attention is on.
+      return {
+        ...buildProjectionContext(roots, homedir()),
+        reviewIsRunning: (reviewId) => inFlightReviews.has(reviewId),
+      };
     },
     // Opt-in bind beyond loopback (default stays 127.0.0.1:0).
     listen: configStore.read().daemon?.listen,
@@ -2259,6 +2270,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     void watcher.close();
     rehydration?.closeAll();
     store?.close();
+    pushTokenStore.close();
     void wsListener?.close();
   };
   return { dispatch, shutdown, wsPort: wsListener.port, wsHost: wsListener.host };

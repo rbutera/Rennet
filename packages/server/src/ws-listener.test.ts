@@ -2,6 +2,7 @@ import { once } from "node:events";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
+import type { ExpoPushMessage } from "./expo-push";
 import { startWsListener, type WsListener, type WsListenerDeps } from "./ws-listener";
 
 describe("WS listener command lifetime", () => {
@@ -388,6 +389,88 @@ describe("WS listener attention delivery (#383 M1, attention-notifications)", ()
     // The socket saw a raised then a cleared frame; the cleared one names the item's id.
     expect(frames.map((f) => f.event)).toEqual(["raised", "cleared"]);
     expect(frames[1]?.clearedIds).toEqual(["review-finished:rev-1"]);
+  });
+
+  it("replays the outstanding attention set to a newly connected socket (#383 batch)", async () => {
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({
+      dispatch,
+      serverVersion: "test",
+      attention: { pushTokens: memoryPushTokens([]), sendPush: vi.fn(async () => 0) },
+    });
+    listeners.push(listener);
+    // Outstanding since BEFORE any client connected — the cold-open case.
+    listener.raiseAttention({
+      family: "ask-pending",
+      reviewId: "rev-9",
+      deepLink: "rennet://review/rev-9/ask",
+      title: "Ask pending",
+      body: "",
+    });
+
+    const socket = new WebSocket(`ws://127.0.0.1:${listener.port}`);
+    sockets.push(socket);
+    await once(socket, "open");
+    const frames = collectAttention(socket); // attach BEFORE the handshake so replay is captured
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        clientId: "cold",
+        clientType: "rennet-client",
+        protocolVersion: PROTOCOL_VERSION,
+      }),
+    );
+    await settle();
+    // The just-connected socket received the outstanding item as a live raised frame.
+    const replayed = frames.find(
+      (f) => f.event === "raised" && (f.item as { reviewId?: string })?.reviewId === "rev-9",
+    );
+    expect(replayed).toBeDefined();
+  });
+
+  it("polls receipts after a send and prunes an async dead token (#383 batch)", async () => {
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    const deleted: string[] = [];
+    const pushTokens = {
+      list: () => [{ deviceId: "phone", token: "tok", platform: "ios" as const, updatedAt: 0 }],
+      delete: (deviceId: string) => void deleted.push(deviceId),
+    };
+    const sendPush = vi.fn(
+      async (
+        messages: readonly ExpoPushMessage[],
+        opts?: { onReceipt?: (h: { receiptId: string; token: string }) => void },
+      ) => {
+        opts?.onReceipt?.({ receiptId: "r1", token: "tok" });
+        return messages.length;
+      },
+    ) as unknown as typeof import("./expo-push").sendExpoPushes;
+    const pollReceipts = vi.fn(
+      async (
+        handles: readonly { receiptId: string; token: string }[],
+        opts?: { onDeadToken?: (token: string) => void },
+      ) => {
+        for (const h of handles) opts?.onDeadToken?.(h.token);
+      },
+    ) as unknown as typeof import("./expo-push").pollExpoReceipts;
+    const listener = await startWsListener({
+      dispatch,
+      serverVersion: "test",
+      attention: { pushTokens, sendPush, pollReceipts, receiptPollDelayMs: 0 },
+    });
+    listeners.push(listener);
+    await connect(listener);
+    listener.raiseAttention({
+      family: "review-finished",
+      reviewId: "rev-1",
+      deepLink: "d",
+      title: "t",
+      body: "",
+    });
+    await settle(); // send resolves, the delay-0 timer fires, the poll runs
+    expect(sendPush).toHaveBeenCalledOnce();
+    expect(pollReceipts).toHaveBeenCalledOnce();
+    // The receipt reported the token dead ⇒ its device is pruned from the store.
+    expect(deleted).toContain("phone");
   });
 
   it("accepts a presence frame only when attention is advertised (capability-gated)", async () => {

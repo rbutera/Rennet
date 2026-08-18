@@ -8,7 +8,7 @@
 // hashing here: unlike a bearer token, a push token is a delivery ADDRESS the daemon
 // must send in cleartext to the push service, so storing it plainly is correct.
 
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -41,7 +41,11 @@ export class PushTokenStore {
     path: string = defaultPushTokensPath(),
     private readonly now: () => number = () => Date.now(),
   ) {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    // The store holds delivery addresses; keep it user-only. `~/.rennet` is created 0700 and the
+    // db + its WAL/SHM sidecars are chmod'd 0600 — the directory mode is the real gate (other
+    // users cannot traverse it), the file modes are defence in depth. Best-effort: a platform
+    // that ignores POSIX modes (Windows) simply relies on the directory ACL.
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA journal_mode = WAL;");
     this.database.exec(
@@ -52,6 +56,14 @@ export class PushTokenStore {
          updated_at INTEGER NOT NULL
        )`,
     );
+    if (path !== ":memory:")
+      for (const p of [path, `${path}-wal`, `${path}-shm`]) {
+        try {
+          chmodSync(p, 0o600);
+        } catch {
+          // The sidecar may not exist yet (no write) or the platform ignores modes — fine.
+        }
+      }
   }
 
   close(): void {

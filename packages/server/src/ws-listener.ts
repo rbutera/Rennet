@@ -47,7 +47,12 @@ import {
   planDelivery,
   type RaisedAttention,
 } from "./attention-planner";
-import { type ExpoPushMessage, sendExpoPushes } from "./expo-push";
+import {
+  type ExpoPushMessage,
+  type ExpoReceiptHandle,
+  pollExpoReceipts,
+  sendExpoPushes,
+} from "./expo-push";
 import {
   buildProjectionContext,
   type ProjectionContext,
@@ -107,6 +112,9 @@ export interface WsListenerDeps {
   readonly attention?: AttentionDeps;
 }
 
+/** Default delay before the single post-send receipt poll (#383 batch). */
+const RECEIPT_POLL_DELAY_MS = 15_000;
+
 /** The attention wiring the listener needs to plan and post pushes (issue #383 M1). */
 export interface AttentionDeps {
   /** The registered push tokens (planner input) and dead-token cleanup. */
@@ -116,6 +124,13 @@ export interface AttentionDeps {
   };
   /** Post pushes (default: the real Expo egress). Injected as a stub in tests. */
   readonly sendPush?: typeof sendExpoPushes;
+  /** Poll delivery receipts (default: the real Expo poll). Injected as a stub in tests. */
+  readonly pollReceipts?: typeof pollExpoReceipts;
+  /**
+   * Delay before the single post-send receipt poll (#383 batch). Default ~15s (receipts settle
+   * after the service tries the device); tests pass 0 for an immediate poll.
+   */
+  readonly receiptPollDelayMs?: number;
   /** Non-fatal egress error sink (logging only). */
   readonly onEgressError?: (error: unknown) => void;
 }
@@ -316,6 +331,9 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   const nonLoopbackBind = !isLoopbackAddress(listenHost) && listenHost !== "localhost";
   const home = homedir();
   const attentionRegistry = new AttentionRegistry();
+  // Pending receipt-poll timers (#383 batch), cleared on close so a poll never fires after
+  // shutdown against a closed store.
+  const receiptTimers = new Set<ReturnType<typeof setTimeout>>();
   const contextOf = (): ProjectionContext => {
     const base = deps.projectionContext?.() ?? buildProjectionContext([], home);
     // COMPAT (#383): a daemon that runs the attention system advertises the summary on projected
@@ -528,6 +546,14 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
               ...(deps.attention ? { [ATTENTION_FEATURE]: true } : {}),
             },
           });
+          // Connect-time replay (#383 batch): hand THIS newly authorized socket the outstanding
+          // attention set as live `raised` frames, so a cold-open client's needs-you badges are
+          // truthful from the first paint — an ask pending since before the client launched pins
+          // without waiting for a new event. Live frames only; no pushes, presence untouched.
+          if (deps.attention && connection.connectionClass !== "pairing-only") {
+            for (const item of attentionRegistry.active())
+              send(socket, { type: "attentionEvent", event: "raised", item });
+          }
           return;
         }
         case "request": {
@@ -737,14 +763,34 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
         data: { deviceId: registration.deviceId, deepLink: item.deepLink, family: item.family },
         priority: plan.priority === "high" ? "high" : "normal",
       }));
+      // Map token → device once; both the synchronous dead-token prune and the async receipt
+      // poll below drop by device id.
+      const deviceByToken = new Map(plan.push.map((r) => [r.token, r.deviceId]));
+      const dropDeadToken = (token: string): void => {
+        const deviceId = deviceByToken.get(token);
+        if (deviceId) attention.pushTokens.delete(deviceId);
+      };
       const post = attention.sendPush ?? sendExpoPushes;
+      const receipts: ExpoReceiptHandle[] = [];
       // Fire-and-forget: push is best-effort, the in-app frame above is authoritative.
       void post(messages, {
-        onDeadToken: (token) => {
-          const dead = plan.push.find((registration) => registration.token === token);
-          if (dead) attention.pushTokens.delete(dead.deviceId);
-        },
+        onDeadToken: dropDeadToken,
+        onReceipt: (handle) => receipts.push(handle),
         onError: (error) => attention.onEgressError?.(error),
+      }).then(() => {
+        // One delayed receipt poll (#383 batch): a token the send accepted can still be reported
+        // dead at receipt time. Pruned by device id, non-fatal, timer cleared on close.
+        if (receipts.length === 0) return;
+        const poll = attention.pollReceipts ?? pollExpoReceipts;
+        const timer = setTimeout(() => {
+          receiptTimers.delete(timer);
+          void poll(receipts, {
+            onDeadToken: dropDeadToken,
+            onError: (error) => attention.onEgressError?.(error),
+          });
+        }, attention.receiptPollDelayMs ?? RECEIPT_POLL_DELAY_MS);
+        timer.unref?.();
+        receiptTimers.add(timer);
       });
     }
     return item;
@@ -791,6 +837,8 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
 
   const close = (): Promise<void> =>
     new Promise<void>((resolve) => {
+      for (const timer of receiptTimers) clearTimeout(timer);
+      receiptTimers.clear();
       for (const connection of connections) connection.socket.close();
       wss.close(() => httpServer.close(() => resolve()));
     });

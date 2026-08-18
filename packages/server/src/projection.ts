@@ -46,6 +46,12 @@ export interface ProjectionContext {
    * a client falls back to deriving needs-you from the flagged queue + live events.
    */
   readonly reviewNeedsYou?: (reviewId: string) => boolean;
+  /**
+   * COMPAT (attention, additive, #383 batch): true while a review-scoped model turn is in flight
+   * on this review (the in-flight registry, NOT `pendingPatchsetId` — that is staleness). Present
+   * only alongside `reviewNeedsYou`; both gate on the attention capability.
+   */
+  readonly reviewIsRunning?: (reviewId: string) => boolean;
 }
 
 /** Thrown when an inbound reference names a repo the server does not know; becomes `rpcError invalid_input`. */
@@ -194,7 +200,8 @@ function projectReview(
   const attention = ctx.reviewNeedsYou
     ? {
         needsYou: ctx.reviewNeedsYou(String(review.id)),
-        running: review.pendingPatchsetId !== undefined,
+        // A live turn, from the in-flight registry — NOT pendingPatchsetId (that is staleness).
+        running: ctx.reviewIsRunning?.(String(review.id)) ?? false,
       }
     : undefined;
   return {

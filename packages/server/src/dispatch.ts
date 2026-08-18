@@ -115,7 +115,13 @@ export interface DispatchDeps {
    * openPr / regenerate) this pass; the other five families raise from their own sources as
    * they are wired (see the attention-notifications spec and the mobile plan).
    */
-  readonly raiseAttention?: (event: RaisedAttention) => void;
+  readonly raiseAttention?: (event: RaisedAttention) => string | undefined;
+  /**
+   * The in-flight-review registry (#383 batch): a review-scoped turn marks its review running
+   * for the duration, so the projection can report `attention.running` truthfully. Absent ⇒ no
+   * running tracking (running reads false).
+   */
+  readonly inFlightReviews?: { enter(reviewId: string): void; leave(reviewId: string): void };
   /**
    * The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
    * backend + the lean primer + a real `claude` turn over the in-process
@@ -536,6 +542,27 @@ type LiveFlaggedAdjudication =
   | { readonly status: "complete"; readonly review: FlaggedReview }
   | { readonly status: "failed"; readonly reason: string };
 
+/**
+ * The review-scoped turn commands whose run marks their review "running" (#383 batch, finding
+ * 2). Each carries an existing `reviewId` in its input, so the review is already on a client's
+ * list and can flip to running while the turn is in flight. `review.capture` (first capture)
+ * and `review.openPr` mint a NEW review — there is no prior row to mark — so they are excluded;
+ * their in-flight state is the review-finished raise on completion, not a running flag.
+ */
+const RUNNING_TURN_COMMANDS = new Set<CommandName>([
+  "review.regenerate",
+  "review.refine",
+  "review.handoff.run",
+  "review.ask",
+]);
+
+/** The reviewId a running-turn command operates on, or undefined if it is not one / has none. */
+function runningReviewIdOf(name: CommandName, rawInput: unknown): string | undefined {
+  if (!RUNNING_TURN_COMMANDS.has(name)) return undefined;
+  const reviewId = (rawInput as { reviewId?: unknown } | null | undefined)?.reviewId;
+  return typeof reviewId === "string" && reviewId.length > 0 ? reviewId : undefined;
+}
+
 export function createDispatch(
   deps: DispatchDeps,
 ): (name: CommandName, rawInput: unknown, ctx?: DispatchContext) => Promise<unknown> {
@@ -645,6 +672,17 @@ export function createDispatch(
     rawInput: unknown,
     ctx?: DispatchContext,
   ): Promise<unknown> {
+    // Mark the review running for the duration of a review-scoped turn (#383 batch), so a
+    // concurrent app.bootstrap / review.load projects `attention.running: true` for it.
+    const runningReviewId = runningReviewIdOf(name, rawInput);
+    if (runningReviewId) deps.inFlightReviews?.enter(runningReviewId);
+    try {
+      return await runCommand();
+    } finally {
+      if (runningReviewId) deps.inFlightReviews?.leave(runningReviewId);
+    }
+
+    async function runCommand(): Promise<unknown> {
     switch (name) {
       case "app.bootstrap": {
         parseCommandInput(name, rawInput);
@@ -1200,6 +1238,33 @@ export function createDispatch(
         // fresh key, so it too is reaped. No registry wired ⇒ no controller ⇒ back-compat.
         const turnKey = stream?.turnId ?? randomUUID();
         const liveTurn = deps.liveTurns?.register(turnKey);
+        // Attention (#383 batch, families ask-pending + turn-failed). Only a STREAMING ask —
+        // a tracked, backgroundable turn (threadId+turnId) — raises attention; a one-shot #139
+        // ask is a synchronous foreground call the caller is already waiting on. Raise
+        // "ask pending" while the turn runs; clear it when it settles; raise "turn failed" if it
+        // errored or was interrupted. review-finished + these two are the families live in M1.
+        const askPendingId = stream
+          ? deps.raiseAttention?.({
+              family: "ask-pending",
+              reviewId: input.reviewId,
+              deepLink: deepLinkFor("ask-pending", { reviewId: input.reviewId }),
+              title: "Ask pending",
+              body: `${basename(review.repositoryRoot)} has a question in flight`,
+            })
+          : undefined;
+        const clearAskPending = (): void => {
+          if (askPendingId) deps.acknowledgeAttention?.({ attentionId: askPendingId });
+        };
+        const raiseTurnFailed = (why: string): void => {
+          if (!stream) return;
+          deps.raiseAttention?.({
+            family: "turn-failed",
+            reviewId: input.reviewId,
+            deepLink: deepLinkFor("turn-failed", { reviewId: input.reviewId }),
+            title: "Turn interrupted",
+            body: why,
+          });
+        };
         try {
           const result = await askReview(mode, input.question, {
             askOrchestrator: (question) =>
@@ -1282,7 +1347,19 @@ export function createDispatch(
               });
             }
           }
+          // The ask settled. An interrupted turn (its controller was aborted but the leg
+          // swallowed the abort and returned) is a truthful "turn failed"; otherwise the ask
+          // is simply no longer pending. Either way, ask-pending clears.
+          clearAskPending();
+          if (liveTurn?.signal.aborted)
+            raiseTurnFailed("The turn was interrupted before it finished.");
           return parseCommandOutput(name, result);
+        } catch (error) {
+          // The turn threw (a real failure, or a quit-abort rejecting the in-flight turn):
+          // clear the pending flag and raise turn-failed with the truthful cause, then rethrow.
+          clearAskPending();
+          raiseTurnFailed(error instanceof Error ? error.message : "The turn failed.");
+          throw error;
         } finally {
           // The turn settled — completed, errored, or aborted-on-quit — so it leaves the
           // registry. Running in `finally` is what makes the "leaves when it settles"
@@ -1836,6 +1913,7 @@ export function createDispatch(
         const unreachable: never = name;
         throw new Error(`Unhandled command: ${String(unreachable)}`);
       }
+    }
     }
   };
 }

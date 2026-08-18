@@ -40,6 +40,7 @@ import type {
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
+import { InFlightReviews } from "./in-flight-reviews";
 import {
   createPublishConsentAuthority,
   type PublishConsentAuthority,
@@ -183,6 +184,7 @@ function harness(
     pushTokens?: DispatchDeps["pushTokens"];
     acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
     raiseAttention?: DispatchDeps["raiseAttention"];
+    inFlightReviews?: DispatchDeps["inFlightReviews"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -301,6 +303,7 @@ function harness(
     ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
     ...(extra.acknowledgeAttention ? { acknowledgeAttention: extra.acknowledgeAttention } : {}),
     ...(extra.raiseAttention ? { raiseAttention: extra.raiseAttention } : {}),
+    ...(extra.inFlightReviews ? { inFlightReviews: extra.inFlightReviews } : {}),
     ...(extra.submitPullRequest ? { submitPullRequest: extra.submitPullRequest } : {}),
     ...(extra.draftDeltaDigest ? { draftDeltaDigest: extra.draftDeltaDigest } : {}),
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
@@ -1007,6 +1010,28 @@ describe("createDispatch — review.refine routing (the live producer, issue #19
     });
     // …and the route returns the producer's result verbatim.
     expect(result).toEqual({ status: "no-change", model: "test-model" });
+  });
+
+  it("marks the review running for the duration of the turn, cleared after (#383 batch)", async () => {
+    const inFlightReviews = new InFlightReviews();
+    const { dispatch, refineCommentSpy } = harness(fakePublishPort(), {}, { inFlightReviews });
+    const review = await capturedReview(dispatch);
+    let runningDuringTurn: boolean | undefined;
+    refineCommentSpy.mockImplementation(async (arg: { review: { id: string } }) => {
+      runningDuringTurn = inFlightReviews.has(arg.review.id);
+      return { status: "no-change", model: "test-model" };
+    });
+    // Red-proof: not running before the turn.
+    expect(inFlightReviews.has(review.id)).toBe(false);
+    await dispatch("review.refine", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      itemId: "x",
+      type: "comment",
+      raw: "note",
+    });
+    expect(runningDuringTurn).toBe(true); // running WHILE the producer ran
+    expect(inFlightReviews.has(review.id)).toBe(false); // cleared after it settled
   });
 
   it("refuses review.refine for a stale or unknown review id (the producer spends a model turn)", async () => {
@@ -2592,6 +2617,78 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     expect(out.secondOpinion?.model).toBe("codex");
     // No merged answer can exist — the result has exactly these three keys.
     expect(Object.keys(out).sort()).toEqual(["mode", "primary", "secondOpinion"]);
+  });
+
+  it("a STREAMING ask raises ask-pending then clears it on completion (#383 batch)", async () => {
+    const raised: { family: string; id: string }[] = [];
+    const cleared: { reviewId?: string; attentionId?: string }[] = [];
+    let n = 0;
+    const h = harness(fakePublishPort(), {}, {
+      raiseAttention: (e) => {
+        const id = `att-${n++}`;
+        raised.push({ family: e.family, id });
+        return id;
+      },
+      acknowledgeAttention: (sel) => {
+        cleared.push(sel);
+        return 1;
+      },
+    });
+    const review = await capturedReview(h.dispatch);
+    raised.length = 0; // drop the capture's review-finished raise; focus on the ask
+    await h.dispatch(
+      "review.ask",
+      { commandId: randomUUID(), reviewId: review.id, question: "q", threadId: "th", turnId: "tn" },
+      { emitAskStream: () => {} },
+    );
+    const askPending = raised.find((r) => r.family === "ask-pending");
+    expect(askPending).toBeDefined();
+    expect(raised.some((r) => r.family === "turn-failed")).toBe(false); // clean completion
+    expect(cleared).toContainEqual({ attentionId: askPending?.id }); // cleared exactly it
+  });
+
+  it("a FAILED streaming ask raises turn-failed and clears ask-pending (#383 batch)", async () => {
+    const raised: { family: string; id: string }[] = [];
+    const cleared: { attentionId?: string; reviewId?: string }[] = [];
+    let n = 0;
+    const h = harness(fakePublishPort(), {}, {
+      raiseAttention: (e) => {
+        const id = `att-${n++}`;
+        raised.push({ family: e.family, id });
+        return id;
+      },
+      acknowledgeAttention: (sel) => {
+        cleared.push(sel);
+        return 1;
+      },
+    });
+    const review = await capturedReview(h.dispatch);
+    raised.length = 0;
+    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("harness exploded"));
+    await expect(
+      h.dispatch(
+        "review.ask",
+        { commandId: randomUUID(), reviewId: review.id, question: "q", threadId: "th", turnId: "tn" },
+        { emitAskStream: () => {} },
+      ),
+    ).rejects.toThrow(/harness exploded/);
+    const askPending = raised.find((r) => r.family === "ask-pending");
+    expect(raised.some((r) => r.family === "turn-failed")).toBe(true);
+    expect(cleared).toContainEqual({ attentionId: askPending?.id });
+  });
+
+  it("a ONE-SHOT (#139) ask raises no attention — it is a synchronous foreground call (#383 batch)", async () => {
+    const raised: { family: string }[] = [];
+    const h = harness(fakePublishPort(), {}, {
+      raiseAttention: (e) => {
+        raised.push({ family: e.family });
+        return "id";
+      },
+    });
+    const review = await capturedReview(h.dispatch);
+    raised.length = 0;
+    await h.dispatch("review.ask", { commandId: randomUUID(), reviewId: review.id, question: "q" });
+    expect(raised.some((r) => r.family === "ask-pending" || r.family === "turn-failed")).toBe(false);
   });
 
   it("hands BOTH legs one resolved snapshot — a mid-ask patchset swap cannot cross them (P1-2)", async () => {
