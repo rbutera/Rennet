@@ -33,7 +33,7 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
       })),
     ).toEqual({
       process: "undefined",
-      bridge: ["onMenuRun", "platform", "updateMenu", "wsPort"],
+      bridge: ["chooseDirectory", "onMenuRun", "platform", "updateMenu", "wsPort"],
     });
 
     // "Review directly" reveals the legacy repo/PR entry with "Choose a repository".

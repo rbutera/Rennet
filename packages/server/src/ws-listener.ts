@@ -23,6 +23,7 @@ import {
   parseSessionFrame,
 } from "@rennet/protocol";
 import { WebSocket, WebSocketServer } from "ws";
+import { z } from "zod";
 
 /** The dispatch surface the transport routes to — the exact shape createDispatch returns. */
 type Dispatch = (
@@ -41,6 +42,17 @@ export interface WsListenerDeps {
   /** The server application's own version, surfaced in the `serverInfo` handshake frame. */
   readonly serverVersion: string;
 }
+
+/** The daemon identity `GET /healthz` returns and a launcher probes before connecting (#379). */
+export const daemonIdentitySchema = z.object({
+  pid: z.number().int().positive(),
+  wsPort: z.number().int().positive(),
+  version: z.string(),
+  protocolVersion: z.number().int().nonnegative(),
+  minCompatibleProtocolVersion: z.number().int().nonnegative(),
+});
+
+export type DaemonIdentity = z.infer<typeof daemonIdentitySchema>;
 
 export interface WsListener {
   /** The ephemeral loopback port the listener bound; the desktop injects it into the renderer. */
@@ -73,7 +85,27 @@ function salvageRequestId(raw: unknown): string {
 export async function startWsListener(deps: WsListenerDeps): Promise<WsListener> {
   const { dispatch, serverVersion } = deps;
   const sockets = new Set<WebSocket>();
-  const httpServer: HttpServer = createServer();
+  // `boundPort` is filled after `listen`; the healthz handler only runs once requests
+  // arrive (post-listen), so the closure always reads the real port.
+  let boundPort = 0;
+  // `GET /healthz` answers the launcher's liveness + protocol probe (#379). Non-upgrade
+  // HTTP requests land here; WS upgrades go to the WebSocketServer instead.
+  const httpServer: HttpServer = createServer((req, res) => {
+    if (req.method === "GET" && (req.url === "/healthz" || req.url?.startsWith("/healthz?"))) {
+      const identity: DaemonIdentity = {
+        pid: process.pid,
+        wsPort: boundPort,
+        version: serverVersion,
+        protocolVersion: PROTOCOL_VERSION,
+        minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
+      };
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(identity));
+      return;
+    }
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  });
   const wss = new WebSocketServer({ server: httpServer });
 
   const send = (socket: WebSocket, frame: SessionFrame): void => {
@@ -212,6 +244,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     throw new Error("WS listener bound without a numeric port");
   }
   const port = address.port;
+  boundPort = port;
 
   const broadcastProgress = (commandId: string, event: ProjectProcessEvent): void => {
     const payload = JSON.stringify({

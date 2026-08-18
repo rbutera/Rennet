@@ -5,11 +5,18 @@
   "projectType": "library",
   "tags": ["scope:rennet", "layer:server"],
   "targets": {
-    "build": { "command": "pnpm exec tsc -p packages/server/tsconfig.json" },
+    "build": {
+      "command": "pnpm exec tsc -p packages/server/tsconfig.json && node scripts/build-server-cli.mjs",
+      "outputs": ["{projectRoot}/dist"],
+      "cache": true
+    },
     "lint": {
       "command": "pnpm exec eslint packages/server/src --max-warnings=0 && pnpm exec biome check packages/server/src"
     },
     "typecheck": { "command": "pnpm exec tsc -p packages/server/tsconfig.json" },
-    "test": { "command": "pnpm exec vitest run packages/server/src" }
+    "test": {
+      "command": "pnpm exec vitest run packages/server/src",
+      "dependsOn": ["build"]
+    }
   }
 }

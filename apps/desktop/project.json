@@ -6,7 +6,7 @@
   "tags": ["scope:rennet", "layer:app", "platform:desktop"],
   "targets": {
     "build": {
-      "command": "pnpm exec vite build -c apps/desktop/vite.main.config.ts && pnpm exec vite build -c apps/desktop/vite.preload.config.ts && pnpm exec vite build -c apps/desktop/vite.renderer.config.ts && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/main"
+      "command": "pnpm exec vite build -c apps/desktop/vite.main.config.ts && pnpm exec vite build -c apps/desktop/vite.preload.config.ts && pnpm exec vite build -c apps/desktop/vite.renderer.config.ts && pnpm exec vite build -c apps/desktop/vite.server.config.ts && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/main && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/server"
     },
     "dev": {
       "cache": false,
@@ -17,7 +17,8 @@
     },
     "typecheck": { "command": "pnpm exec tsc -p apps/desktop/tsconfig.json" },
     "test": {
-      "command": "pnpm exec vitest run --passWithNoTests -c apps/desktop/vitest.config.ts"
+      "command": "pnpm exec vitest run --passWithNoTests -c apps/desktop/vitest.config.ts",
+      "dependsOn": ["build"]
     },
     "e2e": { "command": "pnpm exec playwright test -c apps/desktop/playwright.config.ts" },
     "package": {

@@ -20,8 +20,24 @@ if (preload.platform) {
 // residue (platform + the application-menu channels). Merged into one RennetBridge so
 // the UI stays transport-agnostic.
 const wsBridge = new WsRennetBridge({ url: `ws://127.0.0.1:${preload.wsPort}` });
+const wsInvoke = wsBridge.invoke.bind(wsBridge);
+
+// The dialog seam (#379, design D7): the daemon cannot open a directory picker, so a
+// `repository.choose` with no `path` gets one from the shell's native picker here and
+// forwards it. A cancelled pick resolves `{ path: null }` without touching the wire; an
+// explicit `path` (headless callers) passes straight through. Every other command is the
+// bare WS invoke.
+const invoke: RennetBridge["invoke"] = async (name, input) => {
+  if (name === "repository.choose" && (input as { path?: string }).path === undefined) {
+    const path = await preload.chooseDirectory();
+    if (path === null) return { path: null } as never;
+    return wsInvoke("repository.choose", { path }) as never;
+  }
+  return wsInvoke(name, input);
+};
+
 const bridge: RennetBridge = {
-  invoke: wsBridge.invoke.bind(wsBridge),
+  invoke,
   onProgress: wsBridge.onProgress.bind(wsBridge),
   onAskStream: wsBridge.onAskStream.bind(wsBridge),
   platform: preload.platform,

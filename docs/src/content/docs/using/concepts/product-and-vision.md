@@ -102,9 +102,11 @@ machine **reviewed**, **approved**, or **found a bug** on the reviewer's behalf.
 
 ## Local-first, honestly stated
 
-Rennet has no Rennet backend and no Rennet telemetry service. Review state and
-project context live locally. Material sent through a selected harness may go to
-that harness's model provider. Rennet feeds its deterministic assembled context
+Rennet has no *hosted* Rennet backend and no Rennet telemetry service. There is a
+server, but it runs as a local daemon on your own machine — the desktop app spawns and
+talks to it over loopback, and it outlives the window so a review keeps running when you
+quit. Nothing about it is remote. Review state and project context live locally.
+Material sent through a selected harness may go to that harness's model provider. Rennet feeds its deterministic assembled context
 as a labelled layer. Rennet records the exact text it handed to each model, and
 only labels context **sent** when that record matches what it assembled — it never
 claims a model saw nothing extra. Ambient harness reads remain separately
