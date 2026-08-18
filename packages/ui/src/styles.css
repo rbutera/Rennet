@@ -3387,7 +3387,7 @@ button {
 }
 .settings-pair-code-value {
   font-family: var(--code);
-  font-size: 18px;
+  font-size: 16px;
   letter-spacing: 2px;
   padding: 6px 10px;
   border-radius: var(--chip-radius);

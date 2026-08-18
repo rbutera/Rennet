@@ -50,7 +50,7 @@ function hashToken(rawToken: string): string {
 function mintCode(): string {
   const bytes = randomBytes(CODE_LENGTH);
   let code = "";
-  for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[bytes[i]! % CODE_ALPHABET.length];
+  for (const byte of bytes) code += CODE_ALPHABET[byte % CODE_ALPHABET.length];
   return code;
 }
 

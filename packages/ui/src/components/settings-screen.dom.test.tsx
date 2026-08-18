@@ -690,7 +690,7 @@ describe("SettingsScreen pairing panel (#380)", () => {
       },
       "pairing.revokeDevice": { devices: [] },
     });
-    const screen = mount(<SettingsScreen bridge={bridge} onBack={() => {}} />);
+    const screen = mount(<SettingsScreen bridge={bridge} onBack={() => undefined} />);
     await waitFor(() => screen.getByRole("tab", { name: "Pairing" }));
     fireEvent.click(screen.getByRole("tab", { name: "Pairing" }));
     // The paired device appears (from pairing.listDevices).

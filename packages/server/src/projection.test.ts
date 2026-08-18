@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { commandDefinitions } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
