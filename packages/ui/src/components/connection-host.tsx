@@ -245,106 +245,107 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
     }
   }, [addHost, addCode, addLabel, createBridge, key]);
 
-  return (
-    <div className="connection-host">
-      <div className="connection-bar">
-        <button
-          type="button"
-          className="connection-indicator"
-          onClick={() => setSwitcherOpen((open) => !open)}
-          aria-expanded={switcherOpen}
-          aria-label={`Connected to ${activeTarget.label}. Switch daemon.`}
-        >
-          <span className="connection-dot" aria-hidden="true" />
-          <span className="connection-name">{activeTarget.label}</span>
-        </button>
-        {switcherOpen ? (
-          <div className="connection-switcher" role="menu">
-            <ul className="connection-list">
-              {allTargets.map((target) => (
-                <li key={target.id} className="connection-item">
+  const connectionBar = (
+    <div className="connection-bar">
+      <button
+        type="button"
+        className="connection-indicator"
+        onClick={() => setSwitcherOpen((open) => !open)}
+        aria-expanded={switcherOpen}
+        aria-label={`Connected to ${activeTarget.label}. Switch daemon.`}
+      >
+        <span className="connection-dot" aria-hidden="true" />
+        <span className="connection-name">{activeTarget.label}</span>
+      </button>
+      {switcherOpen ? (
+        <div className="connection-switcher" role="menu">
+          <ul className="connection-list">
+            {allTargets.map((target) => (
+              <li key={target.id} className="connection-item">
+                <button
+                  type="button"
+                  className="connection-choose"
+                  onClick={() => switchTo(target.id)}
+                  aria-current={target.id === activeId}
+                >
+                  {target.label}
+                  {target.host === defaultTarget.host && target.id === defaultTarget.id
+                    ? " (this machine)"
+                    : ` — ${target.host}${target.port ? `:${target.port}` : ""}`}
+                </button>
+                {target.id !== defaultTarget.id ? (
                   <button
                     type="button"
-                    className="connection-choose"
-                    onClick={() => switchTo(target.id)}
-                    aria-current={target.id === activeId}
+                    className="connection-remove"
+                    onClick={() => removeDaemon(target.id)}
+                    aria-label={`Forget ${target.label}`}
                   >
-                    {target.label}
-                    {target.host === defaultTarget.host && target.id === defaultTarget.id
-                      ? " (this machine)"
-                      : ` — ${target.host}${target.port ? `:${target.port}` : ""}`}
+                    ×
                   </button>
-                  {target.id !== defaultTarget.id ? (
-                    <button
-                      type="button"
-                      className="connection-remove"
-                      onClick={() => removeDaemon(target.id)}
-                      aria-label={`Forget ${target.label}`}
-                    >
-                      ×
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-            {adding ? (
-              <form
-                className="connection-add-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submitAdd();
-                }}
-              >
-                <label className="connection-field">
-                  Name
-                  <input
-                    value={addLabel}
-                    onChange={(e) => setAddLabel(e.target.value)}
-                    placeholder="My laptop"
-                  />
-                </label>
-                <label className="connection-field">
-                  Host
-                  <input
-                    value={addHost}
-                    onChange={(e) => setAddHost(e.target.value)}
-                    placeholder="100.x.y.z or host:port"
-                  />
-                </label>
-                <label className="connection-field">
-                  Pairing code
-                  <input
-                    value={addCode}
-                    onChange={(e) => setAddCode(e.target.value)}
-                    placeholder="8 characters"
-                  />
-                </label>
-                {addError ? (
-                  <p className="connection-error" role="alert">
-                    {addError}
-                  </p>
                 ) : null}
-                <div className="connection-add-actions">
-                  <button type="submit" disabled={addBusy}>
-                    {addBusy ? "Pairing…" : "Pair and add"}
-                  </button>
-                  <button type="button" onClick={() => setAdding(false)} disabled={addBusy}>
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <button type="button" className="connection-add" onClick={() => setAdding(true)}>
-                Add a daemon
-              </button>
-            )}
-            <p className="connection-note">
-              A remote daemon shows only repo references, never a host path. Pairing is one-time.
-            </p>
-          </div>
-        ) : null}
-      </div>
-      {bridge ? <RennetApp key={activeId} bridge={bridge} /> : null}
+              </li>
+            ))}
+          </ul>
+          {adding ? (
+            <form
+              className="connection-add-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitAdd();
+              }}
+            >
+              <label className="connection-field">
+                Name
+                <input
+                  value={addLabel}
+                  onChange={(e) => setAddLabel(e.target.value)}
+                  placeholder="My laptop"
+                />
+              </label>
+              <label className="connection-field">
+                Host
+                <input
+                  value={addHost}
+                  onChange={(e) => setAddHost(e.target.value)}
+                  placeholder="100.x.y.z or host:port"
+                />
+              </label>
+              <label className="connection-field">
+                Pairing code
+                <input
+                  value={addCode}
+                  onChange={(e) => setAddCode(e.target.value)}
+                  placeholder="8 characters"
+                />
+              </label>
+              {addError ? (
+                <p className="connection-error" role="alert">
+                  {addError}
+                </p>
+              ) : null}
+              <div className="connection-add-actions">
+                <button type="submit" disabled={addBusy}>
+                  {addBusy ? "Pairing…" : "Pair and add"}
+                </button>
+                <button type="button" onClick={() => setAdding(false)} disabled={addBusy}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button type="button" className="connection-add" onClick={() => setAdding(true)}>
+              Add a daemon
+            </button>
+          )}
+          <p className="connection-note">
+            A remote daemon shows only repo references, never a host path. Pairing is one-time.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
+
+  return bridge ? (
+    <RennetApp key={activeId} bridge={bridge} connectionSlot={connectionBar} />
+  ) : null;
 }

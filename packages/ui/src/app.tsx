@@ -529,7 +529,13 @@ function persistNav(
   }
 }
 
-export function RennetApp({ bridge }: { bridge: RennetBridge }) {
+export function RennetApp({
+  bridge,
+  connectionSlot,
+}: {
+  bridge: RennetBridge;
+  connectionSlot?: ReactNode;
+}) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   // Whether the open review's original repository root still exists on disk (#324).
   // Set by bootstrap/load; fresh capture/openPr paths set it true. A gone root behaves
@@ -2494,6 +2500,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               </code>
             </div>
           ) : null}
+          {connectionSlot}
         </header>
         <NavRail
           canBack={navigation.stack.length > 1}
@@ -2516,6 +2523,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             <RennetBrandMark size={16} />
           </span>
           <Breadcrumb crumb={deriveCrumb([{ kind: "projects" }])} onAscend={() => undefined} />
+          {connectionSlot}
         </header>
         <div className="navigation-surface-content">
           <div className="loading">Restoring local review…</div>

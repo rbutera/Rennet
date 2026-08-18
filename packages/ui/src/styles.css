@@ -109,7 +109,6 @@ button {
 }
 .navigation-titlebar-context {
   margin-left: auto;
-  margin-right: 190px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2835,6 +2834,14 @@ button {
   color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
+.project-detail-auth-hint {
+  margin: 10px 0 0;
+  padding: 9px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  color: var(--text-soft);
+  font-size: 12px;
+}
 
 .smart-filter-bar {
   display: flex;
@@ -3913,14 +3920,17 @@ button {
 
 /* The connections surface (#381): the shared daemon-attachment chrome both shells mount.
    A compact indicator that opens a switcher; the saved-daemon list, add-daemon pairing
-   form, and the R19 honesty note. Colours + radii ride the tokens; sizes ride the ramp. */
-.connection-host {
-  display: contents;
-}
+   form, and the R19 honesty note. Colours + radii ride the tokens; sizes ride the ramp.
+   Lives inside the navigation titlebar — margin-left: auto pushes it to the right edge. */
 .connection-bar {
   position: relative;
+  margin-left: auto;
+  margin-right: 190px;
   display: flex;
   align-items: center;
+}
+.navigation-titlebar-context ~ .connection-bar {
+  margin-left: 12px;
 }
 .connection-indicator {
   display: inline-flex;
