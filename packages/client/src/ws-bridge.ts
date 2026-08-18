@@ -16,7 +16,12 @@ import type {
   ReviewAskStreamEvent,
   SessionFrame,
 } from "@rennet/protocol";
-import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
+import {
+  checkProtocolCompatibility,
+  MIN_COMPATIBLE_PROTOCOL_VERSION,
+  PROTOCOL_VERSION,
+  parseSessionFrame,
+} from "@rennet/protocol";
 
 export interface WsRennetBridgeOptions {
   /** The loopback WS URL the server bound, e.g. `ws://127.0.0.1:<port>`. */
@@ -29,6 +34,12 @@ export interface WsRennetBridgeOptions {
 
 interface Pending {
   readonly resolve: (output: unknown) => void;
+  readonly reject: (error: Error) => void;
+}
+
+interface ReadyWaiter {
+  readonly socket: WebSocket;
+  readonly resolve: (socket: WebSocket) => void;
   readonly reject: (error: Error) => void;
 }
 
@@ -48,6 +59,9 @@ export class WsRennetBridge implements RennetBridge {
   #backoff: number;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #closed = false;
+  #readySocket: WebSocket | null = null;
+  #handshakeFailure: { socket: WebSocket; error: Error } | null = null;
+  readonly #readyWaiters = new Set<ReadyWaiter>();
   readonly #pending = new Map<string, Pending>();
   readonly #progressListeners = new Map<string, Set<(event: ProjectProcessEvent) => void>>();
   readonly #askListeners = new Map<string, Set<(event: ReviewAskStreamEvent) => void>>();
@@ -61,7 +75,7 @@ export class WsRennetBridge implements RennetBridge {
   }
 
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>> {
-    return this.#whenOpen().then(
+    return this.#whenReady().then(
       (socket) =>
         new Promise<CommandOutput<K>>((resolve, reject) => {
           const requestId = crypto.randomUUID();
@@ -89,25 +103,27 @@ export class WsRennetBridge implements RennetBridge {
       clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = null;
     }
-    this.#rejectPending(new Error("WsRennetBridge closed"));
+    const error = new Error("WsRennetBridge closed");
+    if (this.#socket) this.#rejectReady(this.#socket, error);
+    this.#rejectPending(error);
+    this.#readySocket = null;
     this.#socket?.close();
     this.#socket = null;
   }
 
-  /** A socket that is open now, or the current attempt's open; rejects if disconnected. */
-  #whenOpen(): Promise<WebSocket> {
+  /** A socket with a compatible completed handshake, or the current attempt's handshake. */
+  #whenReady(): Promise<WebSocket> {
     const socket = this.#socket;
-    if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve(socket);
-    if (socket && socket.readyState === WebSocket.CONNECTING) {
+    if (socket && this.#readySocket === socket) return Promise.resolve(socket);
+    if (socket && this.#handshakeFailure?.socket === socket) {
+      return Promise.reject(this.#handshakeFailure.error);
+    }
+    if (
+      socket &&
+      (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)
+    ) {
       return new Promise((resolve, reject) => {
-        socket.addEventListener("open", () => resolve(socket), { once: true });
-        socket.addEventListener(
-          "close",
-          () => reject(new Error("connection closed before it opened")),
-          {
-            once: true,
-          },
-        );
+        this.#readyWaiters.add({ socket, resolve, reject });
       });
     }
     return Promise.reject(new Error("WsRennetBridge is not connected"));
@@ -117,26 +133,34 @@ export class WsRennetBridge implements RennetBridge {
     if (this.#closed) return;
     const socket = new WebSocket(this.#url);
     this.#socket = socket;
+    this.#readySocket = null;
+    this.#handshakeFailure = null;
+    let helloClientId: string | null = null;
     socket.addEventListener("open", () => {
       this.#backoff = this.#initialBackoff;
-      // Hello first, before any request the server would reject pre-handshake. WS
-      // preserves message order on one connection, so a request queued right after
-      // this arrives second and finds the handshake already complete.
+      // Hello first, before any request the server would reject pre-handshake.
+      // Queued invokes stay held until a compatible serverInfo completes it.
+      helloClientId = crypto.randomUUID();
       socket.send(
         JSON.stringify({
           type: "hello",
-          clientId: crypto.randomUUID(),
+          clientId: helloClientId,
           clientType: "rennet-client",
           protocolVersion: PROTOCOL_VERSION,
         }),
       );
     });
-    socket.addEventListener("message", (event) => this.#onMessage(event.data));
+    socket.addEventListener("message", (event) =>
+      this.#onMessage(socket, helloClientId, event.data),
+    );
     socket.addEventListener("close", () => {
       if (this.#socket === socket) this.#socket = null;
+      if (this.#readySocket === socket) this.#readySocket = null;
       // Fail in-flight invokes fast on a dropped connection (no offline queueing).
-      this.#rejectPending(new Error("connection lost"));
-      this.#scheduleReconnect();
+      const error = new Error("connection lost");
+      this.#rejectReady(socket, error);
+      this.#rejectPending(error);
+      if (this.#handshakeFailure?.socket !== socket) this.#scheduleReconnect();
     });
     socket.addEventListener("error", () => {
       // 'error' always precedes 'close'; reconnect is driven by 'close'. Swallow it so
@@ -159,7 +183,34 @@ export class WsRennetBridge implements RennetBridge {
     this.#pending.clear();
   }
 
-  #onMessage(data: unknown): void {
+  #resolveReady(socket: WebSocket): void {
+    if (this.#handshakeFailure?.socket === socket) return;
+    this.#readySocket = socket;
+    for (const waiter of this.#readyWaiters) {
+      if (waiter.socket !== socket) continue;
+      this.#readyWaiters.delete(waiter);
+      waiter.resolve(socket);
+    }
+  }
+
+  #rejectReady(socket: WebSocket, error: Error): void {
+    for (const waiter of this.#readyWaiters) {
+      if (waiter.socket !== socket) continue;
+      this.#readyWaiters.delete(waiter);
+      waiter.reject(error);
+    }
+  }
+
+  #failHandshake(socket: WebSocket, reason: string): void {
+    const error = new Error(reason);
+    this.#handshakeFailure = { socket, error };
+    if (this.#readySocket === socket) this.#readySocket = null;
+    this.#rejectReady(socket, error);
+    this.#rejectPending(error);
+    socket.close();
+  }
+
+  #onMessage(socket: WebSocket, helloClientId: string | null, data: unknown): void {
     let frame: SessionFrame;
     try {
       frame = parseSessionFrame(JSON.parse(typeof data === "string" ? data : String(data)));
@@ -167,6 +218,24 @@ export class WsRennetBridge implements RennetBridge {
       return; // ignore an unparseable frame; the socket stays up
     }
     switch (frame.type) {
+      case "serverInfo": {
+        const compatibility = checkProtocolCompatibility(
+          {
+            version: PROTOCOL_VERSION,
+            minCompatible: MIN_COMPATIBLE_PROTOCOL_VERSION,
+          },
+          {
+            version: frame.protocolVersion,
+            minCompatible: frame.minCompatibleProtocolVersion,
+          },
+        );
+        if (!compatibility.compatible) {
+          this.#failHandshake(socket, compatibility.reason);
+          return;
+        }
+        this.#resolveReady(socket);
+        return;
+      }
       case "response": {
         const pending = this.#pending.get(frame.requestId);
         if (pending) {
@@ -176,6 +245,14 @@ export class WsRennetBridge implements RennetBridge {
         return;
       }
       case "rpcError": {
+        if (
+          this.#readySocket !== socket &&
+          frame.code === "incompatible_protocol" &&
+          frame.requestId === helloClientId
+        ) {
+          this.#failHandshake(socket, frame.message);
+          return;
+        }
         const pending = this.#pending.get(frame.requestId);
         if (pending) {
           this.#pending.delete(frame.requestId);
@@ -193,7 +270,7 @@ export class WsRennetBridge implements RennetBridge {
         if (listeners) for (const listener of listeners) listener(frame.event);
         return;
       }
-      // hello/serverInfo/request are not client-inbound work — ignore them.
+      // hello/request are not client-inbound work — ignore them.
       default:
         return;
     }

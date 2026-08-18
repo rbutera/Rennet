@@ -28,7 +28,14 @@ interface RequestFrameShape {
   readonly input: unknown;
 }
 
-function startStub(): Promise<Stub> {
+interface HelloFrameShape {
+  readonly type: "hello";
+  readonly clientId: string;
+}
+
+function startStub(
+  onHello?: (socket: NodeWebSocket, frame: HelloFrameShape) => void,
+): Promise<Stub> {
   return new Promise((resolve) => {
     const sockets = new Set<NodeWebSocket>();
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 }, () => {
@@ -59,6 +66,10 @@ function startStub(): Promise<Stub> {
         const frame = JSON.parse(data.toString());
         if (frame.type === "hello") {
           stub.helloCount += 1;
+          if (onHello) {
+            onHello(socket, frame as HelloFrameShape);
+            return;
+          }
           socket.send(
             JSON.stringify({
               type: "serverInfo",
@@ -139,6 +150,49 @@ describe("WsRennetBridge", () => {
     };
     const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
     await expect(invoke(bridge, "cmd.fail", {})).rejects.toThrow("boom from the command");
+  });
+
+  it("rejects an invoke when serverInfo reports an incompatible protocol window", async () => {
+    const stub = await startStub((socket) => {
+      socket.send(
+        JSON.stringify({
+          type: "serverInfo",
+          version: "stub",
+          protocolVersion: 3,
+          minCompatibleProtocolVersion: 2,
+          features: {},
+        }),
+      );
+    });
+    stubs.push(stub);
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url, initialBackoffMs: 10 }));
+
+    await expect(invoke(bridge, "cmd.incompatible", {})).rejects.toThrow(
+      "local protocol version 1 is below the remote minimum compatible version 2",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(stub.helloCount).toBe(1);
+  });
+
+  it("surfaces an incompatible_protocol rpcError correlated to hello", async () => {
+    const stub = await startStub((socket, frame) => {
+      socket.send(
+        JSON.stringify({
+          type: "rpcError",
+          requestId: frame.clientId,
+          code: "incompatible_protocol",
+          message: "server rejected the client protocol",
+        }),
+      );
+    });
+    stubs.push(stub);
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url, initialBackoffMs: 10 }));
+
+    await expect(invoke(bridge, "cmd.incompatible", {})).rejects.toThrow(
+      "server rejected the client protocol",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(stub.helloCount).toBe(1);
   });
 
   it("routes progress and ask-stream push frames to their keyed listeners", async () => {

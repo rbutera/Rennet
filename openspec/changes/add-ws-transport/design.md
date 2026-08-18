@@ -41,6 +41,7 @@ Recon facts (verified at main f66a45c, pre-phase-1; phase-1 relocations shift th
 - `onProgress(commandId, listener)` / `onAskStream(reviewId, listener)`: local key→listeners maps; incoming push frames route by key. Returns unsubscribe.
 - Reconnect: on close, exponential backoff (capped, e.g. 0.5s→8s), re-`hello` on reopen. In-flight invokes reject on close (callers already handle command failure). Listener maps survive reconnect (resubscribe is client-side state; the streams they watch are live-only, matching today's reload semantics).
 - Constructor takes `{ url }` (or port). No queueing of invokes while disconnected (ponytail: callers see a failed command exactly as they would a thrown dispatch — no new buffering semantics).
+Invokes issued while the socket is CONNECTING (including the moment a reconnect attempt starts) wait for the handshake; invokes issued while the connection is closed or in backoff reject immediately.
 
 **D5 — Preload shrinks to `{ platform, wsPort, updateMenu, onMenuRun }`.** Electron main passes the port to the preload via `process.argv` extra arg or `additionalArguments` (webPreferences) — the established pattern for boot-time constants under contextIsolation — and the preload exposes it. Renderer composition builds the final bridge: `{...new WsRennetBridge({port}), platform, updateMenu, onMenuRun}` merge. `RennetBridge` interface itself is unchanged.
 
