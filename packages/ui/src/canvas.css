@@ -75,7 +75,7 @@
 }
 /* The overlay toggle lit means blast-radius amber is painting the canvas. */
 .lens-overlay.is-on {
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
   background: var(--amber-fill);
   border-color: var(--amber-line);
 }
@@ -106,7 +106,9 @@
 }
 .overlay-legend {
   margin-left: auto;
-  color: var(--amber);
+  /* Ink, not amber: this legend renders on the overlay chrome over the canvas
+     anchor (--chrome-bg base #f4f2ed, 4.26:1, AA fail). */
+  color: var(--text);
 }
 
 /* ── Roll-up narration (#70): the zoom ladder's own voice ──────────────────── */
@@ -160,7 +162,10 @@
   border-bottom: 1px solid var(--hairline);
 }
 .canvas-coverage {
-  color: var(--private);
+  /* Ink, not private: renders on the chrome frost (translucent --chrome-bg over the
+     REAL desktop via Electron vibrancy) — the backdrop is unknowable, so no contrast
+     can be proven. Opaque-ground policy: hue text needs a solid coat. */
+  color: var(--text);
   font-size: 12px;
   font-weight: 600;
 }
@@ -183,11 +188,13 @@
   border-color: var(--amber-line);
   background: var(--amber-surface);
 }
-/* The one-line reason rendered next to the amber mark (issue #35). */
+/* The one-line reason rendered next to the blast badge (issue #35). */
 .cohort-blast-reason {
   margin: 0 0 8px;
   padding: 0 12px;
-  color: var(--amber);
+  /* Ink, not amber: 12px amber (#a86125) on --amber-surface is 4.07:1, below AA. The
+   * blast state is carried by the cohort's amber-line border + amber-surface fill. */
+  color: var(--text);
   font-size: 12px;
 }
 /* NOT-ASSESSED chips: as visible as the marks, so an unmeasured signal reads as
@@ -200,14 +207,16 @@
   padding: 6px 12px;
 }
 .blast-not-assessed-label {
-  color: var(--amber);
+  /* Ink, not amber: this label renders on the canvas anchor (--chrome-bg base
+     #f4f2ed, 4.26:1, AA fail). The sibling .blast-chip already inks on --amber-fill. */
+  color: var(--text);
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .blast-chip {
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
   background: var(--amber-fill);
   border: 1px solid var(--amber-line);
   border-radius: 999px;
@@ -249,7 +258,7 @@
   font-weight: 500;
 }
 .cohort-blast {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -387,7 +396,7 @@
   padding: 14px 16px;
 }
 .decisions-failed-head {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-weight: 700;
   margin: 0 0 4px;
 }
@@ -425,7 +434,7 @@
 }
 /* The amber blast badge + its one-line reason on a flat (sequence) element (#35). */
 .flat-element-blast {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -433,7 +442,7 @@
 .flat-element-blast-reason {
   flex-basis: 100%;
   margin: 0;
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 12px;
 }
 .flat-element-select {
@@ -482,18 +491,24 @@
   font-size: 11px;
 }
 .disposition-btn.d-approve:hover {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--green-line);
   background: var(--green-fill);
 }
 .disposition-btn.d-request:hover {
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
   border-color: var(--amber-line);
   background: var(--amber-fill);
 }
 .disposition-btn.d-comment:hover,
 .disposition-btn.d-question:hover {
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -597,7 +612,10 @@
   cursor: pointer;
 }
 .l3-btn.l3-accept:hover {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--green-line);
   background: var(--green-fill);
 }
@@ -1148,8 +1166,13 @@
   background: var(--code-bg);
 }
 .collation-item-body:focus {
+  /* A textarea, so it keeps the softer box-shadow ring the other text inputs use
+     (.pr-input / .primary-branch-input) rather than the systemic 3px outline — its
+     `:focus` (0,1,1) outranks the bare `:focus-visible` (0,1,0), so without this ring
+     the border tint alone would be the only focus signal. See canvas.css focus doctrine. */
   outline: none;
   border-color: var(--accent-soft-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 /* The comment-refinement zone (#19), rendered per state under the raw note. */
 .collation-item-refine {
@@ -1206,7 +1229,10 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .collation-refined-body {
   margin-top: 4px;
@@ -1391,7 +1417,10 @@
   margin-top: 9px;
 }
 .flag-concur {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
   border-radius: var(--chip-radius);
@@ -1407,7 +1436,9 @@
 }
 .flag-disagree-flare {
   display: block;
-  color: var(--amber);
+  /* Ink, not amber: 10px amber on --amber-surface is 4.07:1, below AA. The disagree
+   * flag's amber-line border + amber-surface carry the state. */
+  color: var(--text);
   font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1428,10 +1459,24 @@
   padding: 8px 10px;
 }
 .flag-answer-model {
-  color: var(--amber);
+  /* Ink, not amber: the model label sits on the --surface-2 answer card (~4.19:1,
+     AA fail). The drawn amber dot below keeps the amber attribution signal
+     (a graphic mark, 4.19:1 ≥ 3:1 WCAG 1.4.11), so the text can ink and stay legible. */
+  color: var(--text);
   font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.flag-answer-model::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--amber);
 }
 .flag-answer-text {
   color: var(--text-soft);
@@ -1461,7 +1506,10 @@
 }
 .flag-deep-review:hover:not(:disabled) {
   border-color: var(--private);
-  color: var(--private);
+  /* Ink, not private: --surface-2 is translucent over the chrome glass (~4.4 on the
+     canvas anchor, worse on a dark desktop). Opaque-ground policy: the --private
+     border carries the hover affordance. */
+  color: var(--text);
 }
 .flag-deep-review:disabled {
   color: var(--text-faint);
@@ -1474,12 +1522,17 @@
   font: 600 11px / 1.2 var(--sans);
 }
 .flag-dual-full {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
 .flag-dual-degraded {
-  color: var(--amber);
+  /* Ink, not amber: amber text on --amber-surface is 4.07:1, below AA. The amber-line
+   * border + amber-surface carry the degraded state. */
+  color: var(--text);
   background: var(--amber-surface);
   border: 1px solid var(--amber-line);
 }
@@ -1568,10 +1621,13 @@
   text-transform: uppercase;
 }
 .flag-verification-reproduced .flag-verification-label {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .flag-verification-inconclusive .flag-verification-label {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .flag-verification-evidence {
   color: var(--text-soft);
@@ -1607,10 +1663,13 @@
   text-transform: uppercase;
 }
 .flag-adjudication-supported .flag-adjudication-label {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .flag-adjudication-contradicted .flag-adjudication-label {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .flag-adjudication-insufficient .flag-adjudication-label {
   color: var(--text-faint);
@@ -1660,7 +1719,10 @@
   color: var(--text-soft);
 }
 .ui-verification-ran .ui-verification-label {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .ui-verification-count {
   flex: none;
@@ -1711,7 +1773,7 @@
   padding: 14px 16px;
 }
 .flagged-failed-head {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-weight: 700;
   margin: 0 0 4px;
 }
@@ -1863,7 +1925,7 @@
   border-radius: var(--radius);
   border: 1px solid var(--amber-line);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 12px;
   line-height: 1.4;
 }
@@ -1899,7 +1961,7 @@
   text-transform: uppercase;
 }
 .hypothesis-status-open {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .hypothesis-status-confirmed {
   color: var(--text-faint);
@@ -2015,7 +2077,10 @@
   font: 500 11px / 1.2 var(--mono);
 }
 .noise-judge-rule {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
@@ -2089,7 +2154,7 @@
   margin-bottom: 10px;
 }
 .noise-ejected-head {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font: 700 12px / 1.3 var(--sans);
   margin: 0 0 8px;
 }
@@ -2200,18 +2265,24 @@
   border-color: var(--private-line);
 }
 .disposition-cluster-btn.d-approve:hover {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--green-line);
   background: var(--green-fill);
 }
 .disposition-cluster-btn.d-request:hover {
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
   border-color: var(--amber-line);
   background: var(--amber-fill);
 }
 .disposition-cluster-btn.d-comment:hover,
 .disposition-cluster-btn.d-question:hover {
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -2253,7 +2324,10 @@
   background: var(--surface-2);
 }
 .collation-item-lane[data-lane="blue"] {
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -2307,7 +2381,9 @@
   font-size: 14px;
 }
 .collation-rollup-verdict[data-verdict="request-changes"] {
-  color: var(--amber);
+  /* Ink, not amber: the verdict renders on the rollup's --surface-2 (~4.19:1, AA fail).
+     The verdict WORD ("request changes") carries the state, not the hue. */
+  color: var(--text);
 }
 .collation-rollup-verdict[data-verdict="none"] {
   color: var(--text-soft);
@@ -2320,7 +2396,10 @@
   font-size: 12px;
 }
 .collation-lane-count[data-lane="blue"] {
-  color: var(--private);
+  /* Ink, not private: the rollup sits on translucent --win-bg over the modal scrim —
+     real range computes 2.63-3.49 (AA fail). Opaque-ground policy: hue text needs a
+     solid coat; the lane WORD carries the lane. */
+  color: var(--text);
 }
 .collation-lane-sep {
   color: var(--text-faint);
@@ -2333,7 +2412,10 @@
   border-radius: var(--chip-radius);
   border: 1px solid var(--private-line);
   background: var(--private-fill);
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font: 700 10px / 1.4 var(--sans);
   letter-spacing: 0.03em;
 }
@@ -2537,7 +2619,10 @@
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font: 600 12px / 1 var(--sans);
   padding: 5px 9px;
   cursor: pointer;
@@ -2560,7 +2645,10 @@
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font: 600 11px / 1 var(--sans);
   padding: 3px 8px;
   cursor: pointer;
@@ -2599,7 +2687,10 @@
   color: var(--private);
 }
 .conversation-head-title {
-  color: var(--private);
+  /* Ink, not private: .conversation-cluster.is-orphaned dims the cluster to 0.85,
+     dropping private on --private-surface to ~3.5:1 (AA fail). The private border
+     + left bar + surface carry the private read; ink stays AA even dimmed. */
+  color: var(--text);
   font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2617,7 +2708,8 @@
   padding: 1px 8px;
   border-radius: var(--chip-radius);
   border: 1px solid var(--private-line);
-  color: var(--private);
+  /* Ink, not private: dimmed to ~3.5:1 under .is-orphaned 0.85 (AA fail). */
+  color: var(--text);
   font: 600 11px / 1.4 var(--sans);
   letter-spacing: 0.02em;
 }
@@ -2654,7 +2746,9 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--private);
+  /* Ink, not private: the thread message ground is --surface-2 over --private-surface,
+     ~4.21:1 (AA fail). The seat is still told apart from "you" by the glyph. */
+  color: var(--text);
   font: 700 11px / 1.2 var(--sans);
   letter-spacing: 0.02em;
 }
@@ -2727,7 +2821,9 @@
   background: var(--private-fill);
 }
 .thread-promote-btn.is-subthread {
-  color: var(--private);
+  /* Ink, not private: renders on --surface-2 over --private-surface, ~4.21:1 (AA
+     fail); the --private-line border carries the sub-thread affordance. */
+  color: var(--text);
   border-color: var(--private-line);
 }
 
@@ -2785,7 +2881,9 @@
   border: 1px solid var(--private-line);
   border-radius: var(--radius);
   background: var(--surface-2);
-  color: var(--private);
+  /* Ink, not private: --surface-2 over a tinted parent drops private to ~4.2-4.4:1
+     (AA fail); the --private-line border carries the private affordance. */
+  color: var(--text);
   font-size: 13px;
   cursor: pointer;
 }
@@ -2841,7 +2939,9 @@
 }
 .conversation-pending {
   margin: 0;
-  color: var(--private);
+  /* Ink, not private: the 0.85 opacity drops private to ~3.87:1 (AA fail). Ink stays
+     >9:1 even dimmed, so the intentional pending de-emphasis is kept without failing AA. */
+  color: var(--text);
   font: 600 12px / 1.4 var(--sans);
   opacity: 0.85;
 }
@@ -3027,12 +3127,17 @@
   border: 1px solid var(--hairline);
 }
 .ospec-cap-new {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border-color: var(--green-line);
 }
 .ospec-cap-modified {
-  color: var(--amber);
+  /* Ink, not amber: amber text on --amber-surface is 4.07:1, below AA. The amber-line
+   * border + amber-surface carry the modified state. */
+  color: var(--text);
   background: var(--amber-surface);
   border-color: var(--amber-line);
 }
@@ -3111,12 +3216,15 @@
   color: var(--text-faint);
 }
 .ospec-op-added {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border-color: var(--green-line);
 }
 .ospec-op-modified {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   background: var(--amber-surface);
   border-color: var(--amber-line);
 }
@@ -3217,7 +3325,10 @@
   font: 500 12px / 1.2 var(--sans);
   padding: 4px 8px;
   border-radius: 6px;
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
@@ -3230,12 +3341,10 @@ button.ospec-covchip {
 button.ospec-covchip:hover {
   border-color: var(--green);
 }
-button.ospec-covchip:focus-visible {
-  outline: 2px solid var(--green);
-  outline-offset: 1px;
-}
+/* Focus falls through to the systemic 3px review-blue `:focus-visible` ring (below).
+   DESIGN.md mandates ONE focus treatment; a bespoke green ring here contradicted it. */
 .ospec-covchip-zero {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   background: var(--amber-surface);
   border-color: var(--amber-line);
 }
@@ -3310,7 +3419,10 @@ button.ospec-covchip:focus-visible {
   flex: none;
   display: inline-flex;
   align-items: center;
-  color: var(--green);
+  /* Ink, not green: .ospec-task-group is translucent --surface-2 over the chrome
+     glass — backdrop unknowable. Opaque-ground policy; the check SHAPE + the row
+     line-through carry the done state. */
+  color: var(--text);
 }
 
 /* Design: table of contents + sections. */
@@ -3546,7 +3658,7 @@ button.ospec-covchip:focus-visible {
   border-color: var(--accent-soft-line);
 }
 .symbol-tier--guess {
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
   background: var(--amber-fill);
   border-color: var(--amber-line);
 }
@@ -3710,4 +3822,34 @@ button.ospec-covchip:focus-visible {
 }
 .symbol-inspector--pinned {
   margin-top: 0;
+}
+
+/* ── Systemic focus ring (critique P1-B) ─────────────────────────────────────
+ * DESIGN.md: "Focus uses a three-pixel review-blue ring." Before this, ~11 scattered
+ * focus rules left most keyboard-reachable controls — lens tabs, nav-rail buttons, the
+ * disposition cluster, view toggles, the sign button, palette rows — AND the
+ * `.canvas-app` region itself (role=application, owns the [ ]/l/h keys) with NO visible
+ * focus, since `.canvas-app` sets `outline: none` (above) with no replacement. This is
+ * the ONE shared rule that covers them all.
+ *
+ * `:focus-visible` only (keyboard focus, never a mouse click), so the ring never fires
+ * on pointer use. `outline` (not box-shadow) so it can't clobber an element's resting
+ * shadow; it sits OUTSIDE the box (an `overflow: hidden` on the element itself never
+ * clips it, though a clipping ancestor still can), and modern Chromium follows the
+ * element's border-radius. canvas.css loads LAST (index.ts), so this wins equal-
+ * specificity ties against earlier `outline: none` resets (e.g. the command-palette
+ * input). Text inputs keep their own softer box-shadow ring — their `:focus` rules
+ * outrank this on specificity — and the remaining bespoke focus-visible rules above (the
+ * discuss controls) likewise outrank it and keep their look. The coverage chip now falls
+ * through to this ring (its bespoke green ring was removed to honour the one-ring rule). */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The keyboard-driven canvas region: an INSET ring hugs the viewport edge, since an
+ * outset ring on a full-screen element would sit off-screen. `.canvas-app:focus-visible`
+ * (0,2,0) outranks the bare `.canvas-app { outline: none }` (0,1,0), so the ring wins
+ * when the region holds keyboard focus. */
+.canvas-app:focus-visible {
+  outline-offset: -3px;
 }

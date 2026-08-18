@@ -289,7 +289,7 @@ button {
   padding: 12px 24px;
   background: var(--amber-surface);
   border-bottom: 1px solid var(--amber-line);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .invalid-banner div {
   display: flex;
@@ -414,7 +414,9 @@ button {
   background: var(--add-fill);
 }
 .status-modified {
-  color: var(--amber);
+  /* The uppercase status LETTER is TEXT: amber is 3.98:1 on --amber-fill (AA fail),
+     so the character inks; the amber-fill square + amber-line keep the state signal. */
+  color: var(--text);
   background: var(--amber-fill);
 }
 .status-deleted {
@@ -517,21 +519,37 @@ button {
   background: var(--accent-soft);
   outline: none;
 }
+/* A rail row is a BUTTON now (critique P2): it navigates to that angle's canvas
+ * lens, so it carries the panel-button resets (.file-row's pattern) on top of the
+ * original row layout. Focus falls through to the systemic :focus-visible ring. */
 .angle-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   height: 36px;
+  width: calc(100% - 24px);
   margin: 0 12px;
+  padding: 0;
+  border: 0;
   border-bottom: 1px solid var(--hairline);
+  background: transparent;
   color: var(--text-soft);
   font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.angle-row:hover {
+  color: var(--text);
 }
 .angle-state {
   color: var(--text-faint);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+/* A row that actually ran reads a shade stronger — ink family only, no hue. */
+.angle-state.is-ran {
+  color: var(--text-soft);
 }
 .snapshot-card {
   margin: 18px 12px;
@@ -1093,9 +1111,64 @@ button {
   color: var(--sheet-bg);
   background: var(--sheet-text);
   cursor: pointer;
+  /* Anchor + clip the hold-progress fill (critique P1-C) to the rounded button. */
+  position: relative;
+  overflow: hidden;
 }
 .publish-sheet-sign.is-arming {
   opacity: 0.72;
+}
+.publish-sheet-sign-label {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* The hold-progress fill (critique P1-C): an ink bar along the button's bottom edge that
+ * inks in 0→100% over exactly `holdToSignMs` (duration set inline on the element). It uses
+ * `currentColor` — the sign button's own ink — so it is high-contrast on the button face
+ * in both themes and reads on-theme: the signature inking in as the hold completes.
+ *
+ * The element is rendered PERSISTENTLY (width 0, no animation at rest); the animation is
+ * armed only by the `.is-holding` class the button carries during a hold. Adding the class
+ * (re)starts the keyframe fresh from 0%, and the hold eligibility epoch is captured in the
+ * same committed render (a layout effect, see publish-sheet.tsx) — so visual completion at
+ * 100% and sign eligibility are driven off ONE timestamp and coincide, rather than the
+ * eligibility clock (pointer-down) leading the animation (first commit) as it did before. */
+.publish-sheet-sign-fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 0;
+  background: currentColor;
+  pointer-events: none;
+}
+.publish-sheet-sign.is-holding .publish-sheet-sign-fill {
+  animation-name: sign-hold-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes sign-hold-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+/* Reduced motion: a discrete STEP fill (five jumps over the same budget), not a
+ * continuous slide — progress stays legible without continuous motion. */
+@media (prefers-reduced-motion: reduce) {
+  .publish-sheet-sign.is-holding .publish-sheet-sign-fill {
+    animation-timing-function: steps(5, end);
+  }
+}
+.publish-sheet-sign-early {
+  margin: 0;
+  font-size: 12px;
+  color: var(--sheet-soft);
 }
 .publish-sheet-sign:disabled {
   color: var(--sheet-soft);
@@ -1117,13 +1190,13 @@ button {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--sheet-text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .publish-sheet-ledger-lede {
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 650;
-  color: var(--amber);
+  color: var(--sheet-text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .publish-sheet-ledger-entries {
   margin: 0 0 10px;
@@ -1283,7 +1356,7 @@ button {
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--sheet-text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .publish-sheet-ledger-detail {
   display: block;
@@ -1393,12 +1466,12 @@ button {
 .engine-fallback-copy strong {
   font-size: 13px;
   font-weight: 650;
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .engine-fallback-copy span {
   font-size: 12px;
   line-height: 1.45;
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   opacity: 0.85;
 }
 .engine-fallback button {
@@ -1474,10 +1547,13 @@ button {
   min-inline-size: 116px;
 }
 .delta-account-status[data-status="addressed"] {
-  color: var(--green);
+  /* Ink, not green: renders on --surface-2 (~4.2-4.4:1, AA fail), same ground as the
+     inked partially-addressed sibling. The status WORD carries the addressed state. */
+  color: var(--text);
 }
 .delta-account-status[data-status="partially-addressed"] {
-  color: var(--amber);
+  /* Ink, not amber: this status label renders on --surface-2 (~3.7-4.3:1, AA fail). */
+  color: var(--text);
 }
 .delta-account-status[data-status="untouched"] {
   color: var(--text-faint);
@@ -1510,7 +1586,7 @@ button {
   margin: 0;
   font-size: 12px;
   font-weight: 650;
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .delta-account-beyond-list {
   display: flex;
@@ -1559,7 +1635,8 @@ button {
   color: var(--text-faint);
 }
 .delta-account-hunk-item[data-bucket="unasked-file"] .delta-account-hunk-bucket {
-  color: var(--amber);
+  /* Ink, not amber: this bucket label renders on --surface-2 (~3.7-4.3:1, AA fail). */
+  color: var(--text);
 }
 .delta-account-hunk-excerpt {
   min-inline-size: 0;
@@ -1636,10 +1713,13 @@ button {
   font-weight: 650;
 }
 .context-manifest-state[data-state="included"] {
-  color: var(--green);
+  /* Ink, not green: renders on --surface-2 (~4.2-4.4:1, AA fail), same ground as the
+     inked truncated sibling. The state WORD carries the included state. */
+  color: var(--text);
 }
 .context-manifest-state[data-state="truncated"] {
-  color: var(--amber);
+  /* Ink, not amber: this state label renders on --surface-2 (~3.7-4.3:1, AA fail). */
+  color: var(--text);
 }
 .context-manifest-state[data-state="dropped"] {
   color: var(--text-faint);
@@ -1686,7 +1766,10 @@ button {
   font-family: var(--mono, ui-monospace, monospace);
 }
 .context-manifest-send[data-digest-match="true"] span:nth-last-of-type(2) {
-  color: var(--green);
+  /* Ink, not green: .context-manifest is translucent --surface-2 over the chrome
+     glass (4.42 on the canvas anchor, worse on a dark desktop). Opaque-ground
+     policy; the words "Digest matches" carry the state. */
+  color: var(--text);
 }
 .context-manifest-empty,
 .context-manifest-unmanaged {
@@ -1779,6 +1862,50 @@ button {
   font-weight: 650;
   cursor: pointer;
 }
+/* The running-review live state (critique P1-A): an indeterminate track (motion =
+ * "still working, not hung") reusing the app's `busy` keyframe, plus a live elapsed
+ * clock. Honest by construction — the fill NEVER represents a percentage or a stage. */
+.canvas-primer-track {
+  position: relative;
+  width: 100%;
+  height: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+  /* A container, not a chip: DESIGN.md reserves the 999px pill for chips and counts,
+     so the track uses the 4px micro radius. The sweep still reads as motion. */
+  border-radius: 4px;
+  background: var(--accent-soft);
+}
+.canvas-primer-track-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 35%;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  animation: busy 1s ease-in-out infinite alternate;
+}
+.canvas-primer-elapsed {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+/* The quiet stalled-run reassurance (appears past ~120s). Faint, not alarming — it's a
+   "still working" line, not an error. */
+.canvas-primer-stalled {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* Reduced motion: no sliding fill. A full, dimmed track reads as "indeterminate/idle"
+ * (never a stalled 35% bar); the elapsed clock ticking carries the "still alive" signal. */
+@media (prefers-reduced-motion: reduce) {
+  .canvas-primer-track-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
 
 /* ── The front door: projects list + add-a-project flow (issue #29) ──────────
  * The app's entry. Glass is the CHROME (the frosted backdrop + the bar); content
@@ -1835,7 +1962,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 .front-door-loading {
@@ -1997,7 +2124,10 @@ button {
   border-radius: var(--chip-radius);
   background: var(--private-fill);
   box-shadow: var(--private-glow);
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -2153,7 +2283,10 @@ button {
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font-size: 12px;
 }
 
@@ -2350,7 +2483,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 .reconciliation-mark {
@@ -2518,7 +2651,7 @@ button {
   color: var(--text-faint);
 }
 .processing-repo-counts.is-error {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .processing-trail {
   list-style: none;
@@ -2600,7 +2733,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 
@@ -2699,7 +2832,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 
@@ -2878,7 +3011,10 @@ button {
   border: 1px solid var(--private-line);
   border-radius: 999px;
   background: var(--private-fill);
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font-size: 11px;
 }
 .smart-row-trajectory {
@@ -2899,7 +3035,9 @@ button {
   padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid var(--amber-line);
-  color: var(--amber);
+  /* Ink, not amber: this pill renders on --private-surface rows (4.07:1, AA fail).
+     The amber-line border keeps the state signal. */
+  color: var(--text);
   font-size: 11px;
 }
 .smart-row-state {
@@ -2916,10 +3054,15 @@ button {
   font: 700 11px / 1 var(--mono);
 }
 .smart-row-ci.is-passing {
-  color: var(--green);
+  /* Ink, not green: merged rows dim to 0.82 (data-read-only), dropping green to
+     ~3.65:1 (AA fail). The check glyph carries the passing state; ink stays AA dimmed. */
+  color: var(--text);
 }
 .smart-row-ci.is-failing {
-  color: var(--del-glyph);
+  /* Ink, not danger red: merged rows dim to 0.82 (data-read-only), dropping
+     --del-glyph to ~4.2:1 (AA fail) — the same dim that inked is-passing above.
+     The ✕ glyph (CloseIcon vs CheckIcon/Ellipsis) carries the failing state. */
+  color: var(--text);
 }
 .smart-row-ci.is-pending {
   color: var(--text-faint);
@@ -2936,12 +3079,15 @@ button {
 .smart-row-badge.is-needs-you {
   border: 1px solid var(--amber-line);
   background: var(--amber-fill);
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .smart-row-badge.is-read-only {
   border: 1px solid var(--green-line);
   background: var(--green-fill);
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .smart-row-statelabel {
   font: 700 10px / 1.2 var(--sans);
@@ -3093,8 +3239,10 @@ button {
 /* A chord claimed by more than one live command (#44): disclosed, never blocked. The
  * warm outline marks the collision; the row's `title` names the other command. */
 .command-palette-key.is-conflict {
+  /* Ink, not amber: the key renders on --surface-2 (4.19:1, AA fail). The amber
+     border marks the collision; the row's `title` names the other command. */
   border-color: var(--amber);
-  color: var(--amber);
+  color: var(--text);
 }
 
 /* ── Settings: the config ladder (wireframe #15) ───────────────────────────── */
@@ -3185,7 +3333,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 .settings-error-inline {
@@ -3322,7 +3470,10 @@ button {
   padding: 2px 7px;
 }
 .settings-prov-set {
-  color: var(--private);
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--private-fill);
   border-color: var(--private-line);
 }
@@ -3371,7 +3522,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 12px;
   line-height: 1.5;
 }
@@ -3490,7 +3641,7 @@ button {
   color: var(--text-faint);
 }
 .settings-sev-high {
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
   background: var(--amber-fill);
   border-color: var(--amber-line);
 }
@@ -3500,7 +3651,10 @@ button {
   border-color: var(--accent-soft-line);
 }
 .settings-sev-low {
-  color: var(--green);
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border-color: var(--green-line);
 }
