@@ -157,6 +157,9 @@ export const cssMobile = `
 .maproute .me .mt2{ font-size:13px; font-weight:650; }
 .maproute .me .ms{ font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-top:2px; }
 .maproute .lands{ font-family:var(--mono); font-size:10.5px; color:var(--blue-ink); white-space:nowrap; }
+.tgl{ flex:none; width:44px; height:26px; border-radius:999px; background:var(--green); position:relative; }
+.tgl::after{ content:""; position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; background:#fff; }
+.tgl.off{ background:var(--line2); } .tgl.off::after{ right:auto; left:3px; }
 .prio{ flex:none; width:8px; height:8px; border-radius:50%; }
 .prio.hi{ background:var(--amber); } .prio.lo{ background:var(--faint); }
 `;
@@ -271,7 +274,7 @@ export function frameM2() {
       <div class="body"><div class="nm" style="font-size:13.5px">atlas · fix/tile-cache</div>
       <div class="sub">3 commits ahead · uncommitted: 2 files</div></div>
       <span class="chip blue">review</span></div>
-    <div class="honest">Review your branch <b>before</b> you submit it — the same end-to-end loop as a team PR, ending in a drafted, signed PR from your phone.</div>`);
+`);
   return {
     head: { badge: '20', title: 'Mobile · review list & kickoff', pill: 'mobile · phase 6' },
     ref: 'issue #382 · deliverable 2\nrunning + needs-you pinned',
@@ -327,7 +330,7 @@ export function frameM3() {
 <span class="add">+    if (entries.size > limit) evictOldest();</span><br>
 <span class="add">+  });</span><br>
 <span class="ctx">   metrics.count(entries.size);</span></div>
-    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--blue-ink);margin:8px 2px 0">open full canvas ↗ (size-ceilinged here)</div>
+    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--blue-ink);margin:8px 2px 0">open full canvas ↗</div>
     <div class="dispo">
       <span class="dbtn on">${ic.check}Agree</span>
       <span class="dbtn">${ic.reqchange}Disagree</span>
@@ -366,7 +369,7 @@ export function frameM4() {
     <div class="tl-ev"><span class="tico">${ic.askharness}</span><div class="tb"><div class="th">assistant · streaming</div>The failing spec reproduces the eviction race. Proposing the lock-scope fix as the primary finding; downgrading the metrics drift to a note…</div></div>
     <div class="sub" style="font-family:var(--mono);font-size:10.5px;color:var(--blue-ink);text-align:center;margin:6px 0">↓ return to tail</div>
     <div class="composer"><span class="ph">Steer the turn…</span><span class="send">${ic.chevronR}</span></div>
-    <div class="sendmode">${ic.resteer}send = <b>interrupt</b> · hold = queue for after the turn</div>`);
+    <div class="sendmode">${ic.resteer}send interrupts · hold to queue</div>`);
   const b = phone(`
     ${backhead('rennet/rennet · own branch')}
     <div class="askcard">
@@ -376,8 +379,7 @@ export function frameM4() {
     </div>
     <div class="tl-ev dim"><span class="tico">${ic.editor}</span><div class="tb"><div class="th">context</div>evict.ts:41 and the failing spec are attached to the ask.</div></div>
     <div class="composer"><span class="ph">Answer with direction… (optional)</span><span class="send">${ic.chevronR}</span></div>
-    <div class="sendmode">${ic.check}a chip answers · text adds redirection · both send as one reply</div>
-    <div class="honest">Backgrounded? This ask arrived as a push carrying the question and the chips — answerable from the notification without opening the app.</div>`);
+    <div class="sendmode">${ic.check}tap an answer, or add direction first</div>`);
   return {
     head: { badge: '22', title: 'Mobile · live turn & ask', pill: 'mobile · phase 6' },
     ref: 'issue #382 · deliverable 2\nreplies steer, not just approve',
@@ -407,7 +409,7 @@ export function frameM5() {
       <p style="color:var(--muted)">…9 judged findings collated · your dispositions · your voice.</p></div>
     </div>
     <div class="mbtn ink" style="margin-top:14px">${ic.sign}Sign &amp; post</div>
-    <div class="mbtn">Edit on this phone</div>`);
+    <div class="mbtn">${ic.resteer}Ask for changes</div>`);
   const b = phone(`
     ${backhead('Sign')}
     <div class="faceid">
@@ -418,7 +420,7 @@ export function frameM5() {
     <div class="paper" style="margin-top:16px">
       <div class="pb">Posts as <b>Rai Butera</b> · request changes on <span class="k" style="font-family:var(--code)">orbital/atlas#214</span></div>
     </div>
-    <div class="honest">Signing is the product’s one human act — your review, your name, your click. Nothing posts without it; the same single-use consent is consumed at egress exactly once.</div>`);
+`);
   const c = phone(`
     ${backhead('Posted')}
     <div style="text-align:center;padding:30px 0 14px">
@@ -426,19 +428,15 @@ export function frameM5() {
       <div style="font-size:18px;font-weight:700">Review posted</div>
       <div class="sub" style="font-family:var(--mono);font-size:12px;color:var(--blue-ink);margin-top:6px">github.com/orbital/atlas/pull/214#review</div>
     </div>
-    <div class="msec">Own-branch flow ends the same way</div>
-    <div class="mrow"><span class="gly sm" style="color:#4a5059">${ic.makepr}</span>
-      <div class="body"><div class="nm" style="font-size:13.5px">Draft title &amp; body → sign → PR created</div>
-      <div class="sub">idempotent by head branch · URL surfaced</div></div></div>
-    <div class="honest">A retry (or a double sign) yields exactly one PR. The outcome is stated truthfully — posted, or exactly why not.</div>`);
+    <div class="mbtn" style="margin-top:18px">Done</div>`);
   return {
     head: { badge: '23', title: 'Mobile · sign & post', pill: 'mobile · phase 6' },
     ref: 'issue #382 · deliverable 2\nthe human act, sofa-sized',
     sub: `The headline: preview → sign → post from anywhere. The paper shows exactly what will appear under Rai’s name; Face ID confirms the signature; the posted screen states the real URL. The own-branch loop ends here too — drafted body, signed, PR created idempotently.`,
     win: `<div class="phones">
-      ${col(a, cap('Preview', 'The collated paper, verdict and destination visible before anything moves.', ['publish.requestConsent', 'review.draftPrBody'], []))}
+      ${col(a, cap('Preview', 'The collated paper before anything moves; not right → ask for changes (a refine turn), never phone-editing.', ['publish.requestConsent', 'review.draftPrBody'], []))}
       ${col(b, cap('Sign', 'Biometric-confirmed signature — the GitHub Mobile approve pattern, made ours.', ['publish.review'], []))}
-      ${col(c, cap('Posted', 'Truthful outcome + the own-branch variant: submit the PR you just reviewed.', ['publish.submitPr'], ['attention: publish-ready']))}
+      ${col(c, cap('Posted', 'Truthful outcome with the real URL. The own-branch loop ends on this same screen: drafted body → sign → exactly one PR.', ['publish.submitPr'], ['attention: publish-ready']))}
     </div>`,
     notes: [
       { h: 'This is the product’s click.', b: 'Publishing stays Rai’s act, in his voice — the phone makes it available from anywhere, it never automates it away.' },
@@ -471,27 +469,26 @@ export function frameM6() {
       <div class="nb">Request-changes review drafted — preview and post when you are.</div>
     </div>
   </div><div class="ph-home"></div></div>`;
-  const route = (prio, title, sub, lands) =>
-    `<div class="maproute"><span class="prio ${prio}"></span><div class="me"><div class="mt2">${title}</div><div class="ms">${sub}</div></div><span class="lands">→ ${lands}</span></div>`;
+  const route = (title, sub, on = true) =>
+    `<div class="maproute"><div class="me"><div class="mt2">${title}</div><div class="ms">${sub}</div></div><span class="tgl${on ? '' : ' off'}"></span></div>`;
   const b = phone(`
-    ${mhead('Notification routes', '')}
-    <div class="msec">High priority · carries the substance</div>
-    ${route('hi', 'Turn needs you', 'onAskStream ask · chips as notification actions', 'ask thread')}
-    ${route('hi', 'Review finished', 'pipeline outcome · finding counts in the body', 'delta digest')}
-    ${route('hi', 'Turn failed / interrupted', 'truthful cause in the body', 'review detail (error)')}
-    <div class="msec">Normal</div>
-    ${route('lo', 'Handoff run completed', 'review.handoff.run outcome + delta summary', 'delta carry')}
-    ${route('lo', 'Ready to sign', 'composed draft awaiting signature', 'publish preview')}
-    <div class="msec">Silent</div>
-    ${route('lo', 'Processing finished', 'project.process terminal onProgress event', 'project detail')}
-    <div class="honest">Presence-aware: focused on that review → in-app event only; away → push. Opening the landing clears the attention flag. Nothing else pushes — a taxonomy that pushes everything is a muted app within a week.</div>`);
+    ${backhead('Notifications', '')}
+    <div class="msec">Needs you</div>
+    ${route('A turn needs you', 'the question, answerable right here')}
+    ${route('Review finished', 'what was found, at a glance')}
+    ${route('Something went wrong', 'a turn failed or was interrupted')}
+    <div class="msec">Progress</div>
+    ${route('Agent finished your asks', 'the follow-up work is ready to re-read')}
+    ${route('Ready to sign', 'a drafted review is waiting for you')}
+    ${route('Project processed', 'quiet — shows in the app only', false)}
+    <div class="honest">You only hear about a review you aren’t already looking at.</div>`);
   return {
     head: { badge: '24', title: 'Mobile · pushes & deep links', pill: 'mobile · phase 6' },
     ref: 'issue #382 · deliverable 2\nblocking events push, day one',
     sub: `The notification taxonomy made visible. Every push carries its substance and lands on the decision surface — the ask push is answerable from the shade (the survey’s clearest lesson: approval requests are user-blocking events, and deferring push was Codex’s biggest miss).`,
     win: `<div class="phones" style="align-items:center">
       ${col(a, cap('Lock screen', 'Ask push with answer actions; finished and publish-ready pushes with real counts.', [], ['attention: ask pending', 'attention: review finished', 'attention: publish-ready']))}
-      ${col(b, cap('Route map', 'Event → priority → landing, one row per taxonomy entry.', ['review.ask', 'review.handoff.run', 'project.process'], ['onAskStream(reviewId)', 'onProgress(commandId)']))}
+      ${col(b, cap('Notification settings', 'The closed taxonomy as user-facing switches; deep-link targets per event live in the ideation doc’s table.', ['review.ask', 'review.handoff.run', 'project.process'], ['onAskStream(reviewId)', 'onProgress(commandId)']))}
     </div>`,
     notes: [
       { h: 'Answer from the shade.', b: 'The ask push carries the question and its chips — the paseo#306 lesson: opening the app must be optional.' },

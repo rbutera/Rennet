@@ -283,6 +283,9 @@ svg{ display:block; width:16px; height:16px; }
 .maproute .me .mt2{ font-size:13px; font-weight:650; }
 .maproute .me .ms{ font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-top:2px; }
 .maproute .lands{ font-family:var(--mono); font-size:10.5px; color:var(--blue-ink); white-space:nowrap; }
+.tgl{ flex:none; width:44px; height:26px; border-radius:999px; background:var(--green); position:relative; }
+.tgl::after{ content:""; position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; background:#fff; }
+.tgl.off{ background:var(--line2); } .tgl.off::after{ right:auto; left:3px; }
 .prio{ flex:none; width:8px; height:8px; border-radius:50%; }
 .prio.hi{ background:var(--amber); } .prio.lo{ background:var(--faint); }
 </style></head>
@@ -304,7 +307,7 @@ replies steer, not just approve</div>
     <div class="tl-ev"><span class="tico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg></span><div class="tb"><div class="th">assistant · streaming</div>The failing spec reproduces the eviction race. Proposing the lock-scope fix as the primary finding; downgrading the metrics drift to a note…</div></div>
     <div class="sub" style="font-family:var(--mono);font-size:10.5px;color:var(--blue-ink);text-align:center;margin:6px 0">↓ return to tail</div>
     <div class="composer"><span class="ph">Steer the turn…</span><span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span></div>
-    <div class="sendmode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5.5A8.3 8.3 0 1 0 21 12"/><path d="M20 4.5V9h-4.5"/><path d="M9 12l2.5 2.5L16 10" opacity=".6"/></svg>send = <b>interrupt</b> · hold = queue for after the turn</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Live turn</div><div class="cs">Typed stream, reattached after a network change; stop is one visible tap.</div>
+    <div class="sendmode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5.5A8.3 8.3 0 1 0 21 12"/><path d="M20 4.5V9h-4.5"/><path d="M9 12l2.5 2.5L16 10" opacity=".6"/></svg>send interrupts · hold to queue</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Live turn</div><div class="cs">Typed stream, reattached after a network change; stop is one visible tap.</div>
    <div class="ph-cmds"><span class="cmd">review.reattach</span><span class="cmd">review.refine</span><span class="cmd topic">onAskStream(reviewId)</span><span class="cmd topic">turn interrupted</span></div></div></div>
       <div class="phcol"><div class="phone"><div class="ph-status"><span>9:41</span><span class="ph-island"></span><span>􀙇 􀛨</span></div><div class="ph-body">
     <div class="mhead"><span class="mback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Back</span><span class="mt" style="font-size:16px">rennet/rennet · own branch</span><span style="margin-left:auto"><span class="daemon"><span class="dd"></span>home-mac</span></span></div>
@@ -315,8 +318,7 @@ replies steer, not just approve</div>
     </div>
     <div class="tl-ev dim"><span class="tico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><path d="M14 4h6v6"/><path d="M11 13L20 4"/></svg></span><div class="tb"><div class="th">context</div>evict.ts:41 and the failing spec are attached to the ask.</div></div>
     <div class="composer"><span class="ph">Answer with direction… (optional)</span><span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span></div>
-    <div class="sendmode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>a chip answers · text adds redirection · both send as one reply</div>
-    <div class="honest">Backgrounded? This ask arrived as a push carrying the question and the chips — answerable from the notification without opening the app.</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Ask pending</div><div class="cs">Answer chips + optional free-text steering in a single reply.</div>
+    <div class="sendmode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>tap an answer, or add direction first</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Ask pending</div><div class="cs">Answer chips + optional free-text steering in a single reply.</div>
    <div class="ph-cmds"><span class="cmd">review.ask</span><span class="cmd topic">onAskStream(reviewId)</span><span class="cmd topic">attention: ask pending</span></div></div></div>
     </div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>

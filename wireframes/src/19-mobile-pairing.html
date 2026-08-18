@@ -283,6 +283,9 @@ svg{ display:block; width:16px; height:16px; }
 .maproute .me .mt2{ font-size:13px; font-weight:650; }
 .maproute .me .ms{ font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-top:2px; }
 .maproute .lands{ font-family:var(--mono); font-size:10.5px; color:var(--blue-ink); white-space:nowrap; }
+.tgl{ flex:none; width:44px; height:26px; border-radius:999px; background:var(--green); position:relative; }
+.tgl::after{ content:""; position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; background:#fff; }
+.tgl.off{ background:var(--line2); } .tgl.off::after{ right:auto; left:3px; }
 .prio{ flex:none; width:8px; height:8px; border-radius:50%; }
 .prio.hi{ background:var(--amber); } .prio.lo{ background:var(--faint); }
 </style></head>

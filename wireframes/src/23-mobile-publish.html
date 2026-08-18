@@ -283,6 +283,9 @@ svg{ display:block; width:16px; height:16px; }
 .maproute .me .mt2{ font-size:13px; font-weight:650; }
 .maproute .me .ms{ font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-top:2px; }
 .maproute .lands{ font-family:var(--mono); font-size:10.5px; color:var(--blue-ink); white-space:nowrap; }
+.tgl{ flex:none; width:44px; height:26px; border-radius:999px; background:var(--green); position:relative; }
+.tgl::after{ content:""; position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; background:#fff; }
+.tgl.off{ background:var(--line2); } .tgl.off::after{ right:auto; left:3px; }
 .prio{ flex:none; width:8px; height:8px; border-radius:50%; }
 .prio.hi{ background:var(--amber); } .prio.lo{ background:var(--faint); }
 </style></head>
@@ -305,7 +308,7 @@ the human act, sofa-sized</div>
       <p style="color:var(--muted)">…9 judged findings collated · your dispositions · your voice.</p></div>
     </div>
     <div class="mbtn ink" style="margin-top:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.5h18"/><path d="M15.5 4.6l3.9 3.9L9.6 18.3l-4.6 1 1-4.6z"/></svg>Sign &amp; post</div>
-    <div class="mbtn">Edit on this phone</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Preview</div><div class="cs">The collated paper, verdict and destination visible before anything moves.</div>
+    <div class="mbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5.5A8.3 8.3 0 1 0 21 12"/><path d="M20 4.5V9h-4.5"/><path d="M9 12l2.5 2.5L16 10" opacity=".6"/></svg>Ask for changes</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Preview</div><div class="cs">The collated paper before anything moves; not right → ask for changes (a refine turn), never phone-editing.</div>
    <div class="ph-cmds"><span class="cmd">publish.requestConsent</span><span class="cmd">review.draftPrBody</span></div></div></div>
       <div class="phcol"><div class="phone"><div class="ph-status"><span>9:41</span><span class="ph-island"></span><span>􀙇 􀛨</span></div><div class="ph-body">
     <div class="mhead"><span class="mback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Back</span><span class="mt" style="font-size:16px">Sign</span><span style="margin-left:auto"><span class="daemon"><span class="dd"></span>home-mac</span></span></div>
@@ -317,7 +320,7 @@ the human act, sofa-sized</div>
     <div class="paper" style="margin-top:16px">
       <div class="pb">Posts as <b>Rai Butera</b> · request changes on <span class="k" style="font-family:var(--code)">orbital/atlas#214</span></div>
     </div>
-    <div class="honest">Signing is the product’s one human act — your review, your name, your click. Nothing posts without it; the same single-use consent is consumed at egress exactly once.</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Sign</div><div class="cs">Biometric-confirmed signature — the GitHub Mobile approve pattern, made ours.</div>
+</div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Sign</div><div class="cs">Biometric-confirmed signature — the GitHub Mobile approve pattern, made ours.</div>
    <div class="ph-cmds"><span class="cmd">publish.review</span></div></div></div>
       <div class="phcol"><div class="phone"><div class="ph-status"><span>9:41</span><span class="ph-island"></span><span>􀙇 􀛨</span></div><div class="ph-body">
     <div class="mhead"><span class="mback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Back</span><span class="mt" style="font-size:16px">Posted</span><span style="margin-left:auto"><span class="daemon"><span class="dd"></span>home-mac</span></span></div>
@@ -326,11 +329,7 @@ the human act, sofa-sized</div>
       <div style="font-size:18px;font-weight:700">Review posted</div>
       <div class="sub" style="font-family:var(--mono);font-size:12px;color:var(--blue-ink);margin-top:6px">github.com/orbital/atlas/pull/214#review</div>
     </div>
-    <div class="msec">Own-branch flow ends the same way</div>
-    <div class="mrow"><span class="gly sm" style="color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18L18 6"/><path d="M9 6h9v9"/></svg></span>
-      <div class="body"><div class="nm" style="font-size:13.5px">Draft title &amp; body → sign → PR created</div>
-      <div class="sub">idempotent by head branch · URL surfaced</div></div></div>
-    <div class="honest">A retry (or a double sign) yields exactly one PR. The outcome is stated truthfully — posted, or exactly why not.</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Posted</div><div class="cs">Truthful outcome + the own-branch variant: submit the PR you just reviewed.</div>
+    <div class="mbtn" style="margin-top:18px">Done</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Posted</div><div class="cs">Truthful outcome with the real URL. The own-branch loop ends on this same screen: drafted body → sign → exactly one PR.</div>
    <div class="ph-cmds"><span class="cmd">publish.submitPr</span><span class="cmd topic">attention: publish-ready</span></div></div></div>
     </div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>

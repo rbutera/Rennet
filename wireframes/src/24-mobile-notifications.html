@@ -283,6 +283,9 @@ svg{ display:block; width:16px; height:16px; }
 .maproute .me .mt2{ font-size:13px; font-weight:650; }
 .maproute .me .ms{ font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-top:2px; }
 .maproute .lands{ font-family:var(--mono); font-size:10.5px; color:var(--blue-ink); white-space:nowrap; }
+.tgl{ flex:none; width:44px; height:26px; border-radius:999px; background:var(--green); position:relative; }
+.tgl::after{ content:""; position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; background:#fff; }
+.tgl.off{ background:var(--line2); } .tgl.off::after{ right:auto; left:3px; }
 .prio{ flex:none; width:8px; height:8px; border-radius:50%; }
 .prio.hi{ background:var(--amber); } .prio.lo{ background:var(--faint); }
 </style></head>
@@ -317,17 +320,16 @@ blocking events push, day one</div>
   </div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Lock screen</div><div class="cs">Ask push with answer actions; finished and publish-ready pushes with real counts.</div>
    <div class="ph-cmds"><span class="cmd topic">attention: ask pending</span><span class="cmd topic">attention: review finished</span><span class="cmd topic">attention: publish-ready</span></div></div></div>
       <div class="phcol"><div class="phone"><div class="ph-status"><span>9:41</span><span class="ph-island"></span><span>􀙇 􀛨</span></div><div class="ph-body">
-    <div class="mhead"><span class="mt">Notification routes</span><span class="daemon-slot" style="margin-left:auto"></span></div>
-    <div class="msec">High priority · carries the substance</div>
-    <div class="maproute"><span class="prio hi"></span><div class="me"><div class="mt2">Turn needs you</div><div class="ms">onAskStream ask · chips as notification actions</div></div><span class="lands">→ ask thread</span></div>
-    <div class="maproute"><span class="prio hi"></span><div class="me"><div class="mt2">Review finished</div><div class="ms">pipeline outcome · finding counts in the body</div></div><span class="lands">→ delta digest</span></div>
-    <div class="maproute"><span class="prio hi"></span><div class="me"><div class="mt2">Turn failed / interrupted</div><div class="ms">truthful cause in the body</div></div><span class="lands">→ review detail (error)</span></div>
-    <div class="msec">Normal</div>
-    <div class="maproute"><span class="prio lo"></span><div class="me"><div class="mt2">Handoff run completed</div><div class="ms">review.handoff.run outcome + delta summary</div></div><span class="lands">→ delta carry</span></div>
-    <div class="maproute"><span class="prio lo"></span><div class="me"><div class="mt2">Ready to sign</div><div class="ms">composed draft awaiting signature</div></div><span class="lands">→ publish preview</span></div>
-    <div class="msec">Silent</div>
-    <div class="maproute"><span class="prio lo"></span><div class="me"><div class="mt2">Processing finished</div><div class="ms">project.process terminal onProgress event</div></div><span class="lands">→ project detail</span></div>
-    <div class="honest">Presence-aware: focused on that review → in-app event only; away → push. Opening the landing clears the attention flag. Nothing else pushes — a taxonomy that pushes everything is a muted app within a week.</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Route map</div><div class="cs">Event → priority → landing, one row per taxonomy entry.</div>
+    <div class="mhead"><span class="mback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Back</span><span class="mt" style="font-size:16px">Notifications</span><span style="margin-left:auto"></span></div>
+    <div class="msec">Needs you</div>
+    <div class="maproute"><div class="me"><div class="mt2">A turn needs you</div><div class="ms">the question, answerable right here</div></div><span class="tgl"></span></div>
+    <div class="maproute"><div class="me"><div class="mt2">Review finished</div><div class="ms">what was found, at a glance</div></div><span class="tgl"></span></div>
+    <div class="maproute"><div class="me"><div class="mt2">Something went wrong</div><div class="ms">a turn failed or was interrupted</div></div><span class="tgl"></span></div>
+    <div class="msec">Progress</div>
+    <div class="maproute"><div class="me"><div class="mt2">Agent finished your asks</div><div class="ms">the follow-up work is ready to re-read</div></div><span class="tgl"></span></div>
+    <div class="maproute"><div class="me"><div class="mt2">Ready to sign</div><div class="ms">a drafted review is waiting for you</div></div><span class="tgl"></span></div>
+    <div class="maproute"><div class="me"><div class="mt2">Project processed</div><div class="ms">quiet — shows in the app only</div></div><span class="tgl off"></span></div>
+    <div class="honest">You only hear about a review you aren’t already looking at.</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Notification settings</div><div class="cs">The closed taxonomy as user-facing switches; deep-link targets per event live in the ideation doc’s table.</div>
    <div class="ph-cmds"><span class="cmd">review.ask</span><span class="cmd">review.handoff.run</span><span class="cmd">project.process</span><span class="cmd topic">onAskStream(reviewId)</span><span class="cmd topic">onProgress(commandId)</span></div></div></div>
     </div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
