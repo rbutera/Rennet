@@ -1963,7 +1963,15 @@ export function RennetApp({
       </section>
     </div>
   ) : (
-    <div className="rennet-glass" data-scheme={effectiveScheme}>
+    <div
+      className="rennet-glass"
+      data-scheme={effectiveScheme}
+      {...(currentSurface.kind === "draft" ||
+      currentSurface.kind === "paper" ||
+      currentSurface.kind === "handoff"
+        ? { "data-destination-visible": "" }
+        : {})}
+    >
       <DestinationFrame
         draft={draft}
         mode={destinationMode}
@@ -2505,6 +2513,19 @@ export function RennetApp({
               </code>
             </div>
           ) : null}
+          {inReview && review && !review.retrospective ? (
+            <button
+              type="button"
+              className="navigation-draft-cta"
+              onClick={() => navigate(pushSurface({ kind: "draft", reviewId: review.id }))}
+            >
+              {draft.length > 0 ? (
+                <span className="navigation-draft-count">{draft.length}</span>
+              ) : null}
+              Preview
+              <ArrowRightIcon size={12} />
+            </button>
+          ) : null}
           {connectionSlot}
         </header>
         <NavRail
@@ -2990,8 +3011,6 @@ export function RennetApp({
           onRegenerate={() => void regenerate()}
         />
       )}
-      {/* The destination is always-present chrome: the north is visible in both the
-          Files and Canvases views, present from review-open even when empty. */}
       {destinationChrome}
       {palette}
       {updatePrompt}

@@ -1,7 +1,6 @@
 import type { CanvasAngle } from "@rennet/types";
 import { type KeyboardEvent, useRef } from "react";
 import { CANVAS_LENSES } from "../canvas/logic";
-import type { Scheme } from "../canvas/store";
 
 /** The five angles' display labels — shared with the Files view's Angles rail. */
 export const ANGLE_LABELS: Record<CanvasAngle, string> = {
@@ -13,25 +12,16 @@ export const ANGLE_LABELS: Record<CanvasAngle, string> = {
 };
 
 /**
- * The lens switcher: the five selectable canvas angles, plus blast-radius as an
- * amber overlay TOGGLE and a colour-scheme toggle. Blast-radius is deliberately
- * NOT a tab — promoting the overlay to a sixth canvas would silently turn it into
- * a writable queue (Canvas Paradigm §1).
+ * The lens switcher: the five selectable canvas angles as tabs. Blast-radius
+ * and scheme controls removed — not in wireframe #06/#08; blast radius lives
+ * in the command palette, scheme toggle lives in the title bar (wireframe #15).
  */
 export function LensSwitcher({
   angle,
-  overlayOn,
-  scheme,
   onSelectAngle,
-  onToggleOverlay,
-  onToggleScheme,
 }: {
   angle: CanvasAngle;
-  overlayOn: boolean;
-  scheme: Scheme;
   onSelectAngle(angle: CanvasAngle): void;
-  onToggleOverlay(): void;
-  onToggleScheme(): void;
 }) {
   // Roving tabindex + arrow-key movement (WAI-ARIA tabs pattern). The role=tablist /
   // role=tab markup announces a tab widget, so the keyboard must operate it as one:
@@ -103,20 +93,6 @@ export function LensSwitcher({
             {ANGLE_LABELS[candidate]}
           </button>
         ))}
-      </div>
-      <div className="lens-controls">
-        <button
-          type="button"
-          className={`lens-overlay ${overlayOn ? "is-on" : ""}`}
-          aria-pressed={overlayOn}
-          title="Paint blast radius onto the active canvas"
-          onClick={onToggleOverlay}
-        >
-          Blast radius
-        </button>
-        <button type="button" className="lens-scheme" onClick={onToggleScheme}>
-          {scheme === "dark" ? "Bright room" : "Dark"}
-        </button>
       </div>
     </nav>
   );

@@ -158,15 +158,9 @@ export const COMMAND_CATALOGUE: readonly CommandDef[] = [
   { id: "zoom.in", title: "Zoom in", group: "Zoom", keybinding: "l" },
   { id: "zoom.out", title: "Zoom out", group: "Zoom", keybinding: "h" },
   {
-    id: "view.overlay",
-    group: "Appearance",
-    title: (ctx) =>
-      ctx.overlayOn ? "Hide the blast-radius overlay" : "Paint the blast-radius overlay",
-  },
-  {
     id: "view.scheme",
     group: "Appearance",
-    title: (ctx) => (ctx.scheme === "dark" ? "Switch to the bright room" : "Switch to dark"),
+    title: (ctx) => (ctx.scheme === "dark" ? "Switch to light" : "Switch to dark"),
   },
   { id: "door.choose", title: "Choose a repository", group: "Start" },
 ];
@@ -293,10 +287,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
       if (ctx.zoomLevel !== "rollup") {
         commands.push(mk("zoom.out", ctx, ctx.zoomOut));
       }
-      commands.push(
-        mk("view.overlay", ctx, ctx.toggleOverlay),
-        mk("view.scheme", ctx, ctx.toggleScheme),
-      );
+      commands.push(mk("view.scheme", ctx, ctx.toggleScheme));
     }
   }
 
