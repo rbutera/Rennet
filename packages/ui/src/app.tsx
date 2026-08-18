@@ -102,6 +102,7 @@ import {
 import { NavRail } from "./components/nav-rail";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
+import { RunningReview } from "./components/running-review";
 import { SettingsScreen } from "./components/settings-screen";
 import { CanvasWorkspace } from "./components/workspace";
 import { runBatched } from "./concurrency";
@@ -2784,11 +2785,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             </button>
           </section>
         ) : (
-          <section className="canvas-primer" role="status">
-            <p className="eyebrow">AI REVIEW</p>
-            <h2>Running the review…</h2>
-            <p>Reading the diff and drafting review angles.</p>
-          </section>
+          // Live running state (critique P1-A): indeterminate motion + a real elapsed
+          // clock, so "working" is visibly distinct from "hung". No stages/cancel — the
+          // engine emits neither (see RunningReview).
+          <RunningReview />
         )
       ) : (
         <ReviewWorkspace
