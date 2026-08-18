@@ -78,13 +78,15 @@ const appIcon =
 
 module.exports = {
   packagerConfig: {
-    asar: true,
     // The detached daemon (#379) is spawned as a plain Node process (ELECTRON_RUN_AS_NODE),
     // so its bundle must live on disk OUTSIDE the asar for a Node `require` to load it.
     // Un-asar the whole server build dir; everything else stays packed. The browser UI
     // (#381) joins it: the daemon serves those files with `createReadStream`, which reads a
     // real on-disk path, so `dist/browser` must be unpacked beside `dist/server`.
-    asarUnpack: ["dist/server/**", "dist/browser/**"],
+    // NOTE: electron-packager takes this as `asar.unpack` (one minimatch glob) — the
+    // electron-builder-style `asarUnpack` array is silently ignored (v0.1.10's macOS
+    // smoke failure: daemon.json never appeared because the bundle stayed inside the asar).
+    asar: { unpack: "**/dist/@(server|browser)/**" },
     executableName: "Rennet",
     icon: appIcon,
     ignore: [
