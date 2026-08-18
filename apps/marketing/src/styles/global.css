@@ -327,8 +327,8 @@ h2 {
 /* Consistent offsite marker on every external text link (nav, footer, hero, closing). */
 a[href^="http"]:not(.button)::after {
   margin-left: 0.25em;
-  font-size: 0.9em;
-  content: "↗";
+  font-size: max(0.9em, 11px);
+  content: "↗" / "";
 }
 
 .availability {
