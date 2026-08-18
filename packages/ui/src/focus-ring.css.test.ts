@@ -35,4 +35,11 @@ describe("systemic focus ring (critique P1-B)", () => {
   it("still zeroes the region's resting outline (the ring is focus-only)", () => {
     expect(canvas).toMatch(/\.canvas-app\s*{[^}]*outline:\s*none;/s);
   });
+
+  it("keeps NO bespoke focus ring on the coverage chip — it falls through to the systemic ring", () => {
+    // The chip's old `outline: 2px solid var(--green)` focus ring contradicted the one
+    // mandated 3px review-blue ring; a reversion re-adding any covchip :focus-visible rule
+    // must fail here.
+    expect(canvas).not.toMatch(/\.ospec-covchip:focus-visible/);
+  });
 });
