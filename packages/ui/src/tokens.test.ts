@@ -60,7 +60,7 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
   };
   const lin = (v: number): number => {
     const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   };
   const luminance = (h: string): number =>
     0.2126 * lin(channel(h, 0)) + 0.7152 * lin(channel(h, 1)) + 0.0722 * lin(channel(h, 2));
@@ -126,6 +126,88 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     expect(hex(LIGHT, "--surface")).toBe("#fcfbf8");
     expect(hex(LIGHT, "--text")).toBe("#111419");
     expect(hex(LIGHT, "--text-soft")).toBe("#59616b");
+  });
+
+  // Derived rgba/hex parsers, so the table below reads the ACTUAL CSS, not a constant.
+  const hexTriplet = (h: string): [number, number, number] => [
+    channel(h, 0),
+    channel(h, 1),
+    channel(h, 2),
+  ];
+  const rgbaTriplet = (scope: string, name: string): [number, number, number] => {
+    const m = block(scope).match(new RegExp(`${name}:[^;]*rgba\\((\\d+),\\s*(\\d+),\\s*(\\d+)`));
+    if (!m || m[1] === undefined || m[2] === undefined || m[3] === undefined)
+      throw new Error(`${name} rgba not found in ${scope}`);
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  };
+
+  // Every derived translucent token re-derives its rgb from its base hex. Codex proved by
+  // mutation that pinning only the base hexes left stale triplets (e.g. accent-soft still
+  // on the old blue's rgb) green; this table reddens on any such drift. --private* derive
+  // from --accent because --private: var(--accent).
+  const DERIVED: ReadonlyArray<readonly [string, readonly string[]]> = [
+    [
+      "--accent",
+      ["--accent-soft", "--accent-soft-line", "--private-fill", "--private-line", "--private-glow"],
+    ],
+    ["--amber", ["--amber-fill", "--amber-line"]],
+    ["--green", ["--green-fill", "--green-line"]],
+  ];
+  for (const scope of [DARK, LIGHT] as const) {
+    const label = scope === DARK ? "dark" : "light";
+    it(`every derived rgba tracks its base hex rgb (${label})`, () => {
+      for (const [base, derived] of DERIVED) {
+        const rgb = hexTriplet(hex(scope, base));
+        for (const tok of derived) {
+          expect(rgbaTriplet(scope, tok), `${tok} vs ${base} (${label})`).toEqual(rgb);
+        }
+      }
+    });
+  }
+
+  it("--chrome-bg's base rgb is the DESIGN.md canvas anchor (both schemes)", () => {
+    // Parsed from the CSS, not a constant: reverting --chrome-bg to the old moodboard rgb
+    // (the "restoring old canvas anchor" mutation) reddens here.
+    expect(rgbaTriplet(DARK, "--chrome-bg")).toEqual(hexTriplet(CANVAS[DARK]));
+    expect(rgbaTriplet(LIGHT, "--chrome-bg")).toEqual(hexTriplet(CANVAS[LIGHT]));
+  });
+
+  it("additions take evidence green: --add-glyph aliases --green, legible on --add-fill", () => {
+    expect(block(DARK)).toMatch(/--add-glyph:\s*var\(--green\)/);
+    expect(block(LIGHT)).toMatch(/--add-glyph:\s*var\(--green\)/);
+    // The green glyph renders over the opaque --add-fill row; keep it AA-legible.
+    for (const scope of [DARK, LIGHT] as const) {
+      expect(
+        contrast(hex(scope, "--green"), hex(scope, "--add-fill")),
+        `--green on --add-fill (${scope === DARK ? "dark" : "light"})`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("small amber-card text clears AA on --amber-surface (ratified amber is 4.07:1, ink-ified)", () => {
+    const canvasCss = readFileSync(fileURLToPath(new URL("./canvas.css", import.meta.url)), "utf8");
+    const decl = (selector: string): string => {
+      const start = canvasCss.indexOf(`\n${selector} {`);
+      if (start < 0) throw new Error(`${selector} not found`);
+      const open = canvasCss.indexOf("{", start);
+      return canvasCss.slice(open, canvasCss.indexOf("}", open));
+    };
+    const amberSurface = hex(LIGHT, "--amber-surface");
+    // These 4 cards render 10-12px text on --amber-surface. Whatever colour token they use
+    // must clear AA on it; ratified --amber (#a86125) is 4.07:1, so reverting reddens.
+    for (const sel of [
+      ".cohort-blast-reason",
+      ".flag-disagree-flare",
+      ".flag-dual-degraded",
+      ".ospec-cap-modified",
+    ]) {
+      const m = decl(sel).match(/color:\s*var\((--[a-z-]+)\)/);
+      if (!m || m[1] === undefined) throw new Error(`no color token on ${sel}`);
+      expect(
+        contrast(hex(LIGHT, m[1]), amberSurface),
+        `${sel} color ${m[1]} on --amber-surface`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 

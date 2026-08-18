@@ -126,9 +126,11 @@
   --green-fill: rgba(136, 188, 155, 0.16);
   --green-line: rgba(136, 188, 155, 0.38);
 
-  /* code stays fully opaque: legibility never rides on the wallpaper */
-  --add-fill: #1a2a20;
-  --add-glyph: #79b98d;
+  /* code stays fully opaque: legibility never rides on the wallpaper. Additions take
+   * evidence green (DESIGN.md: additions = green) — --add-glyph aliases --green and
+   * --add-fill is a dark green-tinted opaque row; deletions keep the deletion red. */
+  --add-fill: #16241c;
+  --add-glyph: var(--green);
   --del-fill: #2e211e;
   --del-glyph: #d08a76;
   --code-bg: #14161b;
@@ -222,8 +224,8 @@
   --green-fill: rgba(65, 116, 91, 0.12);
   --green-line: rgba(65, 116, 91, 0.3);
 
-  --add-fill: #eaf3e8;
-  --add-glyph: #3e7a4e;
+  --add-fill: #e9f2ec;
+  --add-glyph: var(--green);
   --del-fill: #f8ece8;
   --del-glyph: #a14434;
   --code-bg: #ffffff;

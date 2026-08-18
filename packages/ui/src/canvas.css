@@ -187,7 +187,9 @@
 .cohort-blast-reason {
   margin: 0 0 8px;
   padding: 0 12px;
-  color: var(--amber);
+  /* Ink, not amber: 12px amber (#a86125) on --amber-surface is 4.07:1, below AA. The
+   * blast state is carried by the amber mark + the cohort's amber-line border. */
+  color: var(--text);
   font-size: 12px;
 }
 /* NOT-ASSESSED chips: as visible as the marks, so an unmeasured signal reads as
@@ -1407,7 +1409,9 @@
 }
 .flag-disagree-flare {
   display: block;
-  color: var(--amber);
+  /* Ink, not amber: 10px amber on --amber-surface is 4.07:1, below AA. The disagree
+   * flag's amber-line border + amber-surface carry the state. */
+  color: var(--text);
   font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1479,7 +1483,9 @@
   border: 1px solid var(--green-line);
 }
 .flag-dual-degraded {
-  color: var(--amber);
+  /* Ink, not amber: amber text on --amber-surface is 4.07:1, below AA. The amber-line
+   * border + amber-surface carry the degraded state. */
+  color: var(--text);
   background: var(--amber-surface);
   border: 1px solid var(--amber-line);
 }
@@ -3032,7 +3038,9 @@
   border-color: var(--green-line);
 }
 .ospec-cap-modified {
-  color: var(--amber);
+  /* Ink, not amber: amber text on --amber-surface is 4.07:1, below AA. The amber-line
+   * border + amber-surface carry the modified state. */
+  color: var(--text);
   background: var(--amber-surface);
   border-color: var(--amber-line);
 }
