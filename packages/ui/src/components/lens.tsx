@@ -1,8 +1,10 @@
 import type { CanvasAngle } from "@rennet/types";
+import { type KeyboardEvent, useRef } from "react";
 import { CANVAS_LENSES } from "../canvas/logic";
 import type { Scheme } from "../canvas/store";
 
-const ANGLE_LABELS: Record<CanvasAngle, string> = {
+/** The five angles' display labels — shared with the Files view's Angles rail. */
+export const ANGLE_LABELS: Record<CanvasAngle, string> = {
   spec: "Spec",
   sequence: "Sequence",
   decisions: "Decisions",
@@ -31,16 +33,71 @@ export function LensSwitcher({
   onToggleOverlay(): void;
   onToggleScheme(): void;
 }) {
+  // Roving tabindex + arrow-key movement (WAI-ARIA tabs pattern). The role=tablist /
+  // role=tab markup announces a tab widget, so the keyboard must operate it as one:
+  // exactly one tab is in the tab order (the active one), and Arrow/Home/End move
+  // between tabs with focus following selection. Click and the app-level [ ] cycle
+  // are unchanged — this only adds the movement the tab semantics already promise.
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const moveTo = (index: number) => {
+    const count = CANVAS_LENSES.length;
+    const wrapped = ((index % count) + count) % count;
+    const lens = CANVAS_LENSES[wrapped];
+    if (lens === undefined) return;
+    onSelectAngle(lens);
+    tabRefs.current[wrapped]?.focus();
+  };
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    // Arrows move relative to the ACTIVE angle, not the focused button: app-level
+    // bracket rotation can change the selection while focus stays on the old tab
+    // (now tabindex -1), and the next arrow must continue from the real selection,
+    // not the stale button index (focus Decisions, ] selects Noise, ArrowLeft
+    // must land Decisions, not Sequence).
+    const activeIndex = Math.max(0, CANVAS_LENSES.indexOf(angle));
+    // A handled arrow/Home/End must NOT bubble to the canvas application handler
+    // (workspace onKeyDown maps ArrowRight/ArrowLeft to zoom): stopPropagation keeps
+    // tab movement from also zooming the canvas. preventDefault marks it handled so
+    // the app dispatcher's defaultPrevented guard is a second line of defence.
+    switch (event.key) {
+      case "ArrowRight":
+        event.preventDefault();
+        event.stopPropagation();
+        moveTo(activeIndex + 1);
+        break;
+      case "ArrowLeft":
+        event.preventDefault();
+        event.stopPropagation();
+        moveTo(activeIndex - 1);
+        break;
+      case "Home":
+        event.preventDefault();
+        event.stopPropagation();
+        moveTo(0);
+        break;
+      case "End":
+        event.preventDefault();
+        event.stopPropagation();
+        moveTo(CANVAS_LENSES.length - 1);
+        break;
+    }
+  };
   return (
     <nav className="lens-switcher" aria-label="Review lenses">
       <div className="lens-tabs" role="tablist" aria-label="Canvases">
-        {CANVAS_LENSES.map((candidate) => (
+        {CANVAS_LENSES.map((candidate, index) => (
           <button
             type="button"
             role="tab"
             key={candidate}
+            id={`lens-tab-${candidate}`}
+            aria-controls="canvas-surface-panel"
+            ref={(node) => {
+              tabRefs.current[index] = node;
+            }}
+            tabIndex={candidate === angle ? 0 : -1}
             aria-selected={candidate === angle}
             className={`lens-tab ${candidate === angle ? "is-active" : ""}`}
+            onKeyDown={onTabKeyDown}
             onClick={() => onSelectAngle(candidate)}
           >
             {ANGLE_LABELS[candidate]}

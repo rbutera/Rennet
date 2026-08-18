@@ -157,6 +157,16 @@ export function ProjectDetail({
             </p>
           ) : null}
 
+          {detail.authUnavailable ? (
+            <p className="project-detail-auth-hint" role="note">
+              {detail.authUnavailable === "gh-absent"
+                ? "Pull requests unavailable — gh CLI not found. Install gh and run gh auth login."
+                : detail.authUnavailable === "gh-not-logged-in"
+                  ? "Pull requests unavailable — gh CLI not logged in. Run gh auth login."
+                  : "Pull requests unavailable — gh token has insufficient scope."}
+            </p>
+          ) : null}
+
           <div className="smart-list">
             {shown.length === 0 ? (
               <p className="smart-list-empty">Nothing here for this filter.</p>

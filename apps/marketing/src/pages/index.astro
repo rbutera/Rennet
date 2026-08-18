@@ -23,10 +23,10 @@ const diffLines = [
 
 const lenses = [
   ["Spec", "Read the change against what it promised."],
-  ["Sequence", "Follow the implementation in dependency order."],
-  ["Decisions", "See the judgments hidden inside the patch."],
-  ["Flagged", "Resolve findings, verification, and model disagreement."],
-  ["Noise", "Keep generated churn out of the reading path."],
+  ["Sequence", "Follow the work in the order it builds on itself."],
+  ["Decisions", "See the judgment calls hidden inside the change."],
+  ["Flagged", "Work through what the models flagged, and where they disagree."],
+  ["Noise", "Keep generated churn out of your way."],
 ];
 ---
 
@@ -70,8 +70,8 @@ const lenses = [
     <!--
       THESIS: AI expanded the diff faster than the human context window; Rennet restores accountable judgment without hiding the code.
       OWN-WORLD: editorial light and dark fields, precise rules, neo-grotesk display type, calm reading type, and product-native evidence.
-      STORY: feel the review bottleneck, choose your workflow, see digestion and conversation, then understand the harness and repo intelligence.
-      FIRST VIEWPORT: the fixed accountability headline faces a compact review sequence; the download action remains immediate.
+      STORY: feel the review bottleneck, choose your workflow, see the roll-up and the conversation, then how Rennet uses your coding agents and its repo map.
+      FIRST VIEWPORT: the accountability headline faces the review sequence; the download action remains immediate.
       FORM: established-world narrative rebuild; no concept seed because this extends the approved Breaking Edge identity.
       FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
     -->
@@ -113,13 +113,51 @@ const lenses = [
           <p class="reassurance">No API-key setup. No telemetry. Uses the Claude Code and Codex already on your Mac.</p>
         </div>
 
-        <ol class="beat-strip" aria-label="How Rennet reduces one change, from raw diff to a review paper — illustrative">
-          <li class="beat b-raw"><span class="beat-name">Raw change</span><strong class="beat-datum">1,872 lines</strong></li>
-          <li class="beat b-cohort"><span class="beat-name">Related cohorts</span><strong class="beat-datum">4 parts</strong></li>
-          <li class="beat b-decision"><span class="beat-name">Human decisions</span><strong class="beat-datum">11 calls</strong></li>
-          <li class="beat b-paper"><span class="beat-name">One review paper</span><strong class="beat-datum">Ready to sign</strong></li>
+        <figure class="digest" aria-labelledby="digest-caption">
+        <ol class="digest-stages">
+          <li class="digest-stage raw-stage">
+            <div class="stage-label"><span>Raw change</span><strong>1,872 lines</strong></div>
+            <div class="diff-mass" aria-hidden="true">
+              <div class="diff-head"><span>atlas · feat/rate-limiting</span><span>+1,291 −581</span></div>
+              <div class="diff-body">
+                {diffLines.map(([sign, width, tone]) => (
+                  <div class:list={["diff-line", tone]} style={`--line:${width}%`}><span>{sign}</span><i></i></div>
+                ))}
+              </div>
+            </div>
+          </li>
+          <li class="digest-stage cohort-stage">
+            <div class="stage-label"><span>Related changes</span><strong>4 parts</strong></div>
+            <div class="cohort-list" aria-hidden="true">
+              <div><i class="blue"></i><span>Storage & state</span><b>4</b></div>
+              <div><i class="amber"></i><span>Failure posture</span><b>3</b></div>
+              <div><i class="green"></i><span>Interface & API</span><b>2</b></div>
+              <p>+ tests & noise</p>
+            </div>
+          </li>
+          <li class="digest-stage decision-stage">
+            <div class="stage-label"><span>Human decisions</span><strong>11 calls</strong></div>
+            <div class="decision-list" aria-hidden="true">
+              <div><span>1</span><p>One refill-on-read bucket</p></div>
+              <div><span>2</span><p>Fail open on store error</p></div>
+              <div><span>3</span><p>Keep Redis out of core</p></div>
+            </div>
+          </li>
+          <li class="digest-stage paper-stage">
+            <div class="stage-label"><span>PR review</span><strong>Ready to post</strong></div>
+            <div class="paper" aria-hidden="true">
+              <div><span>Review · #482</span><b>Ready</b></div>
+              <h2>PR Review</h2>
+              <p>
+                Fail-open on store errors is a deliberate availability call — agreed. Requesting a
+                test for the fallback path before merge.
+              </p>
+              <ul><li><b>3</b> request changes</li><li><b>1</b> comment</li></ul>
+            </div>
+          </li>
         </ol>
-        <p class="beat-caption" aria-hidden="true">Illustrative review data</p>
+        <figcaption id="digest-caption">From raw change to accountable judgment. Illustrative review data.</figcaption>
+        </figure>
       </section>
 
       <section class="pressure section shell">
@@ -154,80 +192,31 @@ const lenses = [
             </p>
             <ol>
               <li><span>Branch</span><p>Review committed and working-tree changes.</p></li>
-              <li><span>Refine</span><p>Turn your dispositions into focused work for the coding harness.</p></li>
-              <li><span>Re-read</span><p>Rennet captures the result as a new patchset and re-reviews only what changed.</p></li>
+              <li><span>Refine</span><p>Turn your calls into focused work for your coding agent.</p></li>
+              <li><span>Re-read</span><p>Rennet takes a new snapshot of the branch and re-reviews only what changed.</p></li>
             </ol>
           </article>
           <article class="workflow team-work">
             <div class="workflow-title"><span>When they submit</span><h3>Someone else’s work</h3></div>
             <p>
-              A teammate sends an agent-driven PR. Rennet walks you through it in comprehension
-              order, keeps the real code under your hands, and turns your decisions into one normal
-              GitHub review in your own voice.
+              A teammate sends an agent-written PR. Rennet walks you through it in an order you can
+              actually follow, keeps the real code under your hands, and turns your decisions into
+              one normal GitHub review in your own voice.
             </p>
             <ol>
               <li><span>Pull request</span><p>Read the promise, structure, and changed code together.</p></li>
-              <li><span>Question</span><p>Interrogate any finding, decision, or line.</p></li>
-              <li><span>Review</span><p>Edit and sign the exact paper GitHub receives.</p></li>
+              <li><span>Question</span><p>Question any finding, decision, or line.</p></li>
+              <li><span>Review</span><p>Edit and post the exact review GitHub receives.</p></li>
             </ol>
           </article>
         </div>
-      </section>
-
-      <section class="digestion section shell">
-        <div class="section-heading">
-          <h2>Roll up the change. Zoom into any decision.</h2>
-          <p>One agent branch, reduced to logical cohorts and the decisions inside them, then back to the single paper you sign. Every stage stays reachable.</p>
-        </div>
-        <figure class="digest" aria-labelledby="digest-caption">
-          <ol class="digest-stages">
-            <li class="digest-stage raw-stage">
-              <div class="stage-label"><span>Raw change</span><strong>1,872 lines</strong></div>
-              <div class="diff-mass" aria-hidden="true">
-                <div class="diff-head"><span>atlas · feat/rate-limiting</span><span>+1,291 −581</span></div>
-                <div class="diff-body">
-                  {diffLines.map(([sign, width, tone]) => (
-                    <div class:list={["diff-line", tone]} style={`--line:${width}%`}><span>{sign}</span><i></i></div>
-                  ))}
-                </div>
-              </div>
-            </li>
-            <li class="digest-stage cohort-stage">
-              <div class="stage-label"><span>Related cohorts</span><strong>4 parts</strong></div>
-              <div class="cohort-list" aria-hidden="true">
-                <div><i class="blue"></i><span>Storage & state</span><b>4</b></div>
-                <div><i class="amber"></i><span>Failure posture</span><b>3</b></div>
-                <div><i class="green"></i><span>Interface & API</span><b>2</b></div>
-                <p>+ tests & noise</p>
-              </div>
-            </li>
-            <li class="digest-stage decision-stage">
-              <div class="stage-label"><span>Human decisions</span><strong>11 calls</strong></div>
-              <div class="decision-list" aria-hidden="true">
-                <div><span>1</span><p>One refill-on-read bucket</p></div>
-                <div><span>2</span><p>Fail open on store error</p></div>
-                <div><span>3</span><p>Keep Redis out of core</p></div>
-              </div>
-            </li>
-            <li class="digest-stage paper-stage">
-              <div class="stage-label"><span>One review paper</span><strong>Ready to sign</strong></div>
-              <div class="paper" aria-hidden="true">
-                <div><span>Review · #482</span><b>Ready</b></div>
-                <h2>Exactly what will post.</h2>
-                <i></i><i></i>
-                <ul><li><b>3</b> request changes</li><li><b>1</b> comment</li></ul>
-              </div>
-            </li>
-          </ol>
-          <figcaption id="digest-caption">From raw change to accountable judgment. Illustrative review data.</figcaption>
-        </figure>
       </section>
 
       <section class="conversation section shell">
         <div class="conversation-copy">
           <h2>Don’t just read the diff. Talk to it.</h2>
           <p>
-            Ask what changed, why it changed, how it fits the surrounding repository, or whether a
+            Ask what changed, why it changed, how it fits the rest of the repo, or whether a
             failure path is intentional. The conversation stays attached to the review and its code.
           </p>
         </div>
@@ -247,11 +236,11 @@ const lenses = [
         <div class="section-heading harness-heading">
           <h2>Your Claude Code. Your Codex. Already connected.</h2>
           <p>
-            Rennet detects the coding harnesses installed on your Mac and uses their existing
-            authentication. No new API keys and no Rennet inference markup.
+            Rennet finds the Claude Code and Codex already installed on your Mac and signs in as
+            you already do. No new API keys. No extra bill from Rennet.
           </p>
         </div>
-        <div class="provider-lockups" aria-label="Supported coding harnesses">
+        <div class="provider-lockups" aria-label="Supported coding agents">
           <div class="provider">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"></path></svg>
             <div><strong>Claude Code</strong><span>Existing install · existing account</span></div>
@@ -277,21 +266,21 @@ const lenses = [
         <div class="intelligence-copy">
           <h2>A repo map that grows with the repo.</h2>
           <p>
-            Rennet combines deterministic discovery with evidence-backed model knowledge. It maps
-            files, workspaces, symbols, references, tests, ownership, and dependencies, then uses a
-            model to enrich what that structure means.
+            Rennet walks the code itself — files, workspaces, symbols, references, tests, owners,
+            dependencies — then uses a model to explain what that structure means, with the
+            evidence to back it.
           </p>
           <p>
-            When the reference branch advances, affected structure is rebuilt and the knowledge
-            delta is refreshed. The reviewer starts with the repository’s current shape, not a
-            stale snapshot of what it used to be.
+            When the branch you review against moves forward, the affected areas are remapped and
+            what Rennet has learned is refreshed. You start from the repo as it is now, not a
+            stale picture of what it used to be.
           </p>
         </div>
         <div class="map-proof" aria-label="Repository intelligence layers">
           <div class="map-root"><strong>atlas/</strong><span>current · main@8d2f1a</span></div>
           <div class="map-layer deterministic"><span>Deterministic discovery</span><b>47 workspaces · 3,284 symbols · 612 test links</b></div>
           <div class="map-layer learned"><span>Evidence-backed knowledge</span><b>9 conventions · 4 boundaries · 3 active decisions</b></div>
-          <div class="map-update"><i></i><p><strong>Reference branch advanced</strong><span>12 affected shards rebuilt · knowledge delta refreshed</span></p></div>
+          <div class="map-update"><i></i><p><strong>Main moved forward</strong><span>12 affected areas remapped · learned knowledge refreshed</span></p></div>
           <small>Illustrative repository data</small>
         </div>
       </section>
@@ -302,7 +291,7 @@ const lenses = [
           <p>Move from overview to evidence without losing your place. Rennet changes the reading order, not the need to read.</p>
         </div>
         <figure class="product-frame">
-          <div class="window-bar"><span class="traffic"><i></i><i></i><i></i></span><span>atlas · feat/rate-limiting</span><span>patchset 8</span></div>
+          <div class="window-bar"><span class="traffic"><i></i><i></i><i></i></span><span>atlas · feat/rate-limiting</span><span>snapshot 8</span></div>
           <img src="/product/review-heart.png" alt="Rennet review surface with ordered changes, code, and an attached conversation" width="1536" height="1024" loading="lazy" />
           <figcaption>Current product wireframe</figcaption>
         </figure>
@@ -311,7 +300,7 @@ const lenses = [
       <section class="shells section shell">
         <div class="section-heading">
           <h2>One app. A window or a tab. Any of your machines.</h2>
-          <p>Run Rennet as the desktop app or open it as a browser tab the daemon serves itself — both are the full product, no read-only mode, no feature in only one. Review from another computer or your phone by pairing it to your daemon over Tailscale. There is still no hosted anything: the remote device talks straight to your machine, and it never sees a path on it.</p>
+          <p>Run Rennet as the desktop app or open it as a browser tab served straight from your own machine — both are the full product, no read-only mode, no feature in only one. Review from another computer or your phone by pairing it over Tailscale. There is still no hosted anything: the remote device talks straight to your machine, and it never sees a path on it.</p>
         </div>
       </section>
 
@@ -323,16 +312,16 @@ const lenses = [
       </section>
 
       <section class="truth section shell">
-        <div><h2>Local-first, without pretending the models are local.</h2><p>Rennet has no backend and no telemetry. Selected harnesses may send assembled context to their own providers under their existing accounts. Rennet tells you that plainly.</p></div>
+        <div><h2>Local-first, without pretending the models are local.</h2><p>Rennet has no backend and no telemetry. The coding agents you use still send context to their own providers under your existing accounts. Rennet tells you that plainly.</p></div>
         <dl><div><dt>Rennet backend</dt><dd>None</dd></div><div><dt>Telemetry</dt><dd>None</dd></div><div><dt>API key setup</dt><dd>None</dd></div><div><dt>Supported at launch</dt><dd>macOS</dd></div><div><dt>Licence</dt><dd>MIT</dd></div></dl>
       </section>
 
       <section class="objections section shell">
         <h2>The questions worth asking.</h2>
         <div>
-          <details open><summary>Is this another autonomous review bot?</summary><p>No. Rennet performs the structural reading work. You inspect, question, edit, and sign the judgment another person sees.</p></details>
+          <details open><summary>Is this another autonomous review bot?</summary><p>No. Rennet does the structural reading work. You inspect, question, edit, and post the judgment another person sees.</p></details>
           <details><summary>Does dual review mean a model decides by majority?</summary><p>No. Claude and Codex run independently. Agreement is evidence; disagreement is a signal for you, never something Rennet averages away.</p></details>
-          <details><summary>Does “local-first” mean nothing leaves my machine?</summary><p>Rennet itself has no backend or telemetry. The coding harness you select still talks to its provider under its own terms and authentication.</p></details>
+          <details><summary>Does “local-first” mean nothing leaves my machine?</summary><p>Rennet itself has no backend or telemetry. The coding agent you use still talks to its provider under its own terms and sign-in.</p></details>
         </div>
       </section>
 

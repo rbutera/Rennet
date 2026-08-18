@@ -1,5 +1,5 @@
 import type { DecompositionBlockingState } from "@rennet/types";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   bucketLedgerEntries,
   canSign,
@@ -193,6 +193,21 @@ export function PublishSheet({
   // started over makes signing emit ONLY what the reviewer actually held over.
   const holdPayload = useRef<string | null>(null);
   const [armed, setArmed] = useState(false);
+  // Hold-progress feedback (critique P1-C). `holding` is true for the whole press so the
+  // fill can animate the hold budget; `releasedEarly` surfaces the honest "you let go too
+  // soon" reassurance after a below-budget release. Neither gates the sign — the hold is
+  // the sole authorization (Rule Zero); these only make the existing hold LEGIBLE.
+  const [holding, setHolding] = useState(false);
+  const [releasedEarly, setReleasedEarly] = useState(false);
+  // Capture the hold-eligibility epoch in the SAME committed render that arms the fill's
+  // animation (critique fix): `beginHold` flips `holding` true, and this layout effect —
+  // running after that commit, before paint — stamps `holdStart`. The `.is-holding`
+  // animation begins on the same commit's paint, so the JS eligibility clock and the CSS
+  // fill share one origin. Stamping in the pointer-down handler instead (as before) set the
+  // epoch a full render earlier than the fill, letting eligibility precede visual 100%.
+  useLayoutEffect(() => {
+    if (holding) holdStart.current = Date.now();
+  }, [holding]);
   // A hold begun over a stale payload is voided at release by the `endHold` guard
   // (below), which is timing-independent and load-bearing. As a render-time visual,
   // disarm the button the moment the payload identity changes so it does not look
@@ -202,6 +217,12 @@ export function PublishSheet({
     holdStart.current = null;
     holdPayload.current = null;
     setArmed(false);
+  }
+  // Stop the progress fill the instant the bytes change mid-hold (critique P1-C): the
+  // release will sign nothing (the `endHold` stale guard below), so a fill that kept
+  // growing would falsely imply a valid hold. Same render-time adjust pattern as above.
+  if (holding && holdPayload.current !== null && holdPayload.current !== payload) {
+    setHolding(false);
   }
   // The degradation-ledger acknowledgement, owned locally. A gate that clears the
   // instant the ledger renders is no gate — signing a degraded review requires an
@@ -254,11 +275,37 @@ export function PublishSheet({
   const targetBlocksSign =
     target !== undefined && !publishTargetAgrees(target, payload, variant.mode);
 
+  // The single source of truth for the sign button's disabled state — used by the
+  // button AND the guard below, so they can never diverge.
+  const signDisabled =
+    itemCount === 0 || targetBlocksSign || pending || ledgerBlocksSign(ledger, acknowledged);
+
+  // Cancel an in-flight hold the instant the button becomes disabled. A disabled
+  // button eats the mouseup/keyup, so `endHold` never runs — `holding` would stay
+  // true. Then a later re-enable + fresh press calls `setHolding(true)` on an
+  // already-true value: a no-op that never re-fires the [holding] epoch stamp, so the
+  // release measures against the STALE press timestamp and a sub-budget hold signs.
+  // Fully clearing the hold here forces the next press to be a real false→true
+  // transition that re-stamps the epoch.
+  useLayoutEffect(() => {
+    if (signDisabled) {
+      holdStart.current = null;
+      holdPayload.current = null;
+      setHolding(false);
+      setArmed(false);
+    }
+  }, [signDisabled]);
+
   function beginHold(): void {
-    holdStart.current = Date.now();
     // Bind this hold to the exact bytes on screen NOW (#74 HIGH-2), so a later
-    // recomposition cannot make the release sign different bytes.
+    // recomposition cannot make the release sign different bytes. The eligibility
+    // epoch (`holdStart`) is stamped by the layout effect on the resulting commit, so
+    // it lands on the same render that arms the fill animation (see above).
     holdPayload.current = payload;
+    // Show the progress fill for the whole hold (critique P1-C), and clear any prior
+    // "released too soon" note — a fresh attempt starts clean.
+    setHolding(true);
+    setReleasedEarly(false);
     // A zero (or negative) budget is an immediate sign; arm synchronously so the
     // accessibility floor never forces a hold the user cannot perform.
     if (canSign(0, holdToSignMs)) setArmed(true);
@@ -270,6 +317,7 @@ export function PublishSheet({
     holdStart.current = null;
     holdPayload.current = null;
     setArmed(false);
+    setHolding(false);
     if (started === null) return;
     // The bytes changed between the press and the release (#74 HIGH-2): the hold was
     // over a payload the reviewer is no longer looking at. Sign NOTHING — a new hold
@@ -286,7 +334,14 @@ export function PublishSheet({
     // exactly the previewed bytes (never a transform). Below the bar, `resolveSign`
     // is null and nothing leaves — the sign never defaults to APPROVE.
     const outbound = resolveSign(Date.now() - started, holdToSignMs, payload);
-    if (outbound !== null) onSign?.(outbound);
+    if (outbound !== null) {
+      onSign?.(outbound);
+      return;
+    }
+    // Passed every other gate but the hold was TOO SHORT: nothing signed. Say so
+    // (critique P1-C) — honest, announced reassurance that the hold is real and how to
+    // complete it. This is not a new gate: the hold was already the sole trigger.
+    setReleasedEarly(true);
   }
 
   function beginHoldByKeyboard(event: {
@@ -320,9 +375,12 @@ export function PublishSheet({
 
   function clearHold(): void {
     // Focus leaving mid-hold (blur) abandons the hold, mirroring pointer `mouseLeave`,
-    // so a started-but-unreleased keyboard hold never lingers to sign later.
+    // so a started-but-unreleased keyboard hold never lingers to sign later. Abandoning
+    // is not "released too soon" (no note); just stop the fill.
     holdStart.current = null;
+    holdPayload.current = null;
     setArmed(false);
+    setHolding(false);
   }
 
   return (
@@ -517,6 +575,14 @@ export function PublishSheet({
             All-or-nothing: signing publishes the whole set. To leave something out, go back and
             withdraw it on the draft.
           </p>
+          {/* Released-too-soon reassurance (critique P1-C): announced (role="status"), shown
+              only after a below-budget release. Honest, not a gate — the hold is still the
+              sole trigger; this just tells the human WHY nothing signed and how to finish. */}
+          {releasedEarly ? (
+            <p className="publish-sheet-sign-early" role="status" data-testid="sign-released-early">
+              You let go too soon — hold until the bar fills to sign.
+            </p>
+          ) : null}
           <div className="publish-sheet-foot-actions">
             {/* The paper's OTHER action (R40): back to the draft, where editing
                 lives. The paper itself is sign-only. */}
@@ -525,7 +591,7 @@ export function PublishSheet({
             </button>
             <button
               type="button"
-              className={`publish-sheet-sign ${armed ? "is-arming" : ""}`}
+              className={`publish-sheet-sign${armed ? " is-arming" : ""}${holding ? " is-holding" : ""}`}
               data-hold-ms={holdToSignMs}
               // Both pointer AND keyboard now complete a real HOLD (issue #21): a
               // keyboard user presses and holds Enter/Space for the budget, then
@@ -533,7 +599,7 @@ export function PublishSheet({
               aria-keyshortcuts="Enter Space"
               // Disabled while a publish is in flight (double-sign race): the sync ref
               // in `publishReview` is the real guard; this reflects it in the UI.
-              disabled={itemCount === 0 || targetBlocksSign || pending}
+              disabled={signDisabled}
               onMouseDown={beginHold}
               onMouseUp={endHold}
               onMouseLeave={clearHold}
@@ -541,7 +607,22 @@ export function PublishSheet({
               onKeyUp={endHoldByKeyboard}
               onBlur={clearHold}
             >
-              Hold to {variant.signLabel.toLowerCase()}
+              {/* The hold-progress fill (critique P1-C): an ink bar that inks in 0→100%
+                  over EXACTLY `holdToSignMs` (duration set inline off the same prop), so
+                  the hold budget is visible instead of invisible. Rendered PERSISTENTLY —
+                  the `.is-holding` class on the button arms the animation, and the layout
+                  effect stamps the eligibility epoch on that same commit, so visual 100%
+                  and sign eligibility coincide. Reduced motion turns the continuous slide
+                  into a discrete step fill (see styles.css). */}
+              <span
+                className="publish-sheet-sign-fill"
+                style={{ animationDuration: `${Math.max(0, holdToSignMs)}ms` }}
+                aria-hidden="true"
+                data-testid="sign-hold-fill"
+              />
+              <span className="publish-sheet-sign-label">
+                Hold to {variant.signLabel.toLowerCase()}
+              </span>
             </button>
           </div>
         </footer>
