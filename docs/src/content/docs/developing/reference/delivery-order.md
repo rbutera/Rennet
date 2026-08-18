@@ -149,12 +149,18 @@ this wave; the [research digest](/developing/reference/app-server-research/)
 is its evidence base. **Phases 0–5 are delivered** (PRs #385, #387, #388,
 #390, #391, #392; minor release v0.2.0 marks the wave); each phase's OpenSpec
 change is archived. What remains is the mobile arc: the design pass
-([#382](https://github.com/rbutera/rennet/issues/382)) gates phase 6
-([#383](https://github.com/rbutera/rennet/issues/383)). Known follow-ups:
+([#382](https://github.com/rbutera/rennet/issues/382)) gated phase 6
+([#383](https://github.com/rbutera/rennet/issues/383)), whose **M0 —
+client-runtime extraction — is delivered**: the `ConnectionSupervisor`
+(`@rennet/client`) owns reachability state, reconnect, and a resubscribe
+registry, and the desktop + browser shells adopt it behavior-neutrally (the
+[mobile plan](/developing/reference/mobile-plan/) tracks M1–M3). Known
+follow-ups:
 [#386](https://github.com/rbutera/rennet/issues/386) (pre-existing e2e
-failures on main) and
-[#389](https://github.com/rbutera/rennet/issues/389) (live ask-stream rebind
-after a mid-turn reconnect).
+failures on main) and the **server-side half of
+[#389](https://github.com/rbutera/rennet/issues/389)** — M0 fixed the client
+half (subscriptions survive a reconnect); rebinding a live turn's ask-stream
+emit sink to the reconnected socket is a daemon-side change still open.
 
 0. [#376 — protocol handshake, envelope, and versioning
    discipline](https://github.com/rbutera/rennet/issues/376)

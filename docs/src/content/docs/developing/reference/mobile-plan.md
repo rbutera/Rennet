@@ -92,7 +92,7 @@ app never gets a side channel:
 
 | # | Scope | Size | Ships when |
 | --- | --- | --- | --- |
-| M0 | `client-runtime` extraction; desktop + browser shells adopt; #389 fixed by the subscription manager | ~1 week | Existing e2e green on both shells; a mid-turn socket drop rebinds the live ask-stream |
+| M0 — **delivered** | `client-runtime` extraction (`ConnectionSupervisor` in `@rennet/client`); desktop + browser shells adopt behavior-neutrally; #389 client half (resubscribe registry) landed | ~1 week | Existing e2e green on both shells; a mid-turn socket drop keeps the live ask-stream bound on the reconnected supervisor. **The server-side ask-stream rebind (the other half of #389) is a daemon follow-on** — see the reconnect note in [reactive-streams](./reactive-streams.md). |
 | M1 — **first shippable cut** | Expo app skeleton; pairing + connections; review list; review detail/digest + finding detail + full canvas; push pipeline (taxonomy, deep links, presence-aware delivery) | ~2 weeks | See acceptance below |
 | M2 | Live turn + ask (stream, composer, stop, notification actions); publish flow (preview → one-tap post); kickoff (PR link, share sheet, own-branch capture) | ~1.5 weeks | See acceptance below |
 | M3 | Distribution (TestFlight/internal track); `using/` mobile guide; architecture-overview client row; marketing story | ~3–4 days | Docs land same-change; store publishing stays a later decision |

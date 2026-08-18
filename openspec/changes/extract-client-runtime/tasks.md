@@ -31,6 +31,6 @@
 
 ## 6. Boundaries, docs, close-out
 
-- [ ] 6.1 Lint boundary: no DOM/Node globals in `packages/client` core paths (stores implemented in shells); Nx inputs/outputs declared for any new targets.
-- [ ] 6.2 Docs same-change: `architecture-overview.md` client wiring paragraph, `reactive-streams.md` reconnect note, `mobile-plan.md` M0 marked delivered; delivery-order wave entry.
+- [x] 6.1 Lint boundary: no DOM/Node globals in `packages/client` core paths (stores implemented in shells); Nx inputs/outputs declared for any new targets.
+- [x] 6.2 Docs same-change: `architecture-overview.md` client wiring paragraph, `reactive-streams.md` reconnect note, `mobile-plan.md` M0 marked delivered; delivery-order wave entry.
 - [ ] 6.3 Full `pnpm check`; PR references #383 (M0) and `Closes #389`.

@@ -68,6 +68,18 @@ reattaches instead of starting a second concurrent snapshot build. A successful 
 artifact through the real consumer and opens that project; the fold also derives
 that anchor from a successful resolved summary when the push channel degrades.
 
+**Reconnect keeps live subscriptions bound (phase 6 M0).** A live `onAskStream` /
+`onProgress` listener is registered with the `ConnectionSupervisor`'s resubscribe
+registry, which lives *above* the socket. When a socket drops and the supervisor
+reconnects, it re-establishes every registered listener on the fresh bridge and
+re-issues `review.reattach` for each subscribed review — so a stream consumer created
+before an interruption keeps receiving events after it, with no re-subscribe from the
+consumer (issue #389, client half). The complementary server-side half — rebinding a
+turn's live ask-stream *emit sink* to the reconnected socket, since today's
+`emitAskStream` closes over the socket that invoked `review.ask` — is a daemon-side
+follow-on: until it lands, a reconnected client recovers persisted turn state on
+reattach but a mid-turn delta emitted while it was disconnected is not replayed.
+
 The rest of issue #71 is not live yet. The capture/review pipeline does not emit
 progress events and its busy surface does not consume `ProgressFeed`; protocol
 variants for that path should arrive with real emitters and a renderer. The
