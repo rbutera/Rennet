@@ -5,6 +5,8 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
+import { DaemonListStore } from "./daemon-list-store";
+import { NotificationPrefsStore } from "./notification-prefs-store";
 import { AsyncReplicaStore } from "./replica-store";
 import { SecureTokenStore } from "./token-store";
 
@@ -20,6 +22,22 @@ export function createTokenStore(): SecureTokenStore {
 /** The last-known-replica store over async storage. */
 export function createReplicaStore(): AsyncReplicaStore {
   return new AsyncReplicaStore({
+    getItem: (key) => AsyncStorage.getItem(key),
+    setItem: (key, value) => AsyncStorage.setItem(key, value),
+  });
+}
+
+/** The persisted paired-daemon list over async storage (no secrets — tokens stay in the keychain). */
+export function createDaemonListStore(): DaemonListStore {
+  return new DaemonListStore({
+    getItem: (key) => AsyncStorage.getItem(key),
+    setItem: (key, value) => AsyncStorage.setItem(key, value),
+  });
+}
+
+/** The persisted notification-preferences store over async storage. */
+export function createNotificationPrefsStore(): NotificationPrefsStore {
+  return new NotificationPrefsStore({
     getItem: (key) => AsyncStorage.getItem(key),
     setItem: (key, value) => AsyncStorage.setItem(key, value),
   });

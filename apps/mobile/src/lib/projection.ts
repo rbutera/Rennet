@@ -74,16 +74,18 @@ export interface SummaryContext {
  * unreachable daemon or an invalidated review.
  */
 export function toReviewSummary(review: ProjectedReviewLike, ctx: SummaryContext): ReviewSummary {
-  const derivedNeedsYou = ctx.attentionReviewIds.has(review.id);
+  // The daemon's attention summary is authoritative when present: it is the single source of
+  // truth (the daemon's registry), so we use it DIRECTLY — never OR-ed with local derivation,
+  // which would let a stale flagged-queue entry re-assert a needs-you the daemon has cleared.
+  // Only when the summary is absent (a pre-attention daemon) do we derive locally.
+  const attention = review.attention;
   return {
     daemonId: ctx.daemonId,
     reviewId: review.id,
     repoDisplayName: review.repositoryRoot.displayName,
     updatedAt: latestPatchsetTime(review),
-    // Attention summary wins when present; the flagged queue can still add needs-you the
-    // daemon hasn't raised (belt and suspenders), so OR them rather than replace.
-    running: review.attention?.running ?? review.pendingPatchsetId !== undefined,
-    needsYou: (review.attention?.needsYou ?? false) || derivedNeedsYou,
+    running: attention ? attention.running : review.pendingPatchsetId !== undefined,
+    needsYou: attention ? attention.needsYou : ctx.attentionReviewIds.has(review.id),
     reachable: ctx.reachable,
     stale: !ctx.reachable || review.status === "invalid",
   };

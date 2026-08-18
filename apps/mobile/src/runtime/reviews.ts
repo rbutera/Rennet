@@ -23,6 +23,8 @@ export function useAggregatedReviews(runtime: Runtime): ReviewSummary[] {
         const reachable = connection.status.state === "online";
         try {
           const result = await connection.supervisor.invoke("app.bootstrap", {});
+          // Save the reconciled surface as the replica so a later offline open paints it (#383 batch).
+          connection.supervisor.saveReplica(result);
           if (result.review) {
             collected.push(
               toReviewSummary(asProjectedReview(result.review), {
@@ -33,7 +35,20 @@ export function useAggregatedReviews(runtime: Runtime): ReviewSummary[] {
             );
           }
         } catch {
-          // Offline / not yet reconciled: the replica paints elsewhere; skip the live row.
+          // Offline / not yet reconciled: paint the last replica, stale-marked — NEVER drop the
+          // daemon (#383 batch, finding 12). The replica surface is the last app.bootstrap output.
+          const surface = connection.supervisor.replica?.surface as
+            | { review?: unknown }
+            | undefined;
+          if (surface?.review) {
+            collected.push(
+              toReviewSummary(asProjectedReview(surface.review), {
+                daemonId: connection.daemon.id,
+                reachable: false, // a replica-painted row is always stale
+                attentionReviewIds,
+              }),
+            );
+          }
         }
       }
       if (!cancelled) setRows(collected);

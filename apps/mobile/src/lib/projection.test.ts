@@ -105,6 +105,14 @@ describe("projection contract — the app consumes only the projected fixtures (
     );
     expect(runningFromSummary.running).toBe(true);
 
+    // Authoritative, NOT OR-ed: a summary needsYou:false wins even if a stale flagged-queue entry
+    // still names the review — the daemon cleared it, so the row must not re-assert needs-you.
+    const clearedByDaemon = toReviewSummary(
+      { ...sample, attention: { needsYou: false, running: false } },
+      { daemonId: "d1", reachable: true, attentionReviewIds: new Set(["rev-1"]) },
+    );
+    expect(clearedByDaemon.needsYou).toBe(false);
+
     // Absent summary (pre-attention daemon) ⇒ fall back to the flagged-queue derivation.
     const legacy = toReviewSummary(sample, {
       daemonId: "d1",

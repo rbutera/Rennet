@@ -6,10 +6,18 @@
 import { Stack } from "expo-router";
 import type { ReactNode } from "react";
 import { RuntimeProvider } from "../src/runtime/context";
+import { useNotificationRouting } from "../src/runtime/use-notification-routing";
+
+/** Mounts the notification-tap router inside the runtime (cold + warm push navigation). */
+function NotificationRouting(): null {
+  useNotificationRouting();
+  return null;
+}
 
 export default function RootLayout(): ReactNode {
   return (
     <RuntimeProvider>
+      <NotificationRouting />
       <Stack screenOptions={{ headerShown: true, headerBackTitle: "Back" }}>
         <Stack.Screen name="index" options={{ title: "Rennet" }} />
         <Stack.Screen name="pair" options={{ title: "Pair a daemon" }} />

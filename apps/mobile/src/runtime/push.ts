@@ -5,6 +5,7 @@
 // Expo/RN calls live here (typecheck-only from tests); the routing itself is the pure table in
 // lib/deep-links, unit-tested there.
 
+import type { AttentionFamily } from "@rennet/protocol";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { type AttentionPushData, resolvePushHref } from "../lib/deep-links";
@@ -34,15 +35,26 @@ export async function getPushToken(projectId?: string): Promise<string | null> {
   }
 }
 
-/** Register (or re-register) this device's push token with every paired daemon. */
+/**
+ * Register (or re-register) this device's push token with every ATTENTION-CAPABLE paired daemon
+ * (#383 batch). A daemon that does not advertise `attention` has no push pipeline, so registering
+ * a token with it would be a lie — those are skipped. `disabledFamilies` carries the user's muted
+ * families so the daemon suppresses their pushes. Non-fatal per daemon; a reconnect replays it.
+ */
 export async function registerPushWithAllDaemons(
   registry: DaemonRegistry,
   token: string,
+  disabledFamilies: readonly AttentionFamily[] = [],
 ): Promise<void> {
   const platform = platformTag();
   for (const connection of registry.list()) {
+    if (!connection.supervisor.attentionAdvertised()) continue;
     try {
-      await connection.supervisor.invoke("device.registerPush", { pushToken: token, platform });
+      await connection.supervisor.invoke("device.registerPush", {
+        pushToken: token,
+        platform,
+        disabledFamilies: [...disabledFamilies],
+      });
     } catch {
       // Non-fatal: a daemon that is offline registers on its next reachable moment.
     }

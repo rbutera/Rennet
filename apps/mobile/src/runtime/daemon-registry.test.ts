@@ -1,11 +1,20 @@
+import type { AttentionEventFrame } from "@rennet/protocol";
 import type { ConnectionStatus, Presence } from "@rennet/client";
 import { describe, expect, it, vi } from "vitest";
 import { DaemonRegistry, type DaemonSupervisor, type PairedDaemon } from "./daemon-registry";
 
-function fakeSupervisor(): DaemonSupervisor & { presence: Partial<Presence>[]; closed: boolean } {
+type FakeSupervisor = DaemonSupervisor & {
+  presence: Partial<Presence>[];
+  closed: boolean;
+  emitAttention(frame: AttentionEventFrame): void;
+};
+
+function fakeSupervisor(): FakeSupervisor {
+  const attentionListeners = new Set<(f: AttentionEventFrame) => void>();
   const state = { presence: [] as Partial<Presence>[], closed: false };
   return {
     ...state,
+    replica: undefined,
     invoke: (async () => ({})) as DaemonSupervisor["invoke"],
     subscribe: (listener: (s: ConnectionStatus) => void) => {
       listener({ state: "online", since: 0 });
@@ -13,6 +22,15 @@ function fakeSupervisor(): DaemonSupervisor & { presence: Partial<Presence>[]; c
     },
     setPresence(p: Partial<Presence>) {
       this.presence.push(p);
+    },
+    onAttention(listener: (f: AttentionEventFrame) => void) {
+      attentionListeners.add(listener);
+      return () => void attentionListeners.delete(listener);
+    },
+    saveReplica() {},
+    attentionAdvertised: () => true,
+    emitAttention(frame: AttentionEventFrame) {
+      for (const l of attentionListeners) l(frame);
     },
     close() {
       this.closed = true;
@@ -81,5 +99,53 @@ describe("DaemonRegistry (issue #383 M1)", () => {
     registry.subscribe(changed);
     registry.add(daemon({ id: "d1" }));
     expect(changed).toHaveBeenCalled();
+  });
+
+  it("tracks the live needs-you set from attention broadcasts (#383 batch)", () => {
+    let sup: FakeSupervisor | undefined;
+    const registry = new DaemonRegistry(() => {
+      sup = fakeSupervisor();
+      return sup;
+    });
+    registry.add(daemon({ id: "d1" }));
+    expect(registry.needsYouReviewIds().has("rev-1")).toBe(false);
+
+    // A high-priority attention (ask-pending) on rev-1 makes it needs-you.
+    sup?.emitAttention({
+      type: "attentionEvent",
+      event: "raised",
+      item: {
+        id: "ask-pending:rev-1",
+        family: "ask-pending",
+        reviewId: "rev-1",
+        deepLink: "rennet://review/rev-1/ask",
+        title: "Ask pending",
+        body: "",
+      },
+    });
+    expect(registry.needsYouReviewIds().has("rev-1")).toBe(true);
+
+    // A silent family (processing-finished) does NOT add needs-you.
+    sup?.emitAttention({
+      type: "attentionEvent",
+      event: "raised",
+      item: {
+        id: "processing-finished:proj-1",
+        family: "processing-finished",
+        projectId: "proj-1",
+        deepLink: "rennet://project/proj-1",
+        title: "Processing finished",
+        body: "",
+      },
+    });
+    expect(registry.needsYouReviewIds().size).toBe(1);
+
+    // Clearing the ask drops it from the set.
+    sup?.emitAttention({
+      type: "attentionEvent",
+      event: "cleared",
+      clearedIds: ["ask-pending:rev-1"],
+    });
+    expect(registry.needsYouReviewIds().has("rev-1")).toBe(false);
   });
 });

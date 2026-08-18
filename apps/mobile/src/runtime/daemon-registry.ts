@@ -8,8 +8,13 @@
 // The supervisor factory is INJECTED so the registry's bookkeeping unit-tests without opening a
 // socket; the real factory (runtime/native supervisor wiring) constructs live supervisors.
 
-import type { ConnectionStatus, Presence } from "@rennet/client";
-import type { CommandInput, CommandName, CommandOutput } from "@rennet/protocol";
+import type { ConnectionStatus, Presence, StoredReplica } from "@rennet/client";
+import type {
+  AttentionEventFrame,
+  CommandInput,
+  CommandName,
+  CommandOutput,
+} from "@rennet/protocol";
 
 /** A paired daemon as the app tracks it. */
 export interface PairedDaemon {
@@ -35,17 +40,62 @@ export interface DaemonSupervisor {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
   subscribe(listener: (status: ConnectionStatus) => void): () => void;
   setPresence(presence: Partial<Presence>): void;
+  /** Subscribe to this daemon's attention broadcasts (#383 batch) — keeps needs-you live. */
+  onAttention(listener: (event: AttentionEventFrame) => void): () => void;
+  /** The last-known replica surface (offline paint), or undefined if never synced. */
+  readonly replica: StoredReplica | undefined;
+  /** Save a freshly reconciled bootstrap surface as this daemon's replica. */
+  saveReplica(surface: unknown): void;
+  /** Whether this daemon advertised the attention capability (gates push registration, #383). */
+  attentionAdvertised(): boolean;
   close(): void;
 }
 
 export type SupervisorFactory = (daemon: PairedDaemon) => DaemonSupervisor;
 
+/** The attention families that mean "this review needs you" — the pinnable, high-priority set. */
+const NEEDS_YOU_FAMILIES = new Set(["ask-pending", "review-finished", "turn-failed"]);
+
 export class DaemonRegistry {
   readonly #byId = new Map<string, DaemonConnection>();
   readonly #daemonIdByDevice = new Map<string, string>();
   readonly #listeners = new Set<() => void>();
+  // Live needs-you set from attention broadcasts (#383 batch): reviewId ⇢ its active high-priority
+  // attention ids. A review is needs-you while any high-priority attention on it is unresolved.
+  readonly #attentionIdsByReview = new Map<string, Set<string>>();
+  readonly #reviewByAttentionId = new Map<string, string>();
 
   constructor(private readonly createSupervisor: SupervisorFactory) {}
+
+  /** The live needs-you review set from attention broadcasts (augments the projected summary). */
+  needsYouReviewIds(): ReadonlySet<string> {
+    return new Set(this.#attentionIdsByReview.keys());
+  }
+
+  /** Apply one attention frame to the live needs-you set; emits if it changed anything. */
+  #applyAttention(frame: AttentionEventFrame): void {
+    if (frame.event === "raised" && frame.item) {
+      const { id, family, reviewId } = frame.item;
+      if (!reviewId || !NEEDS_YOU_FAMILIES.has(family)) return;
+      this.#reviewByAttentionId.set(id, reviewId);
+      const set = this.#attentionIdsByReview.get(reviewId) ?? new Set<string>();
+      set.add(id);
+      this.#attentionIdsByReview.set(reviewId, set);
+      this.#emit();
+    } else if (frame.event === "cleared" && frame.clearedIds) {
+      let changed = false;
+      for (const id of frame.clearedIds) {
+        const reviewId = this.#reviewByAttentionId.get(id);
+        if (!reviewId) continue;
+        this.#reviewByAttentionId.delete(id);
+        const set = this.#attentionIdsByReview.get(reviewId);
+        set?.delete(id);
+        if (set && set.size === 0) this.#attentionIdsByReview.delete(reviewId);
+        changed = true;
+      }
+      if (changed) this.#emit();
+    }
+  }
 
   /** Every paired daemon connection, in pairing order. */
   list(): DaemonConnection[] {
@@ -84,6 +134,9 @@ export class DaemonRegistry {
       connection.status = status;
       this.#emit();
     });
+    // Keep the needs-you set live off this daemon's attention broadcasts (#383 batch). The
+    // connect-time replay hands the outstanding set on connect, so a cold open pins correctly.
+    supervisor.onAttention((frame) => this.#applyAttention(frame));
     this.#byId.set(daemon.id, connection);
     this.#daemonIdByDevice.set(daemon.deviceId, daemon.id);
     this.#emit();

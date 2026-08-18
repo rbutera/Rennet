@@ -12,83 +12,99 @@ import { useLocalSearchParams } from "expo-router";
 import { type ReactNode, useEffect, useState } from "react";
 import { FlatList, Text, View } from "react-native";
 import { Card, HunkBlock, Screen } from "../../../../../src/components/ui";
+import { type CanvasRow, flattenCanvasRows } from "../../../../../src/lib/canvas-rows";
 import { newCommandId } from "../../../../../src/lib/ids";
-import { asProjectedReview } from "../../../../../src/lib/projection";
-import { useConnection, useReviewFocus } from "../../../../../src/runtime/use-connection";
+import {
+  useConnection,
+  useReviewFocus,
+  useReviewLoad,
+} from "../../../../../src/runtime/use-connection";
 import { space, type } from "../../../../../src/theme/tokens";
 import { useTheme } from "../../../../../src/theme/use-theme";
-
-interface Element {
-  readonly key: string;
-  readonly path: string;
-  readonly diff: string;
-}
 
 export default function Canvas(): ReactNode {
   const t = useTheme();
   const { daemonId, reviewId } = useLocalSearchParams<{ daemonId: string; reviewId: string }>();
   useReviewFocus(daemonId, reviewId);
   const connection = useConnection(daemonId);
-  const [elements, setElements] = useState<Element[]>([]);
+  // Load THIS review's own metadata (#383 batch): its repo key comes from review.load(reviewId),
+  // never the daemon's current bootstrap review — a deep-linked review may be a different one.
+  const loaded = useReviewLoad(daemonId, reviewId);
+  const repoKey = loaded.review?.repositoryRoot.repoKey;
+  // Flattened rows: a file header + one row per hunk, so a large file diff is virtualized hunk
+  // by hunk rather than mounted as one giant row (#383 batch, finding 16).
+  const [rows, setRows] = useState<CanvasRow[]>([]);
 
   useEffect(() => {
-    if (!connection) return;
+    if (!connection || !repoKey) return;
     const conn = connection;
     let cancelled = false;
     async function load(): Promise<void> {
-      // The projected review names its repo as a reference; the daemon resolves the repoPath
-      // reference back to its host path (projection input resolution). We send the projected key.
-      const bootstrap = await conn.supervisor.invoke("app.bootstrap", {});
-      const review = bootstrap.review ? asProjectedReview(bootstrap.review) : null;
-      if (!review) return;
       const canvases = await conn.supervisor.invoke("review.canvases", {
         commandId: newCommandId(),
         reviewId,
-        repoPath: review.repositoryRoot.repoKey,
+        repoPath: repoKey as string,
       });
       if (cancelled) return;
-      setElements(
-        Object.entries(canvases.elementDiffs).map(([key, diff]) => ({
-          key,
-          path: diff.path,
-          diff: diff.diff,
-        })),
+      setRows(
+        flattenCanvasRows(
+          Object.entries(canvases.elementDiffs).map(([key, diff]) => ({
+            key,
+            path: diff.path,
+            diff: diff.diff,
+          })),
+        ),
       );
     }
     void load().catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [connection, reviewId]);
+  }, [connection, reviewId, repoKey]);
 
   return (
     <Screen>
       <Text style={{ color: t.faint, fontSize: type.control, marginBottom: space.sm }}>
-        reading order · {elements.length} elements
+        reading order · {rows.filter((r) => r.type === "file").length} files
       </Text>
       <FlatList
-        data={elements}
+        data={rows}
         keyExtractor={(item) => item.key}
-        renderItem={({ item }) => (
-          <Card>
-            <Text style={{ color: t.text, fontSize: type.control, fontWeight: "600" }}>
+        renderItem={({ item }) =>
+          item.type === "file" ? (
+            <Text
+              style={{
+                color: t.text,
+                fontSize: type.control,
+                fontWeight: "600",
+                marginTop: space.md,
+                marginBottom: space.xs,
+              }}
+            >
               {item.path}
             </Text>
-            <HunkBlock diff={item.diff} />
-          </Card>
-        )}
+          ) : (
+            <Card>
+              <HunkBlock diff={item.diff} />
+            </Card>
+          )
+        }
         // Lazy hunk mounting: keep the mounted window small so a large review stays smooth.
         initialNumToRender={6}
         maxToRenderPerBatch={6}
         windowSize={7}
         removeClippedSubviews
         ListEmptyComponent={
-          <Text style={{ color: t.muted }}>
-            {connection ? "Loading the canvas…" : "Daemon unreachable — showing the last replica."}
+          <Text style={{ color: loaded.status === "error" ? t.amber : t.muted }}>
+            {loaded.status === "unreachable"
+              ? "Daemon unreachable — showing the last replica."
+              : loaded.status === "error"
+                ? `This review could not be loaded. ${loaded.error ?? ""}`.trim()
+                : "Loading the canvas…"}
           </Text>
         }
         ListFooterComponent={
-          elements.length > 0 ? (
+          rows.length > 0 ? (
             <View style={{ paddingVertical: space.lg }}>
               <Text style={{ color: t.faint, textAlign: "center", fontSize: type.control }}>
                 scrolls to the end — every finding, every hunk

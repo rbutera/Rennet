@@ -28,7 +28,15 @@ export default function Connections(): ReactNode {
           <DeviceTokenRow
             key={c.daemon.id}
             connection={c}
-            onRevoke={() => runtime.registry.remove(c.daemon.id)}
+            onRevoke={() => {
+              // Revoke on the daemon (severs the token + its live sockets), then forget locally —
+              // erasing the keychain entry and the registry row (#383 batch, finding 1). Best-effort
+              // on the wire: an offline daemon is still forgotten locally.
+              void c.supervisor
+                .invoke("pairing.revokeDevice", { deviceId: c.daemon.deviceId })
+                .catch(() => undefined)
+                .finally(() => void runtime.forgetDaemon(c.daemon.id));
+            }}
           />
         ))}
 

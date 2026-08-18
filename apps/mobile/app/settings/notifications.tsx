@@ -3,26 +3,18 @@
 // right moment (here, not on cold launch). "Project processed" is silent by taxonomy — shown
 // off and non-interactive. Registering the token happens when the user turns push on.
 
-import { type ReactNode, useState } from "react";
+import type { AttentionFamily } from "@rennet/protocol";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { OutlineButton, Screen, SectionLabel, SwitchRow } from "../../src/components/ui";
 import { useRuntime } from "../../src/runtime/context";
-import {
-  ensurePushPermission,
-  getPushToken,
-  registerPushWithAllDaemons,
-} from "../../src/runtime/push";
+import { ensurePushPermission, getPushToken } from "../../src/runtime/push";
+import { createNotificationPrefsStore } from "../../src/stores/native";
 import { space, type } from "../../src/theme/tokens";
 import { useTheme } from "../../src/theme/use-theme";
 
 /** The six families as user-facing switches (attention-notifications taxonomy). */
-type Family =
-  | "ask-pending"
-  | "review-finished"
-  | "turn-failed"
-  | "handoff-completed"
-  | "publish-ready"
-  | "processing-finished";
+type Family = AttentionFamily;
 
 const COPY: Record<Family, { title: string; subtitle: string }> = {
   "ask-pending": { title: "A turn needs you", subtitle: "the question, answerable right here" },
@@ -39,6 +31,7 @@ const COPY: Record<Family, { title: string; subtitle: string }> = {
 export default function Notifications(): ReactNode {
   const t = useTheme();
   const runtime = useRuntime();
+  const prefsStore = useMemo(() => createNotificationPrefsStore(), []);
   const [enabled, setEnabled] = useState<Record<Family, boolean>>({
     "ask-pending": true,
     "review-finished": true,
@@ -49,18 +42,44 @@ export default function Notifications(): ReactNode {
   });
   const [pushOn, setPushOn] = useState(false);
 
+  // Hydrate the muted families from storage so the switches reflect the saved choice on open.
+  useEffect(() => {
+    let cancelled = false;
+    void prefsStore.load().then((muted) => {
+      if (cancelled) return;
+      setEnabled((prev) => {
+        const next = { ...prev };
+        for (const family of muted) if (family in next) next[family] = false;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [prefsStore]);
+
+  /** The muted families (switch off) — what the daemon suppresses pushes for. */
+  const disabledFamilies = (state: Record<Family, boolean>): AttentionFamily[] =>
+    (Object.keys(state) as Family[]).filter((f) => !state[f]);
+
   async function enablePush(): Promise<void> {
     const granted = await ensurePushPermission();
     if (!granted) return;
     const token = await getPushToken();
     if (token) {
-      await registerPushWithAllDaemons(runtime.registry, token);
+      runtime.configurePush(token, disabledFamilies(enabled));
       setPushOn(true);
     }
   }
 
   const toggle = (family: Family) => (value: boolean) =>
-    setEnabled((prev) => ({ ...prev, [family]: value }));
+    setEnabled((prev) => {
+      const next = { ...prev, [family]: value };
+      // Persist the choice and, if push is on, re-register so the daemon's mute set stays in sync.
+      void prefsStore.save(disabledFamilies(next));
+      if (pushOn) void getPushToken().then((token) => token && runtime.configurePush(token, disabledFamilies(next)));
+      return next;
+    });
 
   const rowFor = (family: Family): ReactNode => (
     <SwitchRow
