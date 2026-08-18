@@ -141,6 +141,14 @@ export default defineConfig({
                     link: "/developing/reference/app-server-research/",
                   },
                   {
+                    label: "Mobile ideation",
+                    link: "/developing/reference/mobile-ideation/",
+                  },
+                  {
+                    label: "Mobile plan",
+                    link: "/developing/reference/mobile-plan/",
+                  },
+                  {
                     label: "Codex app-server integration",
                     link: "/developing/reference/codex-app-server/",
                   },

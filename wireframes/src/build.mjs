@@ -12,6 +12,7 @@ import { frame06, frame07, frame08, frame09, frame10, frameNoise } from './revie
 import { frameDeltaReview } from './deltareview.mjs';
 import { frame11, frame12, frame13, frame14, frame15, frame16 } from './finalize.mjs';
 import { frame18 } from './navmodel.mjs';
+import { frameM1, frameM2, frameM3, frameM4, frameM5, frameM6 } from './mobile.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url)); // .../src
 
@@ -38,6 +39,12 @@ const FRAMES = {
   '16-command-palette': frame15,
   '17-flow-overview': frame16,
   '18-navigation-model': frame18,
+  '19-mobile-pairing': frameM1,
+  '20-mobile-review-list': frameM2,
+  '21-mobile-review-detail': frameM3,
+  '22-mobile-ask': frameM4,
+  '23-mobile-publish': frameM5,
+  '24-mobile-notifications': frameM6,
 };
 
 export const NAMES = Object.keys(FRAMES);

@@ -27,4 +27,4 @@ node wireframes/serve.mjs
 
 Badges are derived from each frame's filename prefix (`05-project-detail` → badge `05`), so a new screen can be inserted (e.g. `04a-projects-list`) without renumbering the frames after it.
 
-Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker + footer) and each frame's `title`. Current: **v4.0** (v3.3 plus a coherent navigation model — the breadcrumb + nav-rail spine, the unified chat conversation panel, the patchset trail, and frame `18-navigation-model`).
+Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker + footer) and each frame's `title`. Current: **v4.1** (v4.0 plus the mobile set — frames `19`–`24`, the phase 6 gate's wireframe pass for issue #382, built by `src/mobile.mjs`; each phone screen names the protocol commands and event topics it consumes).
