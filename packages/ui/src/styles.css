@@ -3379,6 +3379,35 @@ button {
   font-family: var(--code);
   font-size: 11px;
 }
+.settings-pair-code {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-pair-code-value {
+  font-family: var(--code);
+  font-size: 18px;
+  letter-spacing: 2px;
+  padding: 6px 10px;
+  border-radius: var(--chip-radius);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  align-self: flex-start;
+}
+.settings-pair-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-pair-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .settings-empty {
   display: flex;
   flex-direction: column;

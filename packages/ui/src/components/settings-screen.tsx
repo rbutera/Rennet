@@ -148,7 +148,7 @@ export function SettingsScreen({
 }) {
   const [view, setView] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string>();
-  const [tab, setTab] = useState<"global" | "repo" | "keyboard">("global");
+  const [tab, setTab] = useState<"global" | "repo" | "keyboard" | "pairing">("global");
   // A repo row is addressed by its canonical git top-level path — a workspace can
   // contribute several rows, so a bare projectId cannot key the selection.
   const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
@@ -232,6 +232,15 @@ export function SettingsScreen({
             onClick={() => setTab("keyboard")}
           >
             Keyboard
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "pairing"}
+            className={`settings-tab${tab === "pairing" ? " on" : ""}`}
+            onClick={() => setTab("pairing")}
+          >
+            Pairing
           </button>
         </div>
 
@@ -357,8 +366,126 @@ export function SettingsScreen({
             }}
           />
         ) : null}
+
+        {view !== null && tab === "pairing" ? <PairingPanel bridge={bridge} /> : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * The Pairing section (#380) — mint a device pairing code and manage paired devices.
+ * A minted code is a typed one-time bootstrap (5-minute TTL); a device exchanges it
+ * once for a long-lived token and then just works — no per-action ceremony (Rule Zero).
+ * QR rendering is deferred (no dependency added this phase, per the Dependency
+ * Standard); the typed code is the whole UX and works over any transport. All state
+ * goes through `bridge.invoke` — no host effects.
+ */
+function PairingPanel({ bridge }: { bridge: RennetBridge }) {
+  const [devices, setDevices] = useState<
+    { deviceId: string; name: string; lastSeenAt: string; expiresAt: string }[]
+  >([]);
+  const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    bridge
+      .invoke("pairing.listDevices", {})
+      .then((result) => setDevices(result.devices))
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+  }, [bridge]);
+
+  async function mint(): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      setCode(await bridge.invoke("pairing.mint", {}));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(deviceId: string): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await bridge.invoke("pairing.revokeDevice", { deviceId });
+      setDevices(result.devices);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-panel" aria-label="Device pairing">
+      {error ? <p className="settings-error">{error}</p> : null}
+      <div className="settings-row">
+        <div className="settings-row-label">
+          <span className="settings-k">Pair a device</span>
+          <span className="settings-d">a one-time code a remote device exchanges for access</span>
+        </div>
+        <div className="settings-row-value">
+          <button
+            type="button"
+            className="settings-seg-btn"
+            onClick={() => void mint()}
+            disabled={busy}
+          >
+            Create pairing code
+          </button>
+          {code ? (
+            <div className="settings-pair-code" aria-live="polite">
+              <code className="settings-pair-code-value">{code.code}</code>
+              <span className="settings-d">
+                enter it on the device within 5 minutes; it works once
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="settings-row">
+        <div className="settings-row-label">
+          <span className="settings-k">Paired devices</span>
+          <span className="settings-d">
+            revoke a device to end its access at the next handshake
+          </span>
+        </div>
+        <div className="settings-row-value">
+          {devices.length === 0 ? (
+            <p className="settings-note">No devices paired yet.</p>
+          ) : (
+            <ul className="settings-pair-list">
+              {devices.map((device) => (
+                <li key={device.deviceId} className="settings-pair-item">
+                  <span className="settings-k">{device.name}</span>
+                  <span className="settings-d">last seen {device.lastSeenAt}</span>
+                  <button
+                    type="button"
+                    className="settings-seg-btn"
+                    aria-label={`Revoke ${device.name}`}
+                    onClick={() => void revoke(device.deviceId)}
+                    disabled={busy}
+                  >
+                    Revoke
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+      <p className="settings-note">
+        A paired device reaches this daemon directly (Tailscale-first) — there is no Rennet server
+        in the middle. A remote device never sees a host path; it works with repo references only.
+      </p>
+    </section>
   );
 }
 

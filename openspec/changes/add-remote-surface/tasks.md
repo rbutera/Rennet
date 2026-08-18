@@ -28,7 +28,7 @@
 
 ## 5. Desktop settings pairing panel
 
-- [ ] 5.1 `packages/ui` Settings gains a Pairing section: mint button → code (+ QR per design D8 — state the dependency call), paired-device list with revoke. Bridge commands only; DOM test alongside existing settings tests.
+- [x] 5.1 `packages/ui` Settings gains a Pairing section: mint button → code (+ QR per design D8 — state the dependency call), paired-device list with revoke. Bridge commands only; DOM test alongside existing settings tests.
 
 ## 6. Remote e2e + positive control
 
