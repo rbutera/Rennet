@@ -6,9 +6,7 @@
       {
         "rule": "side-tab",
         "value": "*",
-        "files": [
-          "packages/ui/src/canvas.css"
-        ],
+        "files": ["packages/ui/src/canvas.css"],
         "createdAt": "2026-08-17T18:23:31.015Z",
         "reason": "Private backlight provenance system: 3px inset --private bar marking locally-private threads is intentional, documented in-file"
       },
@@ -45,308 +43,312 @@
       {
         "rule": "design-system-font-size",
         "value": "*",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ],
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:12:55.038Z",
         "reason": "Agent: DESIGN.md scopes the enumerated font ramp to packages/ui; marketing uses the documented fluid clamp scale"
       },
       {
         "rule": "design-system-color",
         "value": "rgb(0 0 0 / 65%)",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:13:35.788Z",
-        "reason": "Agent: button ambient shadow black, DESIGN.md sanctions real downward shadows",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: button ambient shadow black, DESIGN.md sanctions real downward shadows"
       },
       {
         "rule": "design-system-color",
         "value": "rgb(0 0 0 / 55%)",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:13:35.827Z",
-        "reason": "Agent: button hover-lift shadow black, DESIGN.md sanctions 2px lift with real shadow",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: button hover-lift shadow black, DESIGN.md sanctions 2px lift with real shadow"
       },
       {
         "rule": "design-system-color",
         "value": "#66717b",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:13:35.867Z",
-        "reason": "Agent: neutral tone bar on the always-dark opaque diff surface; scheme-flipping token would regress",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: neutral tone bar on the always-dark opaque diff surface; scheme-flipping token would regress"
       },
       {
         "rule": "design-system-color",
         "value": "#10141a",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:48.849Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#f2f3f4",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:48.887Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#303741",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:48.928Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#b5bec8",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:48.966Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#75808b",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.002Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#7eb391",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.038Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#6c9f80",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.074Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#cf7e74",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.120Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#a85c56",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.156Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#11151b",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.193Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#e9edf1",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.229Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#303740",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.264Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#9ca6b0",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.300Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#2e211e",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.337Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#d99586",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.372Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#1a2a20",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.409Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#8fc7a1",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.449Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#93a1ae",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.493Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#eceff2",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.537Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#c8cdd2",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.580Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#5e6670",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.623Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#d65f55",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.661Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#d99a3b",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.698Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#5eac6e",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.737Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-color",
         "value": "#59616b",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.778Z",
-        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: fixed-palette proof artwork (always-dark code surfaces, macOS window chrome/traffic lights); scheme tokens intentionally not used"
       },
       {
         "rule": "design-system-radius",
         "value": "2px",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:27:49.819Z",
-        "reason": "Agent: micro tone-bar corner inside miniature diff artwork, not a control/surface radius",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: micro tone-bar corner inside miniature diff artwork, not a control/surface radius"
       },
       {
         "rule": "design-system-radius",
         "value": "11px",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:37:11.631Z",
-        "reason": "Agent: DESIGN.md sanctions 10-14px marketing proof-surface corners",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: DESIGN.md sanctions 10-14px marketing proof-surface corners"
       },
       {
         "rule": "design-system-radius",
         "value": "14px",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:37:11.670Z",
-        "reason": "Agent: DESIGN.md sanctions 10-14px marketing proof-surface corners",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: DESIGN.md sanctions 10-14px marketing proof-surface corners"
       },
       {
         "rule": "design-system-radius",
         "value": "8px 8px 22px 8px",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:37:11.711Z",
-        "reason": "Agent: the paper's sanctioned single deeper corner per DESIGN.md",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: the paper's sanctioned single deeper corner per DESIGN.md"
       },
       {
         "rule": "design-system-radius",
         "value": "22px",
+        "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:37:11.751Z",
-        "reason": "Agent: the paper's sanctioned single deeper corner per DESIGN.md",
-        "files": [
-          "apps/marketing/src/styles/global.css"
-        ]
+        "reason": "Agent: the paper's sanctioned single deeper corner per DESIGN.md"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgb(255 255 255 / 90%)",
+        "files": ["apps/marketing/src/styles/global.css"],
+        "createdAt": "2026-08-18T15:59:25.116Z",
+        "reason": "Agent: caption chip inside fixed-light window-chrome artwork, same sanctioned artwork palette family"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "10px",
+        "createdAt": "2026-08-18T19:39:07.534Z"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "11px",
+        "createdAt": "2026-08-18T19:39:07.641Z"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "12px",
+        "createdAt": "2026-08-18T19:39:07.705Z"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "13px",
+        "createdAt": "2026-08-18T19:39:07.747Z"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "14px",
+        "createdAt": "2026-08-18T19:39:07.789Z"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "19px",
+        "createdAt": "2026-08-18T19:39:07.831Z"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "22px",
+        "createdAt": "2026-08-18T19:39:07.882Z"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "34px",
+        "createdAt": "2026-08-18T19:39:07.934Z"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "16px",
+        "createdAt": "2026-08-18T19:39:07.983Z"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgba(0, 0, 0, 0.28)",
+        "createdAt": "2026-08-18T19:39:08.052Z"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgba(6, 7, 10, 0.72)",
+        "createdAt": "2026-08-18T19:39:08.122Z"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgba(8, 11, 15, 0.62)",
+        "createdAt": "2026-08-18T19:39:08.188Z"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgba(0, 0, 0, 0.5)",
+        "createdAt": "2026-08-18T19:39:08.266Z"
       }
     ]
   }

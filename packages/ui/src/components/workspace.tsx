@@ -924,6 +924,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     // Canvas shortcuts must never hijack text editing: a keydown from the
     // proposal-edit textarea (or any field) is the user typing, not a command.
     if (isEditableTarget(event.target as HTMLElement)) return;
+    // A descendant widget that already handled the key (e.g. the lens tablist
+    // moving between tabs with the arrow keys) marks it defaultPrevented; the
+    // canvas must not then ALSO act on it (arrowing tabs would otherwise zoom).
+    if (event.defaultPrevented) return;
     const pressed = chordFromEvent(event);
     const zoomInDefinition = catalogueDef("zoom.in");
     const zoomOutDefinition = catalogueDef("zoom.out");
@@ -1088,7 +1092,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           only a jump-list, and any unplaceable mark surfaces in the orphan tray. */}
       {marks.length > 0 ? <MarkIndex entries={markEntries} onNavigate={navigateToMark} /> : null}
 
-      <main className="canvas-surface">
+      <main
+        className="canvas-surface"
+        id="canvas-surface-panel"
+        role="tabpanel"
+        aria-labelledby={`lens-tab-${angle}`}
+      >
         {/* The hypothesis reading frame (issue #178/#181): the reviewer's prior —
             domain, scope, the design we'd have chosen, and the predicted risks with
             their cross-check status — shown BEFORE the lenses so the review is read
