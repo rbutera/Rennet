@@ -162,7 +162,10 @@
   border-bottom: 1px solid var(--hairline);
 }
 .canvas-coverage {
-  color: var(--private);
+  /* Ink, not private: renders on the chrome frost (translucent --chrome-bg over the
+     REAL desktop via Electron vibrancy) — the backdrop is unknowable, so no contrast
+     can be proven. Opaque-ground policy: hue text needs a solid coat. */
+  color: var(--text);
   font-size: 12px;
   font-weight: 600;
 }
@@ -488,9 +491,10 @@
   font-size: 11px;
 }
 .disposition-btn.d-approve:hover {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--green-line);
   background: var(--green-fill);
 }
@@ -501,9 +505,10 @@
 }
 .disposition-btn.d-comment:hover,
 .disposition-btn.d-question:hover {
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -607,9 +612,10 @@
   cursor: pointer;
 }
 .l3-btn.l3-accept:hover {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--green-line);
   background: var(--green-fill);
 }
@@ -1223,9 +1229,10 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .collation-refined-body {
   margin-top: 4px;
@@ -1410,9 +1417,10 @@
   margin-top: 9px;
 }
 .flag-concur {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
   border-radius: var(--chip-radius);
@@ -1498,7 +1506,10 @@
 }
 .flag-deep-review:hover:not(:disabled) {
   border-color: var(--private);
-  color: var(--private);
+  /* Ink, not private: --surface-2 is translucent over the chrome glass (~4.4 on the
+     canvas anchor, worse on a dark desktop). Opaque-ground policy: the --private
+     border carries the hover affordance. */
+  color: var(--text);
 }
 .flag-deep-review:disabled {
   color: var(--text-faint);
@@ -1511,9 +1522,10 @@
   font: 600 11px / 1.2 var(--sans);
 }
 .flag-dual-full {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
@@ -1609,9 +1621,10 @@
   text-transform: uppercase;
 }
 .flag-verification-reproduced .flag-verification-label {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .flag-verification-inconclusive .flag-verification-label {
   color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
@@ -1650,9 +1663,10 @@
   text-transform: uppercase;
 }
 .flag-adjudication-supported .flag-adjudication-label {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .flag-adjudication-contradicted .flag-adjudication-label {
   color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
@@ -1705,9 +1719,10 @@
   color: var(--text-soft);
 }
 .ui-verification-ran .ui-verification-label {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .ui-verification-count {
   flex: none;
@@ -2062,9 +2077,10 @@
   font: 500 11px / 1.2 var(--mono);
 }
 .noise-judge-rule {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
@@ -2249,9 +2265,10 @@
   border-color: var(--private-line);
 }
 .disposition-cluster-btn.d-approve:hover {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--green-line);
   background: var(--green-fill);
 }
@@ -2262,9 +2279,10 @@
 }
 .disposition-cluster-btn.d-comment:hover,
 .disposition-cluster-btn.d-question:hover {
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -2306,9 +2324,10 @@
   background: var(--surface-2);
 }
 .collation-item-lane[data-lane="blue"] {
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -2377,7 +2396,10 @@
   font-size: 12px;
 }
 .collation-lane-count[data-lane="blue"] {
-  color: var(--private);
+  /* Ink, not private: the rollup sits on translucent --win-bg over the modal scrim —
+     real range computes 2.63-3.49 (AA fail). Opaque-ground policy: hue text needs a
+     solid coat; the lane WORD carries the lane. */
+  color: var(--text);
 }
 .collation-lane-sep {
   color: var(--text-faint);
@@ -2390,9 +2412,10 @@
   border-radius: var(--chip-radius);
   border: 1px solid var(--private-line);
   background: var(--private-fill);
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font: 700 10px / 1.4 var(--sans);
   letter-spacing: 0.03em;
 }
@@ -2596,9 +2619,10 @@
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font: 600 12px / 1 var(--sans);
   padding: 5px 9px;
   cursor: pointer;
@@ -2621,9 +2645,10 @@
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font: 600 11px / 1 var(--sans);
   padding: 3px 8px;
   cursor: pointer;
@@ -3102,9 +3127,10 @@
   border: 1px solid var(--hairline);
 }
 .ospec-cap-new {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border-color: var(--green-line);
 }
@@ -3190,9 +3216,10 @@
   color: var(--text-faint);
 }
 .ospec-op-added {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border-color: var(--green-line);
 }
@@ -3298,9 +3325,10 @@
   font: 500 12px / 1.2 var(--sans);
   padding: 4px 8px;
   border-radius: 6px;
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
@@ -3391,7 +3419,10 @@ button.ospec-covchip:hover {
   flex: none;
   display: inline-flex;
   align-items: center;
-  color: var(--green);
+  /* Ink, not green: .ospec-task-group is translucent --surface-2 over the chrome
+     glass — backdrop unknowable. Opaque-ground policy; the check SHAPE + the row
+     line-through carry the done state. */
+  color: var(--text);
 }
 
 /* Design: table of contents + sections. */

@@ -1750,7 +1750,10 @@ button {
   font-family: var(--mono, ui-monospace, monospace);
 }
 .context-manifest-send[data-digest-match="true"] span:nth-last-of-type(2) {
-  color: var(--green);
+  /* Ink, not green: .context-manifest is translucent --surface-2 over the chrome
+     glass (4.42 on the canvas anchor, worse on a dark desktop). Opaque-ground
+     policy; the words "Digest matches" carry the state. */
+  color: var(--text);
 }
 .context-manifest-empty,
 .context-manifest-unmanaged {
@@ -2105,9 +2108,10 @@ button {
   border-radius: var(--chip-radius);
   background: var(--private-fill);
   box-shadow: var(--private-glow);
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -2263,9 +2267,10 @@ button {
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font-size: 12px;
 }
 
@@ -2990,9 +2995,10 @@ button {
   border: 1px solid var(--private-line);
   border-radius: 999px;
   background: var(--private-fill);
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   font-size: 11px;
 }
 .smart-row-trajectory {
@@ -3059,9 +3065,10 @@ button {
 .smart-row-badge.is-read-only {
   border: 1px solid var(--green-line);
   background: var(--green-fill);
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
 }
 .smart-row-statelabel {
   font: 700 10px / 1.2 var(--sans);
@@ -3444,9 +3451,10 @@ button {
   padding: 2px 7px;
 }
 .settings-prov-set {
-  color: var(
-    --text
-  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: private on --private-fill is sub-AA on surface-hosted grounds (4.46);
+     raised-hosted computes 4.60 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--private-fill);
   border-color: var(--private-line);
 }
@@ -3624,9 +3632,10 @@ button {
   border-color: var(--accent-soft-line);
 }
 .settings-sev-low {
-  color: var(
-    --text
-  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
+  /* Ink: green on --green-fill is sub-AA on surface/canvas-hosted grounds (4.16-4.48);
+     raised-hosted computes 4.62 (pass) but the ink is uniform across grounds — one
+     policy, no per-host exceptions. State stays on fill+border+word. */
+  color: var(--text);
   background: var(--green-fill);
   border-color: var(--green-line);
 }

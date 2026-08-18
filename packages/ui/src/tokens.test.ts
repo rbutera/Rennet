@@ -209,14 +209,22 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .trim()
         .replace(/\s+/g, " ");
-      out.push({ selector: raw, body: m[2] ?? "" });
+      // A comma-grouped list styles EVERY listed selector: split it, or a grouped
+      // `.x, .panel { background: ... }` override is invisible under `.panel`.
+      for (const part of raw
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean))
+        out.push({ selector: part, body: m[2] ?? "" });
     }
     return out;
   };
   // `color: var(--amber)` as a real TEXT colour — the negative lookbehind rejects
   // `border-color: var(--amber)` (a kept amber affordance is a border, not text ink).
   const amberText = (r: Rule): boolean => /(?<![\w-])color:\s*var\(--amber\)/.test(r.body);
-  const allRules = [...rules(readCss("canvas.css")), ...rules(readCss("styles.css"))];
+  // Cascade file order MUST match index.ts import order (styles.css, then canvas.css):
+  // for equal-specificity repeats the later file wins, so canvas.css goes LAST.
+  const allRules = [...rules(readCss("styles.css")), ...rules(readCss("canvas.css"))];
 
   // Every amber-TEXT selector that SURVIVES ink-ification, mapped to the container whose
   // background is its rendered ground and its kind. `text` must clear AA 4.5:1 on that
@@ -224,7 +232,17 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
   // graphics floor of 3:1. The container's background token is parsed from the CSS below,
   // so a ground that drifts to amber is caught. The discovered-set equality check keeps
   // coverage: ink-ifying reduces the set, and any NEW amber-text rule fails until mapped.
-  const GROUND: Record<string, { container: string; kind: "text" | "graphic" }> = {
+  // `coGrounds`: OTHER background-declaring selectors sharing the container's class
+  // token (state variants, pseudo-layers) that the classifier has looked at. The
+  // ambiguity sweep below fails on any background rule NOT listed, so a new
+  // descendant/state override cannot silently change a mapped ground.
+  type GroundSpec = {
+    container: string;
+    kind: "text" | "graphic";
+    opacity?: number;
+    coGrounds?: string[];
+  };
+  const GROUND: Record<string, GroundSpec> = {
     // amber TEXT that clears AA on the --raised (#fff, 4.77:1) panels it renders on:
     ".ci-signal-failure-label": { container: ".ci-signal-panel", kind: "text" },
     ".ci-signal-body .ci-signal-incomplete": { container: ".ci-signal-panel", kind: "text" },
@@ -232,16 +250,27 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     ".hypothesis-degraded": { container: ".hypothesis-panel", kind: "text" },
     ".hypothesis-count-open": { container: ".hypothesis-panel", kind: "text" },
     ".settings-key-conflict": { container: ".settings-panel", kind: "text" },
-    ".settings-key-recording-note, .settings-key-invalid": {
-      container: ".settings-panel",
-      kind: "text",
-    },
+    ".settings-key-recording-note": { container: ".settings-panel", kind: "text" },
+    ".settings-key-invalid": { container: ".settings-panel", kind: "text" },
     // non-text amber GRAPHICS on an amber ground (icon / spinner / error glyph), 3:1 floor:
     ".engine-fallback-icon": { container: ".engine-fallback", kind: "graphic" },
-    ".processing-orb.is-failed": { container: ".processing-orb.is-failed", kind: "graphic" },
+    ".processing-orb.is-failed": {
+      container: ".processing-orb.is-failed",
+      kind: "graphic",
+      // The orb's other layers/states also paint backgrounds; the error glyph only
+      // ever renders on the is-failed amber surface.
+      coGrounds: [
+        ".processing-orb",
+        ".processing-orb::before",
+        ".processing-orb.is-done",
+        ".processing-orb.is-failed::before",
+        ".processing-orb.is-done::before",
+      ],
+    },
     '.processing-repo[data-state="error"] .processing-repo-icon': {
       container: '.processing-repo[data-state="error"]',
       kind: "graphic",
+      coGrounds: [".processing-repo"], // the base (non-error) row never hosts the amber icon
     },
   };
 
@@ -258,30 +287,57 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     return `#${out.map((x) => x.toString(16).padStart(2, "0")).join("")}`;
   };
 
-  // Resolve the container's WINNING `background: var(--token)` — the last matching
-  // rule that sets a background, matching the CSS cascade for equal-specificity
-  // repeats. Codex proved the hole: `.find()` took the FIRST rule, so appending a
-  // later `.ci-signal-panel { background: var(--amber-surface) }` left the stale
-  // first ground (--raised) green. Scanning to the last declaration bites instead.
-  const lastBackgroundToken = (ruleList: Rule[], selector: string): string | undefined => {
-    let token: string | undefined;
+  // The WINNING background VALUE for a selector: LAST matching rule (file/cascade
+  // order for equal-specificity repeats — Codex proved `.find()` blessed stale
+  // grounds), and within a rule the LAST background/background-color declaration
+  // (duplicate declarations: last wins). Returns the raw value; the caller decides
+  // whether it is resolvable.
+  const winningBackground = (ruleList: Rule[], selector: string): string | undefined => {
+    let value: string | undefined;
     for (const r of ruleList) {
       if (r.selector !== selector) continue;
-      const m = r.body.match(/background:\s*var\(--([a-z0-9-]+)\)/i);
-      if (m?.[1] !== undefined) token = `--${m[1]}`;
+      const decls = [...r.body.matchAll(/(?<![\w-])background(?:-color)?:\s*([^;]+)/gi)];
+      const last = decls[decls.length - 1];
+      if (last?.[1] !== undefined) value = last[1].trim();
     }
-    return token;
+    return value;
   };
-  // Read the container's winning background token and resolve it to a light-scheme hex
-  // (light --amber/--green are the worst case). Solid tokens resolve directly; an rgba
-  // ground composites over --surface.
-  const groundHex = (container: string): string => {
-    const token = lastBackgroundToken(allRules, container);
-    if (token === undefined) throw new Error(`no background token on ${container}`);
-    // Solid hex token → use it; rgba token → composite over --surface.
-    if (new RegExp(`${token}:\\s*#`).test(block(LIGHT))) return hex(LIGHT, token);
-    return composite(rgba(LIGHT, token), hex(LIGHT, "--surface"));
+  // OPAQUE-GROUND POLICY: a hue mark is only provable on a solid coat. The app window
+  // is Electron vibrancy over the real desktop (transparent, #00000000), so any
+  // translucent ground (--surface-2, --win-bg, --chrome-bg…) has an UNKNOWABLE
+  // backdrop — no compositing estimate is allowed. A mapped container whose winning
+  // background is not a solid 6-digit hex token FAILS loudly: ink the site instead.
+  const groundHexIn = (ruleList: Rule[], container: string): string => {
+    const value = winningBackground(ruleList, container);
+    if (value === undefined) throw new Error(`no background declaration on ${container}`);
+    const m = value.match(/^var\(--([a-z0-9-]+)\)$/i);
+    if (!m || m[1] === undefined)
+      throw new Error(`unresolvable background on ${container}: "${value}" — classify explicitly`);
+    const token = `--${m[1]}`;
+    if (!new RegExp(`${token}:\\s*#[0-9a-fA-F]{6}\\b`).test(block(LIGHT)))
+      throw new Error(
+        `translucent ground ${token} on ${container} — hue marks need an opaque coat; ink the site`,
+      );
+    return hex(LIGHT, token);
   };
+  const groundHex = (container: string): string => groundHexIn(allRules, container);
+  // Ambiguity sweep support: every background-declaring selector that mentions a
+  // container's class token. Specificity is NOT modelled — anything beyond the
+  // mapped container and its classified coGrounds is a loud red, not a silent pass.
+  const classToken = (selector: string): string => {
+    const m = selector.match(/\.([a-zA-Z0-9_-]+)/);
+    if (!m || m[1] === undefined) throw new Error(`no class in ${selector}`);
+    return m[1];
+  };
+  const backgroundSelectorsMentioning = (ruleList: Rule[], token: string): string[] =>
+    [
+      ...new Set(
+        ruleList
+          .filter((r) => new RegExp(`\\.${token}(?![a-zA-Z0-9_-])`).test(r.selector))
+          .filter((r) => /(?<![\w-])background(?:-color)?:/i.test(r.body))
+          .map((r) => r.selector),
+      ),
+    ].sort();
 
   it("every amber-TEXT rule is mapped to a rendered ground — coverage stays exhaustive", () => {
     const discovered = [...new Set(allRules.filter(amberText).map((r) => r.selector))].sort();
@@ -314,20 +370,68 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
   });
 
   it("the ground resolver honours the CSS cascade: a LATER background override wins", () => {
-    // Codex's mutation class: append a second rule for the same selector that flips the
-    // background to an amber ground AFTER the real --raised rule. The old `.find()` (first
-    // match) stayed on --raised and missed it; last-wins resolves to the override and the
-    // contrast test above then reddens. This asserts the resolver itself on a synthetic sheet.
+    // Codex's first mutation class: a second rule for the same selector AFTER the real
+    // one. `.find()` (first match) blessed the stale ground; last-wins bites.
     const overridden = rules(
       ".ci-signal-panel { background: var(--raised); }" +
         ".ci-signal-panel { background: var(--amber-surface); }",
     );
-    expect(lastBackgroundToken(overridden, ".ci-signal-panel")).toBe("--amber-surface");
+    expect(winningBackground(overridden, ".ci-signal-panel")).toBe("var(--amber-surface)");
     // The ordinary single-declaration case still resolves to that one declaration.
     const single = rules(".ci-signal-panel { background: var(--raised); }");
-    expect(lastBackgroundToken(single, ".ci-signal-panel")).toBe("--raised");
+    expect(winningBackground(single, ".ci-signal-panel")).toBe("var(--raised)");
     // A selector with no background at all resolves to undefined (the caller throws).
-    expect(lastBackgroundToken(rules(".x { color: red; }"), ".x")).toBeUndefined();
+    expect(winningBackground(rules(".x { color: red; }"), ".x")).toBeUndefined();
+  });
+
+  it("resolver hardening: Codex's three escapes are loud, not silent (synthetic sheets)", () => {
+    // 1. DUPLICATE background declarations inside ONE rule body: the LAST wins.
+    expect(
+      winningBackground(
+        rules(".p { background: var(--raised); background: var(--amber-surface); }"),
+        ".p",
+      ),
+    ).toBe("var(--amber-surface)");
+    // 2. COMMA-GROUPED selector lists are split: the grouped override is visible
+    //    under the mapped selector (pre-split it matched only the joined string).
+    expect(winningBackground(rules(".other, .p { background: var(--amber-surface); }"), ".p")).toBe(
+      "var(--amber-surface)",
+    );
+    // 3. DESCENDANT override (— `.canvas-app .p`): not resolvable per-selector, so
+    //    the ambiguity sweep must SEE it — both selectors surface for classification,
+    //    and an unclassified extra fails the sweep below.
+    const sheet = rules(
+      ".p { background: var(--raised); } .canvas-app .p { background: var(--chrome-bg); }",
+    );
+    expect(backgroundSelectorsMentioning(sheet, "p")).toEqual([".canvas-app .p", ".p"]);
+    // Loud failures, never estimates: a literal/unparseable background throws…
+    expect(() => groundHexIn(rules(".s { background: rgba(8, 11, 15, 0.62); }"), ".s")).toThrow(
+      /unresolvable/,
+    );
+    // …and a translucent token ground (glass) throws under the opaque-ground policy.
+    expect(() => groundHexIn(rules(".s { background: var(--surface-2); }"), ".s")).toThrow(
+      /translucent ground/,
+    );
+    expect(() => groundHexIn(rules(".s { background: var(--win-bg); }"), ".s")).toThrow(
+      /translucent ground/,
+    );
+  });
+
+  it("no unclassified sibling grounds: every background rule touching a mapped container's class is accounted for", () => {
+    // For each mapped container, EVERY rule that mentions its class token and declares
+    // a background must be the container itself or an explicitly classified coGround.
+    // A new state/pseudo/descendant background override fails here with instructions,
+    // instead of silently escaping the exact-selector resolver.
+    for (const { container, coGrounds } of [
+      ...Object.values(GROUND),
+      ...Object.values(HUE_GROUND),
+    ]) {
+      const discovered = backgroundSelectorsMentioning(allRules, classToken(container));
+      const classified = [...new Set([container, ...(coGrounds ?? [])])].sort();
+      expect(discovered, `ambiguous ground for ${container} — classify explicitly`).toEqual(
+        classified,
+      );
+    }
   });
 
   it("amber marks left on an amber ground are non-text graphics (3:1 floor, below AA text)", () => {
@@ -365,41 +469,42 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
   const dimmed = (fgHex: string, opacity: number, backdropHex: string): string =>
     composite([channel(fgHex, 0), channel(fgHex, 1), channel(fgHex, 2), opacity], backdropHex);
 
-  const HUE_GROUND: Record<
-    string,
-    { container: string; kind: "text" | "graphic"; opacity?: number }
-  > = {
-    // green/private TEXT that clears AA 4.5:1 on the ground it renders on:
-    ".canvas-coverage": { container: ".canvas-app", kind: "text" }, // chrome frost: 4.97
+  // Under the OPAQUE-GROUND POLICY every surviving hue site maps to a solid coat
+  // (groundHex throws on translucent tokens). The former glass-hosted entries
+  // (.canvas-coverage, .collation-lane-count, the digest-match span, the
+  // flag-deep-review hover, .ospec-task-check) are ink now, not mapped.
+  const HUE_GROUND: Record<string, GroundSpec> = {
+    // green/private TEXT that clears AA 4.5:1 on the solid ground it renders on:
     ".l3-orphan-header": { container: ".l3-orphan-tray", kind: "text" }, // private-surface: 4.61
     ".collation-pr-draft-btn": { container: ".collation-pr-draft-btn", kind: "text" }, // 4.61
     ".collation-refine-nochange": { container: ".collation-item", kind: "text" }, // raised: 5.42
-    ".flag-deep-review:hover:not(:disabled)": { container: ".flag-deep-review", kind: "text" }, // surface-2: 4.76
-    '.collation-lane-count[data-lane="blue"]': { container: ".collation-canvas", kind: "text" }, // win-bg: 5.11
-    '.context-manifest-send[data-digest-match="true"] span:nth-last-of-type(2)': {
-      container: ".context-manifest", // surface-2: 4.77; digest-match implies included, so never under the 0.72 dropped-row dim
-      kind: "text",
-    },
     // private-surface: 4.61. Local rows are never read-only (smart-list.ts builds
-    // readOnly: false for kind "local"), so the 0.82 read-only dim cannot apply here.
-    ".trajectory-step.is-done": { container: '.smart-row[data-kind="local"]', kind: "text" },
+    // readOnly: false for kind "local"), so the 0.82 read-only dim cannot apply here;
+    // the base/read-only row backgrounds are classified, not this entry's ground.
+    ".trajectory-step.is-done": {
+      container: '.smart-row[data-kind="local"]',
+      kind: "text",
+      coGrounds: [".smart-row", '.smart-row[data-read-only="true"]'],
+    },
     ".settings-prov-item.on": { container: ".settings-panel", kind: "text" }, // raised: 5.40
     ".settings-applied": { container: ".settings-panel", kind: "text" }, // raised: 5.40
-    // non-text green/private GRAPHICS (glyph marks — ◇ hand, lock, check), 3:1 floor:
+    // non-text green/private GRAPHICS (glyph marks — ◇ hand, lock), 3:1 floor:
     ".cv-gutter": { container: ".code-view-scroll", kind: "graphic" },
     ".cv-discuss": { container: ".code-view-scroll", kind: "graphic" },
     ".collation-ask-glyph": { container: ".collation-ask", kind: "graphic" },
-    // The lock glyph survives the orphaned-cluster dim at 3.49 ≥ 3 (its TEXT siblings
-    // .conversation-head-title/.conversation-head-pill did not, and are inked).
+    // The lock glyph survives the orphaned-cluster dim: 3.49 on the --surface backdrop
+    // model, and the bound holds for ANY real backdrop (white 3.48, black 4.18), so the
+    // glass behind the solid cluster cannot break it. Its TEXT siblings
+    // .conversation-head-title/.conversation-head-pill did not survive, and are inked.
     ".conversation-head-lock": {
-      container: ".conversation-cluster, .conversation-general",
+      container: ".conversation-cluster",
       kind: "graphic",
       opacity: 0.85,
     },
-    ".ospec-task-check": { container: ".canvas-app", kind: "graphic" },
     '.smart-row[data-kind="local"] .smart-row-lead': {
       container: '.smart-row[data-kind="local"]',
       kind: "graphic",
+      coGrounds: [".smart-row", '.smart-row[data-read-only="true"]'],
     },
   };
 
