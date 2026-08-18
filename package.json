@@ -101,7 +101,6 @@
     "@fission-ai/openspec": "1.7.0",
     "@nx/eslint": "23.1.0",
     "@nx/eslint-plugin": "23.1.0",
-    "@nx/expo": "23.1.0",
     "@nx/js": "23.1.0",
     "@nx/playwright": "23.1.0",
     "@nx/react": "23.1.0",

@@ -42,9 +42,6 @@ importers:
       '@nx/eslint-plugin':
         specifier: 23.1.0
         version: 23.1.0(@babel/traverse@7.29.7)(@typescript-eslint/parser@8.65.0(@typescript/typescript6@6.0.2)(eslint@10.8.0(jiti@2.7.0)))(@typescript/typescript6@6.0.2)(eslint-config-prettier@10.1.8(eslint@10.8.0(jiti@2.7.0)))(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0)
-      '@nx/expo':
-        specifier: 23.1.0
-        version: 23.1.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@expo/metro@55.1.1)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@nx/playwright@23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@playwright/test@1.62.0)(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0))(@types/babel__core@7.20.5)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(babel-plugin-react-compiler@1.0.0)(esbuild@0.28.1)(eslint@10.8.0(jiti@2.7.0))(expo@55.0.28)(metro-config@0.83.7)(metro-resolver@0.83.7)(nx@23.1.0)(postcss@8.5.25)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@24.12.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.1.10)
       '@nx/js':
         specifier: 23.1.0
         version: 23.1.0(@babel/traverse@7.29.7)(nx@23.1.0)
@@ -2563,14 +2560,6 @@ packages:
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
     deprecated: This functionality has been moved to @npmcli/fs
 
-  '@nx/detox@23.1.0':
-    resolution: {integrity: sha512-jYU9SE6iv8aKqZJPzfpR8NAhcSmTdkgZos0l3w84d+UpT1Gj1MxHYgdgBuCELD4nnCiMNV+WmVw/DvUDN+3fHg==}
-    peerDependencies:
-      detox: ^20.0.0
-    peerDependenciesMeta:
-      detox:
-        optional: true
-
   '@nx/devkit@23.1.0':
     resolution: {integrity: sha512-4LPBrjwtretBQksqph2aXqz2Atd5+oO7RTVlQoOweU8Sh2A0wM8CNig8n+LX2iwxniPYRooLN4kRtKxO4mi2Mw==}
     peerDependencies:
@@ -2597,23 +2586,6 @@ packages:
       '@nx/jest':
         optional: true
       '@zkochan/js-yaml':
-        optional: true
-
-  '@nx/expo@23.1.0':
-    resolution: {integrity: sha512-sVFDIeLueYyPZo+UYumGM3xXt1CWTzQiaxo4nr8BP4PqheaHmKbvjt92hvPm1LFl7jPklyM4mvnEW5b5kLygNw==}
-    peerDependencies:
-      '@expo/metro': '>= 55.0.0'
-      expo: '>=53.0.0'
-      metro-config: '>= 0.82.0'
-      metro-resolver: '>= 0.82.0'
-    peerDependenciesMeta:
-      '@expo/metro':
-        optional: true
-      expo:
-        optional: true
-      metro-config:
-        optional: true
-      metro-resolver:
         optional: true
 
   '@nx/jest@23.1.0':
@@ -11553,83 +11525,6 @@ snapshots:
 
   '@expo-google-fonts/material-symbols@0.4.43': {}
 
-  '@expo/cli@55.0.34(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-constants@55.0.17)(expo-font@55.0.8)(expo-router@55.0.17)(expo@55.0.28)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)':
-    dependencies:
-      '@expo/code-signing-certificates': 0.0.6
-      '@expo/config': 55.0.19(@typescript/typescript6@6.0.2)
-      '@expo/config-plugins': 55.0.11
-      '@expo/devcert': 1.2.1
-      '@expo/env': 2.1.3
-      '@expo/image-utils': 0.8.15(@typescript/typescript6@6.0.2)
-      '@expo/json-file': 10.2.0
-      '@expo/log-box': 55.0.13(@expo/dom-webview@55.0.6)(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      '@expo/metro': 55.1.1
-      '@expo/metro-config': 55.0.25(@typescript/typescript6@6.0.2)(expo@55.0.28)
-      '@expo/osascript': 2.7.1
-      '@expo/package-manager': 1.13.1
-      '@expo/plist': 0.5.4
-      '@expo/prebuild-config': 55.0.20(@typescript/typescript6@6.0.2)(expo@55.0.28)
-      '@expo/require-utils': 55.0.6(@typescript/typescript6@6.0.2)
-      '@expo/router-server': 55.0.18(@expo/metro-runtime@55.0.12)(expo-constants@55.0.17)(expo-font@55.0.8)(expo-router@55.0.17)(expo-server@55.0.11)(expo@55.0.28)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@expo/schema-utils': 55.0.5
-      '@expo/spawn-async': 1.8.0
-      '@expo/ws-tunnel': 1.0.6
-      '@expo/xcpretty': 4.4.4
-      '@react-native/dev-middleware': 0.83.10
-      accepts: 1.3.8
-      arg: 5.0.2
-      better-opn: 3.0.2
-      bplist-creator: 0.1.0
-      bplist-parser: 0.3.2
-      chalk: 4.1.2
-      ci-info: 3.9.0
-      compression: 1.8.1
-      connect: 3.7.0
-      debug: 4.4.3(supports-color@7.2.0)
-      dnssd-advertise: 1.1.6
-      expo: 55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      expo-server: 55.0.11
-      fetch-nodeshim: 0.4.10
-      getenv: 2.0.0
-      glob: 13.0.6
-      lan-network: 0.2.1
-      multitars: 1.0.1
-      node-forge: 1.4.0
-      npm-package-arg: 11.0.3
-      ora: 3.4.0
-      picomatch: 4.0.5
-      pretty-format: 29.7.0
-      progress: 2.0.3
-      prompts: 2.4.2
-      resolve-from: 5.0.0
-      semver: 7.8.5
-      send: 0.19.2
-      slugify: 1.6.9
-      source-map-support: 0.5.21
-      stacktrace-parser: 0.1.11
-      structured-headers: 0.4.1
-      terminal-link: 2.1.1
-      toqr: 0.1.1
-      wrap-ansi: 7.0.0
-      ws: 8.21.1
-      zod: 3.25.76
-    optionalDependencies:
-      expo-router: 55.0.17(@expo/log-box@55.0.13)(@expo/metro-runtime@55.0.12)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(expo-constants@55.0.17)(expo-font@55.0.8)(expo-linking@55.0.16)(expo@55.0.28)(react-dom@19.2.8(react@19.2.8))(react-native-safe-area-context@5.6.2(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8))(react-native-screens@4.23.0(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      react-native: 0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8)
-    transitivePeerDependencies:
-      - '@expo/dom-webview'
-      - '@expo/metro-runtime'
-      - bufferutil
-      - expo-constants
-      - expo-font
-      - react
-      - react-dom
-      - react-server-dom-webpack
-      - supports-color
-      - typescript
-      - utf-8-validate
-    optional: true
-
   '@expo/cli@55.0.34(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(expo-constants@55.0.17)(expo-font@55.0.8)(expo-router@55.0.17)(expo@55.0.28)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)(typescript@5.4.5)':
     dependencies:
       '@expo/code-signing-certificates': 0.0.6
@@ -11730,23 +11625,6 @@ snapshots:
 
   '@expo/config-types@55.0.6': {}
 
-  '@expo/config@55.0.19(@typescript/typescript6@6.0.2)':
-    dependencies:
-      '@expo/config-plugins': 55.0.11
-      '@expo/config-types': 55.0.6
-      '@expo/json-file': 10.2.0
-      '@expo/require-utils': 55.0.6(@typescript/typescript6@6.0.2)
-      deepmerge: 4.3.1
-      getenv: 2.0.0
-      glob: 13.0.6
-      resolve-workspace-root: 2.0.1
-      semver: 7.8.5
-      slugify: 1.6.9
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-    optional: true
-
   '@expo/config@55.0.19(typescript@5.4.5)':
     dependencies:
       '@expo/config-plugins': 55.0.11
@@ -11815,20 +11693,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@expo/image-utils@0.8.15(@typescript/typescript6@6.0.2)':
-    dependencies:
-      '@expo/require-utils': 55.0.6(@typescript/typescript6@6.0.2)
-      '@expo/spawn-async': 1.8.0
-      chalk: 4.1.2
-      getenv: 2.0.0
-      jimp-compact: 0.16.1
-      parse-png: 2.1.0
-      semver: 7.8.5
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-    optional: true
-
   '@expo/image-utils@0.8.15(typescript@5.4.5)':
     dependencies:
       '@expo/require-utils': 55.0.6(typescript@5.4.5)
@@ -11857,15 +11721,6 @@ snapshots:
       '@babel/code-frame': 7.29.7
       json5: 2.2.3
 
-  '@expo/local-build-cache-provider@55.0.15(@typescript/typescript6@6.0.2)':
-    dependencies:
-      '@expo/config': 55.0.19(@typescript/typescript6@6.0.2)
-      chalk: 4.1.2
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-    optional: true
-
   '@expo/local-build-cache-provider@55.0.15(typescript@5.4.5)':
     dependencies:
       '@expo/config': 55.0.19(typescript@5.4.5)
@@ -11882,36 +11737,6 @@ snapshots:
       react: 19.2.8
       react-native: 0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8)
       stacktrace-parser: 0.1.11
-
-  '@expo/metro-config@55.0.25(@typescript/typescript6@6.0.2)(expo@55.0.28)':
-    dependencies:
-      '@babel/code-frame': 7.29.7
-      '@babel/core': 7.29.7
-      '@babel/generator': 7.29.7
-      '@expo/config': 55.0.19(@typescript/typescript6@6.0.2)
-      '@expo/env': 2.1.3
-      '@expo/json-file': 10.0.16
-      '@expo/metro': 55.1.1
-      '@expo/spawn-async': 1.8.0
-      browserslist: 4.28.7
-      chalk: 4.1.2
-      debug: 4.4.3(supports-color@7.2.0)
-      getenv: 2.0.0
-      glob: 13.0.6
-      hermes-parser: 0.32.1
-      jsc-safe-url: 0.2.4
-      lightningcss: 1.33.0
-      picomatch: 4.0.5
-      postcss: 8.5.25
-      resolve-from: 5.0.0
-    optionalDependencies:
-      expo: 55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-    transitivePeerDependencies:
-      - bufferutil
-      - supports-color
-      - typescript
-      - utf-8-validate
-    optional: true
 
   '@expo/metro-config@55.0.25(expo@55.0.28)(typescript@5.4.5)':
     dependencies:
@@ -11997,24 +11822,6 @@ snapshots:
       base64-js: 1.5.1
       xmlbuilder: 15.1.1
 
-  '@expo/prebuild-config@55.0.20(@typescript/typescript6@6.0.2)(expo@55.0.28)':
-    dependencies:
-      '@expo/config': 55.0.19(@typescript/typescript6@6.0.2)
-      '@expo/config-plugins': 55.0.11
-      '@expo/config-types': 55.0.6
-      '@expo/image-utils': 0.8.15(@typescript/typescript6@6.0.2)
-      '@expo/json-file': 10.2.0
-      '@react-native/normalize-colors': 0.83.10
-      debug: 4.4.3(supports-color@7.2.0)
-      expo: 55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      resolve-from: 5.0.0
-      semver: 7.8.5
-      xml2js: 0.6.0
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-    optional: true
-
   '@expo/prebuild-config@55.0.20(expo@55.0.28)(typescript@5.4.5)':
     dependencies:
       '@expo/config': 55.0.19(typescript@5.4.5)
@@ -12031,17 +11838,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
       - typescript
-
-  '@expo/require-utils@55.0.6(@typescript/typescript6@6.0.2)':
-    dependencies:
-      '@babel/code-frame': 7.29.7
-      '@babel/core': 7.29.7
-      '@babel/plugin-transform-modules-commonjs': 7.29.7(@babel/core@7.29.7)
-    optionalDependencies:
-      typescript: '@typescript/typescript6@6.0.2'
-    transitivePeerDependencies:
-      - supports-color
-    optional: true
 
   '@expo/require-utils@55.0.6(typescript@5.4.5)':
     dependencies:
@@ -12854,63 +12650,6 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
 
-  '@nx/detox@23.1.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@nx/playwright@23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@playwright/test@1.62.0)(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0))(@types/babel__core@7.20.5)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(babel-plugin-react-compiler@1.0.0)(esbuild@0.28.1)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0)(postcss@8.5.25)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@24.12.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.1.10)':
-    dependencies:
-      '@nx/devkit': 23.1.0(nx@23.1.0)
-      '@nx/eslint': 23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0)
-      '@nx/jest': 23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0)
-      '@nx/js': 23.1.0(@babel/traverse@7.29.7)(nx@23.1.0)
-      '@nx/react': 23.1.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@nx/playwright@23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@playwright/test@1.62.0)(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0))(@types/babel__core@7.20.5)(@typescript/typescript6@6.0.2)(@zkochan/js-yaml@0.0.7)(babel-plugin-react-compiler@1.0.0)(esbuild@0.28.1)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0)(postcss@8.5.25)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@24.12.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.1.10)
-      semver: 7.8.5
-      tslib: 2.8.1
-    transitivePeerDependencies:
-      - '@babel/core'
-      - '@babel/traverse'
-      - '@minify-html/node'
-      - '@module-federation/enhanced'
-      - '@module-federation/node'
-      - '@module-federation/runtime-tools'
-      - '@nx/cypress'
-      - '@nx/playwright'
-      - '@nx/webpack'
-      - '@swc-node/register'
-      - '@swc/cli'
-      - '@swc/core'
-      - '@swc/css'
-      - '@swc/helpers'
-      - '@swc/html'
-      - '@types/babel__core'
-      - '@types/node'
-      - '@zkochan/js-yaml'
-      - babel-plugin-macros
-      - babel-plugin-react-compiler
-      - clean-css
-      - cssnano
-      - csso
-      - debug
-      - esbuild
-      - esbuild-register
-      - eslint
-      - html-minifier-terser
-      - jest
-      - lightningcss
-      - node-notifier
-      - nx
-      - postcss
-      - react
-      - react-dom
-      - rollup
-      - supports-color
-      - ts-jest
-      - ts-node
-      - typescript
-      - uglify-js
-      - verdaccio
-      - vite
-      - vitest
-      - webpack-cli
-    optional: true
-
   '@nx/devkit@23.1.0(nx@23.1.0)':
     dependencies:
       '@zkochan/js-yaml': 0.0.7
@@ -12969,73 +12708,6 @@ snapshots:
       - nx
       - supports-color
       - verdaccio
-
-  '@nx/expo@23.1.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@expo/metro@55.1.1)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@nx/playwright@23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@playwright/test@1.62.0)(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0))(@types/babel__core@7.20.5)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(babel-plugin-react-compiler@1.0.0)(esbuild@0.28.1)(eslint@10.8.0(jiti@2.7.0))(expo@55.0.28)(metro-config@0.83.7)(metro-resolver@0.83.7)(nx@23.1.0)(postcss@8.5.25)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@24.12.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.1.10)':
-    dependencies:
-      '@nx/devkit': 23.1.0(nx@23.1.0)
-      '@nx/eslint': 23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0)
-      '@nx/js': 23.1.0(@babel/traverse@7.29.7)(nx@23.1.0)
-      '@nx/react': 23.1.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@nx/playwright@23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@playwright/test@1.62.0)(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0))(@types/babel__core@7.20.5)(@typescript/typescript6@6.0.2)(@zkochan/js-yaml@0.0.7)(babel-plugin-react-compiler@1.0.0)(esbuild@0.28.1)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0)(postcss@8.5.25)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@24.12.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.1.10)
-      enhanced-resolve: 5.24.4
-      picocolors: 1.1.1
-      semver: 7.8.5
-      tsconfig-paths: 4.2.0
-      tslib: 2.8.1
-    optionalDependencies:
-      '@expo/metro': 55.1.1
-      '@nx/detox': 23.1.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@nx/playwright@23.1.0(@babel/traverse@7.29.7)(@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0))(@playwright/test@1.62.0)(@zkochan/js-yaml@0.0.7)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0))(@types/babel__core@7.20.5)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(@zkochan/js-yaml@0.0.7)(babel-plugin-macros@3.1.0)(babel-plugin-react-compiler@1.0.0)(esbuild@0.28.1)(eslint@10.8.0(jiti@2.7.0))(nx@23.1.0)(postcss@8.5.25)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@24.12.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.1.10)
-      '@nx/rollup': 23.1.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@types/babel__core@7.20.5)(@typescript/typescript6@6.0.2)(nx@23.1.0)
-      expo: 55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      metro-config: 0.83.7
-      metro-resolver: 0.83.7
-    transitivePeerDependencies:
-      - '@babel/core'
-      - '@babel/traverse'
-      - '@minify-html/node'
-      - '@module-federation/enhanced'
-      - '@module-federation/node'
-      - '@module-federation/runtime-tools'
-      - '@nx/cypress'
-      - '@nx/jest'
-      - '@nx/playwright'
-      - '@nx/webpack'
-      - '@swc-node/register'
-      - '@swc/cli'
-      - '@swc/core'
-      - '@swc/css'
-      - '@swc/helpers'
-      - '@swc/html'
-      - '@types/babel__core'
-      - '@types/node'
-      - '@zkochan/js-yaml'
-      - babel-plugin-macros
-      - babel-plugin-react-compiler
-      - clean-css
-      - cssnano
-      - csso
-      - debug
-      - detox
-      - esbuild
-      - esbuild-register
-      - eslint
-      - html-minifier-terser
-      - jest
-      - lightningcss
-      - node-notifier
-      - nx
-      - postcss
-      - react
-      - react-dom
-      - rollup
-      - supports-color
-      - ts-jest
-      - ts-node
-      - typescript
-      - uglify-js
-      - verdaccio
-      - vite
-      - vitest
-      - webpack-cli
 
   '@nx/jest@23.1.0(@babel/traverse@7.29.7)(@types/node@24.12.0)(@typescript/typescript6@6.0.2)(babel-plugin-macros@3.1.0)(nx@23.1.0)':
     dependencies:
@@ -16340,18 +16012,6 @@ snapshots:
     dependencies:
       expo: 55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)(typescript@5.4.5)
 
-  expo-asset@55.0.18(@typescript/typescript6@6.0.2)(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8):
-    dependencies:
-      '@expo/image-utils': 0.8.15(@typescript/typescript6@6.0.2)
-      expo: 55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      expo-constants: 55.0.17(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))
-      react: 19.2.8
-      react-native: 0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8)
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-    optional: true
-
   expo-asset@55.0.18(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)(typescript@5.4.5):
     dependencies:
       '@expo/image-utils': 0.8.15(typescript@5.4.5)
@@ -16419,17 +16079,6 @@ snapshots:
     transitivePeerDependencies:
       - expo
       - supports-color
-
-  expo-modules-autolinking@55.0.25(@typescript/typescript6@6.0.2):
-    dependencies:
-      '@expo/require-utils': 55.0.6(@typescript/typescript6@6.0.2)
-      '@expo/spawn-async': 1.8.0
-      chalk: 4.1.2
-      commander: 7.2.0
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-    optional: true
 
   expo-modules-autolinking@55.0.25(typescript@5.4.5):
     dependencies:
@@ -16534,49 +16183,6 @@ snapshots:
       react: 19.2.8
       react-native: 0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8)
       sf-symbols-typescript: 2.2.0
-
-  expo@55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8):
-    dependencies:
-      '@babel/runtime': 7.29.7
-      '@expo/cli': 55.0.34(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(@typescript/typescript6@6.0.2)(expo-constants@55.0.17)(expo-font@55.0.8)(expo-router@55.0.17)(expo@55.0.28)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      '@expo/config': 55.0.19(@typescript/typescript6@6.0.2)
-      '@expo/config-plugins': 55.0.11
-      '@expo/devtools': 55.0.3(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      '@expo/fingerprint': 0.16.8
-      '@expo/local-build-cache-provider': 55.0.15(@typescript/typescript6@6.0.2)
-      '@expo/log-box': 55.0.13(@expo/dom-webview@55.0.6)(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      '@expo/metro': 55.1.1
-      '@expo/metro-config': 55.0.25(@typescript/typescript6@6.0.2)(expo@55.0.28)
-      '@expo/vector-icons': 15.1.1(expo-font@55.0.8)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      '@ungap/structured-clone': 1.3.3
-      babel-preset-expo: 55.0.24(@babel/core@7.29.7)(@babel/runtime@7.29.7)(expo@55.0.28)(react-refresh@0.14.2)
-      expo-asset: 55.0.18(@typescript/typescript6@6.0.2)(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      expo-constants: 55.0.17(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))
-      expo-file-system: 55.0.24(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))
-      expo-font: 55.0.8(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      expo-keep-awake: 55.0.8(expo@55.0.28)(react@19.2.8)
-      expo-modules-autolinking: 55.0.25(@typescript/typescript6@6.0.2)
-      expo-modules-core: 55.0.25(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      pretty-format: 29.7.0
-      react: 19.2.8
-      react-native: 0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8)
-      react-refresh: 0.14.2
-      whatwg-url-minimum: 0.1.2
-    optionalDependencies:
-      '@expo/dom-webview': 55.0.6(expo@55.0.28)(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-      '@expo/metro-runtime': 55.0.12(@expo/dom-webview@55.0.6)(expo@55.0.28)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)
-    transitivePeerDependencies:
-      - '@babel/core'
-      - bufferutil
-      - expo-router
-      - expo-widgets
-      - react-dom
-      - react-native-worklets
-      - react-server-dom-webpack
-      - supports-color
-      - typescript
-      - utf-8-validate
-    optional: true
 
   expo@55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)(typescript@5.4.5):
     dependencies:
