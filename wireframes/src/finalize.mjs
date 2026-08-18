@@ -61,8 +61,8 @@ export function frame11() {
     <span class="anno" style="left:-2px;top:-2px">${dot(4)}</span>
     <div class="pblock"><div class="pl">Items</div><div class="pv sm">3 · from 5</div></div>
     <div class="pblock"><div class="pl">Verdict · derived</div><div class="pv sm">Request changes</div></div>
-    <div class="pblock ok"><div class="pl" style="color:var(--amber)">${ic.check} residue 0</div><div style="font-size:12.5px;color:var(--muted)">sign unblocked</div></div>
-    <div class="next"><div class="nh">${ic.paper}Next: paper <span class="chip">freeze</span></div><p>Signing crystallises this glass. Editing lives here, never on the paper.</p><button class="btn ink" style="width:100%;justify-content:center">${ic.paper}Review the paper</button></div>
+    <div class="pblock ok"><div class="pl" style="color:var(--amber)">${ic.check} residue 0</div><div style="font-size:12.5px;color:var(--muted)">post unblocked</div></div>
+    <div class="next"><div class="nh">${ic.paper}Next: preview <span class="chip">freeze</span></div><p>Posting freezes this draft. Editing lives here, never on the preview.</p><button class="btn ink" style="width:100%;justify-content:center">${ic.paper}Open publish preview</button></div>
   </div>`;
 
   const body = `<div class="draft-top"><span class="chip blue">${ic.decisions}editable · yours</span><div class="right"><button class="btn ink">${ic.comment}Refine to post</button><button class="btn">${ic.resteer}Compose handoff</button></div></div><div class="draftgrid">${main}${panel}</div>`;
@@ -70,8 +70,8 @@ export function frame11() {
   return {
     title: 'Rennet v4.0 · 11 Collation draft',
     head: { badge: '11', title: 'Collation draft: the one editable draft', pill: 'Draft' },
-    ref: 'the missing middle\neditable glass between lenses and paper',
-    sub: 'The editable draft between the lenses and the paper: your dispositions collated into a document-in-formation, one click back to each anchor. Every staged item carries the inline conversation cluster, so you can question or discuss a staged chunk before signing. The orchestrator proposes; you dispose. The <b>Draft</b> is a crumb child of the review — the crumb reads … › feat/rate-limiting › Draft, and Esc or the review crumb ascends one step. Editing lives here; the paper is a freeze.',
+    ref: 'the missing middle\neditable glass between lenses and preview',
+    sub: 'The editable draft between the lenses and the preview: your dispositions collated into a document-in-formation, one click back to each anchor. Every staged item carries the inline conversation cluster, so you can question or discuss a staged chunk before posting. The orchestrator proposes; you dispose. The <b>Draft</b> is a crumb child of the review — the crumb reads … › feat/rate-limiting › Draft, and Esc or the review crumb ascends one step. Editing lives here; the preview is a freeze.',
     css: css11,
     win: win({
       name: reviewChain({ label: 'Draft', icon: ic.decisions, cur: true }),
@@ -80,15 +80,15 @@ export function frame11() {
       nav: navRail({ back: true, ctx: reviewCtx(ic.decisions) }),
     }),
     notes: [
-      { h: 'The one editable surface.', b: 'The glass draft between the lenses and the paper. The raw note becomes a refined comment; the strikethrough keeps what you actually typed visible.' },
+      { h: 'The one editable surface.', b: 'The glass draft between the lenses and the preview. The raw note becomes a refined comment; the strikethrough keeps what you actually typed visible.' },
       { h: 'Merge, split, reorder, withdraw.', b: 'Via the drag handle and item controls, plus the inline cluster on every staged item. You can still question or discuss a staged chunk here.' },
       { h: 'The orchestrator proposes; you dispose.', b: 'It can suggest refinements and accept or dismiss, but it never writes the draft. The draft is yours.' },
-      { h: 'Sign is downstream.', b: 'The verdict here is derived (request changes) and the panel shows the paper is unblocked. Editing lives on the draft; the paper only freezes it.' },
+      { h: 'Post is downstream.', b: 'The verdict here is derived (request changes) and the panel shows the preview is unblocked. Editing lives on the draft; the preview only freezes it.' },
     ],
   };
 }
 
-/* ---------- 12 Paper / sign ---------- */
+/* ---------- 12 Publish preview ---------- */
 export const css12 = `
 .papergrid{ display:grid; grid-template-columns:1fr 292px; gap:20px; }
 .paper{ background:#fdfdfb; border:1px solid #e6e2d6; border-radius:12px; box-shadow:0 1px 0 #fff inset, 0 14px 30px -22px rgba(90,80,50,.35); padding:20px 22px; }
@@ -121,32 +121,32 @@ export function frame12() {
   </div>`;
 
   const panel = `<div class="signpanel">
-    <div class="vblock rel"><span class="anno" style="left:-30px;top:14px">${dot(2)}</span><div class="pl">Verdict · derived from dispositions</div><div class="derived">Request changes</div><div class="deriv-note">2 request-changes · 1 comment. Rennet derives the verdict; you can override it, and your sign is what makes it real.</div><div class="override rel"><span class="anno" style="left:-30px;top:8px">${dot(3)}</span>${ic.check}override<span class="k">Approve · Request changes · Comment ${ic.chevron}</span></div></div>
-    <div class="holdsign rel"><span class="anno" style="left:-30px;top:16px">${dot(4)}</span><div class="hs">${ic.sign}Hold to sign</div><div class="track"><i></i></div><div class="hint">the deliberate act · nothing posts until you do</div></div>
+    <div class="vblock rel"><span class="anno" style="left:-30px;top:14px">${dot(2)}</span><div class="pl">Verdict · derived from dispositions</div><div class="derived">Request changes</div><div class="deriv-note">2 request-changes · 1 comment. Rennet derives the verdict; you can override it, and your post is what makes it real.</div><div class="override rel"><span class="anno" style="left:-30px;top:8px">${dot(3)}</span>${ic.check}override<span class="k">Approve · Request changes · Comment ${ic.chevron}</span></div></div>
+    <div class="holdsign rel"><span class="anno" style="left:-30px;top:16px">${dot(4)}</span><div class="hs">${ic.sign}Hold to publish</div><div class="track"><i></i></div><div class="hint">the deliberate act · nothing posts until you do</div></div>
   </div>`;
 
-  const body = `<div class="draft-top" style="margin-bottom:16px"><span class="chip">${ic.paper}paper · solid</span><span class="chip">nothing editable here</span></div><div class="papergrid">${paper}${panel}</div>`;
+  const body = `<div class="draft-top" style="margin-bottom:16px"><span class="chip">${ic.paper}preview · solid</span><span class="chip">nothing editable here</span></div><div class="papergrid">${paper}${panel}</div>`;
 
   return {
-    title: 'Rennet v4.0 · 12 Paper / sign',
-    head: { badge: '12', title: 'Paper: the one thing you sign', pill: 'Sign' },
-    ref: 'the derived verdict + the human sign\nsign in the loop IS the safety',
-    sub: 'The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The <b>Paper</b> is a crumb child of the Draft — the crumb reads … › Draft › Paper, and back lands on the Draft, because editing lives there. The human sign carries the real verdict: the sign in the loop is the safety, not a forced-neutral event.',
+    title: 'Rennet v4.0 · 12 Publish preview',
+    head: { badge: '12', title: 'The preview: exactly what will post', pill: 'Post' },
+    ref: 'the derived verdict + the human post\npost in the loop IS the safety',
+    sub: 'The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The <b>Preview</b> is a crumb child of the Draft — the crumb reads … › Draft › Preview, and back lands on the Draft, because editing lives there. The human post carries the real verdict: the post in the loop is the safety, not a forced-neutral event.',
     css: css11 + css12,
     win: win({
       name: reviewChain(
         { label: 'Draft', icon: ic.decisions },
-        { label: 'Paper', icon: ic.paper, cur: true },
+        { label: 'Preview', icon: ic.paper, cur: true },
       ),
-      meta: tmeta('sign to post'),
+      meta: tmeta('hold to publish'),
       body,
       nav: navRail({ back: true, ctx: reviewCtx(ic.paper) }),
     }),
     notes: [
-      { h: 'The one solid object.', b: 'Paper is opaque: it shows precisely the comments that will land on the PR, in the order they will land. Editing happened on the draft; here it is frozen.' },
+      { h: 'The one solid object.', b: 'The preview is opaque: it shows precisely the comments that will land on the PR, in the order they will land. Editing happened on the draft; here it is frozen.' },
       { h: 'The verdict is derived.', b: 'Rennet reads your dispositions and derives Approve / Request changes / Comment, and shows the arithmetic (2 request-changes, 1 comment).' },
-      { h: 'Override is yours.', b: 'The derived verdict is a default, not a lock. You can change it before signing; the review carries whatever you sign.' },
-      { h: 'The sign is the safety.', b: 'Rennet never forces a neutral event. The human sign in the loop is the safeguard, and it publishes the real verdict.' },
+      { h: 'Override is yours.', b: 'The derived verdict is a default, not a lock. You can change it before posting; the review carries whatever you post.' },
+      { h: 'The post is the safety.', b: 'Rennet never forces a neutral event. The human post in the loop is the safeguard, and it publishes the real verdict.' },
     ],
   };
 }
@@ -310,7 +310,7 @@ export function frame15() {
       ${cmd(ic.chevronL, 'Back', '⌘[')}
       ${cmd(ic.chevronR, 'Forward', '⌘]')}
       ${cmd(ic.decisions, 'Go to Draft', 'G D')}
-      ${cmd(ic.paper, 'Go to Paper', 'G P')}
+      ${cmd(ic.paper, 'Go to Preview', 'G P')}
       ${cmd(ic.palette, 'Open Settings', '⌘,')}
       ${gh('Actions · this review', 4, true)}
       ${cmd(ic.makepr, 'Make PR from worktree', 'P')}
@@ -324,7 +324,7 @@ export function frame15() {
     title: 'Rennet v4.0 · 15 Command palette',
     head: { badge: '15', title: 'Command palette: the keyboard spine', pill: 'Cross-cutting' },
     ref: 'command-K · every action, named\nplus a Navigate group on every screen',
-    sub: 'Command-K. Every action is a named, remappable command — and in v4.0 the palette is also the <b>keyboard spine of navigation</b>. A <b>Navigate</b> group rides every screen: Go to project…, Open review…, Back / Forward, Go to Draft / Paper, Open Settings. On an empty query it shows your <b>recent locations</b> first, so returning to a place is one keystroke. The retired <code>claims</code> lens is gone from the offered set.',
+    sub: 'Command-K. Every action is a named, remappable command — and in v4.0 the palette is also the <b>keyboard spine of navigation</b>. A <b>Navigate</b> group rides every screen: Go to project…, Open review…, Back / Forward, Go to Draft / Preview, Open Settings. On an empty query it shows your <b>recent locations</b> first, so returning to a place is one keystroke. The retired <code>claims</code> lens is gone from the offered set.',
     css: css15,
     win: win({
       name: crumb([
@@ -338,7 +338,7 @@ export function frame15() {
     }),
     notes: [
       { h: 'The keyboard spine.', b: 'One overlay, one search field, every action and every destination reachable by name. As an overlay it never moves the crumb or the history — running Back from here is what moves them.' },
-      { h: 'A Navigate group everywhere.', b: 'Present on every screen: Go to project… (fuzzy over projects), Open review… (fuzzy over the current project’s rows), Back / Forward, Go to Draft / Paper, Open Settings. The legacy “Review directly” door lives here too — palette-only, no drawn button.' },
+      { h: 'A Navigate group everywhere.', b: 'Present on every screen: Go to project… (fuzzy over projects), Open review… (fuzzy over the current project’s rows), Back / Forward, Go to Draft / Preview, Open Settings. The legacy “Review directly” door lives here too — palette-only, no drawn button.' },
       { h: 'Recent locations first.', b: 'With an empty query the palette leads with where you have just been, so returning to review B after glancing at A is a single keystroke — the cheapness that lets one review evict another.' },
       { h: 'Named and remappable.', b: 'Each command carries a default key hint you can rebind. No retired destinations: the resteer-era claims lens is not offered.' },
     ],
@@ -387,8 +387,8 @@ export function frame16() {
     <div class="loopnote rel"><span class="anno" style="left:-30px;top:-2px">${dot(3)}</span>${ic.resteer} re-steer loops a Yours branch back to the harness before it becomes a PR</div>
     <div class="frow">
       ${A(ic.decisions, 'Collation draft', 'editable · yours', 'glass')}${arw}
-      ${A(ic.paper, 'Paper', 'sign · derived verdict', 'paper')}${arw}
-      ${A(ic.pr, 'Posts to the PR', 'exactly what you signed')}
+      ${A(ic.paper, 'Preview', 'post · derived verdict', 'paper')}${arw}
+      ${A(ic.pr, 'Posts to the PR', 'exactly what you posted')}
     </div>
     <div class="frow rel">
       <span class="anno" style="left:-30px;top:16px">${dot(2)}</span>
@@ -399,7 +399,7 @@ export function frame16() {
       <div class="m"><span class="sw ink"></span>ink · publishes, travels to the PR</div>
       <div class="m"><span class="sw blue"></span>blue · stays local to this machine</div>
       <div class="m"><span class="sw glass"></span>glass · chrome</div>
-      <div class="m"><span class="sw paper"></span>paper · the one thing you sign</div>
+      <div class="m"><span class="sw paper"></span>preview · exactly what will post</div>
     </div>
   </div>`;
 
@@ -407,14 +407,14 @@ export function frame16() {
     title: 'Rennet v4.0 · 16 Flow overview',
     head: { badge: '16', title: 'Flow overview: the whole app, one map', pill: 'The map' },
     ref: 'the journey map (forward flow)\nsee 18 for the navigation structure',
-    sub: 'The v3 flow as one map. Point at code, watch it process, land on the two-zone project detail, and review through the canvases into a single editable draft and one signed paper. Your local work flows toward Make PR; a teammate’s PR is the other entry point, into the same canvases.',
+    sub: 'The v3 flow as one map. Point at code, watch it process, land on the two-zone project detail, and review through the canvases into a single editable draft and one publish preview. Your local work flows toward Make PR; a teammate’s PR is the other entry point, into the same canvases.',
     css: css16,
     win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px;color:#4a5059">${ic.repo}</span>Rennet · flow`, meta: tmeta('v3'), body }),
     notes: [
-      { h: 'One map of the flow.', b: 'Projects list to add-project to the narrated processing, then the two-zone project detail, the review canvases, one draft, one signed paper.' },
+      { h: 'One map of the flow.', b: 'Projects list to add-project to the narrated processing, then the two-zone project detail, the review canvases, one draft, one publish preview.' },
       { h: 'Two entry points.', b: 'Your own local work (backlight, heading toward Make PR) and a teammate’s PR (ink, into teammate review). Both land in the same canvases.' },
       { h: 'The re-steer loop.', b: 'A Yours branch can loop back to the coding harness with your requested changes before it ever becomes a PR.' },
-      { h: 'The material legend.', b: 'Ink publishes, blue stays local, glass is chrome, paper is the one thing you sign. The whole app reads by material.' },
+      { h: 'The material legend.', b: 'Ink publishes, blue stays local, glass is chrome, the preview is exactly what will post. The whole app reads by material.' },
     ],
   };
 }

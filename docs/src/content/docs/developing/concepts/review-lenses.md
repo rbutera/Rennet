@@ -133,8 +133,8 @@ change which bytes deterministic ingestion missed. It is honest copy only — it
 adds a confirmation, acknowledgement, or gate.
 
 For GitHub pull requests, Flagged shows the commit's CI checks; the panel informs, it
-never gates. It hangs a collapsible CI signal off the pinned head, and no review, sign,
-or publish handler consults it. How a failure gets attributed:
+never gates. It hangs a collapsible CI signal off the pinned head, and no review or
+publish handler consults it. How a failure gets attributed:
 
 - Deterministic path overlap turns attributable failures into pre-reproduced
   high-severity findings; a failure without an offered-hunk anchor stays visible in the

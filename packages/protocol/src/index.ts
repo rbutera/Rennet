@@ -945,6 +945,12 @@ export const projectDetailSchema = z.object({
    * live GraphQL loop sets it from the explicit truncation state later.
    */
   truncated: z.boolean(),
+  /**
+   * Why GitHub auth is unavailable. Absent (undefined) when auth resolved and PRs
+   * were fetched. Present when the PR source was not wired — a missing token renders
+   * as an honest hint, never as "zero PRs".
+   */
+  authUnavailable: z.enum(["not-connected", "token-invalid", "insufficient-scope"]).optional(),
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 
@@ -2839,6 +2845,27 @@ export interface RennetBridge {
    * Optional, mirroring `updateMenu`.
    */
   onMenuRun?(listener: (id: string) => void): () => void;
+  /**
+   * Subscribe to host-app update readiness: fires when a newer Rennet release has
+   * been downloaded and is ready to apply (badge on the chrome logo). The host
+   * replays its cached state to a late subscriber, so a renderer that mounts after
+   * the download still learns of it. Returns an unsubscribe. Optional: a host
+   * without an updater (browser shell, tests, unsigned macOS) omits it and the
+   * feature is inert.
+   */
+  onUpdateReady?(listener: (info: UpdateReadyInfo) => void): () => void;
+  /**
+   * The user confirmed the restart-into-update prompt; the host quits and installs
+   * the downloaded release. Optional, mirroring `onUpdateReady`. Never called
+   * without an explicit user confirmation.
+   */
+  applyUpdate?(): void;
+}
+
+/** A downloaded-and-ready host-app update, as reported by the host's updater. */
+export interface UpdateReadyInfo {
+  /** Release name when the platform updater supplied one; absent otherwise. */
+  version?: string;
 }
 
 /** Runtime-owned application-menu wire shapes (#44), shared by preload and MAIN. */

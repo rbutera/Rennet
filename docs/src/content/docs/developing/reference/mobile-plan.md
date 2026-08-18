@@ -44,7 +44,7 @@ them; the last column is what each screen demands from the shared
 | Full canvas (21) | `SequenceCanvas` (virtualized cohorts/findings/hunks, judged-cohort collapse) | `review.canvases` full read; `canvas.setCohortExpansion`; lazy hunk mounting |
 | Live turn (22) | `TurnStream` (virtualized typed timeline), `ReturnToTail`, `StopControl`, `Composer` (interrupt/queue) | `onAskStream` subscribe + **rebind on reconnect (#389)**, `review.reattach`, send-mode semantics |
 | Ask (22) | `AskCard` (chips + free text), context attachment row | `review.ask` reply composition (decision + redirection in one) |
-| Publish (23) | `PaperPreview`, `PostedOutcome` | `publish.requestConsent` → `publish.review`/`publish.submitPr` on the one tap; idempotent retry handling |
+| Publish (23) | `ReviewPreview`, `PostedOutcome` | `publish.requestConsent` → `publish.review`/`publish.submitPr` on the one tap; idempotent retry handling |
 | Pushes (24) | notification handlers, deep-link router, notification actions | push-token registration with the daemon; attention-event → route map; clear-on-view |
 
 ## The client-runtime package (extraction scope)
@@ -92,7 +92,7 @@ app never gets a side channel:
 
 | # | Scope | Size | Ships when |
 | --- | --- | --- | --- |
-| M0 | `client-runtime` extraction; desktop + browser shells adopt; #389 fixed by the subscription manager | ~1 week | Existing e2e green on both shells; a mid-turn socket drop rebinds the live ask-stream |
+| M0 — **delivered** | `client-runtime` extraction (`ConnectionSupervisor` in `@rennet/client`); desktop + browser shells adopt behavior-neutrally; **#389 closed** — client half (resubscribe registry) + server half (ask-delta broadcast by reviewId) | ~1 week | Existing e2e green on both shells; a mid-turn reconnect keeps the live ask-stream flowing to the fresh socket — see the reconnect note in [reactive-streams](./reactive-streams.md). |
 | M1 — **first shippable cut** | Expo app skeleton; pairing + connections; review list; review detail/digest + finding detail + full canvas; push pipeline (taxonomy, deep links, presence-aware delivery) | ~2 weeks | See acceptance below |
 | M2 | Live turn + ask (stream, composer, stop, notification actions); publish flow (preview → one-tap post); kickoff (PR link, share sheet, own-branch capture) | ~1.5 weeks | See acceptance below |
 | M3 | Distribution (TestFlight/internal track); `using/` mobile guide; architecture-overview client row; marketing story | ~3–4 days | Docs land same-change; store publishing stays a later decision |

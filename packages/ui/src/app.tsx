@@ -106,6 +106,7 @@ import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { RunningReview } from "./components/running-review";
 import { SettingsScreen } from "./components/settings-screen";
+import { ChromeMark, UpdateReadyPrompt, useUpdateReady } from "./components/update-ready";
 import { CanvasWorkspace } from "./components/workspace";
 import { runBatched } from "./concurrency";
 import {
@@ -331,9 +332,7 @@ export function ReviewWorkspace({
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-title">
-          <span className="topbar-mark" aria-hidden="true">
-            <RennetBrandMark size={16} />
-          </span>
+          <ChromeMark size={16} className="topbar-mark" />
           <div>
             <p className="eyebrow">LOCAL REVIEW</p>
             <h1>{patchset.repository.root.split("/").at(-1)}</h1>
@@ -529,7 +528,13 @@ function persistNav(
   }
 }
 
-export function RennetApp({ bridge }: { bridge: RennetBridge }) {
+export function RennetApp({
+  bridge,
+  connectionSlot,
+}: {
+  bridge: RennetBridge;
+  connectionSlot?: ReactNode;
+}) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   // Whether the open review's original repository root still exists on disk (#324).
   // Set by bootstrap/load; fresh capture/openPr paths set it true. A gone root behaves
@@ -2455,6 +2460,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       dispatchRef.current.commands.find((command) => command.id === id)?.run();
     });
   }, [bridge]);
+  // Host-app update readiness → badge on the chrome marks. Hosts without an
+  // updater omit the member and this is a no-op (spec: desktop-update-notification).
+  useEffect(() => {
+    return bridge.onUpdateReady?.((info) => {
+      useUpdateReady.getState().markReady(info);
+    });
+  }, [bridge]);
+  const updatePrompt = <UpdateReadyPrompt onApply={() => bridge.applyUpdate?.()} />;
 
   const palette = (
     <CommandPalette
@@ -2474,9 +2487,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return (
       <div className="navigation-shell">
         <header className="navigation-titlebar">
-          <span className="navigation-titlebar-mark" aria-hidden="true">
-            <RennetBrandMark size={16} />
-          </span>
+          <ChromeMark size={16} className="navigation-titlebar-mark" />
           <Breadcrumb
             crumb={deriveCrumb(navigation.stack, surfaceLabels)}
             onAscend={(index) => {
@@ -2494,6 +2505,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               </code>
             </div>
           ) : null}
+          {connectionSlot}
         </header>
         <NavRail
           canBack={navigation.stack.length > 1}
@@ -2512,10 +2524,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return (
       <div className="navigation-shell">
         <header className="navigation-titlebar">
-          <span className="navigation-titlebar-mark" aria-hidden="true">
-            <RennetBrandMark size={16} />
-          </span>
+          <ChromeMark size={16} className="navigation-titlebar-mark" />
           <Breadcrumb crumb={deriveCrumb([{ kind: "projects" }])} onAscend={() => undefined} />
+          {connectionSlot}
         </header>
         <div className="navigation-surface-content">
           <div className="loading">Restoring local review…</div>
@@ -2545,6 +2556,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return (
       <>
         {palette}
+        {updatePrompt}
         <main className="empty-state">
           <button type="button" className="entry-back" onClick={() => setDirectEntryOpen(false)}>
             <ArrowLeftIcon size={13} />
@@ -2650,6 +2662,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onBack={() => navigate(navigateBack())}
         />
         {palette}
+        {updatePrompt}
       </>,
     );
   }
@@ -2672,6 +2685,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           scheme={effectiveScheme}
         />
         {palette}
+        {updatePrompt}
       </>,
     );
   }
@@ -2980,6 +2994,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           Files and Canvases views, present from review-open even when empty. */}
       {destinationChrome}
       {palette}
+      {updatePrompt}
     </>,
   );
 }

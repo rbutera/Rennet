@@ -133,7 +133,7 @@ the phone must reach the daemon without exposing the laptop to the internet
 "post the review under my name" as its central mobile moment; GitHub Mobile
 comes closest with its PR-approve flow. Rennet's publish flow — preview,
 then one tap posts, from the sofa — is the differentiating screen. There is
-no sign step and no confirmation ceremony (Rai's call, 2026-08-18): the
+no extra step and no confirmation ceremony (Rai's call, 2026-08-18): the
 preview already shows exactly what posts, and the post button is the click.
 
 ### Open gaps Rennet can own
@@ -264,7 +264,7 @@ What the phone does:
    boundary.
 5. **Post.** Preview, then one tap posts — from anywhere. The product's
    one human act, now sofa-shaped — a headline feature, not an
-   afterthought. No sign step, no confirmation ceremony: the preview
+   afterthought. No extra step, no confirmation ceremony: the preview
    already showed exactly what posts.
 6. **Kick off a review from a PR link** — share sheet or paste into
    `review.openPr`.

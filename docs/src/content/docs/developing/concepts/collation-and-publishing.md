@@ -1,12 +1,12 @@
 ---
-title: Collation and signing
+title: Collation and publishing
 description: How dispositions from every lens become one editable draft and then one exact outbound artifact.
 ---
 
 The collation draft is the missing middle between reviewing code and sending a
 result. It gathers every disposition (a lens's per-anchor judgment) into one
-editable account; signing turns that account into the paper that is pushed or
-posted.
+editable account; publishing turns that account into the outbound artifact that
+is pushed or posted.
 
 ## The three-part spine
 
@@ -14,22 +14,22 @@ posted.
 flowchart LR
   lenses["Lens canvases<br/>judge code at its anchors"]
   draft["Collation draft<br/>edit the whole account"]
-  paper["Paper<br/>exact outbound preview"]
+  preview["Preview<br/>exact outbound artifact"]
   review["Batched GitHub review"]
   agent["Coding-agent handoff<br/>then delta re-review"]
   pr["Push branch and open PR"]
 
   lenses -->|dispose| draft
-  draft -->|sign| paper
-  paper -->|someone else's PR| review
-  paper -->|your branch needs work| agent
-  paper -->|your branch is ready| pr
+  draft -->|publish| preview
+  preview -->|someone else's PR| review
+  preview -->|your branch needs work| agent
+  preview -->|your branch is ready| pr
   draft -->|jump to anchor| lenses
 ```
 
 The lens canvases are where judgments begin. The collation draft is where those
-judgments become a coherent document. The paper is a preview of the exact result,
-with editing kept on the draft.
+judgments become a coherent document. The preview shows the exact result, with
+editing kept on the draft.
 
 ## Why the draft is its own canvas
 
@@ -76,55 +76,55 @@ changes.
 | | Your branch | Someone else's pull request |
 |---|---|---|
 | Draft emphasis | Compose change requests and the PR account | Refine and order review comments |
-| Paper previews | PR title, body, base, head, and draft state | Review verdict and anchored comments |
-| Sign does | Push the branch and create or reuse the PR | Post one batched GitHub review |
+| Preview shows | PR title, body, base, head, and draft state | Review verdict and anchored comments |
+| Publish does | Push the branch and create or reuse the PR | Post one batched GitHub review |
 | Needs another coding pass | Intended: hand the same asks to a coding harness, then recapture | Not applicable |
 
 On your branch, the title and body can be drafted by a [Model
-Council](/developing/concepts/model-council/) seat and then edited directly. On another person's PR, the paper derives one GitHub review
+Council](/developing/concepts/model-council/) seat and then edited directly. On another person's PR, the preview derives one GitHub review
 event from the collated comments.
 
 ## The payload follows the preview
 
-All outbound paths derive from the same draft projection the paper renders:
+All outbound paths derive from the same draft projection the preview renders:
 
 ```mermaid
 sequenceDiagram
   participant D as Collation draft
-  participant P as Paper
+  participant P as Preview
   participant M as Electron main
   participant G as GitHub
 
   D->>P: Ordered effective bodies
   P->>P: Render exact destination shape
-  P->>M: Sign with canonical payload
+  P->>M: Publish with canonical payload
   M->>M: Rebuild and compare outbound form
   M->>G: Post review or push + create PR
   G-->>P: Outcome and URL
 ```
 
-The sign is the product's external act: the reviewer sees the whole artifact, then
+Publishing is the product's external act: the reviewer sees the whole artifact, then
 sends that artifact. Internal review state, orchestrator chatter, and refinement
 history are not part of the outbound shape unless the reviewer has turned them
 into a disposition on the draft.
 
-There is no hosted Rennet backend on either side of that act. The signed artifact
+There is no hosted Rennet backend on either side of that act. The outbound artifact
 goes to GitHub; a review's context reaches the harness's model provider. A remote
 reviewer reaches the daemon on the host machine directly over the user's own
 private network — never through a Rennet server, because none exists. The honest
 claim is "no hosted backend", not "nothing leaves the machine".
 
 When the review ran over partially-ingested content — a truncated tail, a binary
-blob, or a submodule pointer (R18) — the paper discloses those blockers before
-the sign control, so a signer knows the review was not a full read before
-attesting to it. This disclosure is non-gating honest copy. It never blocks the
-sign path. The reviewer publishes anyway if they choose.
+blob, or a submodule pointer (R18) — the preview discloses those blockers before
+the publish control, so a reviewer knows the review was not a full read before
+posting it. This disclosure is non-gating honest copy. It never blocks the
+publish path. The reviewer publishes anyway if they choose.
 
 ## What is live
 
-The destination frame, editable collation canvas, comment refinement, paper,
+The destination frame, editable collation canvas, comment refinement, preview,
 batched review post, and own-branch push-plus-PR submission are wired through the
-renderer. The paper has a back action; edits happen on the draft.
+renderer. The preview has a back action; edits happen on the draft.
 
 The write-enabled handoff and delta-recapture machinery is wired behind typed
 main-process commands, and the renderer now invokes it: an own-branch review
@@ -146,9 +146,10 @@ orchestrator editing of the whole collation draft is not yet the main live path.
 | Destination staging lanes | `packages/ui/src/canvas/staging.ts` |
 | Destination-specific payloads | `packages/ui/src/canvas/publish.ts` |
 | Draft canvas | `packages/ui/src/components/collation-draft-canvas.tsx` |
-| Paper | `packages/ui/src/components/publish-sheet.tsx` |
-| Live sign wiring | `packages/ui/src/app.tsx` and `apps/desktop/src/main/dispatch.ts` |
+| Preview | `packages/ui/src/components/publish-sheet.tsx` |
+| Live publish wiring | `packages/ui/src/app.tsx` and `apps/desktop/src/main/dispatch.ts` |
 
 See [comment refinement](/developing/concepts/comment-refinement/) for how rough
 notes become effective bodies and [the canvas model](/developing/concepts/canvas-model/)
 for the wider L0–L3 architecture.
+</content>

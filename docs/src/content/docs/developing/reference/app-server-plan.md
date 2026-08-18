@@ -196,7 +196,7 @@ sits on the acting path of the product).
    Walk the 49 protocol commands and classify each as mobile-primary,
    mobile-secondary, or absent-by-locus. Name the jobs the phone actually
    does — triage a finished review, answer a turn's ask, steer or interrupt a
-   running review, read canvases, sign and post (the product's human action,
+   running review, read canvases, publish (the product's human action,
    now available from the sofa), kick off a review from a PR link — and the
    jobs it explicitly does not do (writing code on a phone). Define the
    notification taxonomy: which daemon events become pushes, what each push
@@ -228,5 +228,5 @@ the gate issue unblocks Phase 6.
 | New: `using/guide/remote-access.md` | Pairing, Tailscale setup, what a remote client sees (projection, scrubbed paths) | 4-5 |
 | New: `using/guide/browser-rennet.md` | Running `rennet serve`, opening the browser client, the server picker | 5 |
 | `developing/reference/reactive-streams.md`, `harness-adapters.md`, `codex-app-server.md`, `developing/guide/settings-and-setup.md`, `repository-bootstrap.md` | IPC/Electron mentions updated; "no daemon mode" statements corrected | 1-3 |
-| "No Rennet backend" copy: `using/concepts/product-and-vision.md`, `common-questions.md`, `using/guide/getting-started.md`, `reviewing-a-github-pr.md`, `collation-and-signing.md`, `dependency-standard.md` | Stays true and gets sharper: no *hosted* backend — the daemon is yours, runs on your machine, and the only egress is the harness/provider egress already disclosed | 3-4 |
+| "No Rennet backend" copy: `using/concepts/product-and-vision.md`, `common-questions.md`, `using/guide/getting-started.md`, `reviewing-a-github-pr.md`, `collation-and-publishing.md`, `dependency-standard.md` | Stays true and gets sharper: no *hosted* backend — the daemon is yours, runs on your machine, and the only egress is the harness/provider egress already disclosed | 3-4 |
 | `apps/marketing` (Astro site) | Browser client, remote, and mobile stories added when each ships, not before | 5-6 |

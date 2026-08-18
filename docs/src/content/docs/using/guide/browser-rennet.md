@@ -60,4 +60,4 @@ Two small things differ from the desktop window, both by design:
   none is available); it is not a bug that the file does not open on your laptop.
 
 Everything else — capturing reviews, the canvases, conversations, dispositions,
-signing and posting — is identical to the desktop app, because it is the same app.
+and posting — is identical to the desktop app, because it is the same app.

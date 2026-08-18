@@ -68,6 +68,26 @@ reattaches instead of starting a second concurrent snapshot build. A successful 
 artifact through the real consumer and opens that project; the fold also derives
 that anchor from a successful resolved summary when the push channel degrades.
 
+**Reconnect keeps live subscriptions bound (phase 6 M0 — issue #389).** The fix has
+two halves that meet at the socket:
+
+- *Client half.* A live `onAskStream` / `onProgress` listener is registered with the
+  `ConnectionSupervisor`'s resubscribe registry, which lives *above* the socket. When a
+  socket drops and the supervisor reconnects, it re-establishes every registered listener
+  on the fresh bridge and re-issues `review.reattach` for each subscribed review — so a
+  stream consumer created before an interruption keeps receiving events after it, with no
+  re-subscribe from the consumer.
+- *Server half.* A turn's ask-stream deltas no longer close over the socket that invoked
+  `review.ask`; they **broadcast by `reviewId` to every live authorized socket**
+  (`broadcastAskStream` in `ws-listener.ts`, the read-side twin of `broadcastProgress`).
+  So the reconnected client — a fresh connection — receives the turn's subsequent deltas,
+  and filters them with its `onAskStream(reviewId)` listener exactly as it filters
+  progress. Deltas are model-authored prose (not projected), so the raw event reaches
+  private and projected connections alike; a `pairing-only` connection never receives it.
+
+Together the two halves close #389 for every shell: a mid-turn reconnect keeps the live
+ask-stream flowing without the consumer re-subscribing.
+
 The rest of issue #71 is not live yet. The capture/review pipeline does not emit
 progress events and its busy surface does not consume `ProgressFeed`; protocol
 variants for that path should arrive with real emitters and a renderer. The

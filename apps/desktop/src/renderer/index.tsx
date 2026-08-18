@@ -1,6 +1,6 @@
-import { WsRennetBridge } from "@rennet/client";
+import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
 import type { RennetBridge } from "@rennet/protocol";
-import { ConnectionHost, type ConnectionTarget } from "@rennet/ui";
+import { type Connection, ConnectionHost, type ConnectionTarget } from "@rennet/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -25,12 +25,23 @@ if (preload.platform) {
 // RennetApp remount; the desktop's own daemon spawn/supervision is untouched (remote
 // attach is purely a renderer-level bridge choice).
 
-/** Compose a full RennetBridge from a WS bridge + the shell's `repository.choose` fallback. */
+/** A token store seeded from the saved target (ConnectionHost's daemons storage, migrated
+ *  in place). Read-only here — the runtime never mints a token; pairing writes the daemon
+ *  list ConnectionHost owns. Token material stays off every log line by construction. */
+function targetTokenStore(target: ConnectionTarget): TokenStore {
+  return {
+    get: () => target.deviceToken,
+    set: () => undefined,
+    delete: () => undefined,
+  };
+}
+
+/** Compose a full RennetBridge from the supervisor + the shell's `repository.choose` fallback. */
 function composeBridge(
-  wsBridge: WsRennetBridge,
+  supervisor: ConnectionSupervisor,
   chooseDirectory: () => Promise<string | null>,
 ): RennetBridge & { close?(): void } {
-  const wsInvoke = wsBridge.invoke.bind(wsBridge);
+  const wsInvoke = supervisor.invoke.bind(supervisor);
   const invoke: RennetBridge["invoke"] = async (name, input) => {
     if (name === "repository.choose" && (input as { path?: string }).path === undefined) {
       const path = await chooseDirectory();
@@ -41,12 +52,16 @@ function composeBridge(
   };
   return {
     invoke,
-    onProgress: wsBridge.onProgress.bind(wsBridge),
-    onAskStream: wsBridge.onAskStream.bind(wsBridge),
+    onProgress: supervisor.onProgress.bind(supervisor),
+    onAskStream: supervisor.onAskStream.bind(supervisor),
     platform: preload.platform,
     updateMenu: preload.updateMenu,
     onMenuRun: preload.onMenuRun,
-    close: () => wsBridge.close(),
+    // App-binary update readiness rides every target like the menu residue — the
+    // update is about THIS installed app, not whichever daemon the window watches.
+    onUpdateReady: preload.onUpdateReady,
+    applyUpdate: preload.applyUpdate,
+    close: () => supervisor.close(),
   };
 }
 
@@ -57,26 +72,42 @@ const DEFAULT_TARGET: ConnectionTarget = {
   port: preload.wsPort,
 };
 
-function createBridge(target: ConnectionTarget): RennetBridge & { close?(): void } {
-  if (target.id === DEFAULT_TARGET.id) {
-    const wsBridge = new WsRennetBridge({ url: `ws://127.0.0.1:${preload.wsPort}` });
-    return composeBridge(wsBridge, preload.chooseDirectory);
-  }
-  const authority = target.port ? `${target.host}:${target.port}` : target.host;
-  const wsBridge = new WsRennetBridge({
-    url: `ws://${authority}`,
-    deviceToken: target.deviceToken,
+function createConnection(target: ConnectionTarget): Connection {
+  const isLocal = target.id === DEFAULT_TARGET.id;
+  const url = isLocal
+    ? `ws://127.0.0.1:${preload.wsPort}`
+    : `ws://${target.port ? `${target.host}:${target.port}` : target.host}`;
+  // The local daemon uses the native picker; a remote daemon's repository is server-side, so
+  // a path prompt on ITS machine stands in.
+  const chooseDirectory = isLocal
+    ? preload.chooseDirectory
+    : (): Promise<string | null> =>
+        Promise.resolve(
+          window.prompt("Absolute path to a repository on the daemon's machine:") || null,
+        );
+  const supervisor = new ConnectionSupervisor({
+    daemonId: target.id,
+    tokenStore: targetTokenStore(target),
+    // queue: an invoke before the handshake completes waits for `online` (the bridge's old
+    // #whenReady behaviour), so the initial `app.bootstrap` is behavior-neutral.
+    offlineInvoke: "queue",
+    createBridge: (hooks, deviceToken) =>
+      new WsRennetBridge({
+        url,
+        deviceToken,
+        autoReconnect: false,
+        onLifecycle: hooks.onLifecycle,
+      }),
   });
-  // A remote daemon's repository is server-side: prompt for a path on its machine.
-  const promptForPath = (): Promise<string | null> =>
-    Promise.resolve(
-      window.prompt("Absolute path to a repository on the daemon's machine:") || null,
-    );
-  return composeBridge(wsBridge, promptForPath);
+  return {
+    bridge: composeBridge(supervisor, chooseDirectory),
+    subscribe: (listener) => supervisor.subscribe(listener),
+    close: () => supervisor.close(),
+  };
 }
 
 createRoot(root).render(
   <StrictMode>
-    <ConnectionHost createBridge={createBridge} defaultTarget={DEFAULT_TARGET} />
+    <ConnectionHost createConnection={createConnection} defaultTarget={DEFAULT_TARGET} />
   </StrictMode>,
 );

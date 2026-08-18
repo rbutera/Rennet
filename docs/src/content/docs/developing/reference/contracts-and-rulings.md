@@ -64,7 +64,7 @@ These are the load-bearing calls behind the ruling index:
   else's PR or a coding-agent task bundle on the user's branch.
 - Agents remain capable. Analysis can inspect and reproduce; the handoff agent can
   write and run tests. Pushing is part of the own-branch product path.
-- The paper freezes exactly what leaves the machine. Model execution itself does
+- The preview freezes exactly what leaves the machine. Model execution itself does
   not wait for a permission ceremony.
 - Five canvases ship — Spec, Sequence, Decisions, Flagged, and Noise — with blast
   radius as an overlay. Claims-to-requirement mapping is infrastructure, not a
@@ -94,7 +94,7 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R14** | Apple signing and account decisions belong to the public-release phase, not local dogfood. |
 | **R15** | Retired: route-handoff as a separate product artifact. The own-branch review loop itself is the useful feature. |
 | **R23** | `omp` means `@oh-my-pi/pi-coding-agent`; the abandoned namesake package is not a target. |
-| **R26** | Glass is chrome, code is opaque, and paper is the frozen outbound object. Tokens and chrome are product structure; decorative polish can follow. |
+| **R26** | Glass is chrome, code is opaque, and the preview is the frozen outbound object. Tokens and chrome are product structure; decorative polish can follow. |
 
 ### Review engine and data
 
@@ -117,7 +117,7 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R30** | Project context is fingerprinted by source, config, generator, schema, toolchain, and shards. Non-current context is rebuilt or omitted with explicit degradation, never silently reused. |
 | **R31** | Harnesses receive assembled current context and capable execution. The run ledger names provider egress, model source, authority, and non-enumerable ambient inputs. Copy says “no Rennet backend,” never “nothing leaves the machine.” |
 | **R32** | Append-only history lasts only while a review is retained. Delete physically removes Rennet-controlled copies. Unknown events remain byte-identical and make the affected projection explicitly incomplete without disabling the rest of the product. |
-| **R33** | Someone else's PR publishes one signed, idempotent review. On the user's branch, the paper previews the PR submission; signing pushes the named branch and opens that exact PR. |
+| **R33** | Someone else's PR publishes one idempotent review. On the user's branch, the preview shows the PR submission; publishing pushes the named branch and opens that exact PR. |
 | **R35** | No RxJS dataflow layer. Harnesses use `AsyncIterable`; durable truth is the event store; one post-commit feed carries ordered invalidations; small injected-clock batchers own coalescing. |
 
 ### Tooling and dependencies
@@ -129,14 +129,14 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R25** | The diff-rendering direction is measured, not hypothetical. A replacement version must rerun DOM, frame, annotation-recycling, and accessibility checks. |
 | **R34** | pnpm owns packages, Nx owns the project graph and local cache, Vite owns renderer builds, and Electron Forge owns package/make/release. Exact pins follow the dependency standard. |
 
-### Dispositions, paper, and conversation
+### Dispositions, preview, and conversation
 
 | ID | Current ruling |
 |---|---|
 | **R36** | Making a disposition stages it immediately; there is no extra staging gesture. |
 | **R37** | Withdraw means unstage. Editing a staged item is one continuous edit on the draft. |
-| **R38** | A signing act freezes every item currently staged. To sign a subset, withdraw the rest first. |
-| **R40** | The editable forming destination is the collation draft canvas, not the paper. The paper is the frozen signed result and supports sign or back, not editing. |
+| **R38** | Publishing freezes every item currently staged. To publish a subset, withdraw the rest first. |
+| **R40** | The editable forming destination is the collation draft canvas, not the preview. The preview is the frozen outbound result and supports publish or back, not editing. |
 | **R46** | Comment, request-change, question, and discussion work at the relevant anchor rather than in a detached chat silo. |
 | **R52** | Conversation is verbs × anchors: line, range, chunk, fragment, plus structured spec rows. Threads and symbol inspection use the margin/right rail so the diff column never reflows. Peek floats; pin docks. |
 | **R53** | OpenSpec renders as structured review material. Requirements, scenarios, tasks, and rationale are disposition anchors with coverage chips and an honest `unimplemented` state. |
@@ -191,11 +191,11 @@ flowchart LR
   dispose[Stage dispositions]
   refine[Refine and edit draft]
   destination{Whose change?}
-  github[Sign one GitHub review]
+  github[Post one GitHub review]
   agent[Hand bundle to coding agent]
   successor[Capture successor patchset]
   delta[Re-review changed delta]
-  pr[Sign: push branch + open PR]
+  pr[Publish: push branch + open PR]
 
   read --> dispose --> refine --> destination
   destination -->|someone else's PR| github
@@ -226,7 +226,7 @@ The engine owns capture, invalidation, carry, and order. Fleet jobs emit RSP
 documents (the Rennet Surfacing Protocol wire format — see [surfacing and
 routing](/developing/concepts/surfacing-and-routing/)). The orchestrator
 describes, retrieves, focuses, annotates, proposes,
-and recomputes through `canvasOps@2`. The user disposes and signs.
+and recomputes through `canvasOps@2`. The user disposes and publishes.
 
 The orchestrator receives a small primer that maps the available context, then
 zooms on demand through canvas, diff, context, and provenance tools. Tool replies

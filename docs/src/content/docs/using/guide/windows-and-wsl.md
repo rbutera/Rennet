@@ -141,7 +141,7 @@ unreachable surface — Rennet never silently runs a host Codex against a WSL re
 
 - It never reads a credential, on either locus. The harness authenticates with
   your own subscription.
-- It never publishes anything a person can see until you sign it. Pushing a review
+- It never publishes anything a person can see until you post it. Pushing a review
   branch is not publishing — the coding-agent loop pushes freely, because
   submitting a pull request requires a push.
 - It never silently changes a WSL path to a differently configured distro. The

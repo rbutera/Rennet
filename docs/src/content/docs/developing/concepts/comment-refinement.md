@@ -9,8 +9,8 @@ the original remains easy to restore.
 
 ## What ships today
 
-Refinement lives on the [collation draft](/developing/concepts/collation-and-signing/),
-not in the paper and not in the main orchestrator chat. The reviewer can refine
+Refinement lives on the [collation draft](/developing/concepts/collation-and-publishing/),
+not in the preview and not in the main orchestrator chat. The reviewer can refine
 one item or run **Refine to post** over every eligible item.
 
 ```mermaid
@@ -19,7 +19,7 @@ sequenceDiagram
   participant D as Collation draft
   participant C as Model Council
   participant H as Claude or Codex seat
-  participant P as Paper
+  participant P as Preview
 
   U->>D: Write a rough disposition note
   U->>D: Refine one or refine all
@@ -59,11 +59,11 @@ stateDiagram-v2
   Refining --> Raw : no change / unavailable / failed
   Refined --> Raw : keep original
   Refined --> Raw : raw text or type changes
-  Refined --> Signed : paper uses effective body
-  Raw --> Signed : paper uses raw body
+  Refined --> Published : preview uses effective body
+  Raw --> Published : preview uses raw body
 ```
 
-Every request is bound to a signature of the raw body, disposition type, and
+Every request is bound to a fingerprint of the raw body, disposition type, and
 full anchor. If the reviewer edits, retypes, re-anchors, or withdraws the item
 while the model is working, the late result is discarded. Rewording or retyping
 an already refined item also clears the old refinement, because it describes a
@@ -97,7 +97,7 @@ The useful goal is not to make every comment sound the same. A good refinement:
 - stays in the reviewer's first person; and
 - does not add concerns the reviewer did not express.
 
-The resulting text remains editable on the draft. The paper simply renders the
+The resulting text remains editable on the draft. The preview simply renders the
 effective body that the draft currently holds.
 
 ## What remains designed, not live

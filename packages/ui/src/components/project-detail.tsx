@@ -158,6 +158,16 @@ export function ProjectDetail({
             </p>
           ) : null}
 
+          {detail.authUnavailable ? (
+            <p className="project-detail-auth-hint" role="note">
+              {detail.authUnavailable === "not-connected"
+                ? "Pull requests unavailable — GitHub is not connected. Connect in Settings."
+                : detail.authUnavailable === "token-invalid"
+                  ? "Pull requests unavailable — the GitHub token was revoked or expired. Reconnect in Settings."
+                  : "Pull requests unavailable — the GitHub token is missing the repo scope."}
+            </p>
+          ) : null}
+
           <div className="smart-list">
             {shown.length === 0 ? (
               <p className="smart-list-empty">Nothing here for this filter.</p>

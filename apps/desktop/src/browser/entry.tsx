@@ -1,6 +1,6 @@
-import { WsRennetBridge } from "@rennet/client";
+import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
 import type { RennetBridge } from "@rennet/protocol";
-import { ConnectionHost, type ConnectionTarget } from "@rennet/ui";
+import { type Connection, ConnectionHost, type ConnectionTarget } from "@rennet/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { composeBrowserInvoke } from "./shell-intercepts";
@@ -30,26 +30,47 @@ function authorityFor(target: ConnectionTarget): string {
   return target.port ? `${target.host}:${target.port}` : target.host;
 }
 
+/** A token store seeded from the saved target (the daemons localStorage ConnectionHost owns,
+ *  migrated in place). Read-only; token material never reaches a log line. */
+function targetTokenStore(target: ConnectionTarget): TokenStore {
+  return { get: () => target.deviceToken, set: () => undefined, delete: () => undefined };
+}
+
 // Module-level (stable) so ConnectionHost keys its remounts on the active target, not on a
 // changing factory identity.
-function createBridge(target: ConnectionTarget): RennetBridge & { close?(): void } {
+function createConnection(target: ConnectionTarget): Connection {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  const wsBridge = new WsRennetBridge({
-    url: `${scheme}//${authorityFor(target)}`,
-    deviceToken: target.deviceToken,
+  const url = `${scheme}//${authorityFor(target)}`;
+  const supervisor = new ConnectionSupervisor({
+    daemonId: target.id,
+    tokenStore: targetTokenStore(target),
+    // queue: hold an invoke until the handshake completes (the bridge's old #whenReady
+    // behaviour), so the served tab's initial bootstrap stays behavior-neutral.
+    offlineInvoke: "queue",
+    createBridge: (hooks, deviceToken) =>
+      new WsRennetBridge({
+        url,
+        deviceToken,
+        autoReconnect: false,
+        onLifecycle: hooks.onLifecycle,
+      }),
   });
-  const wsInvoke = wsBridge.invoke.bind(wsBridge);
-  const invoke: RennetBridge["invoke"] = composeBrowserInvoke(wsInvoke);
-  return {
+  const invoke: RennetBridge["invoke"] = composeBrowserInvoke(supervisor.invoke.bind(supervisor));
+  const bridge: RennetBridge & { close?(): void } = {
     invoke,
-    onProgress: wsBridge.onProgress.bind(wsBridge),
-    onAskStream: wsBridge.onAskStream.bind(wsBridge),
-    close: () => wsBridge.close(),
+    onProgress: supervisor.onProgress.bind(supervisor),
+    onAskStream: supervisor.onAskStream.bind(supervisor),
+    close: () => supervisor.close(),
+  };
+  return {
+    bridge,
+    subscribe: (listener) => supervisor.subscribe(listener),
+    close: () => supervisor.close(),
   };
 }
 
 createRoot(root).render(
   <StrictMode>
-    <ConnectionHost createBridge={createBridge} defaultTarget={DEFAULT_TARGET} />
+    <ConnectionHost createConnection={createConnection} defaultTarget={DEFAULT_TARGET} />
   </StrictMode>,
 );

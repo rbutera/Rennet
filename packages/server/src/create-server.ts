@@ -581,30 +581,40 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // auth is unavailable it stays `null` and `project.detail` degrades to the local-only
   // list (B1) — a missing token is a local-only surface, never a failed fetch rendered
   // as "zero PRs". Resolution is lazy (first `project.detail`), never at launch —
-  // and INVALIDATED on connect/paste/disconnect so the surface follows the account.
-  let projectPrSource: Promise<ProjectPrSource | null> | null = null;
-  async function resolveProjectPrSource(): Promise<ProjectPrSource | null> {
-    projectPrSource ??= (async (): Promise<ProjectPrSource | null> => {
+  // INVALIDATED on connect/paste/disconnect so the surface follows the account, and
+  // a distinct auth-unavailable REASON rides along so the detail screen can say
+  // WHICH problem stands between the user and the PR half.
+  let projectPrResolution: Promise<{
+    source: ProjectPrSource | null;
+    authUnavailable?: "not-connected" | "token-invalid" | "insufficient-scope";
+  }> | null = null;
+  async function resolveProjectPrSource(): Promise<{
+    source: ProjectPrSource | null;
+    authUnavailable?: "not-connected" | "token-invalid" | "insufficient-scope";
+  }> {
+    projectPrResolution ??= (async () => {
       const auth = await resolveAuth();
-      if (!auth.ok) return null;
-      return createGitHubProjectPrSource({
-        octokit: createGitHubOctokit({ fetch: publishHttp, token: auth.token }),
-      });
+      if (!auth.ok) return { source: null, authUnavailable: auth.reason };
+      return {
+        source: createGitHubProjectPrSource({
+          octokit: createGitHubOctokit({ fetch: publishHttp, token: auth.token }),
+        }),
+      };
     })();
     // A transient validation failure must not poison the memo (mirrors octokitMemo):
     // the next project.detail retries instead of failing forever.
-    const memo = projectPrSource;
+    const memo = projectPrResolution;
     try {
       return await memo;
     } catch (error) {
-      if (projectPrSource === memo) projectPrSource = null;
+      if (projectPrResolution === memo) projectPrResolution = null;
       throw error;
     }
   }
 
   /** Drop every memoized auth-derived surface (the account changed). */
   function invalidateGitHubMemos(): void {
-    projectPrSource = null;
+    projectPrResolution = null;
     octokitMemo = null;
   }
 
@@ -2000,12 +2010,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (!project) {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
       }
-      const prSource = await resolveProjectPrSource();
+      const { source, authUnavailable } = await resolveProjectPrSource();
       const projectRoot = project.openPath || project.path;
-      return loadProjectDetail(
-        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), prSource ?? undefined),
+      const detail = await loadProjectDetail(
+        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), source ?? undefined),
         project,
       );
+      return authUnavailable ? { ...detail, authUnavailable } : detail;
     },
     // The merged-PR row's clean-up (B2), for real: `git worktree remove <path>` run
     // from the project's root. Non-forcing — a dirty worktree is refused and reported

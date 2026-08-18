@@ -358,10 +358,16 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
               event: ctx ? projectProgressEvent(event, ctx) : event,
             })
         : undefined;
-      // Ask-stream deltas are model-authored prose — NOT projected (R31/R32 honesty).
+      // Ask-stream deltas BROADCAST to every live authorized socket by `reviewId`
+      // (issue #389 server half), mirroring `broadcastProgress`. Closing over the
+      // invoking socket dropped the live stream after a mid-turn reconnect — the turn
+      // survives in main, but its deltas kept firing at the dead socket. Broadcasting
+      // means the reconnected socket (a fresh connection) receives them, and the client
+      // filters by its `onAskStream(reviewId)` listener exactly as it filters progress.
+      // Deltas are model-authored prose — NOT projected (R31/R32 honesty) — so the raw
+      // event goes to private and projected connections alike.
       const emitAskStream = reviewId
-        ? (event: ReviewAskStreamEvent): void =>
-            send(socket, { type: "askStreamEvent", reviewId, event })
+        ? (event: ReviewAskStreamEvent): void => broadcastAskStream(reviewId, event)
         : undefined;
       try {
         const output = await dispatch(command, effectiveInput, {
@@ -410,13 +416,29 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             });
             return;
           }
-          // Classify ONCE (design D1): loopback → private; else a valid token → projected;
-          // else pairing-only (may invoke only `pairing.exchange`, so a revoked/absent
-          // token can still re-pair — pairing stays available).
+          // Classify ONCE (design D1): loopback → private; else a PRESENTED token is verified
+          // (valid → projected; invalid → terminal auth rejection, below); else no token →
+          // pairing-only (may invoke only `pairing.exchange`, so a device with no token can
+          // pair). The present-but-REJECTED case (issue #383) must NOT silently fall to
+          // pairing-only and complete the handshake: that reads to the client as `online`,
+          // hiding a bad/revoked token behind a healthy-looking connection. Instead we send an
+          // `unauthorized` rpcError correlated to the hello and close — the client surfaces a
+          // terminal `error`. To re-pair, a device reconnects WITHOUT the rejected token.
           if (loopback) {
             connection.connectionClass = "private";
-          } else if (frame.deviceToken && deps.verifyDeviceToken?.(frame.deviceToken)) {
-            connection.connectionClass = "projected";
+          } else if (frame.deviceToken) {
+            if (deps.verifyDeviceToken?.(frame.deviceToken)) {
+              connection.connectionClass = "projected";
+            } else {
+              send(socket, {
+                type: "rpcError",
+                requestId: frame.clientId,
+                code: "unauthorized",
+                message: "device token rejected",
+              });
+              socket.close();
+              return;
+            }
           } else {
             connection.connectionClass = "pairing-only";
           }
@@ -553,6 +575,32 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       } else if (connection.connectionClass === "private") {
         connection.socket.send(rawPayload);
       }
+    }
+  };
+
+  // Broadcast a review's ask-stream delta to every live authorized socket by `reviewId`
+  // (issue #389 server half). This is the read-side twin of `broadcastProgress`, and it is
+  // what lets a mid-turn reconnect keep the live stream flowing to the fresh socket.
+  //
+  // Why broadcasting to all authorized sockets is correct here, NOT a cross-client leak
+  // (reviewed, #383): Rennet is single-user — every authorized socket is the same person's
+  // paired device, and a device token is a full peer within its locus (Rule Zero), so a
+  // phone watching a turn the desktop started is the phase-6 feature, not a leak.
+  // `ReviewAskStreamEvent` carries NO structural path fields (verified against the schema:
+  // ids, an anchor string, channel, model, and prose — nothing R19 would project), and the
+  // pre-fix path already sent the raw event to a projected invoker, so shapes are unchanged.
+  // `pairing-only` (no valid token) is excluded, exactly as `broadcastProgress` excludes it.
+  // Per-review subscription routing and bandwidth filtering arrive with the presence phase.
+  const broadcastAskStream = (reviewId: string, event: ReviewAskStreamEvent): void => {
+    const payload = JSON.stringify({
+      type: "askStreamEvent",
+      reviewId,
+      event,
+    } satisfies SessionFrame);
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      connection.socket.send(payload);
     }
   };
 

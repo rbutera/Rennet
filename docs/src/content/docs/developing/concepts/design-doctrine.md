@@ -3,7 +3,7 @@ title: Design doctrine
 description: The materials, colour roles, interaction laws, and writing rules that make a Rennet screen feel like Rennet.
 ---
 
-Rennet's interface should make private thinking, source code, and a signed
+Rennet's interface should make private thinking, source code, and a published
 outcome feel like different kinds of object. These rules are the floor for UI
 work, not a mood board to consult at the end.
 
@@ -11,7 +11,7 @@ work, not a mood board to consult at the end.
 
 ```mermaid
 flowchart LR
-  glass["Glass<br/>working interface"] -->|compose and refine| paper["Paper<br/>signed outcome"]
+  glass["Glass<br/>working interface"] -->|compose and refine| preview["Preview<br/>published outcome"]
   code["Code<br/>opaque source truth"] --> glass
 ```
 
@@ -19,11 +19,12 @@ flowchart LR
   private annotations can be translucent. Glass says “still being formed.”
 - **Code is opaque.** Diff and source surfaces need stable contrast. Decorative
   glass must never make code harder to read.
-- **Paper is signed.** The final preview is the one solid object. Editing happens
-  back on the glass draft; signing freezes the result that leaves Rennet.
+- **The preview is the outbound object.** It is the one solid surface, not
+  translucent glass. Editing happens back on the glass draft; publishing freezes
+  the result that leaves Rennet.
 
-The collation draft is intentionally glass. Signing is the phase change that
-makes it paper.
+The collation draft is intentionally glass. Publishing is the phase change from
+glass to the solid preview.
 
 ## Two registers
 
@@ -32,7 +33,7 @@ thing go?
 
 | Register | Meaning | Typical use |
 |---|---|---|
-| Ink | Public or publish-bound | PR content, the signed review, material already visible to the team |
+| Ink | Public or publish-bound | PR content, the posted review, material already visible to the team |
 | Backlight blue | Private to the local review | Notes, local worktrees, orchestrator annotations, working context |
 
 Amber has one narrow job: blast radius, disagreement, and other review signals
@@ -98,7 +99,7 @@ Controls should usually fit in four words. The content being reviewed can
 breathe; the interface around it should get out of the way.
 
 - Use proportional type for interface chrome. Monospace is for code.
-- Keep serif type for paper—the signed destination—not ordinary working chrome.
+- Keep serif type for the preview—the outbound destination—not ordinary working chrome.
 - Prefer one familiar glyph over a row of labelled utilities.
 - Give unfamiliar glyphs a tooltip and include them in the product legend.
 - Use the shared design tokens. New one-off colours and radii usually signal a
@@ -112,7 +113,7 @@ may breathe when brevity would make them cryptic.
 
 - Every pointer action needs a keyboard route and a visible focus state.
 - Respect reduced-motion preferences; removing animation must not remove status.
-- Secondary text still needs readable contrast on glass and paper.
+- Secondary text still needs readable contrast on glass and the preview.
 - Use the shared icon components for real controls. Do not use emoji or arbitrary
   text glyphs as the only meaning-bearing icon.
 - Keep labels or accessible names when a compact glyph replaces visible text.
@@ -124,8 +125,8 @@ Auto is the normal mode. A read-only mode can describe a retrospective review,
 but there is no “ask before each model turn” mode: running review models is the
 job of the product.
 
-Publishing is a different moment. The paper tells the user exactly what will be
-posted, and the user's sign is what makes it public.
+Publishing is a different moment. The preview tells the user exactly what will be
+posted, and the user's post is what makes it public.
 
 ## Review checklist
 
@@ -137,12 +138,12 @@ Before a UI change is done, check:
 4. Is important detail collapsed rather than lost?
 5. Does loading say what the machine is doing?
 6. Is the chrome short, proportional, and built from shared tokens?
-7. Does the signed paper match the outbound artifact exactly?
+7. Does the preview match the outbound artifact exactly?
 8. Can the same work be done by keyboard, with reduced motion and readable contrast?
 9. Does every mark live at an anchor or in an explicit orphan tray?
 
 ## Where to go next
 
 - [Canvas model](/developing/concepts/canvas-model/) explains the layers that these materials render.
-- [Collation and signing](/developing/concepts/collation-and-signing/) follows glass becoming paper.
+- [Collation and publishing](/developing/concepts/collation-and-publishing/) follows glass becoming the solid preview.
 - [Architecture overview](/developing/concepts/architecture-overview/) places the renderer in the wider system.

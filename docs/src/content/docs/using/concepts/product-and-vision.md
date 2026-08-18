@@ -25,7 +25,7 @@ orders them for comprehension, surfaces decisions and disagreements, remembers
 what you acted on, and turns your dispositions into one editable outbound
 artifact.
 
-The models assist. The human reviews and signs.
+The models assist. The human reviews and posts.
 
 ## The whole loop
 
@@ -38,9 +38,9 @@ flowchart LR
   remote --> digest
   digest --> decide[Read, discuss, dispose]
   decide --> draft[Editable collation draft]
-  draft --> sign[Signed paper]
-  sign -->|Team PR| github[Normal GitHub review]
-  sign -->|Your branch| agent[Coding-agent handoff]
+  draft --> preview[Preview and post]
+  preview -->|Team PR| github[Normal GitHub review]
+  preview -->|Your branch| agent[Coding-agent handoff]
   agent --> delta[Successor patchset and delta review]
   delta --> digest
 ```
@@ -96,7 +96,7 @@ same patchset and anchors sit underneath every view, so rotating a lens does not
 move the code under you.
 
 Models surface findings, reconstruct possible reasoning, and propose useful
-grouping. The reviewer reads, judges, and signs. Product copy should preserve
+grouping. The reviewer reads, judges, and posts. Product copy should preserve
 that distinction: Rennet can say a model **flagged** something, not that the
 machine **reviewed**, **approved**, or **found a bug** on the reviewer's behalf.
 
@@ -119,9 +119,9 @@ Claude Code or Codex.
 ## What is live and what is still closing
 
 - **Live** — the team-PR loop, end to end on `main`: ingest, decomposition, the
-  review lenses, dual-model analysis, refinement, signing, and a real GitHub post.
+  review lenses, dual-model analysis, refinement, and a real GitHub post.
 - **Live** — the own-branch submission path: Rennet drafts the pull request, you
-  sign, and it pushes the named branch and opens the previewed pull request.
+  publish, and it pushes the named branch and opens the previewed pull request.
 - **Live** — the coding-agent handoff with delta re-review: you compose the
   handoff, preview it, run it, and get a focused re-review of exactly what the
   agent changed, including anything it changed beyond what you asked for. The
@@ -136,10 +136,10 @@ still intended destinations rather than finished surfaces.
 These docs mark those seams explicitly. A designed flow is useful context, but
 it is not reported as shipped merely because a schema or mockup exists.
 
-## The human sign
+## The human act
 
-The collation draft is private working material. The paper previews the exact
-outbound review or submission. Signing is the moment it becomes the user's
+The collation draft is private working material. The preview shows the exact
+outbound review or submission. Publishing is the moment it becomes the user's
 artifact.
 
 That is not a generic consent gate. It is the authorship model: the review goes
@@ -147,7 +147,7 @@ out in the reviewer's name, voice, and verdict.
 
 ## Where to go next
 
-- [User journey](/using/guide/user-journey/) follows the intended experience from project to signed paper.
+- [User journey](/using/guide/user-journey/) follows the intended experience from project to posted review.
 - [Reviewing a GitHub PR](/using/guide/reviewing-a-github-pr/) covers the live team-review path.
 - [Common questions](/using/concepts/common-questions/) answers the usual objections.
 - [Architecture overview](/developing/concepts/architecture-overview/) explains how the system supports the loop.

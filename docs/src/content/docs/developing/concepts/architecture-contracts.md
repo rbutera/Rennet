@@ -24,7 +24,7 @@ consent screens, capability denial, read-only coding sessions, or safety theatre
 | Evidence-backed knowledge layer | Data model exists; desktop composition is deferred | Every statement carries evidence and freshness |
 | Occurrence lineage | Exact carry is live; fuzzy matching is present but not connected to carry | Similarity never impersonates identity |
 | Someone else's PR | Live end to end | Preview the exact outbound review, then submit once |
-| Own-branch PR submission | Live | Sign pushes the named branch and opens the previewed PR |
+| Own-branch PR submission | Live | Publishing pushes the named branch and opens the previewed PR |
 | Coding-agent handoff | Compose, prepare, and run live; the run executes the composer's digest-bound bundle; the renderer composes, previews, and invokes it; the deterministic delta account is live | Coding agent may write and test; capture its complete delta as a successor |
 | Remote/mobile client | Projection, pairing, and non-loopback bind live over Tailscale; a dedicated mobile client app is still deferred | Host paths and raw events never cross the portable boundary — implemented in both directions for projected connections, with model-authored prose the one stated exception |
 
@@ -50,7 +50,7 @@ consent screens, capability denial, read-only coding sessions, or safety theatre
 9. **Deletion covers every Rennet-controlled copy.** The boundary outside Rennet
    is stated plainly.
 10. **Outbound work is the user's authored result.** Model work may run freely;
-    another human sees a GitHub review or PR only when the reviewer signs it.
+    another human sees a GitHub review or PR only when the reviewer posts it.
 
 ## Repo Map and project context
 
@@ -312,24 +312,24 @@ flowchart LR
   disposition["Disposition<br/>comment · request-change · question · approve"]
   refine["Refined form<br/>investigated and editable"]
   draft["Collation draft<br/>staged glass"]
-  paper["Paper<br/>frozen preview"]
+  preview["Preview<br/>frozen outbound artifact"]
   review["Someone else's PR<br/>one GitHub review"]
   handoff["Own branch<br/>coding-agent bundle"]
   submit["Own branch ready<br/>push + create PR"]
 
-  disposition --> refine --> draft --> paper
-  paper --> review
+  disposition --> refine --> draft --> preview
+  preview --> review
   draft --> handoff --> draft
-  paper --> submit
+  preview --> submit
 ```
 
 Dispose means staged; withdraw means unstaged. Editing happens in the collation
-draft. Signing freezes the exact outbound bytes into the paper.
+draft. Publishing freezes the exact outbound bytes into the preview.
 
-For someone else's PR, signing submits one idempotent GitHub review pinned to the
+For someone else's PR, publishing submits one idempotent GitHub review pinned to the
 reviewed head. For the user's branch, a handoff gives a capable coding agent the
-batched requests and recaptures its changes; once the branch is ready, signing
-pushes the named reviewed branch and opens the exact PR shown on the paper.
+batched requests and recaptures its changes; once the branch is ready, publishing
+pushes the named reviewed branch and opens the exact PR shown on the preview.
 
 ## Proof obligations
 

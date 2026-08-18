@@ -346,8 +346,54 @@ export function ConversationHost({
     const turnId = crypto.randomUUID();
     const previewId = `${STREAM_PREVIEW_ID_PREFIX}${turnId}`;
     let book: CoalescerBook = emptyCoalescerBook();
-    const unsubscribe = bridge.onAskStream?.(reviewId, (event) => {
+
+    /** Drop the live preview from a thread (on completion or failure). */
+    const dropPreview = (thread: ConversationThread): ConversationThread => ({
+      ...thread,
+      messages: thread.messages.filter((message) => message.id !== previewId),
+    });
+
+    // A turn settles EXACTLY ONCE: via the invoke RESULT on the happy path, or — when the
+    // socket drops mid-turn and the invoke rejects with a ConnectionError — via the stream's
+    // `ask-complete`. `settled` makes whichever loses that race a no-op; `connectionLost`
+    // gates the stream-completion path, so a normal turn's answer still comes from the richer
+    // invoke result (it can carry a second opinion) and never from a single-channel complete.
+    let settled = false;
+    let connectionLost = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Held in an object so `finishTurn` (defined before the subscription, which the
+    // ask-complete branch inside the listener calls) reads the disposer at call time.
+    const stream: { unsubscribe?: () => void } = {};
+    const finishTurn = (): void => {
+      stream.unsubscribe?.();
+      if (timer !== undefined) clearTimeout(timer);
+      markPending(threadId, false);
+    };
+
+    stream.unsubscribe = bridge.onAskStream?.(reviewId, (event) => {
       if (event.turnId !== turnId) return; // only THIS turn's tokens
+      // Completion from the STREAM closes the turn only on the reconnect path: the invoke
+      // promise died with the dropped socket, so ask-complete is what lands the answer. On
+      // the happy path the invoke result already settled it and this is a no-op.
+      if (event.kind === "ask-complete" && event.channel === "orchestrator") {
+        if (connectionLost && !settled) {
+          settled = true;
+          setThreads((current) =>
+            current.map((candidate) =>
+              candidate.id === threadId
+                ? answerInThread(
+                    dropPreview(candidate),
+                    crypto.randomUUID(),
+                    event.model,
+                    event.finalBody,
+                  )
+                : candidate,
+            ),
+          );
+          finishTurn();
+        }
+        return;
+      }
       if (event.kind !== "ask-delta" || event.channel !== "orchestrator") return;
       const pushed = pushDelta(
         book,
@@ -381,13 +427,6 @@ export function ConversationHost({
       );
     });
 
-    /** Drop the live preview from a thread (on completion or failure). */
-    const dropPreview = (thread: ConversationThread): ConversationThread => ({
-      ...thread,
-      messages: thread.messages.filter((message) => message.id !== previewId),
-    });
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const invocation = bridge.invoke("review.ask", {
         commandId: crypto.randomUUID(),
@@ -414,6 +453,8 @@ export function ConversationHost({
         );
       });
       const result = await Promise.race([invocation, timeout]);
+      if (settled) return; // the stream already closed it (reconnect path won the race)
+      settled = true;
       // The REAL answer(s) populate the thread — `primary` always, plus `secondOpinion`
       // when the thread asked both. Each is a durable harness card labelled by its own
       // model. No synthesis is possible: the result shape carries at most these two. The
@@ -438,7 +479,23 @@ export function ConversationHost({
           return grown;
         }),
       );
+      finishTurn();
     } catch (reason) {
+      // A mid-turn CONNECTION loss is not a turn failure. Keep the live preview and the
+      // pending (reconnecting) state, and KEEP the ask-stream subscription alive so the
+      // supervisor's resubscribe replays it onto the new socket — its post-reconnect deltas
+      // keep the preview growing and `ask-complete` finalizes the turn (issue #389, the
+      // product seam). A genuine turn failure (below) still tears down honestly.
+      // ponytail: a turn that completes ENTIRELY during a full outage (ask-complete fired
+      // while disconnected) is recovered by review.reattach, not here — this host's reattach
+      // is one-shot, so that edge repaints on the next mount, not instantly. Widen if it bites.
+      if (!settled && reason instanceof Error && reason.name === "ConnectionError") {
+        connectionLost = true;
+        if (timer !== undefined) clearTimeout(timer); // don't let the UI timeout cry "no answer"
+        return;
+      }
+      if (settled) return;
+      settled = true;
       // A failed turn is surfaced honestly on the thread — never swallowed, never
       // replaced by a fixture answer. The half-streamed preview is dropped (its
       // interrupted-surface persistence is #251's next slice, not this one).
@@ -448,10 +505,7 @@ export function ConversationHost({
         ),
       );
       setThreadError(threadId, reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      unsubscribe?.();
-      if (timer !== undefined) clearTimeout(timer);
-      markPending(threadId, false);
+      finishTurn();
     }
   }
 
