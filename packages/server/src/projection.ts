@@ -7,8 +7,8 @@
 //
 // Outbound (server→remote): structural host-path fields become `repoReference`
 // objects (`{repoKey, displayName, relativePath?}`); then a blanket scrub replaces
-// any lingering known-root or home-dir prefix in every remaining string with a
-// display token. Model-authored prose (ask-stream deltas) is NEVER scrubbed — it is
+// known-root and home-dir prefixes in every remaining string with a display token.
+// Model-authored prose (ask-stream deltas) is NEVER scrubbed — it is
 // the model's text, and the docs say so (R31/R32 honesty).
 //
 // Inbound (remote→server): a command's host-path input arrives as a `repoKey` (or a
@@ -16,7 +16,7 @@
 // table. An unresolvable reference is a typed `invalid_input`, never a guessed path.
 
 import { realpathSync } from "node:fs";
-import { basename, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import { escapePath } from "@rennet/core";
 import type { CommandName, ProjectProcessEvent, RepoReference } from "@rennet/protocol";
 
@@ -141,13 +141,13 @@ export function scrubRoots(text: string, ctx: ProjectionContext): string {
   return out;
 }
 
-/** Deep-scrub every string in a value; a safety net that catches any host path a structural pass missed. */
-function scrubDeep(value: unknown, ctx: ProjectionContext): unknown {
+/** Deep-scrub every string in a value for known-root and home-dir prefixes. */
+export function scrubProjectedValue(value: unknown, ctx: ProjectionContext): unknown {
   if (typeof value === "string") return scrubRoots(value, ctx);
-  if (Array.isArray(value)) return value.map((item) => scrubDeep(item, ctx));
+  if (Array.isArray(value)) return value.map((item) => scrubProjectedValue(item, ctx));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value)) out[key] = scrubDeep(val, ctx);
+    for (const [key, val] of Object.entries(value)) out[key] = scrubProjectedValue(val, ctx);
     return out;
   }
   return value;
@@ -223,14 +223,21 @@ function projectSummary(
   return { ...summary, path: toRepoReference(String(summary.path), ctx) };
 }
 
+function projectSettingsProject(
+  project: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  return { ...project, repoPath: toRepoReference(String(project.repoPath), ctx) };
+}
+
 /**
  * Project a command's OUTPUT for a projected connection. Key-driven over the known
  * structural surface (the design Context inventory): every command that returns a
  * `review`/`project`/`projects`/`discovery`/`repos`/`path` shape is covered without
- * enumerating them, then a blanket scrub catches any free-text straggler.
+ * enumerating them, then the deep scrub replaces known-root and home-dir prefixes.
  */
 export function projectCommandOutput(
-  _command: CommandName,
+  command: CommandName,
   output: unknown,
   ctx: ProjectionContext,
 ): unknown {
@@ -239,10 +246,22 @@ export function projectCommandOutput(
     const o = { ...(output as Record<string, unknown>) };
     if (o.review && typeof o.review === "object")
       o.review = projectReview(o.review as Record<string, unknown>, ctx);
-    if (o.project && typeof o.project === "object")
-      o.project = projectProject(o.project as Record<string, unknown>, ctx);
-    if (Array.isArray(o.projects))
-      o.projects = (o.projects as Record<string, unknown>[]).map((p) => projectProject(p, ctx));
+    if (o.project && typeof o.project === "object") {
+      o.project = [
+        "settings.setRepoLocus",
+        "settings.resetRepoValue",
+        "settings.pinRepoValue",
+      ].includes(command)
+        ? projectSettingsProject(o.project as Record<string, unknown>, ctx)
+        : projectProject(o.project as Record<string, unknown>, ctx);
+    }
+    if (Array.isArray(o.projects)) {
+      o.projects = (o.projects as Record<string, unknown>[]).map((project) =>
+        command === "settings.get"
+          ? projectSettingsProject(project, ctx)
+          : projectProject(project, ctx),
+      );
+    }
     if (o.discovery && typeof o.discovery === "object")
       o.discovery = projectDiscovery(o.discovery as Record<string, unknown>, ctx);
     if (Array.isArray(o.repos))
@@ -251,7 +270,7 @@ export function projectCommandOutput(
     if (typeof o.path === "string") o.path = toRepoReference(o.path, ctx);
     projected = o;
   }
-  return scrubDeep(projected, ctx);
+  return scrubProjectedValue(projected, ctx);
 }
 
 /** Project a progress event: the processed-repo summary's `path`, and scrub note/detail. */
@@ -259,7 +278,7 @@ export function projectProgressEvent(
   event: ProjectProcessEvent,
   ctx: ProjectionContext,
 ): ProjectProcessEvent {
-  return scrubDeep(
+  return scrubProjectedValue(
     (() => {
       if (event.kind === "repo-done")
         return {
@@ -324,6 +343,20 @@ function referenceKey(value: unknown): string | null {
   return null;
 }
 
+function resolveReference(value: unknown, ctx: ProjectionContext): string {
+  const key = referenceKey(value);
+  const hostPath = key === null ? undefined : ctx.byRepoKey.get(key);
+  if (!hostPath) throw new ProjectionResolveError(String(key ?? value));
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as { relativePath?: unknown }).relativePath === "string"
+  ) {
+    return join(hostPath, (value as { relativePath: string }).relativePath);
+  }
+  return hostPath;
+}
+
 /**
  * Resolve a projected command's host-path inputs back to real host paths. A missing
  * field is left absent (optional inputs stay optional); a present-but-unresolvable
@@ -334,15 +367,27 @@ export function resolveCommandInput(
   input: unknown,
   ctx: ProjectionContext,
 ): unknown {
+  if (command === "projects.add" && input && typeof input === "object") {
+    const out = { ...(input as Record<string, unknown>) };
+    if (out.discovery && typeof out.discovery === "object") {
+      const discovery = { ...(out.discovery as Record<string, unknown>) };
+      discovery.path = resolveReference(discovery.path, ctx);
+      if (Array.isArray(discovery.repos)) {
+        discovery.repos = (discovery.repos as Record<string, unknown>[]).map((repo) => ({
+          ...repo,
+          path: resolveReference(repo.path, ctx),
+        }));
+      }
+      out.discovery = discovery;
+    }
+    return out;
+  }
   const fields = INBOUND_HOST_PATH_FIELDS[command];
   if (!fields || !input || typeof input !== "object") return input;
   const out = { ...(input as Record<string, unknown>) };
   for (const field of fields) {
     if (!(field in out) || out[field] === undefined) continue;
-    const key = referenceKey(out[field]);
-    const hostPath = key === null ? undefined : ctx.byRepoKey.get(key);
-    if (!hostPath) throw new ProjectionResolveError(String(key ?? out[field]));
-    out[field] = hostPath;
+    out[field] = resolveReference(out[field], ctx);
   }
   return out;
 }

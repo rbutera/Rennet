@@ -1,5 +1,10 @@
-import { commandDefinitions } from "@rennet/protocol";
+import {
+  commandDefinitions,
+  projectProcessEventSchema,
+  reviewAskStreamEventSchema,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import {
   buildProjectionContext,
   INBOUND_HOST_PATH_FIELDS,
@@ -159,24 +164,329 @@ describe("inbound resolution", () => {
     const input = { reviewId: "r", patchsetId: "p", path: "src/x.ts", disposition: null, body: "" };
     expect(resolveCommandInput("review.setDisposition", input, ctx)).toEqual(input);
   });
+
+  it("round-trips projected discovery references through projects.add", () => {
+    const projected = projectCommandOutput(
+      "project.discover",
+      {
+        discovery: {
+          path: REPO,
+          kind: "workspace",
+          repos: [{ name: "nested", path: `${REPO}/nested`, branches: 1 }],
+          primaryBranch: "main",
+        },
+      },
+      ctx,
+    ) as { discovery: Record<string, unknown> };
+    const resolved = resolveCommandInput(
+      "projects.add",
+      {
+        commandId: "00000000-0000-4000-8000-000000000000",
+        discovery: projected.discovery,
+        includedRepos: ["nested"],
+        primaryBranch: "main",
+      },
+      ctx,
+    ) as { discovery: { path: string; repos: { path: string }[] } };
+
+    expect(resolved.discovery.path).toBe(REPO);
+    expect(resolved.discovery.repos[0]?.path).toBe(`${REPO}/nested`);
+  });
+
+  it.each([
+    {
+      label: "discovery root",
+      path: REPO,
+      repoPath: toRepoReference(REPO, ctx),
+    },
+    {
+      label: "discovered repo",
+      path: toRepoReference(REPO, ctx),
+      repoPath: REPO,
+    },
+  ])("rejects a raw absolute $label in projected projects.add input", ({ path, repoPath }) => {
+    expect(() =>
+      resolveCommandInput(
+        "projects.add",
+        {
+          discovery: {
+            path,
+            kind: "repo",
+            repos: [{ name: "rennet", path: repoPath, branches: 1 }],
+            primaryBranch: "main",
+          },
+        },
+        ctx,
+      ),
+    ).toThrow(ProjectionResolveError);
+  });
+
+  it("projects SettingsProject.repoPath and resolves the reference for settings.guidance", () => {
+    const settingsProject = {
+      projectId: "p1",
+      name: "rennet",
+      repoPath: REPO,
+      visibility: "local",
+      visibilityProvenance: { layer: "builtin", contributions: [] },
+      promoted: false,
+      promotedProvenance: { layer: "builtin", contributions: [] },
+      locus: { kind: "host" },
+      locusOverridden: false,
+      configMalformed: false,
+    };
+    const projected = projectCommandOutput(
+      "settings.get",
+      {
+        scheme: "system",
+        schemeProvenance: { layer: "builtin", contributions: [] },
+        appearanceMalformed: false,
+        projects: [settingsProject],
+      },
+      ctx,
+    ) as { projects: { repoPath: { repoKey: string } }[] };
+    const reference = projected.projects[0]?.repoPath;
+
+    expect(reference?.repoKey).toBeTruthy();
+    expect(reference?.repoKey).not.toBe("undefined");
+    const resolved = resolveCommandInput(
+      "settings.guidance",
+      { projectId: "p1", repoPath: reference },
+      ctx,
+    ) as { repoPath: string };
+    expect(resolved.repoPath).toBe(REPO);
+  });
+
+  it.each(["settings.setRepoLocus", "settings.resetRepoValue", "settings.pinRepoValue"] as const)(
+    "projects the SettingsProject row returned by %s",
+    (command) => {
+      const output = projectCommandOutput(
+        command,
+        { project: { projectId: "p1", name: "rennet", repoPath: REPO } },
+        ctx,
+      ) as { project: { repoPath: { repoKey: string } } };
+      expect(output.project.repoPath.repoKey).toBeTruthy();
+      expect(output.project.repoPath.repoKey).not.toBe("undefined");
+    },
+  );
 });
 
-describe("path-field coverage guard (no new path field slips through)", () => {
-  it("classifies every top-level repoPath/path input field as host or repo-relative", () => {
-    const unclassified: string[] = [];
-    for (const [command, def] of Object.entries(commandDefinitions)) {
-      const shape = (def.input as { shape?: Record<string, unknown> }).shape;
-      if (!shape) continue;
-      for (const field of Object.keys(shape)) {
-        if (field !== "path" && field !== "repoPath") continue;
-        const host = INBOUND_HOST_PATH_FIELDS[command]?.includes(field);
-        const rel = INBOUND_REPO_RELATIVE_PATH_FIELDS[command]?.includes(field);
-        if (!host && !rel) unclassified.push(`${command}.${field}`);
-      }
+type PathClassification = "host-path-projected" | "repo-relative" | "opaque";
+
+type SchemaDef = {
+  readonly type?: string;
+  readonly shape?: Record<string, z.ZodType> | (() => Record<string, z.ZodType>);
+  readonly element?: z.ZodType;
+  readonly innerType?: z.ZodType;
+  readonly in?: z.ZodType;
+  readonly out?: z.ZodType;
+  readonly options?: readonly z.ZodType[];
+  readonly items?: readonly z.ZodType[];
+  readonly rest?: z.ZodType;
+  readonly valueType?: z.ZodType;
+};
+
+const PATH_LIKE_FIELD_NAMES = new Set([
+  "path",
+  "repoPath",
+  "openPath",
+  "root",
+  "commonDir",
+  "repositoryRoot",
+  "includedRepoPaths",
+]);
+
+function schemaDef(schema: z.ZodType): SchemaDef {
+  return (schema as unknown as { _zod: { def: SchemaDef } })._zod.def;
+}
+
+function schemaChildren(schema: z.ZodType): readonly z.ZodType[] {
+  const def = schemaDef(schema);
+  switch (def.type) {
+    case "array":
+      return def.element ? [def.element] : [];
+    case "optional":
+    case "nullable":
+    case "default":
+      return def.innerType ? [def.innerType] : [];
+    case "pipe":
+      return [def.in, def.out].filter((child): child is z.ZodType => child !== undefined);
+    case "union":
+      return def.options ?? [];
+    case "tuple":
+      return [...(def.items ?? []), ...(def.rest ? [def.rest] : [])];
+    case "record":
+      return def.valueType ? [def.valueType] : [];
+    default:
+      return [];
+  }
+}
+
+function containsString(schema: z.ZodType, seen = new Set<z.ZodType>()): boolean {
+  if (seen.has(schema)) return false;
+  seen.add(schema);
+  if (schemaDef(schema).type === "string") return true;
+  return schemaChildren(schema).some((child) => containsString(child, seen));
+}
+
+function collectPathFields(
+  schema: z.ZodType,
+  location: string,
+  found: Set<string>,
+  seen = new Set<z.ZodType>(),
+): void {
+  if (seen.has(schema)) return;
+  seen.add(schema);
+  const def = schemaDef(schema);
+  if (def.type === "object") {
+    const shape = typeof def.shape === "function" ? def.shape() : def.shape;
+    for (const [field, child] of Object.entries(shape ?? {})) {
+      const childLocation = `${location}.${field}`;
+      if (PATH_LIKE_FIELD_NAMES.has(field) && containsString(child)) found.add(childLocation);
+      collectPathFields(child, childLocation, found, new Set(seen));
     }
+    return;
+  }
+  for (const child of schemaChildren(schema)) {
+    collectPathFields(child, location, found, new Set(seen));
+  }
+}
+
+function classified(
+  classification: PathClassification,
+  locations: readonly string[],
+): Record<string, PathClassification> {
+  return Object.fromEntries(locations.map((location) => [location, classification]));
+}
+
+function reviewShape(prefix: string): Record<string, PathClassification> {
+  return {
+    ...classified("host-path-projected", [
+      `${prefix}.repositoryRoot`,
+      `${prefix}.patchsets.repository.root`,
+      `${prefix}.patchsets.repository.commonDir`,
+    ]),
+    ...classified("repo-relative", [
+      `${prefix}.patchsets.files.path`,
+      `${prefix}.patchsets.intent.specSnapshots.path`,
+      `${prefix}.dispositions.anchor.path`,
+      `${prefix}.orphaned.anchor.path`,
+      `${prefix}.deltaAccount.asks.path`,
+      `${prefix}.deltaAccount.beyondAskHunks.path`,
+    ]),
+  };
+}
+
+function projectShape(prefix: string): Record<string, PathClassification> {
+  return classified("host-path-projected", [
+    `${prefix}.path`,
+    `${prefix}.openPath`,
+    `${prefix}.includedRepoPaths`,
+  ]);
+}
+
+const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> = {
+  ...reviewShape("app.bootstrap.output.review"),
+  ...reviewShape("review.capture.output.review"),
+  ...reviewShape("review.openPr.output.review"),
+  ...reviewShape("review.load.output.review"),
+  ...reviewShape("review.setDisposition.output.review"),
+  ...reviewShape("review.checkFreshness.output.review"),
+  ...reviewShape("review.regenerate.output.review"),
+  ...reviewShape("canvas.disposition.output.review"),
+  ...reviewShape("canvas.adjudicateProposal.output.review"),
+  ...reviewShape("review.handoff.run.output.result.review"),
+  ...projectShape("projects.list.output.projects"),
+  ...projectShape("projects.add.output.project"),
+  ...projectShape("projects.add.output.projects"),
+  ...classified("host-path-projected", [
+    "repository.choose.input.path",
+    "repository.choose.output.path",
+    "review.capture.input.repoPath",
+    "review.openPr.input.repoPath",
+    "review.checkFreshness.input.repoPath",
+    "review.regenerate.input.repoPath",
+    "review.canvases.input.repoPath",
+    "project.discover.input.path",
+    "project.discover.output.discovery.path",
+    "project.discover.output.discovery.repos.path",
+    "projects.add.input.discovery.path",
+    "projects.add.input.discovery.repos.path",
+    "project.process.output.repos.path",
+    "settings.get.output.projects.repoPath",
+    "settings.guidance.input.repoPath",
+    "settings.setRepoVisibility.input.repoPath",
+    "settings.setRepoLocus.input.repoPath",
+    "settings.setRepoLocus.output.project.repoPath",
+    "settings.resetRepoValue.input.repoPath",
+    "settings.resetRepoValue.output.project.repoPath",
+    "settings.pinRepoValue.input.repoPath",
+    "settings.pinRepoValue.output.project.repoPath",
+    "progressEvent.summary.path",
+    "progressEvent.repos.path",
+  ]),
+  ...classified("repo-relative", [
+    "review.setDisposition.input.path",
+    "review.canvases.output.canvases.spec.layers.disposition.dispositions.anchor.path",
+    "review.canvases.output.canvases.sequence.layers.disposition.dispositions.anchor.path",
+    "review.canvases.output.canvases.decisions.layers.disposition.dispositions.anchor.path",
+    "review.canvases.output.canvases.noise.layers.disposition.dispositions.anchor.path",
+    "review.canvases.output.canvases.flagged.layers.disposition.dispositions.anchor.path",
+    "review.canvases.output.contextManifest.freshness.staleMembers.path",
+    "review.canvases.output.contextManifest.members.path",
+    "review.canvases.output.elementDiffs.path",
+    "publish.review.input.comments.path",
+    "publish.review.output.ledger.path",
+    "canvas.disposition.input.path",
+    "flagged.review.output.uiVerification.screenshots.path",
+    "flagged.review.output.blockingStates.path",
+    "flagged.adjudication.output.review.uiVerification.screenshots.path",
+    "flagged.adjudication.output.review.blockingStates.path",
+    "review.uiEvidence.input.path",
+    "review.ask.input.anchor.path",
+    "review.reattach.output.threads.anchor.path",
+    "review.refine.input.path",
+    "review.draftPrBody.input.dispositions.path",
+    "review.symbolLookup.output.definition.sites.path",
+    "review.symbolLookup.output.references.sites.path",
+    "review.symbolLookup.output.neighbors.path",
+    "review.openInEditor.input.path",
+    "review.handoff.prepare.input.dispositions.path",
+    "review.handoff.prepare.output.bundle.tasks.path",
+    "review.handoff.run.input.bundle.tasks.asks.path",
+    "review.handoff.compose.input.dispositions.path",
+    "review.handoff.compose.output.bundle.tasks.asks.path",
+  ]),
+  ...classified("opaque", [
+    "project.detail.output.locals.id",
+    "project.detail.output.prs.id",
+    "project.cleanupWorktree.input.worktreeId",
+  ]),
+};
+
+describe("recursive path-field coverage guard", () => {
+  it("classifies every path-like string in every command input/output and pushed event", () => {
+    const found = new Set<string>();
+    for (const [command, definition] of Object.entries(commandDefinitions)) {
+      collectPathFields(definition.input, `${command}.input`, found);
+      collectPathFields(definition.output, `${command}.output`, found);
+    }
+    collectPathFields(projectProcessEventSchema, "progressEvent", found);
+    collectPathFields(reviewAskStreamEventSchema, "askStreamEvent", found);
+
+    expect(found).toContain("projects.add.input.discovery.repos.path");
+    expect(found).toContain("settings.get.output.projects.repoPath");
+    expect(found).toContain("review.ask.input.anchor.path");
+    const unclassified = [...found]
+      .filter((location) => PATH_FIELD_CLASSIFICATIONS[location] === undefined)
+      .sort();
     expect(
       unclassified,
-      `classify these into INBOUND_HOST_PATH_FIELDS or INBOUND_REPO_RELATIVE_PATH_FIELDS in projection.ts: ${unclassified.join(", ")}`,
+      `classify every new path location as host-path-projected, repo-relative, or opaque: ${unclassified.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("keeps the runtime inbound tables aligned with their classified top-level fields", () => {
+    expect(INBOUND_HOST_PATH_FIELDS["review.capture"]).toContain("repoPath");
+    expect(INBOUND_REPO_RELATIVE_PATH_FIELDS["review.setDisposition"]).toContain("path");
   });
 });

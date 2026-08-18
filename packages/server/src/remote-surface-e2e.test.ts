@@ -15,7 +15,7 @@
 import { once } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { networkInterfaces, tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, win32 } from "node:path";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -44,6 +44,7 @@ function findLeaks(frames: string[], needles: string[]): string[] {
 describe("remote-surface e2e (#380)", () => {
   const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-remote-repo-"));
   const HOME = mkdtempSync(join(tmpdir(), "rennet-remote-home-"));
+  const ASK_STREAM_ANCHOR = "src/app.ts";
   const listeners: WsListener[] = [];
   const sockets: WebSocket[] = [];
 
@@ -78,9 +79,19 @@ describe("remote-surface e2e (#380)", () => {
     };
   }
 
+  interface DispatchState {
+    connectionId?: string;
+    projectsAddInput?: {
+      discovery: { path: string; repos: { path: string }[] };
+    };
+  }
+
   /** Controlled dispatch: routes pairing.exchange to the store, returns host-path-bearing shapes. */
-  function makeDispatch(pairing: PairingStore): WsListenerDeps["dispatch"] {
+  function makeDispatch(pairing: PairingStore, state: DispatchState): WsListenerDeps["dispatch"] {
     return (async (name, input, ctx) => {
+      if (ctx?.progressRecipientId !== undefined) {
+        state.connectionId = String(ctx.progressRecipientId);
+      }
       switch (name) {
         case "pairing.exchange": {
           const { code, deviceName } = input as { code: string; deviceName: string };
@@ -94,6 +105,37 @@ describe("remote-surface e2e (#380)", () => {
             summary: { repo: "repo", path: REPO_ROOT, ok: true, files: 3 },
           });
           return { review: reviewFixture() };
+        }
+        case "project.discover":
+          return {
+            discovery: {
+              path: REPO_ROOT,
+              kind: "workspace",
+              repos: [
+                {
+                  name: "nested",
+                  path: `${REPO_ROOT}/nested`,
+                  branches: 1,
+                },
+              ],
+              primaryBranch: "main",
+            },
+          };
+        case "projects.add": {
+          state.projectsAddInput = input as DispatchState["projectsAddInput"];
+          const project = {
+            id: "p1",
+            name: "repo",
+            path: REPO_ROOT,
+            kind: "workspace",
+            repoCount: 1,
+            branchCount: 1,
+            primaryBranch: "main",
+            openPath: `${REPO_ROOT}/nested`,
+            includedRepoPaths: [`${REPO_ROOT}/nested`],
+            addedAt: "2026-01-01T00:00:00.000Z",
+          };
+          return { project, projects: [project] };
         }
         case "projects.list":
           return {
@@ -114,15 +156,27 @@ describe("remote-surface e2e (#380)", () => {
           };
         case "review.setDisposition":
           return { review: reviewFixture() };
+        case "review.ask":
+          ctx?.emitAskStream?.({ kind: "ask-focus", anchor: ASK_STREAM_ANCHOR });
+          return {};
+        case "harness.detect": {
+          const error = new Error(`failed to inspect ${REPO_ROOT}/broken`);
+          Object.assign(error, { details: { path: `${REPO_ROOT}/details` } });
+          throw error;
+        }
         default:
           return {};
       }
     }) as WsListenerDeps["dispatch"];
   }
 
-  async function startRemoteListener(pairing: PairingStore, host: string): Promise<WsListener> {
+  async function startRemoteListener(
+    pairing: PairingStore,
+    host: string,
+    state: DispatchState = {},
+  ): Promise<WsListener> {
     const listener = await startWsListener({
-      dispatch: makeDispatch(pairing),
+      dispatch: makeDispatch(pairing, state),
       serverVersion: "e2e",
       verifyDeviceToken: (token) => pairing.verifyToken(token),
       projectionContext: () => buildProjectionContext([REPO_ROOT], HOME),
@@ -169,7 +223,7 @@ describe("remote-surface e2e (#380)", () => {
             resolve(frame.output);
           } else if (frame.type === "rpcError" && frame.requestId === requestId) {
             socket.off("message", onMessage);
-            reject(new Error(frame.message));
+            reject(Object.assign(new Error(frame.message), { frame }));
           }
         };
         socket.on("message", onMessage);
@@ -189,14 +243,45 @@ describe("remote-surface e2e (#380)", () => {
     const pairing = new PairingStore(
       join(mkdtempSync(join(tmpdir(), "rennet-remote-pair-")), "devices.json"),
     );
-    const listener = await startRemoteListener(pairing, "0.0.0.0");
+    const state: DispatchState = {};
+    const listener = await startRemoteListener(pairing, "0.0.0.0", state);
     const url = `ws://${ip}:${listener.port}`;
+
+    const requestFailure = async (
+      client: Awaited<ReturnType<typeof connect>>,
+      command: string,
+      input: unknown,
+    ): Promise<Record<string, unknown>> => {
+      try {
+        await client.request(command, input);
+      } catch (error) {
+        return (error as { frame: Record<string, unknown> }).frame;
+      }
+      throw new Error(`expected ${command} to fail`);
+    };
 
     // 1. Unpaired remote: a non-pairing request is refused (only pairing.exchange is allowed).
     const unpaired = await connect(url);
     await expect(
       unpaired.request("review.capture", { commandId: "c", repoPath: "anything" }),
     ).rejects.toThrow(/pair first/);
+
+    // A second hello cannot upgrade the already-classified pairing-only connection.
+    const existingCode = pairing.mint().code;
+    const existingToken = pairing.exchange(existingCode, "existing phone").deviceToken;
+    const secondHelloReply = once(unpaired.socket, "message");
+    unpaired.send({
+      type: "hello",
+      clientId: "second-hello",
+      clientType: "rennet-client",
+      protocolVersion: PROTOCOL_VERSION,
+      deviceToken: existingToken,
+    });
+    expect(JSON.parse(String((await secondHelloReply)[0]))).toMatchObject({
+      type: "rpcError",
+      code: "invalid_input",
+    });
+    await expect(unpaired.request("projects.list", {})).rejects.toThrow(/pair first/);
 
     // 2. Mint a code daemon-side, then exchange it over the (pairing-only) connection.
     const { code } = pairing.mint();
@@ -217,6 +302,41 @@ describe("remote-surface e2e (#380)", () => {
     const repoKey = list.projects[0]?.path.repoKey;
     expect(repoKey).toBeTruthy();
 
+    const discovered = (await paired.request("project.discover", {
+      commandId: "discover",
+      path: repoKey,
+      kind: "workspace",
+    })) as {
+      discovery: {
+        path: { repoKey: string };
+        repos: { name: string; path: { repoKey: string; relativePath?: string } }[];
+        primaryBranch: string;
+      };
+    };
+    expect(discovered.discovery.repos[0]?.path.relativePath).toBe("nested");
+    await paired.request("projects.add", {
+      commandId: "add",
+      discovery: discovered.discovery,
+      includedRepos: ["nested"],
+      primaryBranch: discovered.discovery.primaryBranch,
+    });
+    expect(state.projectsAddInput?.discovery.path).toBe(REPO_ROOT);
+    expect(state.projectsAddInput?.discovery.repos[0]?.path).toBe(`${REPO_ROOT}/nested`);
+
+    const rawAddError = await requestFailure(paired, "projects.add", {
+      commandId: "raw-add",
+      discovery: {
+        path: discovered.discovery.path,
+        kind: "repo",
+        repos: [{ name: "repo", path: REPO_ROOT, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    });
+    expect(rawAddError).toMatchObject({ type: "rpcError", code: "invalid_input" });
+    expect(JSON.stringify(rawAddError)).not.toContain(REPO_ROOT);
+
     // Inbound: send the repoKey where a private client would send a host path — it resolves server-side.
     const captured = (await paired.request("review.capture", {
       commandId: "cap",
@@ -233,6 +353,73 @@ describe("remote-surface e2e (#380)", () => {
       disposition: null,
       body: "",
     });
+
+    expect(isAbsolute(ASK_STREAM_ANCHOR)).toBe(false);
+    expect(win32.isAbsolute(ASK_STREAM_ANCHOR)).toBe(false);
+    await paired.request("review.ask", {
+      commandId: "ask",
+      reviewId: "rev-1",
+      question: "what changed?",
+    });
+    const askStreamFrame = paired.frames
+      .map((frame) => JSON.parse(frame))
+      .find((frame) => frame.type === "askStreamEvent");
+    expect(askStreamFrame).toMatchObject({
+      event: { kind: "ask-focus", anchor: ASK_STREAM_ANCHOR },
+    });
+
+    const projectedFailure = await requestFailure(paired, "harness.detect", {});
+    expect(projectedFailure).toMatchObject({
+      type: "rpcError",
+      code: "command_failed",
+    });
+    expect(JSON.stringify(projectedFailure)).not.toContain(REPO_ROOT);
+    expect(String(projectedFailure.message)).toContain("<rennet-remote-repo-");
+    expect(String((projectedFailure.details as { path: string }).path)).toContain(
+      "<rennet-remote-repo-",
+    );
+
+    expect(state.connectionId).toBeTruthy();
+    const serverRequestMessage = once(paired.socket, "message");
+    const answerPromise = listener.askConnection(state.connectionId as string, "inspect", {
+      path: `${REPO_ROOT}/server-request`,
+    });
+    const serverRequest = JSON.parse(String((await serverRequestMessage)[0]));
+    expect(JSON.stringify(serverRequest)).not.toContain(REPO_ROOT);
+    expect(serverRequest.payload.path).toContain("<rennet-remote-repo-");
+    const resolvedMessage = once(paired.socket, "message");
+    paired.send({
+      type: "serverResponse",
+      serverRequestId: serverRequest.serverRequestId,
+      payload: { answer: "ok" },
+    });
+    await expect(answerPromise).resolves.toEqual({ answer: "ok" });
+    expect(JSON.parse(String((await resolvedMessage)[0]))).toMatchObject({
+      type: "serverRequestResolved",
+      serverRequestId: serverRequest.serverRequestId,
+    });
+
+    const pairingFrameCount = unpaired.frames.length;
+    const projectedBroadcast = once(paired.socket, "message");
+    listener.broadcastProgress("broadcast", {
+      kind: "repo-done",
+      repo: "repo",
+      summary: { repo: "repo", path: REPO_ROOT, ok: true },
+    });
+    const broadcastFrame = JSON.parse(String((await projectedBroadcast)[0]));
+    expect(broadcastFrame.event.summary.path.repoKey).toBeTruthy();
+    expect(JSON.stringify(broadcastFrame)).not.toContain(REPO_ROOT);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(unpaired.frames).toHaveLength(pairingFrameCount);
+
+    const privateClient = await connect(`ws://127.0.0.1:${listener.port}`);
+    const privateFailure = await requestFailure(privateClient, "harness.detect", {});
+    expect(privateFailure).toMatchObject({
+      type: "rpcError",
+      code: "command_failed",
+      details: { path: `${REPO_ROOT}/details` },
+    });
+    expect(String(privateFailure.message)).toContain(REPO_ROOT);
     // Let the pushed progress frame arrive.
     await new Promise((r) => setTimeout(r, 30));
 
@@ -268,9 +455,7 @@ describe("remote-surface e2e (#380)", () => {
       headers: { host: "evil.example.com" },
     });
     sockets.push(socket);
-    const error = await once(socket, "error")
-      .then(() => true)
-      .catch(() => true);
-    expect(error).toBe(true);
+    const [error] = (await once(socket, "error")) as [Error];
+    expect(error.message).toContain("403");
   });
 });

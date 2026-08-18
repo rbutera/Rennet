@@ -37,6 +37,8 @@ import {
   projectCommandOutput,
   projectProgressEvent,
   resolveCommandInput,
+  scrubProjectedValue,
+  scrubRoots,
 } from "./projection";
 
 /** The dispatch surface the transport routes to — the exact shape createDispatch returns. */
@@ -117,6 +119,13 @@ function salvageRequestId(raw: unknown): string {
     if (typeof value === "string" && value.length > 0) return value;
   }
   return "unknown";
+}
+
+function errorDetails(error: unknown): unknown {
+  if (error && typeof error === "object" && "details" in error) {
+    return (error as { details?: unknown }).details;
+  }
+  return undefined;
 }
 
 const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
@@ -202,12 +211,16 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
+  const verifyClient: WebSocket.VerifyClientCallbackAsync | undefined = nonLoopbackBind
+    ? (info, callback) => {
+        if (isHostAllowed(info.req.headers.host, listenHost)) callback(true);
+        else callback(false, 403, "Forbidden");
+      }
+    : undefined;
   const wss = new WebSocketServer({
     server: httpServer,
     // Refuse a foreign Host at the WS upgrade too (only enforced for a non-loopback bind).
-    verifyClient: nonLoopbackBind
-      ? (info: { req: IncomingMessage }) => isHostAllowed(info.req.headers.host, listenHost)
-      : undefined,
+    verifyClient,
   });
 
   const send = (socket: WebSocket, frame: SessionFrame): void => {
@@ -239,11 +252,14 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
         try {
           effectiveInput = resolveCommandInput(command, input, ctx);
         } catch (error) {
+          const message = error instanceof ProjectionResolveError ? error.message : String(error);
+          const details = errorDetails(error);
           send(socket, {
             type: "rpcError",
             requestId,
             code: "invalid_input",
-            message: error instanceof ProjectionResolveError ? error.message : String(error),
+            message: scrubRoots(message, ctx),
+            ...(details === undefined ? {} : { details: scrubProjectedValue(details, ctx) }),
           });
           return;
         }
@@ -275,11 +291,16 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           output: ctx ? projectCommandOutput(command, output, ctx) : output,
         });
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const details = errorDetails(error);
         send(socket, {
           type: "rpcError",
           requestId,
           code: "command_failed",
-          message: error instanceof Error ? error.message : String(error),
+          message: ctx ? scrubRoots(message, ctx) : message,
+          ...(details === undefined
+            ? {}
+            : { details: ctx ? scrubProjectedValue(details, ctx) : details }),
         });
       }
     };
@@ -287,6 +308,15 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     const handleFrame = (frame: SessionFrame): void => {
       switch (frame.type) {
         case "hello": {
+          if (connection.helloReceived) {
+            send(socket, {
+              type: "rpcError",
+              requestId: frame.clientId,
+              code: "invalid_input",
+              message: "hello handshake already completed",
+            });
+            return;
+          }
           if (frame.protocolVersion < MIN_COMPATIBLE_PROTOCOL_VERSION) {
             send(socket, {
               type: "rpcError",
@@ -426,6 +456,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     let projectedPayload: string | null = null;
     for (const connection of connections) {
       if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
       if (connection.connectionClass === "projected") {
         if (projectedPayload === null) {
           projectedPayload = JSON.stringify({
@@ -435,7 +466,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           } satisfies SessionFrame);
         }
         connection.socket.send(projectedPayload);
-      } else {
+      } else if (connection.connectionClass === "private") {
         connection.socket.send(rawPayload);
       }
     }
@@ -451,7 +482,16 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     const serverRequestId = randomUUID();
     return new Promise<unknown>((resolve, reject) => {
       connection.serverRequests.set(serverRequestId, { resolve, reject });
-      send(connection.socket, { type: "serverRequest", serverRequestId, kind, payload });
+      const projectedPayload =
+        connection.connectionClass === "projected"
+          ? scrubProjectedValue(payload, contextOf())
+          : payload;
+      send(connection.socket, {
+        type: "serverRequest",
+        serverRequestId,
+        kind,
+        payload: projectedPayload,
+      });
     });
   };
 
