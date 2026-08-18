@@ -295,9 +295,9 @@ svg{ display:block; width:16px; height:16px; }
     <h1 class="ftitle">Mobile · review detail & digest</h1>
     <span class="pill">mobile · phase 6</span>
     <div class="fref">issue #382 · deliverable 2
-digest first, hunks on demand</div>
+digest leads, whole review readable</div>
   </div>
-  <p class="fsub">The canvas digest read path at phone width. Delta digest leads — what is new, resolved, carried since the last patchset — then findings open one at a time: claim, the load-bearing hunk (size-ceilinged), and one-tap judgement. The full canvas stays a tap away; a 40-file raw diff never renders here.</p>
+  <p class="fsub">Reading at phone width. The delta digest leads — what is new, resolved, carried since the last patchset — findings open one at a time for judgement, and the <b>whole review is readable</b>: the full sequence canvas renders at phone width in reading order, virtualized, every finding and hunk scrollable to the end. The digest is the entry point, never a boundary.</p>
   <div class="phones">
       <div class="phcol"><div class="phone"><div class="ph-status"><span>9:41</span><span class="ph-island"></span><span>􀙇 􀛨</span></div><div class="ph-body">
     <div class="mhead"><span class="mback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Back</span><span class="mt" style="font-size:16px">orbital/atlas · PR #214</span><span style="margin-left:auto"><span class="daemon"><span class="dd"></span>home-mac</span></span></div>
@@ -335,7 +335,7 @@ digest first, hunks on demand</div>
 <span class="add">+    if (entries.size > limit) evictOldest();</span><br>
 <span class="add">+  });</span><br>
 <span class="ctx">   metrics.count(entries.size);</span></div>
-    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--blue-ink);margin:8px 2px 0">open full canvas ↗</div>
+    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--blue-ink);margin:8px 2px 0">read in full canvas ↗</div>
     <div class="dispo">
       <span class="dbtn on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>Agree</span>
       <span class="dbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg>Disagree</span>
@@ -347,8 +347,30 @@ digest first, hunks on demand</div>
       <div class="answers"><span class="ans pick">Accept</span><span class="ans">Keep separate</span></div>
     </div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Finding detail</div><div class="cs">One finding: claim, hunk, disposition, and an adjudication proposal inline.</div>
    <div class="ph-cmds"><span class="cmd">canvas.select</span><span class="cmd">canvas.disposition</span><span class="cmd">canvas.adjudicateProposal</span><span class="cmd">flagged.adjudication</span></div></div></div>
+      <div class="phcol"><div class="phone"><div class="ph-status"><span>9:41</span><span class="ph-island"></span><span>􀙇 􀛨</span></div><div class="ph-body">
+    <div class="mhead"><span class="mback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Back</span><span class="mt" style="font-size:16px">Sequence · full canvas</span><span style="margin-left:auto"><span class="daemon"><span class="dd"></span>home-mac</span></span></div>
+    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin:0 2px 8px">reading order · cohort 2 of 4 · 17 findings</div>
+    <div class="msec">Cohort · cache eviction (5)</div>
+    <div class="mrow attn" style="margin-bottom:7px"><span class="gly sm" style="color:var(--amber)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg></span>
+      <div class="body"><div class="nm" style="font-size:13px">Race in tile eviction</div></div><span class="chip green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg></span></div>
+    <div class="hunk" style="margin:0 0 9px"><span class="ctx">@@ src/cache/evict.ts:41 @@</span><br>
+<span class="del">-  if (entries.size > limit) {</span><br>
+<span class="add">+  lock.run(() => {</span><br>
+<span class="add">+    if (entries.size > limit) evictOldest();</span><br>
+<span class="ctx">   metrics.count(entries.size);</span></div>
+    <div class="mrow" style="margin-bottom:7px"><span class="gly sm" style="color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6.2L5.6 17a2 2 0 0 0 1.8 3h9.2a2 2 0 0 0 1.8-3L14 9.2V3"/><path d="M8 14.5h8"/></svg></span>
+      <div class="body"><div class="nm" style="font-size:13px">Eviction spec covers the race</div></div><span class="openchev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span></div>
+    <div class="hunk" style="margin:0 0 9px"><span class="ctx">@@ src/cache/evict.race.spec.ts:1 @@</span><br>
+<span class="add">+ it("never evicts a fresh tile", async () => {</span><br>
+<span class="add">+   const cache = fill(limit);</span><br>
+<span class="ctx">   …</span></div>
+    <div class="msec">Cohort · manifest fetch (4) — judged, collapsed</div>
+    <div class="mrow"><span class="gly sm" style="color:var(--green)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg></span>
+      <div class="body"><div class="nm" style="font-size:13px">4 findings · all agreed</div></div><span class="openchev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></div>
+    <div class="sub" style="font-family:var(--mono);font-size:10.5px;color:var(--faint);text-align:center;margin-top:8px">scrolls to the end — every finding, every hunk</div></div><div class="ph-home"></div></div><div class="ph-cap"><div class="cn">Full canvas</div><div class="cs">The whole review in reading order — cohorts, findings, hunks — virtualized so it stays smooth to the last line.</div>
+   <div class="ph-cmds"><span class="cmd">review.canvases</span><span class="cmd">canvas.setCohortExpansion</span><span class="cmd">canvas.select</span></div></div></div>
     </div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
-    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Digest is the read path.</b> The phone leads with the delta digest — the desk’s tall canvas becomes counts + rows + one finding at a time.</div></div><div class="note"><span class="dot">2</span><div><b>Size ceiling by design.</b> Hunks render to a ceiling with “open full canvas”; the survey’s RN perf tail says never stream a big diff into a list.</div></div><div class="note"><span class="dot">3</span><div><b>Judgement is one tap.</b> Agree / disagree / discuss and proposal adjudication are thumb-sized — the unit acts of triage.</div></div><div class="note"><span class="dot">4</span><div><b>Flagged folds in.</b> The flagged queue is the same finding surface with its adjudication ask inline.</div></div></div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Digest leads, canvas follows.</b> The delta digest is the entry point; the same tall canvas the desk reads is one tap deeper, complete.</div></div><div class="note"><span class="dot">2</span><div><b>The whole review, readable.</b> The full canvas is a phone screen, not a desk referral. Virtualization + judged-cohort collapse keep it smooth — the survey’s RN perf tail is an engineering constraint, not a scope cut.</div></div><div class="note"><span class="dot">3</span><div><b>Judgement is one tap.</b> Agree / disagree / discuss and proposal adjudication are thumb-sized — the unit acts of triage.</div></div><div class="note"><span class="dot">4</span><div><b>Flagged folds in.</b> The flagged queue is the same finding surface with its adjudication ask inline.</div></div></div>
   </div>
 </div></body></html>

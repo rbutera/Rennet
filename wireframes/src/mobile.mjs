@@ -330,7 +330,7 @@ export function frameM3() {
 <span class="add">+    if (entries.size > limit) evictOldest();</span><br>
 <span class="add">+  });</span><br>
 <span class="ctx">   metrics.count(entries.size);</span></div>
-    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--blue-ink);margin:8px 2px 0">open full canvas ↗</div>
+    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--blue-ink);margin:8px 2px 0">read in full canvas ↗</div>
     <div class="dispo">
       <span class="dbtn on">${ic.check}Agree</span>
       <span class="dbtn">${ic.reqchange}Disagree</span>
@@ -341,17 +341,39 @@ export function frameM3() {
       <div class="aq" style="font-size:13.5px">Merge with F-214-04 (same lock scope)?</div>
       <div class="answers"><span class="ans pick">Accept</span><span class="ans">Keep separate</span></div>
     </div>`);
+  const c = phone(`
+    ${backhead('Sequence · full canvas')}
+    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin:0 2px 8px">reading order · cohort 2 of 4 · 17 findings</div>
+    <div class="msec">Cohort · cache eviction (5)</div>
+    <div class="mrow attn" style="margin-bottom:7px"><span class="gly sm" style="color:var(--amber)">${ic.flag}</span>
+      <div class="body"><div class="nm" style="font-size:13px">Race in tile eviction</div></div><span class="chip green">${ic.check}</span></div>
+    <div class="hunk" style="margin:0 0 9px"><span class="ctx">@@ src/cache/evict.ts:41 @@</span><br>
+<span class="del">-  if (entries.size > limit) {</span><br>
+<span class="add">+  lock.run(() => {</span><br>
+<span class="add">+    if (entries.size > limit) evictOldest();</span><br>
+<span class="ctx">   metrics.count(entries.size);</span></div>
+    <div class="mrow" style="margin-bottom:7px"><span class="gly sm" style="color:#4a5059">${ic.flask}</span>
+      <div class="body"><div class="nm" style="font-size:13px">Eviction spec covers the race</div></div><span class="openchev">${ic.chevronR}</span></div>
+    <div class="hunk" style="margin:0 0 9px"><span class="ctx">@@ src/cache/evict.race.spec.ts:1 @@</span><br>
+<span class="add">+ it("never evicts a fresh tile", async () => {</span><br>
+<span class="add">+   const cache = fill(limit);</span><br>
+<span class="ctx">   …</span></div>
+    <div class="msec">Cohort · manifest fetch (4) — judged, collapsed</div>
+    <div class="mrow"><span class="gly sm" style="color:var(--green)">${ic.check}</span>
+      <div class="body"><div class="nm" style="font-size:13px">4 findings · all agreed</div></div><span class="openchev">${ic.chevron}</span></div>
+    <div class="sub" style="font-family:var(--mono);font-size:10.5px;color:var(--faint);text-align:center;margin-top:8px">scrolls to the end — every finding, every hunk</div>`);
   return {
     head: { badge: '21', title: 'Mobile · review detail & digest', pill: 'mobile · phase 6' },
-    ref: 'issue #382 · deliverable 2\ndigest first, hunks on demand',
-    sub: `The canvas digest read path at phone width. Delta digest leads — what is new, resolved, carried since the last patchset — then findings open one at a time: claim, the load-bearing hunk (size-ceilinged), and one-tap judgement. The full canvas stays a tap away; a 40-file raw diff never renders here.`,
+    ref: 'issue #382 · deliverable 2\ndigest leads, whole review readable',
+    sub: `Reading at phone width. The delta digest leads — what is new, resolved, carried since the last patchset — findings open one at a time for judgement, and the <b>whole review is readable</b>: the full sequence canvas renders at phone width in reading order, virtualized, every finding and hunk scrollable to the end. The digest is the entry point, never a boundary.`,
     win: `<div class="phones">
       ${col(a, cap('Delta digest', 'Triage a finished review: counts, then the delta rows, then canvas entries.', ['review.load', 'review.deltaDigest', 'review.canvases', 'flagged.review'], []))}
       ${col(b, cap('Finding detail', 'One finding: claim, hunk, disposition, and an adjudication proposal inline.', ['canvas.select', 'canvas.disposition', 'canvas.adjudicateProposal', 'flagged.adjudication'], []))}
+      ${col(c, cap('Full canvas', 'The whole review in reading order — cohorts, findings, hunks — virtualized so it stays smooth to the last line.', ['review.canvases', 'canvas.setCohortExpansion', 'canvas.select'], []))}
     </div>`,
     notes: [
-      { h: 'Digest is the read path.', b: 'The phone leads with the delta digest — the desk’s tall canvas becomes counts + rows + one finding at a time.' },
-      { h: 'Size ceiling by design.', b: 'Hunks render to a ceiling with “open full canvas”; the survey’s RN perf tail says never stream a big diff into a list.' },
+      { h: 'Digest leads, canvas follows.', b: 'The delta digest is the entry point; the same tall canvas the desk reads is one tap deeper, complete.' },
+      { h: 'The whole review, readable.', b: 'The full canvas is a phone screen, not a desk referral. Virtualization + judged-cohort collapse keep it smooth — the survey’s RN perf tail is an engineering constraint, not a scope cut.' },
       { h: 'Judgement is one tap.', b: 'Agree / disagree / discuss and proposal adjudication are thumb-sized — the unit acts of triage.' },
       { h: 'Flagged folds in.', b: 'The flagged queue is the same finding surface with its adjudication ask inline.' },
     ],
@@ -408,19 +430,9 @@ export function frameM5() {
       <div class="pb"><p>The eviction path reads size outside the lock (evict.ts:41); the failing spec reproduces it. Recommending the narrow-lock fix…</p>
       <p style="color:var(--muted)">…9 judged findings collated · your dispositions · your voice.</p></div>
     </div>
-    <div class="mbtn ink" style="margin-top:14px">${ic.sign}Sign &amp; post</div>
+    <div class="sub" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin:10px 2px 0">posts as Rai Butera · request changes on orbital/atlas#214</div>
+    <div class="mbtn ink" style="margin-top:14px">${ic.makepr}Post review</div>
     <div class="mbtn">${ic.resteer}Ask for changes</div>`);
-  const b = phone(`
-    ${backhead('Sign')}
-    <div class="faceid">
-      <div class="fbox">${ic.eye}</div>
-      <div style="font-size:16px;font-weight:650">Confirm it’s you</div>
-      <div style="font-size:13px;color:var(--muted);margin-top:5px">Face ID confirms the signature</div>
-    </div>
-    <div class="paper" style="margin-top:16px">
-      <div class="pb">Posts as <b>Rai Butera</b> · request changes on <span class="k" style="font-family:var(--code)">orbital/atlas#214</span></div>
-    </div>
-`);
   const c = phone(`
     ${backhead('Posted')}
     <div style="text-align:center;padding:30px 0 14px">
@@ -430,17 +442,16 @@ export function frameM5() {
     </div>
     <div class="mbtn" style="margin-top:18px">Done</div>`);
   return {
-    head: { badge: '23', title: 'Mobile · sign & post', pill: 'mobile · phase 6' },
-    ref: 'issue #382 · deliverable 2\nthe human act, sofa-sized',
-    sub: `The headline: preview → sign → post from anywhere. The paper shows exactly what will appear under Rai’s name; Face ID confirms the signature; the posted screen states the real URL. The own-branch loop ends here too — drafted body, signed, PR created idempotently.`,
+    head: { badge: '23', title: 'Mobile · post', pill: 'mobile · phase 6' },
+    ref: 'issue #382 · deliverable 2\nyour click, from anywhere',
+    sub: `The headline: preview → post, from anywhere. The paper shows exactly what will appear under Rai’s name and one tap posts it; the posted screen states the real URL. The own-branch loop ends here too — drafted body, posted, PR created idempotently. No sign step, no confirmation ceremony: the post button <b>is</b> the click.`,
     win: `<div class="phones">
       ${col(a, cap('Preview', 'The collated paper before anything moves; not right → ask for changes (a refine turn), never phone-editing.', ['publish.requestConsent', 'review.draftPrBody'], []))}
-      ${col(b, cap('Sign', 'Biometric-confirmed signature — the GitHub Mobile approve pattern, made ours.', ['publish.review'], []))}
-      ${col(c, cap('Posted', 'Truthful outcome with the real URL. The own-branch loop ends on this same screen: drafted body → sign → exactly one PR.', ['publish.submitPr'], ['attention: publish-ready']))}
+      ${col(c, cap('Posted', 'Truthful outcome with the real URL. The own-branch loop ends on this same screen: drafted body → post → exactly one PR.', ['publish.review', 'publish.submitPr'], ['attention: publish-ready']))}
     </div>`,
     notes: [
-      { h: 'This is the product’s click.', b: 'Publishing stays Rai’s act, in his voice — the phone makes it available from anywhere, it never automates it away.' },
-      { h: 'Biometric, not bureaucratic.', b: 'Face ID is the signature confirmation, one gesture — not an approval ceremony.' },
+      { h: 'This is the product’s click.', b: 'Publishing stays your tap, in your voice — the phone makes it available from anywhere, it never automates it away.' },
+      { h: 'No ceremony.', b: 'One tap posts. No sign step, no biometric ritual, no are-you-sure — the preview already showed exactly what posts.' },
       { h: 'Idempotent by construction.', b: 'Double-tap, retry, flaky network: exactly one review / one PR, and the URL comes back.' },
       { h: 'Publish-ready pushes.', b: 'When a draft is composed and waiting, the phone knows — tap lands on this preview.' },
     ],
@@ -465,8 +476,8 @@ export function frameM6() {
     </div>
     <div class="notif">
       <div class="nh"><span class="napp">R</span>Rennet · home-mac<span class="nago">1h</span></div>
-      <div class="nt">Ready to sign · orbital/atlas #214</div>
-      <div class="nb">Request-changes review drafted — preview and post when you are.</div>
+      <div class="nt">Ready to post · orbital/atlas #214</div>
+      <div class="nb">Request-changes review drafted — one tap away.</div>
     </div>
   </div><div class="ph-home"></div></div>`;
   const route = (title, sub, on = true) =>
@@ -479,7 +490,7 @@ export function frameM6() {
     ${route('Something went wrong', 'a turn failed or was interrupted')}
     <div class="msec">Progress</div>
     ${route('Agent finished your asks', 'the follow-up work is ready to re-read')}
-    ${route('Ready to sign', 'a drafted review is waiting for you')}
+    ${route('Ready to post', 'a drafted review is waiting for you')}
     ${route('Project processed', 'quiet — shows in the app only', false)}
     <div class="honest">You only hear about a review you aren’t already looking at.</div>`);
   return {

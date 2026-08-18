@@ -129,12 +129,12 @@ self-hostable — a bar Paseo's relay happens to meet). The lesson transfers —
 the phone must reach the daemon without exposing the laptop to the internet
 — but the mechanism is the user's tailnet, not our server.
 
-**Signing is the headline, not an afterthought.** No surveyed product treats
+**Posting is the headline, not an afterthought.** No surveyed product treats
 "post the review under my name" as its central mobile moment; GitHub Mobile
-comes closest with biometric-gated PR approval that counts toward branch
-protection. Rennet's publish flow — preview, sign, post, biometric-gated,
-Rai's click from the sofa — is the differentiating screen, and the GitHub
-Mobile approve flow is its reference implementation.
+comes closest with its PR-approve flow. Rennet's publish flow — preview,
+then one tap posts, from the sofa — is the differentiating screen. There is
+no sign step and no confirmation ceremony (Rai's call, 2026-08-18): the
+preview already shows exactly what posts, and the post button is the click.
 
 ### Open gaps Rennet can own
 
@@ -156,13 +156,16 @@ routes scoped by server id so multiple daemons coexist in one navigation
 tree; drafts persisted per agent; presence-based event filtering to save
 phone bandwidth; a too-large-diff placeholder instead of attempting the
 render. From GitHub Mobile: mark-as-viewed progress tracking across files,
-and biometric confirmation on the consequential action.
+as prior art on consequential mobile actions (their biometric gate is
+their branch-protection requirement, not a pattern Rennet adopts — posting
+stays one un-ceremonied tap).
 
 One cost their changelog documents at length: React Native streaming plus
 large diffs is where the app breaks — a long tail of freeze, blank-screen,
 and dropped-session fixes when switching workspaces mid-stream or rendering
-big diffs. Budget list virtualization and a diff size ceiling from the first
-cut, not as a retrofit.
+big diffs. Budget list virtualization and lazy hunk mounting from the first
+cut, not as a retrofit — the whole review must stay readable on the phone,
+so performance is an engineering constraint, never a scope cut.
 
 ## Command classification
 
@@ -206,9 +209,9 @@ The classes:
 | `review.regenerate` | Re-run the review; part of the end-to-end loop, not a desk act. |
 | `review.refine` | Refinement turns are how a review converges; the loop is incomplete without them. |
 | `review.draftPrBody` | Drafting the PR title/body is a leg of the own-branch submit flow. |
-| `publish.requestConsent` | First leg of sign-and-post. |
-| `publish.review` | Sign-and-post a team-PR review: the product's human act, phone-sized. |
-| `publish.submitPr` | Sign-and-post the own-branch PR: same act, other destination. |
+| `publish.requestConsent` | First leg of posting. |
+| `publish.review` | Post a team-PR review: the product's human act, phone-sized. |
+| `publish.submitPr` | Post the own-branch PR: same act, other destination. |
 | `pairing.exchange` | The phone's side of pairing: scan the QR, trade the code for a device token. |
 
 ### Mobile-secondary (25)
@@ -255,11 +258,14 @@ What the phone does:
    visible stop.
 3. **Steer or interrupt a running review.** Watch the live turn via
    `onAskStream`, send mid-turn, stop it.
-4. **Read canvases and the delta digest** at phone width: digest first,
-   load-bearing hunks expandable, size-ceilinged full views.
-5. **Sign and post.** Preview → sign → post, biometric-confirmed, from
-   anywhere. The product's one human act, now sofa-shaped — a headline
-   feature, not an afterthought.
+4. **Read the whole review** at phone width: the delta digest leads, and
+   the full sequence canvas renders complete — every finding and hunk,
+   virtualized, in reading order. The digest is the entry point, never a
+   boundary.
+5. **Post.** Preview, then one tap posts — from anywhere. The product's
+   one human act, now sofa-shaped — a headline feature, not an
+   afterthought. No sign step, no confirmation ceremony: the preview
+   already showed exactly what posts.
 6. **Kick off a review from a PR link** — share sheet or paste into
    `review.openPr`.
 
@@ -284,7 +290,7 @@ Opening the linked surface clears the attention flag.
 | Review finished | Review pipeline completion (`review.capture` / `review.openPr` / `review.regenerate` outcome) | High priority: repo, branch, finding counts | Review detail, delta digest first |
 | Turn failed or interrupted | Turn outcome (`failed` / `interrupted`) | High priority: what stopped and why, truthfully | Review detail in its error state |
 | Handoff run completed | `review.handoff.run` outcome | Normal: outcome + delta summary | The handoff outcome / delta carry surface |
-| Publish-ready | Composed draft awaiting signature | Normal: destination + title | The publish preview / sign screen |
+| Publish-ready | Composed draft awaiting your post | Normal: destination + title | The publish preview screen |
 | Processing finished | `project.process` terminal `onProgress` event | Low / silent update | Project detail |
 
 Flagged-queue arrivals fold into "turn needs you" — a flagged ask is an

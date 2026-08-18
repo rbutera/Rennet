@@ -14,7 +14,7 @@ is the concrete input to the Phase 6 OpenSpec change
 ## The brief, settled
 
 - **Job and audience.** Rai (and any Rennet user) away from the desk:
-  triage, answer, steer, read, sign. Visitor mode is **Operate** — every
+  triage, answer, steer, read, post. Visitor mode is **Operate** — every
   screen is a task surface; scanability and truthful state outrank
   expression.
 - **Direction.** The wireframes' visual world is the desktop kit's language
@@ -40,10 +40,11 @@ them; the last column is what each screen demands from the shared
 | Review list (20) | `ReviewRow` (status glyph, badges), pinned-section list, pull-to-refresh | replica cache (paint-then-reconcile), cross-daemon aggregation, attention flags |
 | Kickoff (20) | `PrLinkField`, share-sheet intent handler, `BranchRow` | `review.openPr` / `review.capture` invocation, `onProgress` subscription |
 | Review detail / digest (21) | `DigestStats`, `DeltaRow`, `CanvasEntryRow` | `review.load` + `review.deltaDigest` + `review.canvases` over the projection; cursor reconcile |
-| Finding detail (21) | `FindingClaim`, `HunkView` (size-ceilinged), `DispositionBar`, `ProposalCard` | `canvas.*` invocations; optimistic disposition write-back |
+| Finding detail (21) | `FindingClaim`, `HunkView`, `DispositionBar`, `ProposalCard` | `canvas.*` invocations; optimistic disposition write-back |
+| Full canvas (21) | `SequenceCanvas` (virtualized cohorts/findings/hunks, judged-cohort collapse) | `review.canvases` full read; `canvas.setCohortExpansion`; lazy hunk mounting |
 | Live turn (22) | `TurnStream` (virtualized typed timeline), `ReturnToTail`, `StopControl`, `Composer` (interrupt/queue) | `onAskStream` subscribe + **rebind on reconnect (#389)**, `review.reattach`, send-mode semantics |
 | Ask (22) | `AskCard` (chips + free text), context attachment row | `review.ask` reply composition (decision + redirection in one) |
-| Publish (23) | `PaperPreview`, `BiometricSign`, `PostedOutcome` | `publish.requestConsent` → biometric gate → `publish.review`/`publish.submitPr`; idempotent retry handling |
+| Publish (23) | `PaperPreview`, `PostedOutcome` | `publish.requestConsent` → `publish.review`/`publish.submitPr` on the one tap; idempotent retry handling |
 | Pushes (24) | notification handlers, deep-link router, notification actions | push-token registration with the daemon; attention-event → route map; clear-on-view |
 
 ## The client-runtime package (extraction scope)
@@ -92,8 +93,8 @@ app never gets a side channel:
 | # | Scope | Size | Ships when |
 | --- | --- | --- | --- |
 | M0 | `client-runtime` extraction; desktop + browser shells adopt; #389 fixed by the subscription manager | ~1 week | Existing e2e green on both shells; a mid-turn socket drop rebinds the live ask-stream |
-| M1 — **first shippable cut** | Expo app skeleton; pairing + connections; review list; review detail/digest + finding detail; push pipeline (taxonomy, deep links, presence-aware delivery) | ~2 weeks | See acceptance below |
-| M2 | Live turn + ask (stream, composer, stop, notification actions); publish flow (preview/sign/post, biometric); kickoff (PR link, share sheet, own-branch capture) | ~1.5 weeks | See acceptance below |
+| M1 — **first shippable cut** | Expo app skeleton; pairing + connections; review list; review detail/digest + finding detail + full canvas; push pipeline (taxonomy, deep links, presence-aware delivery) | ~2 weeks | See acceptance below |
+| M2 | Live turn + ask (stream, composer, stop, notification actions); publish flow (preview → one-tap post); kickoff (PR link, share sheet, own-branch capture) | ~1.5 weeks | See acceptance below |
 | M3 | Distribution (TestFlight/internal track); `using/` mobile guide; architecture-overview client row; marketing story | ~3–4 days | Docs land same-change; store publishing stays a later decision |
 
 Total: roughly five working weeks, matching the app-server plan's 2–4 week
@@ -105,8 +106,9 @@ estimate plus the M0 extraction it always assumed.
   token lands in Keychain/Keystore; revoke works from the phone.
 - Review list paints from replica instantly offline and reconciles on
   connect; running and needs-you pin; freshness renders as a row fact.
-- Open a finished review: digest counts, delta rows, finding detail with
-  size-ceilinged hunk; set a disposition and see it on the desktop.
+- Open a finished review: digest counts, delta rows, finding detail; read
+  the **whole review** in the full canvas to the last hunk without a
+  dropped frame; set a disposition and see it on the desktop.
 - "Review finished" push arrives with real counts while the app is
   backgrounded and deep-links to that review's digest; opening clears the
   attention flag; a client focused on that review gets no push.
@@ -119,10 +121,10 @@ estimate plus the M0 extraction it always assumed.
   from the notification shade without opening the app.
 - Stop a running turn from the visible control; interrupted state renders
   truthfully.
-- Sign and post a team-PR review with biometric confirmation; the posted
-  URL comes back; a double-tap yields exactly one review.
+- Post a team-PR review with one tap; the posted URL comes back; a
+  double-tap yields exactly one review.
 - Share a GitHub PR URL from another app into Rennet → review starts;
-  capture an own branch → review → draft body → sign → exactly one PR.
+  capture an own branch → review → draft body → post → exactly one PR.
 
 ### Acceptance — M3
 
@@ -135,10 +137,6 @@ estimate plus the M0 extraction it always assumed.
 
 - **Push service**: Expo push vs direct APNs/FCM — decide in the Phase 6
   OpenSpec change (working assumption: Expo).
-- **Biometric policy**: Face ID on sign is the design; whether it is
-  skippable on devices without biometrics needs a call (assumption: falls
-  back to device passcode, never to nothing… and never to a consent
-  dialog).
 - **Share-sheet packaging**: iOS share extension timing (M2 as designed,
   or M3 if Expo config-plugin friction bites).
 - **Presence protocol shape**: beacon fields and cadence are
