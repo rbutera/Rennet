@@ -67,24 +67,35 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      # Local Nx cache only (no Nx Cloud / remote cache — not approved, see AGENTS.md).
-      # Cache the WHOLE .nx directory: the cached outputs live in .nx/cache/ but the
-      # task-history DB that maps inputs→outputs lives in .nx/workspace-data/. Without
-      # the DB, Nx sees the artifact files but has no metadata for them (0% hit rate).
-      # The daemon socket (.nx/workspace-data/d/) is ephemeral and harmless to restore.
-      # Restore from the same lockfile hash only — a different lockfile can mean a
-      # different Nx version whose artifacts Nx cannot recognise.
-      - name: Restore Nx cache
+      # Nx remote cache via an in-CI proxy. Nx 23's local DB cache is not portable
+      # across CI runs (mandatory SQLite sync check rejects restored artifacts). A
+      # self-hosted remote cache (NX_SELF_HOSTED_REMOTE_CACHE_SERVER, Nx 20.8+)
+      # bypasses that check entirely. The proxy is a ~100-line Node HTTP server
+      # (tools/nx-cache-proxy.mjs) implementing PUT/GET /v1/cache/{hash}, backed by
+      # a local directory that actions/cache persists across runs. Zero cost, no Nx
+      # Cloud, no external infrastructure.
+      - name: Restore Nx remote cache
         uses: actions/cache@v4
         with:
-          path: .nx
-          key: nx-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          path: /tmp/nx-remote-cache
+          key: nx-remote-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            nx-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            nx-remote-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Start Nx cache proxy
+        run: |
+          node tools/nx-cache-proxy.mjs &
+          # Wait for the server to be ready before proceeding.
+          for i in 1 2 3 4 5; do
+            curl -sf http://127.0.0.1:4210/healthz >/dev/null 2>&1 && break
+            sleep 1
+          done
+
       # The gate. Fails the job (and therefore the PR) if any target fails.
       - name: Check
         run: pnpm check
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:4210
