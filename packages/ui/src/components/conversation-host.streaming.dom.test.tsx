@@ -29,19 +29,25 @@ function streamingBridge(): {
   askInput: () => CommandInput<"review.ask">;
   emit: (event: ReviewAskStreamEvent) => void;
   resolveAsk: (result: AskReviewResult) => void;
+  rejectAsk: (error: Error) => void;
   unsubscribed: () => boolean;
 } {
   let listener: ((event: ReviewAskStreamEvent) => void) | undefined;
   let unsub = false;
   let resolveInvoke: ((result: AskReviewResult) => void) | undefined;
+  let rejectInvoke: ((error: Error) => void) | undefined;
   let lastInput: CommandInput<"review.ask"> | undefined;
   const invoke = (async (name: string, input: unknown): Promise<unknown> => {
     if (name !== "review.ask") throw new Error(`unexpected ${name}`);
     lastInput = input as CommandInput<"review.ask">;
-    return new Promise<AskReviewResult>((resolve) => {
+    return new Promise<AskReviewResult>((resolve, reject) => {
       resolveInvoke = resolve;
+      rejectInvoke = reject;
     });
   }) as RennetBridge["invoke"];
+  // The registry keeps the listener across a "reconnect": this fake models the supervisor,
+  // whose resubscribe replays the SAME listener onto the fresh socket, so `emit` keeps
+  // reaching the consumer after the invoke rejects (unlike the raw bridge's per-socket unsub).
   const onAskStream: NonNullable<RennetBridge["onAskStream"]> = (_reviewId, l) => {
     listener = l;
     return () => {
@@ -57,8 +63,16 @@ function streamingBridge(): {
     },
     emit: (event) => listener?.(event),
     resolveAsk: (result) => resolveInvoke?.(result),
+    rejectAsk: (error) => rejectInvoke?.(error),
     unsubscribed: () => unsub,
   };
+}
+
+/** A connection-loss rejection shaped like the runtime's `ConnectionError` (name-based). */
+function connectionLost(): Error {
+  const error = new Error("connection lost");
+  error.name = "ConnectionError";
+  return error;
 }
 
 function openAndAsk(container: HTMLElement, question: string): void {
@@ -170,5 +184,66 @@ describe("ConversationHost — token streaming into a live message (#251)", () =
     await waitFor(() => expect(harnessBodies(container)).toEqual(["the answer"]));
     // Never a streaming preview when there is no stream.
     expect(container.querySelectorAll('.thread-message[data-status="streaming"]')).toHaveLength(0);
+  });
+
+  it("keeps the live stream after a mid-turn reconnect and finalizes via ask-complete (#389 product seam)", async () => {
+    // The true product seam: the resubscribe registry is useless if the UI tears its stream
+    // subscription down when the in-flight review.ask rejects on a socket drop. Pre-fix, the
+    // ConnectionError rejection dropped the preview and unsubscribed — so post-reconnect
+    // deltas reached no one. Here: stream, drop, KEEP streaming, resume, complete.
+    const h = streamingBridge();
+    const { container } = mount(
+      <ConversationHost bridge={h.bridge} reviewId="review-7" anchors={[RANGE_ANCHOR]} />,
+    );
+    openAndAsk(container, "why?");
+    await waitFor(() => expect(h.askInput().turnId).toBeTruthy());
+    const { threadId, turnId } = h.askInput();
+    const delta = (text: string): ReviewAskStreamEvent => ({
+      kind: "ask-delta",
+      threadId: threadId as string,
+      turnId: turnId as string,
+      channel: "orchestrator",
+      delta: text,
+    });
+
+    // Tokens arrive, then the socket drops mid-turn: the invoke rejects with a ConnectionError.
+    await act(async () => h.emit(delta("Because ")));
+    await act(async () => h.rejectAsk(connectionLost()));
+
+    // The stream is STILL subscribed (not torn down), the preview persists, no error surfaced.
+    expect(h.unsubscribed()).toBe(false);
+    await waitFor(() => {
+      const streaming = container.querySelectorAll('.thread-message[data-status="streaming"]');
+      expect(streaming).toHaveLength(1);
+    });
+    expect(container.querySelector(".conversation-error")).toBeNull();
+
+    // Post-reconnect deltas reach the SAME consumer and keep the preview growing.
+    await act(async () => h.emit(delta("the reconnect resumed it.")));
+    await waitFor(() => {
+      expect(
+        container.querySelector('.thread-message[data-status="streaming"] .thread-message-body')
+          ?.textContent,
+      ).toBe("Because the reconnect resumed it.");
+    });
+
+    // ask-complete lands the durable answer (the dead invoke can't), and the stream closes.
+    await act(async () => {
+      h.emit({
+        kind: "ask-complete",
+        threadId: threadId as string,
+        turnId: turnId as string,
+        channel: "orchestrator",
+        model: "Orchestrator · Claude",
+        finalBody: "Because the reconnect resumed it.",
+      });
+    });
+    await waitFor(() => {
+      expect(container.querySelectorAll('.thread-message[data-status="streaming"]')).toHaveLength(
+        0,
+      );
+      expect(harnessBodies(container)).toEqual(["Because the reconnect resumed it."]);
+    });
+    expect(h.unsubscribed()).toBe(true);
   });
 });

@@ -458,4 +458,40 @@ describe("remote-surface e2e (#380)", () => {
     const [error] = (await once(socket, "error")) as [Error];
     expect(error.message).toContain("403");
   });
+
+  it("rejects a present-but-invalid device token as a terminal auth error, not pairing-only (#383)", async () => {
+    const ip = nonLoopbackIpv4();
+    if (!ip) {
+      console.warn("remote-surface token-reject test skipped: no non-loopback IPv4 interface");
+      return;
+    }
+    const pairing = new PairingStore(
+      join(mkdtempSync(join(tmpdir(), "rennet-remote-pair3-")), "devices.json"),
+    );
+    const listener = await startRemoteListener(pairing, "0.0.0.0");
+    const socket = new WebSocket(`ws://${ip}:${listener.port}`);
+    sockets.push(socket);
+    await once(socket, "open");
+    const first = once(socket, "message");
+    const closed = once(socket, "close");
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        clientId: "reject-me",
+        clientType: "rennet-client",
+        protocolVersion: PROTOCOL_VERSION,
+        deviceToken: "not-a-real-token",
+      }),
+    );
+    // The daemon answers `unauthorized` correlated to the hello (NOT a serverInfo that would
+    // read as a healthy pairing-only `online`) and closes the socket.
+    const frame = JSON.parse(String((await first)[0]));
+    expect(frame).toMatchObject({
+      type: "rpcError",
+      requestId: "reject-me",
+      code: "unauthorized",
+    });
+    expect(frame.type).not.toBe("serverInfo");
+    await closed; // terminal: the connection is dropped, not left pairing-only
+  });
 });

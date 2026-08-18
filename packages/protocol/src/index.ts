@@ -914,6 +914,12 @@ export const projectDetailSchema = z.object({
    * live GraphQL loop sets it from the explicit truncation state later.
    */
   truncated: z.boolean(),
+  /**
+   * Why GitHub auth is unavailable. Absent (undefined) when auth resolved and PRs
+   * were fetched. Present when the PR source was not wired — a missing token renders
+   * as an honest hint, never as "zero PRs".
+   */
+  authUnavailable: z.enum(["gh-absent", "gh-not-logged-in", "insufficient-scope"]).optional(),
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 

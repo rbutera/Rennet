@@ -195,6 +195,37 @@ describe("WsRennetBridge", () => {
     expect(stub.helloCount).toBe(1);
   });
 
+  it("treats an `unauthorized` rpcError as a terminal handshake error, not a retry (#383)", async () => {
+    // A present-but-rejected device token: the daemon answers hello with `unauthorized` and
+    // closes. The bridge must surface `error` (never silently retry the bad token) and stop.
+    const stub = await startStub((socket, frame) => {
+      socket.send(
+        JSON.stringify({
+          type: "rpcError",
+          requestId: frame.clientId,
+          code: "unauthorized",
+          message: "device token rejected",
+        }),
+      );
+    });
+    stubs.push(stub);
+    const lifecycle: string[] = [];
+    const bridge = trackBridge(
+      new WsRennetBridge({
+        url: stub.url,
+        deviceToken: "revoked",
+        initialBackoffMs: 10,
+        onLifecycle: (event) => lifecycle.push(event.kind),
+      }),
+    );
+
+    await expect(invoke(bridge, "cmd.after-reject", {})).rejects.toThrow("device token rejected");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(lifecycle).toContain("error");
+    expect(lifecycle).not.toContain("online");
+    expect(stub.helloCount).toBe(1); // terminal: no reconnect against the rejected token
+  });
+
   it("routes progress and ask-stream push frames to their keyed listeners", async () => {
     const stub = await startStub();
     stubs.push(stub);

@@ -130,7 +130,10 @@ async function createWindow(wsPort: number): Promise<void> {
       : process.platform === "win32"
         ? { backgroundMaterial: "acrylic" as const, backgroundColor: "#00000000" }
         : { transparent: true, backgroundColor: "#00000000" }),
-    title: "Rennet",
+    // Version in the native titlebar (visible on the win32 native frame; macOS shows
+    // it in the standard titlebar too). `page-title-updated` is suppressed below so
+    // the renderer's static <title>Rennet</title> can't overwrite it after load.
+    title: `Rennet ${app.getVersion()}`,
     // Dev runs (and Linux) have no exe-embedded icon, so without this they show the
     // default Electron icon in the titlebar/taskbar. Resolved lazily and only when
     // the brand file exists — the packaged win32 exe carries the `.ico` itself, so a
@@ -147,6 +150,9 @@ async function createWindow(wsPort: number): Promise<void> {
       additionalArguments: [`${WS_PORT_ARG}${wsPort}`],
     },
   });
+  // Keep the versioned title: Electron replaces the window title with the page's
+  // <title> on every load unless the update is prevented.
+  window.on("page-title-updated", (event) => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, destination) => {
     if (!isTrustedAppUrl(destination)) event.preventDefault();

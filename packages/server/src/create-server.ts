@@ -577,18 +577,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // auth is unavailable it stays `null` and `project.detail` degrades to the local-only
   // list (B1) — a missing token is a local-only surface, never a failed fetch rendered
   // as "zero PRs". Resolution is lazy (first `project.detail`), never at launch.
-  let projectPrSource: Promise<ProjectPrSource | null> | null = null;
-  function resolveProjectPrSource(): Promise<ProjectPrSource | null> {
-    projectPrSource ??= (async (): Promise<ProjectPrSource | null> => {
+  let projectPrResolution: Promise<{
+    source: ProjectPrSource | null;
+    authUnavailable?: "gh-absent" | "gh-not-logged-in" | "insufficient-scope";
+  }> | null = null;
+  function resolveProjectPrSource(): Promise<{
+    source: ProjectPrSource | null;
+    authUnavailable?: "gh-absent" | "gh-not-logged-in" | "insufficient-scope";
+  }> {
+    projectPrResolution ??= (async () => {
       const auth = await resolveGitHubAuth({
         gh: runGhAuthToken,
         http: publishHttp,
         secretStore: { getGitHubToken: async () => null },
       });
-      if (!auth.ok) return null;
-      return createGitHubProjectPrSource({ http: publishHttp, token: auth.token });
+      if (!auth.ok) return { source: null, authUnavailable: auth.reason };
+      return { source: createGitHubProjectPrSource({ http: publishHttp, token: auth.token }) };
     })();
-    return projectPrSource;
+    return projectPrResolution;
   }
 
   let repositoryDirty = false;
@@ -1898,12 +1904,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (!project) {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
       }
-      const prSource = await resolveProjectPrSource();
+      const { source, authUnavailable } = await resolveProjectPrSource();
       const projectRoot = project.openPath || project.path;
-      return loadProjectDetail(
-        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), prSource ?? undefined),
+      const detail = await loadProjectDetail(
+        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), source ?? undefined),
         project,
       );
+      return authUnavailable ? { ...detail, authUnavailable } : detail;
     },
     // The merged-PR row's clean-up (B2), for real: `git worktree remove <path>` run
     // from the project's root. Non-forcing — a dirty worktree is refused and reported

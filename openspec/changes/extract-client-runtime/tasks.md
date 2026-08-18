@@ -1,0 +1,46 @@
+# Tasks — extract-client-runtime
+
+## 1. Supervisor core (in `packages/client`)
+
+- [x] 1.1 Add `ConnectionSupervisor`: wraps a `WsRennetBridge` factory; owns the `idle/connecting/online/offline/error` state machine with capped-backoff retry and terminal `error` on auth rejection; exposes `state`, `subscribe`, `bridge`.
+- [x] 1.2 Move reconnect scheduling out of `WsRennetBridge` (bridge emits socket lifecycle; supervisor decides retry) keeping the bridge's correlation/fan-out untouched; unit tests for every transition incl. auth-terminal.
+- [x] 1.3 In-flight invoke rejection on socket drop with a distinguishable connection error; queued-vs-reject invoke mode per design; unit tests.
+
+## 2. Resubscribe registry (#389)
+
+- [x] 2.1 Add the subscription registry: `onAskStream`/`onProgress` registrations survive the socket and replay onto every fresh socket; unregister on unsubscribe.
+- [x] 2.2 Unit test: mid-turn reconnect re-delivers subsequent events to the same listener, at most once, without consumer re-subscribe.
+- [x] 2.3 Extend e2e with the positive control: kill the daemon socket mid-turn, assert the live ask stream resumes on reconnect (this is the #389 fix proof; must fail on today's main).
+- [x] 2.4 Server half of #389 (spec amendment, daemon bug fix): ask-stream deltas broadcast by `reviewId` to every live authorized socket (`broadcastAskStream`, mirroring `broadcastProgress`) instead of closing over the invoking socket; positive control in `ws-listener.test.ts` proven to fail on the pre-fix closure.
+
+## 3. Stores
+
+- [x] 3.1 Define `TokenStore` and `ReplicaStore` interfaces in `packages/client`; token values never logged (lint/test guard).
+- [x] 3.2 Desktop/browser `TokenStore` impls in their shells (existing saved-target storage migrates in place, no user-visible change).
+- [x] 3.3 Replica cache: save projected bootstrap surface per daemon on reconcile; expose `load` + staleness timestamp before connect; reconcile = normal bootstrap reads on `online`; unit tests incl. offline-open scenario.
+
+## 4. Presence seam
+
+- [x] 4.1 `setPresence({focused, visible, deviceClass})` on the supervisor: recorded, exposed, wire-silent; unit test asserting no traffic change.
+
+## 5. Shell adoption (behavior-neutral)
+
+- [x] 5.1 Widen `ConnectionHost`'s seam to accept the supervisor (`createConnection`), keeping a `createBridge` adapter so existing call sites/tests compile unchanged.
+- [x] 5.2 Desktop renderer (`apps/desktop/src/renderer/index.tsx`) constructs its loopback + saved-remote connections through the supervisor.
+- [x] 5.3 Browser shell (`apps/desktop/src/browser/entry.tsx`) likewise, including the serving-origin default target.
+- [x] 5.4 Run existing desktop + browser e2e suites unchanged — green is the behavior-neutrality proof.
+
+## 6. Boundaries, docs, close-out
+
+- [x] 6.1 Lint boundary: no DOM/Node globals in `packages/client` core paths (stores implemented in shells); Nx inputs/outputs declared for any new targets.
+- [x] 6.2 Docs same-change: `architecture-overview.md` client wiring paragraph, `reactive-streams.md` reconnect note, `mobile-plan.md` M0 marked delivered; delivery-order wave entry.
+- [x] 6.3 Full `pnpm check` green (exit 0, 12 projects). PR references prepared in commits (`Refs #383`, `Closes #389`); opening/pushing the PR is the merge agent's step (implementer does not push).
+
+## 7. Dual-review triage (post-implementation)
+
+- [x] 7.1 (High) Product seam: `conversation-host` kept its ask-stream subscription alive across a mid-turn reconnect — a `ConnectionError`-shaped invoke rejection no longer tears the stream down; `ask-complete` finalizes the turn. Regression test is the true #389 product-seam positive control (red→green proven).
+- [x] 7.2 (High) A present-but-rejected device token is now terminal `error`, not a silent `pairing-only` `online`: daemon answers `unauthorized` (rpcError) + closes; the bridge maps it to the `error` lifecycle. Unit tests both sides (red→green proven).
+- [x] 7.3 (Medium) Bounded the offline invoke queue (`maxQueuedInvokes`, default 64) — past the cap a new invoke rejects with `ConnectionError`.
+- [x] 7.4 (Medium) Disposer bookkeeping keyed by (key, listener), not listener alone — one callback on two reviews keeps a distinct disposer per review (ask + progress registries).
+- [x] 7.5 (Medium) `ConnectionStatus` carried through the `ConnectionHost` seam and rendered truthfully — the indicator announces connecting/offline/error + cause instead of an unconditional "Connected to …".
+- [x] 7.6 (Rejected) "Ask-stream broadcast leaks across clients" — no code change: single-user product, every authorized socket is the user's own paired peer, `ReviewAskStreamEvent` has no structural path fields, and the pre-fix path already sent the raw event to a projected invoker. Rationale recorded on `broadcastAskStream`.

@@ -205,7 +205,11 @@ export { CollationDraftCanvas } from "./components/collation-draft-canvas";
 // injects the bridge factory, so `ui` never imports a client package.
 export type {
   BridgeFactory,
+  Connection,
+  ConnectionFactory,
   ConnectionHostProps,
+  ConnectionState,
+  ConnectionStatus,
   ConnectionTarget,
 } from "./components/connection-host";
 export { ConnectionHost } from "./components/connection-host";
