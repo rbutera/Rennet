@@ -414,7 +414,9 @@ button {
   background: var(--add-fill);
 }
 .status-modified {
-  color: var(--amber);
+  /* The uppercase status LETTER is TEXT: amber is 3.98:1 on --amber-fill (AA fail),
+     so the character inks; the amber-fill square + amber-line keep the state signal. */
+  color: var(--text);
   background: var(--amber-fill);
 }
 .status-deleted {
@@ -1532,7 +1534,8 @@ button {
   color: var(--green);
 }
 .delta-account-status[data-status="partially-addressed"] {
-  color: var(--amber);
+  /* Ink, not amber: this status label renders on --surface-2 (~3.7-4.3:1, AA fail). */
+  color: var(--text);
 }
 .delta-account-status[data-status="untouched"] {
   color: var(--text-faint);
@@ -1614,7 +1617,8 @@ button {
   color: var(--text-faint);
 }
 .delta-account-hunk-item[data-bucket="unasked-file"] .delta-account-hunk-bucket {
-  color: var(--amber);
+  /* Ink, not amber: this bucket label renders on --surface-2 (~3.7-4.3:1, AA fail). */
+  color: var(--text);
 }
 .delta-account-hunk-excerpt {
   min-inline-size: 0;
@@ -1694,7 +1698,8 @@ button {
   color: var(--green);
 }
 .context-manifest-state[data-state="truncated"] {
-  color: var(--amber);
+  /* Ink, not amber: this state label renders on --surface-2 (~3.7-4.3:1, AA fail). */
+  color: var(--text);
 }
 .context-manifest-state[data-state="dropped"] {
   color: var(--text-faint);
@@ -2998,7 +3003,9 @@ button {
   padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid var(--amber-line);
-  color: var(--amber);
+  /* Ink, not amber: this pill renders on --private-surface rows (4.07:1, AA fail).
+     The amber-line border keeps the state signal. */
+  color: var(--text);
   font-size: 11px;
 }
 .smart-row-state {
@@ -3192,8 +3199,10 @@ button {
 /* A chord claimed by more than one live command (#44): disclosed, never blocked. The
  * warm outline marks the collision; the row's `title` names the other command. */
 .command-palette-key.is-conflict {
+  /* Ink, not amber: the key renders on --surface-2 (4.19:1, AA fail). The amber
+     border marks the collision; the row's `title` names the other command. */
   border-color: var(--amber);
-  color: var(--amber);
+  color: var(--text);
 }
 
 /* ── Settings: the config ladder (wireframe #15) ───────────────────────────── */
