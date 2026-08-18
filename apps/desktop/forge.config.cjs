@@ -81,8 +81,10 @@ module.exports = {
     asar: true,
     // The detached daemon (#379) is spawned as a plain Node process (ELECTRON_RUN_AS_NODE),
     // so its bundle must live on disk OUTSIDE the asar for a Node `require` to load it.
-    // Un-asar the whole server build dir; everything else stays packed.
-    asarUnpack: ["dist/server/**"],
+    // Un-asar the whole server build dir; everything else stays packed. The browser UI
+    // (#381) joins it: the daemon serves those files with `createReadStream`, which reads a
+    // real on-disk path, so `dist/browser` must be unpacked beside `dist/server`.
+    asarUnpack: ["dist/server/**", "dist/browser/**"],
     executableName: "Rennet",
     icon: appIcon,
     ignore: [

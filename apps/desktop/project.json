@@ -6,7 +6,7 @@
   "tags": ["scope:rennet", "layer:app", "platform:desktop"],
   "targets": {
     "build": {
-      "command": "pnpm exec vite build -c apps/desktop/vite.main.config.ts && pnpm exec vite build -c apps/desktop/vite.preload.config.ts && pnpm exec vite build -c apps/desktop/vite.renderer.config.ts && pnpm exec vite build -c apps/desktop/vite.server.config.ts && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/main && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/server"
+      "command": "pnpm exec vite build -c apps/desktop/vite.main.config.ts && pnpm exec vite build -c apps/desktop/vite.preload.config.ts && pnpm exec vite build -c apps/desktop/vite.renderer.config.ts && pnpm exec vite build -c apps/desktop/vite.browser.config.ts && pnpm exec vite build -c apps/desktop/vite.server.config.ts && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/main && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/server"
     },
     "dev": {
       "cache": false,
