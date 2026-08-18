@@ -26,9 +26,32 @@ export interface ConnectionTarget {
 /** The shell-injected factory. A remote target carries a token; the local one does not. */
 export type BridgeFactory = (target: ConnectionTarget) => RennetBridge & { close?(): void };
 
+/**
+ * A live connection to a daemon (issue #383 M0): the `RennetBridge` the app drives plus a
+ * `close`. Shells build this over a `ConnectionSupervisor` — the bridge is the supervisor's
+ * own `invoke`/`onProgress`/`onAskStream` surface, so the resubscribe registry and the
+ * reachability state machine ride underneath every remount, transparently to the app.
+ */
+export interface Connection {
+  readonly bridge: RennetBridge & { close?(): void };
+  close(): void;
+}
+
+/** The shell-injected connection factory (issue #383 M0). Supersedes {@link BridgeFactory}. */
+export type ConnectionFactory = (target: ConnectionTarget) => Connection;
+
 export interface ConnectionHostProps {
-  /** Build a bridge for a target. MUST be stable (module-level or memoised) — the host keys remounts on it. */
-  readonly createBridge: BridgeFactory;
+  /**
+   * Build a connection for a target (issue #383 M0). MUST be stable (module-level or
+   * memoised) — the host keys remounts on it. Exactly one of `createConnection` /
+   * `createBridge` is supplied; `createConnection` is preferred.
+   */
+  readonly createConnection?: ConnectionFactory;
+  /**
+   * Legacy bridge factory, adapted to a {@link Connection} when `createConnection` is
+   * absent. Kept so existing call sites and tests compile unchanged.
+   */
+  readonly createBridge?: BridgeFactory;
   /** The always-present default (localhost for the desktop, the serving origin for the browser tab). */
   readonly defaultTarget: ConnectionTarget;
   /** localStorage key for the saved remote-daemon list. */
@@ -135,8 +158,25 @@ function parseHostPort(raw: string): { host: string; port?: number } | null {
   return endpoint;
 }
 
-export function ConnectionHost({ createBridge, defaultTarget, storageKey }: ConnectionHostProps) {
+export function ConnectionHost({
+  createConnection,
+  createBridge,
+  defaultTarget,
+  storageKey,
+}: ConnectionHostProps) {
   const key = storageKey ?? DEFAULT_STORAGE_KEY;
+  // Normalise the two seams to one stable factory: prefer `createConnection`, else adapt the
+  // legacy `createBridge` (its returned bridge closes itself). Stable across renders because
+  // both inputs are required to be stable (module-level/memoised), like the old contract.
+  const makeConnection = useCallback<ConnectionFactory>(
+    (target) => {
+      if (createConnection) return createConnection(target);
+      if (!createBridge) throw new Error("ConnectionHost needs createConnection or createBridge");
+      const bridge = createBridge(target);
+      return { bridge, close: () => bridge.close?.() };
+    },
+    [createConnection, createBridge],
+  );
   const [initial] = useState(() => readStoredDaemons(key));
   const [saved, setSaved] = useState<readonly ConnectionTarget[]>(initial.daemons);
   const [activeId, setActiveId] = useState(initial.activeId ?? defaultTarget.id);
@@ -162,13 +202,13 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
 
   const [activeBridge, setActiveBridge] = useState<{
     readonly target: ConnectionTarget;
-    readonly bridge: ReturnType<BridgeFactory>;
+    readonly bridge: Connection["bridge"];
   } | null>(null);
   useEffect(() => {
-    const bridge = createBridge(activeTarget);
-    setActiveBridge({ target: activeTarget, bridge });
-    return () => bridge.close?.();
-  }, [activeTarget, createBridge]);
+    const connection = makeConnection(activeTarget);
+    setActiveBridge({ target: activeTarget, bridge: connection.bridge });
+    return () => connection.close();
+  }, [activeTarget, makeConnection]);
   const bridge = activeBridge?.target === activeTarget ? activeBridge.bridge : null;
 
   const switchTo = useCallback(
@@ -208,15 +248,15 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
     // Exchange the code through a TEMPORARY tokenless bridge (a pairing-only connection).
     // Its only legal command is `pairing.exchange`; the returned token makes the saved
     // daemon a projected connection on every future attach.
-    let temp: ReturnType<BridgeFactory> | undefined;
+    let temp: Connection | undefined;
     try {
-      temp = createBridge({
+      temp = makeConnection({
         id: `pairing:${Date.now()}`,
         label,
         host: parsed.host,
         port: parsed.port,
       });
-      const result = await temp.invoke("pairing.exchange", { code, deviceName: label });
+      const result = await temp.bridge.invoke("pairing.exchange", { code, deviceName: label });
       const target: ConnectionTarget = {
         id: `daemon:${result.deviceId}`,
         label,
@@ -240,10 +280,10 @@ export function ConnectionHost({ createBridge, defaultTarget, storageKey }: Conn
         error instanceof Error ? error.message : "Pairing failed. Check the code and host.",
       );
     } finally {
-      temp?.close?.();
+      temp?.close();
       setAddBusy(false);
     }
-  }, [addHost, addCode, addLabel, createBridge, key]);
+  }, [addHost, addCode, addLabel, makeConnection, key]);
 
   return (
     <div className="connection-host">

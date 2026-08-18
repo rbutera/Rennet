@@ -1,15 +1,11 @@
 import type { AddressInfo } from "node:net";
-import type {
-  ProjectProcessEvent,
-  ReviewAskStreamEvent,
-} from "@rennet/protocol";
+import type { ProjectProcessEvent, ReviewAskStreamEvent } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type WebSocket as NodeWebSocket, WebSocketServer } from "ws";
 import {
   type BridgeHooks,
   ConnectionError,
   ConnectionSupervisor,
-  type ConnectionStatus,
   type SupervisedBridge,
 } from "./connection-supervisor";
 import type { StoredReplica } from "./stores";
@@ -28,7 +24,10 @@ class FakeBridge implements SupervisedBridge {
   readonly progressListeners = new Map<string, Set<(e: ProjectProcessEvent) => void>>();
   invokeImpl: (name: string, input: unknown) => Promise<unknown> = () => Promise.resolve({});
 
-  constructor(readonly hooks: BridgeHooks, readonly token: string | undefined) {}
+  constructor(
+    readonly hooks: BridgeHooks,
+    readonly token: string | undefined,
+  ) {}
 
   invoke(name: string, input: unknown): Promise<never> {
     this.invokes.push({ name, input });
@@ -107,7 +106,7 @@ describe("ConnectionSupervisor — reachability", () => {
     // The factory resolves the token asynchronously; wait for the first bridge.
     await waitFor(() => bridges.length === 1);
     expect(supervisor.state.state).toBe("connecting");
-    bridges[0].goOnline();
+    nth(bridges, 0).goOnline();
     expect(supervisor.state.state).toBe("online");
     expect(seen).toEqual(["connecting", "online"]); // immediate current + the online transition
   });
@@ -116,13 +115,13 @@ describe("ConnectionSupervisor — reachability", () => {
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
     await waitFor(() => bridges.length === 1);
-    bridges[0].goOnline();
-    bridges[0].goOffline();
+    nth(bridges, 0).goOnline();
+    nth(bridges, 0).goOffline();
     expect(supervisor.state.state).toBe("offline");
     // Backoff (5ms) makes a fresh bridge; the old one is closed.
     await waitFor(() => bridges.length === 2);
-    expect(bridges[0].closed).toBe(true);
-    bridges[1].goOnline();
+    expect(nth(bridges, 0).closed).toBe(true);
+    nth(bridges, 1).goOnline();
     expect(supervisor.state.state).toBe("online");
   });
 
@@ -130,7 +129,7 @@ describe("ConnectionSupervisor — reachability", () => {
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
     await waitFor(() => bridges.length === 1);
-    bridges[0].goError("local protocol version 1 is below the remote minimum");
+    nth(bridges, 0).goError("local protocol version 1 is below the remote minimum");
     expect(supervisor.state.state).toBe("error");
     expect(supervisor.state.error).toContain("below the remote minimum");
     // No reconnect scheduled: still one bridge after a backoff window.
@@ -147,21 +146,21 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
     await waitFor(() => bridges.length === 1);
-    bridges[0].goOnline();
+    nth(bridges, 0).goOnline();
 
     const received: ReviewAskStreamEvent[] = [];
     supervisor.onAskStream("rev-1", (e) => received.push(e)); // ONE consumer subscribe, ever
-    bridges[0].emitAsk("rev-1", ASK);
+    nth(bridges, 0).emitAsk("rev-1", ASK);
     expect(received).toHaveLength(1);
 
     // Socket drops, supervisor reconnects onto a FRESH bridge.
-    bridges[0].goOffline();
+    nth(bridges, 0).goOffline();
     await waitFor(() => bridges.length === 2);
-    bridges[1].goOnline();
+    nth(bridges, 1).goOnline();
 
     // The fresh bridge has the listener wired by the registry — the consumer never re-subscribed.
-    expect(bridges[1].askListeners.get("rev-1")?.size).toBe(1);
-    bridges[1].emitAsk("rev-1", ASK);
+    expect(nth(bridges, 1).askListeners.get("rev-1")?.size).toBe(1);
+    nth(bridges, 1).emitAsk("rev-1", ASK);
     expect(received).toHaveLength(2); // delivered again, at most once per emit
   });
 
@@ -169,26 +168,26 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
     await waitFor(() => bridges.length === 1);
-    bridges[0].goOnline();
+    nth(bridges, 0).goOnline();
     supervisor.onAskStream("rev-1", () => undefined);
-    bridges[0].goOffline();
+    nth(bridges, 0).goOffline();
     await waitFor(() => bridges.length === 2);
-    bridges[1].goOnline();
-    const reattaches = bridges[1].invokes.filter((i) => i.name === "review.reattach");
+    nth(bridges, 1).goOnline();
+    const reattaches = nth(bridges, 1).invokes.filter((i) => i.name === "review.reattach");
     expect(reattaches).toHaveLength(1);
-    expect(reattaches[0].input).toMatchObject({ reviewId: "rev-1" });
+    expect(nth(reattaches, 0).input).toMatchObject({ reviewId: "rev-1" });
   });
 
   it("stops delivery after the consumer unsubscribes", async () => {
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
     await waitFor(() => bridges.length === 1);
-    bridges[0].goOnline();
+    nth(bridges, 0).goOnline();
     const received: ReviewAskStreamEvent[] = [];
     const off = supervisor.onAskStream("rev-1", (e) => received.push(e));
     off();
-    expect(bridges[0].askListeners.get("rev-1")?.size ?? 0).toBe(0);
-    bridges[0].emitAsk("rev-1", ASK);
+    expect(nth(bridges, 0).askListeners.get("rev-1")?.size ?? 0).toBe(0);
+    nth(bridges, 0).emitAsk("rev-1", ASK);
     expect(received).toHaveLength(0);
   });
 });
@@ -207,12 +206,12 @@ describe("ConnectionSupervisor — invoke honesty", () => {
     const { supervisor, bridges } = makeSupervisor({ offlineInvoke: "queue" });
     track(supervisor);
     await waitFor(() => bridges.length === 1);
-    bridges[0].invokeImpl = () => Promise.resolve({ ok: true });
+    nth(bridges, 0).invokeImpl = () => Promise.resolve({ ok: true });
     const pending = supervisor.invoke("app.bootstrap" as never, {} as never);
-    expect(bridges[0].invokes).toHaveLength(0); // held, not sent
-    bridges[0].goOnline();
+    expect(nth(bridges, 0).invokes).toHaveLength(0); // held, not sent
+    nth(bridges, 0).goOnline();
     await expect(pending).resolves.toEqual({ ok: true });
-    expect(bridges[0].invokes).toHaveLength(1);
+    expect(nth(bridges, 0).invokes).toHaveLength(1);
   });
 });
 
@@ -227,7 +226,7 @@ describe("ConnectionSupervisor — stores + presence", () => {
     track(supervisor);
     await waitFor(() => bridges.length === 1);
     expect(tokenStore.get).toHaveBeenCalledWith("d1");
-    expect(bridges[0].token).toBe("tok-123");
+    expect(nth(bridges, 0).token).toBe("tok-123");
   });
 
   it("loads the replica before connect and exposes its staleness; saveReplica persists", async () => {
@@ -247,10 +246,10 @@ describe("ConnectionSupervisor — stores + presence", () => {
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
     await waitFor(() => bridges.length === 1);
-    bridges[0].goOnline();
+    nth(bridges, 0).goOnline();
     supervisor.setPresence({ focused: false, visible: false, deviceClass: "mobile" });
     expect(supervisor.presence).toEqual({ focused: false, visible: false, deviceClass: "mobile" });
-    expect(bridges[0].invokes).toHaveLength(0); // wire-silent
+    expect(nth(bridges, 0).invokes).toHaveLength(0); // wire-silent
   });
 });
 
@@ -274,7 +273,12 @@ describe("ConnectionSupervisor — reconnect-resubscribe over a real socket (#38
     }
   });
 
-  function startStub(): Promise<{ url: string; broadcast: (f: unknown) => void; drop: () => void; helloCount: () => number }> {
+  function startStub(): Promise<{
+    url: string;
+    broadcast: (f: unknown) => void;
+    drop: () => void;
+    helloCount: () => number;
+  }> {
     return new Promise((resolve) => {
       const sockets = new Set<NodeWebSocket>();
       let helloCount = 0;
@@ -349,6 +353,13 @@ describe("ConnectionSupervisor — reconnect-resubscribe over a real socket (#38
     expect(received).toHaveLength(2);
   });
 });
+
+/** Index an array with a throw instead of `undefined` (noUncheckedIndexedAccess). */
+function nth<T>(arr: readonly T[], i: number): T {
+  const value = arr[i];
+  if (value === undefined) throw new Error(`expected element ${i}`);
+  return value;
+}
 
 /** Poll until `predicate` holds or the timeout elapses (default 1s). */
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
