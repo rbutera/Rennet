@@ -245,7 +245,7 @@ h2 {
 .hero {
   display: grid;
   gap: clamp(44px, 4.5vw, 64px);
-  padding-block: clamp(60px, 6.5vw, 92px);
+  padding-block: clamp(64px, 7vw, 92px);
 }
 
 .hero h1 {
