@@ -429,15 +429,15 @@ export class ConnectionSupervisor implements RennetBridge {
     this.#transmitPresence();
   }
 
-  /** Whether the connected daemon advertised the attention/presence capability. */
-  #attentionAdvertised(): boolean {
+  /** Whether the connected daemon advertised the attention/presence capability (public read). */
+  attentionAdvertised(): boolean {
     return this.#bridge?.serverInfo?.features?.[ATTENTION_FEATURE] === true;
   }
 
   /** Send current presence iff online and the daemon advertised `attention`. */
   #transmitPresence(): void {
     if (this.#status.state !== "online" || !this.#bridge) return;
-    if (!this.#attentionAdvertised()) return;
+    if (!this.attentionAdvertised()) return;
     this.#bridge.sendPresence(this.#presence);
   }
 
