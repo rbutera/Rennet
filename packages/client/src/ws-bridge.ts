@@ -30,7 +30,22 @@ export interface WsRennetBridgeOptions {
   readonly initialBackoffMs?: number;
   /** Reconnect backoff ceiling in ms (default 8000). */
   readonly maxBackoffMs?: number;
+  /**
+   * A paired device's bearer token (issue #380), sent in every `hello`. Loopback
+   * clients omit it. Token persistence is the embedding client's concern (browser
+   * localStorage / mobile Keychain in later phases) — the bridge just forwards it.
+   */
+  readonly deviceToken?: string;
 }
+
+/** The server's identity, captured from the `serverInfo` handshake frame (#380). */
+export interface CapturedServerInfo {
+  readonly version: string;
+  readonly features: Readonly<Record<string, boolean>>;
+}
+
+/** A server→client request handler: return (or resolve to) the response payload (#380, wire only). */
+export type ServerRequestHandler = (kind: string, payload: unknown) => unknown | Promise<unknown>;
 
 interface Pending {
   readonly resolve: (output: unknown) => void;
@@ -55,6 +70,11 @@ export class WsRennetBridge implements RennetBridge {
   readonly #url: string;
   readonly #initialBackoff: number;
   readonly #maxBackoff: number;
+  readonly #deviceToken: string | undefined;
+  #serverInfo: CapturedServerInfo | null = null;
+  #serverRequestHandler: ServerRequestHandler | null = null;
+  /** In-flight server→client requests; a `serverRequestResolved` deletes an id so a late answer is dropped. */
+  readonly #pendingServerRequests = new Set<string>();
   #socket: WebSocket | null = null;
   #backoff: number;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -71,6 +91,7 @@ export class WsRennetBridge implements RennetBridge {
     this.#initialBackoff = options.initialBackoffMs ?? 500;
     this.#maxBackoff = options.maxBackoffMs ?? 8000;
     this.#backoff = this.#initialBackoff;
+    this.#deviceToken = options.deviceToken;
     this.#connect();
   }
 
@@ -94,6 +115,48 @@ export class WsRennetBridge implements RennetBridge {
 
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void {
     return subscribe(this.#askListeners, reviewId, listener);
+  }
+
+  /** The server identity captured at handshake (version + feature flags), or null before it lands (#380). */
+  get serverInfo(): CapturedServerInfo | null {
+    return this.#serverInfo;
+  }
+
+  /**
+   * Register the server→client request handler (issue #380, wire support only). The
+   * handler's return value is sent back as the `serverResponse`. Returns an
+   * unsubscribe that clears the handler. No product flow drives this yet.
+   */
+  onServerRequest(handler: ServerRequestHandler): () => void {
+    this.#serverRequestHandler = handler;
+    return () => {
+      if (this.#serverRequestHandler === handler) this.#serverRequestHandler = null;
+    };
+  }
+
+  #handleServerRequest(
+    socket: WebSocket,
+    serverRequestId: string,
+    kind: string,
+    payload: unknown,
+  ): void {
+    const handler = this.#serverRequestHandler;
+    if (!handler) return; // no handler: leave it unanswered (the server resolves on turn-end/disconnect)
+    this.#pendingServerRequests.add(serverRequestId);
+    Promise.resolve()
+      .then(() => handler(kind, payload))
+      .then((response) => {
+        // Only answer if the request is still pending (a resolved frame may have cancelled it).
+        if (!this.#pendingServerRequests.delete(serverRequestId)) return;
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(
+            JSON.stringify({ type: "serverResponse", serverRequestId, payload: response }),
+          );
+        }
+      })
+      .catch(() => {
+        this.#pendingServerRequests.delete(serverRequestId);
+      });
   }
 
   /** Tear the bridge down: stop reconnecting, reject pending invokes, close the socket. */
@@ -147,6 +210,7 @@ export class WsRennetBridge implements RennetBridge {
           clientId: helloClientId,
           clientType: "rennet-client",
           protocolVersion: PROTOCOL_VERSION,
+          ...(this.#deviceToken ? { deviceToken: this.#deviceToken } : {}),
         }),
       );
     });
@@ -233,6 +297,7 @@ export class WsRennetBridge implements RennetBridge {
           this.#failHandshake(socket, compatibility.reason);
           return;
         }
+        this.#serverInfo = { version: frame.version, features: frame.features };
         this.#resolveReady(socket);
         return;
       }
@@ -268,6 +333,16 @@ export class WsRennetBridge implements RennetBridge {
       case "askStreamEvent": {
         const listeners = this.#askListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
+        return;
+      }
+      case "serverRequest": {
+        this.#handleServerRequest(socket, frame.serverRequestId, frame.kind, frame.payload);
+        return;
+      }
+      case "serverRequestResolved": {
+        // The server cleaned up (turn ended / asker gone): drop the pending id so a
+        // late handler answer is not sent for a question no longer being asked.
+        this.#pendingServerRequests.delete(frame.serverRequestId);
         return;
       }
       // hello/request are not client-inbound work — ignore them.

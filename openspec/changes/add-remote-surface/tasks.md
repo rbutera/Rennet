@@ -24,7 +24,7 @@
 
 ## 4. Client bridge
 
-- [ ] 4.1 Capture serverInfo (version, features) and expose it; constructor accepts `deviceToken`; `onServerRequest(handler)` seam replying `serverResponse`; tests (token sent in hello; features exposed; serverRequest round-trip; resolved clears pending handler state).
+- [x] 4.1 Capture serverInfo (version, features) and expose it; constructor accepts `deviceToken`; `onServerRequest(handler)` seam replying `serverResponse`; tests (token sent in hello; features exposed; serverRequest round-trip; resolved clears pending handler state).
 
 ## 5. Desktop settings pairing panel
 
