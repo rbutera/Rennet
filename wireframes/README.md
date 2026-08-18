@@ -27,4 +27,4 @@ node wireframes/serve.mjs
 
 Badges are derived from each frame's filename prefix (`05-project-detail` → badge `05`), so a new screen can be inserted (e.g. `04a-projects-list`) without renumbering the frames after it.
 
-Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker + footer) and each frame's `title`. Current: **v4.1** (v4.0 plus the mobile set — frames `19`–`24`, the phase 6 gate's wireframe pass for issue #382, built by `src/mobile.mjs`; each phone screen names the protocol commands and event topics it consumes).
+Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker + footer) and each frame's `title`. Current: **v4.2** (v4.1 plus the GitHub device sign-in pass — first-run's skippable Connect-GitHub card and the Settings account rows, replacing the gh-CLI piggyback). v4.1 was v4.0 plus the mobile set (frames `19`–`24`, the phase 6 gate's wireframe pass for issue #382, built by `src/mobile.mjs`; each phone screen names the protocol commands and event topics it consumes).

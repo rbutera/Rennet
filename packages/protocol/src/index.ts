@@ -713,6 +713,37 @@ export const detectedHarnessSchema = z.object({
 });
 export type DetectedHarness = z.infer<typeof detectedHarnessSchema>;
 
+// ── The GitHub account (v4.2: OAuth device flow replaces the gh-CLI piggyback) ─
+// The renderer-safe projection of the host-side auth state. The TOKEN itself is
+// never here — only who is connected, with which scopes, or which distinct
+// problem (with its copy) stands between the user and a connection.
+export const gitHubAuthStatusSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("connected"),
+    /** The signed-in GitHub login (`@user` on the settings row), when resolvable. */
+    login: z.string().nullable(),
+    scopes: z.array(z.string()),
+  }),
+  z.object({ state: z.literal("not-connected"), copy: z.string().min(1) }),
+  z.object({ state: z.literal("token-invalid"), copy: z.string().min(1) }),
+  z.object({
+    state: z.literal("insufficient-scope"),
+    copy: z.string().min(1),
+    scopes: z.array(z.string()),
+  }),
+]);
+export type GitHubAuthStatus = z.infer<typeof gitHubAuthStatusSchema>;
+
+/** One in-flight device-flow connect, as the renderer polls it. */
+export const gitHubConnectPollSchema = z.discriminatedUnion("phase", [
+  z.object({ phase: z.literal("pending") }),
+  z.object({ phase: z.literal("connected"), status: gitHubAuthStatusSchema }),
+  z.object({ phase: z.literal("failed"), message: z.string() }),
+  /** No flow is in flight (never started, cancelled, or already consumed). */
+  z.object({ phase: z.literal("idle") }),
+]);
+export type GitHubConnectPoll = z.infer<typeof gitHubConnectPollSchema>;
+
 // ── Processing a freshly-added project: the initial context dump ─────────────
 // After `projects.add` persists a project, Rennet PROCESSES each included repo —
 // building the deterministic ProjectSnapshot / repo-map that every later review
@@ -919,7 +950,7 @@ export const projectDetailSchema = z.object({
    * were fetched. Present when the PR source was not wired — a missing token renders
    * as an honest hint, never as "zero PRs".
    */
-  authUnavailable: z.enum(["gh-absent", "gh-not-logged-in", "insufficient-scope"]).optional(),
+  authUnavailable: z.enum(["not-connected", "token-invalid", "insufficient-scope"]).optional(),
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 
@@ -2222,6 +2253,42 @@ export const commandDefinitions = {
     // The ambient detection line: which harnesses were found (felt, not ceremonial).
     input: z.object({}),
     output: z.object({ detected: z.array(detectedHarnessSchema) }),
+  },
+  // ── The GitHub account (v4.2: device flow, no gh CLI) ──────────────────────
+  // Connect is SKIPPABLE everywhere it appears (working-tree review needs no
+  // GitHub); these commands exist so the first-run card and the settings rows can
+  // show honest state and run the one-time sign-in. The token never crosses this
+  // boundary in either direction — except the one deliberate paste (setToken).
+  "github.status": {
+    input: z.object({}),
+    output: z.object({ status: gitHubAuthStatusSchema }),
+  },
+  "github.connectStart": {
+    // Mint the device code. Starting again replaces any in-flight flow.
+    input: z.object({}),
+    output: z.object({
+      userCode: z.string().min(1),
+      verificationUri: z.string().min(1),
+    }),
+  },
+  "github.connectPoll": {
+    // The renderer polls until connected/failed; the host owns GitHub's poll pace.
+    input: z.object({}),
+    output: z.object({ poll: gitHubConnectPollSchema }),
+  },
+  "github.connectCancel": {
+    input: z.object({}),
+    output: z.object({}),
+  },
+  "github.setToken": {
+    // The side door: paste a PAT. Validated BEFORE storing — a bad paste returns
+    // its failure status and persists nothing.
+    input: z.object({ token: z.string().min(1) }),
+    output: z.object({ status: gitHubAuthStatusSchema }),
+  },
+  "github.disconnect": {
+    input: z.object({}),
+    output: z.object({}),
   },
   "projects.list": {
     // The populated state: the projects the user has added.

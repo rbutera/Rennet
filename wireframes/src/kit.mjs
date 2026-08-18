@@ -181,6 +181,7 @@ export const ic = {
   dotsdrag: S('<circle cx="9" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.2" fill="currentColor" stroke="none"/>'),
   sun: S('<circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8L6 18M18 6l1.8-1.8"/>', { w: 1.4 }),
   noise: S('<path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/>'),
+  github: S('<path d="M15 21.5v-3.4a4.2 4.2 0 0 0-.9-3c2.7 0 5.4-1.8 5.4-4.9.07-1.1-.24-2.2-.9-3.1.25-1 .25-2.1 0-3.1 0 0-.9 0-2.7 1.3a12 12 0 0 0-7.2 0C6.9 4 6 4 6 4c-.27 1-.27 2.1 0 3.1a4.9 4.9 0 0 0-.9 3.1c0 3.1 2.7 4.9 5.4 4.9a4.2 4.2 0 0 0-.9 3v3.4"/><path d="M9.6 18.6c-3.6 1.6-4-1.6-5.6-1.6"/>'),
 };
 
 // the title-bar execution-mode glyph (auto default) — on every in-project surface

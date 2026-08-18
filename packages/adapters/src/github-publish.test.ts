@@ -7,7 +7,7 @@ import {
   type ReviewCommentInput,
 } from "@rennet/core";
 import { describe, expect, it } from "vitest";
-import type { HttpFetch, HttpResponse } from "./github-auth";
+import { createGitHubOctokit } from "./github-octokit";
 import { buildGitHubReviewRequest, GitHubPublishAdapter } from "./github-publish";
 
 const TARGET: ForgeReviewTarget = {
@@ -32,16 +32,20 @@ function post(comments: ReviewCommentInput[], reviewId = "rev-1"): ForgeReviewPo
   });
 }
 
-function response(
-  status: number,
-  body: unknown,
-  headers: Record<string, string> = {},
-): HttpResponse {
-  return {
+function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), {
     status,
-    headers: { get: (name) => headers[name] ?? headers[name.toLowerCase()] ?? null },
-    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: { "content-type": "application/json", ...headers },
+  });
+}
+
+function adapterOver(respond: (body: { query: string; variables: never }) => Response) {
+  const fetch: typeof globalThis.fetch = async (_input, init) => {
+    const parsed = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    return respond(parsed);
   };
+  const octokit = createGitHubOctokit({ fetch, token: "test-token" });
+  return new GitHubPublishAdapter({ resolveOctokit: () => Promise.resolve(octokit) });
 }
 
 describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => {
@@ -97,7 +101,7 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
   });
 
   it("carries NO secret — the descriptor has no Authorization/Bearer/token", () => {
-    // The bearer is a send-time HEADER, never part of the constructed descriptor.
+    // The bearer is a send-time credential, never part of the constructed descriptor.
     expect(JSON.stringify(buildGitHubReviewRequest(singleLine))).not.toMatch(
       /authorization|bearer|token/i,
     );
@@ -111,50 +115,42 @@ describe("GitHubPublishAdapter.publishReview (issue #21) — idempotency", () =>
    * SECOND publish of the same post finds the marker and reuses it — proving that a
    * retry after a dropped outcome yields exactly one review.
    */
-  function fakeGitHub(): { http: HttpFetch; mutationCount: () => number } {
+  function fakeGitHub() {
     const created: { id: string; url: string; body: string }[] = [];
     let mutations = 0;
-    const http: HttpFetch = (_url, init) => {
-      const parsed = JSON.parse(init?.body ?? "{}") as {
+    const adapter = adapterOver((parsed) => {
+      const { query, variables } = parsed as unknown as {
         query: string;
         variables: { input?: { body?: string } };
       };
-      if (parsed.query.includes("addPullRequestReview")) {
+      if (query.includes("addPullRequestReview")) {
         mutations += 1;
         const node = {
           id: `PRR_${mutations}`,
           url: `https://github.com/o/r/pull/3#r${mutations}`,
-          body: parsed.variables.input?.body ?? "",
+          body: variables.input?.body ?? "",
         };
         created.push(node);
-        return Promise.resolve(
-          response(200, {
-            data: { addPullRequestReview: { pullRequestReview: { id: node.id, url: node.url } } },
-          }),
-        );
+        return json(200, {
+          data: { addPullRequestReview: { pullRequestReview: { id: node.id, url: node.url } } },
+        });
       }
       // A reviews query — return the created reviews (one page).
-      return Promise.resolve(
-        response(200, {
-          data: {
-            repository: {
-              pullRequest: {
-                reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: created },
-              },
+      return json(200, {
+        data: {
+          repository: {
+            pullRequest: {
+              reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: created },
             },
           },
-        }),
-      );
-    };
-    return { http, mutationCount: () => mutations };
+        },
+      });
+    });
+    return { adapter, mutationCount: () => mutations };
   }
 
   it("posts once, then reuses the marked review on retry — exactly one review", async () => {
-    const { http, mutationCount } = fakeGitHub();
-    const adapter = new GitHubPublishAdapter({
-      http,
-      resolveToken: () => Promise.resolve("test-token"),
-    });
+    const { adapter, mutationCount } = fakeGitHub();
     const p = post([{ path: "a.ts", line: 1, side: "RIGHT", type: "comment", body: "x" }]);
 
     const first = await adapter.publishReview(p);
@@ -172,15 +168,9 @@ describe("GitHubPublishAdapter.publishReview (issue #21) — idempotency", () =>
 describe("GitHubPublishAdapter — secondary rate limit (issue #21)", () => {
   it("throws ForgeRateLimited on a 403 with Retry-After, never a retry storm", async () => {
     let calls = 0;
-    const http: HttpFetch = () => {
+    const adapter = adapterOver(() => {
       calls += 1;
-      return Promise.resolve(
-        response(403, { message: "secondary rate limit" }, { "Retry-After": "42" }),
-      );
-    };
-    const adapter = new GitHubPublishAdapter({
-      http,
-      resolveToken: () => Promise.resolve("test-token"),
+      return json(403, { message: "secondary rate limit" }, { "Retry-After": "42" });
     });
     const p = post([{ path: "a.ts", line: 1, side: "RIGHT", type: "comment", body: "x" }]);
 

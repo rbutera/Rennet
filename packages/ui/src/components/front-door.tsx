@@ -7,6 +7,8 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { type ReactNode, useEffect, useState } from "react";
+import { messageFrom } from "../lib/message-from";
+import { GitHubConnectCard } from "./github-connect";
 import {
   ArrowRightIcon,
   ChevronIcon,
@@ -119,6 +121,7 @@ export function FrontDoor({
         <ProjectsList
           projects={projects}
           detected={detected}
+          bridge={bridge}
           onAdd={() => setFlow({ step: "type-path", kind: "workspace", busy: false })}
           onOpen={onOpenProject}
         />
@@ -132,11 +135,13 @@ export function FrontDoor({
 function ProjectsList({
   projects,
   detected,
+  bridge,
   onAdd,
   onOpen,
 }: {
   projects: Project[] | null;
   detected: DetectedHarness[] | null;
+  bridge: RennetBridge;
   onAdd(): void;
   onOpen(project: Project): void;
 }) {
@@ -196,6 +201,7 @@ function ProjectsList({
       )}
 
       <HarnessLine detected={detected} />
+      <GitHubConnectCard bridge={bridge} />
     </div>
   );
 }
@@ -591,10 +597,6 @@ function Toggle({ on, label, onToggle }: { on: boolean; label: string; onToggle(
 }
 
 /* ── helpers ───────────────────────────────────────────────────────────────── */
-
-function messageFrom(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
-}
 
 function harnessLabel(id: string): string {
   return id === "claude" ? "Claude" : id;

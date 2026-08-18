@@ -1,5 +1,6 @@
+import type { Octokit } from "@octokit/core";
 import type { PullRequest, SmartListCi } from "@rennet/protocol";
-import type { HttpFetch } from "./github-auth";
+import { headerGet } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
 /**
@@ -47,15 +48,12 @@ export interface ProjectPrSource {
 }
 
 export interface GitHubProjectPrSourceConfig {
-  http: HttpFetch;
-  /** The bearer token from the auth ladder. Held in memory only, never persisted. */
-  token: string;
-  graphqlUrl?: string;
+  /** A token-bound client from `createGitHubOctokit`. The token never leaves it. */
+  octokit: Octokit;
   /** How many 50-node pages to page through before declaring the set truncated. */
   maxPages?: number;
 }
 
-const GRAPHQL_URL = "https://api.github.com/graphql";
 const PAGE_SIZE = 50;
 const DEFAULT_MAX_PAGES = 5;
 
@@ -176,7 +174,6 @@ function mapNode(node: GraphqlPrNode, repository: string, viewerLogin: string | 
 
 /** The GitHub GraphQL implementation of `ProjectPrSource`. */
 export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig): ProjectPrSource {
-  const url = config.graphqlUrl ?? GRAPHQL_URL;
   const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
   let viewerLogin: string | null | undefined;
 
@@ -184,20 +181,12 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     query: string,
     variables: Record<string, unknown>,
   ): Promise<{ data: T; partial: boolean }> {
-    const res = await config.http(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.token}`,
-        Accept: "application/vnd.github+json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-    });
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`GitHub GraphQL responded ${res.status}`);
-    }
-    const sso = parseGitHubSso(res.headers.get("X-GitHub-SSO"));
-    const parsed = JSON.parse(await res.text()) as { data?: T; errors?: unknown };
+    // `octokit.request` (not `octokit.graphql`) so the `X-GitHub-SSO` header stays
+    // visible; octokit throws on a non-2xx, keeping the hard-failure invariant
+    // (a broken fetch never renders as "complete, zero PRs").
+    const res = await config.octokit.request("POST /graphql", { query, variables });
+    const sso = parseGitHubSso(headerGet(res.headers, "X-GitHub-SSO"));
+    const parsed = res.data as { data?: T; errors?: unknown };
     if (!parsed.data) {
       throw new Error(`GitHub GraphQL returned no data: ${JSON.stringify(parsed.errors ?? {})}`);
     }

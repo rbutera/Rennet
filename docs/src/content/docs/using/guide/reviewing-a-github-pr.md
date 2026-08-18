@@ -9,17 +9,19 @@ the review says.
 
 ## Before you start
 
-Rennet uses the GitHub CLI login already on your machine. If you have not logged
-in yet, do that once in a terminal:
+Rennet connects to GitHub with a one-time device sign-in — no GitHub CLI
+required. On first run (or any time later, from Settings), choose **Connect
+GitHub**: Rennet shows a short one-time code, you enter it at
+[github.com/login/device](https://github.com/login/device), and GitHub hands
+Rennet a token scoped to `repo` and `workflow`. The sign-in is skippable —
+working-tree review needs no GitHub at all — and any surface that does need
+GitHub asks again at its point of need.
 
-```sh
-gh auth login
-```
-
-Rennet asks `gh auth token` lazily when a GitHub operation needs it. It does not
-read `hosts.yml`, and it does not copy the token into project files. The current
-forge adapter targets github.com and uses the account token returned by `gh`;
-GitHub Enterprise hosts are not wired yet.
+The token is stored in a private file (owner-only permissions) under Rennet's
+own data directory, never in project files, and it never reaches the renderer.
+The side door is pasting a personal access token in Settings; it feeds the same
+store and is validated before it is kept. The current forge adapter targets
+github.com; GitHub Enterprise hosts are not wired yet.
 
 You also need a supported coding harness installed. Claude Code is the primary
 adapter, and Rennet discovers it automatically rather than asking you for an API
@@ -152,11 +154,11 @@ waits until the connection is back.
 
 ## GitHub edge cases
 
-An organization can require SAML SSO for the token returned by `gh`. GitHub may
+An organization can require SAML SSO for Rennet's token. GitHub may
 then return `X-GitHub-SSO: partial-results`: a valid-looking but incomplete pull
 request list. Rennet keeps that state distinct from a complete or empty list;
 GitHub includes an authorization URL with the state, though the current project
-screen only shows the generic incomplete-list banner. Authorize the `gh` token
+screen only shows the generic incomplete-list banner. Authorize the token
 for the named organization through GitHub, then refresh the project.
 
 GitHub can also apply a secondary rate limit while the review is posting. Rennet

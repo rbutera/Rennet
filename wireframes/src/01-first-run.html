@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v4.0 · 01 First run</title><style>
+<title>Rennet v4.2 · 01 First run</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -146,6 +146,12 @@ svg{ display:block; width:16px; height:16px; }
   border-radius:9px; padding:10px 13px; }
 .ambient .hh{ font-family:var(--mono); font-size:12.5px; color:var(--blue-ink); }
 .ambient .hh b{ color:var(--text); font-weight:600; }
+.ghcard{ max-width:560px; margin:14px auto 0; display:flex; align-items:center; gap:12px;
+  border:1px solid var(--line2); border-radius:11px; padding:13px 15px; background:#fff; }
+.ghcard .gtxt h4{ margin:0 0 2px; font-size:13.5px; font-weight:650; }
+.ghcard .gtxt p{ margin:0; font-size:12.5px; color:var(--muted); }
+.ghcard .acts{ margin-left:auto; display:flex; align-items:center; gap:12px; }
+.ghcard .skip{ font-size:12.5px; color:var(--faint); white-space:nowrap; }
 .coach{ max-width:560px; margin:14px auto 0; text-align:center; font-size:12.5px; color:var(--faint); }
 </style></head>
 <body><div class="page">
@@ -156,7 +162,7 @@ svg{ display:block; width:16px; height:16px; }
     <div class="fref">no wizard, no ceremony
 add-a-project IS the onboarding</div>
   </div>
-  <p class="fsub">First run is a <b>state</b> of the projects list, not a separate flow. It is one large add-a-project affordance and an ambient line saying which harnesses were found. Nothing here is once-only, so nothing can rot in a surface you never revisit.</p>
+  <p class="fsub">First run is a <b>state</b> of the projects list, not a separate flow. It is one large add-a-project affordance, an ambient line saying which harnesses were found, and a <b>skippable</b> Connect-GitHub card (one-time device sign-in — v4.2 drops the gh CLI). Nothing here is once-only, so nothing can rot in a surface you never revisit.</p>
   <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px;color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>Rennet</span><span class="tmeta"><span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 9.5h.01M10.5 9.5h.01M14 9.5h.01M7.5 13.5h9" /></svg></span></span></div><div class="content"><div class="firstrun rel">
     <div class="fr-label">Projects · none yet</div>
     <span class="anno" style="left:6px;top:200px"><span class="dot">1</span></span>
@@ -168,11 +174,17 @@ add-a-project IS the onboarding</div>
     <div class="ambient rel">
       <span class="anno" style="left:-30px;top:8px"><span class="dot">2</span></span>
       <span style="color:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>
-      <span class="hh"><b>Claude · codex · gh</b> detected</span>
+      <span class="hh"><b>Claude · codex</b> detected</span>
     </div>
-    <div class="coach rel"><span class="anno" style="left:-30px;top:-2px"><span class="dot">3</span></span>A few one-time coach marks teach the rest, in place.</div>
+    <div class="ghcard rel">
+      <span class="anno" style="left:-30px;top:10px"><span class="dot">3</span></span>
+      <span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21.5v-3.4a4.2 4.2 0 0 0-.9-3c2.7 0 5.4-1.8 5.4-4.9.07-1.1-.24-2.2-.9-3.1.25-1 .25-2.1 0-3.1 0 0-.9 0-2.7 1.3a12 12 0 0 0-7.2 0C6.9 4 6 4 6 4c-.27 1-.27 2.1 0 3.1a4.9 4.9 0 0 0-.9 3.1c0 3.1 2.7 4.9 5.4 4.9a4.2 4.2 0 0 0-.9 3v3.4"/><path d="M9.6 18.6c-3.6 1.6-4-1.6-5.6-1.6"/></svg></span>
+      <div class="gtxt"><h4>Connect GitHub</h4><p>One-time device sign-in. Only needed when a review touches GitHub.</p></div>
+      <div class="acts"><span class="skip">Skip for now</span><button class="btn">Connect</button></div>
+    </div>
+    <div class="coach rel"><span class="anno" style="left:-30px;top:-2px"><span class="dot">4</span></span>A few one-time coach marks teach the rest, in place.</div>
   </div></div></div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
-    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Add-a-project is the onboarding.</b> No connect / find-tools / point-at-code wizard. The one persistent action does the whole job, and it exists forever, not once.</div></div><div class="note"><span class="dot">2</span><div><b>Detection is ambient.</b> Harness discovery is one backlight line, not a screen. Zero-config means it is felt, not ceremonial.</div></div><div class="note"><span class="dot">3</span><div><b>First run is a state.</b> The empty projects list IS first run. The only explicit teaching is a handful of coach marks that fire at their anchor and dismiss forever.</div></div></div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Add-a-project is the onboarding.</b> No connect / find-tools / point-at-code wizard. The one persistent action does the whole job, and it exists forever, not once.</div></div><div class="note"><span class="dot">2</span><div><b>Detection is ambient.</b> Harness discovery is one backlight line, not a screen. Zero-config means it is felt, not ceremonial. gh is gone from the line: GitHub is an account, not a CLI to detect.</div></div><div class="note"><span class="dot">3</span><div><b>GitHub is a card, not a wall.</b> One-time OAuth device sign-in (code shown here, entered at github.com/login/device). Fully skippable — working-tree review needs no GitHub at all — and if skipped, Rennet asks again at the point of need. Its permanent home is Settings, alongside the paste-a-token side door.</div></div><div class="note"><span class="dot">4</span><div><b>First run is a state.</b> The empty projects list IS first run. The only explicit teaching is a handful of coach marks that fire at their anchor and dismiss forever.</div></div></div>
   </div>
 </div></body></html>
