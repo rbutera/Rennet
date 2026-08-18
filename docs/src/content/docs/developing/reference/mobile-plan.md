@@ -93,7 +93,7 @@ app never gets a side channel:
 | # | Scope | Size | Ships when |
 | --- | --- | --- | --- |
 | M0 — **delivered** | `client-runtime` extraction (`ConnectionSupervisor` in `@rennet/client`); desktop + browser shells adopt behavior-neutrally; **#389 closed** — client half (resubscribe registry) + server half (ask-delta broadcast by reviewId) | ~1 week | Existing e2e green on both shells; a mid-turn reconnect keeps the live ask-stream flowing to the fresh socket — see the reconnect note in [reactive-streams](./reactive-streams.md). |
-| M1 — **first shippable cut** | Expo app skeleton; pairing + connections; review list; review detail/digest + finding detail + full canvas; push pipeline (taxonomy, deep links, presence-aware delivery) | ~2 weeks | See acceptance below |
+| M1 — **first shippable cut — delivered** | Expo app skeleton; pairing + connections; review list; review detail/digest + finding detail + full canvas; push pipeline (taxonomy, deep links, presence-aware delivery) | ~2 weeks | Delivered in the `mobile-app-m1` change: `apps/mobile` (Expo + expo-router) + the daemon attention system + additive protocol growth. Automated coverage is unit + typecheck + lint; device acceptance is the smoke checklist below. |
 | M2 | Live turn + ask (stream, composer, stop, notification actions); publish flow (preview → one-tap post); kickoff (PR link, share sheet, own-branch capture) | ~1.5 weeks | See acceptance below |
 | M3 | Distribution (TestFlight/internal track); `using/` mobile guide; architecture-overview client row; marketing story | ~3–4 days | Docs land same-change; store publishing stays a later decision |
 
@@ -112,6 +112,32 @@ estimate plus the M0 extraction it always assumed.
 - "Review finished" push arrives with real counts while the app is
   backgrounded and deep-links to that review's digest; opening clears the
   attention flag; a client focused on that review gets no push.
+
+#### Device smoke checklist — M1 (by hand)
+
+Automated coverage stops at the daemon/protocol/client unit tests, the projection
+contract tests, and the app's typecheck + lint (the RN screens are not driven on a
+simulator in CI). This list is the by-hand acceptance a developer runs on a device
+or simulator against a real daemon over Tailscale before calling M1 shippable:
+
+1. **Pair over Tailscale.** Join the tailnet; scan the desk-minted QR (and, once,
+   paste the link) → the daemon appears reachable in Connections; the token lands in
+   the keychain; revoke from the phone removes it.
+2. **Replica-instant list.** Kill the daemon, reopen the app → the review list paints
+   from the replica immediately with the offline/stale state visible; reconnect →
+   it reconciles.
+3. **Whole review readable.** Open a large finished review → scroll the full sequence
+   canvas to the last hunk with no dropped frame or dropped session; set a disposition
+   → see it reflected on the desktop.
+4. **Backgrounded push + presence suppression.** Background the app → a "review
+   finished" push arrives and deep-links to that review's digest; opening clears the
+   attention flag everywhere; with the app foregrounded and focused on that review, no
+   push arrives.
+
+Note: the app entry (`apps/mobile/src/polyfills.ts`) shims `crypto.randomUUID` — the
+shared client bridge uses it for request-correlation ids and Hermes does not provide
+it. The shim is dependency-free (correlation ids are not secrets); a device with a
+real crypto keeps its own.
 
 ### Acceptance — M2
 

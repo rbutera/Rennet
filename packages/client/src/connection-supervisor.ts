@@ -17,6 +17,7 @@
 // in wherever a bridge went before; it ADDS `state`/`subscribe`/`setPresence`/`replica`.
 
 import type {
+  AttentionEventFrame,
   CommandInput,
   CommandName,
   CommandOutput,
@@ -24,6 +25,7 @@ import type {
   RennetBridge,
   ReviewAskStreamEvent,
 } from "@rennet/protocol";
+import { ATTENTION_FEATURE } from "@rennet/protocol";
 import { ConnectionError } from "./connection-error";
 import type { ReplicaStore, StoredReplica, TokenStore } from "./stores";
 import type { BridgeLifecycleEvent, CapturedServerInfo } from "./ws-bridge";
@@ -35,6 +37,15 @@ export interface SupervisedBridge {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /** Subscribe to daemon attention events (#383 batch). Daemon-wide; returns an unsubscribe. */
+  onAttention(listener: (event: AttentionEventFrame) => void): () => void;
+  /** Send a presence frame (issue #383 M1). Best-effort; the supervisor gates the call on capability. */
+  sendPresence(presence: {
+    focused: boolean;
+    visible: boolean;
+    deviceClass: string;
+    focusedReviewId?: string;
+  }): void;
   readonly serverInfo: CapturedServerInfo | null;
   close(): void;
 }
@@ -67,6 +78,8 @@ export interface Presence {
   readonly focused: boolean;
   readonly visible: boolean;
   readonly deviceClass: string;
+  /** The review the shell is looking at right now — drives focused-client push suppression (#383 M1). */
+  readonly focusedReviewId?: string;
 }
 
 export interface ConnectionSupervisorOptions {
@@ -101,6 +114,9 @@ export interface ConnectionSupervisorOptions {
 
 type AskListener = (event: ReviewAskStreamEvent) => void;
 type ProgressListener = (event: ProjectProcessEvent) => void;
+type AttentionListener = (event: AttentionEventFrame) => void;
+/** Attention is daemon-wide, not keyed by review; one registry bucket under this constant key. */
+const ATTENTION_KEY = "*";
 
 interface QueuedInvoke {
   readonly send: (bridge: SupervisedBridge) => void;
@@ -136,6 +152,8 @@ export class ConnectionSupervisor implements RennetBridge {
   // from review A never loses (or wrongly detaches) its live binding on review B.
   #askBridgeUnsub = new Map<string, Map<AskListener, () => void>>();
   #progressBridgeUnsub = new Map<string, Map<ProgressListener, () => void>>();
+  readonly #attentionRegistry = new Map<string, Set<AttentionListener>>();
+  #attentionBridgeUnsub = new Map<string, Map<AttentionListener, () => void>>();
   #queued: QueuedInvoke[] = [];
 
   constructor(options: ConnectionSupervisorOptions) {
@@ -202,6 +220,10 @@ export class ConnectionSupervisor implements RennetBridge {
         this.#backoff = this.#initialBackoff;
         this.#setState("online");
         this.#flushQueue();
+        // Re-send current presence on every reconnect (client-runtime delta spec), so a fresh
+        // socket immediately knows what the shell is focused on — but only to a daemon that
+        // advertised `attention`; otherwise the seam stays wire-silent (M0-era daemons).
+        this.#transmitPresence();
         if (this.#reconcileOnReconnect) this.#reconcile();
         return;
       }
@@ -251,6 +273,21 @@ export class ConnectionSupervisor implements RennetBridge {
     );
   }
 
+  /**
+   * Subscribe to daemon attention events (#383 batch). Registry-backed like `onAskStream`, so a
+   * reconnect re-attaches the listener to the fresh bridge and the connect-time attention replay
+   * lands on it — a client's needs-you set stays live across reconnects, not just the first socket.
+   */
+  onAttention(listener: AttentionListener): () => void {
+    return this.#register(
+      this.#attentionRegistry,
+      this.#attentionBridgeUnsub,
+      ATTENTION_KEY,
+      listener,
+      (bridge) => bridge.onAttention(listener),
+    );
+  }
+
   #register<L>(
     registry: Map<string, Set<L>>,
     bridgeUnsub: Map<string, Map<L, () => void>>,
@@ -282,6 +319,12 @@ export class ConnectionSupervisor implements RennetBridge {
   #wireRegistry(bridge: SupervisedBridge): void {
     this.#askBridgeUnsub = new Map();
     this.#progressBridgeUnsub = new Map();
+    this.#attentionBridgeUnsub = new Map();
+    for (const [key, listeners] of this.#attentionRegistry) {
+      for (const listener of listeners) {
+        mapSet(this.#attentionBridgeUnsub, key, listener, bridge.onAttention(listener));
+      }
+    }
     for (const [reviewId, listeners] of this.#askRegistry) {
       for (const listener of listeners) {
         mapSet(this.#askBridgeUnsub, reviewId, listener, bridge.onAskStream(reviewId, listener));
@@ -375,9 +418,27 @@ export class ConnectionSupervisor implements RennetBridge {
 
   // ── Presence seam (wire-silent) ───────────────────────────────────────────
 
-  /** Record focus/visibility/device-class. Wire-silent until a daemon consumes presence. */
+  /**
+   * Record focus/visibility/device-class and transmit it to a daemon that advertised
+   * `attention` (client-runtime delta spec). Against a daemon that did NOT advertise it, the
+   * seam stays a no-op: presence is recorded locally and nothing goes on the wire — M0-era
+   * daemons are unaffected. Presence also re-sends on every reconnect (see `#transmitPresence`).
+   */
   setPresence(presence: Partial<Presence>): void {
     this.#presence = { ...this.#presence, ...presence };
+    this.#transmitPresence();
+  }
+
+  /** Whether the connected daemon advertised the attention/presence capability (public read). */
+  attentionAdvertised(): boolean {
+    return this.#bridge?.serverInfo?.features?.[ATTENTION_FEATURE] === true;
+  }
+
+  /** Send current presence iff online and the daemon advertised `attention`. */
+  #transmitPresence(): void {
+    if (this.#status.state !== "online" || !this.#bridge) return;
+    if (!this.attentionAdvertised()) return;
+    this.#bridge.sendPresence(this.#presence);
   }
 
   /** The last-reported presence. */

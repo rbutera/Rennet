@@ -57,6 +57,29 @@ describe("command protocol", () => {
       }),
     ).toThrow();
   });
+
+  it("device.registerPush requires a token XOR remove (#383 batch)", () => {
+    // Set: a token, no remove.
+    expect(
+      parseCommandInput("device.registerPush", { pushToken: "t", platform: "ios" }),
+    ).toMatchObject({ pushToken: "t" });
+    // Clear: remove:true, no token.
+    expect(
+      parseCommandInput("device.registerPush", { platform: "ios", remove: true }),
+    ).toMatchObject({ remove: true });
+    // Neither (no-op) and both (contradictory) are rejected.
+    expect(() => parseCommandInput("device.registerPush", { platform: "ios" })).toThrow();
+    expect(() =>
+      parseCommandInput("device.registerPush", { pushToken: "t", platform: "ios", remove: true }),
+    ).toThrow();
+  });
+
+  it("attention.acknowledge requires a non-empty selector (#383 batch)", () => {
+    expect(parseCommandInput("attention.acknowledge", { reviewId: "r1" })).toMatchObject({
+      reviewId: "r1",
+    });
+    expect(() => parseCommandInput("attention.acknowledge", {})).toThrow();
+  });
 });
 
 describe("application menu wire protocol (#44)", () => {

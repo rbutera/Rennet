@@ -1,5 +1,9 @@
 import type { AddressInfo } from "node:net";
-import type { ProjectProcessEvent, ReviewAskStreamEvent } from "@rennet/protocol";
+import type {
+  AttentionEventFrame,
+  ProjectProcessEvent,
+  ReviewAskStreamEvent,
+} from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type WebSocket as NodeWebSocket, WebSocketServer } from "ws";
 import {
@@ -9,6 +13,7 @@ import {
   type SupervisedBridge,
 } from "./connection-supervisor";
 import type { StoredReplica } from "./stores";
+import type { CapturedServerInfo } from "./ws-bridge";
 import { WsRennetBridge } from "./ws-bridge";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,17 +22,28 @@ import { WsRennetBridge } from "./ws-bridge";
 // so a test drives the LATEST one — that is the whole point of the swap tests.
 // ─────────────────────────────────────────────────────────────────────────────
 class FakeBridge implements SupervisedBridge {
-  serverInfo = null;
+  serverInfo: CapturedServerInfo | null = null;
   closed = false;
   readonly invokes: Array<{ name: string; input: unknown }> = [];
+  readonly sentPresence: Array<Record<string, unknown>> = [];
   readonly askListeners = new Map<string, Set<(e: ReviewAskStreamEvent) => void>>();
   readonly progressListeners = new Map<string, Set<(e: ProjectProcessEvent) => void>>();
+  readonly attentionListeners = new Set<(e: AttentionEventFrame) => void>();
   invokeImpl: (name: string, input: unknown) => Promise<unknown> = () => Promise.resolve({});
 
   constructor(
     readonly hooks: BridgeHooks,
     readonly token: string | undefined,
   ) {}
+
+  sendPresence(presence: {
+    focused: boolean;
+    visible: boolean;
+    deviceClass: string;
+    focusedReviewId?: string;
+  }): void {
+    this.sentPresence.push({ ...presence });
+  }
 
   invoke(name: string, input: unknown): Promise<never> {
     this.invokes.push({ name, input });
@@ -38,6 +54,10 @@ class FakeBridge implements SupervisedBridge {
   }
   onProgress(commandId: string, listener: (e: ProjectProcessEvent) => void): () => void {
     return add(this.progressListeners, commandId, listener);
+  }
+  onAttention(listener: (e: AttentionEventFrame) => void): () => void {
+    this.attentionListeners.add(listener);
+    return () => void this.attentionListeners.delete(listener);
   }
   close(): void {
     this.closed = true;
@@ -54,6 +74,9 @@ class FakeBridge implements SupervisedBridge {
   }
   emitAsk(reviewId: string, event: ReviewAskStreamEvent): void {
     for (const l of this.askListeners.get(reviewId) ?? []) l(event);
+  }
+  emitAttention(event: AttentionEventFrame): void {
+    for (const l of this.attentionListeners) l(event);
   }
 }
 
@@ -162,6 +185,43 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     expect(nth(bridges, 1).askListeners.get("rev-1")?.size).toBe(1);
     nth(bridges, 1).emitAsk("rev-1", ASK);
     expect(received).toHaveLength(2); // delivered again, at most once per emit
+  });
+
+  it("re-delivers attention events to the same listener after a reconnect (#383 batch)", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).goOnline();
+
+    const seen: AttentionEventFrame[] = [];
+    supervisor.onAttention((e) => seen.push(e)); // ONE subscribe, ever
+    const raised: AttentionEventFrame = {
+      type: "attentionEvent",
+      event: "raised",
+      item: {
+        id: "ask-pending:rev-1",
+        family: "ask-pending",
+        reviewId: "rev-1",
+        deepLink: "rennet://review/rev-1/ask",
+        title: "Ask pending",
+        body: "",
+      },
+    };
+    nth(bridges, 0).emitAttention(raised);
+    expect(seen).toHaveLength(1);
+
+    // Reconnect onto a fresh bridge — the registry re-wires the listener (survives reconnect).
+    nth(bridges, 0).goOffline();
+    await waitFor(() => bridges.length === 2);
+    nth(bridges, 1).goOnline();
+    expect(nth(bridges, 1).attentionListeners.size).toBe(1);
+    nth(bridges, 1).emitAttention({
+      type: "attentionEvent",
+      event: "cleared",
+      clearedIds: ["ask-pending:rev-1"],
+    });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ event: "cleared" });
   });
 
   it("re-issues review.reattach for subscribed reviews on reconnect (state reconcile)", async () => {
@@ -389,6 +449,57 @@ describe("ConnectionSupervisor — reconnect-resubscribe over a real socket (#38
     stub.broadcast({ type: "askStreamEvent", reviewId: "rev-1", event: ASK });
     await waitFor(() => received.length === 2, 2000);
     expect(received).toHaveLength(2);
+  });
+});
+
+const ATTENTION_INFO: CapturedServerInfo = { version: "1.0.0", features: { attention: true } };
+const NO_ATTENTION_INFO: CapturedServerInfo = {
+  version: "1.0.0",
+  features: { serverRequests: true },
+};
+
+describe("ConnectionSupervisor — presence transmission (client-runtime delta spec, #383 M1)", () => {
+  it("transmits presence when the daemon advertised attention, and re-sends on reconnect", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).serverInfo = ATTENTION_INFO;
+    nth(bridges, 0).goOnline();
+    // Going online re-sends current presence once (the default), before any shell update.
+    expect(nth(bridges, 0).sentPresence).toHaveLength(1);
+
+    supervisor.setPresence({
+      focused: true,
+      visible: true,
+      deviceClass: "phone",
+      focusedReviewId: "rev-1",
+    });
+    expect(nth(bridges, 0).sentPresence).toHaveLength(2);
+    expect(nth(bridges, 0).sentPresence[1]).toMatchObject({
+      focusedReviewId: "rev-1",
+      deviceClass: "phone",
+    });
+
+    // A reconnect makes a fresh bridge; presence must re-send to it on `online` with no shell action.
+    nth(bridges, 0).goOffline();
+    await waitFor(() => bridges.length === 2);
+    nth(bridges, 1).serverInfo = ATTENTION_INFO;
+    nth(bridges, 1).goOnline();
+    expect(nth(bridges, 1).sentPresence).toHaveLength(1);
+    expect(nth(bridges, 1).sentPresence[0]).toMatchObject({ focusedReviewId: "rev-1" });
+  });
+
+  it("stays wire-silent against a daemon that did not advertise attention (M0-era daemon)", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).serverInfo = NO_ATTENTION_INFO;
+    nth(bridges, 0).goOnline();
+
+    supervisor.setPresence({ focused: false, visible: false, deviceClass: "phone" });
+    // Recorded locally, nothing on the wire.
+    expect(supervisor.presence).toMatchObject({ focused: false, visible: false });
+    expect(nth(bridges, 0).sentPresence).toHaveLength(0);
   });
 });
 

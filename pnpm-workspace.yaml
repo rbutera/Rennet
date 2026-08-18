@@ -77,6 +77,10 @@ peerDependencyRules:
     - "zod"
     - "@anthropic-ai/sdk"
     - "@modelcontextprotocol/sdk"
+  # (The workspace-wide `allowedVersions: typescript` rule the Expo M1 work first needed is
+  #  gone: its only demander was `@expo/require-utils`, pulled in transitively by `@nx/expo`,
+  #  which was unused scaffold and has been removed (#383 batch, finding 17). No remaining
+  #  package objects to TS 6, so the override is unnecessary — install is clean without it.)
 
 overrides:
   "@emnapi/core": "2.0.0-alpha.3"

@@ -97,6 +97,11 @@ describe("remote-surface e2e (#380)", () => {
           const { code, deviceName } = input as { code: string; deviceName: string };
           return pairing.exchange(code, deviceName);
         }
+        case "device.registerPush": {
+          // A token-bearing connection registers; the stub just needs the auth binding to hold.
+          if (!ctx?.deviceId) throw new Error("device.registerPush requires a paired connection");
+          return { registered: true };
+        }
         case "review.capture": {
           // Also push a progress event carrying the repo root (exercises progress projection).
           ctx?.emitProgress?.({
@@ -493,5 +498,60 @@ describe("remote-surface e2e (#380)", () => {
     });
     expect(frame.type).not.toBe("serverInfo");
     await closed; // terminal: the connection is dropped, not left pairing-only
+  });
+
+  it("revoking a device severs its live socket and blocks its token from re-authorizing (#383 batch)", async () => {
+    const ip = nonLoopbackIpv4();
+    if (!ip) {
+      console.warn("remote-surface revoke test skipped: no non-loopback IPv4 interface");
+      return;
+    }
+    const pairing = new PairingStore(
+      join(mkdtempSync(join(tmpdir(), "rennet-remote-revoke-")), "devices.json"),
+    );
+    const listener = await startRemoteListener(pairing, "0.0.0.0");
+    const url = `ws://${ip}:${listener.port}`;
+
+    // Pair over a pairing-only connection, then reconnect projected.
+    const unpaired = await connect(url);
+    const { code } = pairing.mint();
+    const exchanged = (await unpaired.request("pairing.exchange", {
+      code,
+      deviceName: "phone",
+    })) as { deviceToken: string; deviceId: string };
+    unpaired.socket.close();
+
+    const paired = await connect(url, exchanged.deviceToken);
+    // The projected device can register a push token.
+    await expect(
+      paired.request("device.registerPush", { pushToken: "tok", platform: "ios" }),
+    ).resolves.toMatchObject({ registered: true });
+
+    // Revoke: drop the pairing AND sever the live socket (mirrors create-server's revoke wiring).
+    const closedSocket = once(paired.socket, "close");
+    pairing.revokeDevice(exchanged.deviceId);
+    expect(listener.disconnectDevice(exchanged.deviceId)).toBe(1);
+    await closedSocket;
+    expect(paired.socket.readyState).toBe(WebSocket.CLOSED);
+
+    // The revoked token can no longer authorize a fresh connection: it is rejected as a terminal
+    // auth error, so it can never reach device.registerPush again.
+    const reauth = new WebSocket(url);
+    sockets.push(reauth);
+    await once(reauth, "open");
+    const firstFrame = once(reauth, "message");
+    reauth.send(
+      JSON.stringify({
+        type: "hello",
+        clientId: "revoked",
+        clientType: "rennet-client",
+        protocolVersion: PROTOCOL_VERSION,
+        deviceToken: exchanged.deviceToken,
+      }),
+    );
+    expect(JSON.parse(String((await firstFrame)[0]))).toMatchObject({
+      type: "rpcError",
+      code: "unauthorized",
+    });
   });
 });

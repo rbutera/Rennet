@@ -109,6 +109,9 @@ export function objectSchemaFor<T>() {
   return <S extends { [K in keyof T]-?: z.ZodType<T[K]> }>(shape: S) => z.object(shape);
 }
 
+import type { AttentionEventFrame } from "./session";
+import { attentionFamilySchema } from "./session";
+
 export * from "./bodies";
 export * from "./rsp";
 export * from "./session";
@@ -2782,6 +2785,59 @@ export const commandDefinitions = {
     input: z.object({ deviceId: z.string().min(1) }),
     output: z.object({ devices: z.array(pairedDeviceSchema) }),
   },
+  // ── Push registration (issue #383 M1) — token-bearing connections only ──────
+  // A paired device registers the platform push token the daemon posts attention
+  // pushes to (the ideation notification taxonomy). Additive and COMPAT-tagged: it is
+  // reachable only on a projected (token-bearing) connection while the daemon advertises
+  // the `attention` feature; an M0-era daemon never advertises it, so a phone never calls
+  // it. `remove: true` clears the token (the phone lost push permission); otherwise the
+  // token is set/replaced for THIS connection's authenticated device. Revoking a device's
+  // pairing deletes its push token too, so a revoked device is silently un-pushable.
+  "device.registerPush": {
+    input: z
+      .object({
+        /** The Expo/native push token, or omitted with `remove: true` to clear it. */
+        pushToken: z.string().min(1).optional(),
+        /** The device platform, for the push service's routing. */
+        platform: z.enum(["ios", "android"]),
+        /** Clear the registered token instead of setting one (permission revoked on the phone). */
+        remove: z.boolean().optional(),
+        /**
+         * COMPAT (attention, additive, #383 batch): attention families this device has muted in
+         * its notification settings — the daemon suppresses PUSHES for them to this device. A
+         * high-priority family (ask/review-finished/turn-failed) always reaches every client per
+         * spec, so muting one affects only the normal families. Absent ⇒ nothing muted.
+         */
+        disabledFamilies: z.array(attentionFamilySchema).optional(),
+      })
+      // Token XOR remove: a set carries a token and no `remove`; a clear sets `remove` and no token.
+      // Neither (a no-op) and both (contradictory) are rejected at the boundary.
+      .refine((i) => (i.remove === true) !== (i.pushToken !== undefined), {
+        message:
+          "device.registerPush: provide a pushToken to set, or remove:true to clear — not both",
+      }),
+    output: z.object({ registered: z.boolean() }),
+  },
+  // ── Attention acknowledgment (issue #383 M1) — clear on view ────────────────
+  // A client calls this when it lands on an attention surface (the pushed review's
+  // digest, the ask, the error). The daemon clears the matching attention item(s) and
+  // broadcasts the clear to every authorized socket, so a handled item stops demanding
+  // attention everywhere at once (attention-notifications: "handled once, quiet
+  // everywhere"). Additive and COMPAT-gated on the `attention` feature. Clearing by
+  // `reviewId` clears every item on that review; `attentionId` clears exactly one.
+  "attention.acknowledge": {
+    input: z
+      .object({
+        reviewId: z.string().min(1).optional(),
+        attentionId: z.string().min(1).optional(),
+      })
+      // A selector is required — an empty acknowledge would clear nothing (or, worse, invite a
+      // "clear all" reading). At least one of reviewId / attentionId must be present.
+      .refine((i) => i.reviewId !== undefined || i.attentionId !== undefined, {
+        message: "attention.acknowledge: provide a reviewId or an attentionId to clear",
+      }),
+    output: z.object({ cleared: z.number().int().nonnegative() }),
+  },
 } as const;
 
 export type CommandName = keyof typeof commandDefinitions;
@@ -2831,6 +2887,13 @@ export interface RennetBridge {
    * channel omits it, and a subscriber degrades to the command's final resolved value.
    */
   onAskStream?(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /**
+   * Subscribe to daemon attention events (#383): `raised` / `cleared` frames that keep a
+   * client's needs-you set live. Daemon-wide (not keyed by review). Returns an unsubscribe.
+   * Optional: a bridge to a daemon that does not advertise `attention` omits it, and a
+   * subscriber falls back to deriving needs-you from the projected review + flagged queue.
+   */
+  onAttention?(listener: (event: AttentionEventFrame) => void): () => void;
   /**
    * Push the projected application-menu template to MAIN (#44). The renderer derives
    * these serializable sections from the command registry + live context + overrides;
@@ -2928,10 +2991,25 @@ export const projectedPatchsetSchema = patchsetSchema.extend({
   repository: projectedRepositoryProvenanceSchema,
 });
 
+/**
+ * COMPAT (attention, additive): a per-review attention summary sourced from the
+ * daemon's attention system (not the review pipeline). `needsYou` is true when an
+ * attention family is active for the review (e.g. a pending ask); `running` is true
+ * while a turn/handoff is live. Optional: absent means the daemon predates the
+ * attention capability, and a client falls back to deriving these from the flagged
+ * queue plus live session events. Never accepted inbound.
+ */
+export const projectedReviewAttentionSchema = z.object({
+  needsYou: z.boolean(),
+  running: z.boolean(),
+});
+export type ProjectedReviewAttention = z.infer<typeof projectedReviewAttentionSchema>;
+
 /** Projected `review`: `repositoryRoot` becomes a reference and patchsets are projected. */
 export const projectedReviewSchema = reviewSchema.extend({
   repositoryRoot: repoReferenceSchema,
   patchsets: z.array(projectedPatchsetSchema).min(1),
+  attention: projectedReviewAttentionSchema.optional(),
 });
 
 /** Projected `project`: `path`/`openPath`/`includedRepoPaths` become references. */

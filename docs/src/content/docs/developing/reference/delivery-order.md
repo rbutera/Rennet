@@ -164,6 +164,26 @@ mid-turn ask stream. Known follow-up:
 [#386](https://github.com/rbutera/rennet/issues/386) (pre-existing e2e
 failures on main, unrelated to this change).
 
+**M1 — first shippable cut — is delivered** (the `mobile-app-m1` change): the
+daemon's attention system landed in `packages/server` — the closed six-event
+taxonomy, a presence-aware delivery planner (a client focused on a review gets the
+live in-app event, every other registered device gets a push), a SQLite push-token
+store keyed by device id (revoke deletes), outbound non-fatal Expo push egress with
+dead-token cleanup, and attention clear-on-view propagated to every client. The
+protocol grew additively and COMPAT-tagged (a `presence` frame, an `attentionEvent`
+broadcast frame, `device.registerPush` and `attention.acknowledge` commands, the
+`attention` feature flag); `packages/client` transmits presence only when the daemon
+advertises `attention`, re-sending on reconnect. The new **`apps/mobile`** Expo +
+expo-router app consumes `@rennet/client`/`protocol`/`types` only: pairing (scan /
+paste + `pairing.exchange`, keychain token), connections with truthful reachability
+and revoke, the status-first review list, the delta digest, finding disposition
+round-trip, the virtualized full sequence canvas, notification settings, and
+`rennet://` deep-link routing. Grown via `@nx/expo@23.1.0` with explicit
+lint/typecheck/test targets (no `build` target — Expo export is native distribution,
+M3). Source-wiring note: `review-finished` attention is raised from its real pipeline
+source; the other five families have the planner + registry + `raiseAttention` seam
+ready and raise as their flows are wired (several — asks, publish, handoff — are M2).
+
 0. [#376 — protocol handshake, envelope, and versioning
    discipline](https://github.com/rbutera/rennet/issues/376)
 1. [#377 — extract `packages/server`](https://github.com/rbutera/rennet/issues/377)

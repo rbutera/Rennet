@@ -8,6 +8,7 @@
 // exact behaviour the desktop app exercises daily.
 
 import type {
+  AttentionEventFrame,
   CommandInput,
   CommandName,
   CommandOutput,
@@ -115,6 +116,8 @@ export class WsRennetBridge implements RennetBridge {
   readonly #pending = new Map<string, Pending>();
   readonly #progressListeners = new Map<string, Set<(event: ProjectProcessEvent) => void>>();
   readonly #askListeners = new Map<string, Set<(event: ReviewAskStreamEvent) => void>>();
+  /** Daemon-wide attention listeners (#383 batch) — not keyed by review; a raise/clear fans to all. */
+  readonly #attentionListeners = new Set<(event: AttentionEventFrame) => void>();
 
   constructor(options: WsRennetBridgeOptions) {
     this.#url = options.url;
@@ -147,6 +150,41 @@ export class WsRennetBridge implements RennetBridge {
 
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void {
     return subscribe(this.#askListeners, reviewId, listener);
+  }
+
+  /**
+   * Subscribe to daemon attention events (#383 batch): `raised` / `cleared` frames the client
+   * uses to keep its needs-you set live. Daemon-wide (not keyed), so every listener sees every
+   * event. Survives the bridge's own reconnects (the listener set is not cleared on reconnect).
+   */
+  onAttention(listener: (event: AttentionEventFrame) => void): () => void {
+    this.#attentionListeners.add(listener);
+    return () => void this.#attentionListeners.delete(listener);
+  }
+
+  /**
+   * Send a presence frame (issue #383 M1). Best-effort: sent only on a ready (post-handshake)
+   * socket; if the socket is not ready it is dropped, because the supervisor re-sends current
+   * presence on every `online`. The supervisor gates the CALL on the daemon advertising
+   * `attention`, so a daemon that never advertised it never receives a presence frame.
+   */
+  sendPresence(presence: {
+    focused: boolean;
+    visible: boolean;
+    deviceClass: string;
+    focusedReviewId?: string;
+  }): void {
+    const socket = this.#readySocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "presence",
+        focused: presence.focused,
+        visible: presence.visible,
+        deviceClass: presence.deviceClass,
+        ...(presence.focusedReviewId ? { focusedReviewId: presence.focusedReviewId } : {}),
+      }),
+    );
   }
 
   /** The server identity captured at handshake (version + feature flags), or null before it lands (#380). */
@@ -383,6 +421,10 @@ export class WsRennetBridge implements RennetBridge {
       case "askStreamEvent": {
         const listeners = this.#askListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
+        return;
+      }
+      case "attentionEvent": {
+        for (const listener of this.#attentionListeners) listener(frame);
         return;
       }
       case "serverRequest": {

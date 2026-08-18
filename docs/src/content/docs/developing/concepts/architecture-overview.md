@@ -77,10 +77,25 @@ contract); a remote tab is `projected` (the R19 public projection, per the
 [remote access guide](/using/guide/remote-access/)). Reaching a remote daemon is a
 Tailscale hop — there is no relay and no hosted backend.
 
+The **native mobile app** (`apps/mobile`, Expo + expo-router, phase 6 M1) is the
+third client. Unlike the two desktop shells it does not mount `@rennet/ui` (DOM-bound,
+not consumable in React Native) — its screens are RN-native, styled to a theme transpose
+of the kit tokens, and it consumes `@rennet/client`/`protocol`/`types` only. It reaches a
+paired daemon over Tailscale as a `projected` connection with a device token in the
+platform keychain, aggregates reviews across paired daemons, reads the whole review at
+phone width, and receives presence-aware attention pushes. It is a full peer within its
+locus (triage and read), not a reduced client; capabilities meaningless at the phone's
+seat (host filesystem, editor) are absent by *place*, never by permission. Push
+delivery is the one path that leaves the tailnet: when enabled, the daemon posts a
+notification's content outbound to Expo's push service (then Apple/Google) — real
+third-party egress carrying the push's substance, disclosed in the mobile guide;
+reading over the tailnet adds none.
+
 ```mermaid
 flowchart LR
   desktop["Desktop shell<br/>renderer + ConnectionHost"]
   tab["Browser tab<br/>served UI + ConnectionHost"]
+  mobile["Mobile app<br/>apps/mobile + @rennet/client"]
   localdaemon["Local daemon<br/>@rennet/server + WS + static UI"]
   remotedaemon["Remote daemon<br/>projected (R19)"]
 
@@ -88,6 +103,7 @@ flowchart LR
   tab -->|loopback WS · private| localdaemon
   desktop -.->|Tailscale WS · projected + token| remotedaemon
   tab -.->|Tailscale WS · projected + token| remotedaemon
+  mobile -.->|Tailscale WS · projected + token| remotedaemon
 ```
 
 Machine-bound actions key on the daemon's machine, never the shell: open-in-editor

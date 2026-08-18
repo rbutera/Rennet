@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Rennet",
+    "slug": "rennet",
+    "scheme": "rennet",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": false },
+    "android": {},
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      ["expo-camera", { "cameraPermission": "Rennet scans the pairing QR your desktop shows." }],
+      "expo-notifications"
+    ],
+    "experiments": { "typedRoutes": false }
+  }
+}

@@ -67,9 +67,7 @@ function bridge(): RennetBridge {
 
 describe("RennetApp — ⌘K command palette", () => {
   it("opens on ⌘K and runs a command that switches the app to the Files view", async () => {
-    const { user, container, getByLabelText, getByText } = mount(
-      <RennetApp bridge={bridge()} />,
-    );
+    const { user, container, getByLabelText, getByText } = mount(<RennetApp bridge={bridge()} />);
 
     // Land on the workspace (the view toggle appears once a review is open).
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());

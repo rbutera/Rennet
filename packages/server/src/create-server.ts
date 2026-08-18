@@ -172,6 +172,7 @@ import { projectUnavailableDeepVerification } from "./flagged-review-verificatio
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
+import { InFlightReviews } from "./in-flight-reviews";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
@@ -190,6 +191,7 @@ import {
 import { createProcessProject } from "./process-project";
 import { buildProjectionContext } from "./projection";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
+import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
@@ -1798,6 +1800,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // device tokens (hashed at rest in `~/.rennet/devices.json`). Shared between the
   // `pairing.*` commands (below) and the WS listener's handshake token check.
   const pairingStore = new PairingStore();
+  // The push-token store (issue #383 M1): one row per paired device, keyed by device id,
+  // in `~/.rennet/push-tokens.sqlite`. Shared between `device.registerPush` (set/delete),
+  // the attention planner (list + dead-token cleanup), and revoke (delete stops pushes).
+  const pushTokenStore = new PushTokenStore();
+  // Which reviews have a model turn in flight (#383 batch) — the real source of projected
+  // `attention.running`, marked by dispatch and read by the projection context below.
+  const inFlightReviews = new InFlightReviews();
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit });
@@ -1915,7 +1924,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const dispatch = createDispatch({
     service,
     allowedRoots,
-    pairing: pairingStore,
+    // Revoking a device deletes its push token too, so a revoked device is silently
+    // un-pushable (attention-notifications: "revoke stops pushes").
+    pairing: {
+      mint: () => pairingStore.mint(),
+      exchange: (code, deviceName) => pairingStore.exchange(code, deviceName),
+      listDevices: () => pairingStore.listDevices(),
+      revokeDevice: (deviceId) => {
+        pushTokenStore.delete(deviceId);
+        const revoked = pairingStore.revokeDevice(deviceId);
+        // Sever any live socket authorized as this device (#383 batch): a projected connection
+        // cannot outlive the pairing it was authorized by — revoke means gone now, not next time.
+        wsListener?.disconnectDevice(deviceId);
+        return revoked;
+      },
+    },
+    // `device.registerPush` set/delete, keyed by the connection's authenticated device id.
+    pushTokens: {
+      set: (deviceId, token, platform, disabledFamilies) =>
+        pushTokenStore.set(deviceId, token, platform, disabledFamilies),
+      delete: (deviceId) => pushTokenStore.delete(deviceId),
+    },
+    // `attention.acknowledge` clears + broadcasts through the live listener (late-bound).
+    acknowledgeAttention: (selector) => wsListener?.acknowledgeAttention(selector) ?? 0,
+    // Raise attention through the live listener (late-bound); returns the raised item's id so a
+    // caller can clear exactly it (e.g. clearing ask-pending when its turn settles).
+    raiseAttention: (event) => wsListener?.raiseAttention(event)?.id,
+    // A review-scoped turn marks its review running for the duration (#383 batch) — the real
+    // source of the projected `attention.running`, read by the listener's projection context.
+    inFlightReviews,
     orchestratorTurn,
     publishPort,
     submitPullRequest,
@@ -2301,6 +2338,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     serverVersion: options.serverVersion ?? "0.0.0-dev",
     // Non-loopback (remote) connections present a device token; verify it against the store.
     verifyDeviceToken: (token) => pairingStore.verifyToken(token),
+    // The attention system (issue #383 M1): advertising `attention`, accepting presence, and
+    // planning pushes off the registered tokens. Present ⇒ M1 delivery; the egress defaults to
+    // the real Expo call. Dead tokens the service reports are pruned from the store.
+    attention: {
+      pushTokens: {
+        list: () => pushTokenStore.list(),
+        delete: (deviceId) => pushTokenStore.delete(deviceId),
+      },
+    },
     // The R19 projection context: every host root the server could name — the granted
     // roots ∪ every stored project path — rebuilt per request so a new project is
     // referenceable at once. Loopback connections never consult it.
@@ -2311,7 +2357,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         roots.add(project.openPath);
         for (const repoPath of project.includedRepoPaths ?? []) roots.add(repoPath);
       }
-      return buildProjectionContext(roots, homedir());
+      // `reviewIsRunning` feeds the projected review's `attention.running` (#383 batch); the
+      // listener adds `reviewNeedsYou` from its own attention registry when attention is on.
+      return {
+        ...buildProjectionContext(roots, homedir()),
+        reviewIsRunning: (reviewId) => inFlightReviews.has(reviewId),
+      };
     },
     // Opt-in bind beyond loopback (default stays 127.0.0.1:0).
     listen: configStore.read().daemon?.listen,
@@ -2333,6 +2384,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     void watcher.close();
     rehydration?.closeAll();
     store?.close();
+    pushTokenStore.close();
     void wsListener?.close();
   };
   return { dispatch, shutdown, wsPort: wsListener.port, wsHost: wsListener.host };

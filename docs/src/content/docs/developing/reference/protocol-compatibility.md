@@ -87,6 +87,7 @@ added.
 | Feature key | Advertised when | Meaning |
 |---|---|---|
 | `serverRequests` | always, on current daemons | The daemon can send `serverRequest` frames and understands `serverResponse` (see the [frame vocabulary](#the-frame-vocabulary)). A client that reads this flag as true may register an `onServerRequest` handler; one that does not never sees a server-initiated request. No product flow raises one yet — the flag reserves the capability so a future client negotiates it once, at handshake. |
+| `attention` | when the daemon wires the attention system (issue #383 M1) | The daemon consumes client `presence` frames, delivers attention events presence-aware, and accepts `device.registerPush` / `attention.acknowledge`. A client that reads this flag as true transmits its `presence` frame (and re-sends it on every reconnect), registers a push token, and receives `attentionEvent` frames; one that does not (an M0-era daemon never advertises it) sends no presence, registers no token, and its presence seam stays a wire-silent no-op. Checked once at handshake, one path — the standard feature-gate. |
 
 ## Inbound decoders are tolerant
 
@@ -130,6 +131,62 @@ the `sessionFrame` discriminated union, keyed on `type`.
 | `serverRequest` | server → client | `serverRequestId`, `kind`, `payload` |
 | `serverResponse` | client → server | `serverRequestId`, `payload` |
 | `serverRequestResolved` | server → client | `serverRequestId` |
+| `presence` | client → server | `focused`, `visible`, `deviceClass`, optional `focusedReviewId` |
+| `attentionEvent` | server → client | `event` (`raised`/`cleared`), optional `item`, optional `clearedIds` |
+
+The last two frames are the attention layer (issue #383 M1), gated on the `attention`
+feature above. `presence` is the client's focus/visibility beacon the delivery planner reads
+to decide in-app-vs-push per client; a client sends it only to a daemon that advertised
+`attention`, so an M0-era daemon never receives it. `attentionEvent` broadcasts an attention
+raise (a `review-finished`, an `ask-pending`, …) or a clear to every authorized socket, so a
+focused client gets the live in-app event (its push is suppressed) and, on acknowledgment,
+every client's needs-you badge clears together. Both are additive arms of the `sessionFrame`
+union — an older peer that never sends or handles them is unaffected. The two commands that
+travel with the layer, `device.registerPush` (a paired device registers/replaces/clears its
+push token) and `attention.acknowledge` (clear on view, propagated to all clients), are
+ordinary additive `commandDefinitions` entries reachable only on a token-bearing connection
+while `attention` is advertised.
+
+The taxonomy is a closed six-family set, but not every family is raised from a
+real source in M1. **Live in M1:** `review-finished` (wired to the capture / openPr
+/ regenerate pipeline outcomes), `ask-pending` and `turn-failed` (both wired to the
+streaming `review.ask` turn lifecycle — an in-flight ask raises `ask-pending`,
+clears on settle, and raises `turn-failed` on error or interrupt). **Seam-only
+until M2:** `handoff-completed` and `publish-ready` — the planner, registry, and
+`raiseAttention` path are ready, but the handoff and publish flows that would raise
+them are M2 scope, so nothing raises them yet. `processing-finished` is silent by
+taxonomy: it updates the in-app badge but never pushes. The `device.registerPush`
+input also carries an additive optional `disabledFamilies` — families a device
+muted in its notification settings, which the daemon suppresses pushes for; a
+high-priority family (ask-pending / review-finished / turn-failed) always reaches
+every client regardless, so muting affects only the normal families.
+
+The projected review carries an additive optional `attention` summary —
+`{ needsYou, running }` — alongside the attention frames (issue #383 M1). It is
+sourced from the daemon's attention system, not the review pipeline: `needsYou`
+is true when an active high-priority attention (pending ask / review finished /
+turn failed) targets the review, and `running` is true while a review-scoped
+turn is in flight on it (the daemon's in-flight-review registry — **not**
+`pendingPatchsetId`, which means the working tree moved, i.e. staleness). The
+daemon attaches it only when it advertises `attention`; a pre-attention daemon
+omits it, and the field is non-required in the `projected-review` public-schema
+fixture, so an older client ignores it and a newer client falls back to deriving
+needs-you from its flagged queue plus live events (with `running` honestly false —
+a pre-attention daemon exposes no live-turn signal). It exists so a cold-open
+review list is truthful about needs-you before any push arrives — the sanctioned
+"grow the projection" path, never a side channel.
+
+**The additive guarantee has one sharp edge, worth stating plainly.** "Additive"
+means an older *runtime* peer that ignores unknown fields is unaffected — the
+tolerant frame decoders strip what they do not know. It does **not** mean a
+consumer that validates against the *old* checked-in `projected-review` fixture
+stays green: that fixture is `additionalProperties: false`, so a strict validator
+built against it will *reject* a review carrying the new `attention` key. The
+contract is the checked-in fixture, and growing the projection means regenerating
+it (`UPDATE_PUBLIC_SCHEMA=1 pnpm nx test rennet-protocol`) in the same change — a
+consumer pins to a fixture *version*, and picks up the new optional field when it
+adopts the regenerated one. This is the expected refresh, not a break; it is why
+every projected-shape addition ships with its fixture diff.
 
 `hello.deviceToken` is the append-only field a remote client presents to prove it
 was paired; a loopback client omits it. It carries the raw device token, which the

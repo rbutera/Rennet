@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   askStreamEventFrameSchema,
+  attentionEventFrameSchema,
   checkProtocolCompatibility,
   helloFrameSchema,
   MIN_COMPATIBLE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   parseSessionFrame,
+  presenceFrameSchema,
   progressEventFrameSchema,
   requestFrameSchema,
   responseFrameSchema,
@@ -47,6 +49,25 @@ const askStreamEvent = {
   reviewId: "rev1",
   event: { kind: "ask-delta", threadId: "t1", turnId: "u1", channel: "orchestrator", delta: "hi" },
 } as const;
+const presence = {
+  type: "presence",
+  focused: true,
+  visible: true,
+  deviceClass: "phone",
+  focusedReviewId: "rev1",
+} as const;
+const attentionEvent = {
+  type: "attentionEvent",
+  event: "raised",
+  item: {
+    id: "review-finished:rev1",
+    family: "review-finished",
+    reviewId: "rev1",
+    deepLink: "rennet://review/rev1/digest",
+    title: "Review finished",
+    body: "acme is ready to read",
+  },
+} as const;
 
 // Just the surface the red-proof uses: a `.strict()` clone whose parse we probe.
 // Structural, so every heterogeneous frame schema satisfies it without `any`.
@@ -60,6 +81,8 @@ const frames: [string, StrictCheckable, Record<string, unknown>][] = [
   ["rpcError", rpcErrorFrameSchema, rpcError],
   ["progressEvent", progressEventFrameSchema, progressEvent],
   ["askStreamEvent", askStreamEventFrameSchema, askStreamEvent],
+  ["presence", presenceFrameSchema, presence],
+  ["attentionEvent", attentionEventFrameSchema, attentionEvent],
 ];
 
 describe("session frames", () => {
@@ -108,6 +131,20 @@ describe("session frames", () => {
   });
 
   // 2.5
+  it("rejects an attentionEvent whose payload does not match its event (#383 batch)", () => {
+    // `raised` must carry its item…
+    expect(() => parseSessionFrame({ type: "attentionEvent", event: "raised" })).toThrow();
+    // …and must NOT smuggle clearedIds.
+    expect(() => parseSessionFrame({ ...attentionEvent, clearedIds: ["x"] })).toThrow();
+    // `cleared` needs a non-empty id list and no item.
+    expect(() =>
+      parseSessionFrame({ type: "attentionEvent", event: "cleared", clearedIds: [] }),
+    ).toThrow();
+    expect(
+      parseSessionFrame({ type: "attentionEvent", event: "cleared", clearedIds: ["a", "b"] }),
+    ).toMatchObject({ event: "cleared", clearedIds: ["a", "b"] });
+  });
+
   it("accepts both a known rpcError code and a novel string code", () => {
     expect(parseSessionFrame({ ...rpcError, code: "incompatible_protocol" })).toMatchObject({
       code: "incompatible_protocol",

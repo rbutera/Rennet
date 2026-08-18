@@ -20,6 +20,14 @@ export const PROTOCOL_VERSION = 1;
 /** The oldest protocol version this build can still talk to. */
 export const MIN_COMPATIBLE_PROTOCOL_VERSION = 1;
 
+/**
+ * The `serverInfo.features` key a daemon sets when it consumes client presence and plans
+ * attention (issue #383 M1). A client transmits its `presence` frame and registers a push
+ * token ONLY when this flag is advertised; a daemon that predates it never sees either, and
+ * the client treats the seam as a no-op (protocol-compatibility: capability-gated, once).
+ */
+export const ATTENTION_FEATURE = "attention";
+
 // ── Handshake ────────────────────────────────────────────────────────────────
 
 /** Client → server: who is connecting and which protocol version it speaks. */
@@ -140,6 +148,80 @@ export const serverRequestResolvedFrameSchema = z.object({
   serverRequestId: z.string().min(1),
 });
 
+// ── Presence (client → server, issue #383 M1) ────────────────────────────────
+
+// A shell reports focus/visibility/device-class so the daemon's attention planner
+// decides in-app-vs-push per client (mobile plan; ideation notification taxonomy). It
+// is additive-append-only: a client sends it ONLY when the daemon advertised the
+// `attention` feature (protocol-compatibility gating), and a daemon that predates the
+// feature strips it harmlessly (non-strict decoder). `focusedReviewId` is the review the
+// shell is looking at right now, so a review that finishes while its viewer is focused
+// gets the live event and no push; absent means no review is in focus.
+/** Client → server: this client's presence for delivery planning. */
+export const presenceFrameSchema = z.object({
+  type: z.literal("presence"),
+  focused: z.boolean(),
+  visible: z.boolean(),
+  deviceClass: z.string().min(1),
+  /** The review the shell is focused on, if any (drives focused-client push suppression). */
+  focusedReviewId: z.string().min(1).optional(),
+});
+
+// ── Attention (server → client, issue #383 M1) ───────────────────────────────
+
+// The daemon broadcasts an attention RAISE or CLEAR to every authorized socket so a
+// focused client gets the live in-app event (the push planner suppresses its push) and,
+// on acknowledgment, every client's needs-you badge clears together (attention-notifications
+// spec: "handled once, quiet everywhere"). Additive-append-only and feature-gated on
+// `attention`: a daemon that predates the feature never sends it, and an older client
+// strips it. The taxonomy families and deep-link paths are the planner's; the frame is
+// their wire form. Deltas/asks keep their own frames — this is the attention layer only.
+/** The closed six-family attention taxonomy (exported so command inputs reuse the exact enum). */
+export const attentionFamilySchema = z.enum([
+  "ask-pending",
+  "review-finished",
+  "turn-failed",
+  "handoff-completed",
+  "publish-ready",
+  "processing-finished",
+]);
+export type AttentionFamily = z.infer<typeof attentionFamilySchema>;
+
+/** One active attention item, as the client pins and later clears it. */
+export const attentionItemSchema = z.object({
+  id: z.string().min(1),
+  family: attentionFamilySchema,
+  reviewId: z.string().min(1).optional(),
+  projectId: z.string().min(1).optional(),
+  /** Daemon-relative `rennet://…` deep-link the client lands on. */
+  deepLink: z.string().min(1),
+  title: z.string().min(1),
+  body: z.string(),
+});
+export type AttentionItem = z.infer<typeof attentionItemSchema>;
+
+/** Server → client: an attention item was raised, or one/more were cleared. */
+export const attentionEventFrameSchema = z
+  .object({
+    type: z.literal("attentionEvent"),
+    /** `raised` carries `item`; `cleared` carries the ids that are no longer demanding attention. */
+    event: z.enum(["raised", "cleared"]),
+    item: attentionItemSchema.optional(),
+    clearedIds: z.array(z.string().min(1)).optional(),
+  })
+  // A `raised` frame MUST carry its item and a `cleared` frame MUST carry a non-empty id list —
+  // the payload each arm reads. Guards a malformed peer from a half-formed attention update.
+  .refine(
+    (f) =>
+      f.event === "raised"
+        ? f.item !== undefined && f.clearedIds === undefined
+        : f.clearedIds !== undefined && f.clearedIds.length > 0 && f.item === undefined,
+    {
+      message:
+        "attentionEvent: `raised` requires `item`; `cleared` requires non-empty `clearedIds`",
+    },
+  );
+
 // ── The union + parser ───────────────────────────────────────────────────────
 
 /** Every session frame, discriminated on `type`. */
@@ -154,6 +236,8 @@ export const sessionFrameSchema = z.discriminatedUnion("type", [
   serverRequestFrameSchema,
   serverResponseFrameSchema,
   serverRequestResolvedFrameSchema,
+  presenceFrameSchema,
+  attentionEventFrameSchema,
 ]);
 
 export type HelloFrame = z.infer<typeof helloFrameSchema>;
@@ -166,6 +250,8 @@ export type AskStreamEventFrame = z.infer<typeof askStreamEventFrameSchema>;
 export type ServerRequestFrame = z.infer<typeof serverRequestFrameSchema>;
 export type ServerResponseFrame = z.infer<typeof serverResponseFrameSchema>;
 export type ServerRequestResolvedFrame = z.infer<typeof serverRequestResolvedFrameSchema>;
+export type PresenceFrame = z.infer<typeof presenceFrameSchema>;
+export type AttentionEventFrame = z.infer<typeof attentionEventFrameSchema>;
 export type SessionFrame = z.infer<typeof sessionFrameSchema>;
 
 /** Parse an untrusted value into a `SessionFrame`, throwing on an invalid frame. */

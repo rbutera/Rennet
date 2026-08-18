@@ -40,6 +40,7 @@ import type {
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
+import { InFlightReviews } from "./in-flight-reviews";
 import {
   createPublishConsentAuthority,
   type PublishConsentAuthority,
@@ -180,6 +181,10 @@ function harness(
     flaggedReview?: DispatchDeps["flaggedReview"];
     readUiEvidence?: DispatchDeps["readUiEvidence"];
     repositoryExists?: DispatchDeps["repositoryExists"];
+    pushTokens?: DispatchDeps["pushTokens"];
+    acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
+    raiseAttention?: DispatchDeps["raiseAttention"];
+    inFlightReviews?: DispatchDeps["inFlightReviews"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -295,6 +300,10 @@ function harness(
     buildCanvases,
     publishPort,
     publishConsent,
+    ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
+    ...(extra.acknowledgeAttention ? { acknowledgeAttention: extra.acknowledgeAttention } : {}),
+    ...(extra.raiseAttention ? { raiseAttention: extra.raiseAttention } : {}),
+    ...(extra.inFlightReviews ? { inFlightReviews: extra.inFlightReviews } : {}),
     ...(extra.submitPullRequest ? { submitPullRequest: extra.submitPullRequest } : {}),
     ...(extra.draftDeltaDigest ? { draftDeltaDigest: extra.draftDeltaDigest } : {}),
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
@@ -1014,6 +1023,28 @@ describe("createDispatch — review.refine routing (the live producer, issue #19
     });
     // …and the route returns the producer's result verbatim.
     expect(result).toEqual({ status: "no-change", model: "test-model" });
+  });
+
+  it("marks the review running for the duration of the turn, cleared after (#383 batch)", async () => {
+    const inFlightReviews = new InFlightReviews();
+    const { dispatch, refineCommentSpy } = harness(fakePublishPort(), {}, { inFlightReviews });
+    const review = await capturedReview(dispatch);
+    let runningDuringTurn: boolean | undefined;
+    refineCommentSpy.mockImplementation(async (arg: { review: { id: string } }) => {
+      runningDuringTurn = inFlightReviews.has(arg.review.id);
+      return { status: "no-change", model: "test-model" };
+    });
+    // Red-proof: not running before the turn.
+    expect(inFlightReviews.has(review.id)).toBe(false);
+    await dispatch("review.refine", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      itemId: "x",
+      type: "comment",
+      raw: "note",
+    });
+    expect(runningDuringTurn).toBe(true); // running WHILE the producer ran
+    expect(inFlightReviews.has(review.id)).toBe(false); // cleared after it settled
   });
 
   it("refuses review.refine for a stale or unknown review id (the producer spends a model turn)", async () => {
@@ -2614,6 +2645,98 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     expect(Object.keys(out).sort()).toEqual(["mode", "primary", "secondOpinion"]);
   });
 
+  it("a STREAMING ask raises ask-pending then clears it on completion (#383 batch)", async () => {
+    const raised: { family: string; id: string }[] = [];
+    const cleared: { reviewId?: string; attentionId?: string }[] = [];
+    let n = 0;
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        raiseAttention: (e) => {
+          const id = `att-${n++}`;
+          raised.push({ family: e.family, id });
+          return id;
+        },
+        acknowledgeAttention: (sel) => {
+          cleared.push(sel);
+          return 1;
+        },
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+    raised.length = 0; // drop the capture's review-finished raise; focus on the ask
+    await h.dispatch(
+      "review.ask",
+      { commandId: randomUUID(), reviewId: review.id, question: "q", threadId: "th", turnId: "tn" },
+      { emitAskStream: () => undefined },
+    );
+    const askPending = raised.find((r) => r.family === "ask-pending");
+    expect(askPending).toBeDefined();
+    expect(raised.some((r) => r.family === "turn-failed")).toBe(false); // clean completion
+    expect(cleared).toContainEqual({ attentionId: askPending?.id }); // cleared exactly it
+  });
+
+  it("a FAILED streaming ask raises turn-failed and clears ask-pending (#383 batch)", async () => {
+    const raised: { family: string; id: string }[] = [];
+    const cleared: { attentionId?: string; reviewId?: string }[] = [];
+    let n = 0;
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        raiseAttention: (e) => {
+          const id = `att-${n++}`;
+          raised.push({ family: e.family, id });
+          return id;
+        },
+        acknowledgeAttention: (sel) => {
+          cleared.push(sel);
+          return 1;
+        },
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+    raised.length = 0;
+    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("harness exploded"));
+    await expect(
+      h.dispatch(
+        "review.ask",
+        {
+          commandId: randomUUID(),
+          reviewId: review.id,
+          question: "q",
+          threadId: "th",
+          turnId: "tn",
+        },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/harness exploded/);
+    const askPending = raised.find((r) => r.family === "ask-pending");
+    expect(raised.some((r) => r.family === "turn-failed")).toBe(true);
+    expect(cleared).toContainEqual({ attentionId: askPending?.id });
+  });
+
+  it("a ONE-SHOT (#139) ask raises no attention — it is a synchronous foreground call (#383 batch)", async () => {
+    const raised: { family: string }[] = [];
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        raiseAttention: (e) => {
+          raised.push({ family: e.family });
+          return "id";
+        },
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+    raised.length = 0;
+    await h.dispatch("review.ask", { commandId: randomUUID(), reviewId: review.id, question: "q" });
+    expect(raised.some((r) => r.family === "ask-pending" || r.family === "turn-failed")).toBe(
+      false,
+    );
+  });
+
   it("hands BOTH legs one resolved snapshot — a mid-ask patchset swap cannot cross them (P1-2)", async () => {
     const { dispatch, reviewAsk, service, review } = await openReview();
     // Resolution goes through `service.reviewById()` (the by-id resolver, #324);
@@ -3888,5 +4011,80 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     // Codex: no record at all — the cancel is NOT persisted as a codex failure. Drop the
     // guard and this reddens (a `tn::codex` "could not answer" message appears).
     expect(messages.some((m) => m.id === "tn::codex")).toBe(false);
+  });
+});
+
+describe("createDispatch — device.registerPush + attention.acknowledge (#383 M1)", () => {
+  function pushTokensSpy() {
+    return { set: vi.fn(), delete: vi.fn() };
+  }
+
+  it("registers a push token keyed by the connection's authenticated device id", async () => {
+    const pushTokens = pushTokensSpy();
+    const { dispatch } = harness(undefined, {}, { pushTokens });
+    const output = await dispatch(
+      "device.registerPush",
+      { pushToken: "ExponentPushToken[abc]", platform: "ios" },
+      { deviceId: "dev-1" },
+    );
+    expect(output).toEqual({ registered: true });
+    expect(pushTokens.set).toHaveBeenCalledWith("dev-1", "ExponentPushToken[abc]", "ios", []);
+  });
+
+  it("passes the device's muted families through to the store (#383 batch)", async () => {
+    const pushTokens = pushTokensSpy();
+    const { dispatch } = harness(undefined, {}, { pushTokens });
+    await dispatch(
+      "device.registerPush",
+      { pushToken: "t", platform: "ios", disabledFamilies: ["handoff-completed", "publish-ready"] },
+      { deviceId: "dev-1" },
+    );
+    expect(pushTokens.set).toHaveBeenCalledWith("dev-1", "t", "ios", [
+      "handoff-completed",
+      "publish-ready",
+    ]);
+  });
+
+  it("clears the token on remove (permission lost on the phone)", async () => {
+    const pushTokens = pushTokensSpy();
+    const { dispatch } = harness(undefined, {}, { pushTokens });
+    const output = await dispatch(
+      "device.registerPush",
+      { platform: "android", remove: true },
+      { deviceId: "dev-1" },
+    );
+    expect(output).toEqual({ registered: false });
+    expect(pushTokens.delete).toHaveBeenCalledWith("dev-1");
+  });
+
+  it("rejects registerPush on a connection with no authenticated device (loopback/pairing-only)", async () => {
+    const { dispatch } = harness(undefined, {}, { pushTokens: pushTokensSpy() });
+    await expect(
+      dispatch("device.registerPush", { pushToken: "t", platform: "ios" }, {}),
+    ).rejects.toThrow(/paired \(token-bearing\)/);
+  });
+
+  it("acknowledge routes the selector to the clear surface and returns the count", async () => {
+    const acknowledgeAttention = vi.fn(() => 2);
+    const { dispatch } = harness(undefined, {}, { acknowledgeAttention });
+    const output = await dispatch("attention.acknowledge", { reviewId: "rev-1" });
+    expect(output).toEqual({ cleared: 2 });
+    expect(acknowledgeAttention).toHaveBeenCalledWith({ reviewId: "rev-1" });
+  });
+
+  it("acknowledge returns { cleared: 0 } when attention is off (no dep wired)", async () => {
+    const { dispatch } = harness();
+    expect(await dispatch("attention.acknowledge", { reviewId: "rev-1" })).toEqual({ cleared: 0 });
+  });
+
+  it("review.capture raises a review-finished attention with a digest deep-link", async () => {
+    const raiseAttention = vi.fn();
+    const { dispatch } = harness(undefined, {}, { raiseAttention });
+    await dispatch("repository.choose", {});
+    await dispatch("review.capture", { commandId: crypto.randomUUID(), repoPath: REPO });
+    expect(raiseAttention).toHaveBeenCalledOnce();
+    const event = raiseAttention.mock.calls[0]?.[0];
+    expect(event).toMatchObject({ family: "review-finished" });
+    expect(event.deepLink).toMatch(/^rennet:\/\/review\/.+\/digest$/);
   });
 });

@@ -284,6 +284,40 @@ Avoid parallel dialog/menu/toast primitive families. Avoid wrapping the diff
 surface in generic virtualization: the measured direction is Pierre `CodeView`;
 list virtualization belongs to rails and queues, not the diff itself.
 
+## Mobile stack (Expo / React Native)
+
+The native app (`apps/mobile`, phase 6 M1) is an **Expo + expo-router** application.
+It uses **explicit Nx targets** (plain commands over the workspace's own tools), not
+the `@nx/expo` inference — so `@nx/expo` itself is **not a dependency**: it was
+installed during scaffolding, went unused (the generator's inferred targets conflict
+with the biome/eslint/vitest gate), and was removed (no unused deps). Re-add it —
+pinned to the workspace Nx version — only if and when an Expo generator is actually
+wanted. Expo SDK **55** and its module set are pinned from the SDK's
+bundled-native-modules matrix (`expo-router`, `expo-secure-store`, `expo-camera`,
+`expo-notifications`, `expo-linking`, `@react-native-async-storage/async-storage`,
+`react-native`, `react`/`react-dom` at the workspace's React 19.2). SDK 55 matches
+the workspace React, which is why it is chosen over the newer default.
+
+- **MUST** — Expo SDK modules over hand-rolled native code (camera, secure-store,
+  notifications, linking); `expo-secure-store` for the device-token keychain and
+  `@react-native-async-storage/async-storage` for the replica cache, the persisted
+  daemon list, and the notification preferences.
+- **AVOID** — a component library in M1 (the kit look is plain RN styles over a token
+  transpose); a second navigation stack beside expo-router; `packages/ui` in RN (it is
+  DOM-bound). The app imports `@rennet/client`/`protocol`/`types` only.
+- **Nx targets** — the app is admitted with **explicit** `lint`/`typecheck`/`test`
+  targets (plain commands, the workspace's own eslint + biome + tsc + vitest), *not* the
+  generator's inferred Expo targets, so the app rides the same gate as every package. There
+  is **no `build` target**: an Expo export / EAS build is native distribution (M3), outside
+  the JS gate, and `nx run-many -t build` simply skips a project without the target.
+- **Licence exceptions** — the Expo/RN tree pulls several additional permissive
+  licences (dual-`OR` expressions, `MPL-2.0`, `CC-BY-4.0`, `Python-2.0`), now allowlisted in
+  `scripts/check-licenses.mjs` with the rationale inline — the "documented exception, owning
+  checks green" path this policy sanctions. There is **no TypeScript peer override**: the
+  only package that peer-wanted TS `^5` was `@expo/require-utils`, pulled in transitively by
+  the unused `@nx/expo`; removing `@nx/expo` removed the demand, so `pnpm install` is clean
+  with no `peerDependencyRules.allowedVersions` typescript entry.
+
 ## Testing and diagnostics
 
 Vitest owns unit and integration tests. Playwright owns Electron journeys.
