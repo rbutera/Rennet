@@ -149,6 +149,31 @@ export class WsRennetBridge implements RennetBridge {
     return subscribe(this.#askListeners, reviewId, listener);
   }
 
+  /**
+   * Send a presence frame (issue #383 M1). Best-effort: sent only on a ready (post-handshake)
+   * socket; if the socket is not ready it is dropped, because the supervisor re-sends current
+   * presence on every `online`. The supervisor gates the CALL on the daemon advertising
+   * `attention`, so a daemon that never advertised it never receives a presence frame.
+   */
+  sendPresence(presence: {
+    focused: boolean;
+    visible: boolean;
+    deviceClass: string;
+    focusedReviewId?: string;
+  }): void {
+    const socket = this.#readySocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "presence",
+        focused: presence.focused,
+        visible: presence.visible,
+        deviceClass: presence.deviceClass,
+        ...(presence.focusedReviewId ? { focusedReviewId: presence.focusedReviewId } : {}),
+      }),
+    );
+  }
+
   /** The server identity captured at handshake (version + feature flags), or null before it lands (#380). */
   get serverInfo(): CapturedServerInfo | null {
     return this.#serverInfo;

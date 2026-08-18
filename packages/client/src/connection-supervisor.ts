@@ -24,6 +24,7 @@ import type {
   RennetBridge,
   ReviewAskStreamEvent,
 } from "@rennet/protocol";
+import { ATTENTION_FEATURE } from "@rennet/protocol";
 import { ConnectionError } from "./connection-error";
 import type { ReplicaStore, StoredReplica, TokenStore } from "./stores";
 import type { BridgeLifecycleEvent, CapturedServerInfo } from "./ws-bridge";
@@ -35,6 +36,13 @@ export interface SupervisedBridge {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /** Send a presence frame (issue #383 M1). Best-effort; the supervisor gates the call on capability. */
+  sendPresence(presence: {
+    focused: boolean;
+    visible: boolean;
+    deviceClass: string;
+    focusedReviewId?: string;
+  }): void;
   readonly serverInfo: CapturedServerInfo | null;
   close(): void;
 }
@@ -67,6 +75,8 @@ export interface Presence {
   readonly focused: boolean;
   readonly visible: boolean;
   readonly deviceClass: string;
+  /** The review the shell is looking at right now — drives focused-client push suppression (#383 M1). */
+  readonly focusedReviewId?: string;
 }
 
 export interface ConnectionSupervisorOptions {
@@ -202,6 +212,10 @@ export class ConnectionSupervisor implements RennetBridge {
         this.#backoff = this.#initialBackoff;
         this.#setState("online");
         this.#flushQueue();
+        // Re-send current presence on every reconnect (client-runtime delta spec), so a fresh
+        // socket immediately knows what the shell is focused on — but only to a daemon that
+        // advertised `attention`; otherwise the seam stays wire-silent (M0-era daemons).
+        this.#transmitPresence();
         if (this.#reconcileOnReconnect) this.#reconcile();
         return;
       }
@@ -375,9 +389,27 @@ export class ConnectionSupervisor implements RennetBridge {
 
   // ── Presence seam (wire-silent) ───────────────────────────────────────────
 
-  /** Record focus/visibility/device-class. Wire-silent until a daemon consumes presence. */
+  /**
+   * Record focus/visibility/device-class and transmit it to a daemon that advertised
+   * `attention` (client-runtime delta spec). Against a daemon that did NOT advertise it, the
+   * seam stays a no-op: presence is recorded locally and nothing goes on the wire — M0-era
+   * daemons are unaffected. Presence also re-sends on every reconnect (see `#transmitPresence`).
+   */
   setPresence(presence: Partial<Presence>): void {
     this.#presence = { ...this.#presence, ...presence };
+    this.#transmitPresence();
+  }
+
+  /** Whether the connected daemon advertised the attention/presence capability. */
+  #attentionAdvertised(): boolean {
+    return this.#bridge?.serverInfo?.features?.[ATTENTION_FEATURE] === true;
+  }
+
+  /** Send current presence iff online and the daemon advertised `attention`. */
+  #transmitPresence(): void {
+    if (this.#status.state !== "online" || !this.#bridge) return;
+    if (!this.#attentionAdvertised()) return;
+    this.#bridge.sendPresence(this.#presence);
   }
 
   /** The last-reported presence. */

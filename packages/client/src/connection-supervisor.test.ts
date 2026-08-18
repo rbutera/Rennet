@@ -9,6 +9,7 @@ import {
   type SupervisedBridge,
 } from "./connection-supervisor";
 import type { StoredReplica } from "./stores";
+import type { CapturedServerInfo } from "./ws-bridge";
 import { WsRennetBridge } from "./ws-bridge";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,9 +18,10 @@ import { WsRennetBridge } from "./ws-bridge";
 // so a test drives the LATEST one — that is the whole point of the swap tests.
 // ─────────────────────────────────────────────────────────────────────────────
 class FakeBridge implements SupervisedBridge {
-  serverInfo = null;
+  serverInfo: CapturedServerInfo | null = null;
   closed = false;
   readonly invokes: Array<{ name: string; input: unknown }> = [];
+  readonly sentPresence: Array<Record<string, unknown>> = [];
   readonly askListeners = new Map<string, Set<(e: ReviewAskStreamEvent) => void>>();
   readonly progressListeners = new Map<string, Set<(e: ProjectProcessEvent) => void>>();
   invokeImpl: (name: string, input: unknown) => Promise<unknown> = () => Promise.resolve({});
@@ -28,6 +30,15 @@ class FakeBridge implements SupervisedBridge {
     readonly hooks: BridgeHooks,
     readonly token: string | undefined,
   ) {}
+
+  sendPresence(presence: {
+    focused: boolean;
+    visible: boolean;
+    deviceClass: string;
+    focusedReviewId?: string;
+  }): void {
+    this.sentPresence.push({ ...presence });
+  }
 
   invoke(name: string, input: unknown): Promise<never> {
     this.invokes.push({ name, input });
@@ -389,6 +400,57 @@ describe("ConnectionSupervisor — reconnect-resubscribe over a real socket (#38
     stub.broadcast({ type: "askStreamEvent", reviewId: "rev-1", event: ASK });
     await waitFor(() => received.length === 2, 2000);
     expect(received).toHaveLength(2);
+  });
+});
+
+const ATTENTION_INFO: CapturedServerInfo = { version: "1.0.0", features: { attention: true } };
+const NO_ATTENTION_INFO: CapturedServerInfo = {
+  version: "1.0.0",
+  features: { serverRequests: true },
+};
+
+describe("ConnectionSupervisor — presence transmission (client-runtime delta spec, #383 M1)", () => {
+  it("transmits presence when the daemon advertised attention, and re-sends on reconnect", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).serverInfo = ATTENTION_INFO;
+    nth(bridges, 0).goOnline();
+    // Going online re-sends current presence once (the default), before any shell update.
+    expect(nth(bridges, 0).sentPresence).toHaveLength(1);
+
+    supervisor.setPresence({
+      focused: true,
+      visible: true,
+      deviceClass: "phone",
+      focusedReviewId: "rev-1",
+    });
+    expect(nth(bridges, 0).sentPresence).toHaveLength(2);
+    expect(nth(bridges, 0).sentPresence[1]).toMatchObject({
+      focusedReviewId: "rev-1",
+      deviceClass: "phone",
+    });
+
+    // A reconnect makes a fresh bridge; presence must re-send to it on `online` with no shell action.
+    nth(bridges, 0).goOffline();
+    await waitFor(() => bridges.length === 2);
+    nth(bridges, 1).serverInfo = ATTENTION_INFO;
+    nth(bridges, 1).goOnline();
+    expect(nth(bridges, 1).sentPresence).toHaveLength(1);
+    expect(nth(bridges, 1).sentPresence[0]).toMatchObject({ focusedReviewId: "rev-1" });
+  });
+
+  it("stays wire-silent against a daemon that did not advertise attention (M0-era daemon)", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).serverInfo = NO_ATTENTION_INFO;
+    nth(bridges, 0).goOnline();
+
+    supervisor.setPresence({ focused: false, visible: false, deviceClass: "phone" });
+    // Recorded locally, nothing on the wire.
+    expect(supervisor.presence).toMatchObject({ focused: false, visible: false });
+    expect(nth(bridges, 0).sentPresence).toHaveLength(0);
   });
 });
 
