@@ -33,11 +33,12 @@ describe("hold-to-sign progress feedback (critique P1-C)", () => {
       <PublishSheet items={items} payload={payload} variant={destinationVariant("other-pr")} />,
     );
     const button = signButton(container);
-    // No fill at rest.
-    expect(container.querySelector('[data-testid="sign-hold-fill"]')).toBeNull();
-    fireEvent.mouseDown(button);
+    // The fill is rendered persistently; at rest the button is not holding, so the
+    // `.is-holding` class (which arms the CSS animation) is absent.
     const fill = container.querySelector<HTMLElement>('[data-testid="sign-hold-fill"]');
     expect(fill).not.toBeNull();
+    expect(button.className).not.toContain("is-holding");
+    fireEvent.mouseDown(button);
     // The fill animates over EXACTLY the hold budget (default 800ms), off the prop.
     expect(fill?.style.animationDuration).toBe("800ms");
     expect(button.className).toContain("is-holding");
@@ -81,8 +82,8 @@ describe("hold-to-sign progress feedback (critique P1-C)", () => {
     const note = container.querySelector('[data-testid="sign-released-early"]');
     expect(note).not.toBeNull();
     expect(note?.getAttribute("role")).toBe("status");
-    // The fill is gone once released.
-    expect(container.querySelector('[data-testid="sign-hold-fill"]')).toBeNull();
+    // The animation is disarmed once released — the persistent fill loses `.is-holding`.
+    expect(button.className).not.toContain("is-holding");
   });
 
   it("clears the 'too soon' note when a fresh hold begins", () => {
@@ -120,5 +121,43 @@ describe("hold-to-sign progress feedback (critique P1-C)", () => {
     expect(signed).toEqual([payload]);
     // A completed sign shows no "too soon" note.
     expect(container.querySelector('[data-testid="sign-released-early"]')).toBeNull();
+  });
+
+  it("gates eligibility on the SAME budget the fill animates over — visual and eligibility coincide", () => {
+    // The visual completion (fill runs for `animationDuration`) and sign eligibility
+    // (`canSign` at `holdToSignMs`) are one number: a release one tick UNDER the budget
+    // signs nothing, a release AT the budget signs, and the fill's animation runs for
+    // exactly that many ms. So the bar cannot visually complete before the hold is
+    // eligible, nor sign while it still looks unfilled.
+    const signed: string[] = [];
+    const budget = 1000;
+    const { container } = mount(
+      <PublishSheet
+        items={items}
+        payload={payload}
+        variant={destinationVariant("other-pr")}
+        holdToSignMs={budget}
+        onSign={(p) => signed.push(p)}
+      />,
+    );
+    const button = signButton(container);
+    const fill = container.querySelector<HTMLElement>('[data-testid="sign-hold-fill"]');
+    // The fill runs for exactly the eligibility budget.
+    expect(fill?.style.animationDuration).toBe(`${budget}ms`);
+
+    // One tick under the budget: not yet eligible, nothing signs.
+    const base = 2_000_000;
+    vi.setSystemTime(base);
+    fireEvent.mouseDown(button);
+    vi.setSystemTime(base + budget - 1);
+    fireEvent.mouseUp(button);
+    expect(signed).toHaveLength(0);
+
+    // Exactly at the budget (when the fill reaches 100%): eligible, it signs.
+    vi.setSystemTime(base + 10_000);
+    fireEvent.mouseDown(button);
+    vi.setSystemTime(base + 10_000 + budget);
+    fireEvent.mouseUp(button);
+    expect(signed).toEqual([payload]);
   });
 });

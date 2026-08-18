@@ -1109,8 +1109,15 @@ button {
 }
 /* The hold-progress fill (critique P1-C): an ink bar along the button's bottom edge that
  * inks in 0→100% over exactly `holdToSignMs` (duration set inline on the element). It uses
- * `currentColor` — the paper button's espresso ink — so it is high-contrast on the
- * off-white face and reads on-theme: the signature inking in as the hold completes. */
+ * `currentColor` — the sign button's own ink — so it is high-contrast on the button face
+ * in both themes and reads on-theme: the signature inking in as the hold completes.
+ *
+ * The element is rendered PERSISTENTLY (width 0, no animation at rest); the animation is
+ * armed only by the `.is-holding` class the button carries during a hold. Adding the class
+ * (re)starts the keyframe fresh from 0%, and the hold eligibility epoch is captured in the
+ * same committed render (a layout effect, see publish-sheet.tsx) — so visual completion at
+ * 100% and sign eligibility are driven off ONE timestamp and coincide, rather than the
+ * eligibility clock (pointer-down) leading the animation (first commit) as it did before. */
 .publish-sheet-sign-fill {
   position: absolute;
   left: 0;
@@ -1118,10 +1125,12 @@ button {
   height: 3px;
   width: 0;
   background: currentColor;
+  pointer-events: none;
+}
+.publish-sheet-sign.is-holding .publish-sheet-sign-fill {
   animation-name: sign-hold-fill;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
-  pointer-events: none;
 }
 @keyframes sign-hold-fill {
   from {
@@ -1134,7 +1143,7 @@ button {
 /* Reduced motion: a discrete STEP fill (five jumps over the same budget), not a
  * continuous slide — progress stays legible without continuous motion. */
 @media (prefers-reduced-motion: reduce) {
-  .publish-sheet-sign-fill {
+  .publish-sheet-sign.is-holding .publish-sheet-sign-fill {
     animation-timing-function: steps(5, end);
   }
 }

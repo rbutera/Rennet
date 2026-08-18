@@ -1,5 +1,5 @@
 import type { DecompositionBlockingState } from "@rennet/types";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   bucketLedgerEntries,
   canSign,
@@ -199,6 +199,15 @@ export function PublishSheet({
   // the sole authorization (Rule Zero); these only make the existing hold LEGIBLE.
   const [holding, setHolding] = useState(false);
   const [releasedEarly, setReleasedEarly] = useState(false);
+  // Capture the hold-eligibility epoch in the SAME committed render that arms the fill's
+  // animation (critique fix): `beginHold` flips `holding` true, and this layout effect —
+  // running after that commit, before paint — stamps `holdStart`. The `.is-holding`
+  // animation begins on the same commit's paint, so the JS eligibility clock and the CSS
+  // fill share one origin. Stamping in the pointer-down handler instead (as before) set the
+  // epoch a full render earlier than the fill, letting eligibility precede visual 100%.
+  useLayoutEffect(() => {
+    if (holding) holdStart.current = Date.now();
+  }, [holding]);
   // A hold begun over a stale payload is voided at release by the `endHold` guard
   // (below), which is timing-independent and load-bearing. As a render-time visual,
   // disarm the button the moment the payload identity changes so it does not look
@@ -267,9 +276,10 @@ export function PublishSheet({
     target !== undefined && !publishTargetAgrees(target, payload, variant.mode);
 
   function beginHold(): void {
-    holdStart.current = Date.now();
     // Bind this hold to the exact bytes on screen NOW (#74 HIGH-2), so a later
-    // recomposition cannot make the release sign different bytes.
+    // recomposition cannot make the release sign different bytes. The eligibility
+    // epoch (`holdStart`) is stamped by the layout effect on the resulting commit, so
+    // it lands on the same render that arms the fill animation (see above).
     holdPayload.current = payload;
     // Show the progress fill for the whole hold (critique P1-C), and clear any prior
     // "released too soon" note — a fresh attempt starts clean.
@@ -568,7 +578,12 @@ export function PublishSheet({
               aria-keyshortcuts="Enter Space"
               // Disabled while a publish is in flight (double-sign race): the sync ref
               // in `publishReview` is the real guard; this reflects it in the UI.
-              disabled={itemCount === 0 || targetBlocksSign || pending}
+              disabled={
+                itemCount === 0 ||
+                targetBlocksSign ||
+                pending ||
+                ledgerBlocksSign(ledger, acknowledged)
+              }
               onMouseDown={beginHold}
               onMouseUp={endHold}
               onMouseLeave={clearHold}
@@ -578,16 +593,17 @@ export function PublishSheet({
             >
               {/* The hold-progress fill (critique P1-C): an ink bar that inks in 0→100%
                   over EXACTLY `holdToSignMs` (duration set inline off the same prop), so
-                  the hold budget is visible instead of invisible. Reduced motion turns
-                  the continuous slide into a discrete step fill (see styles.css). */}
-              {holding ? (
-                <span
-                  className="publish-sheet-sign-fill"
-                  style={{ animationDuration: `${Math.max(0, holdToSignMs)}ms` }}
-                  aria-hidden="true"
-                  data-testid="sign-hold-fill"
-                />
-              ) : null}
+                  the hold budget is visible instead of invisible. Rendered PERSISTENTLY —
+                  the `.is-holding` class on the button arms the animation, and the layout
+                  effect stamps the eligibility epoch on that same commit, so visual 100%
+                  and sign eligibility coincide. Reduced motion turns the continuous slide
+                  into a discrete step fill (see styles.css). */}
+              <span
+                className="publish-sheet-sign-fill"
+                style={{ animationDuration: `${Math.max(0, holdToSignMs)}ms` }}
+                aria-hidden="true"
+                data-testid="sign-hold-fill"
+              />
               <span className="publish-sheet-sign-label">
                 Hold to {variant.signLabel.toLowerCase()}
               </span>
