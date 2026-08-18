@@ -215,7 +215,11 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     await waitFor(() => bridges.length === 2);
     nth(bridges, 1).goOnline();
     expect(nth(bridges, 1).attentionListeners.size).toBe(1);
-    nth(bridges, 1).emitAttention({ type: "attentionEvent", event: "cleared", clearedIds: ["ask-pending:rev-1"] });
+    nth(bridges, 1).emitAttention({
+      type: "attentionEvent",
+      event: "cleared",
+      clearedIds: ["ask-pending:rev-1"],
+    });
     expect(seen).toHaveLength(2);
     expect(seen[1]).toMatchObject({ event: "cleared" });
   });

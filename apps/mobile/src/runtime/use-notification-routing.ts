@@ -6,8 +6,8 @@
 // ignored rather than routed somewhere wrong. The pure resolution is `hrefForPush`, tested in
 // lib/deep-links; this hook is the thin RN/expo-router glue.
 
-import { useRouter } from "expo-router";
 import * as Notifications from "expo-notifications";
+import { useRouter } from "expo-router";
 import { useEffect } from "react";
 import type { AttentionPushData } from "../lib/deep-links";
 import { useRuntime } from "./context";

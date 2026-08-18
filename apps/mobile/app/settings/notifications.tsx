@@ -77,7 +77,10 @@ export default function Notifications(): ReactNode {
       const next = { ...prev, [family]: value };
       // Persist the choice and, if push is on, re-register so the daemon's mute set stays in sync.
       void prefsStore.save(disabledFamilies(next));
-      if (pushOn) void getPushToken().then((token) => token && runtime.configurePush(token, disabledFamilies(next)));
+      if (pushOn)
+        void getPushToken().then(
+          (token) => token && runtime.configurePush(token, disabledFamilies(next)),
+        );
       return next;
     });
 

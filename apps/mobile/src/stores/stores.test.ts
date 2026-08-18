@@ -93,10 +93,7 @@ describe("DaemonListStore (#383 batch — persisted paired daemons, no secrets)"
     expect(await store.load()).toEqual([]);
     backend.map.set(
       "rennet.daemons",
-      JSON.stringify([
-        { id: "ok", name: "n", url: "u", deviceId: "d" },
-        { id: "missing-fields" },
-      ]),
+      JSON.stringify([{ id: "ok", name: "n", url: "u", deviceId: "d" }, { id: "missing-fields" }]),
     );
     expect(await store.load()).toEqual([{ id: "ok", name: "n", url: "u", deviceId: "d" }]);
   });

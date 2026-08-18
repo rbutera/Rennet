@@ -122,7 +122,10 @@ describe("pollExpoReceipts (#383 batch: two-phase delivery, async dead-token pru
   it("is non-fatal on a network error and a no-op on an empty set", async () => {
     const fetch = vi.fn().mockRejectedValue(new Error("down"));
     const errors: unknown[] = [];
-    await pollExpoReceipts([{ receiptId: "r", token: "t" }], { fetch, onError: (e) => errors.push(e) });
+    await pollExpoReceipts([{ receiptId: "r", token: "t" }], {
+      fetch,
+      onError: (e) => errors.push(e),
+    });
     expect(errors).toHaveLength(1);
 
     const unused = vi.fn();

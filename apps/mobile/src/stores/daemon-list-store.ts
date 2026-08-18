@@ -4,8 +4,8 @@
 // lives in the keychain (SecureTokenStore), keyed by the same daemon id; this list only names
 // which daemons exist. The storage backend is INJECTED, so this logic unit-tests with a stub.
 
-import type { AsyncStorageBackend } from "./replica-store";
 import type { PairedDaemon } from "../runtime/daemon-registry";
+import type { AsyncStorageBackend } from "./replica-store";
 
 const KEY = "rennet.daemons";
 

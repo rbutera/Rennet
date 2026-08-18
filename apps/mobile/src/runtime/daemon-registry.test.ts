@@ -1,5 +1,5 @@
-import type { AttentionEventFrame } from "@rennet/protocol";
 import type { ConnectionStatus, Presence } from "@rennet/client";
+import type { AttentionEventFrame } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { DaemonRegistry, type DaemonSupervisor, type PairedDaemon } from "./daemon-registry";
 
@@ -27,7 +27,9 @@ function fakeSupervisor(): FakeSupervisor {
       attentionListeners.add(listener);
       return () => void attentionListeners.delete(listener);
     },
-    saveReplica() {},
+    saveReplica() {
+      return undefined;
+    },
     attentionAdvertised: () => true,
     emitAttention(frame: AttentionEventFrame) {
       for (const l of attentionListeners) l(frame);

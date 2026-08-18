@@ -60,9 +60,9 @@ describe("command protocol", () => {
 
   it("device.registerPush requires a token XOR remove (#383 batch)", () => {
     // Set: a token, no remove.
-    expect(parseCommandInput("device.registerPush", { pushToken: "t", platform: "ios" })).toMatchObject(
-      { pushToken: "t" },
-    );
+    expect(
+      parseCommandInput("device.registerPush", { pushToken: "t", platform: "ios" }),
+    ).toMatchObject({ pushToken: "t" });
     // Clear: remove:true, no token.
     expect(
       parseCommandInput("device.registerPush", { platform: "ios", remove: true }),

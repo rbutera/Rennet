@@ -280,7 +280,11 @@ describe("WsRennetBridge", () => {
         body: "",
       },
     });
-    stub.broadcast({ type: "attentionEvent", event: "cleared", clearedIds: ["review-finished:rev-1"] });
+    stub.broadcast({
+      type: "attentionEvent",
+      event: "cleared",
+      clearedIds: ["review-finished:rev-1"],
+    });
     await waitFor(() => seen.length === 2);
     expect(seen.map((s) => s.event)).toEqual(["raised", "cleared"]);
 

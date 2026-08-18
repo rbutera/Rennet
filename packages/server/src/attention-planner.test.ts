@@ -7,10 +7,7 @@ import {
 } from "./attention-planner";
 import type { PushRegistration } from "./push-token-store";
 
-const phone = (
-  deviceId: string,
-  disabledFamilies: readonly string[] = [],
-): PushRegistration => ({
+const phone = (deviceId: string, disabledFamilies: readonly string[] = []): PushRegistration => ({
   deviceId,
   token: `ExponentPushToken[${deviceId}]`,
   platform: "ios",

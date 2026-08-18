@@ -261,7 +261,13 @@ describe("WS listener attention delivery (#383 M1, attention-notifications)", ()
     const rows = new Map(
       seed.map((s) => [
         s.deviceId,
-        { deviceId: s.deviceId, token: s.token, platform: "ios" as const, updatedAt: 0 },
+        {
+          deviceId: s.deviceId,
+          token: s.token,
+          platform: "ios" as const,
+          updatedAt: 0,
+          disabledFamilies: [],
+        },
       ]),
     );
     return {
@@ -432,7 +438,15 @@ describe("WS listener attention delivery (#383 M1, attention-notifications)", ()
     const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
     const deleted: string[] = [];
     const pushTokens = {
-      list: () => [{ deviceId: "phone", token: "tok", platform: "ios" as const, updatedAt: 0 }],
+      list: () => [
+        {
+          deviceId: "phone",
+          token: "tok",
+          platform: "ios" as const,
+          updatedAt: 0,
+          disabledFamilies: [],
+        },
+      ],
       delete: (deviceId: string) => void deleted.push(deviceId),
     };
     const sendPush = vi.fn(

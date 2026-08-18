@@ -2746,7 +2746,8 @@ export const commandDefinitions = {
       // Token XOR remove: a set carries a token and no `remove`; a clear sets `remove` and no token.
       // Neither (a no-op) and both (contradictory) are rejected at the boundary.
       .refine((i) => (i.remove === true) !== (i.pushToken !== undefined), {
-        message: "device.registerPush: provide a pushToken to set, or remove:true to clear — not both",
+        message:
+          "device.registerPush: provide a pushToken to set, or remove:true to clear — not both",
       }),
     output: z.object({ registered: z.boolean() }),
   },

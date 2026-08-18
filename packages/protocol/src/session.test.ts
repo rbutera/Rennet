@@ -135,9 +135,7 @@ describe("session frames", () => {
     // `raised` must carry its item…
     expect(() => parseSessionFrame({ type: "attentionEvent", event: "raised" })).toThrow();
     // …and must NOT smuggle clearedIds.
-    expect(() =>
-      parseSessionFrame({ ...attentionEvent, clearedIds: ["x"] }),
-    ).toThrow();
+    expect(() => parseSessionFrame({ ...attentionEvent, clearedIds: ["x"] })).toThrow();
     // `cleared` needs a non-empty id list and no item.
     expect(() =>
       parseSessionFrame({ type: "attentionEvent", event: "cleared", clearedIds: [] }),

@@ -216,7 +216,10 @@ export const attentionEventFrameSchema = z
       f.event === "raised"
         ? f.item !== undefined && f.clearedIds === undefined
         : f.clearedIds !== undefined && f.clearedIds.length > 0 && f.item === undefined,
-    { message: "attentionEvent: `raised` requires `item`; `cleared` requires non-empty `clearedIds`" },
+    {
+      message:
+        "attentionEvent: `raised` requires `item`; `cleared` requires non-empty `clearedIds`",
+    },
   );
 
 // ── The union + parser ───────────────────────────────────────────────────────

@@ -108,7 +108,9 @@ export class PushTokenStore {
   /** The device's registration, or null if it never registered (or was cleared). */
   get(deviceId: string): PushRegistration | null {
     const row = this.database
-      .prepare("SELECT device_id, token, platform, updated_at, disabled_families FROM push_tokens WHERE device_id = ?")
+      .prepare(
+        "SELECT device_id, token, platform, updated_at, disabled_families FROM push_tokens WHERE device_id = ?",
+      )
       .get(deviceId) as Row | undefined;
     return row ? toRegistration(row) : null;
   }

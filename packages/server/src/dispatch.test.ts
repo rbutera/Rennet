@@ -2623,23 +2623,27 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     const raised: { family: string; id: string }[] = [];
     const cleared: { reviewId?: string; attentionId?: string }[] = [];
     let n = 0;
-    const h = harness(fakePublishPort(), {}, {
-      raiseAttention: (e) => {
-        const id = `att-${n++}`;
-        raised.push({ family: e.family, id });
-        return id;
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        raiseAttention: (e) => {
+          const id = `att-${n++}`;
+          raised.push({ family: e.family, id });
+          return id;
+        },
+        acknowledgeAttention: (sel) => {
+          cleared.push(sel);
+          return 1;
+        },
       },
-      acknowledgeAttention: (sel) => {
-        cleared.push(sel);
-        return 1;
-      },
-    });
+    );
     const review = await capturedReview(h.dispatch);
     raised.length = 0; // drop the capture's review-finished raise; focus on the ask
     await h.dispatch(
       "review.ask",
       { commandId: randomUUID(), reviewId: review.id, question: "q", threadId: "th", turnId: "tn" },
-      { emitAskStream: () => {} },
+      { emitAskStream: () => undefined },
     );
     const askPending = raised.find((r) => r.family === "ask-pending");
     expect(askPending).toBeDefined();
@@ -2651,25 +2655,35 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     const raised: { family: string; id: string }[] = [];
     const cleared: { attentionId?: string; reviewId?: string }[] = [];
     let n = 0;
-    const h = harness(fakePublishPort(), {}, {
-      raiseAttention: (e) => {
-        const id = `att-${n++}`;
-        raised.push({ family: e.family, id });
-        return id;
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        raiseAttention: (e) => {
+          const id = `att-${n++}`;
+          raised.push({ family: e.family, id });
+          return id;
+        },
+        acknowledgeAttention: (sel) => {
+          cleared.push(sel);
+          return 1;
+        },
       },
-      acknowledgeAttention: (sel) => {
-        cleared.push(sel);
-        return 1;
-      },
-    });
+    );
     const review = await capturedReview(h.dispatch);
     raised.length = 0;
     h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("harness exploded"));
     await expect(
       h.dispatch(
         "review.ask",
-        { commandId: randomUUID(), reviewId: review.id, question: "q", threadId: "th", turnId: "tn" },
-        { emitAskStream: () => {} },
+        {
+          commandId: randomUUID(),
+          reviewId: review.id,
+          question: "q",
+          threadId: "th",
+          turnId: "tn",
+        },
+        { emitAskStream: () => undefined },
       ),
     ).rejects.toThrow(/harness exploded/);
     const askPending = raised.find((r) => r.family === "ask-pending");
@@ -2679,16 +2693,22 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
 
   it("a ONE-SHOT (#139) ask raises no attention — it is a synchronous foreground call (#383 batch)", async () => {
     const raised: { family: string }[] = [];
-    const h = harness(fakePublishPort(), {}, {
-      raiseAttention: (e) => {
-        raised.push({ family: e.family });
-        return "id";
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        raiseAttention: (e) => {
+          raised.push({ family: e.family });
+          return "id";
+        },
       },
-    });
+    );
     const review = await capturedReview(h.dispatch);
     raised.length = 0;
     await h.dispatch("review.ask", { commandId: randomUUID(), reviewId: review.id, question: "q" });
-    expect(raised.some((r) => r.family === "ask-pending" || r.family === "turn-failed")).toBe(false);
+    expect(raised.some((r) => r.family === "ask-pending" || r.family === "turn-failed")).toBe(
+      false,
+    );
   });
 
   it("hands BOTH legs one resolved snapshot — a mid-ask patchset swap cannot cross them (P1-2)", async () => {

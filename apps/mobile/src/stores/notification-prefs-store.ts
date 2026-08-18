@@ -18,7 +18,9 @@ export class NotificationPrefsStore {
     if (!raw) return [];
     try {
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((f): f is AttentionFamily => typeof f === "string") : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((f): f is AttentionFamily => typeof f === "string")
+        : [];
     } catch {
       return [];
     }
