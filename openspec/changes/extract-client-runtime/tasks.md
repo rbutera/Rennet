@@ -11,6 +11,7 @@
 - [x] 2.1 Add the subscription registry: `onAskStream`/`onProgress` registrations survive the socket and replay onto every fresh socket; unregister on unsubscribe.
 - [x] 2.2 Unit test: mid-turn reconnect re-delivers subsequent events to the same listener, at most once, without consumer re-subscribe.
 - [x] 2.3 Extend e2e with the positive control: kill the daemon socket mid-turn, assert the live ask stream resumes on reconnect (this is the #389 fix proof; must fail on today's main).
+- [x] 2.4 Server half of #389 (spec amendment, daemon bug fix): ask-stream deltas broadcast by `reviewId` to every live authorized socket (`broadcastAskStream`, mirroring `broadcastProgress`) instead of closing over the invoking socket; positive control in `ws-listener.test.ts` proven to fail on the pre-fix closure.
 
 ## 3. Stores
 

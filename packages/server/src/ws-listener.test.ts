@@ -174,3 +174,76 @@ describe("WS listener server-request wire support (#380)", () => {
     await expect(listener.askConnection("nope", "k", {})).rejects.toThrow();
   });
 });
+
+describe("WS listener ask-stream broadcast (#389 server half)", () => {
+  const listeners: WsListener[] = [];
+  const sockets: WebSocket[] = [];
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    for (const listener of listeners.splice(0)) await listener.close();
+  });
+
+  /** Connect a loopback client and complete the handshake. */
+  async function connect(listener: WsListener, clientId: string): Promise<WebSocket> {
+    const socket = new WebSocket(`ws://127.0.0.1:${listener.port}`);
+    sockets.push(socket);
+    await once(socket, "open");
+    const info = once(socket, "message");
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        clientId,
+        clientType: "rennet-client",
+        protocolVersion: PROTOCOL_VERSION,
+      }),
+    );
+    await info; // serverInfo
+    return socket;
+  }
+
+  it("delivers a live ask-stream delta to a RECONNECTED socket, not just the invoker", async () => {
+    // Capture the emit sink ws-listener hands dispatch for a `reviewId`-scoped turn.
+    let askSink: ((event: unknown) => void) | undefined;
+    const dispatch = vi.fn(
+      async (_name, _input, ctx?: { emitAskStream?: (event: unknown) => void }) => {
+        askSink = ctx?.emitAskStream;
+        return { ok: true };
+      },
+    ) as unknown as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({ dispatch, serverVersion: "test" });
+    listeners.push(listener);
+
+    // Socket A is the client that STARTED the turn (its socket is about to "drop").
+    const socketA = await connect(listener, "invoker");
+    const response = once(socketA, "message");
+    socketA.send(
+      JSON.stringify({
+        type: "request",
+        requestId: "ask-1",
+        command: "review.ask",
+        input: { reviewId: "rev-1", commandId: "cmd-1" },
+      }),
+    );
+    await response;
+    expect(askSink).toBeTypeOf("function");
+
+    // Socket B is the SAME client after a mid-turn reconnect — a fresh connection that
+    // never invoked review.ask. Pre-fix, the emit closed over socket A and B got nothing.
+    const socketB = await connect(listener, "reconnected");
+    const delta = new Promise<Record<string, unknown>>((resolve) => {
+      socketB.on("message", (data) => {
+        const frame = JSON.parse(String(data));
+        if (frame.type === "askStreamEvent") resolve(frame);
+      });
+    });
+
+    askSink?.({ kind: "ask-focus", anchor: "widget.ts:1" });
+
+    const frame = await delta;
+    expect(frame).toMatchObject({
+      type: "askStreamEvent",
+      reviewId: "rev-1",
+      event: { kind: "ask-focus", anchor: "widget.ts:1" },
+    });
+  });
+});

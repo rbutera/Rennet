@@ -154,13 +154,15 @@ change is archived. What remains is the mobile arc: the design pass
 client-runtime extraction — is delivered**: the `ConnectionSupervisor`
 (`@rennet/client`) owns reachability state, reconnect, and a resubscribe
 registry, and the desktop + browser shells adopt it behavior-neutrally (the
-[mobile plan](/developing/reference/mobile-plan/) tracks M1–M3). Known
-follow-ups:
+[mobile plan](/developing/reference/mobile-plan/) tracks M1–M3). M0 also **closes
+[#389](https://github.com/rbutera/rennet/issues/389)** in both halves: the
+client resubscribe registry keeps listeners bound across a reconnect, and the
+daemon now broadcasts ask-stream deltas by `reviewId` to every live authorized
+socket (`broadcastAskStream`, the read-side twin of `broadcastProgress`) instead
+of closing over the invoking socket — so a reconnected client keeps receiving a
+mid-turn ask stream. Known follow-up:
 [#386](https://github.com/rbutera/rennet/issues/386) (pre-existing e2e
-failures on main) and the **server-side half of
-[#389](https://github.com/rbutera/rennet/issues/389)** — M0 fixed the client
-half (subscriptions survive a reconnect); rebinding a live turn's ask-stream
-emit sink to the reconnected socket is a daemon-side change still open.
+failures on main, unrelated to this change).
 
 0. [#376 — protocol handshake, envelope, and versioning
    discipline](https://github.com/rbutera/rennet/issues/376)

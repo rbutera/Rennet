@@ -358,10 +358,16 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
               event: ctx ? projectProgressEvent(event, ctx) : event,
             })
         : undefined;
-      // Ask-stream deltas are model-authored prose — NOT projected (R31/R32 honesty).
+      // Ask-stream deltas BROADCAST to every live authorized socket by `reviewId`
+      // (issue #389 server half), mirroring `broadcastProgress`. Closing over the
+      // invoking socket dropped the live stream after a mid-turn reconnect — the turn
+      // survives in main, but its deltas kept firing at the dead socket. Broadcasting
+      // means the reconnected socket (a fresh connection) receives them, and the client
+      // filters by its `onAskStream(reviewId)` listener exactly as it filters progress.
+      // Deltas are model-authored prose — NOT projected (R31/R32 honesty) — so the raw
+      // event goes to private and projected connections alike.
       const emitAskStream = reviewId
-        ? (event: ReviewAskStreamEvent): void =>
-            send(socket, { type: "askStreamEvent", reviewId, event })
+        ? (event: ReviewAskStreamEvent): void => broadcastAskStream(reviewId, event)
         : undefined;
       try {
         const output = await dispatch(command, effectiveInput, {
@@ -553,6 +559,24 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       } else if (connection.connectionClass === "private") {
         connection.socket.send(rawPayload);
       }
+    }
+  };
+
+  // Broadcast a review's ask-stream delta to every live authorized socket by `reviewId`
+  // (issue #389 server half). Ask deltas are model-authored prose — NOT projected — so the
+  // raw event goes to private and projected connections alike; `pairing-only` (no valid
+  // token) never receives it. This is the read-side twin of `broadcastProgress`, and it is
+  // what lets a mid-turn reconnect keep the live stream flowing to the fresh socket.
+  const broadcastAskStream = (reviewId: string, event: ReviewAskStreamEvent): void => {
+    const payload = JSON.stringify({
+      type: "askStreamEvent",
+      reviewId,
+      event,
+    } satisfies SessionFrame);
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      connection.socket.send(payload);
     }
   };
 
