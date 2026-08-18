@@ -49,6 +49,7 @@ export default defineConfig({
                   },
                   { label: "Remote access", link: "/using/guide/remote-access/" },
                   { label: "Rennet in a browser", link: "/using/guide/browser-rennet/" },
+                  { label: "Rennet on your phone", link: "/using/guide/mobile/" },
                   { label: "User journey", link: "/using/guide/user-journey/" },
                 ],
               },

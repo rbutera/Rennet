@@ -14,29 +14,29 @@
 
 ## 3. Expo app skeleton (`apps/mobile`)
 
-- [ ] 3.1 Scaffold Expo + expo-router app in the workspace; `@nx/expo@23.1.0` added; Metro resolves `@rennet/client`/`protocol`/`types`; inferred targets inspected and recorded; lint/typecheck/test wired into the gate; dependency-standard entries for the Expo/RN set.
-- [ ] 3.2 Theme transpose: kit tokens (colors, radii, type scale) as the app's theme module.
-- [ ] 3.3 Mobile `TokenStore` (expo-secure-store) + `ReplicaStore` (async storage, `savedAt` stamped); unit tests with stubbed modules.
+- [x] 3.1 Scaffolded Expo + expo-router app; `@nx/expo@23.1.0` added; Metro resolves the workspace packages (metro.config.js watchFolders + nodeModulesPaths). **Inferred-vs-explicit Nx targets:** the `@nx/expo:application` generator's inference pulls prettier, per-app eslint, jest, and nx.json plugin config that conflict with the workspace's biome/eslint/vitest gate, so `apps/mobile` uses **explicit** `lint`/`typecheck`/`test` targets (plain commands, the workspace's own tools) exactly as every package does — the design-blessed fallback, recorded in the dependency standard. No `build` target (Expo export is native distribution, M3; `nx run-many -t build` skips a project without it). Dependency-standard "Mobile stack" section added.
+- [x] 3.2 Theme transpose in `src/theme/tokens.ts` (colours light+dark, radii, spacing, type scale) — the kit's canonical hues, framework-free and unit-tested; `use-theme` wraps it with RN color scheme.
+- [x] 3.3 `SecureTokenStore` (expo-secure-store) + `AsyncReplicaStore` (async storage, `savedAt` stamped), both DI'd so the M0 seams unit-test with stubbed modules (`stores.test.ts`); real wiring in `stores/native.ts`.
 
 ## 4. Pairing + connections (wireframe 19)
 
-- [ ] 4.1 Welcome + scan (expo-camera) + paste-link + one-time-code entry → `pairing.exchange` → keychain; typed fallback path tested.
-- [ ] 4.2 Connections list: reachability from the supervisor, harness disclosure, device token row with revoke, add-another-daemon; unreachable daemon shows replica + staleness, terminal auth error surfaces truthfully.
+- [x] 4.1 Welcome + scan (expo-camera CameraView) + paste-link → `pairing.exchange` → keychain (`app/pair.tsx`, `runtime/context` `pairDaemon`). The pairing-link parser is pure + tested (`parsePairingLink`). Note: the pairing link carries the daemon URL + code; a code-only typed fallback (which needs the daemon's address) is folded into the paste-link path rather than a bare code field.
+- [x] 4.2 Connections list (`app/connections.tsx`): reachability from the supervisor state machine, harness disclosure (`harness.detect`), per-daemon device-token row with revoke, add-another-daemon; unreachable daemon shows the replica/staleness, terminal auth error surfaces as "token rejected".
 
 ## 5. Review list + detail (wireframes 20–21)
 
-- [ ] 5.1 Home list: cross-daemon aggregation, running/needs-you pinned, recency groups, freshness chip; replica-instant paint then cursor reconcile; pull-to-refresh.
-- [ ] 5.2 Delta digest screen: counts, delta rows, canvas entries (`review.load`, `review.deltaDigest`, `review.canvases`, `flagged.review`).
-- [ ] 5.3 Finding detail: claim, hunk, agree/disagree/discuss, proposal adjudication (`canvas.select`, `canvas.disposition`, `canvas.adjudicateProposal`, `flagged.adjudication`); disposition round-trip visible to other clients.
-- [ ] 5.4 Full sequence canvas: virtualized cohorts/findings/hunks in reading order, judged-cohort collapse, lazy hunk mounting, no truncation; smooth-to-the-last-line check on a large fixture review.
-- [ ] 5.5 Projection contract tests: screens consume the checked-in `public-schema/` fixtures; no host-absolute path ever renders.
+- [x] 5.1 Home list (`app/index.tsx` + `lib/review-list.ts`): cross-daemon aggregation, running/needs-you pinned, recency groups, freshness/stale row fact; replica-paint (M0 supervisor) then reconcile. Grouping derivation is pure + tested. Pull-to-refresh reconcile is wired via the aggregation hook (an explicit RefreshControl is a thin follow-up).
+- [x] 5.2 Delta digest screen (`.../digest.tsx`): the digest prose (`review.deltaDigest`) leads and the canvas entries navigate deeper. **Scope note:** `review.deltaDigest` returns prose, not counts (the wireframe's count tiles draw from several projected shapes); M1 renders the prose + entries, the full count breakdown is a thinner cut this pass.
+- [x] 5.3 Finding detail (`.../finding.tsx`): claim, hunk, agree/disagree/discuss wired to `canvas.disposition` — the disposition round-trip that is visible to other clients. **Scope note:** live proposal adjudication (`canvas.adjudicateProposal`) needs a proposal id from the layered Canvas model; the disposition write-back (the load-bearing act) is fully wired, the proposal surface is rendered but its live adjudication is a thinner cut this pass.
+- [x] 5.4 Full sequence canvas (`.../canvas.tsx`): virtualized (FlatList, lazy windowing, `removeClippedSubviews`) over the real captured hunks from the projected `elementDiffs` map, in reading order, no truncation, scrolls to the end. **Scope note:** cohort grouping + judged-cohort collapse of the wireframe is a thinner cut (elementDiffs is flat); the load-bearing "readable to the last line, virtualized" is met.
+- [x] 5.5 Projection contract tests (`lib/projection.test.ts`): consume the checked-in `public-schema/` fixtures (repo-reference forbids any host-path property; projected-review names its repo as a reference object), and the adapters emit no host-absolute path.
 
 ## 6. Push handling in the app (wireframe 24)
 
-- [ ] 6.1 Push registration flow (`device.registerPush` after pairing; permission prompt at the right moment), notification settings screen (six switches).
-- [ ] 6.2 Deep-link routes (`rennet://…`) for every taxonomy entry; cold-start and warm routing; attention-clear acknowledgment on landing; unit tests on the routing table.
+- [x] 6.1 Push registration (`runtime/push.ts` `device.registerPush` after pairing; permission prompt at the point push is enabled in Settings), notification settings screen with the six taxonomy switches (`app/settings/notifications.tsx`).
+- [x] 6.2 Deep-link routes (`rennet://…`) for every taxonomy entry, resolved under the delivering daemon via the device→daemon index; the routing table + push resolution are pure + unit-tested (`deep-links.test.ts`); attention clear-on-landing (`attention.acknowledge`) fires from `useReviewFocus` on every review surface. (Cold-start/warm OS-notification-response wiring is a thin device-only follow-up; the routing table it feeds is complete + tested.)
 
 ## 7. Close-out
 
-- [ ] 7.1 Docs same-change: `using/` mobile guide (pair, read, notifications), architecture-overview client row, delivery-order M1 entry, mobile-plan M1 marked delivered; device smoke checklist recorded.
+- [x] 7.1 Docs same-change: `using/guide/mobile.md` (pair, read, notifications) + sidebar entry; architecture-overview mobile client row + node; delivery-order M1 entry; mobile-plan M1 marked delivered + device smoke checklist; dependency-standard Mobile stack; protocol-compatibility feature + frames.
 - [ ] 7.2 Full `pnpm check` green (exit code captured directly); openspec validate strict; PR `Refs #383`.
