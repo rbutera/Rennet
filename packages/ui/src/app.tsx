@@ -22,6 +22,7 @@ import type {
   ReviewEngine,
   ReviewNarration,
 } from "@rennet/types";
+import { CANVAS_ANGLES } from "@rennet/types";
 import {
   type ReactNode,
   useCallback,
@@ -99,6 +100,7 @@ import {
   LayersIcon,
   TriangleIcon,
 } from "./components/icons";
+import { ANGLE_LABELS } from "./components/lens";
 import { NavRail } from "./components/nav-rail";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
@@ -169,7 +171,83 @@ function resolveProposal(canvases: CanvasSet, proposalId: string): CanvasSet {
   return next;
 }
 
-const angles = ["Logic", "Security", "Tests", "Performance", "Maintainability", "Product"];
+/**
+ * One row of the Files view's Angles rail (critique P2: the rail was DEAD — six
+ * fictional angle names, every row hard-coded "Not run"). A row is always derived
+ * from real review state, never a placeholder: `ran` (with an honest count read
+ * from the loaded data), `running` (that row's fetch is genuinely in flight),
+ * `pending` (the canvas load has not landed — it fires on the Canvases landing,
+ * so this claims nothing about a run), `failed`, or `unavailable` (the review's
+ * repository is gone, so the live pipeline cannot run).
+ */
+export interface AngleRailRow {
+  readonly angle: CanvasAngle;
+  readonly label: string;
+  readonly state: "pending" | "running" | "failed" | "unavailable" | "ran";
+  /** Present only for `ran`: an honest quantity read from the loaded data. */
+  readonly detail?: string;
+}
+
+const ANGLE_STATE_TEXT: Record<Exclude<AngleRailRow["state"], "ran">, string> = {
+  pending: "Pending",
+  running: "Running",
+  failed: "Failed",
+  unavailable: "Unavailable",
+};
+
+function railCount(n: number, unit: string): string {
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * Derive the Angles rail from the SAME state the Canvases view renders from —
+ * the five real canvas angles, never the old fictional six. Honesty rules:
+ * a count appears ONLY when loaded data carries it; the flagged and noise rows
+ * read their own fetch results (their lenses are fed by those fetches, not the
+ * canvas analysis layer, and those fetches fire on review open — so `running`
+ * is literally true for them while undefined); the other three angles read the
+ * loaded canvas set, whose analysis elements are what their lenses place.
+ */
+function angleRailRows(input: {
+  repositoryPresent: boolean;
+  loadFailed: boolean;
+  canvases: CanvasSet | null;
+  decisionsRun: DecisionsRunStatus | undefined;
+  flagged: FlaggedReview | undefined;
+  noise: NoiseReview | undefined;
+}): AngleRailRow[] {
+  const { repositoryPresent, loadFailed, canvases, decisionsRun, flagged, noise } = input;
+  const fromCanvas = (angle: CanvasAngle): Pick<AngleRailRow, "state" | "detail"> => {
+    if (!repositoryPresent) return { state: "unavailable" };
+    // The Decisions runner can fail while the rest of the set lands (#137/#160):
+    // say so, never an element count that dresses a crashed pass as a run.
+    if (angle === "decisions" && decisionsRun?.status === "failed") return { state: "failed" };
+    if (canvases) {
+      return {
+        state: "ran",
+        detail: railCount(canvases[angle].layers.analysis.elements.length, "element"),
+      };
+    }
+    return { state: loadFailed ? "failed" : "pending" };
+  };
+  const flaggedRow = (): Pick<AngleRailRow, "state" | "detail"> =>
+    flagged === undefined
+      ? { state: "running" }
+      : flagged.status === "failed"
+        ? { state: "failed" }
+        : { state: "ran", detail: railCount(flagged.findings.length, "finding") };
+  const noiseRow = (): Pick<AngleRailRow, "state" | "detail"> =>
+    noise === undefined
+      ? { state: "running" }
+      : noise.status === "failed"
+        ? { state: "failed" }
+        : { state: "ran", detail: railCount(noise.groups.length, "group") };
+  return CANVAS_ANGLES.map((angle) => ({
+    angle,
+    label: ANGLE_LABELS[angle],
+    ...(angle === "flagged" ? flaggedRow() : angle === "noise" ? noiseRow() : fromCanvas(angle)),
+  }));
+}
 
 /** Max concurrent refine turns fired by "Refine all" (#19) — bounds the model
  *  subprocess fan-out on a large draft without the deferred budget machinery. */
@@ -201,6 +279,9 @@ export function ReviewWorkspace({
   review,
   selectedPath,
   focus,
+  angleRail,
+  outlineFallback,
+  onOpenAngle,
   onSelectPath,
   onSetRead,
   onRegenerate,
@@ -208,6 +289,12 @@ export function ReviewWorkspace({
   review: Review;
   selectedPath?: string;
   focus?: DiffFocus;
+  /** The Angles rail, derived from the real canvas/fetch state (`angleRailRows`). */
+  angleRail: readonly AngleRailRow[];
+  /** True when the loaded set is the mechanical outline, not AI findings (#260). */
+  outlineFallback: boolean;
+  /** Open the Canvases view on the given angle — the rail's rows navigate there. */
+  onOpenAngle(angle: CanvasAngle): void;
   onSelectPath(path: string): void;
   onSetRead(path: string, read: boolean): void;
   onRegenerate(): void;
@@ -341,12 +428,26 @@ export function ReviewWorkspace({
 
         <aside className="angle-panel" aria-label="Review angles">
           <div className="panel-title">Angles</div>
-          <p className="muted">Manual coverage only.</p>
-          {angles.map((angle) => (
-            <div className="angle-row" key={angle}>
-              <span>{angle}</span>
-              <span className="angle-state">Not run</span>
-            </div>
+          {/* The loud outline honesty travels with the data (real-AI-default): when
+              the loaded set is the deterministic mechanical outline, the counts below
+              are diff STRUCTURE, and the rail says so — never passing them off as AI
+              findings. The Canvases view carries the full banner + retry. */}
+          {outlineFallback ? <p className="muted">Structural outline — not AI findings.</p> : null}
+          {/* Each row is the REAL state of that canvas angle (critique P2), and a
+              row navigates to its canvas lens — the plumbing the Canvases view
+              already exposes (`setAngle` + the view toggle), no new machinery. */}
+          {angleRail.map((row) => (
+            <button
+              type="button"
+              className="angle-row"
+              key={row.angle}
+              onClick={() => onOpenAngle(row.angle)}
+            >
+              <span>{row.label}</span>
+              <span className={`angle-state${row.state === "ran" ? " is-ran" : ""}`}>
+                {row.state === "ran" ? row.detail : ANGLE_STATE_TEXT[row.state]}
+              </span>
+            </button>
           ))}
           <div className="snapshot-card">
             <span>PATCHSET</span>
@@ -2795,6 +2896,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           review={review}
           selectedPath={selectedPath}
           focus={diffFocus}
+          // The Angles rail reads the SAME state the Canvases view renders from
+          // (critique P2): the loaded canvas set, the decisions-run status, and the
+          // flagged/noise fetch results — so what it shows is what actually ran.
+          angleRail={angleRailRows({
+            repositoryPresent,
+            loadFailed,
+            canvases: liveLoaded ? canvases : null,
+            decisionsRun,
+            flagged: boundFlaggedReview,
+            noise: noiseReview,
+          })}
+          outlineFallback={liveLoaded && engine?.aiReview === false}
+          onOpenAngle={(angle) => {
+            viewStore.getState().setAngle(angle);
+            setView("canvases");
+          }}
           onSelectPath={(path) => {
             setSelectedPath(path);
             setDiffFocus(undefined);

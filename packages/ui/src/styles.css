@@ -519,21 +519,37 @@ button {
   background: var(--accent-soft);
   outline: none;
 }
+/* A rail row is a BUTTON now (critique P2): it navigates to that angle's canvas
+ * lens, so it carries the panel-button resets (.file-row's pattern) on top of the
+ * original row layout. Focus falls through to the systemic :focus-visible ring. */
 .angle-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   height: 36px;
+  width: calc(100% - 24px);
   margin: 0 12px;
+  padding: 0;
+  border: 0;
   border-bottom: 1px solid var(--hairline);
+  background: transparent;
   color: var(--text-soft);
   font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.angle-row:hover {
+  color: var(--text);
 }
 .angle-state {
   color: var(--text-faint);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+/* A row that actually ran reads a shade stronger — ink family only, no hue. */
+.angle-state.is-ran {
+  color: var(--text-soft);
 }
 .snapshot-card {
   margin: 18px 12px;

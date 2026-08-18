@@ -45,6 +45,9 @@ describe("ReviewWorkspace", () => {
     const html = renderToStaticMarkup(
       <ReviewWorkspace
         review={review}
+        angleRail={[{ angle: "spec", label: "Spec", state: "pending" }]}
+        outlineFallback={false}
+        onOpenAngle={() => undefined}
         onSelectPath={() => undefined}
         onSetRead={() => undefined}
         onRegenerate={() => undefined}
@@ -58,6 +61,9 @@ describe("ReviewWorkspace", () => {
   it("keeps the old patch visible behind an invalidation warning", () => {
     const html = renderToStaticMarkup(
       <ReviewWorkspace
+        angleRail={[{ angle: "spec", label: "Spec", state: "pending" }]}
+        outlineFallback={false}
+        onOpenAngle={() => undefined}
         review={{ ...review, status: "invalid", pendingPatchsetId: "patch-two" }}
         onSelectPath={() => undefined}
         onSetRead={() => undefined}

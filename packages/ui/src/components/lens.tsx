@@ -3,7 +3,8 @@ import { type KeyboardEvent, useRef } from "react";
 import { CANVAS_LENSES } from "../canvas/logic";
 import type { Scheme } from "../canvas/store";
 
-const ANGLE_LABELS: Record<CanvasAngle, string> = {
+/** The five angles' display labels — shared with the Files view's Angles rail. */
+export const ANGLE_LABELS: Record<CanvasAngle, string> = {
   spec: "Spec",
   sequence: "Sequence",
   decisions: "Decisions",
