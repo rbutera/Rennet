@@ -44,8 +44,8 @@ sequenceDiagram
   Rennet->>Harness: Send the selected review material
   Harness-->>Rennet: Findings and explanations
   You->>Rennet: Approve, question, comment, or request a change
-  Rennet-->>You: Show the exact review paper
-  You->>Rennet: Sign
+  Rennet-->>You: Show the exact review preview
+  You->>Rennet: Post
   Rennet->>GitHub: Post one SHA-bound review
 ```
 
@@ -55,13 +55,13 @@ sequenceDiagram
    decisions, flags, and remaining noise connected to the same underlying diff.
 3. Leave dispositions where you have a judgment: approve, question, comment, or
    request a change.
-4. Open the draft and tidy the wording. The paper shows the actual outbound
+4. Open the draft and tidy the wording. The preview shows the actual outbound
    review, not a summary of it.
-5. Sign the paper. Rennet posts the review to GitHub as one review event rather
+5. Post the review. Rennet sends it to GitHub as one review event rather
    than a burst of unrelated comments.
 
 The review path for someone else's PR is live end to end on the current main
-branch: GitHub ingest, review, refinement, the paper, and the final post.
+branch: GitHub ingest, review, refinement, the preview, and the final post.
 
 ## Where the diff comes from
 
@@ -93,7 +93,7 @@ a failure it can tie to your changed code becomes a real finding.
 - Only known infrastructure signatures get the infrastructure label.
 - Model refinement can only attribute a failure to the change or leave it
   unclassified.
-- Missing, truncated, or timed-out CI never blocks review, signing, or publishing,
+- Missing, truncated, or timed-out CI never blocks review or publishing,
   and is never reported as passing.
 
 ## What reaches GitHub
@@ -110,7 +110,7 @@ read state. Rennet translates the review at the boundary:
 - private chat, dismissed findings, reading progress, and model traces stay
   local.
 
-The paper shows what will travel and what will remain in Rennet. The posted
+The preview shows what will travel and what will remain in Rennet. The posted
 review is pinned to the commit you reviewed.
 
 ## When the pull request changes
@@ -146,7 +146,7 @@ assembled — it never claims a model saw nothing extra. If you
 on this Mac directly over your own private network, not through any Rennet
 server.
 
-GitHub naturally receives the review only when you sign it. If GitHub is
+GitHub naturally receives the review only when you post it. If GitHub is
 unavailable, local reading still works for material already on disk, but posting
 waits until the connection is back.
 
@@ -159,7 +159,7 @@ GitHub includes an authorization URL with the state, though the current project
 screen only shows the generic incomplete-list banner. Authorize the `gh` token
 for the named organization through GitHub, then refresh the project.
 
-GitHub can also apply a secondary rate limit while the paper is posting. Rennet
+GitHub can also apply a secondary rate limit while the review is posting. Rennet
 keeps the artifact as one batched review and surfaces the backoff instead of
 splitting it into independently retrying comments. Retry after GitHub's stated
 window; the review marker and read-back reconciliation protect the one-review

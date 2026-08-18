@@ -26,7 +26,7 @@ flowchart TD
   token and sees the product exactly as it always has.
 - A **projected** connection comes from elsewhere on your network and presents a
   valid device token. It can do everything a private connection can — capture
-  reviews, drive canvases, sign — but host paths on your machine never cross to
+  reviews, drive canvases, publish — but host paths on your machine never cross to
   it (see [what a remote client sees](#what-a-remote-client-sees)).
 - A connection from the network **without** a valid token can do exactly one
   thing: exchange a pairing code for a token. Every other request is refused.

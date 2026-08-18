@@ -1,10 +1,10 @@
 ---
 title: Getting started
-description: The shortest useful tour of a Rennet review, from choosing a project to signing the result.
+description: The shortest useful tour of a Rennet review, from choosing a project to posting the result.
 ---
 
 Rennet turns a local branch or GitHub pull request into an ordered review you
-can read, discuss, and sign. This page gives the shortest route through the
+can read, discuss, and post. This page gives the shortest route through the
 product through the two current outbound routes.
 
 ## The loop
@@ -15,7 +15,7 @@ flowchart LR
   change --> read[Read through lenses]
   read --> dispose[Comment, question, approve]
   dispose --> draft[Shape the draft]
-  draft --> sign[Preview and sign]
+  draft --> publish[Preview and post]
 ```
 
 1. **Choose a project.** Point Rennet at one repository or a workspace with
@@ -29,7 +29,7 @@ flowchart LR
    discuss, or approve at the line, chunk, requirement, or cohort.
 5. **Shape the draft.** Reword, reorder, merge, split, or withdraw the collected
    dispositions.
-6. **Preview and sign.** The paper shows the exact outbound artifact before it
+6. **Preview and post.** The preview shows the exact outbound artifact before it
    becomes a GitHub review or an own-branch pull request.
 
 ## Two modes, one engine
@@ -38,14 +38,14 @@ flowchart LR
 flowchart TD
   engine[One review engine]
   engine --> team[Team PR]
-  team --> github[Signed GitHub review]
+  team --> github[Posted GitHub review]
   engine --> yours[Your branch]
   yours --> agent[Coding-agent handoff]
   agent --> delta[Review what moved]
 ```
 
-A team PR can become a signed GitHub review. Your branch can be pushed and
-opened as the previewed pull request when you sign. The coding-agent route is
+A team PR can become a posted GitHub review. Your branch can be pushed and
+opened as the previewed pull request when you publish. The coding-agent route is
 live end to end: you compose the handoff, preview it, run it, and get a focused
 re-review of exactly what the agent changed — including anything it changed beyond
 what you asked for.
@@ -59,7 +59,7 @@ it fresh rather than carrying over your earlier decisions.
 Press `⌘K` on macOS or `Ctrl+K` elsewhere to open the context-aware command
 palette. It includes only actions that can do something on the current screen:
 recent places, navigation, review retry/regeneration, lens changes, zoom, blast
-radius, appearance, settings, and the draft or paper when those destinations
+radius, appearance, settings, and the draft or preview when those destinations
 exist.
 
 `⌘[` and `⌘]` move backward and forward through Rennet's surface history without

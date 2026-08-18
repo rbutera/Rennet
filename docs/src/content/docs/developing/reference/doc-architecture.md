@@ -70,7 +70,7 @@ to reconcile rather than a reason to pick whichever sentence is convenient.
 | The review interaction model | [Canvas model](/developing/concepts/canvas-model/) |
 | How model jobs are assigned | [Model council](/developing/concepts/model-council/) |
 | How context reaches models | [Context assembly](/developing/concepts/context-assembly/) |
-| How a review becomes an outbound artifact | [Collation and signing](/developing/concepts/collation-and-signing/) |
+| How a review becomes an outbound artifact | [Collation and publishing](/developing/concepts/collation-and-publishing/) |
 
 ## Live state beats prose
 

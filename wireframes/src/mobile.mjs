@@ -444,14 +444,14 @@ export function frameM5() {
   return {
     head: { badge: '23', title: 'Mobile · post', pill: 'mobile · phase 6' },
     ref: 'issue #382 · deliverable 2\nyour click, from anywhere',
-    sub: `The headline: preview → post, from anywhere. The paper shows exactly what will appear under Rai’s name and one tap posts it; the posted screen states the real URL. The own-branch loop ends here too — drafted body, posted, PR created idempotently. No sign step, no confirmation ceremony: the post button <b>is</b> the click.`,
+    sub: `The headline: preview → post, from anywhere. The preview shows exactly what will appear under Rai’s name and one tap posts it; the posted screen states the real URL. The own-branch loop ends here too — drafted body, posted, PR created idempotently. No extra step, no confirmation ceremony: the post button <b>is</b> the click.`,
     win: `<div class="phones">
-      ${col(a, cap('Preview', 'The collated paper before anything moves; not right → ask for changes (a refine turn), never phone-editing.', ['publish.requestConsent', 'review.draftPrBody'], []))}
+      ${col(a, cap('Preview', 'The outbound review before anything moves; not right → ask for changes (a refine turn), never phone-editing.', ['publish.requestConsent', 'review.draftPrBody'], []))}
       ${col(c, cap('Posted', 'Truthful outcome with the real URL. The own-branch loop ends on this same screen: drafted body → post → exactly one PR.', ['publish.review', 'publish.submitPr'], ['attention: publish-ready']))}
     </div>`,
     notes: [
       { h: 'This is the product’s click.', b: 'Publishing stays your tap, in your voice — the phone makes it available from anywhere, it never automates it away.' },
-      { h: 'No ceremony.', b: 'One tap posts. No sign step, no biometric ritual, no are-you-sure — the preview already showed exactly what posts.' },
+      { h: 'No ceremony.', b: 'One tap posts. No extra step, no biometric ritual, no are-you-sure — the preview already showed exactly what posts.' },
       { h: 'Idempotent by construction.', b: 'Double-tap, retry, flaky network: exactly one review / one PR, and the URL comes back.' },
       { h: 'Publish-ready pushes.', b: 'When a draft is composed and waiting, the phone knows — tap lands on this preview.' },
     ],

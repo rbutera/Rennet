@@ -118,7 +118,7 @@ export function frameDeltaReview() {
     <div class="delta-h"><span class="ey">Since you last reviewed</span><span class="ctx">${ic.resteer} re-review · patchset 9 ⟵ 8 · agent turn</span></div>
     ${digest}
     ${facts}
-    <div class="delta-foot rel"><span class="anno" style="right:6px;top:-2px">${dot(5)}</span>Informational — re-review and sign proceed without dismissing it. Tap any row to open its diff.</div>
+    <div class="delta-foot rel"><span class="anno" style="right:6px;top:-2px">${dot(5)}</span>Informational — re-review and post proceed without dismissing it. Tap any row to open its diff.</div>
   </div>`;
 
   // ── a slim slice of the successor review heart, below the account ──
@@ -183,7 +183,7 @@ export function frameDeltaReview() {
       { h: 'Digest on top, facts below.', b: 'The LLM rephrases the deterministic account into one plain-English read. The addressed / untouched / beyond-asks facts stay visible right under it as the authoritative ground truth — the prose can never claim a fact the facts don’t carry.' },
       { h: 'Auto, and never blocking.', b: 'The facts render the instant the re-review opens; the digest generates in the background and streams in a beat later. One light-model call per re-review — a deliberate, infrequent act.' },
       { h: 'Model-free floor.', b: 'If the light seat is down or over budget, the digest line is simply absent and the facts are unchanged — an honest “no summary this time,” never a blank card and never a guess.' },
-      { h: 'Beyond-asks stays loud.', b: 'The scope-creep the reviewer must see gets its own amber block; every row jumps to its diff. The account is informational — re-review and sign proceed without dismissing it (Rule Zero: no gate).' },
+      { h: 'Beyond-asks stays loud.', b: 'The scope-creep the reviewer must see gets its own amber block; every row jumps to its diff. The account is informational — re-review and post proceed without dismissing it (Rule Zero: no gate).' },
       { h: 'The patchset trail.', b: 'The title-bar patchset chip drops a trail (9 ‹ 8 ‹ 7): the current patchset is pinned, predecessors are read-only look-backs. Regenerate remains the only way a new patchset appears; the trail is how you look back — no browsing of predecessors in v4.0.' },
     ],
   };

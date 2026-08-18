@@ -1,6 +1,6 @@
 ---
 title: Using Rennet
-description: Guides and concepts for people who use Rennet to understand and sign code reviews.
+description: Guides and concepts for people who use Rennet to understand and post code reviews.
 ---
 
 Rennet helps you turn a large local change or GitHub pull request into a review
@@ -11,7 +11,7 @@ path that matches the change in front of you.
 
 - [Getting started](/using/guide/getting-started/) — the shortest useful tour.
 - [Reviewing a GitHub PR](/using/guide/reviewing-a-github-pr/) — the live team-review path end to end.
-- [User journey](/using/guide/user-journey/) — the full intended road from project to signed paper.
+- [User journey](/using/guide/user-journey/) — the full intended road from project to posted review.
 
 ## Understand the product
 
@@ -22,13 +22,13 @@ path that matches the change in front of you.
 flowchart LR
   yours[Your branch] --> review[One Rennet review engine]
   team[Team pull request] --> review
-  review --> paper[Your signed paper]
-  paper --> github[GitHub review]
-  paper --> agent[Coding-agent handoff]
+  review --> preview[Your review preview]
+  preview --> github[GitHub review]
+  preview --> agent[Coding-agent handoff]
 ```
 
-Team work can become a signed GitHub review, and your own branch can become a
-signed push-plus-PR submission. The coding-agent route is live end to end: you
+Team work can become a posted GitHub review, and your own branch can become a
+published push-plus-PR submission. The coding-agent route is live end to end: you
 compose the handoff, preview it, run it, and get a focused re-review of exactly
 what the agent changed — including anything it changed beyond what you asked for.
 The one unfinished piece: when the agent reworks existing code in place, Rennet

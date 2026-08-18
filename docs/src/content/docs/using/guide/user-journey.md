@@ -1,10 +1,10 @@
 ---
 title: User journey
-description: The intended path from adding a project to signing a review, with honest notes about what is live today.
+description: The intended path from adding a project to posting a review, with honest notes about what is live today.
 ---
 
 This is the road through Rennet: add a project, enter through your branch or a
-team pull request, understand the change, shape the outbound artifact, and sign
+team pull request, understand the change, shape the outbound artifact, and post
 it. A team change can become a GitHub review, while your branch can be pushed and
 opened as a pull request. The coding-agent loop is live end to end: you compose
 the handoff, run it, and get a focused re-review of exactly what the agent
@@ -24,9 +24,9 @@ flowchart TD
   local --> review[Review through lenses]
   pr --> review
   review --> draft[Collation draft]
-  draft --> paper[Paper preview]
-  paper -->|Pull request| post[Post GitHub review]
-  paper -->|Own branch| handoff[Handoff to coding agent]
+  draft --> preview[Preview]
+  preview -->|Pull request| post[Post GitHub review]
+  preview -->|Own branch| handoff[Handoff to coding agent]
   handoff --> delta[Review only what moved]
   delta --> review
 ```
@@ -120,7 +120,7 @@ If it could not mount the change with anything your project affords, it says so
 plainly: that is "could not check," never dressed up as an all-clear. A
 backend-only changeset is skipped as not-applicable, and reopening a review checks
 again. Rennet bundles no browser or accessibility tooling of its own, and
-verify-ui never blocks signing or publishing.
+verify-ui never blocks publishing.
 
 Blast radius paints those surfaces rather than changing their order. Read
 coverage is equally literal: an action marks material read, scrolling can only
@@ -145,14 +145,14 @@ from every lens and lets you reword, reorder, merge, split, discuss, or withdraw
 them. Background refinement can clean up rough notes, but the draft remains
 editable and yours.
 
-## 10. Preview and sign the paper
+## 10. Preview and post
 
-The paper is a read-only preview of exactly what will leave Rennet. For a team
+The preview is a read-only view of exactly what will leave Rennet. For a team
 PR it contains the batched GitHub review and its verdict. For your own branch it
 contains the handoff or PR submission.
 
-If the preview is wrong, go back to the draft. Signing publishes the exact
-paper, idempotently, in the reviewer's name.
+If the preview is wrong, go back to the draft. Publishing sends the exact
+preview, idempotently, in the reviewer's name.
 
 ## 11. Re-steer your own branch
 
@@ -163,7 +163,7 @@ The coding-agent route is live end to end: you compose the handoff, preview it,
 run it, and get a focused re-review of exactly what the agent changed — including
 anything it changed beyond what you asked for.
 
-Signing the finished own-branch paper pushes the named branch and opens the
+Publishing the finished own-branch preview pushes the named branch and opens the
 previewed pull request. The one unfinished piece: when the agent reworks existing
 code in place, Rennet cannot yet always recognise it as the same code moved or
 edited, so it re-reviews it fresh rather than carrying over your earlier decisions.
