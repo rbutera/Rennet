@@ -295,6 +295,9 @@ importers:
       ws:
         specifier: 8.21.1
         version: 8.21.1
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.223
@@ -302,6 +305,9 @@ importers:
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
 
   packages/types: {}
 

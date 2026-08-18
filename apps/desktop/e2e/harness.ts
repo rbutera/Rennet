@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -129,7 +136,39 @@ export async function launchRennet(options: {
       RENNET_USER_DATA: options.userData,
     },
   });
+  // Daemon teardown (#379, design D9): the server is now a DETACHED daemon that SURVIVES
+  // app quit — the whole feature. So closing the window no longer stops it, and each test's
+  // isolated daemon would orphan under its throwaway data dir. Wrap `close` (harness-only;
+  // the specs stay untouched) so every `application.close()` also stops the daemon it
+  // spawned, before the spec removes the data dir.
+  const nativeClose = application.close.bind(application);
+  application.close = async (...args: Parameters<ElectronApplication["close"]>) => {
+    const result = await nativeClose(...args);
+    await stopDaemon(options.userData);
+    return result;
+  };
   return { application };
+}
+
+/** Read the test's daemon.json, SIGTERM its pid, and wait (bounded) for the claim to clear. */
+async function stopDaemon(userData: string): Promise<void> {
+  const claimPath = join(userData, "daemon.json");
+  let pid: number | undefined;
+  try {
+    pid = JSON.parse(readFileSync(claimPath, "utf8")).pid;
+  } catch {
+    return; // no daemon (or already gone) — nothing to stop.
+  }
+  if (typeof pid !== "number") return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return; // already dead
+  }
+  const deadline = Date.now() + 3_000;
+  while (existsSync(claimPath) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 /**

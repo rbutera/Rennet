@@ -179,6 +179,39 @@ The exact project directory key is an escaped absolute path today. Relocation
 records and aliases help move local state when the checkout moves; it is not a
 portable repository identity.
 
+## The daemon and the `rennet` CLI
+
+Rennet's server runs as a detached daemon (see the
+[architecture overview](/developing/concepts/architecture-overview/#the-daemon-lifecycle)).
+Opening the desktop app spawns it if it is not already running; quitting the app leaves it
+running, so a review in progress keeps going and the next launch reattaches. The daemon
+writes two files under its data dir (`app.getPath("userData")`, or whatever
+`RENNET_USER_DATA` points at):
+
+- `daemon.json` — the discovery claim (pid, WS port, protocol version, version, start
+  time). Present while a daemon is running, removed on clean shutdown.
+- `daemon.log` — the daemon's stdout/stderr when it was spawned detached.
+
+The `rennet` CLI is the daemon's second client — the same protocol over the same wire the
+desktop uses:
+
+```text
+rennet serve    # run the daemon in the foreground (dev / power tool)
+rennet status   # print the daemon's pid, port, and versions (exit 0 if healthy)
+rennet stop     # stop the running daemon (SIGTERM, clean shutdown)
+```
+
+Each subcommand takes `--data-dir <dir>` and otherwise honors `RENNET_USER_DATA`, then
+falls back to the platform user-data path. There are no confirmation prompts: `rennet
+stop` just stops. The packaged app never depends on `rennet serve` — it spawns its own
+bundled daemon on the Electron binary run as Node, so no system Node is required.
+
+**Data-dir isolation** is how dev checkouts, agent worktrees, and e2e runs stay off the
+production daemon: point `RENNET_USER_DATA` (or `--data-dir`) at a per-checkout directory
+and that run reads and writes only its own claim. The dev target builds the app and
+launches the shell, which spawns the daemon from the built bundle exactly as production
+does (minus the packaging fuses).
+
 ## When setup looks wrong
 
 - Run `gh auth status` to see which GitHub account is active.

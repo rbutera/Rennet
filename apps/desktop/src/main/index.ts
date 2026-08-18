@@ -2,10 +2,10 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { menuRunPayloadSchema } from "@rennet/protocol";
-import { createRennetServer, type RennetServer } from "@rennet/server";
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
+import { ensureDaemon } from "./daemon-supervisor";
 import { applyMenuUpdate } from "./menu";
 import { brandWindowIcon, resolveAppUserModelId } from "./window-identity";
 
@@ -25,6 +25,10 @@ if (squirrelStartup) {
 // streams moved to the loopback WS transport (#378), where the renderer is client #1.
 const MENU_UPDATE_CHANNEL = "rennet:menu-update";
 const MENU_RUN_CHANNEL = "rennet:menu-run";
+// The native directory picker (#379): the detached daemon cannot open a dialog, so the
+// renderer asks MAIN for the path and forwards it to `repository.choose`. Electron-native
+// residue, same family as the menu channels.
+const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 const APP_ORIGIN = "app://rennet";
 // The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
 // process argv via `webPreferences.additionalArguments` (the boot-time-constant pattern
@@ -39,11 +43,6 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 if (process.env.RENNET_USER_DATA) app.setPath("userData", process.env.RENNET_USER_DATA);
-
-// The in-process server handle (#377). Composed in `whenReady` once the app data
-// path is resolved; `registerCommandHandler` forwards each IPC invoke to it and
-// `before-quit` shuts it down. A phase-2 transport speaks to this same handle.
-let server: RennetServer | null = null;
 
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
@@ -72,6 +71,22 @@ function registerMenuHandler(): void {
       buildFromTemplate: (template) => Menu.buildFromTemplate(template),
       setApplicationMenu: (menu) => Menu.setApplicationMenu(menu),
     });
+  });
+}
+
+function registerDialogHandler(): void {
+  // The renderer's bridge composition calls this to satisfy `repository.choose` (#379).
+  // RENNET_TEST_REPO short-circuits the dialog (e2e / headless), mirroring the server's
+  // former chooser so the picker path stays test-driveable; otherwise the native dialog
+  // runs and the chosen directory is forwarded to the daemon as the command's `path`.
+  ipcMain.handle(CHOOSE_DIRECTORY_CHANNEL, async (event) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
+    if (process.env.RENNET_TEST_REPO) return process.env.RENNET_TEST_REPO;
+    const result = await dialog.showOpenDialog({
+      title: "Choose a repository to review",
+      properties: ["openDirectory"],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 }
 
@@ -155,43 +170,36 @@ app.whenReady().then(async () => {
   // on unsigned macOS it no-ops instead of crashing; on Windows it activates once
   // Squirrel artifacts ship in a release.
   if (app.isPackaged) startAutoUpdate();
-  // The composition root now lives in @rennet/server (#377). The shell supplies the
-  // Electron-owned effects — the resolved user-data dir, the process env, the repo
-  // chooser dialog, shell.openPath, and net.fetch. Command invocation and the
-  // progress/ask-stream streams travel the server's loopback WS listener (#378), which
-  // the renderer dials as client #1 — no `rennet:invoke` IPC path exists anymore.
-  // Persistence is byte-for-byte: the server opens the same rennet.sqlite /
-  // projects.json / threads under `dataDir`.
-  server = await createRennetServer({
-    dataDir: app.getPath("userData"),
-    env: process.env,
-    serverVersion: app.getVersion(),
-    chooseRepositoryFallback: async () => {
-      const result = await dialog.showOpenDialog({
-        title: "Choose a repository to review",
-        properties: ["openDirectory"],
-      });
-      return result.canceled ? null : (result.filePaths[0] ?? null);
-    },
-    // Background rehydration progress now fans out to every WS client inside the
-    // server's listener (#378); the old per-window `webContents.send` broadcast is gone.
-    openPath: async (absPath) => (await shell.openPath(absPath)) === "",
-    httpFetch: async (url, init) => {
-      const res = await net.fetch(url, init);
-      return { status: res.status, headers: res.headers, text: () => res.text() };
-    },
-  });
+  // The shell is a supervisor + client now (#379): the composition root runs in a DETACHED
+  // daemon, not in-process. Find a healthy daemon for this data dir or spawn one, then dial
+  // it exactly as phase 2 dialed the in-process listener. The daemon owns the Electron-free
+  // effects it used to receive from the shell (net→global fetch; the repo dialog moves to
+  // the renderer picker forwarded as `repository.choose`'s `path`). Persistence is unchanged:
+  // the daemon opens the same rennet.sqlite / projects.json / threads under `dataDir`.
+  const dataDir = app.getPath("userData");
+  let wsPort: number;
+  try {
+    wsPort = await ensureDaemon(dataDir);
+  } catch (error) {
+    const cause = (error instanceof Error ? error.message : String(error))
+      .replace(/\s+/g, " ")
+      .trim();
+    dialog.showErrorBox(
+      "Rennet daemon failed to start",
+      `Cause: ${cause}\nLog: ${join(dataDir, "daemon.log")}`,
+    );
+    app.quit();
+    return;
+  }
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
   registerAppProtocol();
   registerMenuHandler();
-  await createWindow(server.wsPort);
+  registerDialogHandler();
+  await createWindow(wsPort);
 });
 
+// App quit stops NOTHING (#379): the daemon and any running review turn outlive the window.
+// No `before-quit` shutdown — that implicit teardown was the thing this phase removes.
 app.on("window-all-closed", () => app.quit());
-app.on("before-quit", () => {
-  // Hand the quit to the server: it aborts in-flight turns, closes the watcher and
-  // rehydration, and closes the store (#251 criterion 4). Idempotent.
-  server?.shutdown();
-});

@@ -1871,7 +1871,11 @@ export const commandDefinitions = {
     output: z.object({ review: reviewSchema.nullable(), repositoryPresent: z.boolean() }),
   },
   "repository.choose": {
-    input: z.object({}),
+    // `path` is an optional, append-only input (#379): a detached daemon cannot open a
+    // native directory picker, so a windowed client obtains the path from its own host
+    // dialog and forwards it here. Absent → the server falls back to RENNET_TEST_REPO or
+    // its injected chooser. Optional keeps every pre-#379 caller (which sent `{}`) valid.
+    input: z.object({ path: z.string().optional() }),
     output: z.object({ path: z.string().nullable() }),
   },
   "review.capture": {

@@ -79,6 +79,10 @@ const appIcon =
 module.exports = {
   packagerConfig: {
     asar: true,
+    // The detached daemon (#379) is spawned as a plain Node process (ELECTRON_RUN_AS_NODE),
+    // so its bundle must live on disk OUTSIDE the asar for a Node `require` to load it.
+    // Un-asar the whole server build dir; everything else stays packed.
+    asarUnpack: ["dist/server/**"],
     executableName: "Rennet",
     icon: appIcon,
     ignore: [
@@ -126,7 +130,11 @@ module.exports = {
           : path.join(buildPath, platform === "win32" ? "electron.exe" : "electron");
       await flipFuses(electronPath, {
         version: FuseVersion.V1,
-        [FuseV1Options.RunAsNode]: false,
+        // RunAsNode is ENABLED (#379, design D4): the detached daemon runs the Electron
+        // binary as Node via ELECTRON_RUN_AS_NODE, which this fuse gates. The daemon IS the
+        // product's capability — Rule Zero forbids trading it away for hardening. The other
+        // fuses (OnlyLoadAppFromAsar, cookie encryption, etc.) stay locked down.
+        [FuseV1Options.RunAsNode]: true,
         [FuseV1Options.EnableCookieEncryption]: true,
         [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
         [FuseV1Options.EnableNodeCliInspectArguments]: false,

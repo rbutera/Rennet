@@ -49,10 +49,11 @@ Rennet's product is that durable review loop around the inference.
 
 ## Does code leave my machine?
 
-There is no Rennet backend and no Rennet telemetry service. Context sent through
-Claude Code, Codex, or another selected harness may go to that harness's model
-provider. Rennet records what it assembled for each run so the boundary stays
-visible.
+There is no *hosted* Rennet backend and no Rennet telemetry service. Rennet's server
+runs as a local daemon on your own machine — reachable only over loopback, never remote —
+so quitting the app leaves an in-progress review running. Context sent through Claude
+Code, Codex, or another selected harness may go to that harness's model provider. Rennet
+records what it assembled for each run so the boundary stays visible.
 
 ## Does Rennet need separate API keys?
 

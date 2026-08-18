@@ -11,6 +11,7 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 // that bridge: the host platform, the WS port to dial, and the application-menu channels.
 const MENU_UPDATE_CHANNEL = "rennet:menu-update";
 const MENU_RUN_CHANNEL = "rennet:menu-run";
+const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 const WS_PORT_ARG = "--rennet-ws-port=";
 
 /** The Electron-native surface the preload injects as `window.rennet`. */
@@ -23,6 +24,12 @@ export interface RennetPreload {
   updateMenu(sections: MenuTemplateSection[]): void;
   /** Subscribe to menu-item activations (#44); returns an unsubscribe. */
   onMenuRun(listener: (id: string) => void): () => void;
+  /**
+   * Open the native directory picker and resolve the chosen path, or null if cancelled
+   * (#379). A detached daemon cannot open a dialog, so the renderer obtains the path here
+   * and forwards it to `repository.choose`. Honors RENNET_TEST_REPO on the main side.
+   */
+  chooseDirectory(): Promise<string | null>;
 }
 
 // The WS port is a boot-time constant injected via webPreferences.additionalArguments;
@@ -43,6 +50,7 @@ const preload: RennetPreload = {
     ipcRenderer.on(MENU_RUN_CHANNEL, handler);
     return () => ipcRenderer.removeListener(MENU_RUN_CHANNEL, handler);
   },
+  chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
 };
 
 contextBridge.exposeInMainWorld("rennet", preload);

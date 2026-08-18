@@ -210,10 +210,59 @@ because their ports or contracts exist. The
 [architecture contracts](/developing/concepts/architecture-contracts/) page
 keeps those requirements separate from observed implementation.
 
+## The daemon lifecycle
+
+The server runs as a **detached daemon**, not inside the desktop app. The app is a
+supervisor and a client: on launch it looks for a healthy daemon and connects to it,
+or spawns one and waits for it to come up. Quitting the app stops nothing — the daemon,
+and any review turn running inside it, outlive the window. A running review survives
+app quit and relaunch; the reopened app reattaches to the same process.
+
+Discovery and supervision are a pidfile plus a health probe, nothing fancier. The
+daemon writes `daemon.json` (pid, WS port, protocol version, version, start time) under
+its data dir once its listener is up, and removes it on clean shutdown. A launcher — the
+desktop shell or the `rennet` CLI — treats that file as a *claim* to verify, never as
+truth: it probes `GET /healthz` on the claimed port before trusting it. A missing, stale
+(dead pid), or unhealthy claim leads to spawning a fresh daemon that overwrites it. There
+is no socket-handover protocol and no leader election; two cooperating launchers
+converging on one healthy daemon is enough.
+
+The daemon runs the Electron binary as plain Node (`ELECTRON_RUN_AS_NODE`), so the
+packaged app carries and spawns its own daemon with no system Node dependency. On
+incompatible protocol skew the shell restarts the daemon with no dialog (a personal
+product updates the daemon with the app); the CLI only reports skew, never restarts.
+
+```mermaid
+sequenceDiagram
+  participant App as Desktop shell
+  participant File as daemon.json
+  participant Daemon
+  participant CLI as rennet CLI
+
+  App->>File: Read the claim
+  App->>Daemon: Probe GET /healthz
+  alt healthy and compatible
+    Daemon-->>App: identity (pid, port, protocol)
+    App->>Daemon: Connect over WS (client)
+  else missing, stale, or incompatible
+    App->>Daemon: Spawn detached (ELECTRON_RUN_AS_NODE)
+    Daemon->>File: Write claim once listening
+    App->>Daemon: Probe until healthy, then connect
+  end
+  Note over App,Daemon: App quit closes the window; the daemon keeps running
+  CLI->>File: rennet stop reads the claim
+  CLI->>Daemon: SIGTERM
+  Daemon->>File: Remove claim, shut down cleanly
+```
+
+Per-data-dir isolation keeps dev checkouts, agent worktrees, and e2e runs from ever
+attaching to the production daemon: the pidfile lives under the data dir, so the
+`RENNET_USER_DATA` override that already isolates the stores isolates the daemon too.
+
 ## Conversation transport and durability
 
-Inline review questions stream from desktop main to the renderer on a channel
-keyed by review and turn. The renderer coalesces token deltas before painting;
+Inline review questions stream from the daemon to the renderer over the WebSocket wire
+on a channel keyed by review and turn. The renderer coalesces token deltas before painting;
 those partial bodies are live display state, not durable conversation history.
 
 ```mermaid
@@ -240,9 +289,12 @@ sequenceDiagram
 If the process dies first, the empty `streaming` placeholder reloads as
 `interrupted`; no partial token buffer is promoted to a finished answer. A
 malformed thread file degrades to no restored threads and is left untouched for
-manual recovery. On app quit, desktop main aborts every registered turn. Codex's
-child is killed through its executor; the Claude SDK exposes no child PID, so
-Rennet can request cancellation but cannot claim it observed the process exit.
+manual recovery. **App quit no longer aborts turns** — the daemon outlives the
+window, so a turn keeps running and the relaunched app reattaches to it. A turn is
+aborted only by an explicit daemon shutdown (`rennet stop`, a signal, or a
+skew-restart): then Codex's child is killed through its executor, while the Claude SDK
+exposes no child PID, so Rennet can request cancellation but cannot claim it observed
+the process exit.
 
 Persisted threads reattach after reload; live in-flight deltas do not. Main-alive
 in-flight enumeration is not wired yet — `review.reattach` returns an empty

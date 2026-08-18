@@ -84,6 +84,7 @@
     "dev": "nx run rennet-desktop:dev",
     "e2e": "nx run rennet-desktop:e2e",
     "graph": "nx graph",
+    "rennet": "node packages/server/dist/rennet.cjs",
     "real-turn": "nx run rennet-adapters:real-turn"
   },
   "devDependencies": {
