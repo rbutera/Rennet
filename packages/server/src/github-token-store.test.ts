@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -38,5 +38,25 @@ describe("createGitHubTokenStore", () => {
     const { store } = await freshStore();
     await store.setGitHubToken("   ");
     expect(await store.getGitHubToken()).toBeNull();
+  });
+
+  it("re-tightens a pre-existing permissive file to 0600 on overwrite", async () => {
+    // `writeFile`'s mode applies only on create — this is the regression the chmod
+    // exists for: a 0644 file must not keep exposing the freshly written token.
+    const { dir, store } = await freshStore();
+    const file = join(dir, "github-token");
+    await writeFile(file, "old\n", { mode: 0o644 });
+    await chmod(file, 0o644);
+    await store.setGitHubToken("gho_fresh");
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect(await store.getGitHubToken()).toBe("gho_fresh");
+  });
+
+  it("SURFACES a non-ENOENT read failure instead of lying not-connected", async () => {
+    const { dir, store } = await freshStore();
+    // A directory at the token path is unreadable as a file (EISDIR) — that must
+    // throw, never read as "no token stored".
+    await mkdir(join(dir, "github-token"));
+    await expect(store.getGitHubToken()).rejects.toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { SecretStore } from "@rennet/adapters";
 
@@ -19,13 +19,18 @@ export function createGitHubTokenStore(dataDir: string): SecretStore {
   const filePath = join(dataDir, FILE_NAME);
   return {
     async getGitHubToken(): Promise<string | null> {
+      let raw: string;
       try {
-        const raw = await readFile(filePath, "utf8");
-        const token = raw.trim();
-        return token.length > 0 ? token : null;
-      } catch {
-        return null;
+        raw = await readFile(filePath, "utf8");
+      } catch (error) {
+        // Only "no file" is the honest not-connected state. Any other read failure
+        // (EACCES, EISDIR, corruption) must SURFACE — reporting it as "no token"
+        // would tell the user to reconnect over a store that cannot be read.
+        if ((error as { code?: string }).code === "ENOENT") return null;
+        throw error;
       }
+      const token = raw.trim();
+      return token.length > 0 ? token : null;
     },
     async setGitHubToken(token: string | null): Promise<void> {
       if (token === null) {
@@ -34,6 +39,10 @@ export function createGitHubTokenStore(dataDir: string): SecretStore {
       }
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, `${token}\n`, { mode: 0o600 });
+      // `writeFile`'s mode applies only on CREATE; an overwrite keeps the old bits.
+      // Enforce owner-only on every write so a pre-existing permissive file never
+      // keeps exposing the fresh token.
+      await chmod(filePath, 0o600);
     },
   };
 }

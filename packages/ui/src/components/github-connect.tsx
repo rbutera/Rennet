@@ -29,6 +29,10 @@ export function useGitHubAccount(bridge: RennetBridge) {
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [error, setError] = useState<string>();
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Continuation guard: unmount or cancel bumps the generation, so a bridge call
+  // that settles late neither sets state nor installs a fresh interval.
+  const generation = useRef(0);
+  const alive = useRef(true);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current !== null) clearInterval(pollTimer.current);
@@ -38,27 +42,35 @@ export function useGitHubAccount(bridge: RennetBridge) {
   const refresh = useCallback(async () => {
     try {
       const { status: loaded } = await bridge.invoke("github.status", {});
-      setStatus(loaded);
+      if (alive.current) setStatus(loaded);
     } catch {
-      setStatus(null);
+      if (alive.current) setStatus(null);
     }
   }, [bridge]);
 
   useEffect(() => {
+    alive.current = true;
     void refresh();
-    return stopPolling;
+    return () => {
+      alive.current = false;
+      generation.current += 1;
+      stopPolling();
+    };
   }, [refresh, stopPolling]);
 
   const connect = useCallback(async () => {
     setError(undefined);
+    const started = generation.current;
     try {
-      const started = await bridge.invoke("github.connectStart", {});
-      setFlow({ userCode: started.userCode, verificationUri: started.verificationUri });
+      const flowStart = await bridge.invoke("github.connectStart", {});
+      if (!alive.current || generation.current !== started) return;
+      setFlow({ userCode: flowStart.userCode, verificationUri: flowStart.verificationUri });
       stopPolling();
       pollTimer.current = setInterval(() => {
         void bridge
           .invoke("github.connectPoll", {})
           .then(({ poll }) => {
+            if (!alive.current || generation.current !== started) return stopPolling();
             if (poll.phase === "pending") return;
             stopPolling();
             setFlow(null);
@@ -70,11 +82,12 @@ export function useGitHubAccount(bridge: RennetBridge) {
           });
       }, POLL_MS);
     } catch (reason) {
-      setError(messageFrom(reason));
+      if (alive.current && generation.current === started) setError(messageFrom(reason));
     }
   }, [bridge, stopPolling]);
 
   const cancel = useCallback(async () => {
+    generation.current += 1;
     stopPolling();
     setFlow(null);
     await bridge.invoke("github.connectCancel", {}).catch(() => undefined);
@@ -95,15 +108,22 @@ export function useGitHubAccount(bridge: RennetBridge) {
       setError(undefined);
       try {
         const { status: next } = await bridge.invoke("github.setToken", { token });
-        setStatus(next);
-        if (next.state !== "connected") setError(next.copy);
-        return next.state === "connected";
+        if (next.state === "connected") {
+          if (alive.current) setStatus(next);
+          return true;
+        }
+        // A REJECTED paste is the candidate's failure, not the account's: surface
+        // the copy but re-read the real stored-account status, so a connected user
+        // who mistypes a replacement never sees their live account as broken.
+        if (alive.current) setError(next.copy);
+        await refresh();
+        return false;
       } catch (reason) {
-        setError(messageFrom(reason));
+        if (alive.current) setError(messageFrom(reason));
         return false;
       }
     },
-    [bridge],
+    [bridge, refresh],
   );
 
   return { status, flow, error, connect, cancel, disconnect, pasteToken };

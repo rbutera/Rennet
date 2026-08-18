@@ -91,6 +91,7 @@ import {
   validateGitHubToken,
   wslDiscoveryDeps,
 } from "@rennet/adapters";
+import type { Octokit } from "@octokit/core";
 import {
   type AdmittedDocument,
   adjudicateFlaggedReview,
@@ -548,9 +549,31 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return auth.token;
   }
 
-  /** A token-bound Octokit for a real egress. */
-  async function resolveGitHubOctokit() {
-    return createGitHubOctokit({ fetch: publishHttp, token: await resolveGitHubToken() });
+  // A token-bound Octokit for a real egress, memoized so a multi-page publish does
+  // not re-validate (`/rate_limit` + `/user`) per request. Invalidated whenever the
+  // account changes; a failed resolution is never cached.
+  let octokitMemo: Promise<Octokit> | null = null;
+  async function resolveGitHubOctokit(): Promise<Octokit> {
+    octokitMemo ??= resolveGitHubToken().then((token) =>
+      createGitHubOctokit({ fetch: publishHttp, token }),
+    );
+    const memo = octokitMemo;
+    try {
+      return await memo;
+    } catch (error) {
+      if (octokitMemo === memo) octokitMemo = null;
+      throw error;
+    }
+  }
+
+  // Account mutations (device-flow store, paste, disconnect) are SERIALIZED so a
+  // flow completing mid-disconnect cannot interleave with the token file write and
+  // resurrect a token the user just forgot.
+  let accountLock: Promise<unknown> = Promise.resolve();
+  function withAccountLock<T>(mutate: () => Promise<T>): Promise<T> {
+    const next = accountLock.then(mutate, mutate);
+    accountLock = next.catch(() => undefined);
+    return next;
   }
 
   // The live project-detail PR source (issue #37, B2). Resolved from the SAME stored
@@ -574,6 +597,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   /** Drop every memoized auth-derived surface (the account changed). */
   function invalidateGitHubMemos(): void {
     projectPrSource = null;
+    octokitMemo = null;
   }
 
   /** The renderer-safe projection of the host auth state (the token never leaves). */
@@ -617,8 +641,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           onVerification: resolveVerification,
         })
           .then(async ({ token }) => {
-            await gitHubSecretStore.setGitHubToken(token);
-            invalidateGitHubMemos();
+            // Generation guard: a flow that was cancelled, replaced, or raced by a
+            // disconnect must NOT store its token — the user has moved on.
+            const stored = await withAccountLock(async () => {
+              if (deviceFlow !== flow) return false;
+              await gitHubSecretStore.setGitHubToken(token);
+              invalidateGitHubMemos();
+              return true;
+            });
+            if (!stored) return;
             flow.outcome = { phase: "connected", status: projectAuthStatus(await resolveAuth()) };
           })
           .catch((error: unknown) => {
@@ -647,16 +678,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         secretStore: gitHubSecretStore,
       });
       if (state.ok) {
-        await gitHubSecretStore.setGitHubToken(token);
-        invalidateGitHubMemos();
+        await withAccountLock(async () => {
+          await gitHubSecretStore.setGitHubToken(token);
+          invalidateGitHubMemos();
+        });
       }
       return projectAuthStatus(state);
     },
     async disconnect(): Promise<void> {
       deviceFlow?.controller.abort();
       deviceFlow = null;
-      await gitHubSecretStore.setGitHubToken(null);
-      invalidateGitHubMemos();
+      await withAccountLock(async () => {
+        await gitHubSecretStore.setGitHubToken(null);
+        invalidateGitHubMemos();
+      });
     },
   };
 
@@ -2271,6 +2306,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   let didShutdown = false;
   const shutdown = (): void => {
+    // An in-flight device-flow poll must not outlive the server.
+    deviceFlow?.controller.abort();
+    deviceFlow = null;
     // The old before-quit order (#251 criterion 4): signal in-flight turns, close the
     // watcher, close rehydration, close the store. Idempotent — Electron can fire quit twice.
     // The WS listener closes last, dropping every client socket.

@@ -181,6 +181,30 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
     expect(container.querySelector(".github-connected")).toBeNull();
   });
 
+  it("a rejected paste NEVER corrupts a connected account's displayed status", async () => {
+    const { bridge } = fakeBridge({
+      status: CONNECTED,
+      setTokenStatus: { state: "token-invalid", copy: "That token was revoked." },
+    });
+    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    await waitFor(() =>
+      expect(container.querySelector(".github-connected")?.textContent).toContain("@rbutera"),
+    );
+    const input = container.querySelector(".github-token-input");
+    if (!input) throw new Error("token input missing");
+    fireEvent.input(input, { target: { value: "ghp_typo" } });
+    const save = [...container.querySelectorAll(".github-btn")].find(
+      (button) => button.textContent === "Save",
+    );
+    if (!save) throw new Error("save button missing");
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(container.querySelector(".github-error")?.textContent).toContain("revoked"),
+    );
+    // The candidate failed; the ACCOUNT is still connected and still says so.
+    expect(container.querySelector(".github-connected")?.textContent).toContain("@rbutera");
+  });
+
   it("insufficient-scope renders its own copy as the row's problem, with Connect", async () => {
     const { bridge } = fakeBridge({
       status: { state: "insufficient-scope", copy: "This token is missing `repo`.", scopes: [] },

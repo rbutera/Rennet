@@ -192,9 +192,9 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     query: string,
     variables: Record<string, unknown>,
   ): Promise<{ data: T; errors?: unknown }> {
-    const octokit = await this.config.resolveOctokit();
     let res: Awaited<ReturnType<Octokit["request"]>>;
     try {
+      const octokit = await this.config.resolveOctokit();
       // `octokit.request` (not `octokit.graphql`) so response headers stay visible
       // and the GraphQL error envelope is ours to interpret.
       res = await octokit.request("POST /graphql", { query, variables });
