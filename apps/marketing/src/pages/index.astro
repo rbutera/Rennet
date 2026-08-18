@@ -112,48 +112,12 @@ const lenses = [
           <p class="availability">Available now · Free · Open source · MIT</p>
         </div>
 
-        <figure class="digest" aria-labelledby="digest-caption">
-          <ol class="digest-stages">
-            <li class="digest-stage raw-stage">
-              <div class="stage-label"><span>Raw change</span><strong>1,872 lines</strong></div>
-              <div class="diff-mass" aria-hidden="true">
-                <div class="diff-head"><span>atlas · feat/rate-limiting</span><span>+1,291 −581</span></div>
-                <div class="diff-body">
-                  {diffLines.map(([sign, width, tone]) => (
-                    <div class:list={["diff-line", tone]} style={`--line:${width}%`}><span>{sign}</span><i></i></div>
-                  ))}
-                </div>
-              </div>
-            </li>
-            <li class="digest-stage cohort-stage">
-              <div class="stage-label"><span>Related cohorts</span><strong>4 parts</strong></div>
-              <div class="cohort-list" aria-hidden="true">
-                <div><i class="blue"></i><span>Storage & state</span><b>4</b></div>
-                <div><i class="amber"></i><span>Failure posture</span><b>3</b></div>
-                <div><i class="green"></i><span>Interface & API</span><b>2</b></div>
-                <p>+ tests & noise</p>
-              </div>
-            </li>
-            <li class="digest-stage decision-stage">
-              <div class="stage-label"><span>Human decisions</span><strong>11 calls</strong></div>
-              <div class="decision-list" aria-hidden="true">
-                <div><span>1</span><p>One refill-on-read bucket</p></div>
-                <div><span>2</span><p>Fail open on store error</p></div>
-                <div><span>3</span><p>Keep Redis out of core</p></div>
-              </div>
-            </li>
-            <li class="digest-stage paper-stage">
-              <div class="stage-label"><span>Your review</span><strong>One paper</strong></div>
-              <div class="paper" aria-hidden="true">
-                <div><span>Review · #482</span><b>Ready</b></div>
-                <h2>Exactly what will post.</h2>
-                <i></i><i></i>
-                <ul><li><b>3</b> request changes</li><li><b>1</b> comment</li></ul>
-              </div>
-            </li>
-          </ol>
-          <figcaption id="digest-caption">From raw change to accountable judgment. Illustrative review data.</figcaption>
-        </figure>
+        <ol class="beat-strip" aria-label="How Rennet reduces one change, from raw diff to a review paper — illustrative">
+          <li class="beat b-raw"><span class="beat-name">Raw change</span><strong class="beat-datum">1,872 lines</strong></li>
+          <li class="beat b-cohort"><span class="beat-name">Related cohorts</span><strong class="beat-datum">4 parts</strong></li>
+          <li class="beat b-decision"><span class="beat-name">Human decisions</span><strong class="beat-datum">11 calls</strong></li>
+          <li class="beat b-paper"><span class="beat-name">One review paper</span><strong class="beat-datum">Ready to sign</strong></li>
+        </ol>
       </section>
 
       <section class="pressure section shell">
@@ -206,6 +170,55 @@ const lenses = [
             </ol>
           </article>
         </div>
+      </section>
+
+      <section class="digestion section shell">
+        <div class="section-heading">
+          <h2>Roll up the change. Zoom into any decision.</h2>
+          <p>One agent branch, reduced to logical cohorts and the decisions inside them, then back to the single paper you sign. Every stage stays reachable.</p>
+        </div>
+        <figure class="digest" aria-labelledby="digest-caption">
+          <ol class="digest-stages">
+            <li class="digest-stage raw-stage">
+              <div class="stage-label"><span>Raw change</span><strong>1,872 lines</strong></div>
+              <div class="diff-mass" aria-hidden="true">
+                <div class="diff-head"><span>atlas · feat/rate-limiting</span><span>+1,291 −581</span></div>
+                <div class="diff-body">
+                  {diffLines.map(([sign, width, tone]) => (
+                    <div class:list={["diff-line", tone]} style={`--line:${width}%`}><span>{sign}</span><i></i></div>
+                  ))}
+                </div>
+              </div>
+            </li>
+            <li class="digest-stage cohort-stage">
+              <div class="stage-label"><span>Related cohorts</span><strong>4 parts</strong></div>
+              <div class="cohort-list" aria-hidden="true">
+                <div><i class="blue"></i><span>Storage & state</span><b>4</b></div>
+                <div><i class="amber"></i><span>Failure posture</span><b>3</b></div>
+                <div><i class="green"></i><span>Interface & API</span><b>2</b></div>
+                <p>+ tests & noise</p>
+              </div>
+            </li>
+            <li class="digest-stage decision-stage">
+              <div class="stage-label"><span>Human decisions</span><strong>11 calls</strong></div>
+              <div class="decision-list" aria-hidden="true">
+                <div><span>1</span><p>One refill-on-read bucket</p></div>
+                <div><span>2</span><p>Fail open on store error</p></div>
+                <div><span>3</span><p>Keep Redis out of core</p></div>
+              </div>
+            </li>
+            <li class="digest-stage paper-stage">
+              <div class="stage-label"><span>One review paper</span><strong>Ready to sign</strong></div>
+              <div class="paper" aria-hidden="true">
+                <div><span>Review · #482</span><b>Ready</b></div>
+                <h2>Exactly what will post.</h2>
+                <i></i><i></i>
+                <ul><li><b>3</b> request changes</li><li><b>1</b> comment</li></ul>
+              </div>
+            </li>
+          </ol>
+          <figcaption id="digest-caption">From raw change to accountable judgment. Illustrative review data.</figcaption>
+        </figure>
       </section>
 
       <section class="conversation section shell">
