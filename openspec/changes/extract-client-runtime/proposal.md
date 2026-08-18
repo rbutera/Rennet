@@ -8,10 +8,11 @@ Phase 6 (issue #383, unblocked by the #382 design pass) adds a third UI shell �
 
 - New workspace package `packages/client-runtime` (working name; may land as an expansion of `packages/client`) owning:
   - **Connection supervisor**: probe, retry with capped backoff, network-change detection, a subscribable reachability state machine (`idle / connecting / online / offline / error`).
-  - **Subscription manager**: an `onProgress` / `onAskStream` registry that re-establishes every live subscription on a reconnected socket — **closes #389 for every shell**, not just mobile.
+  - **Subscription manager**: an `onProgress` / `onAskStream` registry that re-establishes every live subscription on a reconnected socket — the client half of **#389**.
   - **Auth/token storage abstraction**: device-token persistence behind an injected store (config file on desktop/browser shells; Keychain/Keystore later on mobile).
   - **Replica cache**: last-known projected state persisted per daemon; paint instantly on open, reconcile by cursor.
   - **Presence reporting**: focus/visibility/device-type beacons the daemon's notification planner and bandwidth filter will consume (transport seam now; daemon-side consumption is a later Phase 6 change).
+- Daemon bug fix (the server half of #389): ask-stream deltas broadcast to live authorized sockets by reviewId (mirroring the existing progress broadcast) instead of closing over the socket that invoked the turn. No new commands, no wire-shape change. Together the two halves **close #389 for every shell**.
 - Browser shell (`apps/desktop/src/browser/entry.tsx`) and desktop renderer adopt the runtime **behavior-neutrally**: same commands, same streams, same UI — proven by the existing e2e suite.
 - No protocol wire changes; no new commands. Presence beacons ride an additive, optional envelope only if the design finds a zero-cost slot — otherwise they stay a local no-op seam until the daemon-side change.
 

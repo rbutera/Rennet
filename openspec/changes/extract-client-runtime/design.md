@@ -16,7 +16,7 @@ Constraints: package boundaries (the runtime may import only `protocol` and `typ
 
 **Non-Goals:**
 
-- No daemon-side changes: no new commands, no presence consumption, no notification planner (later Phase 6 changes).
+- No daemon-side FEATURES: no new commands, no wire-shape changes, no presence consumption, no notification planner (later Phase 6 changes). One daemon-side BUG FIX is in scope: ask-stream deltas currently close over the invoking socket and keep firing at it after a reconnect — mirroring the existing `broadcastProgress` pattern for ask deltas (broadcast by reviewId to live authorized sockets) is the root-cause half of #389 and lands here.
 - No UI changes beyond swapping the wiring under `ConnectionHost`.
 - No RN/Expo code in this change — the runtime must merely be consumable there (no DOM/Node globals in core paths).
 
