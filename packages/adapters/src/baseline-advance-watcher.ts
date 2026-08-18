@@ -201,6 +201,17 @@ const REAL_WATCH: WatchFn = (path, listener) => {
   const watcher: FSWatcher = nodeWatch(path, { persistent: false, recursive: true }, () =>
     listener(),
   );
+  // fs.watch handles emit "error" asynchronously (e.g. the watched dir vanishes, or
+  // the WSL 9P bridge misbehaves); unhandled, that crashes the whole daemon — the
+  // same class of bug as the repo-watcher crash loop observed 2026-08-19. Degrade to
+  // a closed watcher instead: baseline advance falls back to the next explicit check.
+  watcher.on("error", () => {
+    try {
+      watcher.close();
+    } catch {
+      // best-effort teardown
+    }
+  });
   return { close: () => watcher.close() };
 };
 
