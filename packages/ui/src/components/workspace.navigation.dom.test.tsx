@@ -186,3 +186,22 @@ describe("lens tablist arrows vs canvas zoom, and the tabpanel wiring (wave-3 fi
     );
   });
 });
+
+describe("bracket rotation vs tablist focus (the desync fix)", () => {
+  it("after ] rotates the lens away from the focused tab, ArrowLeft continues from the ACTIVE angle", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "rollup" } });
+    const { getByRole } = mount(<CanvasWorkspace canvases={demoCanvases()} store={store} />);
+    const decisionsTab = getByRole("tab", { name: "Decisions" });
+    decisionsTab.focus();
+
+    // ] is not a tablist key: it bubbles to the canvas and rotates decisions -> noise,
+    // while DOM focus stays on the (now tabindex=-1) Decisions button.
+    fireEvent.keyDown(decisionsTab, { key: "]" });
+    expect(store.getState().angle).toBe("noise");
+
+    // The next ArrowLeft must move from the ACTIVE angle (noise -> decisions), not from
+    // the stale focused button index (which would land noise -> sequence).
+    fireEvent.keyDown(decisionsTab, { key: "ArrowLeft" });
+    expect(store.getState().angle).toBe("decisions");
+  });
+});

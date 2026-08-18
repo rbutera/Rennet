@@ -46,7 +46,13 @@ export function LensSwitcher({
     onSelectAngle(lens);
     tabRefs.current[wrapped]?.focus();
   };
-  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    // Arrows move relative to the ACTIVE angle, not the focused button: app-level
+    // bracket rotation can change the selection while focus stays on the old tab
+    // (now tabindex -1), and the next arrow must continue from the real selection,
+    // not the stale button index (focus Decisions, ] selects Noise, ArrowLeft
+    // must land Decisions, not Sequence).
+    const activeIndex = Math.max(0, CANVAS_LENSES.indexOf(angle));
     // A handled arrow/Home/End must NOT bubble to the canvas application handler
     // (workspace onKeyDown maps ArrowRight/ArrowLeft to zoom): stopPropagation keeps
     // tab movement from also zooming the canvas. preventDefault marks it handled so
@@ -55,12 +61,12 @@ export function LensSwitcher({
       case "ArrowRight":
         event.preventDefault();
         event.stopPropagation();
-        moveTo(index + 1);
+        moveTo(activeIndex + 1);
         break;
       case "ArrowLeft":
         event.preventDefault();
         event.stopPropagation();
-        moveTo(index - 1);
+        moveTo(activeIndex - 1);
         break;
       case "Home":
         event.preventDefault();
@@ -90,7 +96,7 @@ export function LensSwitcher({
             tabIndex={candidate === angle ? 0 : -1}
             aria-selected={candidate === angle}
             className={`lens-tab ${candidate === angle ? "is-active" : ""}`}
-            onKeyDown={(event) => onTabKeyDown(event, index)}
+            onKeyDown={onTabKeyDown}
             onClick={() => onSelectAngle(candidate)}
           >
             {ANGLE_LABELS[candidate]}
