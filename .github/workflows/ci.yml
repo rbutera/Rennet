@@ -68,14 +68,16 @@ jobs:
           cache: pnpm
 
       # Local Nx cache only (no Nx Cloud / remote cache — not approved, see AGENTS.md).
-      # Same-input targets restore from a prior run; a lockfile change busts the key.
+      # Cache the WHOLE .nx directory: the cached outputs live in .nx/cache/ but the
+      # task-history DB that maps inputs→outputs lives in .nx/workspace-data/. Without
+      # the DB, Nx sees the artifact files but has no metadata for them (0% hit rate).
+      # The daemon socket (.nx/workspace-data/d/) is ephemeral and harmless to restore.
       # Restore from the same lockfile hash only — a different lockfile can mean a
-      # different Nx version, whose cache artifacts Nx cannot recognise (the
-      # "Unrecognized Cache Artifacts" warning that fires on cross-version restores).
+      # different Nx version whose artifacts Nx cannot recognise.
       - name: Restore Nx cache
         uses: actions/cache@v4
         with:
-          path: .nx/cache
+          path: .nx
           key: nx-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
             nx-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
