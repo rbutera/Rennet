@@ -9,8 +9,7 @@ import remarkMermaid from "./src/plugins/remark-mermaid.mjs";
 export default defineConfig({
   site: "https://docs.rennet.dev",
   redirects: {
-    "/developing/concepts/collation-and-signing/":
-      "/developing/concepts/collation-and-publishing/",
+    "/developing/concepts/collation-and-signing/": "/developing/concepts/collation-and-publishing/",
   },
   markdown: {
     // The remark plugin replaces ```mermaid fences with inline SVG before Shiki
