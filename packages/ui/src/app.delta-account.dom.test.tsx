@@ -65,8 +65,13 @@ const bridge: RennetBridge = {
 describe("RennetApp — delta-account hunk navigation", () => {
   it("clicking a hunk row focuses its path and exact span in the Files diff", async () => {
     const { container } = mount(<RennetApp bridge={bridge} />);
-    await waitFor(() =>
-      expect(container.querySelector('[data-testid="delta-account-hunk"]')).not.toBeNull(),
+    // Full-app mount + review navigation is this suite's heaviest path; the
+    // focus attribute is DECLARATIVE (render-derived), so these waits can only
+    // be late, never wrong — testing-library's 1s default grazed real CI runs
+    // (auto-release 32272116190 failed on exactly this assertion under load).
+    await waitFor(
+      () => expect(container.querySelector('[data-testid="delta-account-hunk"]')).not.toBeNull(),
+      { timeout: 5000 },
     );
 
     fireEvent.click(
@@ -85,10 +90,10 @@ describe("RennetApp — delta-account hunk navigation", () => {
           "42",
         ]);
         expect(document.activeElement).toBe(focused[0]);
-        // 5s, not the 1s default: the focus lands after a render + effect chain that
-        // a loaded runner can stretch past 1s — this exact waitFor sank the v0.2.5
-        // release run (2026-08-18) and a local gate (2026-08-19) as a flake.
       },
+      // 5s, not the 1s default: the focus lands after a render + effect chain that a
+      // loaded runner can stretch past 1s — this exact waitFor sank the v0.2.5
+      // release run (2026-08-18) and a local gate (2026-08-19) as a flake.
       { timeout: 5000 },
     );
   });

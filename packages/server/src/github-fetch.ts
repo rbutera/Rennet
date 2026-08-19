@@ -65,6 +65,15 @@ export function withConnectResilience(
     } catch (first) {
       const code = connectPhaseCode(first);
       if (code === null) throw first;
+      // Diagnostic breadcrumb (field lesson, 2026-08-19): a connect failure's
+      // family/address is the difference between "the network is down" and "one
+      // family is broken" — log the raw cause once so the NEXT report is
+      // diagnosable from daemon.log instead of reconstructed from probes.
+      console.warn(
+        "[github-egress] connect failure (%s), retrying once:",
+        code,
+        (first as { cause?: { message?: string } })?.cause?.message ?? (first as Error)?.message,
+      );
       const signal = init?.signal ?? (input instanceof Request ? input.signal : null);
       await abortableDelay(delayMs, signal);
       try {
