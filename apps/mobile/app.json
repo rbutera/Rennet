@@ -7,7 +7,8 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": false },
+    "ios": { "supportsTablet": false, "bundleIdentifier": "com.rbutera.rennet" },
+    "android": { "package": "com.rbutera.rennet" },
     "plugins": [
       "expo-router",
       "expo-secure-store",

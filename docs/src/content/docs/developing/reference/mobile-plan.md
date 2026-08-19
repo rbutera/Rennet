@@ -94,8 +94,8 @@ app never gets a side channel:
 | --- | --- | --- | --- |
 | M0 — **delivered** | `client-runtime` extraction (`ConnectionSupervisor` in `@rennet/client`); desktop + browser shells adopt behavior-neutrally; **#389 closed** — client half (resubscribe registry) + server half (ask-delta broadcast by reviewId) | ~1 week | Existing e2e green on both shells; a mid-turn reconnect keeps the live ask-stream flowing to the fresh socket — see the reconnect note in [reactive-streams](./reactive-streams.md). |
 | M1 — **first shippable cut — delivered** | Expo app skeleton; pairing + connections; review list; review detail/digest + finding detail + full canvas; push pipeline (taxonomy, deep links, presence-aware delivery) | ~2 weeks | Delivered in the `mobile-app-m1` change: `apps/mobile` (Expo + expo-router) + the daemon attention system + additive protocol growth. Automated coverage is unit + typecheck + lint; device acceptance is the smoke checklist below. |
-| M2 — **delivered** | Live turn + ask (stream, composer, stop, notification actions); publish flow (preview → one-tap post); kickoff (PR link, share sheet, own-branch capture) | ~1.5 weeks | Delivered in the `mobile-app-m2` change: additive `review.interrupt` (Stop) + `publish.compose` (own-branch outbound) daemon seams, ask-push `actions` field, handoff-completed + publish-ready live, and the M1 cut closures. Honest scope: team-PR review composition posts from the desktop until the `ui` collation relocates to `core`; the OS share extension is a recorded follow-up (paste + `rennet://kickoff` + Android share target ship). See acceptance below. |
-| M3 | Distribution (TestFlight/internal track); `using/` mobile guide; architecture-overview client row; marketing story | ~3–4 days | Docs land same-change; store publishing stays a later decision |
+| M2 — **delivered** | Live turn + ask (stream, composer, stop, notification actions); publish flow (preview → one-tap post); kickoff (PR link, share sheet, own-branch capture) | ~1.5 weeks | Delivered in the `mobile-app-m2` change: additive `review.interrupt` (Stop, single terminal event, persisted interrupted state), `publish.compose` (**both loops** — the daemon composes the byte-exact team-PR comments/verdict via core's `reviewCommentsFromDispositions` and the own-branch submission; a composition binding refuses stale or cross-review posts), ask-push `actions` bound to their attention id (shade answers consume atomically; Android answers with the app closed via `expo-task-manager`), Android share sheet reading the shared text (`expo-share-intent`), handoff-completed + publish-ready live, and the M1 cut closures. The iOS share extension is the one recorded follow-up (paste + `rennet://kickoff` cover iOS). See acceptance below. |
+| M3 — **delivered (automatable half)** | Distribution (TestFlight/internal track); `using/` mobile guide; architecture-overview client row; marketing story | ~3–4 days | EAS build profiles (`apps/mobile/eas.json`: development / internal / production), bundle identifiers, and the install docs land in the M3 change; the guide and architecture rows landed with M1–M2. What remains is **human-only** (the checklist below): Apple Developer enrolment, `eas init` (mints the Expo project id the app needs for push tokens), credentials, the first TestFlight submit, and the on-device smoke run. The marketing story waits for an installable build, deliberately. |
 
 Total: roughly five working weeks, matching the app-server plan's 2–4 week
 estimate plus the M0 extraction it always assumed.
@@ -158,6 +158,21 @@ real crypto keeps its own.
   with no developer tooling.
 - The docs a new mobile user reads are true (`using/` guide, remote-access
   page, architecture overview).
+
+#### The human-only checklist (Rai)
+
+Everything automatable is on `main`; these five steps need a person with the
+accounts, in order:
+
+1. Apple Developer Program enrolment (as for #298's desktop signing).
+2. `npx eas init` in `apps/mobile` — creates the Expo project and writes
+   `extra.eas.projectId` into `app.json` (the app reads it to mint push
+   tokens; without it, in-app events work and pushes stay off).
+3. `npx eas credentials` — iOS certificates/profiles, Android keystore.
+4. `npx eas build --profile internal` (both platforms), then
+   `npx eas submit` for the TestFlight track.
+5. Run the device smoke checklists (M1 + M2 sections above) on a real
+   phone against a daemon over Tailscale.
 
 ## Open decisions the builder must not invent
 

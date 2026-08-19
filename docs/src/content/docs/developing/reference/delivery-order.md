@@ -191,10 +191,12 @@ notification action), stops a turn, posts a review, and kicks one off from a PR 
 or the share sheet. Two additive daemon seams the design assumed but M1 had not built:
 **`review.interrupt`** (the client Stop — aborts a review's in-flight turn via the
 live-turn registry, now indexed by `reviewId`, emits `ask-interrupted` on the stream,
-clears ask-pending, raises turn-failed), and **`publish.compose`** (the daemon composes
-the own-branch outbound submission + byte-exact payload, because the mobile boundary
-cannot import the DOM `ui` layer where that composition lives — the phone posts exactly
-what it returned, so `publish.submitPr` round-trips it). The ask push gained an additive
+clears ask-pending, raises turn-failed), and **`publish.compose`** (the daemon composes the byte-exact
+outbound artifact for **both loops** — team-PR comments + verdict via core's
+`reviewCommentsFromDispositions`, and the own-branch submission — because the mobile
+boundary cannot import the DOM `ui` layer where the editable collation lives; the phone
+posts exactly the bytes it previewed, and a composition binding refuses a stale or
+cross-review post). The ask push gained an additive
 `actions` field (answer chips) on `attentionItemSchema`, carried through the planner and
 the Expo push payload (with a `categoryId`) so the shade can register them as actions.
 The remaining two families went live: **handoff-completed** raises from
@@ -202,11 +204,18 @@ The remaining two families went live: **handoff-completed** raises from
 composed own-branch draft (`review.draftPrBody`), clearing on post or on viewing the
 preview — so all six taxonomy families now raise from real lifecycles. M1 cut closures
 landed too: live proposal adjudication (`canvas.adjudicateProposal`), client-derived
-delta count tiles, and cohort grouping with judged-collapse on the full canvas. Honest
-scope: team-PR review composition stays renderer-only (the phone previews it and offers a
-refine turn, posting it from the desktop for now, until the `ui` collation relocates to
-`core`), and the OS share extension is a recorded follow-up (paste + the `rennet://kickoff`
-deep link + an Android share target ship now).
+delta count tiles, and cohort grouping with judged-collapse on the full canvas. Shade
+answers bind to their attention id and consume atomically (Android answers with the
+app closed via `expo-task-manager`; iOS opens pre-filled), and the Android share sheet
+reads the shared PR text for real (`expo-share-intent`). The one recorded follow-up is
+the iOS share extension (paste + the `rennet://kickoff` deep link cover iOS).
+
+**M3 — distribution — automatable half delivered**: EAS build profiles
+(`apps/mobile/eas.json`), bundle identifiers, and the install docs are on `main`;
+what remains is human-only (Apple enrolment, `eas init` for the Expo project id,
+credentials, the first TestFlight submit, the on-device smoke run) — the checklist
+lives in the [mobile plan](/developing/reference/mobile-plan/#the-human-only-checklist-rai).
+The marketing site's mobile story waits for an installable build, deliberately.
 
 0. [#376 — protocol handshake, envelope, and versioning
    discipline](https://github.com/rbutera/rennet/issues/376)
