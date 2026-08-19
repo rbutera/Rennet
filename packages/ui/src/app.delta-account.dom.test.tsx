@@ -74,14 +74,21 @@ describe("RennetApp — delta-account hunk navigation", () => {
       { timeout: 5000 },
     );
 
-    fireEvent.click(
-      container.querySelector<HTMLButtonElement>(
-        '[data-testid="delta-account-hunk"]',
-      ) as HTMLButtonElement,
-    );
-
+    // The click is RETRIED inside waitFor, re-querying a FRESH node each
+    // attempt: the surface re-renders around the hunk list, and a click on a
+    // node detached between query and dispatch lands nowhere — the 1-in-N CI
+    // red (#414 raised timeouts; the race survived because no timeout fixes a
+    // dead click). Clicking an already-focused row is idempotent, so retrying
+    // until the outcome appears is sound.
     await waitFor(
       () => {
+        const hunk = container.querySelector<HTMLButtonElement>(
+          '[data-testid="delta-account-hunk"]',
+        );
+        if (container.querySelectorAll('.diff-line[data-delta-focus="true"]').length === 0) {
+          expect(hunk).not.toBeNull();
+          fireEvent.click(hunk as HTMLButtonElement);
+        }
         expect(container.querySelector(".diff-toolbar strong")?.textContent).toBe("src/x.ts");
         const focused = container.querySelectorAll('.diff-line[data-delta-focus="true"]');
         expect([...focused].map((line) => line.getAttribute("data-file-line"))).toEqual([
