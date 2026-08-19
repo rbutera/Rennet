@@ -20,8 +20,8 @@
 ## 4. Publish flow (wireframe 23)
 
 - [x] 4.1 Preview screen: composed outbound review, verdict + destination visible; "Ask for changes" → refine turn; no editor, no ceremony.
-- [x] 4.2 One-tap post: `publish.requestConsent` + `publish.review` / `publish.submitPr`; posted screen with the real URL; double-tap/retry test asserting exactly-one via the engine's idempotence; failure states truthful. (Own-branch posts end-to-end via additive `publish.compose` — the phone cannot import the `ui` composition layer; team-PR review composition is renderer-only for now, previewed truthfully. Flagged to main.)
-- [x] 4.3 publish-ready family live: raises when a composed draft becomes ready, clears on post or preview view; planner + dispatch tests.
+- [x] 4.2 One-tap post: `publish.requestConsent` + `publish.review` / `publish.submitPr`; posted screen with the real URL; double-tap/retry test asserting exactly-one via the engine's idempotence; failure states truthful. (BOTH loops end on the phone — Finding C ruling (a). The daemon composes byte-exact via `publish.compose {mode}`: `"review"` → team-PR comments+verdict from `reviewCommentsFromDispositions` (new node-free `@rennet/core` fn) → posted via `publish.review`; `"pr"` → own-branch submission → `publish.submitPr`. The phone previews exactly the bytes it posts. Boundary note: `layer:ui` cannot import `layer:core`, so the ruling's ui-shim step is impossible AND unnecessary — core already owns the postable bytes; the daemon, not ui, composes. No ui file touched.)
+- [x] 4.3 publish-ready family live: raises when a composed draft becomes ready, clears on post or preview view; planner + dispatch tests. (Raises off compose-readiness for BOTH modes now — `publish.compose` raises `publish-ready` on a successful `review`/`pr` compose, idempotent by derived id with the own-branch `review.draftPrBody` raise.)
 
 ## 5. Kickoff (wireframe 20)
 
@@ -37,4 +37,4 @@
 ## 7. Close-out
 
 - [x] 7.1 Docs same-change: mobile guide acting sections (watch, answer incl. shade behavior per platform, post, kickoff), delivery-order M2 entry, mobile-plan M2 delivered; protocol-compatibility note for the additive push field.
-- [ ] 7.2 Full `pnpm check` green (exit code captured directly, no pipes); `openspec validate mobile-app-m2 --strict`; report per-scenario test names. NO push; the reviewer opens the PR (`Refs #383`).
+- [x] 7.2 Full `pnpm check` green (exit code captured directly, no pipes); `openspec validate mobile-app-m2 --strict`; report per-scenario test names. NO push; the reviewer opens the PR (`Refs #383`).

@@ -108,11 +108,14 @@ If the preview is not what you want, **Ask for changes** starts a refine turn an
 you on the live turn screen. The phone never text-edits the outbound review — you steer it
 with a turn, the same as everywhere else in Rennet.
 
-The **own-branch** loop posts end to end from the phone: the daemon composes the PR
-submission (title, body, base, head) and the phone posts exactly those bytes, opening one
-pull request. Composing a **team-PR review** to post still happens on the desktop for now;
-the phone previews it truthfully and offers the refine turn, and the post button says so
-rather than pretending.
+Both loops post end to end from the phone. For a **team-PR review**, the daemon composes
+the outbound comments and verdict from your dispositions and the phone posts exactly those
+bytes as one neutral review event on the pull request. For your **own branch**, the daemon
+composes the PR submission (title, body, base, head) and the phone opens one pull request
+from exactly those bytes. Either way, what you preview is what posts — byte for byte — and
+the daemon is the single source that composes it, so the phone and the desktop post the
+same review. If your daemon predates this (it does not yet know how to compose for the
+phone), the publish screen says it needs updating rather than showing a dead post button.
 
 ## Start a review
 

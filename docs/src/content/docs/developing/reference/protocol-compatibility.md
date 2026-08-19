@@ -153,8 +153,9 @@ real source in M1. **Live in M1:** `review-finished` (wired to the capture / ope
 streaming `review.ask` turn lifecycle — an in-flight ask raises `ask-pending`,
 clears on settle, and raises `turn-failed` on error or interrupt). **Now live (M2):**
 `handoff-completed` raises from `review.handoff.run`'s outcome (delta summary as
-substance) and `publish-ready` from a composed own-branch draft (`review.draftPrBody`),
-clearing on post or on viewing the preview — so all six families now raise from real
+substance) and `publish-ready` from a composed draft becoming ready — both loops:
+`review.draftPrBody` and either mode of `publish.compose` raise it (idempotent by derived
+id) — clearing on post or on viewing the preview, so all six families now raise from real
 lifecycles. `processing-finished` is silent by taxonomy: it updates the in-app badge
 but never pushes.
 
@@ -166,9 +167,11 @@ Expo push payload (alongside a `categoryId`); it is absent on every other family
 daemon that predates it, stripped harmlessly by the tolerant decoder. Two additive
 `commandDefinitions` entries landed with M2, ordinary token-bearing commands under the same
 rules: `review.interrupt` (the client Stop — aborts a review's in-flight turn, emits
-`ask-interrupted`) and `publish.compose` (the daemon composes the own-branch outbound
-submission + byte-exact payload for a projected client that cannot import the `ui`
-composition layer). The `device.registerPush`
+`ask-interrupted`) and `publish.compose` (the daemon composes the outbound artifact +
+byte-exact payload for a projected client that cannot import the `ui` composition layer —
+`mode: "review"` returns the team-PR comments/verdict from the review's dispositions,
+`mode: "pr"` the own-branch submission; the phone previews AND posts exactly those bytes, so
+both publish loops end on the phone). The `device.registerPush`
 input also carries an additive optional `disabledFamilies` — families a device
 muted in its notification settings, which the daemon suppresses pushes for; a
 high-priority family (ask-pending / review-finished / turn-failed) always reaches
