@@ -761,13 +761,27 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     const registrations = attention.pushTokens.list();
     const plan = planDelivery(item, connectedClients(), registrations);
     if (plan.push.length > 0) {
+      // The ask category id must match the app's `askCategoryId(reviewId)` = `ask:${reviewId}`, so
+      // the shade renders the chips this push carries as notification actions (#382 M2).
+      const categoryId =
+        item.family === "ask-pending" && item.actions && item.reviewId
+          ? `ask:${item.reviewId}`
+          : undefined;
       const messages: ExpoPushMessage[] = plan.push.map((registration) => ({
         to: registration.token,
         title: item.title,
         body: item.body,
         // The app maps `deviceId` back to the delivering daemon and resolves `deepLink` under it.
-        data: { deviceId: registration.deviceId, deepLink: item.deepLink, family: item.family },
+        // `actions` (ask-pending only, #382 M2) rides the payload so the shade can register answer
+        // chips as notification actions; absent on every other family (undefined is dropped by JSON).
+        data: {
+          deviceId: registration.deviceId,
+          deepLink: item.deepLink,
+          family: item.family,
+          ...(item.actions ? { actions: item.actions } : {}),
+        },
         priority: plan.priority === "high" ? "high" : "normal",
+        ...(categoryId ? { categoryId } : {}),
       }));
       // Map token → device once; both the synchronous dead-token prune and the async receipt
       // poll below drop by device id.

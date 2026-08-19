@@ -31,17 +31,23 @@ export interface AbortAllOutcome {
 
 export class LiveTurnRegistry {
   private readonly turns = new Map<string, AbortController>();
+  /** turnId → the reviewId it runs on, so a client can abort a review's turn(s) by review
+   *  (issue #382 M2, `review.interrupt`). Optional per turn — a one-shot ask with no review
+   *  scope simply is not in this index and is never reached by `abortReview`. */
+  private readonly reviewOf = new Map<string, string>();
 
   /**
    * Enter a turn. Returns the AbortController whose `.signal` the caller threads into
    * the model backends. The caller MUST `settle(turnId)` when the turn finishes (in a
    * `finally`), or the registry leaks a controller for a turn that is already done. A
    * repeated id replaces the prior controller (a fresh turn reusing an id) rather than
-   * silently dropping the new one.
+   * silently dropping the new one. `reviewId`, when given, indexes the turn so
+   * `abortReview` can stop it (the client "Stop"); omitted ⇒ abortable only in bulk on quit.
    */
-  register(turnId: string): AbortController {
+  register(turnId: string, reviewId?: string): AbortController {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
+    if (reviewId !== undefined) this.reviewOf.set(turnId, reviewId);
     return controller;
   }
 
@@ -49,6 +55,26 @@ export class LiveTurnRegistry {
    *  turn that is not (or no longer) tracked is a no-op. */
   settle(turnId: string): void {
     this.turns.delete(turnId);
+    this.reviewOf.delete(turnId);
+  }
+
+  /**
+   * Abort every in-flight turn on ONE review (the client "Stop", issue #382 M2). Fires each
+   * matching turn's AbortController — the same signal `before-quit` uses, so both backends
+   * (claude via the SDK, codex via execa's cancelSignal) cancel — and returns how many turns
+   * were SIGNALLED (an abort-request count, never a confirmed-exit count — see the honesty
+   * boundary above). The turns leave the registry through their own `settle` in the ask
+   * handler's `finally`, exactly as a completed turn does; this only requests the stop. Safe
+   * with nothing in flight (returns 0) and safe to call twice (a double-tap Stop).
+   */
+  abortReview(reviewId: string): number {
+    let signalled = 0;
+    for (const [turnId, controller] of this.turns) {
+      if (this.reviewOf.get(turnId) !== reviewId) continue;
+      controller.abort();
+      signalled += 1;
+    }
+    return signalled;
   }
 
   /** The turn ids currently in flight, for observability and tests. */
@@ -74,6 +100,7 @@ export class LiveTurnRegistry {
       signalled += 1;
     }
     this.turns.clear();
+    this.reviewOf.clear();
     return { signalled };
   }
 }

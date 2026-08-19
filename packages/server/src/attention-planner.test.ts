@@ -120,6 +120,27 @@ describe("deepLinkFor — every taxonomy entry has a daemon-relative route", () 
 });
 
 describe("AttentionRegistry — raise, dedupe, clear (handled once, quiet everywhere)", () => {
+  it("carries the ask's answer chips through the raise (#382 M2 shade actions)", () => {
+    const registry = new AttentionRegistry();
+    const item = registry.raise({
+      family: "ask-pending",
+      reviewId: "r1",
+      deepLink: "rennet://review/r1/ask",
+      title: "Ask pending",
+      body: "a question",
+      actions: [
+        { id: "a1", label: "Narrow the lock" },
+        { id: "a2", label: "Async queue" },
+      ],
+    });
+    expect(item.actions).toEqual([
+      { id: "a1", label: "Narrow the lock" },
+      { id: "a2", label: "Async queue" },
+    ]);
+    // The stored active item keeps them for a fresh client to hydrate + register as shade actions.
+    expect(registry.active()[0]?.actions).toHaveLength(2);
+  });
+
   it("re-raising the same family on the same review refreshes rather than stacks", () => {
     const registry = new AttentionRegistry();
     registry.raise({

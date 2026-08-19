@@ -20,6 +20,33 @@ describe("LiveTurnRegistry — scoped reaping on quit (issue #251, criterion 4)"
     expect(outcome).toEqual({ signalled: 2 });
   });
 
+  it("abortReview stops only the named review's turns (the client Stop, #382 M2)", () => {
+    const registry = new LiveTurnRegistry();
+    const a = registry.register("turn-a", "review-1");
+    const b = registry.register("turn-b", "review-1");
+    const other = registry.register("turn-c", "review-2");
+    const unscoped = registry.register("turn-d");
+
+    const count = registry.abortReview("review-1");
+
+    expect(count).toBe(2);
+    expect(a.signal.aborted).toBe(true);
+    expect(b.signal.aborted).toBe(true);
+    // A different review's turn and an unscoped turn are untouched.
+    expect(other.signal.aborted).toBe(false);
+    expect(unscoped.signal.aborted).toBe(false);
+  });
+
+  it("abortReview is idempotent and safe with nothing in flight (a double-tap Stop)", () => {
+    const registry = new LiveTurnRegistry();
+    registry.register("t", "rev");
+    expect(registry.abortReview("rev")).toBe(1);
+    // The turn settles (its handler's finally), then a second Stop finds nothing.
+    registry.settle("t");
+    expect(registry.abortReview("rev")).toBe(0);
+    expect(registry.abortReview("never")).toBe(0);
+  });
+
   it("does NOT signal a turn that already SETTLED — the leak guard (a registry that only grew is the bug)", () => {
     const registry = new LiveTurnRegistry();
     const settled = registry.register("done");

@@ -2166,6 +2166,118 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
   });
 });
 
+describe("createDispatch — publish.compose + publish-ready + handoff-completed (#382 M2)", () => {
+  function ownBranchCapture(): PatchsetCapturePort {
+    return {
+      capture: () =>
+        Promise.resolve({
+          ...patchset(),
+          repository: { ...patchset().repository, headRef: "feat/reviewed", baseRef: "main" },
+        }),
+    };
+  }
+
+  it("publish.compose composes an own-branch submission the engine's publish.submitPr round-trips exactly", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/9",
+      number: 9,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      { capturePort: ownBranchCapture(), submitPullRequest },
+    );
+    const review = await capturedReview(dispatch);
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { status: string; submission: unknown; payload: string; destination: string };
+    expect(composed.status).toBe("pr");
+    // The payload is byte-consistent with the composed submission — so posting it round-trips.
+    expect(composed.payload).toBe(canonicalPrSubmissionPayload(composed.submission as never));
+    expect(composed.destination).toContain("feat/reviewed");
+
+    // The phone posts EXACTLY what compose returned — the engine accepts it and opens one PR.
+    const out = (await dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      submission: composed.submission as never,
+      payload: composed.payload,
+    })) as { url: string };
+    expect(out.url).toBe("https://github.com/acme/widget/pull/9");
+    expect(submitPullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("publish.compose is honestly unavailable when HEAD is detached (no own branch)", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { status: string; reason?: string };
+    expect(composed.status).toBe("unavailable");
+    expect(composed.reason).toMatch(/detached|branch/i);
+  });
+
+  it("publish-ready raises when the own-branch draft is composed, and clears on the post", async () => {
+    const raised: { family: string }[] = [];
+    const acknowledged: { attentionId?: string }[] = [];
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/9",
+      number: 9,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        submitPullRequest,
+        raiseAttention: (event) => {
+          raised.push({ family: event.family });
+          return `${event.family}:${event.reviewId ?? "-"}`;
+        },
+        acknowledgeAttention: (selector) => {
+          acknowledged.push(selector);
+          return 1;
+        },
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    await dispatch("review.draftPrBody", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      base: "main",
+      head: "feat/reviewed",
+      dispositions: [],
+    });
+    expect(raised.some((r) => r.family === "publish-ready")).toBe(true);
+
+    await dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      submission: {
+        title: "Reviewed change",
+        body: "b",
+        base: "main",
+        head: "feat/reviewed",
+        draft: true,
+      },
+      payload: canonicalPrSubmissionPayload({
+        title: "Reviewed change",
+        body: "b",
+        base: "main",
+        head: "feat/reviewed",
+        draft: true,
+      }),
+    });
+    expect(acknowledged.some((a) => a.attentionId === `publish-ready:${review.id}`)).toBe(true);
+  });
+});
+
 describe("createDispatch — review.openPr (the GitHub PR front door)", () => {
   it("opens a PR into a review and grants access to its root", async () => {
     const { dispatch, allowedRoots } = harness();
@@ -3784,23 +3896,36 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
   // A recording registry that hands out REAL AbortControllers, so a test can assert the
   // exact controller instance reaches each leg and that register/settle bracket the turn.
   function spyRegistry(): {
-    registered: { turnId: string; controller: AbortController }[];
+    registered: { turnId: string; reviewId?: string; controller: AbortController }[];
     settled: string[];
     liveTurns: NonNullable<DispatchDeps["liveTurns"]>;
   } {
-    const registered: { turnId: string; controller: AbortController }[] = [];
+    const registered: { turnId: string; reviewId?: string; controller: AbortController }[] = [];
     const settled: string[] = [];
+    const active = new Map<string, { reviewId?: string; controller: AbortController }>();
     return {
       registered,
       settled,
       liveTurns: {
-        register(turnId: string): AbortController {
+        register(turnId: string, reviewId?: string): AbortController {
           const controller = new AbortController();
-          registered.push({ turnId, controller });
+          registered.push({ turnId, reviewId, controller });
+          active.set(turnId, { reviewId, controller });
           return controller;
         },
         settle(turnId: string): void {
           settled.push(turnId);
+          active.delete(turnId);
+        },
+        abortReview(reviewId: string): number {
+          let count = 0;
+          for (const turn of active.values()) {
+            if (turn.reviewId === reviewId) {
+              turn.controller.abort();
+              count += 1;
+            }
+          }
+          return count;
         },
       },
     };
@@ -3838,6 +3963,85 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     expect(codexArg.abortController).toBe(controller);
     // Left the registry when the turn settled.
     expect(reg.settled).toEqual(["tn"]);
+  });
+
+  it("review.interrupt aborts the in-flight turn, emits ask-interrupted, clears ask-pending, raises turn-failed (#382 M2)", async () => {
+    const reg = spyRegistry();
+    const raised: { family: string; body: string }[] = [];
+    const acknowledged: { attentionId?: string; reviewId?: string }[] = [];
+    const h = harness(
+      undefined,
+      {},
+      {
+        liveTurns: reg.liveTurns,
+        raiseAttention: (event) => {
+          raised.push({ family: event.family, body: event.body });
+          return `${event.family}:${event.reviewId ?? "-"}`;
+        },
+        acknowledgeAttention: (selector) => {
+          acknowledged.push(selector);
+          return 1;
+        },
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+
+    // The orchestrator blocks until its abort fires, then swallows it and returns — the
+    // "leg swallowed its abort and returned" path (still an interrupted turn).
+    let entered!: () => void;
+    const enteredP = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(
+      async ({ abortController }: { abortController?: AbortController }) => {
+        entered();
+        await new Promise<void>((resolve) =>
+          abortController?.signal.addEventListener("abort", () => resolve()),
+        );
+        return { model: "Orchestrator · Claude", answer: "partial" };
+      },
+    );
+
+    const events: ReviewAskStreamEvent[] = [];
+    const askPromise = h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "orchestrator",
+        question: "which fix?",
+        threadId: "th",
+        turnId: "tn",
+        anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+      },
+      { emitAskStream: (event) => events.push(event) },
+    );
+
+    await enteredP; // the turn is registered and the orchestrator is blocked on its abort
+    const interrupt = (await h.dispatch("review.interrupt", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { interrupted: number };
+    expect(interrupt).toEqual({ interrupted: 1 });
+
+    await askPromise;
+
+    // The stream carries the truthful terminal, and the badges agree: ask-pending cleared,
+    // turn-failed raised with the interrupted cause.
+    expect(events.some((e) => e.kind === "ask-interrupted")).toBe(true);
+    expect(raised.some((r) => r.family === "ask-pending")).toBe(true);
+    expect(raised.some((r) => r.family === "turn-failed")).toBe(true);
+    expect(acknowledged.some((a) => a.attentionId === `ask-pending:${review.id}`)).toBe(true);
+  });
+
+  it("review.interrupt with nothing in flight is a truthful no-op (a double-tap Stop)", async () => {
+    const reg = spyRegistry();
+    const { dispatch, review } = await openReview(reg.liveTurns);
+    const out = (await dispatch("review.interrupt", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { interrupted: number };
+    expect(out).toEqual({ interrupted: 0 });
   });
 
   it("SETTLES the turn even when the ask throws — the leak guard on the aborted/errored path", async () => {
