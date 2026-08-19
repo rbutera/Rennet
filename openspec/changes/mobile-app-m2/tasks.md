@@ -3,7 +3,7 @@
 ## 1. Live turn screen (wireframe 22)
 
 - [x] 1.1 Turn screen: `review.reattach` paints persisted thread state, supervisor `onAskStream` appends live events; virtualized typed timeline (reuse the canvas-row discipline); return-to-tail anchor; unit tests on the timeline reducer (reattach + live fold, no double-render of a caught-up event).
-- [x] 1.2 Stop control → the streaming ask interrupt path; interrupted outcome renders truthfully; test. (Added additive `review.interrupt` — no client interrupt seam existed; flagged to main.)
+- [x] 1.2 Stop control → the streaming ask interrupt path; interrupted outcome renders truthfully; test. (Added additive `review.interrupt` — no client interrupt seam existed; flagged to main. Finding A resolved: no ownership check (Rule Zero); the interrupted outcome LANDS in the persisted thread messages — `review.reattach` returns it in `threads` as `interrupted` with empty `inFlight`, asserted end-to-end against a real `FileThreadStore`; against a pre-M2 daemon Stop LOOKS disabled — the daemon advertises an additive `act` handshake feature and the phone gates Stop on `actAdvertised()` rather than silently no-opping.)
 - [x] 1.3 Mid-turn continuity: test the reducer over a reconnect (rebind delivers later events exactly once — rides the M0 registry).
 
 ## 2. Ask answering
@@ -13,7 +13,7 @@
 
 ## 3. Shade answering (notification actions)
 
-- [x] 3.1 Ask push payload gains chip descriptors (additive field); daemon includes them from the ask's live state; schema + planner tests. (Additive `actions` on `attentionItemSchema`, carried through planner + push; populated at the raise site — content producer is the future turn-ask seam, flagged to main.)
+- [x] 3.1 Ask push payload gains chip descriptors (additive field); daemon includes them from the ask's live state; schema + planner tests. (Additive `actions` on `attentionItemSchema`, carried through planner + push; populated at the raise site — content producer is the future turn-ask seam, flagged to main. Finding B resolved: `actions` is optional and additive-only — an absent/empty-actions ask still renders a useful shade notification (question body + deep-link tap + in-app free-text; `shadeActionsFor(undefined) ⇒ []`, tested), losing nothing for today's real asks; the M1 refinement discipline holds — `attentionActionSchema` pins `id`/`label` to `z.string().min(1)`.)
 - [x] 3.2 App registers notification categories/actions per ask push; response handler posts the same `review.ask` reply (background where the platform allows; otherwise open-prefilled-and-send). Routing/composer unit tests; platform behavior documented.
 - [x] 3.3 Truthful outcome: superseded/unreachable answer updates the notification and deep-links into the ask; no silent drop, no duplicate (daemon's superseded-turn refusal is the dedup); tests both refusal paths.
 
