@@ -3,11 +3,13 @@
 // states the real URL. No sign step, no biometric, no confirmation dialog: the post button IS the
 // click. "Ask for changes" routes to a refine turn (never phone-editing the outbound review).
 //
-// The phone cannot compose the byte-exact payload (that lives in the DOM ui layer, off-limits to
-// the mobile boundary), so the daemon composes it via `publish.compose` and the phone posts EXACTLY
-// what it returned. Own-branch composes fully here; a team-PR review preview renders from the
-// projected review and is posted from the desktop for now (truthful, never a dead post button).
-// Idempotency is the engine's — a double tap / retry yields exactly one PR (or review).
+// The phone cannot compose the byte-exact payload (the DOM ui layer owns the editable collation
+// model, off-limits to the mobile boundary), so the DAEMON composes it via `publish.compose` and
+// the phone posts EXACTLY what it returned. Finding C ruling (a): BOTH loops end on the phone —
+//   • a team-PR review (`postTarget` present) composes in `mode: "review"` and posts via
+//     `publish.requestConsent` + `publish.review` (dryRun:false);
+//   • an own-branch capture composes in `mode: "pr"` and posts via `publish.submitPr`.
+// Idempotency is the engine's — a double tap / retry yields exactly one review (or one PR).
 
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { type ReactNode, useEffect, useState } from "react";
@@ -28,8 +30,31 @@ import {
 import { space, type } from "../../../../../src/theme/tokens";
 import { useTheme } from "../../../../../src/theme/use-theme";
 
+type ReviewComment = {
+  readonly path: string;
+  readonly line?: number;
+  readonly side: "LEFT" | "RIGHT";
+  readonly type: string;
+  readonly body: string;
+};
+type PostTarget = {
+  repo: { forge: string; owner: string; name: string };
+  number: number;
+  forgeRef: string;
+  headOid: string;
+};
+
 type Composed =
   | { readonly status: "loading" }
+  | {
+      readonly status: "review";
+      readonly comments: readonly ReviewComment[];
+      readonly payload: string;
+      readonly verdict: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      readonly destination: string;
+      readonly title: string;
+      readonly target: PostTarget;
+    }
   | {
       readonly status: "pr";
       readonly submission: unknown;
@@ -37,7 +62,6 @@ type Composed =
       readonly destination: string;
       readonly title: string;
     }
-  | { readonly status: "team-pr"; readonly reason: string }
   | { readonly status: "unavailable"; readonly reason: string };
 
 type Posting =
@@ -46,12 +70,13 @@ type Posting =
   | { readonly phase: "posted"; readonly url: string }
   | { readonly phase: "failed"; readonly reason: string };
 
-/** Derive the display verdict for a team-PR review from its dispositions. */
-function verdictOf(dispositions: readonly { type?: string }[] | undefined): string {
-  if (!dispositions || dispositions.length === 0) return "Comment";
-  if (dispositions.some((d) => d.type === "request-change")) return "Request changes";
-  if (dispositions.some((d) => d.type === "approve")) return "Approve";
-  return "Comment";
+/** Human label for the GitHub review event the post will carry. */
+function verdictLabel(verdict: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"): string {
+  return verdict === "REQUEST_CHANGES"
+    ? "Request changes"
+    : verdict === "APPROVE"
+      ? "Approve"
+      : "Comment";
 }
 
 export default function Publish(): ReactNode {
@@ -66,14 +91,38 @@ export default function Publish(): ReactNode {
   const [composed, setComposed] = useState<Composed>({ status: "loading" });
   const [posting, setPosting] = useState<Posting>({ phase: "idle" });
 
+  // The review determines the loop: a team-PR review (postTarget present) posts a review; an
+  // own-branch capture opens a PR. Wait for the loaded review before composing so the mode fits.
+  const review = loaded.review as { postTarget?: PostTarget } | undefined;
+  const mode: "review" | "pr" | undefined =
+    review === undefined ? undefined : review.postTarget ? "review" : "pr";
+
   useEffect(() => {
-    if (!connection) return;
+    if (!connection || mode === undefined) return;
     let cancelled = false;
     connection.supervisor
-      .invoke("publish.compose", { commandId: newCommandId(), reviewId })
+      .invoke("publish.compose", { commandId: newCommandId(), reviewId, mode })
       .then((result) => {
         if (cancelled) return;
-        if (result.status === "pr") {
+        if (result.status === "review") {
+          const target = review?.postTarget;
+          if (!target) {
+            setComposed({
+              status: "unavailable",
+              reason: "This review has no pull request to post to.",
+            });
+            return;
+          }
+          setComposed({
+            status: "review",
+            comments: result.comments,
+            payload: result.payload,
+            verdict: result.verdict,
+            destination: result.destination,
+            title: result.title,
+            target,
+          });
+        } else if (result.status === "pr") {
           setComposed({
             status: "pr",
             submission: result.submission,
@@ -82,13 +131,7 @@ export default function Publish(): ReactNode {
             title: result.title,
           });
         } else {
-          // Unavailable: a team-PR review previews here but posts from the desktop for now.
-          const review = loaded.review as { postTarget?: unknown } | undefined;
-          setComposed(
-            review?.postTarget
-              ? { status: "team-pr", reason: result.reason }
-              : { status: "unavailable", reason: result.reason },
-          );
+          setComposed({ status: "unavailable", reason: result.reason });
         }
       })
       .catch((error: unknown) => {
@@ -101,7 +144,44 @@ export default function Publish(): ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [connection, reviewId, loaded.review]);
+  }, [connection, reviewId, mode, review?.postTarget]);
+
+  async function postReview(c: Extract<Composed, { status: "review" }>): Promise<void> {
+    if (!connection) return;
+    setPosting({ phase: "posting" });
+    try {
+      // One tap posts. requestConsent mints a single-use token bound to (review, target, payload,
+      // verdict); publish.review consumes it with dryRun:false. The engine's idempotency marker
+      // makes a double tap / retry reuse the same review — exactly one lands.
+      const { authorization } = await connection.supervisor.invoke("publish.requestConsent", {
+        commandId: newCommandId(),
+        reviewId,
+        target: c.target as never,
+        payload: c.payload,
+        verdict: c.verdict,
+      });
+      const outcome = await connection.supervisor.invoke("publish.review", {
+        commandId: newCommandId(),
+        reviewId,
+        target: c.target as never,
+        comments: c.comments as never,
+        payload: c.payload,
+        verdict: c.verdict,
+        authorization,
+        dryRun: false,
+      });
+      if (!outcome.outcome) {
+        setPosting({ phase: "failed", reason: "The post did not land (nothing was posted)." });
+        return;
+      }
+      setPosting({ phase: "posted", url: outcome.outcome.url ?? c.destination });
+    } catch (error) {
+      setPosting({
+        phase: "failed",
+        reason: error instanceof Error ? error.message : "The post did not land.",
+      });
+    }
+  }
 
   async function postPr(submission: unknown, payload: string): Promise<void> {
     if (!connection) return;
@@ -161,6 +241,33 @@ export default function Publish(): ReactNode {
               ? "Composing the outbound review…"
               : "Daemon unreachable — showing the last replica."}
           </Text>
+        ) : composed.status === "review" ? (
+          <>
+            <Card>
+              <Text style={{ color: t.faint, fontSize: type.control }}>{composed.destination}</Text>
+              <Text
+                style={{
+                  color: composed.verdict === "REQUEST_CHANGES" ? t.amber : t.green,
+                  fontSize: type.control,
+                  fontWeight: "600",
+                  marginTop: 4,
+                }}
+              >
+                {verdictLabel(composed.verdict)}
+              </Text>
+              <Text style={{ color: t.text, fontSize: type.body, marginTop: space.xs }}>
+                {composed.comments.length} comment{composed.comments.length === 1 ? "" : "s"}{" "}
+                collated · your dispositions · your voice
+              </Text>
+              <Text style={{ color: t.muted, fontSize: type.control, marginTop: space.sm }}>
+                One neutral review event · posts exactly one review
+              </Text>
+            </Card>
+            <PrimaryButton
+              label={posting.phase === "posting" ? "Posting…" : "↗ Post review"}
+              onPress={() => void postReview(composed)}
+            />
+          </>
         ) : composed.status === "pr" ? (
           <>
             <Card>
@@ -177,19 +284,6 @@ export default function Publish(): ReactNode {
               onPress={() => void postPr(composed.submission, composed.payload)}
             />
           </>
-        ) : composed.status === "team-pr" ? (
-          <Card>
-            <Text style={{ color: t.green, fontSize: type.control, fontWeight: "600" }}>
-              {verdictOf((loaded.review as { dispositions?: { type?: string }[] })?.dispositions)}
-            </Text>
-            <Text style={{ color: t.text, fontSize: type.body, marginTop: space.xs }}>
-              {(loaded.review as { dispositions?: unknown[] })?.dispositions?.length ?? 0} judged
-              findings collated · your dispositions · your voice
-            </Text>
-            <Text style={{ color: t.muted, fontSize: type.control, marginTop: space.sm }}>
-              {composed.reason}
-            </Text>
-          </Card>
         ) : (
           <Text style={{ color: t.amber }}>{composed.reason}</Text>
         )}
