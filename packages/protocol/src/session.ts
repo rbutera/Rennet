@@ -187,6 +187,20 @@ export const attentionFamilySchema = z.enum([
 ]);
 export type AttentionFamily = z.infer<typeof attentionFamilySchema>;
 
+/**
+ * A shade answer action carried on an ask-pending attention (issue #382 M2, additive). Each is
+ * one answer chip the app renders and the OS notification registers as an action: `id` is the
+ * stable action identifier, `label` is the chip text AND the seed of the composed `review.ask`
+ * reply (the app composes `label` + newline + optional free-text direction into one reply — the
+ * "decision plus direction" shape). Populated at the raise site when a turn surfaces answer
+ * options; absent ⇒ the ask is answered by free-text alone (still one reply, spec-compliant).
+ */
+export const attentionActionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+});
+export type AttentionAction = z.infer<typeof attentionActionSchema>;
+
 /** One active attention item, as the client pins and later clears it. */
 export const attentionItemSchema = z.object({
   id: z.string().min(1),
@@ -197,6 +211,14 @@ export const attentionItemSchema = z.object({
   deepLink: z.string().min(1),
   title: z.string().min(1),
   body: z.string(),
+  /**
+   * COMPAT (attention, additive, #382 M2): answer chips for an ask-pending item — the shade
+   * actions the app registers so a lock-screen ask is answerable WITHOUT opening the app. Absent
+   * on every non-ask family and on any daemon that predates this field (stripped harmlessly by the
+   * non-strict decoder). A high-priority ask always reaches every client; the actions only add the
+   * quick-answer affordance on top.
+   */
+  actions: z.array(attentionActionSchema).optional(),
 });
 export type AttentionItem = z.infer<typeof attentionItemSchema>;
 

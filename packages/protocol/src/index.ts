@@ -2179,6 +2179,37 @@ export const commandDefinitions = {
       reused: z.boolean(),
     }),
   },
+  // ── publish.compose: the daemon composes the outbound artifact (issue #382 M2) ─
+  // A projected client (the phone) cannot compose the byte-exact outbound payload —
+  // that composition lives in the DOM `ui` layer and the mobile boundary forbids
+  // importing it. So the daemon composes it and the phone POSTS what it returns: the
+  // preview and the post use the SAME bytes, single-source and R33-honest. This pass
+  // composes the OWN-BRANCH submission (title/body/base/head + canonical payload) from
+  // the review's provenance; the payload is derived from the SAME submission returned,
+  // so `publish.submitPr` round-trips it exactly. A team-PR (postTarget present) or a
+  // retrospective/branchless review returns `unavailable` with a truthful reason (the
+  // team-PR review composition is renderer-only until its collation relocates to core).
+  // Reads only readiness state — no consent internals, no egress, nothing secret.
+  "publish.compose": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("pr"),
+        /** The composed own-branch submission the phone posts verbatim via `publish.submitPr`. */
+        submission: prSubmissionSchema,
+        /** The canonical bytes, derived from `submission` — the round-trip `publish.submitPr` verifies. */
+        payload: z.string(),
+        /** A human destination line for the preview (e.g. `atlas:feat/x → main`). */
+        destination: z.string(),
+        /** The PR title, surfaced as the preview's headline. */
+        title: z.string(),
+      }),
+      z.object({ status: z.literal("unavailable"), reason: z.string() }),
+    ]),
+  },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────
   // The renderer reaches the canvas engine ONLY through this command map (R20).
   // These are the USER surface: `canvas.disposition` is the sovereign L2 write;
@@ -2468,6 +2499,25 @@ export const commandDefinitions = {
       reviewId: z.string().min(1),
     }),
     output: reattachResultSchema,
+  },
+  // ── review.interrupt: stop a review's in-flight turn (issue #382 M2) ──────────
+  // The mobile "Stop" (wireframe 22) and any client's turn interrupt. Aborts the
+  // review's currently-streaming turn(s) via the live-turn registry — the same abort
+  // signal `before-quit` fires, but scoped to ONE review and client-triggered. The
+  // aborted turn emits `ask-interrupted` on its stream (so every watcher renders the
+  // interrupted outcome truthfully), its ask-pending attention clears, and turn-failed
+  // raises with the truthful "interrupted" cause. Additive and idempotent: interrupting
+  // a review with nothing in flight returns `interrupted: 0` (a no-op, never an error) —
+  // a double-tap Stop is safe. No new egress, no gate: stopping your own turn just runs.
+  "review.interrupt": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+    }),
+    output: z.object({
+      /** How many in-flight turns were signalled to stop (0 ⇒ nothing was running). */
+      interrupted: z.number().int().nonnegative(),
+    }),
   },
   // ── review.refine: refine one rough note into a clean comment (issue #19) ────
   // Rai's headline feature. A real model turn cleans the user's raw note into a
