@@ -4140,6 +4140,15 @@ button {
   border-radius: 50%;
   background: var(--green, var(--accent));
 }
+/* The dot tells the truth the banner tells (PR #405 follow-up): green only when online.
+ * A non-text graphic cue — the indicator's aria-label carries the meaning. */
+.connection-dot[data-state="connecting"] {
+  background: var(--text-faint);
+}
+.connection-dot[data-state="offline"],
+.connection-dot[data-state="error"] {
+  background: var(--amber);
+}
 .connection-name {
   font-size: 12px;
   color: var(--text);
@@ -4232,6 +4241,43 @@ button {
   color: var(--text-faint);
   font-size: 11px;
   line-height: 1.45;
+}
+/* Daemon-lost disclosure (PR #405 follow-up): when the socket drops, every surface says
+ * so — a fixed, non-modal strip over whatever the app is showing; nothing blocks. Ink
+ * text on the opaque --raised coat (the amber is a border affordance, never text ink);
+ * z-index 30 sits above the titlebar (20) and below the switcher popover (40). */
+.connection-banner {
+  position: fixed;
+  z-index: 30;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 9px 14px;
+  border: 1px solid var(--amber);
+  border-radius: var(--chip-radius);
+  background: var(--raised);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: var(--raised-shadow);
+}
+.connection-banner[data-kind="restored"] {
+  border-color: var(--hairline-strong);
+  color: var(--text-soft);
+}
+.connection-banner-retry {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
 }
 
 /* Host-app update readiness (spec: desktop-update-notification): the chrome mark

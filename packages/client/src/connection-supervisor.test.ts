@@ -148,6 +148,18 @@ describe("ConnectionSupervisor — reachability", () => {
     expect(supervisor.state.state).toBe("online");
   });
 
+  it("stamps `since` on the offline transition — the shell banner's elapsed-time anchor", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).goOnline();
+    const before = Date.now();
+    nth(bridges, 0).goOffline();
+    expect(supervisor.state.state).toBe("offline");
+    expect(supervisor.state.since).toBeGreaterThanOrEqual(before);
+    expect(supervisor.state.since).toBeLessThanOrEqual(Date.now());
+  });
+
   it("treats a rejected handshake as terminal error, not a retry", async () => {
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
