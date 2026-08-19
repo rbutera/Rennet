@@ -275,6 +275,15 @@ or spawns one and waits for it to come up. Quitting the app stops nothing — th
 and any review turn running inside it, outlive the window. A running review survives
 app quit and relaunch; the reopened app reattaches to the same process.
 
+The shell is **tray-resident**: closing the last window does not quit and stops
+nothing (it stays in the macOS menu bar / Windows tray, daemon and streams
+untouched; macOS hides the Dock while window-less). The tray's **Quit completely**
+is the *one* explicit, scoped teardown — it stops only the **owned** daemon (the
+one claimed by this data dir's `daemon.json`, whoever spawned it) the same graceful
+way `rennet stop` does, then exits; an attached remote daemon is never signalled.
+That is the sole reintroduction of a teardown path #379 removed, recorded in
+[ADR 0001](https://github.com/rbutera/rennet/blob/main/docs/adr/0001-tray-quit-owns-the-daemon.md).
+
 Discovery and supervision are a pidfile plus a health probe, nothing fancier. The
 daemon writes `daemon.json` (pid, WS port, protocol version, version, start time) under
 its data dir once its listener is up, and removes it on clean shutdown. A launcher — the

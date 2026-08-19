@@ -120,6 +120,13 @@ for their current tasks rather than treating any wave as still open:
 - `add-narrated-progress`
 - `fix-rest-parser-hunk-metadata`
 - `rennet-docsite`
+- `tray-presence` — the desktop shell's ambient presence: a tray icon (macOS
+  menu bar, Windows tray), tray residency on window close (the daemon and
+  streams outlive it; macOS hides the Dock while window-less), the truthful
+  minimal tray menu, the owned-daemon "Quit completely", and the tray's
+  update-ready surface shared with the in-app badge. Reintroduces one scoped
+  teardown #379 removed, recorded in
+  [ADR 0001](https://github.com/rbutera/rennet/blob/main/docs/adr/0001-tray-quit-owns-the-daemon.md).
 - `adopt-codex-app-server` — swaps the Codex adapter's transport from
   `codex exec --json` to the `codex app-server` JSON-RPC protocol behind the same
   injected seam, **superseding the exec-transport verdict recorded in the #25
