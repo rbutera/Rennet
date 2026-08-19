@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { app, autoUpdater, BrowserWindow, ipcMain } from "electron";
-import { updateElectronApp } from "update-electron-app";
+import { type IUpdateSource, UpdateSourceType, updateElectronApp } from "update-electron-app";
 
 /** MAIN → renderer push AND renderer → MAIN invoke (replay) channel for readiness. */
 export const UPDATE_READY_CHANNEL = "rennet:update-ready";
@@ -91,9 +91,32 @@ export function stagedNewerVersion(
   }
 }
 
-// Wire the Electron-maintained update client: update-electron-app polls
-// update.electronjs.org, which resolves this repo's public GitHub Releases and
-// serves the newest build. No Rennet backend is involved. `notifyUser: false`
+/**
+ * Where the update check looks, per platform.
+ *
+ * win32 asks GitHub Releases DIRECTLY: Squirrel.Windows only needs `RELEASES` +
+ * the nupkg at a base URL, and GitHub's `releases/latest/download/` redirect
+ * serves exactly that — no intermediary, no update.electronjs.org cache (which
+ * was observed serving a stale "no update" for ~87 minutes after a publish,
+ * lancelot 2026-08-19). darwin stays on update.electronjs.org: Squirrel.Mac
+ * needs the JSON feed that service derives, and macOS auto-update is a silent
+ * no-op until builds are Developer-ID-signed (issue #42) anyway. Either way the
+ * egress is GitHub-or-Electron infrastructure only — no Rennet backend.
+ */
+export function updateSourceFor(platform: NodeJS.Platform, repo: string): IUpdateSource {
+  if (platform === "win32") {
+    return {
+      type: UpdateSourceType.StaticStorage,
+      baseUrl: `https://github.com/${repo}/releases/latest/download`,
+    };
+  }
+  return { type: UpdateSourceType.ElectronPublicUpdateService, repo };
+}
+
+/** The public repository updates come from. */
+export const UPDATE_REPO = "rbutera/rennet";
+
+// Wire the Electron-maintained update client. `notifyUser: false`
 // replaces the stock modal with the in-app badge flow: `update-downloaded` is
 // cached + pushed to the renderer (badge on the Rennet logo), and the renderer's
 // confirm calls back on UPDATE_APPLY_CHANNEL to restart into the new version.
@@ -157,7 +180,12 @@ export function startAutoUpdate(
     logger.error("[auto-update] updater error (ignored):", error?.message ?? error);
   });
   try {
-    updateElectronApp({ updateInterval: "5 minutes", notifyUser: false, logger });
+    updateElectronApp({
+      updateSource: updateSourceFor(process.platform, UPDATE_REPO),
+      updateInterval: "5 minutes",
+      notifyUser: false,
+      logger,
+    });
   } catch (error) {
     logger.error(
       "[auto-update] failed to initialise (ignored):",
