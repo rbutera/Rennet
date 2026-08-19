@@ -19,7 +19,7 @@ export const daemonInfoSchema = z.object({
   host: z.string().optional(),
   /** The wire protocol version, cross-checked against the launcher's compatibility window. */
   protocolVersion: z.number().int().nonnegative(),
-  /** The server/app version string, for display (`rennet status`). Not a compatibility input. */
+  /** The server/app version string. Not a WIRE-compatibility input, but the desktop shell restarts a healthy daemon whose version differs from the app (the daemon updates with the app). */
   version: z.string(),
   /** ISO timestamp the daemon came up, for display. */
   startedAt: z.string(),

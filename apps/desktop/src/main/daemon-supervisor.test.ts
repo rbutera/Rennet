@@ -116,4 +116,60 @@ describe("desktop daemon supervision", () => {
     expect(removeDaemonFile(dataDir, old.pid)).toBe(false);
     expect(readDaemonFile(dataDir)).toEqual(spawned);
   });
+  it("attaches to a healthy daemon whose server version matches the app", async () => {
+    const dataDir = makeDir();
+    const current = claim(555, 44_000);
+    writeDaemonFile(dataDir, current);
+    const spawn = vi.fn();
+    const kill = vi.fn();
+
+    const port = await ensureDaemon(dataDir, {
+      probe: async () => healthy(current),
+      spawn,
+      waitForHealthy: async () => healthy(current),
+      kill,
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+
+    expect(port).toBe(current.wsPort);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("restarts a HEALTHY daemon running an older server version — the daemon updates with the app", async () => {
+    // Field bug (lancelot, 2026-08-19): a healthy 0.2.14 daemon kept serving a
+    // 0.2.18 app forever because only protocol skew triggered a restart, so
+    // shipped fixes never reached the daemon.
+    const dataDir = makeDir();
+    const old = claim(666, 45_000);
+    const spawned = claim(777, 46_000);
+    writeDaemonFile(dataDir, old);
+    const kill = vi.fn(() => removeDaemonFile(dataDir, old.pid));
+    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
+    const warn = vi.fn();
+
+    const port = await ensureDaemon(dataDir, {
+      probe: async () => healthy(old),
+      spawn,
+      waitForHealthy: async () => healthy(spawned),
+      kill,
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.4",
+      env: {},
+      warn,
+    });
+
+    expect(kill).toHaveBeenCalledWith(old.pid, "SIGTERM");
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(port).toBe(spawned.wsPort);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("restarting the bundled daemon"));
+    expect(readDaemonFile(dataDir)).toEqual(spawned);
+  });
 });
