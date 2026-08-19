@@ -1,175 +1,129 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
-import { type DaemonInfo, readDaemonFile, removeDaemonFile, writeDaemonFile } from "@rennet/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-vi.mock("electron", () => ({
-  app: {
-    getAppPath: () => "/tmp/Rennet.app/Contents/Resources/app.asar",
-    getVersion: () => "1.2.3",
-    isPackaged: false,
-  },
-}));
+// The Electron `app` import in daemon-supervisor is only touched by ensureDaemon/
+// resolveServerBundle; stopOwnedDaemon and ownedDaemon never reach it. Stub it so the
+// module loads under vitest without a real Electron.
+vi.mock("electron", () => ({ app: { isPackaged: false, getVersion: () => "test" } }));
 
-import { ensureDaemon } from "./daemon-supervisor";
+import { ownedDaemon, stopOwnedDaemon } from "./daemon-supervisor";
 
-describe("desktop daemon supervision", () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
+const claim = {
+  pid: 4242,
+  wsPort: 51000,
+  protocolVersion: 1,
+  version: "0.2.0",
+  startedAt: "2026-08-19T00:00:00.000Z",
+} as const;
 
-  function makeDir(): string {
-    const dir = mkdtempSync(join(tmpdir(), "rennet-daemon-supervisor-"));
-    dirs.push(dir);
-    return dir;
-  }
+/** A readClaim that returns `claim` for the first `liveReads` calls, then null (claim cleared). */
+function clearingReader(liveReads: number) {
+  let n = 0;
+  return () => (n++ < liveReads ? { ...claim } : null);
+}
 
-  function claim(pid: number, wsPort: number, protocolVersion = PROTOCOL_VERSION): DaemonInfo {
-    return {
-      pid,
-      wsPort,
-      protocolVersion,
-      version: "1.2.3",
-      startedAt: "2026-08-18T00:00:00.000Z",
-    };
-  }
+const immediateSleep = () => Promise.resolve();
 
-  function healthy(info: DaemonInfo) {
-    return {
-      kind: "healthy" as const,
-      claim: info,
-      identity: {
-        pid: info.pid,
-        wsPort: info.wsPort,
-        version: info.version,
-        protocolVersion: info.protocolVersion,
-        minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
-      },
-    };
-  }
-
-  it("takes over a dead-pid claim, publishes the spawned claim, and preserves it from late cleanup", async () => {
-    const dataDir = makeDir();
-    const stale = claim(111, 40_000);
-    const spawned = claim(222, 41_000);
-    writeDaemonFile(dataDir, stale);
-    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
-
-    const port = await ensureDaemon(dataDir, {
-      probe: async () => ({ kind: "stale", claim: stale }),
-      spawn,
-      waitForHealthy: async () => healthy(spawned),
-      kill: vi.fn(),
-      readClaim: readDaemonFile,
-      entryPath: "/bundle/server.cjs",
-      execPath: "/electron",
-      serverVersion: "1.2.3",
-      env: {},
-      warn: vi.fn(),
-    });
-
-    expect(port).toBe(spawned.wsPort);
-    expect(spawn).toHaveBeenCalledOnce();
-    expect(readDaemonFile(dataDir)).toEqual(spawned);
-    expect(removeDaemonFile(dataDir, stale.pid)).toBe(false);
-    expect(readDaemonFile(dataDir)).toEqual(spawned);
-  });
-
-  it("kills an incompatible daemon, spawns the bundled daemon, and preserves the new claim", async () => {
-    const dataDir = makeDir();
-    const old = claim(333, 42_000, PROTOCOL_VERSION + 500);
-    const spawned = claim(444, 43_000);
-    writeDaemonFile(dataDir, old);
-    const kill = vi.fn(() => removeDaemonFile(dataDir, old.pid));
-    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
-
-    const port = await ensureDaemon(dataDir, {
-      probe: async () => ({
-        kind: "incompatible",
-        claim: old,
-        identity: {
-          pid: old.pid,
-          wsPort: old.wsPort,
-          version: old.version,
-          protocolVersion: old.protocolVersion,
-          minCompatibleProtocolVersion: old.protocolVersion,
-        },
-        reason: "test skew",
-      }),
-      spawn,
-      waitForHealthy: async () => healthy(spawned),
-      kill,
-      readClaim: readDaemonFile,
-      entryPath: "/bundle/server.cjs",
-      execPath: "/electron",
-      serverVersion: "1.2.3",
-      env: {},
-      warn: vi.fn(),
-    });
-
-    expect(port).toBe(spawned.wsPort);
-    expect(kill).toHaveBeenCalledWith(old.pid, "SIGTERM");
-    expect(spawn).toHaveBeenCalledOnce();
-    expect(removeDaemonFile(dataDir, old.pid)).toBe(false);
-    expect(readDaemonFile(dataDir)).toEqual(spawned);
-  });
-  it("attaches to a healthy daemon whose server version matches the app", async () => {
-    const dataDir = makeDir();
-    const current = claim(555, 44_000);
-    writeDaemonFile(dataDir, current);
-    const spawn = vi.fn();
+describe("stopOwnedDaemon (tray Quit completely)", () => {
+  it("is a no-op when no daemon is owned (no claim, remote-only)", async () => {
     const kill = vi.fn();
-
-    const port = await ensureDaemon(dataDir, {
-      probe: async () => healthy(current),
-      spawn,
-      waitForHealthy: async () => healthy(current),
-      kill,
-      readClaim: readDaemonFile,
-      entryPath: "/bundle/server.cjs",
-      execPath: "/electron",
-      serverVersion: "1.2.3",
-      env: {},
-      warn: vi.fn(),
-    });
-
-    expect(port).toBe(current.wsPort);
-    expect(spawn).not.toHaveBeenCalled();
+    const warn = vi.fn();
+    await stopOwnedDaemon("/data", { readClaim: () => null, kill, warn, sleep: immediateSleep });
     expect(kill).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it("restarts a HEALTHY daemon running an older server version — the daemon updates with the app", async () => {
-    // Field bug (lancelot, 2026-08-19): a healthy 0.2.14 daemon kept serving a
-    // 0.2.18 app forever because only protocol skew triggered a restart, so
-    // shipped fixes never reached the daemon.
-    const dataDir = makeDir();
-    const old = claim(666, 45_000);
-    const spawned = claim(777, 46_000);
-    writeDaemonFile(dataDir, old);
-    const kill = vi.fn(() => removeDaemonFile(dataDir, old.pid));
-    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
+  it("SIGTERMs the owned pid and returns cleanly once the claim clears", async () => {
+    const kill = vi.fn();
     const warn = vi.fn();
-
-    const port = await ensureDaemon(dataDir, {
-      probe: async () => healthy(old),
-      spawn,
-      waitForHealthy: async () => healthy(spawned),
+    await stopOwnedDaemon("/data", {
+      readClaim: clearingReader(1), // present on the pre-kill read, gone on the first poll
       kill,
-      readClaim: readDaemonFile,
-      entryPath: "/bundle/server.cjs",
-      execPath: "/electron",
-      serverVersion: "1.2.4",
-      env: {},
       warn,
+      sleep: immediateSleep,
     });
+    expect(kill).toHaveBeenCalledWith(claim.pid, "SIGTERM");
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
 
-    expect(kill).toHaveBeenCalledWith(old.pid, "SIGTERM");
-    expect(spawn).toHaveBeenCalledOnce();
-    expect(port).toBe(spawned.wsPort);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("restarting the bundled daemon"));
-    expect(readDaemonFile(dataDir)).toEqual(spawned);
+  it("warns truthfully and returns when the claim never clears within the bounded wait", async () => {
+    const kill = vi.fn();
+    const warn = vi.fn();
+    let clock = 0;
+    await stopOwnedDaemon("/data", {
+      readClaim: () => ({ ...claim }), // claim persists forever
+      kill,
+      warn,
+      sleep: immediateSleep,
+      now: () => (clock += 1000), // advance 1s per read; deadline is 5s
+      timeoutMs: 5_000,
+    });
+    expect(kill).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("still present");
+    expect(warn.mock.calls[0]?.[0]).toContain(String(claim.pid));
+  });
+
+  it("treats an already-gone pid (ESRCH) as a clean stop, no warning", async () => {
+    const warn = vi.fn();
+    await stopOwnedDaemon("/data", {
+      readClaim: () => ({ ...claim }),
+      kill: () => {
+        const err = new Error("no such process") as NodeJS.ErrnoException;
+        err.code = "ESRCH";
+        throw err;
+      },
+      warn,
+      sleep: immediateSleep,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns (but does not throw) when the kill fails for a reason other than ESRCH", async () => {
+    const warn = vi.fn();
+    await stopOwnedDaemon("/data", {
+      readClaim: () => ({ ...claim }),
+      kill: () => {
+        const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+        err.code = "EPERM";
+        throw err;
+      },
+      warn,
+      sleep: immediateSleep,
+    });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain("failed to signal");
+  });
+});
+
+describe("ownedDaemon (truthful quit-label state)", () => {
+  it("returns the claim when it is present and the pid is alive", () => {
+    expect(
+      ownedDaemon(
+        "/data",
+        () => ({ ...claim }),
+        () => true,
+      ),
+    ).toEqual(claim);
+  });
+
+  it("returns null when there is no claim (attached remote only)", () => {
+    expect(
+      ownedDaemon(
+        "/data",
+        () => null,
+        () => true,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when the claimed pid is dead (stale claim)", () => {
+    expect(
+      ownedDaemon(
+        "/data",
+        () => ({ ...claim }),
+        () => false,
+      ),
+    ).toBeNull();
   });
 });

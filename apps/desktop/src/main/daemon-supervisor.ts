@@ -30,6 +30,82 @@ export function resolveServerBundle(): string {
   return resolve(__dirname, "../server/index.cjs");
 }
 
+/** The daemon this app owns, if any: the live claim in its own data dir (tray-presence). */
+export function ownedDaemon(
+  dataDir: string,
+  readClaim: (dataDir: string) => DaemonInfo | null = readDaemonFile,
+  alive: (pid: number) => boolean = isPidAlive,
+): DaemonInfo | null {
+  const claim = readClaim(dataDir);
+  return claim && alive(claim.pid) ? claim : null;
+}
+
+/** True if `pid` is a signalable process. `process.kill(pid, 0)` probes without signalling. */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM = alive but not ours to signal; ESRCH = gone.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+export interface StopOwnedDaemonDeps {
+  readonly readClaim: (dataDir: string) => DaemonInfo | null;
+  readonly kill: (pid: number, signal: "SIGTERM") => void;
+  readonly now: () => number;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly warn: (message: string) => void;
+  readonly timeoutMs: number;
+}
+
+/**
+ * Stop the OWNED daemon the same way `rennet stop` does (tray "Quit completely",
+ * design D3): read the claim, SIGTERM the pid (which triggers the daemon's graceful
+ * shutdown — in-flight turns persist as resumable `interrupted`), then poll — bounded —
+ * for the claim to clear. Never signals anything but this data dir's own daemon, so an
+ * attached remote daemon is untouched. No claim ⇒ nothing to stop. A pid already gone
+ * (ESRCH) is success. On timeout it warns truthfully and returns — the caller exits the
+ * app regardless, exactly as `rennet stop` exits after its bounded wait; the claim-file
+ * protocol keeps the next launch honest either way.
+ */
+export async function stopOwnedDaemon(
+  dataDir: string,
+  overrides: Partial<StopOwnedDaemonDeps> = {},
+): Promise<void> {
+  const deps: StopOwnedDaemonDeps = {
+    readClaim: readDaemonFile,
+    kill: (pid, signal) => {
+      process.kill(pid, signal);
+    },
+    now: Date.now,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    warn: console.warn,
+    timeoutMs: 5_000,
+    ...overrides,
+  };
+  const claim = deps.readClaim(dataDir);
+  if (!claim) return; // nothing owned here — remote-only or already stopped.
+  try {
+    deps.kill(claim.pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return; // already gone.
+    deps.warn(
+      `rennet: failed to signal owned daemon pid ${claim.pid}: ${(error as Error).message}`,
+    );
+    return;
+  }
+  const deadline = deps.now() + deps.timeoutMs;
+  while (deps.now() < deadline) {
+    if (deps.readClaim(dataDir)?.pid !== claim.pid) return; // claim cleared — clean stop.
+    await deps.sleep(100);
+  }
+  deps.warn(
+    `rennet: sent SIGTERM to owned daemon pid ${claim.pid} but daemon.json is still present after ${deps.timeoutMs}ms; exiting anyway`,
+  );
+}
+
 /** Wait (bounded) for the signalled daemon to stop owning the claim after SIGTERM. */
 async function waitForClaimGone(
   dataDir: string,
