@@ -1,5 +1,6 @@
 import type { LocalWork, Project, ProjectDetail, PullRequest } from "@rennet/protocol";
 import type { GitExec } from "./git-range-diff";
+import { isGitHubNetworkError } from "./github-fetch";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
 import { type ProjectPrSource, parseForgeRepository } from "./project-pr-source";
 import { parseRemoteIdentity } from "./worktree-discovery";
@@ -268,6 +269,29 @@ async function resolveViewerLogin(git: GitExec, roots: readonly string[]): Promi
   return "you";
 }
 
+/** How many per-repo PR fetches run at once (each carries its own 15s deadline). */
+const MAX_CONCURRENT_PR_FETCHES = 4;
+
+/** `Promise.all` with a concurrency cap; order-preserving, first rejection wins. */
+async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index] as T);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 /**
  * Build the live `ProjectDetail` for a project from real git and (B2) live GitHub.
  * The local half is always real; the PR half fills when a `prSource` is wired (GitHub
@@ -292,16 +316,32 @@ export async function loadProjectDetail(
   let viewer = gitViewer;
   let prs: PullRequest[] = [];
   let truncated = false;
+  let authUnavailable: "network" | undefined;
   const prSource = deps.prSource;
   if (prSource && forgeRepos.length > 0) {
-    // The GitHub login pins ownership; a null viewer keeps the git identity.
-    const githubViewer = await prSource.resolveViewer();
-    if (githubViewer) viewer = githubViewer;
-    const results = await Promise.all(
-      forgeRepos.map((identity) => prSource.listOpenPullRequests(identity)),
-    );
-    prs = results.flatMap((result) => result.prs);
-    truncated = results.some((result) => result.truncated);
+    try {
+      // The GitHub login pins ownership; a null viewer keeps the git identity.
+      const githubViewer = await prSource.resolveViewer();
+      if (githubViewer) viewer = githubViewer;
+      // Bounded fan-out: each request already carries a 15s deadline, so an
+      // unbounded Promise.all over a many-repo workspace would stack one worst
+      // case per repo. Four in flight keeps the worst case near one deadline.
+      const results = await mapLimit(forgeRepos, MAX_CONCURRENT_PR_FETCHES, (identity) =>
+        prSource.listOpenPullRequests(identity),
+      );
+      prs = results.flatMap((result) => result.prs);
+      truncated = results.some((result) => result.truncated);
+    } catch (error) {
+      // A network failure AFTER auth established the source (the post-establishment
+      // outage): the source is fine, the fetch failed. Degrade to the local-only
+      // list with the honest reason — never a hard-failed project.detail, and never
+      // a lying "complete, zero PRs" (the hint names why the PR half is absent).
+      // Non-network failures still throw: a broken response must surface.
+      if (!isGitHubNetworkError(error)) throw error;
+      prs = [];
+      truncated = false;
+      authUnavailable = "network";
+    }
   }
 
   const perRepo = await Promise.all(
@@ -312,6 +352,7 @@ export async function loadProjectDetail(
     locals: perRepo.flat(),
     prs,
     truncated,
+    ...(authUnavailable === undefined ? {} : { authUnavailable }),
   };
 }
 

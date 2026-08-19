@@ -59,6 +59,7 @@ import {
   FileConfigStore,
   FileProjectStore,
   FileThreadStore,
+  GITHUB_REQUEST_TIMEOUT_MS,
   GitCaptureAdapter,
   GitCheckpointStore,
   GitHubChangesetSource,
@@ -67,6 +68,7 @@ import {
   GitHubPublishAdapter,
   gitForRepoFactory,
   inspectUiEvidence,
+  isGitHubNetworkError,
   KnowledgeStore,
   loadConventionCatalogue,
   loadProjectDetail,
@@ -91,6 +93,7 @@ import {
   SqliteReviewStore,
   snapshotStoreFor,
   validateGitHubToken,
+  withRequestTimeout,
   wslDiscoveryDeps,
 } from "@rennet/adapters";
 import {
@@ -217,6 +220,8 @@ export interface RennetServerOptions {
   readonly openPath?: (absPath: string) => Promise<boolean>;
   /** The outbound HTTP transport for GitHub egress (the daemon's global fetch). */
   readonly httpFetch?: typeof globalThis.fetch;
+  /** Per-request deadline on GitHub egress (tests shrink it). Default 15s. */
+  readonly httpTimeoutMs?: number;
   /** The server application's own version, surfaced in the WS `serverInfo` handshake. Defaults to a dev sentinel. */
   readonly serverVersion?: string;
   /**
@@ -538,9 +543,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // dry-run (which constructs the request without a credential).
   // Connect-phase resilience: one retry on a momentary network blip, and a
   // plain-language error (never a raw undici internal) when GitHub is unreachable.
-  const publishHttp: typeof globalThis.fetch = withConnectResilience(
+  // Every request ALSO carries an abort deadline (the lancelot field bug: a
+  // stalled connection to api.github.com hung auth validation forever, which
+  // wedged `project.detail` AND the account surface). The deadline wraps INSIDE
+  // the retry, so each attempt is individually bounded, and a deadline abort
+  // (TimeoutError — not a connect-phase code) is never replayed. One composition
+  // here bounds every consumer — validation, the refresh exchange, the PR
+  // source, the device flow (whose cancel signal stays composed in), and
+  // publish — so the worst network case is a bounded failure the rejection
+  // paths below already recover from.
+  const rawGitHubHttp: typeof globalThis.fetch =
     options.httpFetch ??
-      (() => Promise.reject(new Error("Rennet server: options.httpFetch was not provided"))),
+    (() => Promise.reject(new Error("Rennet server: options.httpFetch was not provided")));
+  const publishHttp: typeof globalThis.fetch = withConnectResilience(
+    withRequestTimeout(rawGitHubHttp, options.httpTimeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS),
   );
 
   const gitHubSecretStore = createGitHubTokenStore(dataDir);
@@ -625,7 +641,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // WHICH problem stands between the user and the PR half.
   interface ProjectPrResolution {
     source: ProjectPrSource | null;
-    authUnavailable?: "not-connected" | "token-invalid" | "insufficient-scope";
+    authUnavailable?: "not-connected" | "token-invalid" | "insufficient-scope" | "network";
   }
   let projectPrMemo: { promise: Promise<ProjectPrResolution>; deadline: number | null } | null =
     null;
@@ -645,10 +661,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         try {
           auth = await resolveAuth();
         } catch {
-          // A transport blip (refresh POST, /rate_limit) must degrade to the
-          // local-only list, never fail the whole project.detail RPC. No
-          // authUnavailable hint: "reconnect" would be the WRONG advice for a
-          // network problem. The memo is cleared so the next call retries.
+          // `resolveGitHubAuth` classifies transport failures as the honest
+          // `network` reason itself, so only a NON-network fault lands here
+          // (store corruption, a broken response). Degrade to the local-only
+          // list rather than failing the whole project.detail RPC; the memo is
+          // cleared so the next call retries.
           if (projectPrMemo === memo) projectPrMemo = null;
           return { source: null };
         }
@@ -668,7 +685,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // the next project.detail retries instead of failing forever.
     const memo = projectPrMemo;
     try {
-      return await memo.promise;
+      const resolved = await memo.promise;
+      // An unreachable GitHub is transient: memoizing the verdict would pin the
+      // surface local-only after the network recovers. The next call retries.
+      if (resolved.authUnavailable === "network" && projectPrMemo === memo) {
+        projectPrMemo = null;
+      }
+      return resolved;
     } catch (error) {
       if (projectPrMemo === memo) projectPrMemo = null;
       throw error;
@@ -732,8 +755,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             flow.outcome = { phase: "connected", status: projectAuthStatus(await resolveAuth()) };
           })
           .catch((error: unknown) => {
-            flow.outcome = { phase: "failed", message: String((error as Error)?.message ?? error) };
-            rejectVerification(error);
+            // A deliberate cancel aborts the in-flight fetch too, which would
+            // otherwise read as AbortError = "network". The user's own cancel is
+            // never a connectivity problem — report it as what it is, quietly.
+            const cancelled = controller.signal.aborted;
+            // Raw undici strings ("UND_ERR_CONNECT_TIMEOUT…") are not user copy:
+            // map a network failure to plain words, keep the raw detail in the log.
+            const network = !cancelled && isGitHubNetworkError(error);
+            if (network) console.warn("GitHub device flow could not reach github.com", error);
+            const message = network
+              ? "Couldn't reach github.com — check your connection."
+              : String((error as Error)?.message ?? error);
+            flow.outcome = { phase: "failed", message };
+            rejectVerification(network ? new Error(message) : error);
           });
       });
       return {

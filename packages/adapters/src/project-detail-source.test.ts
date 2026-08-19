@@ -477,3 +477,78 @@ describe("defaultProjectDetailSourceDeps.resolveRepoRoots", () => {
     await expect(deps.resolveRepoRoots(repoProject("/solo"))).resolves.toEqual(["/solo"]);
   });
 });
+
+describe("loadProjectDetail — the post-establishment outage (bounded, honest)", () => {
+  const depsFor = (
+    git: GitExec,
+    roots: readonly string[],
+    prSource: ProjectPrSource,
+  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+
+  const netError = () =>
+    Object.assign(new Error("Connect Timeout Error"), { code: "UND_ERR_CONNECT_TIMEOUT" });
+
+  it("a network failure in the live PR load degrades to local-only with the honest hint", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1, "feat/z": 2 },
+        aheadBehind: { "feat/z": { ahead: 1, behind: 0 } },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: () => Promise.reject(netError()),
+    };
+    const detail = await loadProjectDetail(depsFor(git, ["/repo"], prSource), repoProject("/repo"));
+    expect(detail.authUnavailable).toBe("network");
+    expect(detail.prs).toEqual([]);
+    expect(detail.truncated).toBe(false);
+    // The local half survives the outage.
+    expect(detail.locals.length).toBeGreaterThan(0);
+  });
+
+  it("a NON-network failure still throws — a broken response never fakes an empty list", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1 },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: () => Promise.reject(new Error("GraphQL schema drift")),
+    };
+    await expect(
+      loadProjectDetail(depsFor(git, ["/repo"], prSource), repoProject("/repo")),
+    ).rejects.toThrow("GraphQL schema drift");
+  });
+
+  it("caps the per-repo PR fan-out at 4 in flight (each request carries a 15s worst case)", async () => {
+    const roots = Array.from({ length: 8 }, (_, i) => `/r${i}`);
+    const fixtures = Object.fromEntries(
+      roots.map((root, i) => [
+        root,
+        { remoteUrl: `git@github.com:acme/repo${i}.git`, userName: "rai", branches: { main: 1 } },
+      ]),
+    );
+    const git = makeGit(fixtures);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight -= 1;
+        return { prs: [], truncated: false };
+      },
+    };
+    await loadProjectDetail(depsFor(git, roots, prSource), repoProject("/r0"));
+    expect(maxInFlight).toBeGreaterThan(0);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+});

@@ -23,7 +23,10 @@ If the OAuth app is configured with expiring user tokens, Rennet renews the
 token automatically before it expires — the one-time sign-in stays one-time.
 The side door is pasting a personal access token in Settings; it feeds the same
 store and is validated before it is kept. The current forge adapter targets
-github.com; GitHub Enterprise hosts are not wired yet.
+github.com; GitHub Enterprise hosts are not wired yet. When GitHub is
+unreachable (offline, DNS, a stalled connection), Rennet says so and degrades to
+your local work only — it never hangs, and it never blames your token for a
+network problem.
 
 You also need a supported coding harness installed. Claude Code is the primary
 adapter, and Rennet discovers it automatically rather than asking you for an API
