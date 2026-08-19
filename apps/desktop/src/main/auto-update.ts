@@ -19,6 +19,8 @@ export interface UpdateReadiness {
   readonly ready: UpdateReadyInfo | null;
   /** Record a completed download and push it to every subscriber. */
   markDownloaded(releaseName?: unknown): void;
+  /** Also notify this listener on each readiness change (the tray subscribes here). */
+  subscribe(listener: (info: UpdateReadyInfo) => void): void;
 }
 
 /**
@@ -26,9 +28,12 @@ export interface UpdateReadiness {
  * reloading) renderers can replay it, and broadcasts each transition. The badge
  * means READY — this only ever fires off a completed download, so the UI can
  * never claim an update it doesn't have (spec: desktop-update-notification).
+ * The renderer badge rides the injected `broadcast`; the tray rides `subscribe` —
+ * one store, two surfaces, no IPC hop between them.
  */
 export function createUpdateReadiness(broadcast: (info: UpdateReadyInfo) => void): UpdateReadiness {
   let ready: UpdateReadyInfo | null = null;
+  const listeners: Array<(info: UpdateReadyInfo) => void> = [];
   return {
     get ready() {
       return ready;
@@ -37,6 +42,10 @@ export function createUpdateReadiness(broadcast: (info: UpdateReadyInfo) => void
       const name = typeof releaseName === "string" ? releaseName.trim() : "";
       ready = name ? { version: name } : {};
       broadcast(ready);
+      for (const listener of listeners) listener(ready);
+    },
+    subscribe(listener: (info: UpdateReadyInfo) => void): void {
+      listeners.push(listener);
     },
   };
 }
@@ -139,7 +148,6 @@ export function startAutoUpdate(
   isTrustedUrl: (value: string) => boolean,
   logger: Console = console,
   detectStaged: () => string | null = () => stagedNewerVersion(process.execPath, app.getVersion()),
-  onReady: () => void = () => undefined,
 ): AutoUpdateHandle {
   // Whether THIS run saw the live update-downloaded event. When readiness was
   // seeded from a previously staged update instead, electron's quitAndInstall
@@ -151,8 +159,6 @@ export function startAutoUpdate(
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.webContents.isDestroyed()) window.webContents.send(UPDATE_READY_CHANNEL, info);
     }
-    // The tray subscribes to the SAME store (no IPC hop): one readiness, two surfaces.
-    onReady();
   });
 
   // The one apply path, shared by the renderer badge's confirm AND the tray's

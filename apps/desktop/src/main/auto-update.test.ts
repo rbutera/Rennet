@@ -79,6 +79,16 @@ describe("createUpdateReadiness", () => {
     expect(broadcast).toHaveBeenCalledWith({ version: "0.2.3" });
   });
 
+  it("notifies subscribers (the tray) on each download, alongside the window broadcast", () => {
+    const broadcast = vi.fn();
+    const readiness = createUpdateReadiness(broadcast);
+    const trayListener = vi.fn();
+    readiness.subscribe(trayListener);
+    readiness.markDownloaded("0.2.4");
+    expect(trayListener).toHaveBeenCalledWith({ version: "0.2.4" });
+    expect(broadcast).toHaveBeenCalledWith({ version: "0.2.4" });
+  });
+
   it("treats a non-string or blank release name as version-unknown, still ready", () => {
     const broadcast = vi.fn();
     const readiness = createUpdateReadiness(broadcast);

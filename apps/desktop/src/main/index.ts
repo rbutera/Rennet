@@ -19,7 +19,7 @@ import { startAutoUpdate } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
 import { ensureDaemon, ownedDaemon, stopOwnedDaemon } from "./daemon-supervisor";
 import { applyMenuUpdate } from "./menu";
-import { createTray, ensureWindow, residencyOnAllWindowsClosed, type TrayController } from "./tray";
+import { createTray, ensureWindow, residencyOnAllWindowsClosed } from "./tray";
 import { brandWindowIcon, isExternalHttpUrl, resolveAppUserModelId } from "./window-identity";
 
 // Squirrel (the win32 installer) launches the freshly-installed exe with a
@@ -258,14 +258,11 @@ app.whenReady().then(async () => {
   activeWsPort = wsPort;
 
   // Tray-resident presence (tray-presence). The updater and the tray share ONE readiness
-  // store and ONE apply path: startAutoUpdate returns the handle, notifies the tray on every
-  // readiness change, and the tray's update line calls the same apply the renderer badge does.
-  // Auto-update is packaged-only (dev/test have no feed); the tray always exists.
-  let tray: TrayController | undefined;
-  const update = app.isPackaged
-    ? startAutoUpdate(isTrustedAppUrl, console, undefined, () => tray?.setUpdateReady(true))
-    : undefined;
-  tray = createTray({
+  // store and ONE apply path: the tray subscribes to the same store the renderer badge
+  // rides, and its update line calls the same apply. Auto-update is packaged-only (dev/test
+  // have no feed); the tray always exists.
+  const update = app.isPackaged ? startAutoUpdate(isTrustedAppUrl) : undefined;
+  const tray = createTray({
     baseDir: __dirname,
     resourcesPath: process.resourcesPath,
     isPackaged: app.isPackaged,
@@ -276,6 +273,7 @@ app.whenReady().then(async () => {
     applyUpdate: () => update?.applyUpdate(),
     quitCompletely: () => void quitCompletely(dataDir),
   });
+  update?.readiness.subscribe(() => tray.setUpdateReady(true));
   // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
   if (update?.readiness.ready) tray.setUpdateReady(true);
 });

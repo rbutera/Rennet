@@ -184,7 +184,9 @@ describe("createTray update surface (one readiness, tray reflects it)", () => {
       quitCompletely: vi.fn(),
       ...overrides,
     });
-    return { controller, rec: trayInstances[0]! };
+    const rec = trayInstances[0];
+    if (!rec) throw new Error("tray was not constructed");
+    return { controller, rec };
   }
 
   it("starts with the plain icon and no update line", () => {
