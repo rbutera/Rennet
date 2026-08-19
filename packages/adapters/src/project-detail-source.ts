@@ -272,7 +272,11 @@ async function resolveViewerLogin(git: GitExec, roots: readonly string[]): Promi
 /** How many per-repo PR fetches run at once (each carries its own 15s deadline). */
 const MAX_CONCURRENT_PR_FETCHES = 4;
 
-/** `Promise.all` with a concurrency cap; order-preserving, first rejection wins. */
+/**
+ * `Promise.all` with a concurrency cap; order-preserving, first rejection wins.
+ * After a rejection the surviving workers stop picking up NEW items — the call
+ * is already doomed, so launching more requests would only waste the network.
+ */
 async function mapLimit<T, R>(
   items: readonly T[],
   limit: number,
@@ -280,12 +284,18 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
+    while (!failed) {
       const index = next;
       next += 1;
       if (index >= items.length) return;
-      results[index] = await fn(items[index] as T);
+      try {
+        results[index] = await fn(items[index] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
   await Promise.all(workers);

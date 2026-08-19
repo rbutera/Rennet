@@ -21,8 +21,16 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  createGitHubOctokit,
+  GitHubPublishAdapter,
+  isGitHubNetworkError,
+  withRequestTimeout,
+} from "@rennet/adapters";
+import type { ForgeReviewTarget } from "@rennet/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer } from "./create-server";
+import { withConnectResilience } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 
 /** A transport that stalls forever but honors its abort signal, like real undici. */
@@ -350,4 +358,54 @@ describe("GitHub egress bounds (the lancelot hang)", () => {
     // paste is neither stored nor blamed.
     expect(result.status.state).toBe("network");
   }, 15_000);
+
+  it("connect failure + retry + stall shares ONE aggregate budget through the server", async () => {
+    // First attempt fails the connect phase; the retry then stalls. Per-attempt
+    // deadlines would chain ~150 + 750 (pause) + 150; the aggregate contract is
+    // ~150 total — the deadline spans the pause and the second attempt.
+    let calls = 0;
+    const stalling = stallingFetch();
+    const connectFailThenStall: typeof globalThis.fetch = (input, init) => {
+      calls += 1;
+      if (calls === 1) return unreachableFetch(input, init);
+      return stalling.fetch(input, init);
+    };
+    const server = await makeServer(connectFailThenStall);
+
+    const started = Date.now();
+    const result = (await server.dispatch("github.setToken", { token: "gho_candidate" })) as {
+      status: { state: string };
+    };
+    expect(result.status.state).toBe("network");
+    expect(Date.now() - started).toBeLessThan(600);
+  }, 15_000);
+});
+
+describe("publish egress rides the SAME bounded transport (unit-level middle ground)", () => {
+  // Full publish.review e2e needs the composed review + consent machinery; this
+  // drives the REAL publish adapter over the REAL create-server transport stack
+  // (withRequestTimeout(withConnectResilience(raw))) so that mutating ONLY the
+  // publish octokit wiring to an unbounded transport turns this red (it hangs).
+  it("a stalled GraphQL during the publish reconcile settles within the bound as a network error", async () => {
+    const stalling = stallingFetch();
+    const publishHttp = withRequestTimeout(withConnectResilience(stalling.fetch), 150);
+    const adapter = new GitHubPublishAdapter({
+      resolveOctokit: async () =>
+        createGitHubOctokit({ fetch: publishHttp, token: "gho_perfectly_fine" }),
+    });
+    const target: ForgeReviewTarget = {
+      ref: { repo: { forge: "github", owner: "rbutera", name: "fixture" }, number: 3 },
+      forgeRef: "PR_kwFIXTURE",
+      headOid: "cafe0003",
+    };
+    const started = Date.now();
+    const error = await adapter
+      .findExistingReview(target, "marker-1")
+      .then(() => null)
+      .catch((caught: unknown) => caught);
+    expect(error).not.toBeNull();
+    expect(isGitHubNetworkError(error)).toBe(true);
+    expect(stalling.calls()).toBe(1); // a stall is not a connect failure — never replayed
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
 });

@@ -2,12 +2,13 @@ import type { Project, PullRequest } from "@rennet/protocol";
 import { projectDetailSchema } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { GitExec } from "./git-range-diff";
+import { createGitHubOctokit } from "./github-octokit";
 import {
   defaultProjectDetailSourceDeps,
   loadProjectDetail,
   type ProjectDetailSourceDeps,
 } from "./project-detail-source";
-import type { ProjectPrSource } from "./project-pr-source";
+import { createGitHubProjectPrSource, type ProjectPrSource } from "./project-pr-source";
 
 /** A canned PullRequest for the B2 merge tests. */
 const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
@@ -550,5 +551,89 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
     await loadProjectDetail(depsFor(git, roots, prSource), repoProject("/r0"));
     expect(maxInFlight).toBeGreaterThan(0);
     expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("the fan-out cap is SHARED per source instance (overlapping loads)", () => {
+  const depsFor = (
+    git: GitExec,
+    roots: readonly string[],
+    prSource: ProjectPrSource,
+  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+
+  const eightForgeRepos = (prefix: string) => {
+    const roots = Array.from({ length: 8 }, (_, i) => `/${prefix}${i}`);
+    const fixtures = Object.fromEntries(
+      roots.map((root, i) => [
+        root,
+        {
+          remoteUrl: `git@github.com:acme/${prefix}${i}.git`,
+          userName: "rai",
+          branches: { main: 1 },
+        },
+      ]),
+    );
+    return { roots, fixtures };
+  };
+
+  it("two overlapping loadProjectDetail on ONE real source stay ≤ 4 in flight combined", async () => {
+    const a = eightForgeRepos("a");
+    const b = eightForgeRepos("b");
+    let inFlight = 0;
+    let maxInFlight = 0;
+    // The REAL GitHub source (where the shared semaphore lives) over a counting
+    // transport: the viewer query answers immediately, each PR page takes 10ms.
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        query?: string;
+      };
+      const graphqlResponse = (data: unknown) =>
+        new Response(JSON.stringify({ data }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      if (!body.query?.includes("pullRequests")) {
+        return graphqlResponse({ viewer: { login: "octocat" } });
+      }
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      return graphqlResponse({
+        repository: {
+          pullRequests: {
+            totalCount: 0,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [],
+          },
+        },
+      });
+    };
+    const source = createGitHubProjectPrSource({ octokit: createGitHubOctokit({ fetch }) });
+    await Promise.all([
+      loadProjectDetail(depsFor(makeGit(a.fixtures), a.roots, source), repoProject("/a0")),
+      loadProjectDetail(depsFor(makeGit(b.fixtures), b.roots, source), repoProject("/b0")),
+    ]);
+    expect(maxInFlight).toBeGreaterThan(0);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+
+  it("after the first rejection, workers launch NO new PR fetches (the call is doomed)", async () => {
+    const { roots, fixtures } = eightForgeRepos("r");
+    let launches = 0;
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: async (repository) => {
+        launches += 1;
+        if (repository === "acme/r0") throw new Error("GraphQL schema drift");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { prs: [], truncated: false };
+      },
+    };
+    await expect(
+      loadProjectDetail(depsFor(makeGit(fixtures), roots, prSource), repoProject("/r0")),
+    ).rejects.toThrow("GraphQL schema drift");
+    // The initial worker pool launches 4; the rejection stops every later pick-up.
+    expect(launches).toBe(4);
   });
 });

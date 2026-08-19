@@ -545,8 +545,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // plain-language error (never a raw undici internal) when GitHub is unreachable.
   // Every request ALSO carries an abort deadline (the lancelot field bug: a
   // stalled connection to api.github.com hung auth validation forever, which
-  // wedged `project.detail` AND the account surface). The deadline wraps INSIDE
-  // the retry, so each attempt is individually bounded, and a deadline abort
+  // wedged `project.detail` AND the account surface). The deadline wraps OUTSIDE
+  // the retry: ONE absolute budget spans both attempts, so a slow connect
+  // failure plus the retry pause plus a stalled second attempt can never chain
+  // past the deadline — the retry gets the REMAINDER, which is the honest
+  // contract. The pause itself is abort-aware, and a deadline abort
   // (TimeoutError — not a connect-phase code) is never replayed. One composition
   // here bounds every consumer — validation, the refresh exchange, the PR
   // source, the device flow (whose cancel signal stays composed in), and
@@ -555,8 +558,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const rawGitHubHttp: typeof globalThis.fetch =
     options.httpFetch ??
     (() => Promise.reject(new Error("Rennet server: options.httpFetch was not provided")));
-  const publishHttp: typeof globalThis.fetch = withConnectResilience(
-    withRequestTimeout(rawGitHubHttp, options.httpTimeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS),
+  const publishHttp: typeof globalThis.fetch = withRequestTimeout(
+    withConnectResilience(rawGitHubHttp),
+    options.httpTimeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS,
   );
 
   const gitHubSecretStore = createGitHubTokenStore(dataDir);
