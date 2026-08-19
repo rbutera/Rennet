@@ -94,15 +94,16 @@ Keyboard settings show the new shortcut. Overrides are stored on this machine on
 
 ### The palette is the command surface
 
-Every Rennet command lives in the palette and in **Settings → Keyboard** — press
-`⌘K` (or `Ctrl+K`) to run one, open Keyboard to see them all and remap them. There
-is no command menu on the window itself.
+Every command lives in the palette — press `⌘K` (or `Ctrl+K`) to open it and run
+one. **Settings → Keyboard** lists the stable commands and lets you remap their
+chords; dynamic entries like recent surfaces and lens jumps are palette-only.
+There is no command menu on the window itself.
 
 On macOS, Rennet installs the standard platform menu — the app menu, **Edit**, and
 **Window** — because the system expects one there. It handles native niceties like
 copy, paste, and window controls, and carries no Rennet commands of its own.
 Windows and Linux show no menu strip at all. Nothing is lost either way: every
-command is a `⌘K` away, with the same label and the same (remappable) shortcut.
+command is a `⌘K` away.
 
 ## Reopen old reviews, and pick up where you left off
 
