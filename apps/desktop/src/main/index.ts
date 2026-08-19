@@ -235,6 +235,9 @@ app.whenReady().then(async () => {
   // A second instance lost the single-instance lock and already called quit — do no startup
   // work (no daemon spawn, no window, no tray). The primary handles the relaunch.
   if (!isPrimaryInstance) return;
+  // Install the static application menu first, before any await, so macOS shows the roles-only
+  // menu instead of Electron's default while the daemon starts (or hangs, or fails its dialog).
+  installApplicationMenu();
   // Stable Windows taskbar/toast identity — set before any window so grouping,
   // pinning, and notifications attach to this AUMID instead of a per-exe default. On
   // a Squirrel install we must match the id Squirrel stamped on the shortcut, or
@@ -267,7 +270,6 @@ app.whenReady().then(async () => {
     callback(false);
   });
   registerAppProtocol();
-  installApplicationMenu();
   registerDialogHandler();
   await createWindow(wsPort);
   activeWsPort = wsPort;
