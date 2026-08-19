@@ -33,6 +33,7 @@ import type {
   SessionFrame,
 } from "@rennet/protocol";
 import {
+  ACT_FEATURE,
   ATTENTION_FEATURE,
   MIN_COMPATIBLE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
@@ -110,6 +111,13 @@ export interface WsListenerDeps {
    * Absent ⇒ M0 behaviour unchanged: no `attention` flag, presence frames ignored, no pushes.
    */
   readonly attention?: AttentionDeps;
+  /**
+   * Whether this daemon wires the M2 acting seams (`review.interrupt`, `publish.compose`).
+   * Present ⇒ the daemon advertises the `act` feature so a client renders Stop and the publish
+   * surface truthfully; absent ⇒ pre-M2, and those affordances show disabled / needs-updating
+   * rather than silently no-opping (issue #382 M2, Finding A + Finding C).
+   */
+  readonly act?: boolean;
 }
 
 /** Default delay before the single post-send receipt poll (#383 batch). */
@@ -550,6 +558,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             features: {
               serverRequests: true,
               ...(deps.attention ? { [ATTENTION_FEATURE]: true } : {}),
+              ...(deps.act ? { [ACT_FEATURE]: true } : {}),
             },
           });
           // Connect-time replay (#383 batch): hand THIS newly authorized socket the outstanding

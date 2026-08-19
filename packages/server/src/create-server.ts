@@ -2347,6 +2347,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         delete: (deviceId) => pushTokenStore.delete(deviceId),
       },
     },
+    // This build wires the M2 acting seams (`review.interrupt` via the live-turn registry,
+    // `publish.compose`), so it advertises `act` — a phone renders Stop and the publish surface
+    // truthfully instead of showing controls that silently no-op against a pre-M2 daemon.
+    act: true,
     // The R19 projection context: every host root the server could name — the granted
     // roots ∪ every stored project path — rebuilt per request so a new project is
     // referenceable at once. Loopback connections never consult it.

@@ -501,6 +501,19 @@ describe("ConnectionSupervisor — presence transmission (client-runtime delta s
     expect(supervisor.presence).toMatchObject({ focused: false, visible: false });
     expect(nth(bridges, 0).sentPresence).toHaveLength(0);
   });
+
+  it("reads the daemon's `act` capability so a client can render acting affordances truthfully (#382 M2)", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    // Pre-M2 daemon (no `act`): the phone would show Stop disabled / publish needs-updating.
+    nth(bridges, 0).serverInfo = { version: "1.0.0", features: { attention: true } };
+    nth(bridges, 0).goOnline();
+    expect(supervisor.actAdvertised()).toBe(false);
+    // M2 daemon advertises it.
+    nth(bridges, 0).serverInfo = { version: "1.0.0", features: { attention: true, act: true } };
+    expect(supervisor.actAdvertised()).toBe(true);
+  });
 });
 
 /** Index an array with a throw instead of `undefined` (noUncheckedIndexedAccess). */

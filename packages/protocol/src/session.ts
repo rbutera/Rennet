@@ -28,6 +28,16 @@ export const MIN_COMPATIBLE_PROTOCOL_VERSION = 1;
  */
 export const ATTENTION_FEATURE = "attention";
 
+/**
+ * COMPAT (handshake feature, additive, #382 M2). The `serverInfo.features` key a daemon sets
+ * when it wires the M2 acting seams — `review.interrupt` (client Stop) and `publish.compose`
+ * (daemon-composed publish preview). A client reads it to render those affordances TRUTHFULLY:
+ * against a daemon that predates M2 (never advertises it), the phone shows Stop as visibly
+ * disabled and the publish surface as "this daemon needs updating" rather than a control that
+ * silently no-ops. Absent ⇒ pre-M2 daemon; the acting commands would be refused as unknown.
+ */
+export const ACT_FEATURE = "act";
+
 // ── Handshake ────────────────────────────────────────────────────────────────
 
 /** Client → server: who is connecting and which protocol version it speaks. */
