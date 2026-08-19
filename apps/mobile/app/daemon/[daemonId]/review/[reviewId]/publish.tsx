@@ -93,8 +93,10 @@ export default function Publish(): ReactNode {
   const t = useTheme();
   const router = useRouter();
   const { daemonId, reviewId } = useLocalSearchParams<{ daemonId: string; reviewId: string }>();
-  // Landing on the preview reports focus and clears the review's attention — including
-  // publish-ready (clears on preview view, #382 M2 task 4.3).
+  // Landing on the preview reports focus (push suppression) but does NOT clear publish-ready here
+  // (#382 M2 finding 10): publish.compose below RE-RAISES publish-ready, so the clear must land
+  // AFTER a successful compose, not on mount — otherwise the re-raise leaves a stale badge. No
+  // `family` ⇒ presence only; the ack happens in the compose success handler.
   useReviewFocus(daemonId, reviewId);
   const connection = useConnection(daemonId);
   const loaded = useReviewLoad(daemonId, reviewId);
@@ -159,7 +161,14 @@ export default function Publish(): ReactNode {
           });
         } else {
           setComposed({ status: "unavailable", reason: result.reason });
+          return;
         }
+        // Clear publish-ready AFTER a successful compose (#382 M2 finding 10): compose itself
+        // re-raised it, so this is the clear-on-view, landing after the raise. Exact id only —
+        // viewing the preview never silences a live ask on the same review.
+        void connection.supervisor
+          .invoke("attention.acknowledge", { attentionId: `publish-ready:${reviewId}` })
+          .catch(() => undefined);
       })
       .catch((error: unknown) => {
         if (!cancelled)

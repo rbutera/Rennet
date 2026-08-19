@@ -3012,6 +3012,52 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     expect(cleared).toContainEqual({ attentionId: askPending?.id });
   });
 
+  it("a shade answer binds to the attention id: consumed once, a duplicate is refused (#382 M2 finding 3)", async () => {
+    // Model the attention registry's active set: acknowledge(id) returns 1 the first time (it was
+    // active) and 0 afterwards (already consumed) — the exact dedup the shade answer binds to.
+    const active = new Set<string>();
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        acknowledgeAttention: (sel) => {
+          if (sel.attentionId && active.delete(sel.attentionId)) return 1;
+          return 0;
+        },
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+    const attentionId = `ask-pending:${review.id}`;
+    active.add(attentionId);
+    // First shade tap: the ask is active ⇒ consumed ⇒ the turn runs.
+    await h.dispatch(
+      "review.ask",
+      { commandId: randomUUID(), reviewId: review.id, question: "yes", attentionId },
+      { emitAskStream: () => undefined },
+    );
+    expect(h.reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
+    // Second (duplicate) shade tap of the SAME push: the item is no longer active ⇒ refused
+    // truthfully, and the turn does NOT run a second time.
+    await expect(
+      h.dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "yes",
+        attentionId,
+      }),
+    ).rejects.toThrow(/already answered/i);
+    expect(h.reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
+    // A forged/stale attention id (never active) is refused for the same reason.
+    await expect(
+      h.dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "yes",
+        attentionId: "ask-pending:forged",
+      }),
+    ).rejects.toThrow(/already answered/i);
+  });
+
   it("a ONE-SHOT (#139) ask raises no attention — it is a synchronous foreground call (#383 batch)", async () => {
     const raised: { family: string }[] = [];
     const h = harness(

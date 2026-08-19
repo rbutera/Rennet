@@ -206,30 +206,59 @@ export type AttentionFamily = z.infer<typeof attentionFamilySchema>;
  * options; absent ⇒ the ask is answered by free-text alone (still one reply, spec-compliant).
  */
 export const attentionActionSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
+  // Bounded (#382 M2 finding 11): an id/label that is unbounded could bloat a push payload or a
+  // notification button. 64/60 chars are comfortably above any real chip and cheap to enforce.
+  id: z.string().min(1).max(64),
+  label: z.string().min(1).max(60),
 });
 export type AttentionAction = z.infer<typeof attentionActionSchema>;
 
+/** The most answer actions a single ask push carries (#382 M2 finding 11) — a shade with more
+ *  buttons than this is malformed, not a richer ask. */
+export const MAX_ATTENTION_ACTIONS = 4;
+
 /** One active attention item, as the client pins and later clears it. */
-export const attentionItemSchema = z.object({
-  id: z.string().min(1),
-  family: attentionFamilySchema,
-  reviewId: z.string().min(1).optional(),
-  projectId: z.string().min(1).optional(),
-  /** Daemon-relative `rennet://…` deep-link the client lands on. */
-  deepLink: z.string().min(1),
-  title: z.string().min(1),
-  body: z.string(),
-  /**
-   * COMPAT (attention, additive, #382 M2): answer chips for an ask-pending item — the shade
-   * actions the app registers so a lock-screen ask is answerable WITHOUT opening the app. Absent
-   * on every non-ask family and on any daemon that predates this field (stripped harmlessly by the
-   * non-strict decoder). A high-priority ask always reaches every client; the actions only add the
-   * quick-answer affordance on top.
-   */
-  actions: z.array(attentionActionSchema).optional(),
-});
+export const attentionItemSchema = z
+  .object({
+    id: z.string().min(1),
+    family: attentionFamilySchema,
+    reviewId: z.string().min(1).optional(),
+    projectId: z.string().min(1).optional(),
+    /** Daemon-relative `rennet://…` deep-link the client lands on. */
+    deepLink: z.string().min(1),
+    title: z.string().min(1),
+    body: z.string(),
+    /**
+     * COMPAT (attention, additive, #382 M2): answer chips for an ask-pending item — the shade
+     * actions the app registers so a lock-screen ask is answerable WITHOUT opening the app. Absent
+     * on every non-ask family and on any daemon that predates this field (stripped harmlessly by the
+     * non-strict decoder). A high-priority ask always reaches every client; the actions only add the
+     * quick-answer affordance on top.
+     */
+    actions: z.array(attentionActionSchema).max(MAX_ATTENTION_ACTIONS).optional(),
+  })
+  // Refined attention item (#382 M2 finding 11): `actions` belong ONLY to an ask-pending item (a
+  // publish-ready or review-finished push has nothing to quick-answer), and their ids must be
+  // unique so a tapped action resolves to exactly one chip. A malformed item is rejected at parse,
+  // so the app never renders a fabricated or ambiguous chip.
+  .superRefine((item, ctx) => {
+    if (item.actions === undefined) return;
+    if (item.family !== "ask-pending") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "actions are only valid on an ask-pending attention item",
+        path: ["actions"],
+      });
+    }
+    const ids = item.actions.map((action) => action.id);
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "answer action ids must be unique",
+        path: ["actions"],
+      });
+    }
+  });
 export type AttentionItem = z.infer<typeof attentionItemSchema>;
 
 /** Server → client: an attention item was raised, or one/more were cleared. */

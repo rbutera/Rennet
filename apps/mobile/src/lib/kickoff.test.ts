@@ -55,6 +55,28 @@ describe("matchProjectRepoKey (#382 M2, task 5.1)", () => {
     const parsed = parsePrRef("someone/unknown#1");
     expect(parsed && matchProjectRepoKey(projects, parsed)).toBeUndefined();
   });
+
+  it("matches a bare repo name only when it is unique (#382 M2 finding 9)", () => {
+    // `rennet` (bare displayName) is unique across the two projects ⇒ a bare-name match resolves it.
+    const parsed = parsePrRef("me/rennet#1");
+    expect(parsed && matchProjectRepoKey(projects, parsed)).toBe("key-rennet");
+  });
+
+  it("PREFERS an exact owner/repo over an ambiguous bare name (#382 M2 finding 9)", () => {
+    // Two clones share the repo name `rennet` under different owners — a fork and its upstream.
+    const forks: KickoffProject[] = [
+      { id: "a", name: "rennet", repo: { repoKey: "key-mine", displayName: "me/rennet" }, primaryBranch: "main" },
+      { id: "b", name: "rennet", repo: { repoKey: "key-theirs", displayName: "you/rennet" }, primaryBranch: "main" },
+    ];
+    // Exact owner/repo routes to the right clone, never a guess.
+    const mine = parsePrRef("me/rennet#7");
+    expect(mine && matchProjectRepoKey(forks, mine)).toBe("key-mine");
+    const theirs = parsePrRef("you/rennet#7");
+    expect(theirs && matchProjectRepoKey(forks, theirs)).toBe("key-theirs");
+    // A bare name is now AMBIGUOUS (both display as `.../rennet`) ⇒ refuse rather than guess.
+    const ambiguous = parsePrRef("someoneelse/rennet#7");
+    expect(ambiguous && matchProjectRepoKey(forks, ambiguous)).toBeUndefined();
+  });
 });
 
 describe("kickoffReducer (#382 M2, task 5.1)", () => {

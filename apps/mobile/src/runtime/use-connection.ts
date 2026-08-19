@@ -4,6 +4,7 @@
 // view, propagated to every client). These are the load-bearing behaviours the detail screens
 // share; the exact per-screen rendering sits on top.
 
+import type { AttentionFamily } from "@rennet/protocol";
 import { useEffect, useState } from "react";
 import { newCommandId } from "../lib/ids";
 import { asProjectedReview, type ProjectedReviewLike } from "../lib/projection";
@@ -65,28 +66,34 @@ export function useReviewLoad(daemonId: string, reviewId: string): LoadedReview 
 }
 
 /**
- * On landing on a review surface: report focus on it (push suppression) and acknowledge its
- * attention so the needs-you badge clears here and on every other client. Presence resets to
- * unfocused when the screen unmounts.
+ * On landing on a review surface: report focus on it (push suppression) and acknowledge the EXACT
+ * attention this surface is the landing for (#382 M2 finding 10) — e.g. the turn screen clears
+ * `ask-pending`, the digest clears `review-finished`. Clearing the WHOLE review's families on any
+ * view was over-broad: viewing the digest should not silence a live ask. A surface that is not a
+ * taxonomy landing (the raw canvas, a finding) passes no `family` and clears nothing — presence
+ * only. Presence resets to unfocused when the screen unmounts.
  */
-export function useReviewFocus(daemonId: string, reviewId: string): void {
+export function useReviewFocus(daemonId: string, reviewId: string, family?: AttentionFamily): void {
   const runtime = useRuntime();
   useEffect(() => {
     runtime.registry.reportPresence(
       { focused: true, visible: true, focusedReviewId: reviewId },
       daemonId,
     );
-    const connection = runtime.registry.get(daemonId);
-    void connection?.supervisor
-      .invoke("attention.acknowledge", { reviewId })
-      .catch(() => undefined);
+    if (family !== undefined) {
+      const connection = runtime.registry.get(daemonId);
+      void connection?.supervisor
+        // The taxonomy id is `${family}:${reviewId}` (the daemon's derived attention id).
+        .invoke("attention.acknowledge", { attentionId: `${family}:${reviewId}` })
+        .catch(() => undefined);
+    }
     return () => {
       runtime.registry.reportPresence(
         { focused: true, visible: true, focusedReviewId: undefined },
         daemonId,
       );
     };
-  }, [runtime, daemonId, reviewId]);
+  }, [runtime, daemonId, reviewId, family]);
 }
 
 /** A fresh command id for a review-scoped invocation. */

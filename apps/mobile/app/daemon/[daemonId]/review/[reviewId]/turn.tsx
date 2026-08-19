@@ -34,7 +34,8 @@ export default function Turn(): ReactNode {
   const t = useTheme();
   const runtime = useRuntime();
   const { daemonId, reviewId } = useLocalSearchParams<{ daemonId: string; reviewId: string }>();
-  useReviewFocus(daemonId, reviewId);
+  // The turn screen is the ask-pending landing (#382 M2 finding 10): clear exactly that.
+  useReviewFocus(daemonId, reviewId, "ask-pending");
   const connection = useConnection(daemonId);
   const supervisor = connection?.supervisor;
 

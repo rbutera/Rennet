@@ -777,7 +777,12 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   const raiseAttention = (event: RaisedAttention): AttentionItem | null => {
     const attention = deps.attention;
     if (!attention) return null;
-    const item = attentionRegistry.raise(event);
+    const { item, changed } = attentionRegistry.raiseIfChanged(event);
+    // Suppress a redundant refresh (#382 M2 finding 10): an identical item is already active (e.g.
+    // publish.compose re-raising publish-ready on every preview re-render), so re-broadcasting and
+    // re-pushing would re-buzz a device for a state it already holds. Nothing changed ⇒ nothing to
+    // deliver; the item stays active for a fresh client to hydrate.
+    if (!changed) return item;
     // Live in-app: every authorized socket gets the raised frame (its needs-you badge appears).
     broadcastAttention({ type: "attentionEvent", event: "raised", item });
     // Push: every registered device NOT connected-and-focused on this review (planner decision).
@@ -801,6 +806,9 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           deviceId: registration.deviceId,
           deepLink: item.deepLink,
           family: item.family,
+          // The attention id (#382 M2 finding 3): a shade answer invokes `review.ask` with it so
+          // the daemon consumes exactly this ask atomically (dedup + forgery guard).
+          attentionId: item.id,
           ...(item.actions ? { actions: item.actions } : {}),
         },
         priority: plan.priority === "high" ? "high" : "normal",

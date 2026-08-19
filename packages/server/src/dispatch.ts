@@ -1453,6 +1453,18 @@ export function createDispatch(
           // current review; there is no permission gate and no consent token, and a
           // question always answers against the latest code rather than ever refusing.
           const review = requireReviewById(input.reviewId);
+          // Shade-answer binding (#382 M2 finding 3): a chip answer from the notification carries
+          // the ask's attention id. Atomically CONSUME it (acknowledge) BEFORE running the turn, so
+          // exactly one answer lands: a duplicate tap finds the item already consumed and is refused
+          // truthfully; a forged/stale id matches no active item and is refused too. This runs
+          // before the first await, so two concurrent taps cannot both consume. Only enforced when
+          // attention is wired (a build without it has no shade-answer path to dedup).
+          if (input.attentionId !== undefined && deps.acknowledgeAttention) {
+            const consumed = deps.acknowledgeAttention({ attentionId: input.attentionId });
+            if (consumed === 0) {
+              throw new Error("This ask was already answered.");
+            }
+          }
           const mode = input.mode ?? "orchestrator";
           // #251 streaming: with a thread + turn AND a push channel, stream the
           // orchestrator's tokens live and emit a terminal event per channel. Absent →

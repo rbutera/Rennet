@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseDeepLink, parsePairingLink, resolvePushHref, routeHref } from "./deep-links";
+import {
+  parseAttentionPushData,
+  parseDeepLink,
+  parsePairingLink,
+  resolvePushHref,
+  routeHref,
+} from "./deep-links";
 
 describe("parsePairingLink (task 4.1)", () => {
   it("parses a pairing link's url, code, and name", () => {
@@ -79,5 +85,36 @@ describe("deep-link routing table (task 6.2)", () => {
     );
     expect(unknownDaemon).toBeNull();
     expect(resolvePushHref({ family: "review-finished" }, () => "d")).toBeNull();
+  });
+});
+
+describe("parseAttentionPushData (#382 M2 findings 3 + 11 — parse before use)", () => {
+  it("parses a well-formed ask push, keeping attentionId and validated actions", () => {
+    const parsed = parseAttentionPushData({
+      deviceId: "d1",
+      deepLink: "rennet://review/r1/ask",
+      family: "ask-pending",
+      attentionId: "ask-pending:r1",
+      actions: [{ id: "a", label: "Approve" }],
+      extra: "stripped",
+    });
+    expect(parsed).toEqual({
+      deviceId: "d1",
+      deepLink: "rennet://review/r1/ask",
+      family: "ask-pending",
+      attentionId: "ask-pending:r1",
+      actions: [{ id: "a", label: "Approve" }],
+    });
+  });
+
+  it("returns null for a non-object payload", () => {
+    expect(parseAttentionPushData(null)).toBeNull();
+    expect(parseAttentionPushData("nope")).toBeNull();
+  });
+
+  it("rejects a payload whose actions are malformed (over-long label)", () => {
+    expect(
+      parseAttentionPushData({ deviceId: "d", actions: [{ id: "a", label: "x".repeat(200) }] }),
+    ).toBeNull();
   });
 });

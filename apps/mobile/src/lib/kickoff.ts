@@ -65,22 +65,28 @@ export function parsePrRef(input: string): ParsedPrRef | null {
 
 /**
  * Match a parsed PR ref to a known project's repo key, so `review.openPr` addresses the right local
- * clone. Matches on the repo display name (case-insensitive) — the repo half of the PR ref. Returns
- * undefined when no paired project owns that repo (the screen then says so honestly, rather than
- * opening the PR against the wrong clone).
+ * clone. Repo matching PREFERS an exact `owner/repo` match (#382 M2 finding 9): a bare repo-name
+ * match is used ONLY when it is unique, so two paired projects sharing a repo name (a fork and its
+ * upstream, `me/rennet` and `you/rennet`) can never route a PR to the wrong clone. Returns undefined
+ * when nothing matches exactly and the bare name is absent or ambiguous — the screen then says so
+ * honestly rather than opening the PR against a guessed clone.
  */
 export function matchProjectRepoKey(
   projects: readonly KickoffProject[],
   parsed: ParsedPrRef,
 ): string | undefined {
-  const wanted = parsed.repo.toLowerCase();
-  const match = projects.find(
-    (p) =>
-      p.repo.displayName.toLowerCase() === wanted ||
-      p.repo.displayName.toLowerCase() === `${parsed.owner}/${parsed.repo}`.toLowerCase() ||
-      p.name.toLowerCase() === wanted,
+  const ownerRepo = `${parsed.owner}/${parsed.repo}`.toLowerCase();
+  // 1) Exact `owner/repo` — unambiguous, always wins.
+  const exact = projects.find(
+    (p) => p.repo.displayName.toLowerCase() === ownerRepo || p.name.toLowerCase() === ownerRepo,
   );
-  return match?.repo.repoKey;
+  if (exact) return exact.repo.repoKey;
+  // 2) Bare repo name — only when EXACTLY ONE project matches (else it is ambiguous, so refuse).
+  const wanted = parsed.repo.toLowerCase();
+  const byName = projects.filter(
+    (p) => p.repo.displayName.toLowerCase() === wanted || p.name.toLowerCase() === wanted,
+  );
+  return byName.length === 1 ? byName[0]?.repo.repoKey : undefined;
 }
 
 /** The kickoff lifecycle the screen renders (wireframe 20 progress → the new review appears). */

@@ -22,7 +22,8 @@ export default function Digest(): ReactNode {
   const t = useTheme();
   const router = useRouter();
   const { daemonId, reviewId } = useLocalSearchParams<{ daemonId: string; reviewId: string }>();
-  useReviewFocus(daemonId, reviewId);
+  // The digest is the review-finished landing (#382 M2 finding 10): clear exactly that.
+  useReviewFocus(daemonId, reviewId, "review-finished");
   const connection = useConnection(daemonId);
   const loaded = useReviewLoad(daemonId, reviewId);
   // The count tiles derive CLIENT-SIDE from the review's own delta account (#382 M2, task 6.3) —

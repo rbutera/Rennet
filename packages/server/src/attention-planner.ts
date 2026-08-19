@@ -27,11 +27,25 @@ export class AttentionRegistry {
 
   /** Raise (or refresh) an attention item; returns the stored item with its derived id. */
   raise(event: RaisedAttention): AttentionItem {
+    return this.raiseIfChanged(event).item;
+  }
+
+  /**
+   * Raise (or refresh) an attention item, reporting whether it actually CHANGED (#382 M2 finding
+   * 10): `changed` is false when an identical item was already active — the same family+scope with
+   * byte-identical content (e.g. `publish.compose` re-raising publish-ready on every preview
+   * re-render). The caller suppresses the redundant broadcast + push on an unchanged refresh, so a
+   * device is not re-buzzed for a state it already holds. A first raise or any content change is
+   * `changed: true`.
+   */
+  raiseIfChanged(event: RaisedAttention): { item: AttentionItem; changed: boolean } {
     const scope = event.reviewId ?? event.projectId ?? "-";
     const id = `${event.family}:${scope}`;
     const item: AttentionItem = { ...event, id };
+    const prev = this.#items.get(id);
+    const changed = prev === undefined || JSON.stringify(prev) !== JSON.stringify(item);
     this.#items.set(id, item);
-    return item;
+    return { item, changed };
   }
 
   /** Clear by review (every item on it) or by a single attention id; returns what was cleared. */

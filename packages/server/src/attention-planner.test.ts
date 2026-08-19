@@ -141,6 +141,23 @@ describe("AttentionRegistry — raise, dedupe, clear (handled once, quiet everyw
     expect(registry.active()[0]?.actions).toHaveLength(2);
   });
 
+  it("reports whether a raise CHANGED, so an identical refresh can be suppressed (#382 M2 finding 10)", () => {
+    const registry = new AttentionRegistry();
+    const event = {
+      family: "publish-ready" as const,
+      reviewId: "r1",
+      deepLink: "rennet://review/r1/publish",
+      title: "Publish ready",
+      body: "owner/name#7",
+    };
+    // First raise: changed (nothing was active).
+    expect(registry.raiseIfChanged(event).changed).toBe(true);
+    // Identical re-raise (compose re-running on a preview re-render): NOT changed — suppress it.
+    expect(registry.raiseIfChanged(event).changed).toBe(false);
+    // A content change (new destination) IS changed again.
+    expect(registry.raiseIfChanged({ ...event, body: "owner/name#8" }).changed).toBe(true);
+  });
+
   it("re-raising the same family on the same review refreshes rather than stacks", () => {
     const registry = new AttentionRegistry();
     registry.raise({

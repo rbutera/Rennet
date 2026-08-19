@@ -12,14 +12,29 @@
 import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
-import type { AttentionPushData } from "../lib/deep-links";
+import { type AttentionPushData, parseAttentionPushData } from "../lib/deep-links";
 import { useRuntime } from "./context";
-import { answerAskFromShade, askActionsOf, hrefForPush, registerAskCategory } from "./push";
+import {
+  answerAskFromShade,
+  askActionsOf,
+  hrefForPush,
+  notifyShadeAnswerFailed,
+  registerAskCategory,
+} from "./push";
 
-/** Read a notification response's `data` payload as the attention push shape. */
+/** PARSE a notification response's untrusted `data` payload into the attention push shape (never a
+ *  blind cast — #382 M2 findings 3 + 11). */
 function dataOf(notification: Notifications.Notification | null): AttentionPushData | null {
-  const data = notification?.request.content.data;
-  return data && typeof data === "object" ? (data as AttentionPushData) : null;
+  return parseAttentionPushData(notification?.request.content.data ?? null);
+}
+
+// Responses already handled this app lifetime (#382 M2 finding 4): `getLastNotificationResponseAsync`
+// returns the SAME cold-start response on every remount, so without deduping, a remount would
+// re-send a shade answer already sent. Keyed by the notification's request id + the action, at
+// module scope so it survives a component remount within the process.
+const handledResponses = new Set<string>();
+function responseKey(response: Notifications.NotificationResponse): string {
+  return `${response.notification.request.identifier}:${response.actionIdentifier}`;
 }
 
 /** The reviewId an ask deep-link names, for registering its category. */
@@ -39,15 +54,23 @@ export function useNotificationRouting(): void {
     let cancelled = false;
 
     const handleResponse = (response: Notifications.NotificationResponse | null): void => {
-      const data = dataOf(response?.notification ?? null);
-      if (!data || cancelled) return;
-      const action = response?.actionIdentifier;
+      if (!response || cancelled) return;
+      // Dedup a replayed cold-start response (#382 M2 finding 4): remounting re-reads the same last
+      // response, which would re-send an answer already sent. Handle each response exactly once.
+      const key = responseKey(response);
+      if (handledResponses.has(key)) return;
+      handledResponses.add(key);
+      const data = dataOf(response.notification);
+      if (!data) return;
+      const action = response.actionIdentifier;
       // A chip action (not the default body tap) answers the ask from the shade.
       if (action && action !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
         void answerAskFromShade(registry, data, action).then((outcome) => {
-          // Truthful failure: could not send / superseded / unknown chip ⇒ deep-link into the ask
-          // so the user finishes it in-app, never a silent drop. A sent answer needs no navigation.
+          // Truthful failure: could not send / superseded / unknown chip ⇒ UPDATE the notification
+          // to say the answer did not land, THEN deep-link into the ask so the user finishes it
+          // in-app, never a silent drop. A sent answer needs no navigation.
           if (outcome.status !== "sent") {
+            void notifyShadeAnswerFailed(data);
             const href = hrefForPush(data, registry);
             if (href && !cancelled) router.push(href);
           }
@@ -69,7 +92,11 @@ export function useNotificationRouting(): void {
       if (!data) return;
       const reviewId = askReviewId(data);
       const actions = askActionsOf(data);
-      if (reviewId && actions.length > 0) void registerAskCategory(reviewId, actions);
+      // Open-app fallback (#382 M2 finding 4): without a registered background-response task the
+      // action cannot be honoured while the app is closed, so it opens the app — the deduped
+      // cold/warm handler then sends the answer (still one tap). True background execution needs
+      // expo-task-manager (a dependency decision flagged to the lead).
+      if (reviewId && actions.length > 0) void registerAskCategory(reviewId, actions, false);
     });
 
     return () => {

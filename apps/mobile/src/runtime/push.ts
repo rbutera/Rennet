@@ -83,10 +83,9 @@ export function hrefForPush(data: AttentionPushData, registry: DaemonRegistry): 
   return resolvePushHref(data, (deviceId) => registry.daemonIdForDevice(deviceId));
 }
 
-/** The ask push's answer chips, when present in its data payload (#382 M2). */
-export function askActionsOf(data: AttentionPushData): AttentionAction[] {
-  const actions = (data as { actions?: unknown }).actions;
-  return Array.isArray(actions) ? (actions as AttentionAction[]) : [];
+/** The ask push's answer chips, when present in its (already-parsed) data payload (#382 M2). */
+export function askActionsOf(data: AttentionPushData): readonly AttentionAction[] {
+  return data.actions ?? [];
 }
 
 /**
@@ -111,6 +110,27 @@ export async function registerAskCategory(
     );
   } catch {
     // Non-fatal: without the category the push still deep-links; the ask is answered in-app.
+  }
+}
+
+/**
+ * Update the shade to say a shade answer did NOT land (#382 M2 finding 4). Presented before the
+ * routing deep-links into the ask, so the user is told the truth (never a silently dropped answer)
+ * and can finish it in-app. Best-effort: a platform/permission that denies a local notification
+ * still gets the deep-link. `deepLink` is carried through so tapping the update re-opens the ask.
+ */
+export async function notifyShadeAnswerFailed(data: AttentionPushData): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Answer didn't land",
+        body: "Tap to finish answering in the app.",
+        data: { deviceId: data.deviceId, deepLink: data.deepLink, family: data.family },
+      },
+      trigger: null, // present immediately
+    });
+  } catch {
+    // Non-fatal: the routing still deep-links into the ask; the answer is never silently dropped.
   }
 }
 
@@ -152,6 +172,10 @@ export async function answerAskFromShade(
       turnId: newCommandId(),
       anchor: { kind: "fragment", label: "steer", key: reviewId },
       turnBody: question,
+      // Bind the answer to the ask's attention id (#382 M2 finding 3): the daemon consumes exactly
+      // this ask atomically, so a duplicate tap is refused "already answered" and a stale/forged id
+      // is refused too. Absent ⇒ the daemon runs it unbound (a pre-M2 daemon has no such id).
+      ...(data.attentionId ? { attentionId: data.attentionId } : {}),
     });
     return { status: "sent" };
   } catch (error) {

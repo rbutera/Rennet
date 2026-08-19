@@ -2544,6 +2544,15 @@ export const commandDefinitions = {
       // The reviewer's RAW question for this turn (not the folded transcript), persisted
       // as the "you" message so a re-attached thread shows what was asked. #251.
       turnBody: z.string().optional(),
+      /**
+       * The attention item this answer resolves (#382 M2 finding 3, shade answering). Carried ONLY
+       * by a shade answer: the ask push carries its attention id, the chip-tap invokes `review.ask`
+       * with it, and the daemon consumes that attention atomically BEFORE running the turn — so a
+       * duplicate tap (the item already consumed) is refused truthfully as "already answered", and a
+       * forged/stale id (no such active item) is refused too. Absent for an in-app answer (which
+       * interrupts + asks) and for a pre-M2 client. Additive.
+       */
+      attentionId: z.string().min(1).optional(),
     }),
     output: askReviewResultSchema,
   },
