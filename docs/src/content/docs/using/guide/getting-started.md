@@ -73,8 +73,8 @@ Open **Settings → Keyboard** to change a command's chord. Each row shows its
 current shortcut with **Set**, **Unbind**, and **Reset**: Set records the next
 chord you press, Unbind removes the shortcut entirely, and Reset returns the
 command to its default. A remap takes effect immediately and everywhere — the new
-chord actually runs the command, the old one stops, and the palette and menu both
-show the new shortcut. Overrides are stored on this machine only, in
+chord actually runs the command, the old one stops, and both the palette and the
+Keyboard settings show the new shortcut. Overrides are stored on this machine only, in
 `~/.rennet/config.json`, and survive a restart.
 
 **Edge cases:**
@@ -92,12 +92,17 @@ show the new shortcut. Overrides are stored on this machine only, in
   shows the raw value as invalid and Rennet uses that command's default until you
   replace, unbind, or reset it.
 
-### The menu bar mirrors the palette
+### The palette is the command surface
 
-Rennet's application menu is built from the same command registry as the palette,
-so every menu item carries the same label and the same (remappable) shortcut. A
-command that can't act on the current screen appears **disabled**, not missing,
-and choosing a menu item runs exactly what the palette would.
+Every Rennet command lives in the palette and in **Settings → Keyboard** — press
+`⌘K` (or `Ctrl+K`) to run one, open Keyboard to see them all and remap them. There
+is no command menu on the window itself.
+
+On macOS, Rennet installs the standard platform menu — the app menu, **Edit**, and
+**Window** — because the system expects one there. It handles native niceties like
+copy, paste, and window controls, and carries no Rennet commands of its own.
+Windows and Linux show no menu strip at all. Nothing is lost either way: every
+command is a `⌘K` away, with the same label and the same (remappable) shortcut.
 
 ## Reopen old reviews, and pick up where you left off
 
