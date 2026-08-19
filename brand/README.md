@@ -17,6 +17,7 @@ The primary identity is monochrome. The colour gradient is application-icon artw
 - `exports/app-icons/windows/` — multi-resolution `.ico` files for all three variants.
 - `exports/app-icons/linux/` — PNGs from 16 px through 1024 px.
 - `exports/web/` — SVG/PNG/ICO favicons, Apple touch icon, PWA icons, and manifest.
+- `exports/tray/` — menu-bar / system-tray icons for the desktop shell (see below).
 - `exports/social/` — square colour and monochrome avatars.
 - `preview/brand-pack-overview.png` — quick visual index.
 - `preview/trace-fidelity.png` — selected raster artwork beside the production traces.
@@ -43,3 +44,17 @@ python3 scripts/build-brand-assets.py
 ```
 
 The builder requires Python with Pillow, ImageMagick, and macOS `iconutil`.
+
+### Tray / menu-bar icons
+
+`exports/tray/` holds the desktop shell's ambient-presence icons (issue: tray-presence). Regenerate with:
+
+```sh
+node scripts/gen-tray-icons.mjs
+```
+
+The script rasterizes the committed SVG sources with `sharp` (already in the workspace — no browser, no `.ico`: Electron's `Tray` takes a PNG `NativeImage` on every platform):
+
+- **macOS** — `rennetTemplate.png` / `@2x` are *template* images (alpha-only, black artwork that macOS recolours to the menu-bar theme), traced from `logo/svg/mark-small-black.svg` at 16 pt / 32 pt height (the wide mark; verified legible at 16 px).
+- **Windows / Linux** — `rennet.png` / `@2x` are the white-on-black *square* app badge (`app-icons/masters/app-icon-white-on-black-small.svg`) so the mark stays visible on any taskbar colour.
+- **Update-ready** — `rennetUpdate*` bake a dot into the corner. The dot's *presence* is the whole signal; on the monochrome macOS template it is not a distinct colour, by design.
