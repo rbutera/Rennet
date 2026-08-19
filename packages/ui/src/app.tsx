@@ -74,7 +74,6 @@ import {
   commandFromCatalogue,
   type KeybindingOverrides,
   matchKeybinding,
-  menuTemplate,
   type Screen,
 } from "./command/commands";
 import { RennetBrandMark } from "./components/brand-mark";
@@ -860,7 +859,7 @@ export function RennetApp({
   const [paletteOpen, setPaletteOpen] = useState(false);
   // User keybinding overrides (#44), fetched with settings and overlaid on the
   // catalogue defaults at dispatch. A remap here is what key dispatch, the palette,
-  // the menu, and conflict detection all read — so a remapped chord actually runs the
+  // and conflict detection all read — so a remapped chord actually runs the
   // command (never a label that lies). Updated in state after each `setKeybinding`.
   const [keybindingOverrides, setKeybindingOverrides] = useState<KeybindingOverrides>({});
   // The live dispatch list + overrides, held in a ref so the window keydown listener
@@ -2510,7 +2509,7 @@ export function RennetApp({
   const builtCommands = commandContext ? buildCommands(commandContext) : [];
   // The palette-toggle is a registry command whose `run` is supplied here (like every
   // other handler). It is not emitted into the palette list itself, but it joins the
-  // dispatch + menu list so its ⌘K chord (remappable) routes through the same matcher.
+  // dispatch list so its ⌘K chord (remappable) routes through the same matcher.
   const paletteCommand: Command = commandFromCatalogue(
     "palette.toggle",
     commandContext ?? undefined,
@@ -2520,24 +2519,6 @@ export function RennetApp({
   // Publish the live dispatch list for the stable window keydown listener (above).
   dispatchRef.current = { commands: dispatchCommands, overrides: keybindingOverrides };
 
-  // The application menu (#44): project the registry into a serializable template and
-  // post it to MAIN, but only when the serialized template actually changed — a context
-  // flicker or an override edit reposts, an identical render does not.
-  const menuJson = commandContext
-    ? JSON.stringify(menuTemplate(commandContext, keybindingOverrides))
-    : null;
-  useEffect(() => {
-    if (!menuJson) return;
-    bridge.updateMenu?.(JSON.parse(menuJson));
-  }, [menuJson, bridge]);
-  // A menu-item activation runs the SAME handler the palette would (single dispatcher).
-  // A `menu:run` for a command the live context no longer offers is dropped without a
-  // throw (the disabled state raced the click).
-  useEffect(() => {
-    return bridge.onMenuRun?.((id) => {
-      dispatchRef.current.commands.find((command) => command.id === id)?.run();
-    });
-  }, [bridge]);
   // Host-app update readiness → badge on the chrome marks. Hosts without an
   // updater omit the member and this is a no-op (spec: desktop-update-notification).
   useEffect(() => {

@@ -3018,20 +3018,6 @@ export interface RennetBridge {
    */
   onAttention?(listener: (event: AttentionEventFrame) => void): () => void;
   /**
-   * Push the projected application-menu template to MAIN (#44). The renderer derives
-   * these serializable sections from the command registry + live context + overrides;
-   * MAIN builds `Menu.setApplicationMenu` from them and routes item clicks back through
-   * `onMenuRun`. One-way (no result). Optional: a bridge without a menu channel omits
-   * it (tests, non-Electron hosts) and the app simply has no registry-built menu.
-   */
-  updateMenu?(sections: MenuTemplateSection[]): void;
-  /**
-   * Subscribe to menu-item activations (#44): MAIN sends the clicked command's id, and
-   * the renderer runs the SAME handler the palette would. Returns an unsubscribe.
-   * Optional, mirroring `updateMenu`.
-   */
-  onMenuRun?(listener: (id: string) => void): () => void;
-  /**
    * Subscribe to host-app update readiness: fires when a newer Rennet release has
    * been downloaded and is ready to apply (badge on the chrome logo). The host
    * replays its cached state to a late subscriber, so a renderer that mounts after
@@ -3053,30 +3039,6 @@ export interface UpdateReadyInfo {
   /** Release name when the platform updater supplied one; absent otherwise. */
   version?: string;
 }
-
-/** Runtime-owned application-menu wire shapes (#44), shared by preload and MAIN. */
-export const menuTemplateItemSchema = z
-  .object({
-    id: z.string().min(1),
-    label: z.string().min(1),
-    accelerator: z.string().min(1).optional(),
-    enabled: z.boolean(),
-  })
-  .strict();
-
-export const menuTemplateSectionSchema = z
-  .object({
-    group: z.string().min(1),
-    items: z.array(menuTemplateItemSchema),
-  })
-  .strict();
-
-export const menuTemplateSectionsSchema = z.array(menuTemplateSectionSchema);
-export const menuRunPayloadSchema = z.object({ id: z.string().min(1) }).strict();
-
-export type MenuTemplateItem = z.infer<typeof menuTemplateItemSchema>;
-export type MenuTemplateSection = z.infer<typeof menuTemplateSectionSchema>;
-export type MenuRunPayload = z.infer<typeof menuRunPayloadSchema>;
 
 // ── R19 public projection (issue #380) — the recipient-specific public contract ──
 //
