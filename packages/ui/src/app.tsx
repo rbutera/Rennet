@@ -2656,39 +2656,57 @@ export function RennetApp({
 
   // Settings and direct entry are orbital overlays. They take render precedence but
   // never mutate the surface stack, so closing either reveals the exact location.
+  // Both keep the standard titlebar: on macOS's hiddenInset frame it is the ONLY
+  // drag surface, and it reserves the traffic-light inset (review finding: without
+  // it these screens made the window immovable).
   if (settingsOpen) {
     return (
-      <>
+      <div className="navigation-shell min-h-screen bg-canvas text-ink">
+        <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
+          <ChromeMark
+            size={16}
+            className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+          />
+          <span className="text-sm text-ink-soft">Settings</span>
+        </header>
         {error ? (
-          <div className="error-toast fixed left-1/2 top-3.5 z-10 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
+          <div className="error-toast fixed left-1/2 top-16 z-30 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
             {error}
           </div>
         ) : null}
-        <SettingsScreen
-          bridge={bridge}
-          scheme={effectiveScheme}
-          onBack={() => setSettingsOpen(false)}
-          onSchemeChange={setScheme}
-          onKeybindingsChange={setKeybindingOverrides}
-        />
-      </>
+        <div className="navigation-surface-content min-h-screen pt-14">
+          <SettingsScreen
+            bridge={bridge}
+            scheme={effectiveScheme}
+            onBack={() => setSettingsOpen(false)}
+            onSchemeChange={setScheme}
+            onKeybindingsChange={setKeybindingOverrides}
+          />
+        </div>
+      </div>
     );
   }
 
   if (directEntryOpen) {
     return (
-      <>
+      <div className="navigation-shell min-h-screen bg-canvas text-ink">
         {palette}
         {updatePrompt}
-        <main className="empty-state grid min-h-screen place-content-center justify-items-center bg-canvas p-8 text-center">
+        <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
+          <ChromeMark
+            size={16}
+            className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+          />
           <button
             type="button"
-            className="entry-back fixed left-4 top-3 z-[12] inline-flex cursor-pointer items-center gap-1.5 rounded-control border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink-soft hover:text-ink"
+            className="entry-back inline-flex cursor-pointer items-center gap-1.5 rounded-control border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink-soft hover:text-ink"
             onClick={() => setDirectEntryOpen(false)}
           >
             <ArrowLeftIcon size={13} />
             Back
           </button>
+        </header>
+        <main className="empty-state grid min-h-screen place-content-center justify-items-center bg-canvas p-8 pt-22 text-center">
           <div
             className="mark mb-4 grid size-[54px] place-items-center rounded-window border border-accent-line bg-accent-soft text-accent -rotate-[4deg]"
             aria-hidden="true"
@@ -2762,7 +2780,7 @@ export function RennetApp({
 
           {error ? <p className="error text-danger">{error}</p> : null}
         </main>
-      </>
+      </div>
     );
   }
 

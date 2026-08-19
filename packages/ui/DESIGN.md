@@ -46,8 +46,12 @@ The full design system — colour, semantics, material, components, do's and
 don'ts — is the root [`DESIGN.md`](../../DESIGN.md). This file records only the
 things the desktop material scales differently: the **type ramp** and the
 **radius scale**. The design detector checks `font-size` longhand and
-`border-radius`; the UI package's design-ramp test also checks `font:` shorthand
-sizes and the radius-bearing tokens in `tokens.css`.
+`border-radius`; the UI package's design-ramp test enforces the ramp over the
+component sources themselves — it scans every `.ts`/`.tsx` for arbitrary-value
+escapes (`text-[…]`, `rounded-[…]`, arbitrary colors, inline `fontSize`) and
+checks that the entry stylesheet (`src/index.css`) sizes type only through ramp
+variables, with the ramp tokens themselves defined in
+[`packages/theme/src/theme.css`](../theme/src/theme.css).
 
 ## Type ramp
 

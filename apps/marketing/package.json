@@ -12,6 +12,7 @@
     "@fontsource-variable/dm-sans": "5.3.0",
     "@fontsource-variable/fraunces": "5.3.0",
     "@fontsource-variable/source-serif-4": "5.3.0",
+    "@rennet/theme": "workspace:*",
     "astro": "7.1.6",
     "cookie": "2.0.1",
     "typescript": "npm:@typescript/typescript6@6.0.2"

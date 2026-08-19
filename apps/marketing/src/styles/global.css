@@ -1,53 +1,42 @@
+@import "@rennet/theme/palette.css";
+
 :root {
   color-scheme: light;
-  --canvas: #fbfaf7;
-  --surface: #f3f1ec;
-  --surface-strong: #ffffff;
-  --ink: #1e1b16;
-  --ink-soft: #57534a;
-  --line: #e2ddd2;
-  --line-strong: #cfc9bb;
-  --inverse: #0e0d0c;
-  --inverse-surface: #1b1a18;
-  --inverse-text: #f2ede4;
-  --inverse-soft: #a9a196;
-  /* gold — the single accent AND decision register (replaces former blue + amber) */
-  --gold: #8a5d0b;
-  --gold-soft: #f6ecd6;
-  --gold-on-inverse: #e8b13c;
-  --green: #41745b;
-  --green-soft: #e4ede8;
-  --red: #b23b2b;
-  --red-soft: #f6e2dd;
+  /* Palette aliases → the ONE source (packages/theme/src/palette.css). These
+     name-map the shared --rn-* tokens onto marketing's local vocabulary so the
+     ~1500 usage sites below don't churn, and they flip per scheme automatically
+     because palette.css rebinds --rn-* under [data-scheme]. Define no --rn-*
+     and restate no palette hex here — palette-sync.test.ts enforces both. */
+  --canvas: var(--rn-canvas);
+  --surface: var(--rn-raised);
+  --surface-strong: var(--rn-surface);
+  --ink: var(--rn-ink);
+  --ink-soft: var(--rn-ink-soft);
+  --line: var(--rn-line);
+  --line-strong: var(--rn-line-strong);
+  --gold: var(--rn-accent);
+  --gold-soft: var(--rn-accent-surface);
+  --green: var(--rn-green);
+  --green-soft: var(--rn-green-soft);
+  --red: var(--rn-danger);
+  /* marketing-only tokens (no palette equivalent) */
   --shadow: 0 26px 64px -36px rgb(30 27 22 / 32%);
-  --display: "Fraunces Variable", Georgia, "Times New Roman", serif;
-  --body: "DM Sans Variable", system-ui, sans-serif;
-  --prose: "Source Serif 4 Variable", Georgia, serif;
-  --code: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --display: var(--rn-font-display);
+  --body: var(--rn-font-sans);
+  --prose: var(--rn-font-serif);
+  --code: var(--rn-font-mono);
   --shell: min(1440px, calc(100vw - 80px));
   --section: clamp(96px, 10vw, 168px);
 }
 
 :root[data-scheme="dark"] {
   color-scheme: dark;
-  --canvas: #0e0d0c;
-  --surface: #151413;
-  --surface-strong: #1b1a18;
-  --ink: #f2ede4;
-  --ink-soft: #a9a196;
-  --line: #2a2825;
-  --line-strong: #3d3a35;
-  --inverse: #f3f1ec;
-  --inverse-surface: #ffffff;
-  --inverse-text: #1e1b16;
-  --inverse-soft: #57534a;
-  --gold: #e8b13c;
-  --gold-soft: #241c0e;
-  --gold-on-inverse: #8a5d0b;
-  --green: #88bc9b;
-  --green-soft: #1b2a22;
-  --red: #db7a6a;
-  --red-soft: #2e1c18;
+  /* Aliases flip via palette.css. Two exceptions: surface / surface-strong
+     cross-map to different --rn-* steps per scheme (light: tinted panel vs
+     white card; dark: first vs second raise), and the card shadow is
+     marketing-specific. Everything else needs no dark override. */
+  --surface: var(--rn-surface);
+  --surface-strong: var(--rn-raised);
   --shadow: 0 28px 72px -34px rgb(0 0 0 / 78%);
 }
 
@@ -171,16 +160,10 @@ h2 {
   visibility: visible;
 }
 
+/* The closing band is always dark (forced data-scheme="dark" in markup), so
+   the white mark shows in both page schemes. */
 .closing-mark-light {
-  visibility: hidden;
-}
-
-:root[data-scheme="dark"] .closing-mark-light {
-  visibility: visible;
-}
-
-:root[data-scheme="dark"] .closing-mark-dark {
-  visibility: hidden;
+  display: none;
 }
 
 .site-header nav,
@@ -345,7 +328,7 @@ a[href^="http"]:not(.button)::after {
 
 .platform-note {
   margin: 20px 0 0;
-  color: var(--inverse-soft);
+  color: var(--ink-soft);
   font-size: 13px;
 }
 
@@ -404,7 +387,7 @@ a[href^="http"]:not(.button)::after {
   overflow: hidden;
   border-radius: 12px;
   background: #14120f;
-  color: #f2ede4;
+  color: var(--ink);
   box-shadow: var(--shadow);
 }
 
@@ -416,7 +399,7 @@ a[href^="http"]:not(.button)::after {
   gap: 10px;
   padding: 0 16px;
   border-bottom: 1px solid #2b2926;
-  color: #a9a196;
+  color: var(--ink-soft);
   font-size: 11px;
 }
 
@@ -445,13 +428,13 @@ a[href^="http"]:not(.button)::after {
 }
 
 .diff-line.add {
-  color: #88bc9b;
+  color: var(--green);
 }
 .diff-line.add i {
-  background: linear-gradient(90deg, #88bc9b 0 22%, #5c574d 22%);
+  background: linear-gradient(90deg, var(--green) 0 22%, #5c574d 22%);
 }
 .diff-line.remove {
-  color: #db7a6a;
+  color: var(--red);
 }
 .diff-line.remove i {
   background: linear-gradient(90deg, #c0604f 0 22%, #5c574d 22%);
@@ -719,7 +702,7 @@ a[href^="http"]:not(.button)::after {
   overflow: hidden;
   border-radius: 14px;
   background: #14120f;
-  color: #f2ede4;
+  color: var(--ink);
   box-shadow: var(--shadow);
 }
 
@@ -732,7 +715,7 @@ a[href^="http"]:not(.button)::after {
   align-items: center;
   justify-content: space-between;
   padding: 0 22px;
-  color: #a9a196;
+  color: var(--ink-soft);
   font-size: 11px;
 }
 .code-question code {
@@ -744,12 +727,12 @@ a[href^="http"]:not(.button)::after {
   padding-inline: 10px;
 }
 .code-question .minus {
-  background: #241c0e;
-  color: #db7a6a;
+  background: var(--gold-soft);
+  color: var(--red);
 }
 .code-question .plus {
   background: #182219;
-  color: #88bc9b;
+  color: var(--green);
 }
 
 .thread {
@@ -763,7 +746,7 @@ a[href^="http"]:not(.button)::after {
   gap: 20px;
 }
 .thread span {
-  color: #a9a196;
+  color: var(--ink-soft);
   font-size: 12px;
   font-weight: 700;
 }
@@ -775,18 +758,18 @@ a[href^="http"]:not(.button)::after {
   border-top: 1px solid #2b2926;
 }
 .thread .answer span {
-  color: #e8b13c;
+  color: var(--gold);
 }
 
 .harnesses {
-  background: var(--inverse);
-  color: var(--inverse-text);
-  box-shadow: 0 0 0 100vmax var(--inverse);
+  background: var(--canvas);
+  color: var(--ink);
+  box-shadow: 0 0 0 100vmax var(--canvas);
   clip-path: inset(0 -100vmax);
 }
 
 .harness-heading p {
-  color: var(--inverse-soft);
+  color: var(--ink-soft);
 }
 
 .provider-lockups {
@@ -795,7 +778,7 @@ a[href^="http"]:not(.button)::after {
   justify-content: center;
   gap: clamp(24px, 4vw, 64px);
   padding-block: 48px;
-  border-block: 1px solid color-mix(in srgb, var(--inverse-text) 20%, transparent);
+  border-block: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
 .provider {
@@ -818,11 +801,11 @@ a[href^="http"]:not(.button)::after {
   letter-spacing: -0.03em;
 }
 .provider span {
-  color: var(--inverse-soft);
+  color: var(--ink-soft);
   font-size: 13px;
 }
 .provider-plus {
-  color: var(--inverse-soft);
+  color: var(--ink-soft);
   font-family: var(--display);
   font-size: 44px;
   font-weight: 300;
@@ -842,7 +825,7 @@ a[href^="http"]:not(.button)::after {
 .dual-copy p {
   max-width: 58ch;
   margin: 28px 0 0;
-  color: var(--inverse-soft);
+  color: var(--ink-soft);
   font-size: 18px;
 }
 .dual-proof {
@@ -850,16 +833,16 @@ a[href^="http"]:not(.button)::after {
   grid-template-columns: 1fr 1fr;
   gap: 1px;
   align-self: end;
-  background: color-mix(in srgb, var(--inverse-text) 18%, transparent);
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
 }
 .dual-proof > div {
   min-height: 190px;
   padding: 26px;
-  background: var(--inverse-surface);
-  color: var(--inverse-text);
+  background: var(--surface);
+  color: var(--ink);
 }
 .dual-proof span {
-  color: var(--inverse-soft);
+  color: var(--ink-soft);
   font-size: 12px;
   font-weight: 700;
 }
@@ -870,7 +853,7 @@ a[href^="http"]:not(.button)::after {
   line-height: 1.25;
 }
 .dual-proof b {
-  color: var(--gold-on-inverse);
+  color: var(--gold);
   font-size: 12px;
 }
 .dual-proof > p {
@@ -894,8 +877,8 @@ a[href^="http"]:not(.button)::after {
 .dual-proof > small {
   grid-column: 1 / -1;
   padding-top: 10px;
-  background: var(--inverse);
-  color: var(--inverse-soft);
+  background: var(--canvas);
+  color: var(--ink-soft);
   font-size: 11px;
   text-align: right;
 }
@@ -1007,7 +990,7 @@ a[href^="http"]:not(.button)::after {
   align-items: center;
   padding: 0 18px;
   border-bottom: 1px solid #ddd7c9;
-  color: #6b6558;
+  color: var(--rn-ink-faint);
   font-size: 11px;
 }
 .window-bar > span:last-child {
@@ -1040,7 +1023,7 @@ a[href^="http"]:not(.button)::after {
   padding: 6px 10px;
   border-radius: 6px;
   background: rgb(255 255 255 / 90%);
-  color: #57534a;
+  color: var(--ink-soft);
   font-size: 11px;
 }
 
@@ -1154,8 +1137,8 @@ a[href^="http"]:not(.button)::after {
 }
 
 .closing {
-  background: var(--inverse);
-  color: var(--inverse-text);
+  background: var(--canvas);
+  color: var(--ink);
 }
 .closing-inner {
   display: grid;
@@ -1172,7 +1155,7 @@ a[href^="http"]:not(.button)::after {
 .closing-theme {
   max-width: 28ch;
   margin: 42px 0 22px;
-  color: var(--inverse-soft);
+  color: var(--ink-soft);
   font-family: var(--display);
   font-size: clamp(1.2rem, 2vw, 1.8rem);
   font-weight: 500;
@@ -1181,13 +1164,8 @@ a[href^="http"]:not(.button)::after {
 .closing h2 {
   max-width: 12ch;
 }
-.button.inverse {
-  border-color: var(--inverse-text);
-  background: var(--inverse-text);
-  color: var(--inverse);
-}
 .inverse-link {
-  color: var(--inverse-text);
+  color: var(--ink);
 }
 
 .site-footer {

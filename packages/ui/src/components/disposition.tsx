@@ -22,7 +22,9 @@ const DISPOSITIONS: {
 // The verb's hover register: approve reads as evidence (green); the other three all
 // resolve to gold — review-blue and decision-amber merged into the one accent (theme
 // doctrine 2026-08-19). The icon + word carry the verb; the tint carries the mood.
-const VERB_HOVER: Record<DispositionType, string> = {
+// Exported so DispositionCluster shares the ONE map (review finding: it was
+// duplicated verbatim there).
+export const VERB_HOVER: Record<DispositionType, string> = {
   approve: "hover:border-green-line hover:bg-green-soft hover:text-ink",
   "request-change": "hover:border-accent-line hover:bg-accent-soft hover:text-ink",
   comment: "hover:border-accent-line hover:bg-accent-soft hover:text-ink",

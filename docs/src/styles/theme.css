@@ -1,15 +1,24 @@
 /*
  * Rennet documentation theme — Starlight override, "The Affineur's Bench".
  *
- * PROVENANCE. Every colour, radius, and type role below is taken from — or
- * derived by stated interpolation from — the shared Rennet theme, so the docs
- * read as the same public surface as the app and marketing site:
- *   - packages/theme/src/theme.css — the ONE source of visual truth (the
- *     --rn-* palette). Tailwind v4 consumes it in packages/ui and
- *     apps/marketing; this file transposes the same values into Starlight's
- *     --sl-color-* tokens by hand (Starlight owns its own token vocabulary).
+ * PROVENANCE. This file no longer transposes the palette by hand — it CONSUMES
+ * it live. @rennet/theme/palette.css is the ONE source of colour truth (the
+ * --rn-* set); it is imported below and every Starlight --sl-color-* token maps
+ * to a var(--rn-*) or a color-mix() derived from one, so a palette change here
+ * needs no edit — the docs track it automatically. The only literals left are
+ * non-palette values (black scrims/shadows) and two AA-tuned text colours the
+ * palette hue can't hit on white; both are called out at their line.
+ *   - packages/theme/src/palette.css — the shared palette (Tailwind consumes it
+ *     in packages/ui; marketing and this file import it directly as plain CSS).
  *   - DESIGN.md (repo root) — type roles, semantic hues, radii, do's/don'ts.
- * When packages/theme changes, update the hex values here in the same change.
+ * palette.css puts light on :root and dark on [data-theme="dark"] — the exact
+ * data-theme Starlight stamps — so one var(--rn-*) reference resolves correctly
+ * in both schemes. This file is unlayered, so its bare-:root mappings win over
+ * Starlight's layered light defaults without a specificity hack; the
+ * :root[data-theme="light"] block below carries only per-scheme tuning.
+ *
+ * palette-sync.test.ts enforces the discipline: the import must be present, and
+ * this file must define no --rn-* of its own and restate no canonical hex.
  *
  * DOCTRINE (kept, not reinvented):
  *   - One seamless, opaque window: canvas = chrome = toolbar, one warm ground.
@@ -25,85 +34,100 @@
 
 @import "@fontsource-variable/dm-sans";
 @import "@fontsource-variable/fraunces";
+@import "@rennet/theme/palette.css";
 
 /* ============================================================ *
  *  DARK — warm near-black (default)                            *
  * ============================================================ */
+/* Base = dark (the default). Every value that tracks a palette var by the same
+   role in both schemes lives here once and auto-flips (palette.css swaps --rn-*
+   by data-theme); the light block carries only per-scheme tuning. Neutral-ramp
+   intermediates are color-mix(in oklab, ink N%, canvas) so they track too. */
 :root {
   /* Neutral ramp. Starlight semantics: --sl-color-white = highest-contrast
      (headings/strong), gray-2 = body text, gray-3 = muted, gray-5 = borders,
      gray-6 = sidebar/nav surface, black = page canvas. */
-  --sl-color-white: #f2ede4; /* --rn-ink */
-  --sl-color-gray-1: #ddd6c9;
-  --sl-color-gray-2: #cbc4b7; /* body text */
-  --sl-color-gray-3: #a9a196; /* muted (--rn-ink-soft) */
-  --sl-color-gray-4: #6a6458;
-  --sl-color-gray-5: #2a2723; /* borders (--rn-line) */
-  --sl-color-gray-6: #151413; /* sidebar / nav surface (--rn-surface) */
-  --sl-color-gray-7: #1b1a18; /* raised step (--rn-raised) */
-  --sl-color-black: #0e0d0c; /* canvas (--rn-canvas) */
+  --sl-color-white: var(--rn-ink);
+  --sl-color-gray-1: color-mix(in oklab, var(--rn-ink) 91%, var(--rn-canvas));
+  --sl-color-gray-2: color-mix(in oklab, var(--rn-ink) 84%, var(--rn-canvas)); /* body text */
+  --sl-color-gray-3: var(--rn-ink-soft); /* muted */
+  --sl-color-gray-4: color-mix(in oklab, var(--rn-ink) 44%, var(--rn-canvas)); /* light: 48% */
+  --sl-color-gray-5: color-mix(
+    in oklab,
+    var(--rn-ink) 15%,
+    var(--rn-canvas)
+  ); /* borders; light: 11% */
+  --sl-color-gray-6: var(--rn-surface); /* sidebar / nav surface */
+  --sl-color-gray-7: var(--rn-raised); /* raised step */
+  --sl-color-black: var(--rn-canvas); /* canvas */
 
-  /* Gold — the one link/selection/structure/decision hue. */
-  --sl-color-accent-low: #241c0e; /* subtle fill (--rn-accent-surface) */
-  --sl-color-accent: #e0a52e; /* mid: indicators, borders, fills */
-  --sl-color-accent-high: #e8b13c; /* bright: link text (--rn-accent) */
+  /* Gold — the one link/selection/structure/decision hue. --rn-accent is ochre
+     in light (AA text) and true gold in dark, so accent + accent-high share it. */
+  --sl-color-accent-low: var(--rn-accent-surface); /* subtle fill */
+  --sl-color-accent: var(--rn-accent); /* mid: indicators, borders, fills */
+  --sl-color-accent-high: var(--rn-accent); /* bright: link text */
 
   /* Semantic aside hues. New world: no blue. Note is a quiet neutral surface;
      tip = evidence green; caution = gold (amber merged into the accent);
      danger = red. Solid *-low fills, hue-derived 1px borders. */
-  --sl-color-blue: rgba(240, 232, 215, 0.14); /* note border (neutral) */
-  --sl-color-blue-high: #cbc4b7;
-  --sl-color-blue-low: #1b1a18; /* note fill (--rn-raised) */
-  --sl-color-orange: rgba(232, 177, 60, 0.35); /* caution border (gold) */
-  --sl-color-orange-high: #e8b13c; /* --rn-accent (dark) */
-  --sl-color-orange-low: #241c0e; /* --rn-accent-surface */
-  --sl-color-red: rgba(219, 122, 106, 0.4); /* danger border */
-  --sl-color-red-high: #db7a6a; /* --rn-danger */
-  --sl-color-red-low: #2e211e; /* --rn-del */
-  --sl-color-green: rgba(136, 188, 155, 0.38); /* tip border */
-  --sl-color-green-high: #88bc9b; /* --rn-green */
-  --sl-color-green-low: #16241c; /* --rn-add */
+  --sl-color-blue: var(--rn-line-strong); /* note border (neutral); light: --rn-line */
+  --sl-color-blue-high: var(--sl-color-gray-2);
+  --sl-color-blue-low: var(--rn-raised); /* note fill */
+  --sl-color-orange: var(--rn-accent-line); /* caution border (gold) */
+  --sl-color-orange-high: var(--rn-accent);
+  --sl-color-orange-low: var(--rn-accent-surface);
+  --sl-color-red: color-mix(
+    in srgb,
+    var(--rn-danger) 40%,
+    transparent
+  ); /* danger border; light: 32% */
+  --sl-color-red-high: var(--rn-danger);
+  --sl-color-red-low: var(--rn-del);
+  --sl-color-green: var(--rn-green-line); /* tip border */
+  --sl-color-green-high: var(--rn-green);
+  --sl-color-green-low: var(--rn-add);
 
   --sl-color-text: var(--sl-color-gray-2);
   --sl-color-text-accent: var(--sl-color-accent-high);
   --sl-color-text-invert: var(--sl-color-black);
 
   --sl-color-bg: var(--sl-color-black);
-  --sl-color-bg-nav: #0e0d0c; /* seamless opaque chrome — same ground as canvas */
+  --sl-color-bg-nav: var(--rn-canvas); /* seamless opaque chrome — same ground as canvas */
   --sl-color-bg-sidebar: var(--sl-color-gray-6);
-  --sl-color-bg-inline-code: #1b1a18; /* quiet chip (--rn-raised) */
+  --sl-color-bg-inline-code: var(--rn-raised); /* quiet chip; light: warm ink-wash */
   --sl-color-bg-accent: var(--sl-color-accent-high);
 
   --sl-color-hairline: var(--sl-color-gray-5);
-  --sl-color-hairline-light: rgb(240 232 215 / 0.09); /* --rn-line */
-  --sl-color-hairline-shade: rgba(0, 0, 0, 0.4);
+  --sl-color-hairline-light: var(--rn-line); /* light: half-strength */
+  --sl-color-hairline-shade: rgba(0, 0, 0, 0.4); /* black scrim (not palette); light: ink-wash */
 
-  /* Flat by default: shadow only on true overlays, with a real downward offset
-     and broad blur (--rn-shadow-overlay). */
+  /* Flat by default: shadow only on true overlays. sm/md are small non-palette
+     shadows; lg is the shared overlay shadow, which flips with the scheme. */
   --sl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --sl-shadow-md: 0 2px 10px rgba(0, 0, 0, 0.35);
-  --sl-shadow-lg: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+  --sl-shadow-lg: var(--rn-shadow-overlay);
 
   /* Type roles. Self-hosted variable fonts; monospace is code only. */
-  --sl-font: "DM Sans Variable", system-ui, sans-serif;
-  --sl-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-  --rennet-display: "Fraunces Variable", Georgia, serif;
+  --sl-font: var(--rn-font-sans);
+  --sl-font-mono: var(--rn-font-mono);
+  --rennet-display: var(--rn-font-display);
 
   /* Primary button: gold fill with near-black ink (the one saturated object). */
-  --rennet-btn-bg: #e8b13c; /* --rn-accent-fill (dark) */
-  --rennet-btn-text: #191307; /* --rn-accent-ink */
+  --rennet-btn-bg: var(--rn-accent-fill);
+  --rennet-btn-text: var(--rn-accent-ink);
   --rennet-btn-border: transparent;
 
-  /* Selection: tinted from gold. */
-  --rennet-selection: rgb(232 177 60 / 0.22);
+  /* Selection: tinted from gold (fill in dark; light retunes to the ochre). */
+  --rennet-selection: color-mix(in srgb, var(--rn-accent-fill) 22%, transparent);
 
-  /* Code frame (expressive-code): opaque surface, 1px hairline, 12px radius. */
-  --ec-codeBg: #151413; /* --rn-surface */
-  --ec-frm-edBg: #151413;
-  --ec-frm-trmBg: #151413;
-  --ec-frm-edTabBarBg: #121110;
-  --ec-frm-edActTabBg: #151413;
-  --ec-frm-trmTtbBg: #121110;
+  /* Code frame (expressive-code): opaque surface, 1px hairline, 12px radius.
+     Tab bar recesses toward the canvas (dark); light retunes it to --rn-raised. */
+  --ec-codeBg: var(--rn-surface);
+  --ec-frm-edBg: var(--rn-surface);
+  --ec-frm-trmBg: var(--rn-surface);
+  --ec-frm-edTabBarBg: color-mix(in oklab, var(--rn-surface) 58%, var(--rn-canvas));
+  --ec-frm-edActTabBg: var(--rn-surface);
+  --ec-frm-trmTtbBg: color-mix(in oklab, var(--rn-surface) 58%, var(--rn-canvas));
   --ec-brdCol: var(--sl-color-gray-5);
   --ec-frm-edTabBarBrdBtmCol: var(--sl-color-gray-5);
   --ec-frm-trmTtbBrdBtmCol: var(--sl-color-gray-5);
@@ -125,59 +149,40 @@
 /* ============================================================ *
  *  LIGHT — warm near-white (the bright room)                   *
  * ============================================================ */
+/* Light overrides. Only the values that need scheme-specific tuning appear
+   here — everything else auto-flips from the :root base via the palette. */
 :root[data-theme="light"] {
-  --sl-color-white: #1e1b16; /* darkest text/headings (--rn-ink) */
-  --sl-color-gray-1: #2e2a22;
-  --sl-color-gray-2: #3d382e; /* body text */
-  --sl-color-gray-3: #57534a; /* muted (--rn-ink-soft) */
-  --sl-color-gray-4: #8a8578;
-  --sl-color-gray-5: #e2ddd2; /* borders (--rn-line, warm) */
-  --sl-color-gray-6: #ffffff; /* sidebar / nav surface (--rn-surface) */
-  --sl-color-gray-7: #f3f1ec; /* raised step (--rn-raised) */
-  --sl-color-black: #fbfaf7; /* canvas (--rn-canvas, warm) */
+  /* Neutral ramp: gray-4/5 sit at different ink fractions in the bright room. */
+  --sl-color-gray-4: color-mix(in oklab, var(--rn-ink) 48%, var(--rn-canvas));
+  --sl-color-gray-5: color-mix(in oklab, var(--rn-ink) 11%, var(--rn-canvas)); /* borders (warm) */
 
-  /* Gold is a FILL hue in light; gold TEXT uses the ochre (AA on white). */
-  --sl-color-accent-low: #f6ecd6; /* --rn-accent-surface */
-  --sl-color-accent: #8a5d0b; /* --rn-accent (ochre) */
-  --sl-color-accent-high: #8a5d0b; /* links — ochre, AA on white */
+  /* Note border wants the lighter hairline in light; danger border eases off. */
+  --sl-color-blue: var(--rn-line); /* note border (neutral) */
+  --sl-color-red: color-mix(in srgb, var(--rn-danger) 32%, transparent); /* danger border */
 
-  --sl-color-blue: rgba(60, 50, 30, 0.12); /* note border (neutral) */
-  --sl-color-blue-high: #3d382e;
-  --sl-color-blue-low: #f3f1ec; /* note fill (--rn-raised) */
-  --sl-color-orange: rgba(138, 93, 11, 0.3); /* caution (gold) */
-  --sl-color-orange-high: #8a5d0b; /* --rn-accent */
-  --sl-color-orange-low: #f6ecd6; /* --rn-accent-surface */
-  --sl-color-red: rgba(178, 59, 43, 0.32); /* danger */
-  --sl-color-red-high: #8f3f39; /* darkened --rn-danger for text */
-  --sl-color-red-low: #f7e7e2;
-  --sl-color-green: rgba(65, 116, 91, 0.3); /* tip */
-  --sl-color-green-high: #35604b; /* darkened --rn-green for text */
-  --sl-color-green-low: #e5efe8;
+  /* AA on white: the palette hue is too light for text, so darken it. These two
+     are the only non-palette colour literals in the file (contrast, not decor). */
+  --sl-color-red-high: #8f3f39; /* darkened --rn-danger for AA text */
+  --sl-color-green-high: #35604b; /* darkened --rn-green for AA text */
 
-  --sl-color-bg-nav: #fbfaf7; /* seamless opaque chrome */
-  --sl-color-bg-inline-code: #f0ece3; /* warm chip between line and canvas */
+  --sl-color-bg-inline-code: color-mix(
+    in oklab,
+    var(--rn-ink) 5%,
+    var(--rn-canvas)
+  ); /* warm chip */
 
-  --sl-color-hairline-light: rgb(60 50 30 / 0.06);
-  --sl-color-hairline-shade: rgba(30, 27, 22, 0.14);
+  --sl-color-hairline-light: color-mix(in srgb, var(--rn-line) 50%, transparent);
+  --sl-color-hairline-shade: color-mix(in srgb, var(--rn-ink) 14%, transparent);
 
+  /* Warm shadows in light (non-palette small shadows; lg flips via the base). */
   --sl-shadow-sm: 0 1px 2px rgb(30 20 5 / 0.1);
   --sl-shadow-md: 0 2px 10px rgb(30 20 5 / 0.12);
-  --sl-shadow-lg: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
 
-  --rennet-btn-bg: #e0a52e; /* --rn-accent-fill (light) */
-  --rennet-btn-text: #191307; /* --rn-accent-ink */
-  --rennet-btn-border: transparent;
+  --rennet-selection: color-mix(in srgb, var(--rn-accent) 16%, transparent);
 
-  --rennet-selection: rgb(138 93 11 / 0.16);
-
-  --ec-codeBg: #ffffff; /* --rn-surface */
-  --ec-frm-edBg: #ffffff;
-  --ec-frm-trmBg: #ffffff;
-  --ec-frm-edTabBarBg: #f3f1ec;
-  --ec-frm-edActTabBg: #ffffff;
-  --ec-frm-trmTtbBg: #f3f1ec;
-
-  --pagefind-ui-background: #ffffff;
+  /* Code-frame tab bar recesses toward --rn-raised on the white surface. */
+  --ec-frm-edTabBarBg: var(--rn-raised);
+  --ec-frm-trmTtbBg: var(--rn-raised);
 }
 
 /* ============================================================ *

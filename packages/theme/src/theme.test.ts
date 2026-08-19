@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 // palette edit that drops legibility reddens here rather than shipping, plus the
 // structural guards this file's duplication makes necessary.
 
-const css = readFileSync(fileURLToPath(new URL("./theme.css", import.meta.url)), "utf8");
+// The raw values live in palette.css (theme.css is the Tailwind mapping over it).
+const css = readFileSync(fileURLToPath(new URL("./palette.css", import.meta.url)), "utf8");
 
 /** Slice a top-level block's declarations by its opening selector. */
 function block(selector: string): string {
@@ -19,7 +20,8 @@ function block(selector: string): string {
 }
 
 const LIGHT = block(":root {");
-const DARK = block('[data-scheme="dark"] {');
+// Dark binds to both scheme vocabularies (data-scheme app/marketing, data-theme docs).
+const DARK = block('[data-scheme="dark"],');
 // The prefers-color-scheme fallback nests one deeper; slice from its guard selector.
 const fallbackStart = css.indexOf(':root:not([data-scheme="light"])');
 const FALLBACK = css.slice(css.indexOf("{", fallbackStart), css.indexOf("}", fallbackStart));
@@ -59,8 +61,13 @@ describe("scheme structure", () => {
   });
 
   it("every dark token has a light counterpart (no theme-only colors)", () => {
+    // Font stacks are scheme-invariant by design (defined once on :root); every
+    // OTHER light token must be overridden in dark, and dark must add nothing.
     const names = (s: string): string[] =>
-      [...s.matchAll(/(--rn-[\w-]+):/g)].map((m) => m[1] ?? "").sort();
+      [...s.matchAll(/(--rn-[\w-]+):/g)]
+        .map((m) => m[1] ?? "")
+        .filter((name) => !name.startsWith("--rn-font-"))
+        .sort();
     expect(names(DARK)).toEqual(names(LIGHT));
   });
 });

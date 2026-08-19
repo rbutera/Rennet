@@ -26,14 +26,15 @@ function AppRouting(): null {
 export default function RootLayout(): ReactNode {
   // Interface = DM Sans, display titles = Fraunces (see src/theme/tokens.ts `fontFamily`).
   // RN needs each weight loaded as its own face; gate the tree until they're ready so text
-  // never flashes in the system font first.
-  const [fontsLoaded] = useFonts({
+  // never flashes in the system font first. A LOAD FAILURE releases the gate instead of
+  // blanking the app forever — the system font is the honest fallback (review finding).
+  const [fontsLoaded, fontError] = useFonts({
     DMSans_400Regular,
     DMSans_500Medium,
     DMSans_600SemiBold,
     Fraunces_600SemiBold,
   });
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded && !fontError) return null;
   return (
     <RuntimeProvider>
       <AppRouting />

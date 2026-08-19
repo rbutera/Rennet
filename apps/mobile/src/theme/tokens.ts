@@ -1,19 +1,22 @@
 // The design-token transpose (issue #383). React Native cannot consume the web
-// theme's CSS custom properties, so this file RE-STATES the same canonical values
-// as plain strings RN styles read directly.
+// theme's CSS custom properties, so the palette arrives as GENERATED data:
+// `palette.generated.ts` is emitted from packages/theme/src/palette.css (the one
+// palette source of truth) by `pnpm nx run rennet-theme:generate`, and
+// packages/theme/src/palette-sync.test.ts reddens the gate if it goes stale.
+// This file only SHAPES that data into the mobile Palette vocabulary — it holds
+// no colour values of its own.
 //
-// SOURCE OF TRUTH: `packages/theme/src/theme.css` ("The Affineur's Bench", ratified
-// 2026-08-19). Keep these values in sync with it BY HAND — there is no DOM here to
-// inherit the `--rn-*` custom properties. When theme.css changes, mirror it here.
-//
-// The world: warm near-black dark / warm near-white light, ONE accent (gold) that is
-// also the decision register (review blue and decision amber are retired — both fold
-// into `accent`), plus evidence green and danger red. Serif is the review's voice on
-// the desktop; here the interface is DM Sans and display titles are Fraunces.
+// The world ("The Affineur's Bench", ratified 2026-08-19): warm near-black dark /
+// warm near-white light, ONE accent (gold) that is also the decision register
+// (review blue and decision amber are retired — both fold into `accent`), plus
+// evidence green and danger red. Serif is the review's voice on the desktop;
+// here the interface is DM Sans and display titles are Fraunces.
 //
 // Pure and framework-free so it unit-tests without React Native: `resolveTheme(scheme)`
 // returns the palette for a colour scheme; a thin RN hook (theme/use-theme) wraps it
 // with Appearance.
+
+import { type GeneratedPalette, palette } from "./palette.generated";
 
 export type ColorScheme = "light" | "dark";
 
@@ -40,7 +43,7 @@ export interface Palette {
    *  selection, review structure, reconstructed decisions, disagreement. Text form
    *  (ochre in light, AA on white; gold in dark). */
   readonly accent: string;
-  /** Accent tint fill (chips, callouts). */
+  /** Accent tint fill (chips, callouts) — the solid accent-surface step. */
   readonly accentSoft: string;
   /** Accent border. */
   readonly accentLine: string;
@@ -53,45 +56,34 @@ export interface Palette {
   readonly dangerSoft: string;
 }
 
-const light: Palette = {
-  canvas: "#fbfaf7",
-  surface: "#ffffff",
-  card: "#f3f1ec",
-  ink: "#1e1b16",
-  text: "#1e1b16",
-  muted: "#57534a",
-  faint: "#6b6558",
-  line: "rgba(60,50,30,0.12)",
-  line2: "rgba(60,50,30,0.2)",
-  accent: "#8a5d0b",
-  accentSoft: "#f6ecd6",
-  accentLine: "rgba(138,93,11,0.32)",
-  green: "#41745b",
-  greenSoft: "rgba(65,116,91,0.12)",
-  greenLine: "rgba(65,116,91,0.3)",
-  danger: "#b23b2b",
-  dangerSoft: "rgba(178,59,43,0.1)",
-};
+/** Same keys as the generated palette, but widened from the literal hex types so
+ *  both schemes flow through one shaper. */
+type SchemeColors = { readonly [K in keyof GeneratedPalette]: string };
 
-const dark: Palette = {
-  canvas: "#0e0d0c",
-  surface: "#151413",
-  card: "#1b1a18",
-  ink: "#f2ede4",
-  text: "#f2ede4",
-  muted: "#a9a196",
-  faint: "#948d80",
-  line: "rgba(240,232,215,0.09)",
-  line2: "rgba(240,232,215,0.16)",
-  accent: "#e8b13c",
-  accentSoft: "#241c0e",
-  accentLine: "rgba(232,177,60,0.35)",
-  green: "#88bc9b",
-  greenSoft: "rgba(136,188,155,0.14)",
-  greenLine: "rgba(136,188,155,0.36)",
-  danger: "#db7a6a",
-  dangerSoft: "rgba(219,122,106,0.14)",
-};
+function shape(generated: SchemeColors): Palette {
+  return {
+    canvas: generated.canvas,
+    surface: generated.surface,
+    card: generated.raised,
+    ink: generated.ink,
+    text: generated.ink,
+    muted: generated.inkSoft,
+    faint: generated.inkFaint,
+    line: generated.line,
+    line2: generated.lineStrong,
+    accent: generated.accent,
+    accentSoft: generated.accentSurface,
+    accentLine: generated.accentLine,
+    green: generated.green,
+    greenSoft: generated.greenSoft,
+    greenLine: generated.greenLine,
+    danger: generated.danger,
+    dangerSoft: generated.dangerSoft,
+  };
+}
+
+const light: Palette = shape(palette.light);
+const dark: Palette = shape(palette.dark);
 
 /** The palette for a colour scheme. Dark and light carry the SAME keys (checked in tests). */
 export function resolveTheme(scheme: ColorScheme): Palette {

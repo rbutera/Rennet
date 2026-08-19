@@ -1,6 +1,7 @@
 import type { DispositionType } from "@rennet/types";
 import type { ComponentType } from "react";
 import { defaultLane, type StagingLane } from "../canvas/staging";
+import { VERB_HOVER } from "./disposition";
 import { CheckIcon, CommentIcon, QuestionIcon, TriangleIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,15 +63,6 @@ const VERBS: readonly VerbSpec[] = [
   { type: "comment", label: "Comment", className: "d-comment", Icon: CommentIcon },
   { type: "question", label: "Question", className: "d-question", Icon: QuestionIcon },
 ];
-
-// approve reads as evidence (green); the other three resolve to gold — review-blue and
-// decision-amber merged into the one accent (theme doctrine 2026-08-19).
-const VERB_HOVER: Record<DispositionType, string> = {
-  approve: "hover:border-green-line hover:bg-green-soft hover:text-ink",
-  "request-change": "hover:border-accent-line hover:bg-accent-soft hover:text-ink",
-  comment: "hover:border-accent-line hover:bg-accent-soft hover:text-ink",
-  question: "hover:border-accent-line hover:bg-accent-soft hover:text-ink",
-};
 
 /** A terse human name for an anchor kind, for the control's accessible name. */
 const ANCHOR_NOUN: Record<DispositionAnchorKind, string> = {

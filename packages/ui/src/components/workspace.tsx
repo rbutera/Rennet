@@ -1080,9 +1080,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           Zoom in
         </button>
         {overlayOn ? (
-          <span className="overlay-legend ml-auto text-sm text-ink">
-            Blast radius painted amber
-          </span>
+          <span className="overlay-legend ml-auto text-sm text-ink">Blast radius painted gold</span>
         ) : null}
       </div>
 

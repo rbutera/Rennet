@@ -124,8 +124,11 @@ async function createWindow(wsPort: number): Promise<void> {
     minHeight: 640,
     // One seamless OPAQUE window (2026-08-19 overhaul; root DESIGN.md §Material).
     // Glass/vibrancy/acrylic are retired: the whole window paints the theme's warm
-    // canvas, titlebar included. The pre-paint backgroundColor matches the resolved
-    // scheme's canvas so there is no white/black flash before the renderer loads.
+    // canvas, titlebar included. The pre-paint backgroundColor follows the OS
+    // appearance — the best guess available before the renderer loads its stored
+    // scheme. A user who forces the scheme OPPOSITE to the OS sees one brief
+    // canvas-swap on launch; the renderer stamps data-scheme before its first
+    // paint, so the swap is between the two theme canvases, never white/black.
     // macOS hides the native titlebar (traffic lights overlay the in-app bar, which
     // reserves their inset via [data-platform="darwin"]); win32/linux keep the
     // native frame (titlebar, snap, drag) above the web content.

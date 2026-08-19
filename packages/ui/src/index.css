@@ -12,7 +12,11 @@
 
 @import "tailwindcss";
 @import "@rennet/theme/theme.css";
-@source "./";
+/* Utility candidates live in the app shell and the components; test files are
+ * excluded so fixtures can't mint CSS. */
+@source "./app.tsx";
+@source "./components";
+@source not "./components/**/*.test.tsx";
 
 @layer base {
   :root {
@@ -46,10 +50,11 @@
   textarea {
     caret-color: var(--rn-accent);
   }
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--rn-line-strong) transparent;
-  }
+  /* Scrollbars theme via the ::-webkit-* path (Electron + every Chromium /
+   * WebKit shell that serves the browser build). The standard scrollbar-width/
+   * scrollbar-color properties are deliberately NOT set: in Chromium 121+ they
+   * disable the ::-webkit-scrollbar styling wherever they apply, and a
+   * universal `*` rule also taxes style recalc across huge diff trees. */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -64,9 +69,16 @@
     background: transparent;
   }
 
+  /* The systemic focus ring: 3px SOLID gold (the translucent accent-line token
+   * fails the 3:1 focus-indicator floor when composited — review finding). */
   :focus-visible {
-    outline: 3px solid var(--rn-accent-line);
+    outline: 3px solid var(--rn-accent);
     outline-offset: 1px;
+  }
+  /* The full-viewport keyboard canvas region draws its ring INSET — an outset
+   * ring on a min-h-screen element clips off-screen and under the titlebar. */
+  .canvas-app:focus-visible {
+    outline-offset: -3px;
   }
 
   @media (prefers-reduced-motion: reduce) {

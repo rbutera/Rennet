@@ -37,6 +37,13 @@ describe("AskAnswers two-column comparison contract", () => {
     expect(answers?.getAttribute("data-count")).toBe("2");
     const cards = container.querySelectorAll(".ask-answer-cards .ask-answer-card");
     expect(cards).toHaveLength(2);
+    // The side-by-side mechanism itself (review finding: two cards alone would
+    // still pass while stacking): the answers wrapper is the `group` whose
+    // data-count drives the card grid's two-column variant. happy-dom computes
+    // no layout, so the utility contract is the observable truth.
+    expect(answers?.className).toContain("group");
+    const grid = container.querySelector(".ask-answer-cards");
+    expect(grid?.className).toContain("group-data-[count=2]:grid-cols-2");
   });
 
   it("renders a single card when only the orchestrator answered", () => {

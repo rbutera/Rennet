@@ -451,27 +451,42 @@ export function ConnectionHost({
   }, [addHost, addCode, addLabel, makeConnection, key]);
 
   const { announce, dotState } = describeConnection(activeTarget.label, status);
+  // The dot is a redundant non-text cue (the indicator's aria-label carries the truth):
+  // green when live, ink-faint while idle/connecting, danger when offline/failed.
+  const dotColor =
+    dotState === "online"
+      ? "bg-green"
+      : dotState === "offline" || dotState === "error"
+        ? "bg-danger"
+        : "bg-ink-faint";
   const connectionBar = (
-    <div className="connection-bar">
+    <div className="connection-bar relative ml-auto inline-flex items-center">
       <button
         type="button"
-        className="connection-indicator"
+        className="connection-indicator inline-flex cursor-pointer items-center gap-1.5 rounded-chip border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:bg-raised"
         data-state={dotState}
         onClick={() => setSwitcherOpen((open) => !open)}
         aria-expanded={switcherOpen}
         aria-label={announce}
       >
-        <span className="connection-dot" data-state={dotState} aria-hidden="true" />
-        <span className="connection-name">{activeTarget.label}</span>
+        <span
+          className={`connection-dot h-2 w-2 flex-none rounded-full ${dotColor}`}
+          data-state={dotState}
+          aria-hidden="true"
+        />
+        <span className="connection-name text-ink">{activeTarget.label}</span>
       </button>
       {switcherOpen ? (
-        <div className="connection-switcher" role="menu">
-          <ul className="connection-list">
+        <div
+          className="connection-switcher absolute left-0 top-full z-40 mt-1.5 min-w-[280px] rounded-surface border border-line bg-overlay p-2 shadow-overlay"
+          role="menu"
+        >
+          <ul className="connection-list mb-1.5 list-none">
             {allTargets.map((target) => (
-              <li key={target.id} className="connection-item">
+              <li key={target.id} className="connection-item flex items-center gap-1.5">
                 <button
                   type="button"
-                  className="connection-choose"
+                  className="connection-choose flex-1 cursor-pointer rounded-chip px-2 py-1.5 text-left text-sm text-ink hover:bg-raised aria-[current=true]:bg-accent-soft"
                   onClick={() => switchTo(target.id)}
                   aria-current={target.id === activeId}
                 >
@@ -483,7 +498,7 @@ export function ConnectionHost({
                 {target.id !== defaultTarget.id ? (
                   <button
                     type="button"
-                    className="connection-remove"
+                    className="connection-remove flex-none cursor-pointer px-1 text-sm text-ink-faint hover:text-danger"
                     onClick={() => removeDaemon(target.id)}
                     aria-label={`Forget ${target.label}`}
                   >
@@ -495,56 +510,72 @@ export function ConnectionHost({
           </ul>
           {adding ? (
             <form
-              className="connection-add-form"
+              className="connection-add-form flex flex-col gap-1.5"
               onSubmit={(event) => {
                 event.preventDefault();
                 void submitAdd();
               }}
             >
-              <label className="connection-field">
+              <label className="connection-field flex flex-col gap-1 text-2xs text-ink-faint">
                 Name
                 <input
+                  className="rounded-chip border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                   value={addLabel}
                   onChange={(e) => setAddLabel(e.target.value)}
                   placeholder="My laptop"
                 />
               </label>
-              <label className="connection-field">
+              <label className="connection-field flex flex-col gap-1 text-2xs text-ink-faint">
                 Host
                 <input
+                  className="rounded-chip border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                   value={addHost}
                   onChange={(e) => setAddHost(e.target.value)}
                   placeholder="100.x.y.z or host:port"
                 />
               </label>
-              <label className="connection-field">
+              <label className="connection-field flex flex-col gap-1 text-2xs text-ink-faint">
                 Pairing code
                 <input
+                  className="rounded-chip border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                   value={addCode}
                   onChange={(e) => setAddCode(e.target.value)}
                   placeholder="8 characters"
                 />
               </label>
               {addError ? (
-                <p className="connection-error" role="alert">
+                <p className="connection-error text-2xs text-danger" role="alert">
                   {addError}
                 </p>
               ) : null}
-              <div className="connection-add-actions">
-                <button type="submit" disabled={addBusy}>
+              <div className="connection-add-actions flex gap-1.5">
+                <button
+                  type="submit"
+                  className="cursor-pointer rounded-control bg-accent-fill px-3 py-1.5 text-xs font-semibold text-accent-ink disabled:opacity-60"
+                  disabled={addBusy}
+                >
                   {addBusy ? "Pairing…" : "Pair and add"}
                 </button>
-                <button type="button" onClick={() => setAdding(false)} disabled={addBusy}>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-control border border-line px-3 py-1.5 text-xs text-ink-soft hover:bg-raised disabled:opacity-60"
+                  onClick={() => setAdding(false)}
+                  disabled={addBusy}
+                >
                   Cancel
                 </button>
               </div>
             </form>
           ) : (
-            <button type="button" className="connection-add" onClick={() => setAdding(true)}>
+            <button
+              type="button"
+              className="connection-add w-full cursor-pointer rounded-chip border border-dashed border-line-strong px-2 py-1.5 text-xs text-ink-soft hover:bg-raised"
+              onClick={() => setAdding(true)}
+            >
               Add a daemon
             </button>
           )}
-          <p className="connection-note">
+          <p className="connection-note mt-2 text-2xs leading-relaxed text-ink-faint">
             A remote daemon shows only repo references, never a host path. Pairing is one-time.
           </p>
         </div>
@@ -554,7 +585,15 @@ export function ConnectionHost({
 
   const daemonBanner =
     banner === null ? null : (
-      <div className="connection-banner" data-kind={banner.kind} role="status">
+      // A fixed, non-modal strip over whatever the app is showing — nothing blocks. It
+      // sits at top-14 (below the h-14 titlebar) so a min-h-screen surface never pushes
+      // it off-screen, and clears the fixed top-3/right-4 Files/Canvases toggle. Danger
+      // ground for a live/failed outage; the transient "restored" note flips to green.
+      <div
+        className="connection-banner fixed inset-x-0 top-14 z-30 flex items-center justify-center gap-3 border-b border-danger bg-danger-soft px-4 py-2 text-xs text-danger data-[kind=restored]:border-green-line data-[kind=restored]:bg-green-soft data-[kind=restored]:text-green"
+        data-kind={banner.kind}
+        role="status"
+      >
         {banner.kind === "outage" ? (
           <span className="connection-banner-text">
             {fold.everOnline
@@ -569,7 +608,7 @@ export function ConnectionHost({
             </span>
             <button
               type="button"
-              className="connection-banner-retry"
+              className="connection-banner-retry flex-none cursor-pointer rounded-chip border border-danger px-2.5 py-1 text-xs font-semibold text-danger hover:bg-danger hover:text-canvas"
               onClick={() => setRetryNonce((nonce) => nonce + 1)}
             >
               Retry
