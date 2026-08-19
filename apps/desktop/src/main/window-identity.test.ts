@@ -65,3 +65,15 @@ describe("window identity", () => {
     expect(brandWindowIcon("/nonexistent/dist/main", "win32")).toBeUndefined();
   });
 });
+
+describe("isExternalHttpUrl", () => {
+  it("accepts http(s) and nothing else", async () => {
+    const { isExternalHttpUrl } = await import("./window-identity");
+    expect(isExternalHttpUrl("https://github.com/login/device")).toBe(true);
+    expect(isExternalHttpUrl("http://example.test/x")).toBe(true);
+    expect(isExternalHttpUrl("file:///etc/passwd")).toBe(false);
+    expect(isExternalHttpUrl("app://rennet/")).toBe(false);
+    expect(isExternalHttpUrl("javascript:alert(1)")).toBe(false);
+    expect(isExternalHttpUrl("not a url")).toBe(false);
+  });
+});

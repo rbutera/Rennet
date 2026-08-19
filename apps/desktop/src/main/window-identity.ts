@@ -44,3 +44,19 @@ export function brandWindowIcon(baseDir: string, platform: NodeJS.Platform): str
   const candidate = join(baseDir, "../../../../brand/exports", rel);
   return existsSync(candidate) ? candidate : undefined;
 }
+
+/**
+ * True for a plain http(s) URL that may be handed to the OS browser. The window
+ * shell routes `target="_blank"` opens and untrusted navigations through this:
+ * matches open externally, everything else is denied outright (field bug
+ * 2026-08-19: the GitHub device-flow verification link was a silent no-op under
+ * the old deny-all handler).
+ */
+export function isExternalHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
