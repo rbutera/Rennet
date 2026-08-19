@@ -25,6 +25,16 @@ answer an ask (from the app or straight from the notification shade), post a rev
 and start one from a PR link or the share sheet. Those sections are below, after
 reading.
 
+## Install the app
+
+Until the TestFlight/internal track is live, the app runs as an Expo
+development build from the repo: `pnpm install`, then from `apps/mobile`
+run `npx expo run:ios` or `npx expo run:android` with your phone connected
+(or use `npx eas build --profile development` for an installable dev
+client). Once the internal track exists, installation is one TestFlight
+invite — no developer tooling. Push notifications need the app built with
+its Expo project id; a build without one still gets every in-app event.
+
 ## Pair a phone
 
 Pairing is connection bootstrap, not a consent ceremony: you do it once and the
