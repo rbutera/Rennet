@@ -90,11 +90,13 @@ cannot land (the daemon is unreachable, or the turn was already answered) the no
 says so and deep-links you into the ask, so an answer is never silently dropped or
 duplicated.
 
-**Platform coverage (honest):** shipping now on both platforms are the in-app ask card
-and the deep-link that lands you on it. Registering the chips as lock-screen actions is
-declared and wired; whether a chosen chip answers fully in the background is platform- and
-permission-dependent (iOS limits background execution), and the app falls back to
-open-and-send when the background path is denied — never a dropped answer.
+**Platform coverage (honest):** the in-app ask card and the deep-link that lands you on it
+ship on both platforms. On **Android** a chip tap answers fully in the background — the app
+stays closed and a background task sends your reply — because Android is the platform where
+the notification action runs a task while the app is backgrounded or terminated. On **iOS**,
+which does not run a background task on an action tap, the chip opens the app with your
+answer ready and sends it (still one tap). Either way the answer is never dropped: a failure
+tells you it did not land and deep-links you into the ask.
 
 ## Post a review
 
@@ -127,10 +129,12 @@ PR whose repository no paired daemon owns says so honestly, rather than opening 
 the wrong clone.
 
 **Share-sheet coverage (honest):** paste-a-link and the `rennet://kickoff` deep link work
-now on both platforms, and Android declares a share target. The full OS share extension
-(receiving a shared URL directly from another app's share sheet on both platforms) is a
-recorded follow-up — the Expo share-intent module it needs is deferred to keep this pass
-free of an unverifiable native dependency.
+on both platforms. On **Android**, sharing a GitHub PR URL to Rennet from another app now
+lands you on the kickoff screen with the link filled in — the app reads the shared text
+natively and the matching paired project opens it. On **iOS**, use paste or the
+`rennet://kickoff` link; the OS share extension (a shared URL straight from the iOS share
+sheet) is the recorded follow-up, since it needs a separate native extension target beyond
+this pass.
 
 ## Notifications
 
