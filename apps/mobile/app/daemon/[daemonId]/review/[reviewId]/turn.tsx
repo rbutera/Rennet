@@ -70,6 +70,9 @@ export default function Turn(): ReactNode {
 
   const running = isTurnRunning(timeline);
   const chips = runtime.registry.askActionsFor(reviewId);
+  // A pre-M2 daemon never advertises `act`, so it cannot honour `review.interrupt`. Stop stays
+  // VISIBLE but disabled (truthful) rather than silently no-opping the tap (#382 M2, Finding A).
+  const canInterrupt = supervisor?.actAdvertised() ?? false;
 
   const stop = useCallback(() => {
     void supervisor
@@ -83,7 +86,13 @@ export default function Turn(): ReactNode {
         <Text style={{ color: t.blueInk, fontSize: type.control }}>
           {running ? "turn running · reattached" : "reattached"}
         </Text>
-        {running ? <StopButton label="◼ Stop" onPress={stop} /> : null}
+        {running ? (
+          <StopButton
+            label={canInterrupt ? "◼ Stop" : "◼ Stop · update daemon"}
+            onPress={stop}
+            disabled={!canInterrupt}
+          />
+        ) : null}
       </View>
 
       <FlatList

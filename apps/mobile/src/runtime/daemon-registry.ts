@@ -59,6 +59,12 @@ export interface DaemonSupervisor {
   saveReplica(surface: unknown): void;
   /** Whether this daemon advertised the attention capability (gates push registration, #383). */
   attentionAdvertised(): boolean;
+  /**
+   * Whether this daemon advertised the `act` capability — the M2 acting seams (`review.interrupt`,
+   * `publish.compose`). The turn screen's Stop and the publish surface gate on it so a pre-M2
+   * daemon shows them truthfully disabled / needs-updating, never a silent no-op (#382 M2).
+   */
+  actAdvertised(): boolean;
   close(): void;
 }
 

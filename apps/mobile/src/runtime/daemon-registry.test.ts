@@ -33,6 +33,7 @@ function fakeSupervisor(): FakeSupervisor {
       return undefined;
     },
     attentionAdvertised: () => true,
+    actAdvertised: () => true,
     emitAttention(frame: AttentionEventFrame) {
       for (const l of attentionListeners) l(frame);
     },

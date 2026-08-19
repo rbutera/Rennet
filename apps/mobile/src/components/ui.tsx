@@ -147,13 +147,28 @@ export function AnswerChip({
   );
 }
 
-/** A destructive/stop control (the live turn's visible Stop). */
-export function StopButton({ label, onPress }: { label: string; onPress?: () => void }): ReactNode {
+/** A destructive/stop control (the live turn's visible Stop). Disabled ⇒ visibly dimmed and
+ *  inert (a pre-M2 daemon cannot interrupt; the control tells the truth rather than no-opping). */
+export function StopButton({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress?: () => void;
+  disabled?: boolean;
+}): ReactNode {
   const t = useTheme();
   return (
     <Pressable
-      onPress={onPress}
-      style={[styles.stopBtn, { backgroundColor: t.amberBg, borderColor: t.amberLine }]}
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      accessibilityState={{ disabled: Boolean(disabled) }}
+      style={[
+        styles.stopBtn,
+        { backgroundColor: t.amberBg, borderColor: t.amberLine },
+        disabled ? { opacity: 0.4 } : null,
+      ]}
     >
       <Text style={{ color: t.amber, fontSize: type.control, fontWeight: "600" }}>{label}</Text>
     </Pressable>

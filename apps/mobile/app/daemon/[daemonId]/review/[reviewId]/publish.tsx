@@ -100,6 +100,16 @@ export default function Publish(): ReactNode {
   useEffect(() => {
     if (!connection || mode === undefined) return;
     let cancelled = false;
+    // A pre-M2 daemon never advertises `act`, so it has no `publish.compose`. Say so truthfully
+    // (like the turn screen's Stop) instead of surfacing a raw "unknown command" throw (#382 M2,
+    // Finding C).
+    if (!connection.supervisor.actAdvertised()) {
+      setComposed({
+        status: "unavailable",
+        reason: "This daemon needs updating to preview and post from the phone.",
+      });
+      return;
+    }
     connection.supervisor
       .invoke("publish.compose", { commandId: newCommandId(), reviewId, mode })
       .then((result) => {
