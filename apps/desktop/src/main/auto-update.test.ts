@@ -246,3 +246,42 @@ describe("updateSourceFor", () => {
     });
   });
 });
+
+describe("staged-at-interval polling (the badge is a disk fact)", () => {
+  it("seeds when a staged version appears AFTER boot — the live event is not required", () => {
+    vi.useFakeTimers();
+    try {
+      let staged: string | null = null;
+      startAutoUpdate(isTrusted, quietLogger, () => staged);
+      const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
+      if (!replay) throw new Error("replay handler not registered");
+      expect(replay(trusted)).toBeNull();
+      staged = "0.3.1";
+      vi.advanceTimersByTime(5 * 60_000 + 10);
+      expect(replay(trusted)).toEqual({ version: "0.3.1" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-seeds only on a version change — a standing badge never re-broadcasts", () => {
+    vi.useFakeTimers();
+    try {
+      const window = liveWindow();
+      harness.windows.push(window);
+      let staged: string | null = "0.3.1";
+      startAutoUpdate(isTrusted, quietLogger, () => staged);
+      expect(window.webContents.send).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(3 * (5 * 60_000 + 10));
+      expect(window.webContents.send).toHaveBeenCalledTimes(1);
+      staged = "0.3.2";
+      vi.advanceTimersByTime(5 * 60_000 + 10);
+      expect(window.webContents.send).toHaveBeenCalledTimes(2);
+      expect(window.webContents.send).toHaveBeenLastCalledWith(UPDATE_READY_CHANNEL, {
+        version: "0.3.2",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
