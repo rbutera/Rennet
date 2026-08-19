@@ -184,6 +184,30 @@ M3). Source-wiring note: `review-finished` attention is raised from its real pip
 source; the other five families have the planner + registry + `raiseAttention` seam
 ready and raise as their flows are wired (several — asks, publish, handoff — are M2).
 
+**M2 — act from the phone — is delivered** (the `mobile-app-m2` change): the phone
+watches a live turn (reattach paint + rebind-safe `onAskStream`), answers an ask
+(chips + free text composed into one `review.ask` reply, and the same reply from a
+notification action), stops a turn, posts a review, and kicks one off from a PR link
+or the share sheet. Two additive daemon seams the design assumed but M1 had not built:
+**`review.interrupt`** (the client Stop — aborts a review's in-flight turn via the
+live-turn registry, now indexed by `reviewId`, emits `ask-interrupted` on the stream,
+clears ask-pending, raises turn-failed), and **`publish.compose`** (the daemon composes
+the own-branch outbound submission + byte-exact payload, because the mobile boundary
+cannot import the DOM `ui` layer where that composition lives — the phone posts exactly
+what it returned, so `publish.submitPr` round-trips it). The ask push gained an additive
+`actions` field (answer chips) on `attentionItemSchema`, carried through the planner and
+the Expo push payload (with a `categoryId`) so the shade can register them as actions.
+The remaining two families went live: **handoff-completed** raises from
+`review.handoff.run`'s outcome (delta summary as substance) and **publish-ready** from a
+composed own-branch draft (`review.draftPrBody`), clearing on post or on viewing the
+preview — so all six taxonomy families now raise from real lifecycles. M1 cut closures
+landed too: live proposal adjudication (`canvas.adjudicateProposal`), client-derived
+delta count tiles, and cohort grouping with judged-collapse on the full canvas. Honest
+scope: team-PR review composition stays renderer-only (the phone previews it and offers a
+refine turn, posting it from the desktop for now, until the `ui` collation relocates to
+`core`), and the OS share extension is a recorded follow-up (paste + the `rennet://kickoff`
+deep link + an Android share target ship now).
+
 0. [#376 — protocol handshake, envelope, and versioning
    discipline](https://github.com/rbutera/rennet/issues/376)
 1. [#377 — extract `packages/server`](https://github.com/rbutera/rennet/issues/377)

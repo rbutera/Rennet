@@ -20,8 +20,10 @@ third-party egress, and it carries the push's substance (never a host path or a
 token). Leave notification delivery off and none of that happens — the in-app
 event over your own tailnet is the only path.
 
-This is the phase 6 **M1** cut: pair, read, and be notified. Answering an ask,
-posting a review, and starting one from a shared PR link land in M2.
+With the phase 6 **M2** cut the phone also *acts*: watch a live turn and stop it,
+answer an ask (from the app or straight from the notification shade), post a review,
+and start one from a PR link or the share sheet. Those sections are below, after
+reading.
 
 ## Pair a phone
 
@@ -58,6 +60,75 @@ then the canvas entries. From there:
   (agree / disagree / discuss) with one tap. A disposition you set on the phone persists
   on the daemon and shows up on your desktop.
 
+## Watch a live turn
+
+Open a review's **Live turn & ask** and the screen paints the turn's persisted state
+first, then follows the live stream — a typed timeline of the turn's messages. Switching
+from Wi-Fi to cellular mid-turn is the normal case, not a recovery: the timeline catches
+up and keeps flowing, and no message renders twice. When you have scrolled up, a **return
+to tail** control jumps you back to the live edge.
+
+A running turn shows a **Stop**. One tap interrupts it; the timeline then states the
+interrupted outcome truthfully — a stopped turn reads as *interrupted*, never as one that
+silently quit.
+
+## Answer an ask
+
+When a turn needs you, the ask renders its question with any **answer chips** and an
+optional free-text field. A chip alone, text alone, or both together compose into a
+single reply — the chip is the decision, the text is your direction, and they travel as
+one message. **Send** interrupts the running turn and sends; **hold** the send button to
+send without interrupting. What you are composing persists per review, so leaving and
+coming back does not lose a half-typed answer.
+
+You can also answer **without opening the app**. An ask push carries its chips as
+notification actions: pick one on the lock screen and it round-trips to the daemon as the
+same reply. Where the platform allows a background response the app never opens; where it
+does not, the action opens the app with your answer ready to send — still one tap. Either
+way the outcome is truthful: on success the attention clears everywhere; if the answer
+cannot land (the daemon is unreachable, or the turn was already answered) the notification
+says so and deep-links you into the ask, so an answer is never silently dropped or
+duplicated.
+
+**Platform coverage (honest):** shipping now on both platforms are the in-app ask card
+and the deep-link that lands you on it. Registering the chips as lock-screen actions is
+declared and wired; whether a chosen chip answers fully in the background is platform- and
+permission-dependent (iOS limits background execution), and the app falls back to
+open-and-send when the background path is denied — never a dropped answer.
+
+## Post a review
+
+The **Publish** screen is preview → post, with no ceremony. The preview shows the
+composed outbound review — its verdict and destination — and one tap posts it. There is no
+sign step, no biometric, no are-you-sure: the post button is the click. The posted screen
+states the real URL, and posting is idempotent — a double tap or a retry over a flaky
+connection yields exactly one review (or one pull request), never two.
+
+If the preview is not what you want, **Ask for changes** starts a refine turn and lands
+you on the live turn screen. The phone never text-edits the outbound review — you steer it
+with a turn, the same as everywhere else in Rennet.
+
+The **own-branch** loop posts end to end from the phone: the daemon composes the PR
+submission (title, body, base, head) and the phone posts exactly those bytes, opening one
+pull request. Composing a **team-PR review** to post still happens on the desktop for now;
+the phone previews it truthfully and offers the refine turn, and the post button says so
+rather than pretending.
+
+## Start a review
+
+Tap **New review** (or share a GitHub PR URL to Rennet from another app) to reach the
+kickoff screen. Paste — or land with — a PR link and the app opens it against the matching
+paired project; pick one of your **branches** to capture a pre-submit review of your own
+work. Progress streams live, and the new review appears in your list. A shared or pasted
+PR whose repository no paired daemon owns says so honestly, rather than opening it against
+the wrong clone.
+
+**Share-sheet coverage (honest):** paste-a-link and the `rennet://kickoff` deep link work
+now on both platforms, and Android declares a share target. The full OS share extension
+(receiving a shared URL directly from another app's share sheet on both platforms) is a
+recorded follow-up — the Expo share-intent module it needs is deferred to keep this pass
+free of an unverifiable native dependency.
+
 ## Notifications
 
 The app registers for push with each paired daemon and asks for notification permission
@@ -80,5 +151,5 @@ other devices too. You only hear about a review you are not already looking at.
 
 Not because it is forbidden — because the locus makes it desk work: editing code,
 browsing the host filesystem, or replacing the desk for dense multi-file reading. The
-phone is a full peer within its locus (triage and read), and those capabilities are
-absent by *place*, never by permission.
+phone is a full peer within its locus (triage, read, and act — watch, answer, post, kick
+off), and those capabilities are absent by *place*, never by permission.

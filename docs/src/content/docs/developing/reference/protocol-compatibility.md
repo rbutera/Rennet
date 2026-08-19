@@ -151,11 +151,24 @@ The taxonomy is a closed six-family set, but not every family is raised from a
 real source in M1. **Live in M1:** `review-finished` (wired to the capture / openPr
 / regenerate pipeline outcomes), `ask-pending` and `turn-failed` (both wired to the
 streaming `review.ask` turn lifecycle — an in-flight ask raises `ask-pending`,
-clears on settle, and raises `turn-failed` on error or interrupt). **Seam-only
-until M2:** `handoff-completed` and `publish-ready` — the planner, registry, and
-`raiseAttention` path are ready, but the handoff and publish flows that would raise
-them are M2 scope, so nothing raises them yet. `processing-finished` is silent by
-taxonomy: it updates the in-app badge but never pushes. The `device.registerPush`
+clears on settle, and raises `turn-failed` on error or interrupt). **Now live (M2):**
+`handoff-completed` raises from `review.handoff.run`'s outcome (delta summary as
+substance) and `publish-ready` from a composed own-branch draft (`review.draftPrBody`),
+clearing on post or on viewing the preview — so all six families now raise from real
+lifecycles. `processing-finished` is silent by taxonomy: it updates the in-app badge
+but never pushes.
+
+`attentionItemSchema` gained an additive optional `actions` array (issue #382 M2) —
+answer chips (`{ id, label }`) an ask-pending item carries, so the app can register them
+as notification actions and answer the ask from the shade (the reply composes chip label +
+free-text direction into one `review.ask`). It rides the `attentionEvent` frame and the
+Expo push payload (alongside a `categoryId`); it is absent on every other family and on any
+daemon that predates it, stripped harmlessly by the tolerant decoder. Two additive
+`commandDefinitions` entries landed with M2, ordinary token-bearing commands under the same
+rules: `review.interrupt` (the client Stop — aborts a review's in-flight turn, emits
+`ask-interrupted`) and `publish.compose` (the daemon composes the own-branch outbound
+submission + byte-exact payload for a projected client that cannot import the `ui`
+composition layer). The `device.registerPush`
 input also carries an additive optional `disabledFamilies` — families a device
 muted in its notification settings, which the daemon suppresses pushes for; a
 high-priority family (ask-pending / review-finished / turn-failed) always reaches
