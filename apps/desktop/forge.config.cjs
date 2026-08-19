@@ -89,6 +89,12 @@ module.exports = {
     asar: { unpack: "**/dist/@(server|browser)/**" },
     executableName: "Rennet",
     icon: appIcon,
+    // Tray/menu-bar icons (tray-presence): the brand `tray/` dir lives at the repo root,
+    // OUTSIDE this app package, so copy it into the packaged app's resources. The tray
+    // module resolves `<process.resourcesPath>/tray` when packaged (the dev path reaches
+    // brand/exports/tray directly). Unlike the app icon, the tray has no exe-embedded
+    // fallback — it MUST ship these files.
+    extraResource: [path.join(__dirname, "../../brand/exports/tray")],
     ignore: [
       /^\/node_modules/,
       /^\/src/,

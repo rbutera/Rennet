@@ -8,8 +8,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 2544,
-      "sha256": "0445111e638039b9d9ba9d15a1d2c27d2acf6a793af62ac99a43540429b7d207"
+      "bytes": 3716,
+      "sha256": "60021b95d43ef44ba97bb73b4b2d3dbe5f1a2aeb915f6bdcb093128d61364da3"
     },
     {
       "path": "brand.json",
@@ -510,6 +510,64 @@
       "dimensions": "1024x1024"
     },
     {
+      "path": "exports/tray/rennet.ico",
+      "bytes": 10988,
+      "sha256": "e981dd3915ec90f6502bc1e20935a12b1bc56f186193947f3456651fa7f56fd0"
+    },
+    {
+      "path": "exports/tray/rennet.png",
+      "bytes": 778,
+      "sha256": "46d963151fb8bce24b9d3089fed629c7c75ef9517db34120c6360f9aeb0c51f9",
+      "dimensions": "32x32"
+    },
+    {
+      "path": "exports/tray/rennet@2x.png",
+      "bytes": 1633,
+      "sha256": "bfb85a48bfa4c70faaa2dcbd6e52f9f6dc439d150158397dbad6fac0b7b28da2",
+      "dimensions": "64x64"
+    },
+    {
+      "path": "exports/tray/rennetTemplate.png",
+      "bytes": 706,
+      "sha256": "9f6c4b82dcc29dc1f2964f7cbbb97b1a1ec7ac0ff0cbe1f1a851468d7fac94f3",
+      "dimensions": "29x16"
+    },
+    {
+      "path": "exports/tray/rennetTemplate@2x.png",
+      "bytes": 1457,
+      "sha256": "349cea59a195f52ee5a9409c30cacbfb6637c289f7564daf1b6f79c9a9d48c4f",
+      "dimensions": "57x32"
+    },
+    {
+      "path": "exports/tray/rennetUpdate.ico",
+      "bytes": 12131,
+      "sha256": "5b05bf8db47f121d486e56104b69f931a2de21baf9bf56b0fa565f22f5ffac96"
+    },
+    {
+      "path": "exports/tray/rennetUpdate.png",
+      "bytes": 889,
+      "sha256": "7b50e56c7a5f81e4ea9c05829a8f44699c45cbb0f98c542080f98999ed447c15",
+      "dimensions": "32x32"
+    },
+    {
+      "path": "exports/tray/rennetUpdate@2x.png",
+      "bytes": 1807,
+      "sha256": "51c46e99c4df6ba0b25789d39291de0c9254ae5e4a978cb617acc9d205b0d55c",
+      "dimensions": "64x64"
+    },
+    {
+      "path": "exports/tray/rennetUpdateTemplate.png",
+      "bytes": 722,
+      "sha256": "a094e4be16f6ade472383e4824aa2affbbea0e2a3ec2077cdc3fc2958394f136",
+      "dimensions": "29x16"
+    },
+    {
+      "path": "exports/tray/rennetUpdateTemplate@2x.png",
+      "bytes": 1522,
+      "sha256": "6bf9d695b0d79592f86889defcf0ef419c207eac2d91479443d0dd67414594f8",
+      "dimensions": "57x32"
+    },
+    {
       "path": "exports/web/apple-touch-icon.png",
       "bytes": 35228,
       "sha256": "a07645482ccc4b51177ca3e39e12f25ce52e92825207c7d35d9f5f5568ea5ac4",
@@ -573,6 +631,11 @@
       "dimensions": "1600x900"
     },
     {
+      "path": "scripts/gen-tray-icons.mjs",
+      "bytes": 5112,
+      "sha256": "bb042ec401dd92408fd24f337999d72cb081899d00ef184f12c85bf8314e034f"
+    },
+    {
       "path": "sources/gradient-reference.png",
       "bytes": 2234400,
       "sha256": "d38287ed8746f86ff964e2ec547b87d8b26c6ebef8cf6cc534fd04cc938157ce",
@@ -619,8 +682,8 @@
     },
     {
       "path": "tokens.css",
-      "bytes": 319,
-      "sha256": "8283f3348e2a394663e1a77c5954e995ec271c066ca2c4b6295f360d846122bb"
+      "bytes": 986,
+      "sha256": "32e977ce18be7c6808b53ab2e893da818a1404e3f85468f2481a8ec70110e3b5"
     }
   ]
 }

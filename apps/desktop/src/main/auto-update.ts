@@ -19,6 +19,8 @@ export interface UpdateReadiness {
   readonly ready: UpdateReadyInfo | null;
   /** Record a completed download and push it to every subscriber. */
   markDownloaded(releaseName?: unknown): void;
+  /** Also notify this listener on each readiness change (the tray subscribes here). */
+  subscribe(listener: (info: UpdateReadyInfo) => void): void;
 }
 
 /**
@@ -26,9 +28,12 @@ export interface UpdateReadiness {
  * reloading) renderers can replay it, and broadcasts each transition. The badge
  * means READY — this only ever fires off a completed download, so the UI can
  * never claim an update it doesn't have (spec: desktop-update-notification).
+ * The renderer badge rides the injected `broadcast`; the tray rides `subscribe` —
+ * one store, two surfaces, no IPC hop between them.
  */
 export function createUpdateReadiness(broadcast: (info: UpdateReadyInfo) => void): UpdateReadiness {
   let ready: UpdateReadyInfo | null = null;
+  const listeners: Array<(info: UpdateReadyInfo) => void> = [];
   return {
     get ready() {
       return ready;
@@ -37,6 +42,10 @@ export function createUpdateReadiness(broadcast: (info: UpdateReadyInfo) => void
       const name = typeof releaseName === "string" ? releaseName.trim() : "";
       ready = name ? { version: name } : {};
       broadcast(ready);
+      for (const listener of listeners) listener(ready);
+    },
+    subscribe(listener: (info: UpdateReadyInfo) => void): void {
+      listeners.push(listener);
     },
   };
 }
@@ -127,11 +136,19 @@ export const UPDATE_REPO = "rbutera/rennet";
 // there, blocked on the Developer ID cert, issue #42). We catch the throw AND
 // attach a quiet "error" listener so that degrades to a silent no-op instead of a
 // crash or a nag dialog: no download ever completes, so no badge ever shows.
+/** What `startAutoUpdate` hands back so the tray shares the SAME readiness + apply path. */
+export interface AutoUpdateHandle {
+  /** The live readiness store (also pushed to the renderer badge) — read `.ready` for state. */
+  readonly readiness: UpdateReadiness;
+  /** Apply the staged update through the existing restart path (quitAndInstall / stub respawn). */
+  readonly applyUpdate: () => void;
+}
+
 export function startAutoUpdate(
   isTrustedUrl: (value: string) => boolean,
   logger: Console = console,
   detectStaged: () => string | null = () => stagedNewerVersion(process.execPath, app.getVersion()),
-): void {
+): AutoUpdateHandle {
   // Whether THIS run saw the live update-downloaded event. When readiness was
   // seeded from a previously staged update instead, electron's quitAndInstall
   // may no-op (its internal downloaded flag is unset), so apply falls back to
@@ -144,6 +161,20 @@ export function startAutoUpdate(
     }
   });
 
+  // The one apply path, shared by the renderer badge's confirm AND the tray's
+  // "Restart Rennet to update" line — never applies without an explicit choice (spec).
+  const applyUpdate = (): void => {
+    if (!liveDownloadSeen && process.platform === "win32") {
+      const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
+      if (existsSync(stub)) {
+        spawn(stub, [], { detached: true, stdio: "ignore" }).unref();
+        app.quit();
+        return;
+      }
+    }
+    autoUpdater.quitAndInstall();
+  };
+
   // Replay for late subscribers: the preload invokes this once on load, so a
   // renderer that mounts (or reloads) after the download still badges.
   ipcMain.handle(UPDATE_READY_CHANNEL, (event) => {
@@ -155,15 +186,7 @@ export function startAutoUpdate(
   // fires from the renderer's explicit confirm.
   ipcMain.on(UPDATE_APPLY_CHANNEL, (event) => {
     if (!event.senderFrame || !isTrustedUrl(event.senderFrame.url)) return;
-    if (!liveDownloadSeen && process.platform === "win32") {
-      const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
-      if (existsSync(stub)) {
-        spawn(stub, [], { detached: true, stdio: "ignore" }).unref();
-        app.quit();
-        return;
-      }
-    }
-    autoUpdater.quitAndInstall();
+    applyUpdate();
   });
 
   autoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
@@ -192,4 +215,5 @@ export function startAutoUpdate(
       error instanceof Error ? error.message : error,
     );
   }
+  return { readiness, applyUpdate };
 }
