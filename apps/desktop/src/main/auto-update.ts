@@ -127,11 +127,20 @@ export const UPDATE_REPO = "rbutera/rennet";
 // there, blocked on the Developer ID cert, issue #42). We catch the throw AND
 // attach a quiet "error" listener so that degrades to a silent no-op instead of a
 // crash or a nag dialog: no download ever completes, so no badge ever shows.
+/** What `startAutoUpdate` hands back so the tray shares the SAME readiness + apply path. */
+export interface AutoUpdateHandle {
+  /** The live readiness store (also pushed to the renderer badge) — read `.ready` for state. */
+  readonly readiness: UpdateReadiness;
+  /** Apply the staged update through the existing restart path (quitAndInstall / stub respawn). */
+  readonly applyUpdate: () => void;
+}
+
 export function startAutoUpdate(
   isTrustedUrl: (value: string) => boolean,
   logger: Console = console,
   detectStaged: () => string | null = () => stagedNewerVersion(process.execPath, app.getVersion()),
-): void {
+  onReady: () => void = () => undefined,
+): AutoUpdateHandle {
   // Whether THIS run saw the live update-downloaded event. When readiness was
   // seeded from a previously staged update instead, electron's quitAndInstall
   // may no-op (its internal downloaded flag is unset), so apply falls back to
@@ -142,7 +151,23 @@ export function startAutoUpdate(
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.webContents.isDestroyed()) window.webContents.send(UPDATE_READY_CHANNEL, info);
     }
+    // The tray subscribes to the SAME store (no IPC hop): one readiness, two surfaces.
+    onReady();
   });
+
+  // The one apply path, shared by the renderer badge's confirm AND the tray's
+  // "Restart Rennet to update" line — never applies without an explicit choice (spec).
+  const applyUpdate = (): void => {
+    if (!liveDownloadSeen && process.platform === "win32") {
+      const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
+      if (existsSync(stub)) {
+        spawn(stub, [], { detached: true, stdio: "ignore" }).unref();
+        app.quit();
+        return;
+      }
+    }
+    autoUpdater.quitAndInstall();
+  };
 
   // Replay for late subscribers: the preload invokes this once on load, so a
   // renderer that mounts (or reloads) after the download still badges.
@@ -155,15 +180,7 @@ export function startAutoUpdate(
   // fires from the renderer's explicit confirm.
   ipcMain.on(UPDATE_APPLY_CHANNEL, (event) => {
     if (!event.senderFrame || !isTrustedUrl(event.senderFrame.url)) return;
-    if (!liveDownloadSeen && process.platform === "win32") {
-      const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
-      if (existsSync(stub)) {
-        spawn(stub, [], { detached: true, stdio: "ignore" }).unref();
-        app.quit();
-        return;
-      }
-    }
-    autoUpdater.quitAndInstall();
+    applyUpdate();
   });
 
   autoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
@@ -192,4 +209,5 @@ export function startAutoUpdate(
       error instanceof Error ? error.message : error,
     );
   }
+  return { readiness, applyUpdate };
 }

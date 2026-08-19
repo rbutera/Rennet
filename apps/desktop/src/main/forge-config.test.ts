@@ -20,6 +20,7 @@ const savedEnv = new Map(APPLE_VARS.map((key) => [key, process.env[key]]));
 type ForgeConfig = {
   packagerConfig: {
     icon: string;
+    extraResource: string[];
     ignore: RegExp[];
     osxSign: {
       identity: string;
@@ -58,6 +59,13 @@ describe("forge.config.cjs signing", () => {
         ? /brand[\\/]exports[\\/]app-icons[\\/]windows[\\/]rennet-white-on-black$/
         : /brand[\\/]exports[\\/]app-icons[\\/]macos[\\/]rennet-white-on-black$/;
     expect(packagerConfig.icon).toMatch(expected);
+  });
+
+  it("bundles the tray icons as a resource (they have no exe-embedded fallback)", () => {
+    const { packagerConfig } = loadConfig({});
+    expect(packagerConfig.extraResource).toEqual([
+      expect.stringMatching(/brand[\\/]exports[\\/]tray$/),
+    ]);
   });
 
   it("default (no creds): ad-hoc signature, not hardened, no notarization", () => {
