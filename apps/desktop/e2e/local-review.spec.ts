@@ -46,6 +46,19 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
       // exposed WITHOUT being declared there still fails the equality.
       bridge: [...RENNET_PRELOAD_KEYS].sort(),
     });
+    // Independent public-surface allowlist (review finding): the contract import
+    // above only proves the two implementation artifacts agree with each other.
+    // This literal is the boundary's OWN record — expanding `window.rennet`
+    // must consciously edit this spec, not just contract.ts.
+    expect([...RENNET_PRELOAD_KEYS].sort()).toEqual([
+      "applyUpdate",
+      "chooseDirectory",
+      "onMenuRun",
+      "onUpdateReady",
+      "platform",
+      "updateMenu",
+      "wsPort",
+    ]);
 
     // "Review directly" is palette-only since the v4.0 nav pass: ⌘K, then the row.
     await openDirectEntry(page);

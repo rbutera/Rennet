@@ -197,6 +197,24 @@ function rowClass(row: RegistryRow): string {
   return `cv-${row.kind}`;
 }
 
+// The diff fill lives on the whole row (dominant signal); the diff INK lives on the
+// code cell only, so line numbers stay quiet even on a changed line — the same split
+// the old CSS made (`.cv-add` row fill vs `.cv-add .code-view-code` ink).
+function rowTint(row: RegistryRow): string {
+  if (row.side === "additions") return "bg-add";
+  if (row.side === "deletions") return "bg-del";
+  return "";
+}
+
+function codeTint(row: RegistryRow): string {
+  if (row.side === "additions") return "text-add-ink";
+  if (row.side === "deletions") return "text-del-ink";
+  // Header/meta rows are muted chrome, never content ink.
+  if (row.kind === "hunk-header" || row.kind === "file-header" || row.kind === "meta")
+    return "text-ink-faint";
+  return "text-ink";
+}
+
 // Syntax highlighting (issue #68). Only CONTENT rows are tokenized; the highlight
 // rides UNDER the diff add/removed colouring, never over it — the row background
 // carries the diff semantic (dominant), structural tokens (whitespace, the diff
@@ -413,10 +431,16 @@ export function CodeView({
   const visible = registry.rows.slice(range.start, range.end);
 
   return (
-    <section className="code-view" aria-label={`Diff of ${path}`}>
-      <header className="code-view-head">
-        <span className="code-view-path">{path}</span>
-        <span className="code-view-tier" title="Definition tier">
+    <section
+      className="code-view overflow-hidden rounded-surface border border-line bg-code"
+      aria-label={`Diff of ${path}`}
+    >
+      <header className="code-view-head flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-2">
+        <span className="code-view-path font-mono text-sm text-ink">{path}</span>
+        <span
+          className="code-view-tier text-2xs font-semibold uppercase tracking-wide text-ink-faint"
+          title="Definition tier"
+        >
           {tier}
         </span>
         {/* The impl↔test counterpart jump (Rai, wireframes #7): ONE button that
@@ -425,7 +449,7 @@ export function CodeView({
         {counterpart ? (
           <button
             type="button"
-            className="code-view-counterpart"
+            className="code-view-counterpart ml-auto cursor-pointer rounded-full border border-accent-line bg-accent-soft px-3 py-1 font-sans text-xs text-accent hover:bg-accent-surface"
             title={`Go to ${counterpart.path}`}
             onClick={() => {
               onSpanSelect?.(null);
@@ -459,7 +483,7 @@ export function CodeView({
       </header>
       <div
         ref={attachScroll}
-        className="code-view-scroll"
+        className="code-view-scroll overflow-auto bg-code"
         style={{ height: `${viewportHeight}px` }}
         onScroll={(event) => setScroll(event.currentTarget.scrollTop)}
         data-total-rows={total}
@@ -525,9 +549,16 @@ export function CodeView({
             rangeStart.line === discussLineNo &&
             rangeStart.side === discussSide;
           const className = [
-            "code-view-row",
+            // Layout is pinned to an 18px row (text-xs · leading-normal = 12·1.5) so the
+            // windowing spacers stay honest; `group` drives the hover-revealed discuss glyph.
+            "code-view-row group relative grid grid-cols-[52px_1fr] font-mono text-xs leading-normal",
             rowClass(row),
-            isGlow ? "cv-glow" : "",
+            rowTint(row),
+            // The L3 mark's private backlight: a gold left bar + faint inset wash (the
+            // load-bearing local/private state marker), replacing the old --private glow.
+            isGlow
+              ? "cv-glow shadow-[inset_3px_0_0_0_var(--rn-accent),inset_0_0_18px_var(--rn-accent-soft)]"
+              : "",
             isFocus ? "cv-focus" : "",
           ]
             .filter(Boolean)
@@ -547,7 +578,7 @@ export function CodeView({
             >
               {gutterMarks && gutterMarks.length > 0 ? (
                 <span
-                  className="cv-gutter l3-hand"
+                  className="cv-gutter l3-hand pointer-events-none absolute left-0.5 top-0 text-xs leading-normal text-accent"
                   data-l3="mark"
                   data-gutter-marks={gutterMarks.map((m) => m.mark.markId).join(" ")}
                   aria-hidden="true"
@@ -567,7 +598,11 @@ export function CodeView({
               discussSide !== undefined ? (
                 <button
                   type="button"
-                  className="cv-discuss l3-hand"
+                  className={`cv-discuss l3-hand absolute left-0.5 top-0 z-[2] cursor-pointer border-0 bg-transparent px-0.5 text-xs leading-normal text-accent ${
+                    discussIsRangeStart
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  }`}
                   data-cv-discuss={discussLineNo}
                   data-cv-discuss-side={discussSide}
                   data-range-start={discussIsRangeStart ? "" : undefined}
@@ -578,13 +613,17 @@ export function CodeView({
                   ◇
                 </button>
               ) : null}
-              <span className="code-view-ln">{row.fileLine ?? ""}</span>
-              <code className="code-view-code">{renderCode(row, language, onSymbolClick)}</code>
+              <span className="code-view-ln select-none px-2.5 text-right text-ink-faint">
+                {row.fileLine ?? ""}
+              </span>
+              <code className={`code-view-code whitespace-pre pr-3 ${codeTint(row)}`}>
+                {renderCode(row, language, onSymbolClick)}
+              </code>
               {/* The mark's card renders inline AT its span (its home row), not in a strip. */}
               {gutterMarks && renderMarkCard
                 ? gutterMarks.map((placed) => (
                     <div
-                      className="cv-mark-card"
+                      className="cv-mark-card col-span-full py-1.5 pr-3 pl-[52px]"
                       data-mark-card={placed.mark.markId}
                       key={placed.mark.markId}
                     >

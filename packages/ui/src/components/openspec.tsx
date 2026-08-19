@@ -57,6 +57,19 @@ const OPERATION_LABEL: Record<OpenSpecDeltaView["delta"]["groups"][number]["oper
   renamed: "Renamed",
 };
 
+/** Per-operation chip hue: added → evidence green, modified → gold register, rest quiet. */
+const OPERATION_CHIP: Record<OpenSpecDeltaView["delta"]["groups"][number]["operation"], string> = {
+  added: "border-green-line text-green",
+  modified: "border-accent-line text-accent",
+  removed: "border-line text-ink-faint",
+  renamed: "border-line text-ink-faint",
+};
+
+/** The shared operation-badge utility string (rounded-full chip, hue by operation). */
+function opChipClass(operation: OpenSpecDeltaView["delta"]["groups"][number]["operation"]): string {
+  return `ospec-op ospec-op-${operation} flex-none rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide ${OPERATION_CHIP[operation]}`;
+}
+
 /** Title-case a Gherkin keyword for display (avoids a record with a `then` key). */
 function stepLabel(keyword: OpenSpecScenario["steps"][number]["keyword"]): string {
   return keyword.charAt(0).toUpperCase() + keyword.slice(1);
@@ -84,21 +97,33 @@ function AnchorReview({
 function Block({ block }: { block: OpenSpecBlock }) {
   switch (block.kind) {
     case "paragraph":
-      return <p className="ospec-paragraph">{block.text}</p>;
+      return (
+        <p className="ospec-paragraph my-1.5 font-serif text-base leading-relaxed text-ink-soft">
+          {block.text}
+        </p>
+      );
     case "code":
       return (
-        <pre className="ospec-code" data-language={block.language}>
+        <pre
+          className="ospec-code my-2 overflow-x-auto rounded-surface border border-line bg-code px-3.5 py-3 font-mono text-sm leading-relaxed text-ink whitespace-pre"
+          data-language={block.language}
+        >
           <code>{block.code}</code>
         </pre>
       );
     case "table":
       return (
-        <div className="ospec-table-wrap">
-          <table className="ospec-table">
+        <div className="ospec-table-wrap my-2 overflow-x-auto">
+          <table className="ospec-table w-full border-collapse text-sm">
             <thead>
               <tr>
                 {block.headers.map((header) => (
-                  <th key={header}>{header}</th>
+                  <th
+                    className="border border-line bg-raised px-2.5 py-1.5 text-left font-semibold text-ink"
+                    key={header}
+                  >
+                    {header}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -108,8 +133,13 @@ function Block({ block }: { block: OpenSpecBlock }) {
                 // biome-ignore lint/suspicious/noArrayIndexKey: table rows are positional and never reordered
                 <tr key={rowIndex}>
                   {row.map((cell, cellIndex) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: table cells are positional and never reordered
-                    <td key={cellIndex}>{cell}</td>
+                    <td
+                      className="border border-line px-2.5 py-1.5 text-left text-ink-soft"
+                      // biome-ignore lint/suspicious/noArrayIndexKey: table cells are positional and never reordered
+                      key={cellIndex}
+                    >
+                      {cell}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -119,21 +149,25 @@ function Block({ block }: { block: OpenSpecBlock }) {
       );
     case "list":
       return block.ordered ? (
-        <ol className="ospec-list ospec-list-ordered">
+        <ol className="ospec-list ospec-list-ordered my-1 flex list-none flex-col gap-1.5 pl-5 font-serif text-base leading-normal text-ink-soft">
           {block.items.map((item, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list items are positional prose with no stable id
             <li key={index}>
-              {item.lead ? <span className="ospec-list-lead">{item.lead}</span> : null}
+              {item.lead ? (
+                <span className="ospec-list-lead mr-1.5 font-semibold text-ink">{item.lead}</span>
+              ) : null}
               <span className="ospec-list-text">{item.text}</span>
             </li>
           ))}
         </ol>
       ) : (
-        <ul className="ospec-list ospec-list-unordered">
+        <ul className="ospec-list ospec-list-unordered my-1 flex list-none flex-col gap-1.5 pl-5 font-serif text-base leading-normal text-ink-soft">
           {block.items.map((item, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list items are positional prose with no stable id
             <li key={index}>
-              {item.lead ? <span className="ospec-list-lead">{item.lead}</span> : null}
+              {item.lead ? (
+                <span className="ospec-list-lead mr-1.5 font-semibold text-ink">{item.lead}</span>
+              ) : null}
               <span className="ospec-list-text">{item.text}</span>
             </li>
           ))}
@@ -163,17 +197,25 @@ function Scenario({
   onDispose(anchor: OpenSpecReviewAnchor, type: DispositionType): void;
 }) {
   return (
-    <div className="ospec-scenario">
-      <div className="ospec-scenario-head">
-        <p className="ospec-scenario-name">{scenario.name}</p>
+    <div className="ospec-scenario border-l-2 border-accent-line pl-3">
+      <div className="ospec-scenario-head flex items-center justify-between gap-2.5">
+        <p className="ospec-scenario-name m-0 mb-1 text-base font-semibold text-ink">
+          {scenario.name}
+        </p>
         {anchor ? <AnchorReview anchor={anchor} onDispose={onDispose} /> : null}
       </div>
-      <ol className="ospec-steps">
+      <ol className="ospec-steps flex list-none flex-col gap-1">
         {scenario.steps.map((step, index) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: steps are an ordered Gherkin sequence
-          <li className="ospec-step" data-keyword={step.keyword} key={index}>
-            <span className="ospec-step-keyword">{stepLabel(step.keyword)}</span>
-            <span className="ospec-step-text">{step.text}</span>
+          <li
+            className="ospec-step flex gap-2 text-base leading-normal"
+            data-keyword={step.keyword}
+            // biome-ignore lint/suspicious/noArrayIndexKey: steps are an ordered Gherkin sequence
+            key={index}
+          >
+            <span className="ospec-step-keyword min-w-[44px] flex-none font-mono text-xs font-semibold uppercase text-accent">
+              {stepLabel(step.keyword)}
+            </span>
+            <span className="ospec-step-text text-ink-soft">{step.text}</span>
           </li>
         ))}
       </ol>
@@ -185,7 +227,7 @@ function Scenario({
 function CoverageIcon() {
   return (
     <svg
-      className="ospec-covchip-icon"
+      className="ospec-covchip-icon h-3.5 w-3.5 flex-none"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -226,7 +268,10 @@ function CoverageChip({
   if (!chip) return null;
   if (chip.kind === "unimplemented") {
     return (
-      <span className="ospec-covchip ospec-covchip-zero" data-coverage="unimplemented">
+      <span
+        className="ospec-covchip ospec-covchip-zero inline-flex items-center gap-1.5 rounded-full border border-accent-line bg-accent-surface px-2.5 py-1 text-2xs font-medium text-accent"
+        data-coverage="unimplemented"
+      >
         <CoverageIcon />
         unimplemented · 0 hunks
       </span>
@@ -240,7 +285,7 @@ function CoverageChip({
     return (
       <button
         type="button"
-        className="ospec-covchip"
+        className="ospec-covchip inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-green-line bg-green-soft px-2.5 py-1 text-2xs font-medium text-green hover:border-green"
         data-coverage="covered"
         onClick={() => onJumpToHunk(jumpTarget)}
         aria-label={`${label} — jump to the claiming hunk`}
@@ -251,7 +296,10 @@ function CoverageChip({
     );
   }
   return (
-    <span className="ospec-covchip" data-coverage="covered">
+    <span
+      className="ospec-covchip inline-flex items-center gap-1.5 rounded-full border border-green-line bg-green-soft px-2.5 py-1 text-2xs font-medium text-green"
+      data-coverage="covered"
+    >
       <CoverageIcon />
       {label}
     </span>
@@ -271,23 +319,31 @@ function Requirement({
 }) {
   const { requirement } = view;
   return (
-    <li className="ospec-requirement" data-anchor={view.anchor.key} data-operation={operation}>
-      <div className="ospec-requirement-head">
+    <li
+      className="ospec-requirement border-t border-line pt-3 first:border-t-0 first:pt-0"
+      data-anchor={view.anchor.key}
+      data-operation={operation}
+    >
+      <div className="ospec-requirement-head flex flex-wrap items-start justify-between gap-3">
         {/* The requirement carries its OWN operation badge (issue #4): a delta mixing
             MODIFIED + ADDED requirements stays legible per-requirement, not just at
             the capability header. */}
-        <span className={`ospec-op ospec-op-${operation}`} data-operation={operation}>
+        <span className={opChipClass(operation)} data-operation={operation}>
           {OPERATION_LABEL[operation]}
         </span>
-        <h4 className="ospec-requirement-name">{requirement.name}</h4>
+        <h4 className="ospec-requirement-name m-0 text-base font-semibold text-ink">
+          {requirement.name}
+        </h4>
         <AnchorReview anchor={view.anchor} onDispose={onDispose} />
       </div>
       {requirement.statement ? (
-        <p className="ospec-requirement-statement">{requirement.statement}</p>
+        <p className="ospec-requirement-statement mt-1.5 font-serif text-base leading-relaxed text-ink-soft">
+          {requirement.statement}
+        </p>
       ) : null}
       {requirement.scenarios.length > 0 ? (
-        <div className="ospec-scenarios">
-          <span className="ospec-scenarios-count">
+        <div className="ospec-scenarios mt-2.5 flex flex-col gap-2">
+          <span className="ospec-scenarios-count text-2xs font-semibold uppercase tracking-wide text-ink-faint">
             {requirement.scenarios.length}{" "}
             {requirement.scenarios.length === 1 ? "scenario" : "scenarios"}
           </span>
@@ -305,7 +361,7 @@ function Requirement({
           by N hunks · M tests (click jumps to the claiming hunk), or an honest
           "unimplemented" when the mapping scored zero, or nothing when uncomputed. */}
       {view.coverage ? (
-        <div className="ospec-requirement-foot">
+        <div className="ospec-requirement-foot mt-2 flex items-center gap-2">
           <CoverageChip view={view} onJumpToHunk={onJumpToHunk} />
         </div>
       ) : null}
@@ -323,14 +379,19 @@ function SpecDelta({
   onJumpToHunk?(anchor: string): void;
 }) {
   return (
-    <section className="ospec-delta" data-capability={view.delta.capability}>
-      <header className="ospec-delta-head">
-        <div className="ospec-delta-title">
-          <span className="ospec-delta-cap">{view.delta.capability}</span>
-          <span className="ospec-delta-ops">
+    <section
+      className="ospec-delta mt-2.5 rounded-surface border border-line bg-surface px-3.5 py-3"
+      data-capability={view.delta.capability}
+    >
+      <header className="ospec-delta-head flex items-center justify-between gap-3 border-b border-line pb-2">
+        <div className="ospec-delta-title flex items-center gap-2.5">
+          <span className="ospec-delta-cap font-mono text-base font-semibold text-ink">
+            {view.delta.capability}
+          </span>
+          <span className="ospec-delta-ops inline-flex gap-1.5">
             {view.groups.map((group, index) => (
               <span
-                className={`ospec-op ospec-op-${group.operation}`}
+                className={opChipClass(group.operation)}
                 data-operation={group.operation}
                 // biome-ignore lint/suspicious/noArrayIndexKey: groups are positional; operation+index disambiguates a rare repeat
                 key={`${group.operation}-${index}`}
@@ -346,13 +407,15 @@ function SpecDelta({
           its operation, so attribution is never flattened away. */}
       {view.groups.map((group, index) => (
         <div
-          className="ospec-op-group"
+          className="ospec-op-group mt-2.5"
           data-operation={group.operation}
           // biome-ignore lint/suspicious/noArrayIndexKey: groups are positional; operation+index disambiguates a rare repeat
           key={`${group.operation}-${index}`}
         >
-          <h5 className="ospec-op-group-head">{OPERATION_LABEL[group.operation]} requirements</h5>
-          <ol className="ospec-requirements">
+          <h5 className="ospec-op-group-head mt-2 mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            {OPERATION_LABEL[group.operation]} requirements
+          </h5>
+          <ol className="ospec-requirements flex list-none flex-col gap-3">
             {group.requirements.map((requirement) => (
               <Requirement
                 key={requirement.anchor.key}
@@ -383,11 +446,15 @@ function RawArtifacts({ raw }: { raw: OpenSpecChangeRaw }) {
     files.push({ label: `specs/${delta.capability}/spec.md`, md: delta.md });
   }
   return (
-    <section className="ospec-raw" aria-label="Raw markdown">
+    <section className="ospec-raw flex flex-col gap-4" aria-label="Raw markdown">
       {files.map((file) => (
-        <div className="ospec-raw-file" key={file.label}>
-          <h3 className="ospec-raw-name">{file.label}</h3>
-          <pre className="ospec-raw-text">{file.md}</pre>
+        <div className="ospec-raw-file flex flex-col gap-1.5" key={file.label}>
+          <h3 className="ospec-raw-name m-0 font-mono text-sm font-semibold text-ink">
+            {file.label}
+          </h3>
+          <pre className="ospec-raw-text overflow-x-auto rounded-surface border border-line bg-code px-3.5 py-3 font-mono text-sm leading-relaxed text-ink whitespace-pre-wrap">
+            {file.md}
+          </pre>
         </div>
       ))}
     </section>
@@ -440,35 +507,46 @@ export function OpenSpecView({
 
   return (
     <div
-      className="openspec-view"
+      className="openspec-view flex flex-col gap-6 pb-6 text-ink"
       data-change={view.name}
       data-view={showRaw ? "raw" : "structured"}
     >
       {showRaw && view.raw ? <RawArtifacts raw={view.raw} /> : null}
-      <header className="ospec-header">
-        <div className="ospec-header-title">
-          <span className="ospec-kicker">OpenSpec change</span>
-          <h2 className="ospec-name">{view.name}</h2>
+      <header className="ospec-header flex flex-col gap-3 border-b border-line pb-4">
+        <div className="ospec-header-title flex flex-col gap-1">
+          <span className="ospec-kicker text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            OpenSpec change
+          </span>
+          <h2 className="ospec-name m-0 font-display text-2xl font-semibold text-ink">
+            {view.name}
+          </h2>
         </div>
-        <div className="ospec-summary">
-          <span className="ospec-stat">
-            <span className="ospec-stat-num">{summary.requirements}</span> requirements
+        <div className="ospec-summary flex flex-wrap gap-4">
+          <span className="ospec-stat text-base text-ink-soft">
+            <span className="ospec-stat-num font-semibold text-ink">{summary.requirements}</span>{" "}
+            requirements
           </span>
-          <span className="ospec-stat">
-            <span className="ospec-stat-num">{summary.scenarios}</span> scenarios
+          <span className="ospec-stat text-base text-ink-soft">
+            <span className="ospec-stat-num font-semibold text-ink">{summary.scenarios}</span>{" "}
+            scenarios
           </span>
-          <span className="ospec-stat">
-            <span className="ospec-stat-num">{summary.specCapabilities}</span> spec capabilities
+          <span className="ospec-stat text-base text-ink-soft">
+            <span className="ospec-stat-num font-semibold text-ink">
+              {summary.specCapabilities}
+            </span>{" "}
+            spec capabilities
           </span>
-          <span className="ospec-stat">
-            <span className="ospec-stat-num">
+          <span className="ospec-stat text-base text-ink-soft">
+            <span className="ospec-stat-num font-semibold text-ink">
               {summary.tasksDone}/{summary.tasksTotal}
             </span>{" "}
             tasks
           </span>
         </div>
-        <div className="ospec-header-review">
-          <span className="ospec-review-label">Review the whole change</span>
+        <div className="ospec-header-review flex items-center gap-3">
+          <span className="ospec-review-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            Review the whole change
+          </span>
           <DispositionCluster
             anchor={{ kind: "rollup", label: view.name }}
             onDispose={(type) => onDispose(view.changeAnchor, type)}
@@ -477,7 +555,10 @@ export function OpenSpecView({
       </header>
 
       {ask ? (
-        <section className="ospec-ask" aria-label="Ask about this change">
+        <section
+          className="ospec-ask rounded-surface border border-line bg-surface p-4"
+          aria-label="Ask about this change"
+        >
           <AskControl
             mode={ask.mode}
             question={ask.question}
@@ -491,21 +572,23 @@ export function OpenSpecView({
       ) : null}
 
       {!showRaw && proposal ? (
-        <section className="ospec-proposal" aria-label="Proposal">
-          <div className="ospec-section-head">
-            <h3 className="ospec-section-title">Proposal</h3>
+        <section className="ospec-proposal flex flex-col" aria-label="Proposal">
+          <div className="ospec-section-head mb-2.5 flex items-center justify-between gap-3">
+            <h3 className="ospec-section-title m-0 text-lg font-semibold text-ink">Proposal</h3>
           </div>
 
           {proposal.proposal.why.length > 0 ? (
             <div className="ospec-why">
-              <h4 className="ospec-subhead">Why</h4>
+              <h4 className="ospec-subhead mt-4 mb-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                Why
+              </h4>
               {/* Each Why block carries its own review cluster (issue #3), anchored
                   to its source line in proposal.md. */}
               {proposal.proposal.why.map((block, index) => {
                 const whyAnchor = proposal.whyAnchors[index];
                 return (
                   <div
-                    className="ospec-why-block"
+                    className="ospec-why-block flex items-start justify-between gap-2.5 [&>:first-child]:min-w-0 [&>:first-child]:flex-1"
                     // biome-ignore lint/suspicious/noArrayIndexKey: why blocks are positional prose
                     key={index}
                   >
@@ -519,12 +602,18 @@ export function OpenSpecView({
 
           {proposal.proposal.whatChanges.length > 0 ? (
             <div className="ospec-what-changes">
-              <h4 className="ospec-subhead">What changes</h4>
-              <ul className="ospec-list ospec-list-unordered">
+              <h4 className="ospec-subhead mt-4 mb-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                What changes
+              </h4>
+              <ul className="ospec-list ospec-list-unordered my-1 flex list-none flex-col gap-1.5 pl-5 font-serif text-base leading-normal text-ink-soft">
                 {proposal.proposal.whatChanges.map((item, index) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: change items are positional prose
                   <li key={index}>
-                    {item.lead ? <span className="ospec-list-lead">{item.lead}</span> : null}
+                    {item.lead ? (
+                      <span className="ospec-list-lead mr-1.5 font-semibold text-ink">
+                        {item.lead}
+                      </span>
+                    ) : null}
                     <span className="ospec-list-text">{item.text}</span>
                   </li>
                 ))}
@@ -534,23 +623,31 @@ export function OpenSpecView({
 
           {proposal.capabilities.length > 0 ? (
             <div className="ospec-capabilities">
-              <h4 className="ospec-subhead">Capabilities</h4>
-              <ul className="ospec-capability-list">
+              <h4 className="ospec-subhead mt-4 mb-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                Capabilities
+              </h4>
+              <ul className="ospec-capability-list my-1 flex list-none flex-col gap-2">
                 {proposal.capabilities.map((capability) => (
                   <li
-                    className="ospec-capability"
+                    className="ospec-capability rounded-surface border border-line bg-surface px-3 py-2.5"
                     data-nature={capability.nature}
                     key={capability.anchor.key}
                   >
-                    <div className="ospec-capability-head">
-                      <span className={`ospec-cap-nature ospec-cap-${capability.nature}`}>
+                    <div className="ospec-capability-head flex items-center gap-2.5">
+                      <span
+                        className={`ospec-cap-nature ospec-cap-${capability.nature} flex-none rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide ${capability.nature === "new" ? "border-green-line text-green" : "border-accent-line text-accent"}`}
+                      >
                         {capability.nature === "new" ? "new" : "modified"}
                       </span>
-                      <span className="ospec-cap-name">{capability.note.name}</span>
+                      <span className="ospec-cap-name mr-auto font-mono text-base font-semibold text-ink">
+                        {capability.note.name}
+                      </span>
                       <AnchorReview anchor={capability.anchor} onDispose={onDispose} />
                     </div>
                     {capability.note.summary ? (
-                      <p className="ospec-cap-summary">{capability.note.summary}</p>
+                      <p className="ospec-cap-summary mt-1.5 font-serif text-base leading-normal text-ink-soft">
+                        {capability.note.summary}
+                      </p>
                     ) : null}
                   </li>
                 ))}
@@ -560,13 +657,22 @@ export function OpenSpecView({
 
           {proposal.proposal.impact.length > 0 ? (
             <div className="ospec-impact">
-              <h4 className="ospec-subhead">Impact</h4>
-              <ul className="ospec-impact-list">
+              <h4 className="ospec-subhead mt-4 mb-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                Impact
+              </h4>
+              <ul className="ospec-impact-list my-1 flex list-none flex-col gap-1">
                 {proposal.proposal.impact.map((entry, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: impact rows are positional
-                  <li className="ospec-impact-row" key={index}>
-                    {entry.area ? <span className="ospec-impact-area">{entry.area}</span> : null}
-                    <span className="ospec-impact-detail">{entry.detail}</span>
+                  <li
+                    className="ospec-impact-row flex gap-2.5 text-base leading-normal"
+                    // biome-ignore lint/suspicious/noArrayIndexKey: impact rows are positional
+                    key={index}
+                  >
+                    {entry.area ? (
+                      <span className="ospec-impact-area flex-none font-mono text-sm font-semibold text-ink">
+                        {entry.area}
+                      </span>
+                    ) : null}
+                    <span className="ospec-impact-detail text-ink-soft">{entry.detail}</span>
                   </li>
                 ))}
               </ul>
@@ -576,8 +682,8 @@ export function OpenSpecView({
       ) : null}
 
       {!showRaw && view.specDeltas.length > 0 ? (
-        <section className="ospec-deltas" aria-label="Spec deltas">
-          <h3 className="ospec-section-title">Spec deltas</h3>
+        <section className="ospec-deltas flex flex-col" aria-label="Spec deltas">
+          <h3 className="ospec-section-title m-0 text-lg font-semibold text-ink">Spec deltas</h3>
           {view.specDeltas.map((delta) => (
             <SpecDelta
               key={delta.anchor.key}
@@ -590,22 +696,22 @@ export function OpenSpecView({
       ) : null}
 
       {!showRaw && view.taskGroups.length > 0 ? (
-        <section className="ospec-tasks" aria-label="Tasks">
-          <div className="ospec-section-head">
-            <h3 className="ospec-section-title">Tasks</h3>
-            <span className="ospec-task-progress">
+        <section className="ospec-tasks flex flex-col" aria-label="Tasks">
+          <div className="ospec-section-head mb-2.5 flex items-center justify-between gap-3">
+            <h3 className="ospec-section-title m-0 text-lg font-semibold text-ink">Tasks</h3>
+            <span className="ospec-task-progress text-sm font-semibold text-ink-faint">
               {summary.tasksDone} of {summary.tasksTotal} done
             </span>
           </div>
           <div
-            className="ospec-progress"
+            className="ospec-progress mb-3 h-1.5 overflow-hidden rounded-micro border border-line bg-raised"
             role="progressbar"
             aria-valuenow={summary.tasksDone}
             aria-valuemin={0}
             aria-valuemax={summary.tasksTotal}
           >
             <span
-              className="ospec-progress-fill"
+              className="ospec-progress-fill block h-full bg-green"
               style={{
                 width:
                   summary.tasksTotal > 0
@@ -615,32 +721,41 @@ export function OpenSpecView({
             />
           </div>
           {view.taskGroups.map((groupView) => (
-            <section className="ospec-task-group" key={groupView.anchor.key}>
-              <header className="ospec-task-group-head">
-                <span className="ospec-task-group-title">{groupView.group.title}</span>
-                <span className="ospec-task-group-count">
+            <section
+              className="ospec-task-group mb-2 rounded-surface border border-line bg-surface px-3 py-2.5"
+              key={groupView.anchor.key}
+            >
+              <header className="ospec-task-group-head mb-1.5 flex items-center gap-2.5">
+                <span className="ospec-task-group-title mr-auto text-base font-semibold text-ink">
+                  {groupView.group.title}
+                </span>
+                <span className="ospec-task-group-count font-mono text-xs font-semibold text-ink-faint">
                   {groupView.group.done}/{groupView.group.total}
                 </span>
                 <AnchorReview anchor={groupView.anchor} onDispose={onDispose} />
               </header>
-              <ul className="ospec-task-items">
+              <ul className="ospec-task-items flex list-none flex-col gap-1">
                 {groupView.group.items.map((item, index) => {
                   const itemAnchor = groupView.itemAnchors[index];
                   return (
                     <li
-                      className="ospec-task-item"
+                      className="ospec-task-item flex items-center gap-2 text-base leading-normal text-ink-soft"
                       data-status={item.status}
                       // biome-ignore lint/suspicious/noArrayIndexKey: task items are positional
                       key={index}
                     >
-                      <span className="ospec-task-check">
+                      <span className="ospec-task-check inline-flex flex-none items-center text-ink">
                         {item.status === "done" ? (
                           <CheckboxCheckedIcon size={14} />
                         ) : (
                           <CheckboxIcon size={14} />
                         )}
                       </span>
-                      <span className="ospec-task-text">{item.text}</span>
+                      <span
+                        className={`ospec-task-text flex-1 ${item.status === "done" ? "text-ink-faint line-through" : ""}`}
+                      >
+                        {item.text}
+                      </span>
                       {/* Per-item review cluster (issue #3), anchored to the item's line. */}
                       {itemAnchor ? (
                         <AnchorReview anchor={itemAnchor} onDispose={onDispose} />
@@ -655,12 +770,15 @@ export function OpenSpecView({
       ) : null}
 
       {!showRaw && view.designSections.length > 0 ? (
-        <section className="ospec-design" aria-label="Design">
-          <h3 className="ospec-section-title">Design</h3>
-          <nav className="ospec-toc" aria-label="Design contents">
+        <section className="ospec-design flex flex-col" aria-label="Design">
+          <h3 className="ospec-section-title m-0 text-lg font-semibold text-ink">Design</h3>
+          <nav
+            className="ospec-toc my-2 flex flex-col gap-0.5 rounded-surface border border-line bg-surface px-3 py-2.5"
+            aria-label="Design contents"
+          >
             {view.designSections.map((sectionView) => (
               <a
-                className={`ospec-toc-link ospec-toc-l${sectionView.section.level}`}
+                className={`ospec-toc-link ospec-toc-l${sectionView.section.level} no-underline hover:text-accent ${sectionView.section.level === 3 ? "pl-3.5 text-sm text-ink-faint" : "text-base text-ink-soft"}`}
                 href={`#${sectionView.anchor.key}`}
                 key={sectionView.anchor.key}
               >
@@ -670,15 +788,19 @@ export function OpenSpecView({
           </nav>
           {view.designSections.map((sectionView) => (
             <section
-              className={`ospec-design-section ospec-design-l${sectionView.section.level}`}
+              className={`ospec-design-section ospec-design-l${sectionView.section.level} mt-3 ${sectionView.section.level === 3 ? "ml-3 border-l border-line pl-3" : ""}`}
               id={sectionView.anchor.key}
               key={sectionView.anchor.key}
             >
-              <div className="ospec-design-head">
+              <div className="ospec-design-head flex items-center justify-between gap-3">
                 {sectionView.section.level === 2 ? (
-                  <h4 className="ospec-design-heading">{sectionView.section.heading}</h4>
+                  <h4 className="ospec-design-heading m-0 text-base font-semibold text-ink">
+                    {sectionView.section.heading}
+                  </h4>
                 ) : (
-                  <h5 className="ospec-design-heading">{sectionView.section.heading}</h5>
+                  <h5 className="ospec-design-heading m-0 text-base font-semibold text-ink">
+                    {sectionView.section.heading}
+                  </h5>
                 )}
                 <AnchorReview anchor={sectionView.anchor} onDispose={onDispose} />
               </div>

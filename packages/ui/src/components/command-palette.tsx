@@ -117,18 +117,21 @@ export function CommandPalette({ open, commands, overrides, onClose }: CommandPa
   }
 
   return (
-    <div className="command-palette-backdrop" role="presentation">
+    <div
+      className="command-palette-backdrop fixed inset-0 z-[60] grid items-start justify-items-center bg-black/60 px-6 pb-6 pt-[12vh]"
+      role="presentation"
+    >
       {/* The scrim is a real button: click-out-to-close is a focusable, keyboard-
           operable control, so the dismiss affordance carries no static-element
           handler. It sits behind the dialog, so a click on the dialog never hits it. */}
       <button
         type="button"
-        className="command-palette-scrim"
+        className="command-palette-scrim absolute inset-0 z-0 cursor-default border-0 bg-transparent p-0"
         aria-label="Close the command palette"
         onClick={onClose}
       />
       <div
-        className="command-palette"
+        className="command-palette relative z-[1] flex max-h-[70vh] w-[min(560px,100%)] flex-col overflow-hidden rounded-surface border border-line bg-overlay font-sans text-ink shadow-overlay"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
@@ -137,7 +140,7 @@ export function CommandPalette({ open, commands, overrides, onClose }: CommandPa
         <input
           ref={inputRef}
           type="text"
-          className="command-palette-input"
+          className="command-palette-input border-0 border-b border-line bg-transparent px-[18px] py-4 font-sans text-lg text-ink outline-none placeholder:text-ink-faint"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -150,22 +153,29 @@ export function CommandPalette({ open, commands, overrides, onClose }: CommandPa
           autoCapitalize="off"
           autoCorrect="off"
         />
-        <ul className="command-palette-list" id="command-palette-list">
+        <ul
+          className="command-palette-list m-0 list-none overflow-y-auto p-1.5"
+          id="command-palette-list"
+        >
           {results.length === 0 ? (
-            <li className="command-palette-empty">No commands match “{query.trim()}”.</li>
+            <li className="command-palette-empty p-[18px] text-center text-base text-ink-soft">
+              No commands match “{query.trim()}”.
+            </li>
           ) : (
             results.map((command, index) => (
               <li key={command.id}>
                 <button
                   type="button"
-                  className={`command-palette-row ${index === activeIndex ? "is-active" : ""}`}
+                  className={`command-palette-row flex w-full cursor-pointer items-baseline gap-3 rounded-chip px-3 py-2 text-left font-sans text-base text-ink ${index === activeIndex ? "is-active bg-accent-soft" : "hover:bg-raised"}`}
                   aria-current={index === activeIndex ? "true" : undefined}
                   // Hover previews the row the way arrow-keys land on it.
                   onMouseMove={() => setActive(index)}
                   onClick={() => runAt(index)}
                 >
-                  <span className="command-palette-group">{command.group}</span>
-                  <span className="command-palette-title">{command.title}</span>
+                  <span className="command-palette-group min-w-[76px] text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                    {command.group}
+                  </span>
+                  <span className="command-palette-title flex-1">{command.title}</span>
                   {renderKey(command, overrides, conflicts, titleById)}
                 </button>
               </li>
@@ -199,7 +209,7 @@ function renderKey(
   const otherTitles = others.map((id) => titleById.get(id) ?? id).join(", ");
   return (
     <kbd
-      className={`command-palette-key ${conflict ? "is-conflict" : ""}`}
+      className={`command-palette-key rounded-chip border bg-raised px-1.5 py-0.5 font-sans text-2xs ${conflict ? "is-conflict border-accent-line text-ink" : "border-line-strong text-ink-soft"}`}
       title={conflict ? `Also bound to ${otherTitles}` : undefined}
       data-conflict={conflict ? "true" : undefined}
     >

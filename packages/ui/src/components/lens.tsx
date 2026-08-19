@@ -72,8 +72,11 @@ export function LensSwitcher({
     }
   };
   return (
-    <nav className="lens-switcher" aria-label="Review lenses">
-      <div className="lens-tabs" role="tablist" aria-label="Canvases">
+    <nav
+      className="lens-switcher flex items-center justify-between gap-4 border-b border-line bg-canvas px-5 py-3 font-sans"
+      aria-label="Review lenses"
+    >
+      <div className="lens-tabs flex gap-1" role="tablist" aria-label="Canvases">
         {CANVAS_LENSES.map((candidate, index) => (
           <button
             type="button"
@@ -86,7 +89,11 @@ export function LensSwitcher({
             }}
             tabIndex={candidate === angle ? 0 : -1}
             aria-selected={candidate === angle}
-            className={`lens-tab ${candidate === angle ? "is-active" : ""}`}
+            className={`lens-tab h-8 rounded-control border px-3 text-sm font-semibold ${
+              candidate === angle
+                ? "is-active border-accent-line bg-accent-soft text-accent"
+                : "border-transparent text-ink-soft hover:bg-raised hover:text-ink"
+            }`}
             onKeyDown={onTabKeyDown}
             onClick={() => onSelectAngle(candidate)}
           >
@@ -117,10 +124,20 @@ const SIGNAL_LABELS: Record<string, string> = {
 export function BlastNotAssessed({ signals }: { signals: { signal: string; reason: string }[] }) {
   if (signals.length === 0) return null;
   return (
-    <div className="blast-not-assessed" role="note" aria-label="Blast radius: signals not assessed">
-      <span className="blast-not-assessed-label">Not assessed</span>
+    <div
+      className="blast-not-assessed flex flex-wrap items-center gap-2 px-3 py-1.5 font-sans"
+      role="note"
+      aria-label="Blast radius: signals not assessed"
+    >
+      <span className="blast-not-assessed-label text-2xs font-semibold uppercase tracking-wide text-ink">
+        Not assessed
+      </span>
       {signals.map((entry) => (
-        <span key={entry.signal} className="blast-chip" title={entry.reason}>
+        <span
+          key={entry.signal}
+          className="blast-chip rounded-full border border-accent-line bg-accent-soft px-2.5 py-0.5 text-2xs text-accent"
+          title={entry.reason}
+        >
           {SIGNAL_LABELS[entry.signal] ?? entry.signal}
         </span>
       ))}

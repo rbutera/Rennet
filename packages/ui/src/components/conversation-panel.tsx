@@ -49,7 +49,10 @@ export function ConversationPanel({
   diffRef,
 }: ConversationPanelProps) {
   return (
-    <aside className="conversation-panel-shell" aria-label="Conversation">
+    <aside
+      className="conversation-panel-shell min-w-0 w-[380px] max-w-[42%] shrink-0"
+      aria-label="Conversation"
+    >
       <ConversationHost
         bridge={bridge}
         reviewId={reviewId}

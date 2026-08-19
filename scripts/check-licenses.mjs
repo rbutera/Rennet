@@ -35,6 +35,14 @@ const allowed = new Set([
   "MIT AND Apache-2.0",
   "MPL-2.0",
   "Python-2.0",
+  // Self-hosted brand fonts (2026-08-19 design overhaul: DM Sans, Fraunces,
+  // Source Serif 4 via fontsource / expo-google-fonts). OFL-1.1 is the SIL Open
+  // Font License: permissive for bundling and redistribution inside software of
+  // any licence; its conditions (font stays OFL, reserved font names) bind the
+  // FONT FILES only and never infect Rennet's MIT code. "MIT AND OFL-1.1" is
+  // the expo-google-fonts wrappers: MIT loader code + OFL font payload.
+  "OFL-1.1",
+  "MIT AND OFL-1.1",
 ]);
 
 // Deliberate exception, Rai's decision 2026-08-06 (Master Plan R2). The Claude

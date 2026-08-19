@@ -1,6 +1,7 @@
 import type { DispositionType } from "@rennet/types";
 import type { ComponentType } from "react";
 import { defaultLane, type StagingLane } from "../canvas/staging";
+import { VERB_HOVER } from "./disposition";
 import { CheckIcon, CommentIcon, QuestionIcon, TriangleIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ export function DispositionCluster({
   const noun = ANCHOR_NOUN[anchor.kind];
   return (
     <div
-      className={`disposition-cluster ${compact ? "is-compact" : ""}`}
+      className={`disposition-cluster flex gap-1.5 ${compact ? "is-compact" : ""}`}
       data-anchor-kind={anchor.kind}
       role="toolbar"
       aria-label={`Dispose on ${noun} ${anchor.label}`}
@@ -103,7 +104,7 @@ export function DispositionCluster({
           <button
             type="button"
             key={type}
-            className={`disposition-cluster-btn ${className}`}
+            className={`disposition-cluster-btn ${className} inline-flex cursor-pointer items-center rounded-chip border bg-raised font-sans text-ink-soft ${lane === "ink" ? "border-line-strong" : "border-accent-line"} ${compact ? "gap-1 px-1.5 py-0.5 text-2xs" : "gap-1.5 px-2.5 py-1 text-sm"} ${VERB_HOVER[type]}`}
             data-type={type}
             data-lane={lane}
             title={`${label} — ${noun} ${anchor.label}`}

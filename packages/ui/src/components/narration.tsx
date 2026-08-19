@@ -23,20 +23,30 @@ export interface NarrationPanelProps {
 export function NarrationPanel({ altitude, placement }: NarrationPanelProps) {
   return (
     <section
-      className="narration-panel"
+      className="narration-panel mb-4 rounded-surface border border-line bg-surface p-4"
       aria-label={`${altitude} narration`}
       data-status={placement.status}
     >
-      <p className="narration-altitude">{altitude}</p>
+      <p className="narration-altitude mb-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        {altitude}
+      </p>
       {placement.status === "narrated" ? (
         <>
-          <p className="narration-one-line">{placement.oneLine}</p>
-          <p className="narration-paragraph">{placement.paragraph}</p>
+          <p className="narration-one-line mb-2 font-serif text-base text-ink">
+            {placement.oneLine}
+          </p>
+          <p className="narration-paragraph font-serif text-base leading-relaxed text-ink-soft">
+            {placement.paragraph}
+          </p>
         </>
       ) : placement.status === "pending" ? (
-        <p className="narration-state narration-pending">Narration pending…</p>
+        <p className="narration-state narration-pending font-serif italic text-ink-faint">
+          Narration pending…
+        </p>
       ) : (
-        <p className="narration-state narration-failed">Narration unavailable for this view.</p>
+        <p className="narration-state narration-failed font-serif text-danger">
+          Narration unavailable for this view.
+        </p>
       )}
     </section>
   );

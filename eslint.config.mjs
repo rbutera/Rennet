@@ -54,8 +54,19 @@ export default [
               ],
             },
             {
+              // layer:theme is the shared design-token package (CSS only, no
+              // runtime imports) — the UI consumes its stylesheet.
+              sourceTag: "layer:theme",
+              onlyDependOnLibsWithTags: ["layer:theme"],
+            },
+            {
               sourceTag: "layer:ui",
-              onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:ui"],
+              onlyDependOnLibsWithTags: [
+                "layer:types",
+                "layer:protocol",
+                "layer:theme",
+                "layer:ui",
+              ],
             },
             {
               sourceTag: "layer:client",
@@ -108,10 +119,11 @@ export default [
     },
   },
   {
-    // No hardcoded hex colours in the UI package: every colour is a glass token
-    // (var(--…)) defined in packages/ui/src/tokens.css, the ONLY place raw hex
-    // lives (issue #11). Test files and fixtures are exempt — the hex-lint test
-    // lints code strings through the ESLint API. Mirrored by hex-lint.test.ts.
+    // No hardcoded hex colours in the UI package: every colour comes from the
+    // shared @rennet/theme tokens (Tailwind utilities or var(--rn-…)), and
+    // packages/theme/src/theme.css is the ONLY place raw hex lives (issue #11,
+    // re-homed in the 2026-08-19 overhaul). Test files and fixtures are exempt —
+    // the hex-lint test lints code strings through the ESLint API (hex-lint.test.ts).
     files: ["packages/ui/src/**/*.ts", "packages/ui/src/**/*.tsx"],
     ignores: [
       "packages/ui/src/**/*.test.ts",
@@ -127,7 +139,7 @@ export default [
         {
           selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
           message:
-            "No hardcoded hex colours in packages/ui — use a glass token from tokens.css, e.g. var(--code-bg).",
+            "No hardcoded hex colours in packages/ui — use a theme utility or var(--rn-…) token from @rennet/theme.",
         },
       ],
     },

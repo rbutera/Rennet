@@ -61,7 +61,7 @@ function ConnectionRow({ connection }: { connection: DaemonConnection }): ReactN
         </Text>
         <Chip
           label={online ? "online" : state === "error" ? "auth error" : "offline"}
-          tone={online ? "green" : "amber"}
+          tone={online ? "green" : "accent"}
         />
       </View>
       <Text style={{ color: t.muted, fontSize: type.control, marginTop: 4 }}>
@@ -101,7 +101,7 @@ function DeviceTokenRow({
         </View>
         <Text
           onPress={onRevoke}
-          style={{ color: t.amber, fontSize: type.control, fontWeight: "600" }}
+          style={{ color: t.danger, fontSize: type.control, fontWeight: "600" }}
         >
           revoke
         </Text>

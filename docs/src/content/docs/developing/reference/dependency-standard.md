@@ -32,6 +32,13 @@ may use compatible permissive licences; any attribution and NOTICE obligations
 travel with distributed artifacts. Tools and binaries discovered in a reviewed
 repository are external processes, not linked parts of Rennet.
 
+Self-hosted brand fonts (DM Sans, Fraunces, Source Serif 4, adopted in the
+2026-08-19 design overhaul) ship under the SIL Open Font License (`OFL-1.1`,
+or `MIT AND OFL-1.1` for the expo-google-fonts wrappers). The OFL is
+permissive for bundling and redistribution inside software of any licence; its
+conditions bind the font files only and never affect Rennet's MIT code, so the
+licence gate allows those two expressions.
+
 Dependency versions are exact pins with a committed `pnpm-lock.yaml`. A new
 release normally waits seven days before adoption (`minimumReleaseAge: 10080`),
 then passes its owning tests. An exact-version exception is acceptable when the

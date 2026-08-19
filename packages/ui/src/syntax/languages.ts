@@ -20,7 +20,7 @@
 // case; stateful per-hunk tokenization is a follow-up.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A token's semantic class. Everything the CSS in canvas.css can style. */
+/** A token's semantic class. Everything the central CSS in index.css can style. */
 export type TokenType =
   | "plain"
   | "keyword"

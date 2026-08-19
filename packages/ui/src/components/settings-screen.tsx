@@ -25,6 +25,28 @@ import { RennetBrandMark } from "./brand-mark";
 import { GitHubAccountRows } from "./github-connect";
 import { ArrowLeftIcon, SlidersIcon } from "./icons";
 
+// Shared Tailwind recipes for this Operate surface: sans throughout (the screen
+// title is the one display voice). Every control is a real bordered button; the
+// selected state rides the kept `.on` token via the [&.on] variant, so the
+// existing `${on ? " on" : ""}` conditionals keep working unchanged.
+const SEG_BTN =
+  "inline-flex h-8 items-center justify-center rounded-control border border-line bg-surface px-3 text-sm text-ink-soft cursor-pointer [&:not(.on):hover]:bg-raised [&:not(.on):hover]:text-ink [&.on]:border-accent-line [&.on]:bg-accent-fill [&.on]:text-accent-ink disabled:cursor-default disabled:opacity-55";
+const ROW = "flex flex-wrap items-center gap-4 border-b border-line py-3 [&:last-of-type]:border-0";
+const ROW_LABEL = "flex flex-col gap-1";
+const ROW_VALUE = "ml-auto flex flex-wrap items-center gap-2";
+const KEY = "text-base font-semibold text-ink";
+const DESC = "text-sm text-ink-soft";
+const NOTE = "mt-3 text-sm text-ink-faint";
+// Malformed / error banners share the warm gold surface (accent === decision).
+const BANNER =
+  "rounded-chip border border-accent-line bg-accent-surface px-3 py-2 text-sm leading-relaxed text-ink";
+// Severity chips (guidance rules): a gold ramp for high→medium, green for low.
+const SEV: Record<string, string> = {
+  high: "border-accent-line bg-accent-fill text-accent-ink",
+  medium: "border-accent-line bg-accent-soft text-accent",
+  low: "border-green-line bg-green-soft text-green",
+};
+
 /**
  * The settings screen — the config ladder (wireframe #15) over the REAL `~/.rennet`
  * store. Two scopes ship, honestly:
@@ -68,13 +90,25 @@ function Provenance({ provenance }: { provenance: ResolvedProvenance }) {
   const setHere = provenance.layer === "global" || provenance.layer === "repo";
   const label = provenance.layer === "detected" ? "detected" : setHere ? "set here" : "default";
   return (
-    <span className="settings-prov-wrap">
-      <span className={`settings-prov${setHere ? " settings-prov-set" : ""}`}>{label}</span>
-      <span className="settings-prov-list">
+    <span className="settings-prov-wrap inline-flex flex-wrap items-center gap-1.5">
+      <span
+        className={`settings-prov rounded-chip border px-2 py-0.5 text-2xs uppercase tracking-wide ${
+          setHere
+            ? "settings-prov-set border-accent-line bg-accent-soft text-ink"
+            : "border-line text-ink-faint"
+        }`}
+      >
+        {label}
+      </span>
+      <span className="settings-prov-list inline-flex flex-wrap gap-1">
         {provenance.contributions.map((c) => (
           <span
             key={c.layer}
-            className={`settings-prov-item${c.effective ? " on" : ""}`}
+            className={`settings-prov-item rounded-micro border border-dashed px-1.5 py-0.5 text-2xs tracking-wide ${
+              c.effective
+                ? "on border-solid border-accent-line text-accent"
+                : "border-line text-ink-faint"
+            }`}
           >{`${c.layer}: ${c.value}`}</span>
         ))}
       </span>
@@ -106,7 +140,7 @@ function ResetPin({
   return layer === "repo" ? (
     <button
       type="button"
-      className="settings-reset settings-seg-btn"
+      className={`settings-reset settings-seg-btn ${SEG_BTN}`}
       aria-label={resetLabel}
       title="Clear the repo-layer value and inherit down the ladder"
       onClick={onReset}
@@ -117,7 +151,7 @@ function ResetPin({
   ) : (
     <button
       type="button"
-      className="settings-pin settings-seg-btn"
+      className={`settings-pin settings-seg-btn ${SEG_BTN}`}
       aria-label={pinTitle}
       title={pinTitle}
       onClick={onPin}
@@ -187,28 +221,40 @@ export function SettingsScreen({
   const selected = view?.projects.find((project) => project.repoPath === selectedRepoPath) ?? null;
 
   return (
-    <div className="rennet-glass settings" data-scheme={scheme ?? "dark"}>
-      <header className="settings-bar">
-        <button type="button" className="settings-back" onClick={onBack}>
+    <div
+      className="rennet-glass settings flex min-h-screen flex-col items-center bg-canvas px-6 pb-24 font-sans text-ink"
+      data-scheme={scheme ?? "dark"}
+    >
+      <header className="settings-bar flex h-[68px] w-full max-w-[760px] items-center gap-3">
+        <button
+          type="button"
+          className="settings-back inline-flex h-8 items-center gap-1.5 rounded-control border border-line bg-surface px-3 text-sm text-ink-soft hover:bg-raised hover:text-ink"
+          onClick={onBack}
+        >
           <ArrowLeftIcon size={13} />
           Back
         </button>
-        <span className="settings-mark" aria-hidden="true">
+        <span
+          className="settings-mark grid h-8 w-8 flex-none place-items-center rounded-control border border-accent-line bg-accent-soft text-accent"
+          aria-hidden="true"
+        >
           <SlidersIcon size={16} />
         </span>
-        <h1>Settings</h1>
-        <span className="settings-sub">global &rsaquo; repo</span>
+        <h1 className="font-display text-2xl text-ink">Settings</h1>
+        <span className="settings-sub ml-auto text-sm text-ink-faint">global &rsaquo; repo</span>
       </header>
 
-      {error ? <p className="settings-error">{error}</p> : null}
+      {error ? (
+        <p className={`settings-error mb-3 w-full max-w-[760px] ${BANNER}`}>{error}</p>
+      ) : null}
 
-      <div className="settings-body">
-        <div className="settings-tabs" role="tablist">
+      <div className="settings-body flex w-full max-w-[760px] flex-col">
+        <div className="settings-tabs mb-4 flex gap-2" role="tablist">
           <button
             type="button"
             role="tab"
             aria-selected={tab === "global"}
-            className={`settings-tab${tab === "global" ? " on" : ""}`}
+            className={`settings-tab ${SEG_BTN}${tab === "global" ? " on" : ""}`}
             onClick={() => setTab("global")}
           >
             Global
@@ -217,7 +263,7 @@ export function SettingsScreen({
             type="button"
             role="tab"
             aria-selected={tab === "repo"}
-            className={`settings-tab${tab === "repo" ? " on" : ""}`}
+            className={`settings-tab ${SEG_BTN}${tab === "repo" ? " on" : ""}`}
             onClick={() => setTab("repo")}
           >
             Repo
@@ -226,7 +272,7 @@ export function SettingsScreen({
             type="button"
             role="tab"
             aria-selected={tab === "keyboard"}
-            className={`settings-tab${tab === "keyboard" ? " on" : ""}`}
+            className={`settings-tab ${SEG_BTN}${tab === "keyboard" ? " on" : ""}`}
             onClick={() => setTab("keyboard")}
           >
             Keyboard
@@ -235,31 +281,36 @@ export function SettingsScreen({
             type="button"
             role="tab"
             aria-selected={tab === "pairing"}
-            className={`settings-tab${tab === "pairing" ? " on" : ""}`}
+            className={`settings-tab ${SEG_BTN}${tab === "pairing" ? " on" : ""}`}
             onClick={() => setTab("pairing")}
           >
             Pairing
           </button>
         </div>
 
-        {view === null && !error ? <p className="settings-loading">Loading settings…</p> : null}
+        {view === null && !error ? (
+          <p className="settings-loading mt-10 text-base text-ink-faint">Loading settings…</p>
+        ) : null}
 
         {view !== null && tab === "global" ? (
-          <section className="settings-panel" aria-label="Global settings">
-            <div className="settings-row">
-              <div className="settings-row-label">
-                <span className="settings-k">Appearance</span>
-                <span className="settings-d">the scheme this machine reviews in</span>
+          <section className="settings-panel flex flex-col" aria-label="Global settings">
+            <div className={`settings-row ${ROW}`}>
+              <div className={`settings-row-label ${ROW_LABEL}`}>
+                <span className={`settings-k ${KEY}`}>Appearance</span>
+                <span className={`settings-d ${DESC}`}>the scheme this machine reviews in</span>
               </div>
-              <div className="settings-row-value">
-                <fieldset className="settings-seg" aria-label="Appearance scheme">
+              <div className={`settings-row-value ${ROW_VALUE}`}>
+                <fieldset
+                  className="settings-seg m-0 inline-flex min-w-0 items-center gap-1 p-0"
+                  aria-label="Appearance scheme"
+                >
                   {SCHEMES.map((option) => (
                     <button
                       key={option.id}
                       type="button"
                       title={option.hint}
                       aria-pressed={view.scheme === option.id}
-                      className={`settings-seg-btn${view.scheme === option.id ? " on" : ""}`}
+                      className={`settings-seg-btn ${SEG_BTN}${view.scheme === option.id ? " on" : ""}`}
                       onClick={() => void chooseScheme(option.id)}
                       disabled={busy || view.appearanceMalformed}
                     >
@@ -271,7 +322,7 @@ export function SettingsScreen({
                 {view.schemeProvenance.layer === "global" ? (
                   <button
                     type="button"
-                    className="settings-reset settings-seg-btn"
+                    className={`settings-reset settings-seg-btn ${SEG_BTN}`}
                     aria-label="Reset appearance to the system default"
                     title="Clear the stored appearance and follow the OS again"
                     onClick={() => void chooseScheme(null)}
@@ -283,12 +334,13 @@ export function SettingsScreen({
               </div>
             </div>
             {view.appearanceMalformed ? (
-              <p className="settings-malformed">
-                Your <code>~/.rennet/config.json</code> could not be parsed. Editing is disabled so
-                it is not overwritten — fix or remove the file, then reopen settings.
+              <p className={`settings-malformed mt-3 ${BANNER}`}>
+                Your <code className="font-mono text-xs">~/.rennet/config.json</code> could not be
+                parsed. Editing is disabled so it is not overwritten — fix or remove the file, then
+                reopen settings.
               </p>
             ) : (
-              <p className="settings-note">
+              <p className="settings-note mt-3 text-sm text-ink-faint">
                 A personal preference, stored on this machine only. It never leaves it and never
                 touches a repository.
               </p>
@@ -299,12 +351,14 @@ export function SettingsScreen({
 
         {view !== null && tab === "repo" ? (
           view.projects.length === 0 ? (
-            <section className="settings-panel">
-              <div className="settings-empty">
-                <span className="settings-empty-mark" aria-hidden="true">
+            <section className="settings-panel flex flex-col">
+              <div className="settings-empty flex flex-col items-center gap-4 py-10 text-center text-ink-faint">
+                <span className="settings-empty-mark text-accent opacity-70" aria-hidden="true">
                   <RennetBrandMark size={22} />
                 </span>
-                <p>No projects yet. Add one from the front door to configure it here.</p>
+                <p className="text-base">
+                  No projects yet. Add one from the front door to configure it here.
+                </p>
               </div>
             </section>
           ) : (
@@ -423,51 +477,55 @@ function PairingPanel({ bridge }: { bridge: RennetBridge }) {
   }
 
   return (
-    <section className="settings-panel" aria-label="Device pairing">
-      {error ? <p className="settings-error">{error}</p> : null}
-      <div className="settings-row">
-        <div className="settings-row-label">
-          <span className="settings-k">Pair a device</span>
-          <span className="settings-d">a one-time code a remote device exchanges for access</span>
+    <section className="settings-panel flex flex-col" aria-label="Device pairing">
+      {error ? <p className={`settings-error ${BANNER}`}>{error}</p> : null}
+      <div className={`settings-row ${ROW}`}>
+        <div className={`settings-row-label ${ROW_LABEL}`}>
+          <span className={`settings-k ${KEY}`}>Pair a device</span>
+          <span className={`settings-d ${DESC}`}>
+            a one-time code a remote device exchanges for access
+          </span>
         </div>
-        <div className="settings-row-value">
+        <div className={`settings-row-value ${ROW_VALUE}`}>
           <button
             type="button"
-            className="settings-seg-btn"
+            className={`settings-seg-btn ${SEG_BTN}`}
             onClick={() => void mint()}
             disabled={busy}
           >
             Create pairing code
           </button>
           {code ? (
-            <div className="settings-pair-code" aria-live="polite">
-              <code className="settings-pair-code-value">{code.code}</code>
-              <span className="settings-d">
+            <div className="settings-pair-code mt-2 flex flex-col gap-1" aria-live="polite">
+              <code className="settings-pair-code-value self-start rounded-chip border border-line bg-code px-3 py-1.5 font-mono text-lg tracking-[0.15em]">
+                {code.code}
+              </code>
+              <span className={`settings-d ${DESC}`}>
                 enter it on the device within 5 minutes; it works once
               </span>
             </div>
           ) : null}
         </div>
       </div>
-      <div className="settings-row">
-        <div className="settings-row-label">
-          <span className="settings-k">Paired devices</span>
-          <span className="settings-d">
+      <div className={`settings-row ${ROW}`}>
+        <div className={`settings-row-label ${ROW_LABEL}`}>
+          <span className={`settings-k ${KEY}`}>Paired devices</span>
+          <span className={`settings-d ${DESC}`}>
             revoke a device to end its access at the next handshake
           </span>
         </div>
-        <div className="settings-row-value">
+        <div className={`settings-row-value ${ROW_VALUE}`}>
           {devices.length === 0 ? (
-            <p className="settings-note">No devices paired yet.</p>
+            <p className="settings-note text-sm text-ink-faint">No devices paired yet.</p>
           ) : (
-            <ul className="settings-pair-list">
+            <ul className="settings-pair-list m-0 mt-2 flex list-none flex-col gap-2 p-0">
               {devices.map((device) => (
-                <li key={device.deviceId} className="settings-pair-item">
-                  <span className="settings-k">{device.name}</span>
-                  <span className="settings-d">last seen {device.lastSeenAt}</span>
+                <li key={device.deviceId} className="settings-pair-item flex items-center gap-3">
+                  <span className={`settings-k ${KEY}`}>{device.name}</span>
+                  <span className={`settings-d ${DESC}`}>last seen {device.lastSeenAt}</span>
                   <button
                     type="button"
-                    className="settings-seg-btn"
+                    className={`settings-seg-btn ${SEG_BTN}`}
                     aria-label={`Revoke ${device.name}`}
                     onClick={() => void revoke(device.deviceId)}
                     disabled={busy}
@@ -480,7 +538,7 @@ function PairingPanel({ bridge }: { bridge: RennetBridge }) {
           )}
         </div>
       </div>
-      <p className="settings-note">
+      <p className={`settings-note ${NOTE}`}>
         A paired device reaches this daemon directly (Tailscale-first) — there is no Rennet server
         in the middle. A remote device never sees a host path; it works with repo references only.
       </p>
@@ -574,20 +632,24 @@ function KeyboardPanel({
   }
 
   return (
-    <section className="settings-panel settings-keyboard" aria-label="Keyboard settings">
-      {error ? <p className="settings-error">{error}</p> : null}
+    <section
+      className="settings-panel settings-keyboard flex flex-col"
+      aria-label="Keyboard settings"
+    >
+      {error ? <p className={`settings-error ${BANNER}`}>{error}</p> : null}
       {malformed ? (
-        <p className="settings-malformed">
-          Your <code>~/.rennet/config.json</code> could not be parsed. Editing is disabled so it is
-          not overwritten — fix or remove the file, then reopen settings.
+        <p className={`settings-malformed mt-3 ${BANNER}`}>
+          Your <code className="font-mono text-xs">~/.rennet/config.json</code> could not be parsed.
+          Editing is disabled so it is not overwritten — fix or remove the file, then reopen
+          settings.
         </p>
       ) : (
-        <p className="settings-note">
+        <p className="settings-note text-sm text-ink-faint">
           Remap any command. Overrides are stored on this machine only and survive restart. Two
           commands may share a chord — the collision is shown, never blocked; the first match wins.
         </p>
       )}
-      <ul className="settings-keys">
+      <ul className="settings-keys m-0 mt-1 flex list-none flex-col p-0">
         {rows.map((def) => {
           const rawOverride = overrides[def.id];
           const invalidOverride = typeof rawOverride === "string" && !normalizeChord(rawOverride);
@@ -598,19 +660,22 @@ function KeyboardPanel({
           const others = colliding?.filter((other) => other !== def.id) ?? [];
           const overridden = overrides[def.id] !== undefined;
           return (
-            <li key={def.id} className="settings-key-row">
-              <div className="settings-row-label">
-                <span className="settings-k">{catalogueLabel(def)}</span>
-                <span className="settings-d">{def.group}</span>
+            <li
+              key={def.id}
+              className="settings-key-row flex items-center justify-between gap-3 border-b border-line py-2"
+            >
+              <div className={`settings-row-label ${ROW_LABEL}`}>
+                <span className={`settings-k ${KEY}`}>{catalogueLabel(def)}</span>
+                <span className={`settings-d ${DESC}`}>{def.group}</span>
               </div>
-              <div className="settings-row-value settings-key-value">
+              <div className="settings-row-value settings-key-value flex flex-wrap items-center justify-end gap-2">
                 {recording === def.id ? (
                   <input
                     type="text"
                     readOnly
                     // Focus on mount so the very next keystroke is captured as the chord.
                     ref={(node) => node?.focus()}
-                    className="settings-key-recorder"
+                    className="settings-key-recorder h-8 w-32 rounded-control border border-accent-line bg-surface px-2 text-sm text-ink"
                     aria-label={`Press the new chord for ${catalogueLabel(def)}`}
                     placeholder="Press a chord…"
                     onKeyDown={(event) => onRecordKey(def.id, event)}
@@ -621,7 +686,11 @@ function KeyboardPanel({
                   />
                 ) : token ? (
                   <kbd
-                    className={`command-palette-key${others.length > 0 ? " is-conflict" : ""}`}
+                    className={`command-palette-key rounded-chip border px-2 py-0.5 font-sans text-xs ${
+                      others.length > 0
+                        ? "is-conflict border-accent-line bg-raised text-ink"
+                        : "border-line bg-raised text-ink-soft"
+                    }`}
                     title={
                       others.length > 0
                         ? `Also bound to ${others.map((id) => labelById.get(id) ?? id).join(", ")}`
@@ -632,26 +701,30 @@ function KeyboardPanel({
                     {formatKeybinding(token)}
                   </kbd>
                 ) : (
-                  <span className="settings-key-unbound">unbound</span>
+                  <span className="settings-key-unbound text-sm italic text-ink-faint">
+                    unbound
+                  </span>
                 )}
                 {recording === def.id && recordingNote ? (
-                  <span className="settings-key-recording-note">{recordingNote}</span>
+                  <span className="settings-key-recording-note text-xs text-accent">
+                    {recordingNote}
+                  </span>
                 ) : null}
                 {invalidOverride ? (
-                  <span className="settings-key-invalid">
-                    Invalid stored chord: <code>{rawOverride}</code>;{" "}
+                  <span className="settings-key-invalid text-xs text-accent">
+                    Invalid stored chord: <code className="font-mono">{rawOverride}</code>;{" "}
                     {def.keybinding ? "using the default." : "no shortcut is active."}
                   </span>
                 ) : null}
                 {others.length > 0 ? (
-                  <span className="settings-key-conflict">
+                  <span className="settings-key-conflict text-xs text-accent">
                     conflicts with {others.map((id) => labelById.get(id) ?? id).join(", ")}
                   </span>
                 ) : null}
-                <span className="settings-key-controls">
+                <span className="settings-key-controls inline-flex gap-1">
                   <button
                     type="button"
-                    className="settings-seg-btn"
+                    className={`settings-seg-btn ${SEG_BTN}`}
                     onClick={() => {
                       setRecordingNote(undefined);
                       setRecording(def.id);
@@ -662,7 +735,7 @@ function KeyboardPanel({
                   </button>
                   <button
                     type="button"
-                    className="settings-seg-btn"
+                    className={`settings-seg-btn ${SEG_BTN}`}
                     onClick={() => void write(def.id, null)}
                     disabled={busy || malformed}
                   >
@@ -671,7 +744,7 @@ function KeyboardPanel({
                   {overridden ? (
                     <button
                       type="button"
-                      className="settings-seg-btn"
+                      className={`settings-seg-btn ${SEG_BTN}`}
                       onClick={() => void write(def.id, undefined)}
                       disabled={busy || malformed}
                     >
@@ -684,17 +757,22 @@ function KeyboardPanel({
           );
         })}
         {unknownOverrides.map(([id, raw]) => (
-          <li key={id} className="settings-key-row settings-key-unknown">
-            <div className="settings-row-label">
-              <span className="settings-k">{id}</span>
-              <span className="settings-d">Unknown command</span>
+          <li
+            key={id}
+            className="settings-key-row settings-key-unknown flex items-center justify-between gap-3 border-b border-line py-2"
+          >
+            <div className={`settings-row-label ${ROW_LABEL}`}>
+              <span className={`settings-k ${KEY}`}>{id}</span>
+              <span className={`settings-d ${DESC}`}>Unknown command</span>
             </div>
-            <div className="settings-row-value settings-key-value">
-              <code>{raw === null ? "unbound" : raw}</code>
-              <span className="settings-key-controls">
+            <div className="settings-row-value settings-key-value flex flex-wrap items-center justify-end gap-2">
+              <code className="font-mono text-sm text-ink-soft">
+                {raw === null ? "unbound" : raw}
+              </code>
+              <span className="settings-key-controls inline-flex gap-1">
                 <button
                   type="button"
-                  className="settings-seg-btn"
+                  className={`settings-seg-btn ${SEG_BTN}`}
                   onClick={() => void write(id, undefined)}
                   disabled={busy || malformed}
                 >
@@ -851,15 +929,19 @@ function RepoPanel({
   }
 
   return (
-    <section className="settings-panel" aria-label="Repository settings">
-      <div className="settings-picker" role="tablist" aria-label="Repository">
+    <section className="settings-panel flex flex-col" aria-label="Repository settings">
+      <div
+        className="settings-picker mb-2 flex flex-wrap gap-2 border-b border-line py-3"
+        role="tablist"
+        aria-label="Repository"
+      >
         {projects.map((project) => (
           <button
             key={project.repoPath}
             type="button"
             role="tab"
             aria-selected={project.repoPath === selectedRepoPath}
-            className={`settings-pick${project.repoPath === selectedRepoPath ? " on" : ""}`}
+            className={`settings-pick ${SEG_BTN}${project.repoPath === selectedRepoPath ? " on" : ""}`}
             onClick={() => onSelect(project.repoPath)}
           >
             {project.name}
@@ -869,20 +951,25 @@ function RepoPanel({
 
       {selected ? (
         <>
-          <div className="settings-row">
-            <div className="settings-row-label">
-              <span className="settings-k">Map visibility</span>
-              <span className="settings-d">whether the derived map is visible to git</span>
+          <div className={`settings-row ${ROW}`}>
+            <div className={`settings-row-label ${ROW_LABEL}`}>
+              <span className={`settings-k ${KEY}`}>Map visibility</span>
+              <span className={`settings-d ${DESC}`}>
+                whether the derived map is visible to git
+              </span>
             </div>
-            <div className="settings-row-value">
-              <fieldset className="settings-seg" aria-label="Map visibility">
+            <div className={`settings-row-value ${ROW_VALUE}`}>
+              <fieldset
+                className="settings-seg m-0 inline-flex min-w-0 items-center gap-1 p-0"
+                aria-label="Map visibility"
+              >
                 {VISIBILITIES.map((option) => (
                   <button
                     key={option.id}
                     type="button"
                     title={option.hint}
                     aria-pressed={selected.visibility === option.id}
-                    className={`settings-seg-btn${selected.visibility === option.id ? " on" : ""}`}
+                    className={`settings-seg-btn ${SEG_BTN}${selected.visibility === option.id ? " on" : ""}`}
                     onClick={() => void chooseVisibility(option.id)}
                     disabled={busy || selected.configMalformed}
                   >
@@ -902,37 +989,40 @@ function RepoPanel({
             </div>
           </div>
 
-          <div className="settings-row">
-            <div className="settings-row-label">
-              <span className="settings-k">Map promotion</span>
-              <span className="settings-d">is the base map mirrored into the repo</span>
+          <div className={`settings-row ${ROW}`}>
+            <div className={`settings-row-label ${ROW_LABEL}`}>
+              <span className={`settings-k ${KEY}`}>Map promotion</span>
+              <span className={`settings-d ${DESC}`}>is the base map mirrored into the repo</span>
             </div>
-            <div className="settings-row-value">
-              <span className="settings-readthrough">
+            <div className={`settings-row-value ${ROW_VALUE}`}>
+              <span className="settings-readthrough text-base text-ink-soft">
                 {selected.promoted ? "Promoted" : "Not promoted"}
               </span>
               <Provenance provenance={selected.promotedProvenance} />
             </div>
           </div>
 
-          <div className="settings-row">
-            <div className="settings-row-label">
-              <span className="settings-k">Execution locus</span>
-              <span className="settings-d">
+          <div className={`settings-row ${ROW}`}>
+            <div className={`settings-row-label ${ROW_LABEL}`}>
+              <span className={`settings-k ${KEY}`}>Execution locus</span>
+              <span className={`settings-d ${DESC}`}>
                 where git and the harness run — the host, or a WSL distro
               </span>
             </div>
-            <div className="settings-row-value">
-              <span className="settings-readthrough">
+            <div className={`settings-row-value ${ROW_VALUE}`}>
+              <span className="settings-readthrough text-base text-ink-soft">
                 {describeLocus(selected.locus)}
                 {selected.locusOverridden ? "" : " (auto-detected)"}
               </span>
-              <fieldset className="settings-seg" aria-label="Execution locus">
+              <fieldset
+                className="settings-seg m-0 inline-flex min-w-0 items-center gap-1 p-0"
+                aria-label="Execution locus"
+              >
                 <button
                   type="button"
                   title="Run git and the harness on the host OS"
                   aria-pressed={selected.locus.kind === "host"}
-                  className={`settings-seg-btn${selected.locus.kind === "host" ? " on" : ""}`}
+                  className={`settings-seg-btn ${SEG_BTN}${selected.locus.kind === "host" ? " on" : ""}`}
                   onClick={() => void chooseLocus({ kind: "host" })}
                   disabled={busy || selected.configMalformed}
                 >
@@ -948,7 +1038,7 @@ function RepoPanel({
                 onPin={() => void resetPin("settings.pinRepoValue", "locus")}
                 disabled={busy || selected.configMalformed}
               />
-              <div className="settings-locus-distro">
+              <div className="settings-locus-distro flex items-center gap-2">
                 <input
                   type="text"
                   aria-label="WSL distro name"
@@ -956,10 +1046,11 @@ function RepoPanel({
                   value={distroInput}
                   onChange={(event) => setDistroInput(event.target.value)}
                   disabled={busy || selected.configMalformed}
+                  className="h-8 rounded-control border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink-faint disabled:opacity-55"
                 />
                 <button
                   type="button"
-                  className="settings-seg-btn"
+                  className={`settings-seg-btn ${SEG_BTN}`}
                   onClick={() => void chooseLocus({ kind: "wsl", distro: distroInput.trim() })}
                   disabled={busy || selected.configMalformed || distroInput.trim().length === 0}
                 >
@@ -970,13 +1061,16 @@ function RepoPanel({
           </div>
 
           {selected.configMalformed ? (
-            <p className="settings-malformed">
-              This repository's <code>~/.rennet</code> config could not be parsed. It shows built-in
-              defaults and editing is disabled so the file is not overwritten.
+            <p className={`settings-malformed mt-3 ${BANNER}`}>
+              This repository's <code className="font-mono text-xs">~/.rennet</code> config could
+              not be parsed. It shows built-in defaults and editing is disabled so the file is not
+              overwritten.
             </p>
           ) : null}
-          {note ? <p className="settings-applied">{note}</p> : null}
-          {error ? <p className="settings-error settings-error-inline">{error}</p> : null}
+          {note ? <p className="settings-applied mt-3 text-sm text-accent">{note}</p> : null}
+          {error ? (
+            <p className={`settings-error settings-error-inline mt-2 ${BANNER}`}>{error}</p>
+          ) : null}
 
           <Guidance guidance={guidance} />
         </>
@@ -988,13 +1082,15 @@ function RepoPanel({
 /** The per-repo guidance panel: the house rules the harness reads before every review. */
 function Guidance({ guidance }: { guidance: SettingsGuidance | null }) {
   return (
-    <div className="settings-guidance">
-      <div className="settings-guidance-h">Per-repo guidance &middot; .rennet/conventions.json</div>
-      <div className="settings-guidance-b">
+    <div className="settings-guidance mt-4 flex flex-col gap-2">
+      <div className="settings-guidance-h text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        Per-repo guidance &middot; .rennet/conventions.json
+      </div>
+      <div className="settings-guidance-b flex flex-col">
         {guidance === null ? (
-          <p className="settings-guidance-empty">Loading guidance…</p>
+          <p className="settings-guidance-empty text-sm text-ink-faint">Loading guidance…</p>
         ) : guidance.rules.length === 0 ? (
-          <p className="settings-guidance-empty">
+          <p className="settings-guidance-empty text-sm text-ink-faint">
             {guidance.reason === "absent"
               ? "No guidance file. The review runs on its built-in checklist."
               : guidance.reason === "unreadable"
@@ -1003,24 +1099,35 @@ function Guidance({ guidance }: { guidance: SettingsGuidance | null }) {
           </p>
         ) : (
           <>
-            <p className="settings-guidance-lede">
+            <p className="settings-guidance-lede mb-2 text-sm text-ink-soft">
               The house rules the review runners read before every review.
             </p>
-            <ul className="settings-rules">
+            <ul className="settings-rules m-0 flex list-none flex-col gap-3 p-0">
               {guidance.rules.map((rule) => (
-                <li key={`${rule.convention}::${rule.rationale}`} className="settings-rule">
-                  <span className={`settings-sev settings-sev-${rule.severity}`}>
+                <li
+                  key={`${rule.convention}::${rule.rationale}`}
+                  className="settings-rule flex items-start gap-3"
+                >
+                  <span
+                    className={`settings-sev settings-sev-${rule.severity} mt-0.5 flex-none rounded-chip border px-2 py-0.5 text-2xs uppercase tracking-wide ${
+                      SEV[rule.severity] ?? "border-line text-ink-faint"
+                    }`}
+                  >
                     {rule.severity}
                   </span>
-                  <div className="settings-rule-body">
-                    <span className="settings-rule-k">{rule.convention}</span>
-                    <span className="settings-rule-why">{rule.rationale}</span>
+                  <div className="settings-rule-body flex flex-col gap-0.5">
+                    <span className="settings-rule-k text-base font-semibold text-ink">
+                      {rule.convention}
+                    </span>
+                    <span className="settings-rule-why text-sm text-ink-soft">
+                      {rule.rationale}
+                    </span>
                   </div>
                 </li>
               ))}
             </ul>
             {guidance.dropped > 0 ? (
-              <p className="settings-guidance-dropped">
+              <p className="settings-guidance-dropped mt-3 text-sm text-ink-faint">
                 {guidance.dropped} malformed {guidance.dropped === 1 ? "rule was" : "rules were"}{" "}
                 dropped.
               </p>

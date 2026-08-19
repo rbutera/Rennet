@@ -384,16 +384,28 @@ export function PublishSheet({
   }
 
   return (
-    <div className="publish-sheet-backdrop" role="dialog" aria-modal="true" aria-label="Publish">
-      <section className="publish-sheet" data-mode={variant.mode}>
-        <header className="publish-sheet-head">
+    <div
+      className="publish-sheet-backdrop fixed inset-0 z-40 grid place-items-center p-8 bg-black/70"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Publish"
+    >
+      <section
+        className="publish-sheet flex flex-col w-[min(720px,100%)] max-h-[calc(100vh-64px)] gap-4 p-6 rounded-window border border-sheet-line bg-sheet text-sheet-ink shadow-overlay"
+        data-mode={variant.mode}
+      >
+        <header className="publish-sheet-head flex items-start justify-between gap-3">
           <div>
-            <p className="publish-sheet-eyebrow">{variant.title}</p>
-            <h2>{variant.summary}</h2>
+            <p className="publish-sheet-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-sheet-soft">
+              {variant.title}
+            </p>
+            <h2 className="mt-1 text-xl font-semibold font-serif text-sheet-ink">
+              {variant.summary}
+            </h2>
           </div>
           <button
             type="button"
-            className="publish-sheet-close"
+            className="publish-sheet-close grid place-items-center h-8 w-8 rounded-control text-lg text-sheet-soft hover:bg-sheet-line"
             aria-label="Close"
             onClick={() => onClose?.()}
           >
@@ -401,7 +413,7 @@ export function PublishSheet({
           </button>
         </header>
 
-        <p className="publish-sheet-lede">
+        <p className="publish-sheet-lede m-0 text-base font-serif text-sheet-soft">
           {itemCount === 0
             ? "Nothing collated. Go back to the draft and dispose something first — this paper is what leaves the machine."
             : target?.mode === "own-branch"
@@ -418,7 +430,10 @@ export function PublishSheet({
         {/* The exact outbound bytes, machine-readable: previewed bytes == the
             `payload` prop == what `onSign` emits. Rendered so a reviewer (and a
             test) can verify what will leave, not eyeball it. */}
-        <pre className="publish-sheet-preview" data-testid="publish-preview">
+        <pre
+          className="publish-sheet-preview m-0 max-h-[120px] overflow-auto p-2.5 rounded-control border border-dashed border-sheet-line font-mono text-2xs text-sheet-soft whitespace-pre-wrap break-all"
+          data-testid="publish-preview"
+        >
           {payload}
         </pre>
 
@@ -434,48 +449,55 @@ export function PublishSheet({
             degraded. Entries are bucketed by kind and the read-vs-attested counts
             are stated honestly. Absent/empty ledger → not rendered. */}
         {hasLedger ? (
-          <fieldset className="publish-sheet-ledger">
-            <legend className="publish-sheet-ledger-legend">Run degradations to acknowledge</legend>
-            <p className="publish-sheet-ledger-lede">
+          <fieldset className="publish-sheet-ledger m-0 min-w-0 p-3 rounded-control border border-accent-line bg-accent-soft">
+            <legend className="publish-sheet-ledger-legend px-1.5 text-2xs font-semibold uppercase tracking-wide text-sheet-ink">
+              Run degradations to acknowledge
+            </legend>
+            <p className="publish-sheet-ledger-lede mt-0 mb-2 text-sm font-semibold text-sheet-ink">
               This run degraded. Signing is blocked until you acknowledge what happened.
             </p>
             {ledger?.counts ? (
-              <p className="publish-sheet-ledger-counts" data-testid="ledger-counts">
+              <p
+                className="publish-sheet-ledger-counts mt-0 mb-2.5 text-sm font-semibold text-sheet-ink"
+                data-testid="ledger-counts"
+              >
                 {ledger.counts.attested} of {ledger.counts.total} attested · {ledger.counts.read}{" "}
                 read
               </p>
             ) : null}
             {bucketLedgerEntries(ledgerEntries).map((bucket) => (
               <div
-                className="publish-sheet-ledger-bucket"
+                className="publish-sheet-ledger-bucket mb-2"
                 data-bucket={bucket.kind ?? "other"}
                 key={bucket.kind ?? "other"}
               >
                 {bucket.kind ? (
-                  <p className="publish-sheet-ledger-bucket-label">
+                  <p className="publish-sheet-ledger-bucket-label mt-0 mb-1 text-2xs font-bold uppercase tracking-wide text-sheet-ink">
                     {LEDGER_BUCKET_LABEL[bucket.kind]}
                   </p>
                 ) : null}
-                <ul className="publish-sheet-ledger-entries">
+                <ul className="publish-sheet-ledger-entries m-0 pl-5 flex flex-col gap-1 list-disc">
                   {bucket.entries.map((entry) => (
                     <li
-                      className="publish-sheet-ledger-entry"
+                      className="publish-sheet-ledger-entry text-sm text-sheet-ink"
                       data-ledger-id={entry.id}
                       key={entry.id}
                     >
                       {entry.summary}
                       {entry.detail ? (
-                        <span className="publish-sheet-ledger-detail">{entry.detail}</span>
+                        <span className="publish-sheet-ledger-detail block font-mono text-2xs text-sheet-soft">
+                          {entry.detail}
+                        </span>
                       ) : null}
                     </li>
                   ))}
                 </ul>
               </div>
             ))}
-            <label className="publish-sheet-ack">
+            <label className="publish-sheet-ack flex items-start gap-2 text-sm font-semibold text-sheet-ink cursor-pointer">
               <input
                 type="checkbox"
-                className="publish-sheet-ack-box"
+                className="publish-sheet-ack-box mt-0.5"
                 checked={acknowledged}
                 onChange={(event) => setAcknowledged(event.target.checked)}
               />
@@ -492,7 +514,11 @@ export function PublishSheet({
             signing is blocked so no mismatched artifact leaves. aria-legible
             (role="alert") so the blocked state is announced, not merely visual. */}
         {targetBlocksSign ? (
-          <p className="publish-sheet-mismatch-notice" role="alert" data-testid="publish-mismatch">
+          <p
+            className="publish-sheet-mismatch-notice m-0 px-3 py-2 rounded-control bg-danger-soft text-sm text-danger"
+            role="alert"
+            data-testid="publish-mismatch"
+          >
             This paper is blocked: the artifact shown and the bytes to sign disagree. Nothing can be
             signed until they match — go back to the draft.
           </p>
@@ -507,25 +533,25 @@ export function PublishSheet({
             yet, the pre-sign notice describes what Hold-to-sign will do. */}
         {result?.kind === "review" ? (
           <div
-            className="publish-sheet-result"
+            className="publish-sheet-result flex flex-col gap-1 p-3 rounded-control border border-sheet-line"
             data-testid="publish-result"
             data-outcome="review"
             data-dry-run={result.dryRun}
             role="status"
           >
-            <p className="publish-sheet-result-line">
+            <p className="publish-sheet-result-line m-0 text-sm font-semibold text-sheet-ink">
               {result.dryRun
                 ? `Dry run — nothing was posted. The publish engine built a ${result.verdict} review of ${result.count} comment${result.count === 1 ? "" : "s"} for ${result.targetLabel}.`
                 : `Posted a ${result.verdict} review of ${result.count} comment${result.count === 1 ? "" : "s"} to ${result.targetLabel}.`}
             </p>
-            <p className="publish-sheet-result-detail">
+            <p className="publish-sheet-result-detail m-0 font-mono text-2xs text-sheet-soft">
               {result.method} {result.endpoint} · marker {result.marker.slice(0, 12)}
               {result.ledgerCount > 0
                 ? ` · ${result.ledgerCount} degradation${result.ledgerCount === 1 ? "" : "s"} recorded`
                 : ""}
             </p>
             {result.preview ? (
-              <p className="publish-sheet-result-note" role="note">
+              <p className="publish-sheet-result-note m-0 text-xs text-sheet-soft" role="note">
                 Local preview target — the review does not yet carry the GitHub PR coordinates the
                 publish engine binds to, so this dry run targets a placeholder. Persisting the real
                 target, and the explicit consented send, are the remaining #21 steps.
@@ -536,42 +562,57 @@ export function PublishSheet({
           // OWN-BRANCH sign (issue #257 / #107): the branch was pushed and a real pull
           // request was opened with the drafted title/body. The PR URL surfaces here.
           <div
-            className="publish-sheet-result"
+            className="publish-sheet-result flex flex-col gap-1 p-3 rounded-control border border-sheet-line"
             data-testid="publish-result"
             data-outcome="submitted"
             role="status"
           >
-            <p className="publish-sheet-result-line">
+            <p className="publish-sheet-result-line m-0 text-sm font-semibold text-sheet-ink">
               {result.reused
                 ? `A pull request from this branch was already open — reused #${result.number}.`
                 : `Pushed your branch and opened pull request #${result.number}.`}
             </p>
-            <p className="publish-sheet-result-detail">
-              <a href={result.url} target="_blank" rel="noreferrer">
+            <p className="publish-sheet-result-detail m-0 font-mono text-2xs">
+              <a
+                className="text-accent hover:underline"
+                href={result.url}
+                target="_blank"
+                rel="noreferrer"
+              >
                 {result.url}
               </a>
             </p>
           </div>
         ) : variant.mode === "own-branch" ? (
-          <p className="publish-sheet-shell-notice" role="note">
+          <p
+            className="publish-sheet-shell-notice m-0 px-2.5 py-2 rounded-control border border-dashed border-sheet-line text-xs text-sheet-soft"
+            role="note"
+          >
             Hold to sign pushes your branch and opens the pull request on GitHub, as you. This is
             the one action that leaves the machine — nothing is pushed until you complete the hold.
           </p>
         ) : willPost ? (
-          <p className="publish-sheet-shell-notice" data-testid="will-post-notice" role="note">
+          <p
+            className="publish-sheet-shell-notice m-0 px-2.5 py-2 rounded-control border border-dashed border-sheet-line text-xs text-sheet-soft"
+            data-testid="will-post-notice"
+            role="note"
+          >
             Hold to sign posts this review to {postLabel ?? "the pull request"} on GitHub, as you.
             This is the one action that leaves the machine — nothing posts until you complete the
             hold.
           </p>
         ) : (
-          <p className="publish-sheet-shell-notice" role="note">
+          <p
+            className="publish-sheet-shell-notice m-0 px-2.5 py-2 rounded-control border border-dashed border-sheet-line text-xs text-sheet-soft"
+            role="note"
+          >
             Hold to sign runs the publish engine in dry run: it builds the exact GitHub request and
             posts nothing (this review has no pull request to post to).
           </p>
         )}
 
-        <footer className="publish-sheet-foot">
-          <p className="publish-sheet-note">
+        <footer className="publish-sheet-foot flex flex-col gap-3">
+          <p className="publish-sheet-note m-0 text-sm text-sheet-soft">
             All-or-nothing: signing publishes the whole set. To leave something out, go back and
             withdraw it on the draft.
           </p>
@@ -579,19 +620,27 @@ export function PublishSheet({
               only after a below-budget release. Honest, not a gate — the hold is still the
               sole trigger; this just tells the human WHY nothing signed and how to finish. */}
           {releasedEarly ? (
-            <p className="publish-sheet-sign-early" role="status" data-testid="sign-released-early">
+            <p
+              className="publish-sheet-sign-early m-0 text-sm text-sheet-soft"
+              role="status"
+              data-testid="sign-released-early"
+            >
               You let go too soon — hold until the bar fills to sign.
             </p>
           ) : null}
-          <div className="publish-sheet-foot-actions">
+          <div className="publish-sheet-foot-actions flex items-center justify-between gap-3">
             {/* The paper's OTHER action (R40): back to the draft, where editing
                 lives. The paper itself is sign-only. */}
-            <button type="button" className="publish-sheet-back" onClick={() => onBack?.()}>
+            <button
+              type="button"
+              className="publish-sheet-back inline-flex items-center gap-2 h-8 px-4 rounded-control border border-sheet-line text-sm font-semibold text-sheet-soft hover:bg-sheet-line"
+              onClick={() => onBack?.()}
+            >
               <ArrowLeftIcon size={13} /> Back to the draft
             </button>
             <button
               type="button"
-              className={`publish-sheet-sign${armed ? " is-arming" : ""}${holding ? " is-holding" : ""}`}
+              className={`publish-sheet-sign relative overflow-hidden inline-flex items-center gap-2 h-9 px-5 rounded-control text-sm font-bold bg-accent-fill text-accent-ink disabled:bg-transparent disabled:text-sheet-soft disabled:border disabled:border-sheet-line disabled:cursor-not-allowed${armed ? " is-arming" : ""}${holding ? " is-holding" : ""}`}
               data-hold-ms={holdToSignMs}
               // Both pointer AND keyboard now complete a real HOLD (issue #21): a
               // keyboard user presses and holds Enter/Space for the budget, then
@@ -613,14 +662,14 @@ export function PublishSheet({
                   the `.is-holding` class on the button arms the animation, and the layout
                   effect stamps the eligibility epoch on that same commit, so visual 100%
                   and sign eligibility coincide. Reduced motion turns the continuous slide
-                  into a discrete step fill (see styles.css). */}
+                  into a discrete step fill (see index.css). */}
               <span
-                className="publish-sheet-sign-fill"
+                className="publish-sheet-sign-fill absolute left-0 bottom-0 h-[3px] w-0 bg-current pointer-events-none"
                 style={{ animationDuration: `${Math.max(0, holdToSignMs)}ms` }}
                 aria-hidden="true"
                 data-testid="sign-hold-fill"
               />
-              <span className="publish-sheet-sign-label">
+              <span className="publish-sheet-sign-label relative z-[1] inline-flex items-center gap-2">
                 Hold to {variant.signLabel.toLowerCase()}
               </span>
             </button>
@@ -639,21 +688,29 @@ function renderItems(items: DispositionWrite[]) {
   // OCCURRENCE counter rather than the array index.
   const seenByPath = new Map<string, number>();
   return (
-    <ol className="publish-sheet-items" aria-label="Outbound artifact">
+    <ol
+      className="publish-sheet-items list-none m-0 p-0 flex flex-col gap-2 overflow-y-auto"
+      aria-label="Outbound artifact"
+    >
       {items.map((entry) => {
         const occurrence = seenByPath.get(entry.path) ?? 0;
         seenByPath.set(entry.path, occurrence + 1);
         return (
           <li
-            className="publish-sheet-item"
+            className="publish-sheet-item grid grid-cols-[auto_1fr] items-center gap-3 px-3 py-2 rounded-control border border-sheet-line"
             data-path={entry.path}
             key={`${entry.path}#${occurrence}`}
           >
-            <span className="publish-sheet-item-type" data-type={entry.type}>
+            <span
+              className="publish-sheet-item-type text-2xs font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-chip text-sheet-soft border border-sheet-line"
+              data-type={entry.type}
+            >
               {entry.type}
             </span>
-            <span className="publish-sheet-item-path">{entry.path}</span>
-            <span className="publish-sheet-item-body">
+            <span className="publish-sheet-item-path font-mono text-sm text-sheet-ink">
+              {entry.path}
+            </span>
+            <span className="publish-sheet-item-body col-[2/-1] text-sm font-serif text-sheet-soft">
               {entry.body.trim() === "" ? "(no note)" : entry.body}
             </span>
           </li>
@@ -679,22 +736,42 @@ function renderTarget(target: PublishTarget) {
  */
 function renderPrSubmission(submission: PrSubmission) {
   return (
-    <div className="publish-sheet-pr" data-testid="pr-submission">
-      <div className="publish-sheet-pr-head">
-        <span className="publish-sheet-pr-state" data-draft={submission.draft}>
+    <div
+      className="publish-sheet-pr flex flex-col gap-2.5 p-3.5 rounded-surface border border-sheet-line"
+      data-testid="pr-submission"
+    >
+      <div className="publish-sheet-pr-head flex items-baseline gap-2.5">
+        <span
+          className={`publish-sheet-pr-state flex-none text-2xs font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-chip ${
+            submission.draft
+              ? "border border-sheet-line text-sheet-soft"
+              : "bg-accent-fill text-accent-ink"
+          }`}
+          data-draft={submission.draft}
+        >
           {submission.draft ? "Draft" : "Ready"}
         </span>
-        <h3 className="publish-sheet-pr-title">{submission.title}</h3>
+        <h3 className="publish-sheet-pr-title m-0 text-lg font-semibold font-serif text-sheet-ink">
+          {submission.title}
+        </h3>
       </div>
-      <p className="publish-sheet-pr-branches" data-testid="pr-branches">
-        <code className="publish-sheet-pr-base">{submission.base}</code>
+      <p
+        className="publish-sheet-pr-branches inline-flex items-center gap-1.5 m-0 text-sm text-sheet-soft"
+        data-testid="pr-branches"
+      >
+        <code className="publish-sheet-pr-base font-mono text-sheet-ink">{submission.base}</code>
         <ArrowLeftIcon size={11} />
-        <code className="publish-sheet-pr-head-ref">{submission.head}</code>
+        <code className="publish-sheet-pr-head-ref font-mono text-sheet-ink">
+          {submission.head}
+        </code>
       </p>
-      <div className="publish-sheet-pr-body" data-testid="pr-body">
+      <div
+        className="publish-sheet-pr-body m-0 max-h-[180px] overflow-auto p-2.5 rounded-control border border-dashed border-sheet-line text-sm font-serif leading-relaxed text-sheet-ink whitespace-pre-wrap break-words"
+        data-testid="pr-body"
+      >
         {submission.body.trim() === "" ? "(no description)" : submission.body}
       </div>
-      <p className="publish-sheet-pr-note" role="note">
+      <p className="publish-sheet-pr-note m-0 text-xs text-sheet-soft" role="note">
         Signing previews the submission. Creating the pull request is a separate act — nothing is
         pushed from here.
       </p>
@@ -711,7 +788,10 @@ function renderPrSubmission(submission: PrSubmission) {
 function renderReviewComments(comments: readonly ReviewComment[]) {
   const seenByPath = new Map<string, number>();
   return (
-    <ol className="publish-sheet-comments" aria-label="Review comments to post">
+    <ol
+      className="publish-sheet-comments list-none m-0 p-0 flex flex-col gap-2 overflow-y-auto"
+      aria-label="Review comments to post"
+    >
       {comments.map((comment) => {
         const occurrence = seenByPath.get(comment.path) ?? 0;
         seenByPath.set(comment.path, occurrence + 1);
@@ -719,33 +799,39 @@ function renderReviewComments(comments: readonly ReviewComment[]) {
           comment.line !== undefined ? `${comment.path}:${comment.line}` : `${comment.path}`;
         return (
           <li
-            className="publish-sheet-comment"
+            className="publish-sheet-comment grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 rounded-control border border-sheet-line"
             data-path={comment.path}
             data-line={comment.line ?? "file"}
             data-side={comment.side}
             key={`${comment.path}#${occurrence}`}
           >
-            <span className="publish-sheet-item-type" data-type={comment.type}>
+            <span
+              className="publish-sheet-item-type text-2xs font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-chip text-sheet-soft border border-sheet-line"
+              data-type={comment.type}
+            >
               {comment.type}
             </span>
-            <span className="publish-sheet-comment-anchor">
+            <span className="publish-sheet-comment-anchor font-mono text-sm text-sheet-ink">
               {anchorLabel}
               {comment.line === undefined ? (
-                <span className="publish-sheet-comment-file"> (file)</span>
+                <span className="publish-sheet-comment-file text-xs text-sheet-soft"> (file)</span>
               ) : (
-                <span className="publish-sheet-comment-side"> {comment.side}</span>
+                <span className="publish-sheet-comment-side text-xs text-sheet-soft">
+                  {" "}
+                  {comment.side}
+                </span>
               )}
             </span>
             {comment.refined ? null : (
               <span
-                className="publish-sheet-comment-raw"
+                className="publish-sheet-comment-raw justify-self-end text-2xs font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-micro text-sheet-soft border border-sheet-line"
                 data-testid="comment-raw"
                 title="Raw — the refined form lands with #19"
               >
                 raw
               </span>
             )}
-            <span className="publish-sheet-item-body">
+            <span className="publish-sheet-item-body col-[1/-1] text-sm font-serif text-sheet-soft">
               {comment.body.trim() === "" ? "(no note)" : comment.body}
             </span>
           </li>

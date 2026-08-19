@@ -67,6 +67,14 @@ export interface SymbolInspectorProps {
   onNavigate?: (name: string) => void;
 }
 
+// Shared chrome recipes, repeated across the three lookup sections. Each keeps its
+// semantic class as the first token (tests select on those) and its role is sans/chrome.
+const SECTION = "symbol-section mt-3";
+const SECTION_HEAD =
+  "symbol-section-head mb-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint";
+const SECTION_NOTE = "text-2xs text-ink-faint mt-1";
+const SITE_LIST = "list-none m-0 p-0 flex flex-col gap-1.5";
+
 /**
  * The honest confidence chip (#11). `exact` = a single structural declaration;
  * `guess` = a textual reference match, or several ambiguous declarations (with the
@@ -83,17 +91,29 @@ function TierChip({ tier }: { tier?: SymbolTier }) {
       : tier.kind === "exact"
         ? "Resolved to a single exported declaration by structural extraction (not a TypeScript LSP — exported top-level symbols only)."
         : `Structural extraction found ${candidates ?? 0} declarations of this name; the index cannot pick one, so these are candidates.`;
+  // exact = gold wash + gold ink; guess = the fuller gold surface with plain ink
+  // (both live on the one gold family — review-blue and decision-amber are retired).
+  const tone =
+    tier.kind === "exact"
+      ? "border-accent-line bg-accent-soft text-accent"
+      : "border-accent-line bg-accent-surface text-ink";
   return (
     <span
-      className={`symbol-tier symbol-tier--${tier.kind}`}
+      className={`symbol-tier symbol-tier--${tier.kind} ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 align-middle font-mono text-2xs normal-case tracking-normal ${tone}`}
       data-tier={tier.kind}
       data-method={tier.method}
       title={title}
     >
-      <span className="symbol-tier-kind">{tier.kind}</span>
-      <span className="symbol-tier-method">{tier.method}</span>
+      <span className="symbol-tier-kind font-semibold">{tier.kind}</span>
+      <span
+        className={`symbol-tier-method ${tier.kind === "guess" ? "opacity-75" : "text-ink-faint"}`}
+      >
+        {tier.method}
+      </span>
       {candidates !== null ? (
-        <span className="symbol-tier-candidates">{candidates} candidates</span>
+        <span className="symbol-tier-candidates border-l border-current pl-1.5 opacity-80">
+          {candidates} candidates
+        </span>
       ) : null}
     </span>
   );
@@ -111,7 +131,7 @@ function OpenSite({
   const label = `${basename(path)}:${line}`;
   if (!onOpenInEditor) {
     return (
-      <span className="symbol-site-loc" title={`${path}:${line}`}>
+      <span className="symbol-site-loc font-mono text-sm text-ink" title={`${path}:${line}`}>
         {label}
       </span>
     );
@@ -119,7 +139,7 @@ function OpenSite({
   return (
     <button
       type="button"
-      className="symbol-site-open"
+      className="symbol-site-open cursor-pointer border-0 bg-transparent p-0 font-mono text-sm text-accent underline-offset-2 hover:underline"
       title={`Open ${path}:${line} in your editor`}
       onClick={() => onOpenInEditor(path, line)}
     >
@@ -137,9 +157,9 @@ function DefinitionSection({
 }) {
   if (section.status === "unavailable") {
     return (
-      <div className="symbol-section" data-section="definition">
-        <p className="symbol-section-head">Defined in</p>
-        <p className="symbol-unavailable" role="status">
+      <div className={SECTION} data-section="definition">
+        <p className={SECTION_HEAD}>Defined in</p>
+        <p className={`symbol-unavailable ${SECTION_NOTE}`} role="status">
           Couldn't resolve definitions — {section.reason}
         </p>
       </div>
@@ -147,9 +167,9 @@ function DefinitionSection({
   }
   if (section.sites.length === 0) {
     return (
-      <div className="symbol-section" data-section="definition">
-        <p className="symbol-section-head">Defined in</p>
-        <p className="symbol-empty">
+      <div className={SECTION} data-section="definition">
+        <p className={SECTION_HEAD}>Defined in</p>
+        <p className={`symbol-empty ${SECTION_NOTE}`}>
           No exported definition in the reviewed range. Go-to-definition covers exported top-level
           symbols in the committed review range (base..head), not uncommitted local edits.
         </p>
@@ -157,17 +177,23 @@ function DefinitionSection({
     );
   }
   return (
-    <div className="symbol-section" data-section="definition">
-      <p className="symbol-section-head">
+    <div className={SECTION} data-section="definition">
+      <p className={SECTION_HEAD}>
         Defined in
         <TierChip tier={section.tier} />
       </p>
-      <ul className="symbol-sites">
+      <ul className={`symbol-sites ${SITE_LIST}`}>
         {section.sites.map((site) => (
-          <li className="symbol-site" key={`${site.path}:${site.line}`}>
-            <span className="symbol-site-kind">{site.kind}</span>
+          <li className="symbol-site flex items-center gap-2" key={`${site.path}:${site.line}`}>
+            <span className="symbol-site-kind rounded-full border border-accent-line bg-accent-soft px-2 py-0.5 text-2xs text-accent">
+              {site.kind}
+            </span>
             <OpenSite path={site.path} line={site.line} onOpenInEditor={onOpenInEditor} />
-            {site.scope ? <span className="symbol-site-scope">{site.scope}</span> : null}
+            {site.scope ? (
+              <span className="symbol-site-scope font-mono text-2xs text-ink-faint">
+                {site.scope}
+              </span>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -184,9 +210,9 @@ function ReferencesSection({
 }) {
   if (section.status === "unavailable") {
     return (
-      <div className="symbol-section" data-section="references">
-        <p className="symbol-section-head">Used in</p>
-        <p className="symbol-unavailable" role="status">
+      <div className={SECTION} data-section="references">
+        <p className={SECTION_HEAD}>Used in</p>
+        <p className={`symbol-unavailable ${SECTION_NOTE}`} role="status">
           Couldn't resolve references — {section.reason}
         </p>
       </div>
@@ -195,25 +221,26 @@ function ReferencesSection({
   const groups = groupReferencesByFile(section.sites);
   if (groups.length === 0) {
     return (
-      <div className="symbol-section" data-section="references">
-        <p className="symbol-section-head">Used in</p>
-        <p className="symbol-empty">No other occurrences found.</p>
+      <div className={SECTION} data-section="references">
+        <p className={SECTION_HEAD}>Used in</p>
+        <p className={`symbol-empty ${SECTION_NOTE}`}>No other occurrences found.</p>
       </div>
     );
   }
   return (
-    <div className="symbol-section" data-section="references">
-      <p className="symbol-section-head">
-        Used in <span className="symbol-ref-count">{groups.length} files</span>
+    <div className={SECTION} data-section="references">
+      <p className={SECTION_HEAD}>
+        Used in{" "}
+        <span className="symbol-ref-count normal-case tracking-normal">{groups.length} files</span>
         <TierChip tier={section.tier} />
       </p>
-      <ul className="symbol-ref-groups">
+      <ul className="symbol-ref-groups list-none m-0 p-0 flex flex-col gap-1.5">
         {groups.map((group) => (
-          <li className="symbol-ref-group" key={group.path}>
-            <span className="symbol-ref-file" title={group.path}>
+          <li className="symbol-ref-group flex items-baseline gap-2 flex-wrap" key={group.path}>
+            <span className="symbol-ref-file font-mono text-2xs text-ink-faint" title={group.path}>
               {basename(group.path)}
             </span>
-            <span className="symbol-ref-lines">
+            <span className="symbol-ref-lines inline-flex gap-2 flex-wrap">
               {group.lines.map((line) => (
                 <OpenSite
                   key={line}
@@ -227,9 +254,9 @@ function ReferencesSection({
         ))}
       </ul>
       {section.truncated ? (
-        <p className="symbol-truncated">More occurrences exist than shown.</p>
+        <p className={`symbol-truncated ${SECTION_NOTE}`}>More occurrences exist than shown.</p>
       ) : null}
-      <p className="symbol-scope-note">
+      <p className={`symbol-scope-note ${SECTION_NOTE}`}>
         Find-references is name-based and textual — same-named symbols and mentions in comments or
         strings are included.
       </p>
@@ -254,24 +281,33 @@ function NeighborsSection({
 }) {
   if (neighbors.symbols.length === 0) return null;
   return (
-    <div className="symbol-section" data-section="neighbors">
-      <p className="symbol-section-head">
-        In {basename(neighbors.path)} <span className="symbol-ref-count">symbols</span>
+    <div className={SECTION} data-section="neighbors">
+      <p className={SECTION_HEAD}>
+        In {basename(neighbors.path)}{" "}
+        <span className="symbol-ref-count normal-case tracking-normal">symbols</span>
       </p>
-      <ul className="symbol-neighbors">
+      <ul className="symbol-neighbors list-none m-0 p-0 flex flex-wrap gap-2">
         {neighbors.symbols.map((symbol) => {
           const isCurrent = symbol.name === current;
           return (
             <li key={`${symbol.name}:${symbol.line}`}>
               <button
                 type="button"
-                className={`symbol-neighbor${isCurrent ? " symbol-neighbor--current" : ""}`}
+                className={`symbol-neighbor inline-flex items-center gap-1.5 rounded-chip border px-2 py-1 font-mono text-2xs cursor-pointer disabled:cursor-default ${
+                  isCurrent
+                    ? "symbol-neighbor--current border-accent-line bg-accent-soft text-accent"
+                    : "border-line bg-raised text-ink hover:border-accent-line"
+                }${!isCurrent && !onNavigate ? " opacity-70" : ""}`}
                 aria-current={isCurrent ? "true" : undefined}
                 disabled={!onNavigate || isCurrent}
                 title={`Inspect ${symbol.name} (${symbol.kind}) · ${basename(neighbors.path)}:${symbol.line}`}
                 onClick={() => onNavigate?.(symbol.name)}
               >
-                <span className="symbol-neighbor-kind">{symbol.kind}</span>
+                <span
+                  className={`symbol-neighbor-kind text-2xs ${isCurrent ? "text-inherit" : "text-ink-faint"}`}
+                >
+                  {symbol.kind}
+                </span>
                 <span className="symbol-neighbor-name">{symbol.name}</span>
               </button>
             </li>
@@ -293,18 +329,25 @@ function Breadcrumb({
   onCrumb?: (index: number) => void;
 }) {
   return (
-    <nav className="symbol-crumb" aria-label="Inspector history">
+    <nav
+      className="symbol-crumb mt-2.5 flex flex-wrap items-center gap-1"
+      aria-label="Inspector history"
+    >
       {names.map((name, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: a breadcrumb is positional history — the same symbol legitimately recurs at different positions, so the index IS the crumb's identity.
-        <span className="symbol-crumb-item" key={`${name}:${index}`}>
+        <span className="symbol-crumb-item inline-flex items-center gap-1" key={`${name}:${index}`}>
           {index > 0 ? (
-            <span className="symbol-crumb-sep" aria-hidden="true">
+            <span className="symbol-crumb-sep font-mono text-2xs text-ink-faint" aria-hidden="true">
               ›
             </span>
           ) : null}
           <button
             type="button"
-            className={`symbol-crumb-name${index === cursor ? " symbol-crumb-name--current" : ""}`}
+            className={`symbol-crumb-name border-0 bg-transparent px-0.5 py-px font-mono text-2xs ${
+              index === cursor
+                ? "symbol-crumb-name--current text-ink font-semibold cursor-default"
+                : "text-ink-faint hover:text-ink hover:underline hover:underline-offset-2 cursor-pointer"
+            }`}
             aria-current={index === cursor ? "true" : undefined}
             disabled={!onCrumb || index === cursor}
             onClick={() => onCrumb?.(index)}
@@ -345,17 +388,25 @@ export function SymbolInspector({
   const showCrumbs = pinned && breadcrumb !== undefined && breadcrumb.length > 0;
   return (
     <aside
-      className={`symbol-inspector${pinned ? " symbol-inspector--pinned" : ""}`}
+      className={`symbol-inspector rounded-surface border border-line bg-surface p-4 font-sans text-sm text-ink ${
+        pinned ? "symbol-inspector--pinned mt-0" : "mt-2.5"
+      }`}
       aria-label={`Symbol: ${name}`}
       data-pinned={pinned ? "true" : undefined}
     >
-      <header className="symbol-inspector-head">
-        <span className="symbol-inspector-eyebrow">{pinned ? "INSPECTOR · PINNED" : "SYMBOL"}</span>
-        <span className="symbol-inspector-name">{name}</span>
+      <header className="symbol-inspector-head flex items-baseline gap-2">
+        <span className="symbol-inspector-eyebrow text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+          {pinned ? "INSPECTOR · PINNED" : "SYMBOL"}
+        </span>
+        <span className="symbol-inspector-name font-mono text-base text-ink">{name}</span>
         {onTogglePin ? (
           <button
             type="button"
-            className={`symbol-inspector-pin${pinned ? " symbol-inspector-pin--on" : ""}`}
+            className={`symbol-inspector-pin rounded-full border px-2.5 py-0.5 font-sans text-xs cursor-pointer ${
+              pinned
+                ? "symbol-inspector-pin--on border-accent-line bg-accent-soft text-accent"
+                : "border-line-strong bg-transparent text-ink-faint hover:text-ink"
+            }`}
             aria-pressed={pinned}
             title={pinned ? "Unpin from the rail" : "Pin to the rail"}
             onClick={onTogglePin}
@@ -365,7 +416,7 @@ export function SymbolInspector({
         ) : null}
         <button
           type="button"
-          className="symbol-inspector-close"
+          className="symbol-inspector-close ml-auto cursor-pointer border-0 bg-transparent text-lg leading-none text-ink-faint hover:text-ink"
           aria-label="Close symbol inspector"
           onClick={onClose}
         >
@@ -373,10 +424,10 @@ export function SymbolInspector({
         </button>
       </header>
       {pinned ? (
-        <div className="symbol-nav">
+        <div className="symbol-nav mt-2.5 flex gap-2">
           <button
             type="button"
-            className="symbol-nav-btn"
+            className="symbol-nav-btn cursor-pointer rounded-control border border-line-strong bg-transparent px-3 py-1.5 font-sans text-xs text-ink hover:border-accent-line disabled:cursor-default disabled:text-ink-faint disabled:opacity-50"
             aria-label="Back"
             disabled={!onBack || !canBack}
             onClick={onBack}
@@ -385,7 +436,7 @@ export function SymbolInspector({
           </button>
           <button
             type="button"
-            className="symbol-nav-btn"
+            className="symbol-nav-btn cursor-pointer rounded-control border border-line-strong bg-transparent px-3 py-1.5 font-sans text-xs text-ink hover:border-accent-line disabled:cursor-default disabled:text-ink-faint disabled:opacity-50"
             aria-label="Forward"
             disabled={!onForward || !canForward}
             onClick={onForward}
@@ -396,11 +447,11 @@ export function SymbolInspector({
       ) : null}
       {showCrumbs ? <Breadcrumb names={breadcrumb} cursor={cursor} onCrumb={onCrumb} /> : null}
       {pending ? (
-        <p className="symbol-pending" role="status">
+        <p className={`symbol-pending ${SECTION_NOTE}`} role="status">
           Looking up {name}…
         </p>
       ) : error ? (
-        <p className="symbol-error" role="alert">
+        <p className="symbol-error mt-1 text-2xs text-danger" role="alert">
           {error}
         </p>
       ) : inspection ? (
@@ -419,7 +470,9 @@ export function SymbolInspector({
         </>
       ) : null}
       {pinned ? (
-        <p className="symbol-pinned-note">navigation stays here · the diff never moves</p>
+        <p className="symbol-pinned-note mt-3 font-mono text-2xs text-ink-faint">
+          navigation stays here · the diff never moves
+        </p>
       ) : null}
     </aside>
   );

@@ -68,9 +68,12 @@ test("renders every review lens and the structured OpenSpec viewer", async () =>
       .click();
     await expect(page.locator("pre.diff")).toContainText("step + 1");
 
-    // Dispose: the v4.0 nav rail replaced the drawn back button — Home is the
-    // front door.
-    await page.getByRole("button", { name: "Home", exact: true }).click();
+    // Dispose: the rail is gone (2026-08-19 overhaul) — the breadcrumb root
+    // ascends to Projects, the front door.
+    await page
+      .getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("button", { name: /Projects/ })
+      .click();
     await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible();
   } finally {
     await application.close();

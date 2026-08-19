@@ -505,13 +505,12 @@ describe("RennetApp — the handoff compose→preview→run loop (issue #72)", (
       "1",
     );
 
-    // Switch to review B through the app's own capture path: go Home → the front door,
-    // ⌘K → "Review directly" → direct entry → "Choose a repository", which captures a
+    // Switch to review B through the app's own capture path: ascend to Projects via the
+    // breadcrumb root (the rail is gone; the breadcrumb is the way home), then ⌘K →
+    // "Review directly" → direct entry → "Choose a repository", which captures a
     // DIFFERENT review (review B, a new id) via review.capture.
-    const home = [...container.querySelectorAll<HTMLButtonElement>(".nav-rail-button")].find(
-      (button) => button.textContent?.includes("Home"),
-    );
-    fireEvent.click(home as HTMLButtonElement);
+    const crumbRoot = container.querySelector(".nav-breadcrumb .nav-breadcrumb-segment");
+    fireEvent.click(crumbRoot as HTMLButtonElement);
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });

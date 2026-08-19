@@ -1,6 +1,7 @@
 ---
-import "@fontsource-variable/instrument-sans/wdth.css";
-import "@fontsource-variable/source-sans-3/wght.css";
+import "@fontsource-variable/fraunces/wght.css";
+import "@fontsource-variable/dm-sans/wght.css";
+import "@fontsource-variable/source-serif-4/wght.css";
 import logoWhite from "../../../../brand/exports/logo/svg/lockup-horizontal-white.svg?url";
 import markWhite from "../../../../brand/exports/logo/svg/mark-small-white.svg?url";
 import CategoryStatement from "../components/CategoryStatement.astro";
@@ -39,7 +40,7 @@ const lenses = [
       name="description"
       content="Rennet is a free, local-first macOS review harness for understanding, questioning, and refining large AI-generated code changes."
     />
-    <meta id="theme-color" name="theme-color" content="#f4f2ed" />
+    <meta id="theme-color" name="theme-color" content="#fbfaf7" />
     <meta property="og:title" content="Rennet — Make code digestible" />
     <meta
       property="og:description"
@@ -61,7 +62,7 @@ const lenses = [
         document.documentElement.dataset.scheme = scheme;
         document.querySelector("#theme-color")?.setAttribute(
           "content",
-          scheme === "dark" ? "#0e1116" : "#f4f2ed",
+          scheme === "dark" ? "#0e0d0c" : "#fbfaf7",
         );
       })();
     </script>
@@ -117,7 +118,7 @@ const lenses = [
         <ol class="digest-stages">
           <li class="digest-stage raw-stage">
             <div class="stage-label"><span>Raw change</span><strong>1,872 lines</strong></div>
-            <div class="diff-mass" aria-hidden="true">
+            <div class="diff-mass" data-scheme="dark" aria-hidden="true">
               <div class="diff-head"><span>atlas · feat/rate-limiting</span><span>+1,291 −581</span></div>
               <div class="diff-body">
                 {diffLines.map(([sign, width, tone]) => (
@@ -220,7 +221,7 @@ const lenses = [
             failure path is intentional. The conversation stays attached to the review and its code.
           </p>
         </div>
-        <div class="conversation-proof" aria-label="Illustrative conversation with a code change">
+        <div class="conversation-proof" data-scheme="dark" aria-label="Illustrative conversation with a code change">
           <div class="code-question">
             <div class="code-bar"><span>src/rate-limit/store.ts</span><span>lines 84–101</span></div>
             <code><span class="minus">− return store.get(key)</span><span class="plus">+ return store.get(key).catch(() =&gt; fallback)</span></code>
@@ -232,7 +233,7 @@ const lenses = [
         </div>
       </section>
 
-      <section class="harnesses section shell">
+      <section class="harnesses section shell" data-scheme="dark">
         <div class="section-heading harness-heading">
           <h2>Your Claude Code. Your Codex. Already connected.</h2>
           <p>
@@ -290,7 +291,7 @@ const lenses = [
           <h2>The code never disappears.</h2>
           <p>Move from overview to evidence without losing your place. Rennet changes the reading order, not the need to read.</p>
         </div>
-        <figure class="product-frame">
+        <figure class="product-frame" data-scheme="light">
           <div class="window-bar"><span class="traffic"><i></i><i></i><i></i></span><span>atlas · feat/rate-limiting</span><span>snapshot 8</span></div>
           <img src="/product/review-heart.png" alt="Rennet review surface with ordered changes, code, and an attached conversation" width="1536" height="1024" loading="lazy" />
           <figcaption>Current product wireframe</figcaption>
@@ -325,7 +326,7 @@ const lenses = [
         </div>
       </section>
 
-      <section class="closing">
+      <section class="closing" data-scheme="dark">
         <div class="shell closing-inner">
           <img class="closing-mark-light" src="/brand/rennet-mark-small.svg" alt="" width="72" height="54" />
           <img class="closing-mark-dark" src={markWhite} alt="" width="72" height="54" />
@@ -355,7 +356,7 @@ const lenses = [
         toggle?.setAttribute("aria-pressed", String(dark));
         document.querySelector("#theme-color")?.setAttribute(
           "content",
-          dark ? "#0e1116" : "#f4f2ed",
+          dark ? "#0e0d0c" : "#fbfaf7",
         );
       };
       updateToggle();

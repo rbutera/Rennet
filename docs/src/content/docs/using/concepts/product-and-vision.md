@@ -79,7 +79,7 @@ may improve it into the clearest story: high-level intent first, then the
 foundations needed to understand the implementation.
 
 Risk is an overlay, not the table of contents. A high-blast-radius change can be
-painted amber without forcing every review to begin at the scariest line.
+painted gold without forcing every review to begin at the scariest line.
 
 ## The review lenses
 

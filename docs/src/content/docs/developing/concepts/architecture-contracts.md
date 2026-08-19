@@ -311,7 +311,7 @@ The same staged dispositions have two destinations:
 flowchart LR
   disposition["Disposition<br/>comment · request-change · question · approve"]
   refine["Refined form<br/>investigated and editable"]
-  draft["Collation draft<br/>staged glass"]
+  draft["Collation draft<br/>staged draft surface"]
   preview["Preview<br/>frozen outbound artifact"]
   review["Someone else's PR<br/>one GitHub review"]
   handoff["Own branch<br/>coding-agent bundle"]

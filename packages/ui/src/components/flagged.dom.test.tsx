@@ -174,7 +174,7 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(getByText(/Couldn't check/)).toBeTruthy();
     expect(getByText(/harness timed out/)).toBeTruthy();
     expect(container.innerHTML).toBe(
-      '<div class="flagged-canvas"><div class="flagged-failed" role="status"><p class="flagged-failed-head">Couldn\'t check</p><p class="flagged-failed-body">The automated review runner did not complete, so this is not an all-clear.</p><p class="flagged-failed-reason">harness timed out</p></div></div>',
+      '<div class="flagged-canvas flex flex-col"><div class="flagged-failed rounded-surface border border-accent-line bg-accent-surface p-4" role="status"><p class="flagged-failed-head text-base font-semibold text-ink">Couldn\'t check</p><p class="flagged-failed-body mt-1.5 text-ink-soft">The automated review runner did not complete, so this is not an all-clear.</p><p class="flagged-failed-reason mt-1.5 font-mono text-xs text-ink-faint">harness timed out</p></div></div>',
     );
   });
 

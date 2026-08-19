@@ -1,11 +1,12 @@
 {
   "name": "@rennet/ui",
-  "version": "0.3.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
     "@rennet/protocol": "workspace:*",
+    "@rennet/theme": "workspace:*",
     "@rennet/types": "workspace:*",
     "react": "19.2.8",
     "react-dom": "19.2.8",

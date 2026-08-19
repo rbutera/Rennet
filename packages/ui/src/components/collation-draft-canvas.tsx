@@ -31,7 +31,7 @@ import { ArrowLeftIcon, ArrowRightIcon } from "./icons";
 // paper: it themes for free with the two schemes and needs no material tokens of
 // its own. Signing is the phase transition that freezes it into the paper.
 //
-// It reuses the real glass tokens (Design Doctrine; tokens.css) via the shared
+// It reuses the real glass tokens (Design Doctrine; @rennet/theme) via the shared
 // `.rennet-glass` / `.canvas-app` token scope — no parallel palette. Editing lives
 // here (reword / retype / reorder / merge / split / withdraw); the paper's only
 // actions are sign + back.
@@ -168,26 +168,35 @@ export function CollationDraftCanvas({
 
   return (
     <div
-      className="collation-backdrop"
+      className="collation-backdrop fixed inset-0 z-[38] grid place-items-center bg-black/60 p-8"
       role="dialog"
       aria-modal="true"
       aria-label="Collation draft"
     >
-      <section className="collation-canvas" data-mode={variant.mode}>
-        <header className="collation-head">
+      <section
+        className="collation-canvas flex max-h-[calc(100vh-64px)] w-[min(760px,100%)] flex-col gap-4 rounded-window border border-line bg-overlay p-6 font-sans text-ink shadow-overlay"
+        data-mode={variant.mode}
+      >
+        <header className="collation-head flex items-start justify-between gap-4">
           <div>
-            <p className="collation-eyebrow">THE COLLATION DRAFT</p>
-            <h2 className="collation-title">{variant.title}</h2>
-            <p className="collation-framing">{EDIT_FRAMING[variant.mode]}</p>
+            <p className="collation-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+              THE COLLATION DRAFT
+            </p>
+            <h2 className="collation-title mt-1 font-display text-xl font-semibold text-ink">
+              {variant.title}
+            </h2>
+            <p className="collation-framing mt-1.5 max-w-[46ch] text-sm leading-snug text-ink-soft">
+              {EDIT_FRAMING[variant.mode]}
+            </p>
           </div>
-          <div className="collation-head-actions">
-            <span className="collation-count">
-              <strong>{draft.length}</strong> collated
+          <div className="collation-head-actions flex flex-col items-end gap-2">
+            <span className="collation-count text-sm text-ink-soft">
+              <strong className="text-xl font-semibold text-accent">{draft.length}</strong> collated
             </span>
             {onRefineAll ? (
               <button
                 type="button"
-                className="collation-refine-all"
+                className="collation-refine-all h-8 rounded-control bg-accent-fill px-3 text-sm font-semibold text-accent-ink disabled:opacity-40"
                 onClick={() => onRefineAll()}
                 disabled={!anyRefinable}
                 aria-label="Refine all notes"
@@ -198,7 +207,7 @@ export function CollationDraftCanvas({
             ) : null}
             <button
               type="button"
-              className="collation-back"
+              className="collation-back inline-flex h-8 items-center gap-1.5 rounded-control border border-line px-3 text-sm text-ink-soft hover:bg-raised"
               onClick={() => onBack?.()}
               aria-label="Back to the lenses"
             >
@@ -211,8 +220,11 @@ export function CollationDraftCanvas({
             draft; the orchestrator PROPOSES on L3 and you accept into L2 — it never
             writes the draft itself (the safety line holds). Wiring the real
             orchestrator is a follow-up; the affordance is present and honest. */}
-        <div className="collation-ask" role="note">
-          <span className="collation-ask-glyph" aria-hidden="true">
+        <div
+          className="collation-ask flex items-center gap-2 rounded-control border border-accent-line bg-accent-surface px-3 py-2 text-sm text-ink-soft"
+          role="note"
+        >
+          <span className="collation-ask-glyph text-sm text-accent" aria-hidden="true">
             ◇
           </span>
           <span>
@@ -226,13 +238,18 @@ export function CollationDraftCanvas({
             fields are editable and the human's edit is final. This is a DRAFT into a
             preview: nothing is pushed here (creating the PR is the gated #21 act). */}
         {variant.mode === "own-branch" && prDraft !== undefined ? (
-          <div className="collation-pr-draft" data-testid="pr-draft-composer">
-            <div className="collation-pr-draft-head">
-              <p className="collation-pr-draft-label">PR submission</p>
+          <div
+            className="collation-pr-draft flex flex-col gap-2 rounded-control border border-accent-line bg-accent-surface p-3"
+            data-testid="pr-draft-composer"
+          >
+            <div className="collation-pr-draft-head flex items-center justify-between gap-2">
+              <p className="collation-pr-draft-label m-0 text-2xs font-semibold uppercase tracking-wide text-ink-soft">
+                PR submission
+              </p>
               {onDraftPrBody ? (
                 <button
                   type="button"
-                  className="collation-pr-draft-btn"
+                  className="collation-pr-draft-btn h-8 rounded-control border border-accent-line px-3 text-sm text-accent hover:bg-accent-soft disabled:opacity-60"
                   onClick={() => onDraftPrBody()}
                   disabled={prDraftState?.status === "drafting"}
                   aria-label="Draft the PR title and description with AI"
@@ -242,21 +259,23 @@ export function CollationDraftCanvas({
                 </button>
               ) : null}
             </div>
-            <label className="collation-pr-draft-field">
-              <span className="collation-pr-draft-field-label">Title</span>
+            <label className="collation-pr-draft-field flex flex-col gap-1">
+              <span className="collation-pr-draft-field-label text-xs text-ink-faint">Title</span>
               <input
                 type="text"
-                className="collation-pr-draft-title"
+                className="collation-pr-draft-title h-8 w-full rounded-control border border-line bg-surface px-2.5 text-base text-ink"
                 data-testid="pr-draft-title"
                 value={prDraft.title}
                 placeholder="A concise PR title"
                 onChange={(event) => onPrDraftChange?.({ ...prDraft, title: event.target.value })}
               />
             </label>
-            <label className="collation-pr-draft-field">
-              <span className="collation-pr-draft-field-label">Description</span>
+            <label className="collation-pr-draft-field flex flex-col gap-1">
+              <span className="collation-pr-draft-field-label text-xs text-ink-faint">
+                Description
+              </span>
               <textarea
-                className="collation-pr-draft-body"
+                className="collation-pr-draft-body w-full resize-y rounded-control border border-line bg-surface px-2.5 py-2 text-base leading-relaxed text-ink"
                 data-testid="pr-draft-body"
                 value={prDraft.body}
                 rows={6}
@@ -265,13 +284,17 @@ export function CollationDraftCanvas({
               />
             </label>
             {prDraftState?.status === "drafted" ? (
-              <p className="collation-pr-draft-status" data-testid="pr-draft-status" role="note">
+              <p
+                className="collation-pr-draft-status m-0 text-sm text-ink-soft"
+                data-testid="pr-draft-status"
+                role="note"
+              >
                 Drafted with {prDraftState.model}. Edit freely — your version is what the PR would
                 use.
               </p>
             ) : prDraftState?.status === "unavailable" ? (
               <p
-                className="collation-pr-draft-status"
+                className="collation-pr-draft-status m-0 text-sm text-ink-soft"
                 data-testid="pr-draft-status"
                 data-status="unavailable"
                 role="note"
@@ -281,7 +304,7 @@ export function CollationDraftCanvas({
               </p>
             ) : prDraftState?.status === "failed" ? (
               <p
-                className="collation-pr-draft-status"
+                className="collation-pr-draft-status m-0 text-sm text-danger"
                 data-testid="pr-draft-status"
                 data-status="failed"
                 role="alert"
@@ -294,12 +317,15 @@ export function CollationDraftCanvas({
         ) : null}
 
         {empty ? (
-          <p className="collation-empty">
+          <p className="collation-empty m-0 px-2 py-7 text-center text-base leading-relaxed text-ink-faint">
             The draft is empty. Dispose something on a lens and it collates here — still yours,
             until you sign.
           </p>
         ) : (
-          <ol className="collation-items" aria-label="Collated dispositions">
+          <ol
+            className="collation-items m-0 flex list-none flex-col gap-3 overflow-y-auto p-0"
+            aria-label="Collated dispositions"
+          >
             {draft.map((item, index) => {
               const lane = itemLane(item);
               const stageable = isStageable(item.type);
@@ -310,22 +336,28 @@ export function CollationDraftCanvas({
               const refinable = isRefinable(item);
               return (
                 <li
-                  className="collation-item"
+                  className="collation-item flex flex-col gap-2 rounded-surface border border-line border-l-2 bg-raised p-4 data-[lane=blue]:border-l-accent-line data-[lane=ink]:border-l-line-strong"
                   data-item-id={item.id}
                   data-path={item.path}
                   data-type={item.type}
                   data-lane={lane}
                   key={item.id}
                 >
-                  <div className="collation-item-top">
-                    <span className="collation-item-ordinal" aria-hidden="true">
+                  <div className="collation-item-top flex items-center gap-2.5">
+                    <span
+                      className="collation-item-ordinal grid size-[22px] shrink-0 place-items-center rounded-chip bg-accent-fill text-xs font-bold text-accent-ink"
+                      aria-hidden="true"
+                    >
                       {index + 1}
                     </span>
-                    <span className="collation-item-path" title={item.path}>
+                    <span
+                      className="collation-item-path min-w-0 flex-1 truncate font-mono text-sm text-ink"
+                      title={item.path}
+                    >
                       {item.path}
                     </span>
                     <select
-                      className="collation-item-type"
+                      className="collation-item-type h-8 rounded-control border border-line bg-surface px-2 text-sm text-ink"
                       aria-label={`Type for item ${index + 1}`}
                       value={item.type}
                       onChange={(event) =>
@@ -341,7 +373,11 @@ export function CollationDraftCanvas({
                     {/* The material law, visible per item (issue #109): ink travels
                         to the PR; blue stays on this machine. */}
                     <span
-                      className="collation-item-lane"
+                      className={`collation-item-lane shrink-0 rounded-chip border px-2 py-0.5 text-2xs font-bold uppercase tracking-wide ${
+                        lane === "ink"
+                          ? "border-line-strong bg-raised text-ink"
+                          : "border-accent-line bg-accent-soft text-accent"
+                      }`}
                       data-lane={lane}
                       title={
                         lane === "ink"
@@ -359,10 +395,10 @@ export function CollationDraftCanvas({
                       publishes and request-change always does, so neither shows a
                       toggle: their lane is not the reviewer's to move. */}
                   {stageable ? (
-                    <label className="collation-item-stage">
+                    <label className="collation-item-stage mt-1.5 flex items-center gap-2 text-sm text-ink-soft">
                       <input
                         type="checkbox"
-                        className="collation-item-stage-box"
+                        className="collation-item-stage-box shrink-0 accent-accent-fill"
                         aria-label={`Stage item ${index + 1} to the pull request`}
                         checked={lane === "ink"}
                         onChange={(event) =>
@@ -382,7 +418,7 @@ export function CollationDraftCanvas({
                       hijacks the field you type in, and editing it invalidates a
                       stale refinement (rewordItem clears `refined`, #236). */}
                   <textarea
-                    className="collation-item-body"
+                    className="collation-item-body min-h-[52px] w-full resize-y rounded-control border border-line bg-code px-2.5 py-2 text-base leading-relaxed text-ink"
                     aria-label={`Body for item ${index + 1}`}
                     value={item.raw}
                     placeholder="Rough note — lazy is fine; refine it into a clean comment."
@@ -395,7 +431,7 @@ export function CollationDraftCanvas({
                       posts — the loop failing is worse prose, never a silent rewrite
                       and never a spinner masking absence. */}
                   <div
-                    className="collation-item-refine"
+                    className="collation-item-refine text-xs"
                     data-refine-state={refineState?.status ?? (refined ? "refined" : "idle")}
                   >
                     {/* Terse chrome labels (§4); the model/system reason and the
@@ -403,13 +439,20 @@ export function CollationDraftCanvas({
                         stays visible, so "your original posts" holds structurally
                         without a chrome sentence saying so. */}
                     {refined ? (
-                      <div className="collation-refined" role="note">
-                        <p className="collation-refined-label">Refined</p>
-                        <p className="collation-refined-body">{item.refined}</p>
+                      <div
+                        className="collation-refined rounded-control border border-green-line bg-green-soft px-2.5 py-2"
+                        role="note"
+                      >
+                        <p className="collation-refined-label m-0 text-2xs font-bold uppercase tracking-wide text-ink">
+                          Refined
+                        </p>
+                        <p className="collation-refined-body mt-1 text-base leading-relaxed text-ink">
+                          {item.refined}
+                        </p>
                         {onKeepRaw ? (
                           <button
                             type="button"
-                            className="collation-keep-raw"
+                            className="collation-keep-raw mt-1.5 cursor-pointer bg-transparent p-0 text-xs text-ink-soft underline"
                             aria-label={`Keep original note for item ${index + 1}`}
                             onClick={() => onKeepRaw(item)}
                           >
@@ -418,17 +461,27 @@ export function CollationDraftCanvas({
                         ) : null}
                       </div>
                     ) : refineState?.status === "refining" ? (
-                      <p className="collation-refine-pending" aria-live="polite">
+                      <p
+                        className="collation-refine-pending m-0 italic text-accent"
+                        aria-live="polite"
+                      >
                         Refining…
                       </p>
                     ) : refineState?.status === "failed" ? (
-                      <p className="collation-refine-failed" role="alert">
-                        <span className="collation-refine-chrome">Refine failed</span>
-                        <span className="collation-refine-reason">{refineState.reason}</span>
+                      <p
+                        className="collation-refine-failed m-0 flex flex-wrap items-baseline gap-1.5"
+                        role="alert"
+                      >
+                        <span className="collation-refine-chrome font-semibold text-danger">
+                          Refine failed
+                        </span>
+                        <span className="collation-refine-reason text-ink-faint">
+                          {refineState.reason}
+                        </span>
                         {onRefine ? (
                           <button
                             type="button"
-                            className="collation-refine-retry"
+                            className="collation-refine-retry ml-2 rounded-control border border-accent-line px-2 py-0.5 text-xs font-semibold text-accent hover:bg-accent-soft"
                             aria-label={`Retry refining item ${index + 1}`}
                             onClick={() => onRefine(item)}
                           >
@@ -437,18 +490,25 @@ export function CollationDraftCanvas({
                         ) : null}
                       </p>
                     ) : refineState?.status === "unavailable" ? (
-                      <p className="collation-refine-unavailable" role="note">
-                        <span className="collation-refine-chrome">Refine unavailable</span>
-                        <span className="collation-refine-reason">{refineState.reason}</span>
+                      <p
+                        className="collation-refine-unavailable m-0 flex flex-wrap items-baseline gap-1.5"
+                        role="note"
+                      >
+                        <span className="collation-refine-chrome font-semibold text-ink-soft">
+                          Refine unavailable
+                        </span>
+                        <span className="collation-refine-reason text-ink-faint">
+                          {refineState.reason}
+                        </span>
                       </p>
                     ) : refineState?.status === "no-change" ? (
-                      <p className="collation-refine-nochange" role="note">
+                      <p className="collation-refine-nochange m-0 text-green" role="note">
                         Already clear
                       </p>
                     ) : onRefine && refinable ? (
                       <button
                         type="button"
-                        className="collation-refine"
+                        className="collation-refine rounded-control border border-accent-line bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent-surface"
                         aria-label={`Refine item ${index + 1}`}
                         onClick={() => onRefine(item)}
                       >
@@ -457,10 +517,10 @@ export function CollationDraftCanvas({
                     ) : null}
                   </div>
 
-                  <div className="collation-item-actions">
+                  <div className="collation-item-actions flex flex-wrap gap-1.5">
                     <button
                       type="button"
-                      className="collation-act collation-move-up"
+                      className="collation-act collation-move-up rounded-control border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft hover:bg-raised hover:text-ink disabled:opacity-40"
                       aria-label={`Move item ${index + 1} up`}
                       disabled={index === 0}
                       onClick={() => onChange(moveItem(draft, item.id, "up"))}
@@ -469,7 +529,7 @@ export function CollationDraftCanvas({
                     </button>
                     <button
                       type="button"
-                      className="collation-act collation-move-down"
+                      className="collation-act collation-move-down rounded-control border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft hover:bg-raised hover:text-ink disabled:opacity-40"
                       aria-label={`Move item ${index + 1} down`}
                       disabled={index === draft.length - 1}
                       onClick={() => onChange(moveItem(draft, item.id, "down"))}
@@ -478,7 +538,7 @@ export function CollationDraftCanvas({
                     </button>
                     <button
                       type="button"
-                      className="collation-act collation-merge"
+                      className="collation-act collation-merge rounded-control border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft hover:bg-raised hover:text-ink disabled:opacity-40"
                       aria-label={`Merge item ${index + 1} with the next`}
                       disabled={index === draft.length - 1}
                       onClick={() => {
@@ -490,7 +550,7 @@ export function CollationDraftCanvas({
                     </button>
                     <button
                       type="button"
-                      className="collation-act collation-split"
+                      className="collation-act collation-split rounded-control border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft hover:bg-raised hover:text-ink disabled:opacity-40"
                       aria-label={`Split item ${index + 1} into two`}
                       onClick={() => onChange(splitItem(draft, item.id))}
                     >
@@ -498,7 +558,7 @@ export function CollationDraftCanvas({
                     </button>
                     <button
                       type="button"
-                      className="collation-act collation-withdraw"
+                      className="collation-act collation-withdraw ml-auto rounded-control border border-line px-2.5 py-1 text-xs font-semibold text-danger hover:bg-danger-soft disabled:opacity-40"
                       aria-label={`Withdraw item ${index + 1}`}
                       onClick={() => onChange(withdrawItem(draft, item.id))}
                     >
@@ -515,7 +575,10 @@ export function CollationDraftCanvas({
             Doctrine §3.2): sign still blocks on incomplete ingestion. This slice
             runs on fixtures, so it states the guarantee honestly rather than
             fabricating a coverage number. */}
-        <p className="collation-residue" role="note">
+        <p
+          className="collation-residue m-0 rounded-control border border-dashed border-line-strong px-3 py-2 text-xs text-ink-soft"
+          role="note"
+        >
           Everything you've staged is here. Sign still blocks on anything not yet ingested — the
           whole account, or nothing.
         </p>
@@ -524,35 +587,44 @@ export function CollationDraftCanvas({
             only. Approve never appears; request-changes drives the type; a staged
             comment/question rolls up to a plain comments review; else nothing
             publishes. The lane counts state what travels vs what stays local. */}
-        <div className="collation-rollup" role="note" data-rollup={rollup ?? "none"}>
-          <p className="collation-rollup-line">
-            <span className="collation-rollup-label">Posts as</span>
-            <span className="collation-rollup-verdict" data-verdict={rollup ?? "none"}>
+        <div
+          className="collation-rollup my-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 rounded-surface border border-line bg-raised px-3.5 py-2.5"
+          role="note"
+          data-rollup={rollup ?? "none"}
+        >
+          <p className="collation-rollup-line m-0 flex items-baseline gap-2">
+            <span className="collation-rollup-label text-2xs font-bold uppercase tracking-wide text-ink-faint">
+              Posts as
+            </span>
+            <span
+              className="collation-rollup-verdict text-sm font-bold text-ink data-[verdict=none]:text-ink-soft"
+              data-verdict={rollup ?? "none"}
+            >
               {publishReviewLabel(rollup)}
             </span>
           </p>
-          <p className="collation-rollup-lanes">
-            <span className="collation-lane-count" data-lane="ink">
+          <p className="collation-rollup-lanes m-0 flex items-baseline gap-2 text-sm text-ink-soft">
+            <span className="collation-lane-count text-ink" data-lane="ink">
               <strong>{lanes.ink}</strong> travel to the PR
             </span>
-            <span className="collation-lane-sep" aria-hidden="true">
+            <span className="collation-lane-sep text-ink-faint" aria-hidden="true">
               ·
             </span>
-            <span className="collation-lane-count" data-lane="blue">
+            <span className="collation-lane-count text-ink" data-lane="blue">
               <strong>{lanes.blue}</strong> stay on this machine
             </span>
           </p>
         </div>
 
-        <footer className="collation-foot">
-          <p className="collation-foot-note">
+        <footer className="collation-foot flex items-center justify-between gap-4 border-t border-line pt-1">
+          <p className="collation-foot-note m-0 text-sm text-ink-soft">
             {items.length === 0
               ? "Nothing collated yet."
               : `${items.length} disposition${items.length === 1 ? "" : "s"}, still glass. Sign to freeze into paper.`}
           </p>
           <button
             type="button"
-            className="collation-sign"
+            className="collation-sign inline-flex h-10 items-center gap-2 rounded-control bg-accent-fill px-5 text-base font-semibold text-accent-ink disabled:opacity-45"
             // Disabled while a PR-body draft is in flight (#74 HIGH-2): opening the
             // paper mid-draft is the entry to the swap-during-hold hole — the model
             // result would land while the paper is open and recompose its payload.

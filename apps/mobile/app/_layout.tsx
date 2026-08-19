@@ -3,6 +3,13 @@
 // is a stack scoped by daemon id (the survey's shape: many daemons in one nav tree), with no
 // persistent tab bar — overlay/stack navigation, per the mobile plan.
 
+import {
+  DMSans_400Regular,
+  DMSans_500Medium,
+  DMSans_600SemiBold,
+  useFonts,
+} from "@expo-google-fonts/dm-sans";
+import { Fraunces_600SemiBold } from "@expo-google-fonts/fraunces";
 import { Stack } from "expo-router";
 import type { ReactNode } from "react";
 import { RuntimeProvider } from "../src/runtime/context";
@@ -17,6 +24,17 @@ function AppRouting(): null {
 }
 
 export default function RootLayout(): ReactNode {
+  // Interface = DM Sans, display titles = Fraunces (see src/theme/tokens.ts `fontFamily`).
+  // RN needs each weight loaded as its own face; gate the tree until they're ready so text
+  // never flashes in the system font first. A LOAD FAILURE releases the gate instead of
+  // blanking the app forever — the system font is the honest fallback (review finding).
+  const [fontsLoaded, fontError] = useFonts({
+    DMSans_400Regular,
+    DMSans_500Medium,
+    DMSans_600SemiBold,
+    Fraunces_600SemiBold,
+  });
+  if (!fontsLoaded && !fontError) return null;
   return (
     <RuntimeProvider>
       <AppRouting />

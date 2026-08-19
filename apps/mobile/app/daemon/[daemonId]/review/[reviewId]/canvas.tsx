@@ -135,7 +135,7 @@ export default function Canvas(): ReactNode {
         windowSize={7}
         removeClippedSubviews
         ListEmptyComponent={
-          <Text style={{ color: loaded.status === "error" ? t.amber : t.muted }}>
+          <Text style={{ color: loaded.status === "error" ? t.danger : t.muted }}>
             {loaded.status === "unreachable"
               ? "Daemon unreachable — showing the last replica."
               : loaded.status === "error"

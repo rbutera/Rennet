@@ -19,7 +19,7 @@ import {
 import { groupReviews, type ReviewSummary } from "../src/lib/review-list";
 import { useRuntime } from "../src/runtime/context";
 import { useAggregatedReviews } from "../src/runtime/reviews";
-import { space, type } from "../src/theme/tokens";
+import { fontFamily, space, type } from "../src/theme/tokens";
 import { useTheme } from "../src/theme/use-theme";
 
 export default function Home(): ReactNode {
@@ -36,7 +36,12 @@ function Welcome(): ReactNode {
     <Screen>
       <View style={{ flex: 1, justifyContent: "center", paddingBottom: space.xxl }}>
         <Text
-          style={{ color: t.ink, fontSize: type.title, fontWeight: "600", textAlign: "center" }}
+          style={{
+            color: t.ink,
+            fontSize: type.title,
+            fontFamily: fontFamily.display,
+            textAlign: "center",
+          }}
         >
           Connect to your Rennet
         </Text>
@@ -79,8 +84,10 @@ function ReviewList({ reviews }: { reviews: ReviewSummary[] }): ReactNode {
         <View
           style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
         >
-          <Text style={{ color: t.ink, fontSize: type.title, fontWeight: "600" }}>Reviews</Text>
-          <Link href="/connections" style={{ color: t.blueInk, fontSize: type.control }}>
+          <Text style={{ color: t.ink, fontSize: type.title, fontFamily: fontFamily.display }}>
+            Reviews
+          </Text>
+          <Link href="/connections" style={{ color: t.accent, fontSize: type.control }}>
             Connections
           </Link>
         </View>
@@ -127,9 +134,9 @@ function ReviewRow({
 }): ReactNode {
   const t = useTheme();
   const chips: { label: string; tone: ChipTone }[] = [];
-  if (review.running) chips.push({ label: "running", tone: "blue" });
-  if (review.needsYou) chips.push({ label: "needs you", tone: "amber" });
-  if (review.stale) chips.push({ label: "stale", tone: "amber" });
+  if (review.running) chips.push({ label: "running", tone: "accent" });
+  if (review.needsYou) chips.push({ label: "needs you", tone: "accent" });
+  if (review.stale) chips.push({ label: "stale", tone: "accent" });
   return (
     <Card backlit={backlit} onPress={onPress}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>

@@ -34,8 +34,8 @@ import { CommentIcon, LockIcon, SparkleIcon } from "./icons";
 // token streaming from the harness is the DEFERRED follow-up. The panel renders
 // identically whether messages arrive from a fixture or (later) a live stream.
 //
-// Styling uses existing `var(--private*)` / `var(--surface*)` tokens only — no new
-// hues (the hex-lint discipline). The UI stays pure: no core/adapter/Node imports.
+// Styling rides Tailwind utilities on the shared @rennet/theme tokens only — no
+// new hues (the hex-lint discipline). The UI stays pure: no core/adapter/Node imports.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -56,7 +56,7 @@ export function DiscussControl({
   return (
     <button
       type="button"
-      className="discuss-control"
+      className="discuss-control inline-flex items-center gap-2 rounded-chip border border-line bg-accent-soft px-3 py-1.5 font-sans text-sm font-semibold text-ink cursor-pointer hover:border-accent-line"
       data-anchor-kind={anchor.kind}
       data-lane="blue"
       title={`Discuss ${anchor.kind} ${anchor.label}`}
@@ -82,7 +82,7 @@ export function ThreadChip({
   return (
     <button
       type="button"
-      className="thread-chip"
+      className="thread-chip inline-flex items-center gap-1.5 rounded-chip border border-line bg-accent-soft px-2 py-1 font-sans text-xs font-semibold text-ink cursor-pointer hover:border-accent-line"
       data-anchor-kind={anchor.kind}
       title={`${count} thread${count === 1 ? "" : "s"} on ${anchor.label}`}
       aria-label={`Open ${count} thread${count === 1 ? "" : "s"} on ${anchor.kind} ${anchor.label}`}
@@ -116,37 +116,44 @@ export function MessageCard({
   const isInterrupted = message.status === "interrupted";
   return (
     <article
-      className={`thread-message${isStreaming ? " is-streaming" : ""}${isInterrupted ? " is-interrupted" : ""}`}
+      className={`thread-message flex flex-col gap-2 rounded-surface border px-4 py-3 ${isHarness ? "border-accent-line bg-accent-soft" : "border-line bg-raised"}${isStreaming ? " is-streaming" : ""}${isInterrupted ? " is-interrupted" : ""}`}
       data-author={message.author}
       data-message-id={message.id}
       {...(message.status ? { "data-status": message.status } : {})}
     >
-      <header className="thread-message-head">
+      <header className="thread-message-head flex items-center gap-2">
         {isHarness ? (
-          <span className="thread-message-model">
+          <span className="thread-message-model inline-flex items-center gap-1.5 font-sans text-xs font-semibold text-ink-soft">
             <SparkleIcon size={12} />
             <span>{message.model ?? "Harness"}</span>
           </span>
         ) : (
-          <span className="thread-message-you">You</span>
+          <span className="thread-message-you font-sans text-xs font-semibold text-ink-soft">
+            You
+          </span>
         )}
       </header>
       {isInterrupted ? (
-        <p className="thread-message-interrupted" role="note">
+        <p
+          className="thread-message-interrupted font-serif text-sm italic text-ink-faint"
+          role="note"
+        >
           This answer was interrupted before it finished. Ask again to retry.
         </p>
       ) : (
-        <p className="thread-message-body">{message.body}</p>
+        <p className="thread-message-body font-serif text-base leading-relaxed text-ink">
+          {message.body}
+        </p>
       )}
       {/* Promotion — a deliberate act, only on a COMPLETE harness answer. A still-
           streaming preview or an interrupted turn cannot be promoted (no durable answer). */}
       {isHarness && !isStreaming && !isInterrupted && (onPromote || onSubThread) ? (
-        <footer className="thread-message-promote">
+        <footer className="thread-message-promote flex flex-wrap gap-2 mt-1">
           {onPromote ? (
             <>
               <button
                 type="button"
-                className="thread-promote-btn"
+                className="thread-promote-btn inline-flex items-center rounded-chip border border-line bg-surface px-3 py-1.5 font-sans text-xs font-medium text-ink-soft cursor-pointer hover:bg-raised hover:text-ink"
                 data-kind="finding"
                 onClick={() => onPromote(message.id, "finding")}
               >
@@ -154,7 +161,7 @@ export function MessageCard({
               </button>
               <button
                 type="button"
-                className="thread-promote-btn"
+                className="thread-promote-btn inline-flex items-center rounded-chip border border-line bg-surface px-3 py-1.5 font-sans text-xs font-medium text-ink-soft cursor-pointer hover:bg-raised hover:text-ink"
                 data-kind="draft-comment"
                 onClick={() => onPromote(message.id, "draft-comment")}
               >
@@ -165,7 +172,7 @@ export function MessageCard({
           {onSubThread ? (
             <button
               type="button"
-              className="thread-promote-btn is-subthread"
+              className="thread-promote-btn is-subthread inline-flex items-center rounded-chip border border-accent-line bg-surface px-3 py-1.5 font-sans text-xs font-medium text-ink cursor-pointer hover:bg-raised"
               data-kind="sub-thread"
               onClick={() => onSubThread(message.id)}
             >
@@ -244,9 +251,12 @@ export function AskComposer({
   }
 
   return (
-    <div className="conversation-composer" data-ask-mode={mode}>
+    <div
+      className="conversation-composer flex items-stretch gap-2 border-t border-line p-4"
+      data-ask-mode={mode}
+    >
       <textarea
-        className="conversation-composer-input"
+        className="conversation-composer-input min-w-0 flex-1 min-h-[44px] resize-y rounded-control border border-line bg-raised px-3 py-2 font-sans text-base text-ink placeholder:text-ink-faint"
         placeholder={placeholder}
         aria-label={inputLabel}
         value={draft}
@@ -256,10 +266,10 @@ export function AskComposer({
       {/* The per-turn routing caret (#139): "Ask the orchestrator" is the default,
           "Ask both models" the opt-in. Picking a routing changes only THIS turn's
           mode; there is no synthesis — "both" yields two labelled answers. */}
-      <div className="conversation-composer-route">
+      <div className="conversation-composer-route relative inline-flex items-stretch">
         <button
           type="button"
-          className="conversation-composer-caret"
+          className="conversation-composer-caret inline-flex items-center justify-center min-w-8 rounded-control border border-line bg-raised px-2 font-sans text-base text-ink cursor-pointer disabled:opacity-50 disabled:cursor-default"
           aria-label="ask options"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
@@ -269,19 +279,24 @@ export function AskComposer({
           <span aria-hidden="true">⌄</span>
         </button>
         {menuOpen ? (
-          <div className="conversation-route-menu" role="menu">
+          <div
+            className="conversation-route-menu absolute bottom-[calc(100%+6px)] right-0 z-20 flex flex-col min-w-[240px] rounded-control border border-line bg-overlay p-1.5 gap-0.5 shadow-overlay"
+            role="menu"
+          >
             {ASK_OPTIONS.map((option) => (
               <button
                 type="button"
                 role="menuitemradio"
                 aria-checked={option.mode === mode}
-                className="conversation-route-item"
+                className="conversation-route-item flex items-baseline justify-between gap-3 rounded-chip border-0 bg-transparent px-3 py-2 text-left font-sans text-base text-ink cursor-pointer hover:bg-raised aria-checked:bg-raised"
                 data-mode={option.mode}
                 key={option.mode}
                 onClick={() => pickMode(option.mode)}
               >
-                <span className="conversation-route-label">{option.label}</span>
-                <span className="conversation-route-hint">{option.hint}</span>
+                <span className="conversation-route-label font-medium">{option.label}</span>
+                <span className="conversation-route-hint font-sans text-xs text-ink-faint">
+                  {option.hint}
+                </span>
               </button>
             ))}
           </div>
@@ -289,7 +304,7 @@ export function AskComposer({
       </div>
       <button
         type="button"
-        className="conversation-composer-send"
+        className="conversation-composer-send shrink-0 inline-flex items-center justify-center min-w-10 rounded-control bg-accent-fill text-accent-ink cursor-pointer disabled:opacity-50 disabled:cursor-default"
         data-ask-mode={mode}
         aria-label={sendLabel(mode)}
         disabled={!canSend}
@@ -362,7 +377,7 @@ export function ConversationCluster({
   const orphaned = thread.orphaned === true;
   return (
     <aside
-      className={`conversation-cluster is-private${orphaned ? " is-orphaned" : ""}`}
+      className={`conversation-cluster is-private flex flex-col overflow-hidden rounded-surface border border-line bg-surface shadow-[inset_0_0_18px_var(--rn-accent-soft)]${orphaned ? " is-orphaned opacity-[0.85]" : ""}`}
       data-lane={thread.lane}
       data-anchor-kind={thread.anchor.kind}
       data-anchor-key={thread.anchor.key}
@@ -372,22 +387,34 @@ export function ConversationCluster({
       style={alignOffset != null ? { transform: `translateY(${alignOffset}px)` } : undefined}
       aria-label={`Private thread on ${thread.anchor.kind} ${thread.anchor.label}`}
     >
-      <header className="conversation-head">
-        <span className="conversation-head-lock" aria-hidden="true">
+      <header className="conversation-head flex items-baseline gap-2 px-4 py-3 border-b border-line">
+        <span
+          className="conversation-head-lock inline-flex self-center text-accent"
+          aria-hidden="true"
+        >
           <LockIcon size={12} />
         </span>
-        <span className="conversation-head-title">Thread</span>
-        <span className="conversation-head-anchor">{thread.anchor.label}</span>
-        <span className="conversation-head-pill">{pill}</span>
+        <span className="conversation-head-title font-sans text-2xs font-semibold uppercase tracking-wide text-ink-soft">
+          Thread
+        </span>
+        <span className="conversation-head-anchor min-w-0 truncate font-sans text-sm text-ink-soft">
+          {thread.anchor.label}
+        </span>
+        <span className="conversation-head-pill ml-auto shrink-0 rounded-chip border border-line px-2 py-0.5 font-sans text-xs font-semibold text-ink-soft">
+          {pill}
+        </span>
       </header>
       {orphaned ? (
-        <p className="conversation-orphaned" role="note">
+        <p
+          className="conversation-orphaned mx-2 my-1 border-l-2 border-l-accent-line px-3 py-2 font-serif text-sm italic text-ink-soft"
+          role="note"
+        >
           The code this thread was about is no longer in the diff. It is kept here, but not moved
           onto other code.
         </p>
       ) : null}
 
-      <div className="conversation-messages">
+      <div className="conversation-messages flex flex-col gap-3 p-4">
         {thread.messages.map((message) => (
           <MessageCard
             key={message.id}
@@ -400,12 +427,16 @@ export function ConversationCluster({
             "thinking" row; a failed turn shows the reason. Both sit AFTER the real
             messages so a pending/failed ask is never read as an answer. */}
         {pending ? (
-          <p className="conversation-pending" role="status" aria-live="polite">
+          <p
+            className="conversation-pending m-0 font-sans text-sm text-ink-soft"
+            role="status"
+            aria-live="polite"
+          >
             Asking the orchestrator…
           </p>
         ) : null}
         {error ? (
-          <p className="conversation-error" role="alert">
+          <p className="conversation-error m-0 font-sans text-sm text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -479,7 +510,11 @@ export function ConversationMargin({
   const railRef = useRef<HTMLElement>(null);
   const alignments = useRailAlignments(railRef, diffRef, threads);
   return (
-    <section className="conversation-margin" aria-label="Conversation threads" ref={railRef}>
+    <section
+      className="conversation-margin flex flex-col gap-3"
+      aria-label="Conversation threads"
+      ref={railRef}
+    >
       {threads.map((thread) => (
         <ConversationCluster
           key={thread.id}

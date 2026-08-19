@@ -39,50 +39,63 @@ export function FlatCanvas({
   const elements = canvas.layers.analysis.elements;
   return (
     <div className={`flat-canvas flat-${canvas.angle}`}>
-      <div className="canvas-toolbar">
-        <span className="canvas-coverage">{elements.length} items</span>
+      <div className="canvas-toolbar mb-3.5 flex items-center justify-between gap-4 border-b border-line pb-2.5">
+        <span className="canvas-coverage text-sm font-semibold text-ink">
+          {elements.length} items
+        </span>
         <DispositionBar
           scopeLabel="whole roll-up"
           onDisposition={(type) => onApproveScope({ kind: "rollup" }, type)}
         />
       </div>
       {elements.length === 0 ? (
-        <p className="canvas-empty">This angle is empty.</p>
+        <p className="canvas-empty px-1 py-5 italic text-ink-faint">This angle is empty.</p>
       ) : (
-        <ol className="flat-elements">
+        <ol className="flat-elements m-0 list-none p-0">
           {elements.map((element) => {
             const chunkId = anchorChunkId(canvas, element.anchor);
             const isBlast = chunkId !== undefined && painted.has(chunkId);
             const blastReason = chunkId !== undefined ? reasons.get(chunkId) : undefined;
             return (
-              <li className={`flat-element ${isBlast ? "is-blast" : ""}`} key={element.elementKey}>
+              <li
+                className={`flat-element group mb-2 flex flex-wrap items-center justify-between gap-3 rounded-surface border px-3.5 py-2.5 ${isBlast ? "is-blast border-accent-line bg-accent-surface" : "border-line bg-surface"}`}
+                key={element.elementKey}
+              >
                 <button
                   type="button"
-                  className="flat-element-select"
+                  className="flat-element-select flex cursor-pointer items-baseline gap-2.5 border-0 bg-transparent text-left text-ink"
                   onClick={() => onSelectElement(element.elementKey)}
                 >
-                  <span className="flat-element-kind">{element.kind}</span>
+                  <span className="flat-element-kind text-2xs font-bold uppercase tracking-wide text-ink-faint">
+                    {element.kind}
+                  </span>
                   <span className="flat-element-title">{element.title}</span>
                   {isBlast ? (
                     <span
-                      className="flat-element-blast"
+                      className="flat-element-blast text-2xs font-bold uppercase tracking-wide text-ink"
                       title={blastReason ?? "In the blast radius"}
                     >
                       blast
                     </span>
                   ) : null}
                 </button>
-                {/* The one-line reason rendered beside the amber mark (issue #35). */}
+                {/* The one-line reason rendered beside the gold blast mark (issue #35). */}
                 {isBlast && blastReason ? (
-                  <p className="flat-element-blast-reason">{blastReason}</p>
+                  <p className="flat-element-blast-reason m-0 basis-full text-sm text-ink">
+                    {blastReason}
+                  </p>
                 ) : null}
-                <DispositionBar
-                  scopeLabel={element.title}
-                  compact
-                  onDisposition={(type) =>
-                    onApproveScope({ kind: "anchor", elementKey: element.elementKey }, type)
-                  }
-                />
+                {/* Calm roll-up (#62): the per-row cluster stays in the DOM + tab order,
+                    revealed on hover/focus so the surface reads calm, not a dense grid. */}
+                <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none">
+                  <DispositionBar
+                    scopeLabel={element.title}
+                    compact
+                    onDisposition={(type) =>
+                      onApproveScope({ kind: "anchor", elementKey: element.elementKey }, type)
+                    }
+                  />
+                </div>
               </li>
             );
           })}

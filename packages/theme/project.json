@@ -1,0 +1,16 @@
+{
+  "name": "rennet-theme",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/theme/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:theme"],
+  "targets": {
+    "lint": {
+      "command": "pnpm exec biome check packages/theme/src packages/theme/scripts"
+    },
+    "test": { "command": "pnpm exec vitest run --passWithNoTests packages/theme/src" },
+    "generate": {
+      "command": "node packages/theme/scripts/generate-mobile-palette.mjs"
+    }
+  }
+}

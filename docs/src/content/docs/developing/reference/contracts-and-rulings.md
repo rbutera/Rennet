@@ -94,7 +94,7 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R14** | Apple signing and account decisions belong to the public-release phase, not local dogfood. |
 | **R15** | Retired: route-handoff as a separate product artifact. The own-branch review loop itself is the useful feature. |
 | **R23** | `omp` means `@oh-my-pi/pi-coding-agent`; the abandoned namesake package is not a target. |
-| **R26** | Glass is chrome, code is opaque, and the preview is the frozen outbound object. Tokens and chrome are product structure; decorative polish can follow. |
+| **R26** | Chrome is one seamless opaque surface, code is opaque, and the preview is the frozen outbound object. Tokens and chrome are product structure; decorative polish can follow. (Superseded material: the original ruling framed chrome as translucent glass; the Affineur's Bench world, ratified 2026-08-19, retires glass.) |
 
 ### Review engine and data
 

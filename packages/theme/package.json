@@ -1,0 +1,15 @@
+{
+  "name": "@rennet/theme",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./theme.css": "./src/theme.css",
+    "./palette.css": "./src/palette.css"
+  },
+  "dependencies": {
+    "@fontsource-variable/dm-sans": "5.3.0",
+    "@fontsource-variable/fraunces": "5.3.0",
+    "@fontsource-variable/source-serif-4": "5.3.0"
+  }
+}

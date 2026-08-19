@@ -2,7 +2,7 @@
 // The line tokenizer (issue #68). Deterministic, synchronous, zero-dependency,
 // fail-closed. Given one line of code and a language, it returns a flat list of
 // typed tokens that the CodeView paints as coloured spans UNDER the diff row's
-// add/removed background (the diff semantic stays dominant; see canvas.css).
+// add/removed background (the diff semantic stays dominant; see index.css).
 //
 // It runs only on the WINDOWED rows the CodeView actually paints (never the whole
 // file), so the R16 node-count / perf envelope is preserved: a scroll re-tokenizes

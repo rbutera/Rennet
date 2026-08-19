@@ -272,7 +272,7 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
     // cv-add class and the keyword span), so it cannot pass via a keyword on a
     // different row.
     expect(html).toMatch(
-      /class="code-view-row cv-add"(?:(?!code-view-row)[\s\S])*?rtok-keyword">return<\/span>/,
+      /class="code-view-row [^"]*cv-add[^"]*"(?:(?!code-view-row)[\s\S])*?rtok-keyword">return<\/span>/,
     );
   });
 
@@ -293,7 +293,7 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
     // The header text is emitted whole INSIDE its <code> element, with NO token
     // spans — if it were tokenized, the raw string would be shredded across
     // rtok spans and this contiguous-inside-<code> assertion would fail.
-    expect(html).toContain('<code class="code-view-code">@@ -10,3 +10,4 @@</code>');
+    expect(html).toMatch(/<code class="code-view-code[^"]*">@@ -10,3 \+10,4 @@<\/code>/);
   });
 
   it("keeps the R16 node envelope WITH highlighting on (5000-line windowed render)", () => {

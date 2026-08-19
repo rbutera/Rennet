@@ -51,70 +51,104 @@ export function ContextManifestPanel({
   const panelLabel = hasProvenSend ? "Context sent to the fleet" : "Context Rennet assembled";
 
   return (
-    <section className="context-manifest" data-testid="context-manifest" aria-label={panelLabel}>
-      <p className="context-manifest-eyebrow">{panelLabel}</p>
+    <section
+      className="context-manifest flex flex-col gap-2 border-b border-line bg-surface px-5 py-3"
+      data-testid="context-manifest"
+      aria-label={panelLabel}
+    >
+      <p className="context-manifest-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        {panelLabel}
+      </p>
 
-      <p className="context-manifest-summary" data-testid="context-manifest-summary">
+      <p
+        className="context-manifest-summary m-0 text-sm text-ink-soft"
+        data-testid="context-manifest-summary"
+      >
         {documents.length} document{documents.length === 1 ? "" : "s"} · {manifest.totalBytes} B
         assembled
       </p>
 
       {documents.length > 0 ? (
-        <ol className="context-manifest-docs">
+        <ol className="context-manifest-docs m-0 flex list-none flex-col gap-0.5 p-0">
           {documents.map((doc) => (
             <li
               key={`${doc.order}:${doc.sourcePath}`}
-              className="context-manifest-doc"
+              className="context-manifest-doc flex items-baseline gap-2.5 rounded-chip px-2 py-1 data-[state=dropped]:opacity-70"
               data-testid="context-manifest-doc"
               data-state={doc.state}
             >
-              <span className="context-manifest-source" data-source={doc.source}>
+              <span
+                className="context-manifest-source min-w-[92px] flex-none text-2xs font-semibold text-ink-soft"
+                data-source={doc.source}
+              >
                 {doc.source}
               </span>
-              <code className="context-manifest-path">{doc.sourcePath}</code>
-              <span className="context-manifest-state" data-state={doc.state}>
+              <code className="context-manifest-path min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-sm text-ink-soft">
+                {doc.sourcePath}
+              </code>
+              <span
+                className="context-manifest-state flex-none text-2xs font-semibold data-[state=included]:text-green data-[state=truncated]:text-accent data-[state=dropped]:text-ink-faint"
+                data-state={doc.state}
+              >
                 {STATE_LABEL[doc.state]}
               </span>
-              <span className="context-manifest-bytes">{bytesLabel(doc)}</span>
-              <code className="context-manifest-hash" title={doc.contentHash}>
+              <span className="context-manifest-bytes flex-none text-2xs tabular-nums text-ink-faint">
+                {bytesLabel(doc)}
+              </span>
+              <code
+                className="context-manifest-hash flex-none font-mono text-2xs text-ink-faint"
+                title={doc.contentHash}
+              >
                 {doc.contentHash.slice(0, 12)}
               </code>
             </li>
           ))}
         </ol>
       ) : (
-        <p className="context-manifest-empty" data-testid="context-manifest-empty">
+        <p
+          className="context-manifest-empty m-0 text-2xs text-ink-faint"
+          data-testid="context-manifest-empty"
+        >
           No context documents were assembled for this dispatch.
         </p>
       )}
 
       {sends.length > 0 ? (
-        <ol className="context-manifest-sends" aria-label="Fleet context send transcript">
+        <ol
+          className="context-manifest-sends m-0 flex list-none flex-col gap-0.5 p-0"
+          aria-label="Fleet context send transcript"
+        >
           {sends.map((send) => {
             const digestMatches =
               send.contextIncluded && send.contextDigest === manifest.assembledPromptDigest;
             return (
               <li
                 key={`${send.sentAt}:${send.seat}:${send.harness}:${send.attempt}:${send.promptDigest}`}
-                className="context-manifest-send"
+                className="context-manifest-send flex items-baseline gap-2.5 rounded-chip px-2 py-1 text-2xs text-ink-faint data-[context-included=false]:opacity-70"
                 data-testid="context-manifest-send"
                 data-context-included={send.contextIncluded}
                 data-digest-match={digestMatches}
               >
-                <span className="context-manifest-send-seat">{send.seat}</span>
-                <span className="context-manifest-send-harness">{send.harness}</span>
-                <span className="context-manifest-send-channel">{send.channel}</span>
+                <span className="context-manifest-send-seat font-semibold text-ink-soft">
+                  {send.seat}
+                </span>
+                <span className="context-manifest-send-harness font-semibold text-ink-soft">
+                  {send.harness}
+                </span>
+                <span className="context-manifest-send-channel font-mono">{send.channel}</span>
                 <span>Attempt {send.attempt}</span>
                 <span>{send.promptBytes} B</span>
                 <span>{send.contextIncluded ? "Included" : "Dropped"}</span>
-                <span>
+                <span className={digestMatches ? "text-green" : undefined}>
                   {digestMatches
                     ? "Digest matches"
                     : send.contextIncluded
                       ? "Digest differs"
                       : "No context digest"}
                 </span>
-                <code title={send.promptDigest}>{send.promptDigest.slice(0, 12)}</code>
+                <code className="font-mono" title={send.promptDigest}>
+                  {send.promptDigest.slice(0, 12)}
+                </code>
               </li>
             );
           })}
@@ -127,7 +161,10 @@ export function ContextManifestPanel({
         the unmanaged sources, rather than claiming completeness we cannot prove.
       */}
       {!manifest.exhaustive ? (
-        <p className="context-manifest-unmanaged" data-testid="context-manifest-unmanaged">
+        <p
+          className="context-manifest-unmanaged m-0 text-2xs text-ink-faint"
+          data-testid="context-manifest-unmanaged"
+        >
           Not exhaustive — the harness may also read:{" "}
           {manifest.unmanagedSources.length > 0
             ? manifest.unmanagedSources.join("; ")
@@ -135,10 +172,12 @@ export function ContextManifestPanel({
         </p>
       ) : null}
 
-      <div className="context-manifest-assembled">
-        <p className="context-manifest-assembled-title">Assembled context</p>
+      <div className="context-manifest-assembled flex flex-col gap-1 pt-1">
+        <p className="context-manifest-assembled-title m-0 text-2xs font-semibold text-ink-soft">
+          Assembled context
+        </p>
         <code
-          className="context-manifest-assembled-digest"
+          className="context-manifest-assembled-digest font-mono text-2xs text-ink-faint"
           data-testid="context-manifest-assembled-digest"
           title={manifest.assembledPromptDigest}
         >
@@ -146,7 +185,7 @@ export function ContextManifestPanel({
         </code>
         {assembledContext !== undefined ? (
           <pre
-            className="context-manifest-assembled-prompt"
+            className="context-manifest-assembled-prompt m-0 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-control border border-line bg-code px-2.5 py-2 font-mono text-2xs leading-relaxed text-ink-soft"
             data-testid="context-manifest-assembled-prompt"
           >
             {assembledContext}
@@ -155,7 +194,7 @@ export function ContextManifestPanel({
         {assembledContext === undefined && onOpenAssembledContext ? (
           <button
             type="button"
-            className="context-manifest-open"
+            className="context-manifest-open cursor-pointer self-start rounded-chip border border-line bg-transparent px-2.5 py-1 text-2xs text-ink-soft hover:bg-raised"
             data-testid="context-manifest-open"
             onClick={onOpenAssembledContext}
           >
