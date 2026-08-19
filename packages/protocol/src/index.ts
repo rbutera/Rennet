@@ -2181,21 +2181,47 @@ export const commandDefinitions = {
   },
   // ── publish.compose: the daemon composes the outbound artifact (issue #382 M2) ─
   // A projected client (the phone) cannot compose the byte-exact outbound payload —
-  // that composition lives in the DOM `ui` layer and the mobile boundary forbids
-  // importing it. So the daemon composes it and the phone POSTS what it returns: the
-  // preview and the post use the SAME bytes, single-source and R33-honest. This pass
-  // composes the OWN-BRANCH submission (title/body/base/head + canonical payload) from
-  // the review's provenance; the payload is derived from the SAME submission returned,
-  // so `publish.submitPr` round-trips it exactly. A team-PR (postTarget present) or a
-  // retrospective/branchless review returns `unavailable` with a truthful reason (the
-  // team-PR review composition is renderer-only until its collation relocates to core).
-  // Reads only readiness state — no consent internals, no egress, nothing secret.
+  // the DOM `ui` layer owns the editable collation model and the mobile boundary
+  // forbids importing it (and `layer:ui` may not import `layer:core`, so it cannot
+  // be shimmed there either). So the DAEMON composes it — `layer:server` imports
+  // `@rennet/core`'s node-free `reviewCommentsFromDispositions`/`canonicalReviewPayload`
+  // /`canonicalPrSubmissionPayload` — and the phone POSTS exactly what it returns: the
+  // preview and the post use the SAME bytes, single-source and R33-honest (Finding C
+  // ruling (a): BOTH loops end on the phone).
+  //
+  // `mode` selects which loop:
+  //  • "review" — a team-PR review to post. Composes the default (unedited) comments
+  //    from the review's dispositions + the derived verdict; the phone previews them and
+  //    posts via `publish.review`, which re-verifies these very bytes.
+  //  • "pr" — the OWN-BRANCH PR submission (title/body/base/head + canonical payload);
+  //    the phone posts via `publish.submitPr`, which round-trips the payload exactly.
+  // A mode that does not fit the review (a "pr" compose of a team-PR review, a "review"
+  // compose of a branch-only review, a retrospective, or a detached HEAD) returns
+  // `unavailable` with a truthful reason. Reads only readiness state — no consent
+  // internals, no egress, nothing secret. COMPAT: a pre-M2 daemon does not implement
+  // this command; the phone's publish surface says the daemon needs updating (truthful,
+  // like Stop) rather than pretending it can post.
   "publish.compose": {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
+      /** Which loop to compose: a team-PR "review" to post, or an own-branch "pr" to open. */
+      mode: z.enum(["review", "pr"]),
     }),
     output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("review"),
+        /** The composed team-PR comments the phone previews AND posts verbatim via `publish.review`. */
+        comments: z.array(reviewCommentSchema),
+        /** The canonical bytes, derived from `comments` — the round-trip `publish.review` verifies. */
+        payload: z.string(),
+        /** The derived review verdict (the GitHub review event the post will carry). */
+        verdict: forgeReviewEventSchema,
+        /** A human destination line for the preview (e.g. `owner/name#7`). */
+        destination: z.string(),
+        /** A short headline for the preview (the repo/PR the review posts to). */
+        title: z.string(),
+      }),
       z.object({
         status: z.literal("pr"),
         /** The composed own-branch submission the phone posts verbatim via `publish.submitPr`. */
