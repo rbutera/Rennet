@@ -2,9 +2,21 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { menuRunPayloadSchema } from "@rennet/protocol";
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  net,
+  protocol,
+  session,
+  shell,
+} from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
+import { buildContextMenuTemplate } from "./context-menu";
 import { ensureDaemon } from "./daemon-supervisor";
 import { applyMenuUpdate } from "./menu";
 import { brandWindowIcon, isExternalHttpUrl, resolveAppUserModelId } from "./window-identity";
@@ -219,4 +231,17 @@ app.whenReady().then(async () => {
 
 // App quit stops NOTHING (#379): the daemon and any running review turn outlive the window.
 // No `before-quit` shutdown — that implicit teardown was the thing this phase removes.
+// The system right-click menu (copy/paste/select-all, link copy, spellcheck) on
+// every window this app ever creates. Contextual: an empty template shows nothing.
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("context-menu", (_menuEvent, params) => {
+    const template = buildContextMenuTemplate(params, {
+      replaceMisspelling: (suggestion) => contents.replaceMisspelling(suggestion),
+      copyText: (text) => clipboard.writeText(text),
+    });
+    if (template.length === 0) return;
+    Menu.buildFromTemplate(template).popup();
+  });
+});
+
 app.on("window-all-closed", () => app.quit());

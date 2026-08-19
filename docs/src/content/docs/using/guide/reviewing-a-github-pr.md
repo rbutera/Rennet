@@ -156,6 +156,10 @@ waits until the connection is back.
 
 ## GitHub edge cases
 
+If the network path to GitHub drops (VPN flap, sleep/wake, WSL DNS), Rennet
+retries the connection once and then says plainly that GitHub is unreachable
+and nothing was sent — reconnect the network and try again; no state is lost.
+
 An organization can require SAML SSO for Rennet's token. GitHub may
 then return `X-GitHub-SSO: partial-results`: a valid-looking but incomplete pull
 request list. Rennet keeps that state distinct from a complete or empty list;
