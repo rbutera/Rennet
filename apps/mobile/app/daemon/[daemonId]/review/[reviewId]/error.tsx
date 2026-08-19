@@ -14,7 +14,8 @@ export default function ReviewError(): ReactNode {
   const t = useTheme();
   const router = useRouter();
   const { daemonId, reviewId } = useLocalSearchParams<{ daemonId: string; reviewId: string }>();
-  useReviewFocus(daemonId, reviewId);
+  // The error screen is the turn-failed landing (#382 M2 finding 10): clear exactly that.
+  useReviewFocus(daemonId, reviewId, "turn-failed");
 
   return (
     <Screen>

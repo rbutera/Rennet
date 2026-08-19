@@ -23,6 +23,14 @@ interface Finding {
   readonly patchsetId: string;
 }
 
+/** A live proposal on the finding's canvas (real ids, adjudicated over the projection). */
+interface LiveProposal {
+  readonly proposalId: string;
+  readonly kind: string;
+  readonly payload: string;
+  readonly status: "pending" | "accepted" | "dismissed";
+}
+
 export default function FindingDetail(): ReactNode {
   const t = useTheme();
   const { daemonId, reviewId } = useLocalSearchParams<{ daemonId: string; reviewId: string }>();
@@ -30,6 +38,8 @@ export default function FindingDetail(): ReactNode {
   const connection = useConnection(daemonId);
   const [finding, setFinding] = useState<Finding | null>(null);
   const [saved, setSaved] = useState<Disposition | null>(null);
+  const [canvasId, setCanvasId] = useState<string | null>(null);
+  const [proposals, setProposals] = useState<LiveProposal[]>([]);
 
   useEffect(() => {
     if (!connection) return;
@@ -45,15 +55,49 @@ export default function FindingDetail(): ReactNode {
         repoPath: review.repositoryRoot.repoKey,
       });
       const first = Object.values(canvases.elementDiffs)[0];
-      if (!cancelled && first) {
+      if (cancelled) return;
+      if (first) {
         setFinding({ path: first.path, diff: first.diff, patchsetId: review.activePatchsetId });
       }
+      // Live proposal adjudication (#382 M2, task 6.2): the sequence canvas's real proposal ids.
+      const sequence = canvases.canvases.sequence;
+      setCanvasId(sequence.canvasId);
+      setProposals(
+        sequence.layers.annotation.proposals.map((p) => ({
+          proposalId: p.proposalId,
+          kind: p.kind,
+          payload: p.payload,
+          status: p.status,
+        })),
+      );
     }
     void load().catch(() => undefined);
     return () => {
       cancelled = true;
     };
   }, [connection, reviewId]);
+
+  async function adjudicate(proposalId: string, outcome: "accepted" | "dismissed"): Promise<void> {
+    if (!connection || !canvasId) return;
+    // Optimistic: reflect the outcome immediately; the write round-trips to the daemon.
+    setProposals((prev) =>
+      prev.map((p) => (p.proposalId === proposalId ? { ...p, status: outcome } : p)),
+    );
+    await connection.supervisor
+      .invoke("canvas.adjudicateProposal", {
+        commandId: newCommandId(),
+        reviewId,
+        canvasId,
+        proposalId,
+        outcome,
+      })
+      .catch(() =>
+        // On failure, revert to pending — never a silently-stuck optimistic state.
+        setProposals((prev) =>
+          prev.map((p) => (p.proposalId === proposalId ? { ...p, status: "pending" } : p)),
+        ),
+      );
+  }
 
   async function dispose(disposition: Disposition): Promise<void> {
     if (!connection || !finding) return;
@@ -104,15 +148,48 @@ export default function FindingDetail(): ReactNode {
           </View>
         </View>
 
-        <Card>
-          <Text style={{ color: t.amber, fontSize: type.pill, letterSpacing: 1, marginBottom: 4 }}>
-            PROPOSAL
-          </Text>
-          <Text style={{ color: t.text, fontSize: type.body }}>
-            Proposal adjudication opens on the desktop this cut; the reading + disposition act is
-            complete on the phone.
-          </Text>
-        </Card>
+        {proposals.length === 0 ? null : (
+          <View style={{ marginTop: space.md }}>
+            <Text
+              style={{
+                color: t.amber,
+                fontSize: type.pill,
+                letterSpacing: 1,
+                marginBottom: space.xs,
+              }}
+            >
+              PROPOSALS
+            </Text>
+            {proposals.map((proposal) => (
+              <Card key={proposal.proposalId}>
+                <Text style={{ color: t.faint, fontSize: type.control }}>{proposal.kind}</Text>
+                <Text style={{ color: t.text, fontSize: type.body, marginTop: 2 }}>
+                  {proposal.payload}
+                </Text>
+                {proposal.status === "pending" ? (
+                  <View style={{ flexDirection: "row", gap: space.sm, marginTop: space.sm }}>
+                    <View style={{ flex: 1 }}>
+                      <OutlineButton
+                        label="Accept"
+                        onPress={() => void adjudicate(proposal.proposalId, "accepted")}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <OutlineButton
+                        label="Dismiss"
+                        onPress={() => void adjudicate(proposal.proposalId, "dismissed")}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <Text style={{ color: t.muted, fontSize: type.control, marginTop: space.xs }}>
+                    {proposal.status}
+                  </Text>
+                )}
+              </Card>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </Screen>
   );

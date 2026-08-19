@@ -294,14 +294,28 @@ with the biome/eslint/vitest gate), and was removed (no unused deps). Re-add it 
 pinned to the workspace Nx version — only if and when an Expo generator is actually
 wanted. Expo SDK **55** and its module set are pinned from the SDK's
 bundled-native-modules matrix (`expo-router`, `expo-secure-store`, `expo-camera`,
-`expo-notifications`, `expo-linking`, `@react-native-async-storage/async-storage`,
-`react-native`, `react`/`react-dom` at the workspace's React 19.2). SDK 55 matches
-the workspace React, which is why it is chosen over the newer default.
+`expo-notifications`, `expo-task-manager`, `expo-linking`,
+`@react-native-async-storage/async-storage`, `react-native`, `react`/`react-dom` at
+the workspace's React 19.2). SDK 55 matches the workspace React, which is why it is
+chosen over the newer default.
 
 - **MUST** — Expo SDK modules over hand-rolled native code (camera, secure-store,
-  notifications, linking); `expo-secure-store` for the device-token keychain and
-  `@react-native-async-storage/async-storage` for the replica cache, the persisted
-  daemon list, and the notification preferences.
+  notifications, linking, task-manager); `expo-secure-store` for the device-token keychain
+  and `@react-native-async-storage/async-storage` for the replica cache, the persisted
+  daemon list, and the notification preferences; `expo-task-manager` (`~55.0.18`,
+  SDK-matched) for the module-scope background task that answers an ask from a notification
+  action while the app is backgrounded/terminated — Android only, the one platform
+  expo-notifications runs a task on an action tap (M2 finding 4). Elsewhere the action opens
+  the app pre-filled (the honest fallback), never a dropped answer.
+- **`expo-share-intent`** (`6.1.1`, community, **MIT**) — reads a shared PR link
+  (Android `Intent.EXTRA_TEXT`) into the kickoff route (M2 finding 9). Vetted per this
+  standard: MIT is allowlisted; the version is exact-pinned and >7 days old (published
+  2026-05-25); it is the SDK-55 line (`expo: ^55` — the 7.x/8.x releases target SDK 56/57).
+  The config plugin is admitted **Android-only** (`disableIOS: true`, `androidIntentFilters:
+  ["text/*"]`): the iOS share extension is a native extension target (Apple team id + app
+  group) disproportionate to this pass, so iOS keeps the paste + `rennet://kickoff` link
+  paths and the extension is the recorded follow-up (design decision 5) — not a lying
+  manifest that claims an iOS share sheet Rennet has not wired.
 - **AVOID** — a component library in M1 (the kit look is plain RN styles over a token
   transpose); a second navigation stack beside expo-router; `packages/ui` in RN (it is
   DOM-bound). The app imports `@rennet/client`/`protocol`/`types` only.

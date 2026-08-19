@@ -27,10 +27,13 @@ function fakeSupervisor(): FakeSupervisor {
       attentionListeners.add(listener);
       return () => void attentionListeners.delete(listener);
     },
+    onAskStream: () => () => undefined,
+    onProgress: () => () => undefined,
     saveReplica() {
       return undefined;
     },
     attentionAdvertised: () => true,
+    actAdvertised: () => true,
     emitAttention(frame: AttentionEventFrame) {
       for (const l of attentionListeners) l(frame);
     },

@@ -8,6 +8,7 @@ import {
   buildHandoffBundle,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
+  deriveReviewEvent,
   detectLocus,
   disclosureFor,
   type ForgePrSubmission,
@@ -16,9 +17,11 @@ import {
   type ForgeReviewTarget,
   forgeTargetKey,
   type HandoffTurnOutcome,
+  isRepoRelativePath,
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
+  reviewCommentsFromDispositions,
   verifyComposedBundle,
 } from "@rennet/core";
 import {
@@ -39,6 +42,7 @@ import {
   parseCommandOutput,
   type ReattachResult,
   type ReviewAskStreamEvent,
+  sha256Hex,
 } from "@rennet/protocol";
 import type {
   AnchorSide,
@@ -379,8 +383,20 @@ export interface DispatchDeps {
    * flight. The registered controller is threaded into BOTH model legs.
    */
   readonly liveTurns?: {
-    register(turnId: string): AbortController;
+    /** `reviewId` (#382 M2) indexes the turn so `review.interrupt` can abort it by review; `stream`
+     *  marks a live streaming turn so `review.reattach` resumes its real in-flight body (finding 5). */
+    register(
+      turnId: string,
+      reviewId?: string,
+      stream?: { threadId: string; channel: "orchestrator" | "codex" },
+    ): AbortController;
     settle(turnId: string): void;
+    /** Grow a live turn's coalesced body as deltas stream (the reattach cursor, #382 M2 finding 5). */
+    appendDelta(turnId: string, delta: string): void;
+    /** The coalesced body streamed so far — the truthful partial persisted on interrupt (finding 6). */
+    bodyOf(turnId: string): string;
+    /** Abort every in-flight turn on a review (the client "Stop", #382 M2); returns the count. */
+    abortReview(reviewId: string): number;
   };
   /**
    * The comment-refinement producer (issue #19): refine one raw review note into a
@@ -578,6 +594,60 @@ const RUNNING_TURN_COMMANDS = new Set<CommandName>([
 ]);
 
 /** The reviewId a running-turn command operates on, or undefined if it is not one / has none. */
+/**
+ * The compose integrity binding (#382 M2 finding 2). A deterministic id over (reviewId, active
+ * patchset, mode, canonical payload) — the payload already canonicalises the comments/submission,
+ * so binding those four is enough to pin the artifact to one review AT one revision. `publish.compose`
+ * returns it; the post commands recompute it from the CURRENT review and refuse a mismatch, so a
+ * cross-review or stale-revision artifact cannot post. Pure integrity (recomputable, not a secret):
+ * it catches accidental drift and confusion, not adversarial forgery — Rennet is single-user.
+ */
+function publishCompositionId(fields: {
+  reviewId: string;
+  patchsetId: string;
+  mode: "review" | "pr";
+  payload: string;
+}): string {
+  return sha256Hex(
+    JSON.stringify([fields.reviewId, fields.patchsetId, fields.mode, fields.payload]),
+  );
+}
+
+/**
+ * Refuse a post whose compose binding no longer matches the current review (#382 M2 finding 2).
+ * A no-op when `compositionId` is absent (the desktop composes locally and posts without one —
+ * additive/back-compat). For a team-PR "review" the expected binding is recomputed from the CURRENT
+ * dispositions, so a disposition edit that landed between preview and post is caught (stale). For a
+ * "pr" submission the payload is model-drafted (not re-derivable), so the binding is recomputed over
+ * the posted payload + current patchset — catching a cross-review post or an advanced patchset; the
+ * existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload to its content.
+ */
+function assertCompositionFresh(
+  review: Review,
+  mode: "review" | "pr",
+  payload: string,
+  compositionId: string | undefined,
+): void {
+  if (compositionId === undefined) return;
+  const boundPayload =
+    mode === "review"
+      ? canonicalReviewPayload(reviewCommentsFromDispositions(review.dispositions))
+      : payload;
+  const expected = publishCompositionId({
+    reviewId: review.id,
+    patchsetId: review.activePatchsetId,
+    mode,
+    payload: boundPayload,
+  });
+  if (compositionId !== expected) {
+    throw new Error(
+      mode === "review"
+        ? "Publish refused: this preview is stale or from another review — recompose before posting."
+        : "Submit refused: this preview is stale or from another review — recompose before submitting.",
+    );
+  }
+}
+
 function runningReviewIdOf(name: CommandName, rawInput: unknown): string | undefined {
   if (!RUNNING_TURN_COMMANDS.has(name)) return undefined;
   const reviewId = (rawInput as { reviewId?: unknown } | null | undefined)?.reviewId;
@@ -605,6 +675,44 @@ export function createDispatch(
       title: "Review finished",
       body: `${basename(review.repositoryRoot)} is ready to read`,
     });
+  };
+
+  /**
+   * Raise "handoff run completed" (issue #382 M2, family goes live) when `review.handoff.run`
+   * resolves its outcome — with the delta summary as substance (files touched, dispositions
+   * carried forward, occurrences orphaned for re-review). Deep-links to the review's handoff
+   * landing; clears on view (opening the landing) per the taxonomy.
+   */
+  const raiseHandoffCompleted = (review: Review, summary: string): void => {
+    deps.raiseAttention?.({
+      family: "handoff-completed",
+      reviewId: review.id,
+      deepLink: deepLinkFor("handoff-completed", { reviewId: review.id }),
+      title: "Handoff finished",
+      body: summary,
+    });
+  };
+
+  /**
+   * Raise "publish-ready" (issue #382 M2, family goes live) when a composed draft first awaits
+   * the user's post — the own-branch PR draft becoming ready (`review.draftPrBody` → drafted) is
+   * that dispatch point. Destination + title are the substance; it deep-links to the publish
+   * preview and clears on the post happening OR on viewing the preview (clear-on-view). Raising
+   * reads only readiness state — no consent internals, no egress, nothing secret (design risk).
+   */
+  const raisePublishReady = (review: Review, destination: string, title: string): void => {
+    deps.raiseAttention?.({
+      family: "publish-ready",
+      reviewId: review.id,
+      deepLink: deepLinkFor("publish-ready", { reviewId: review.id }),
+      title: "Ready to post",
+      body: `${title} → ${destination}`,
+    });
+  };
+
+  /** Clear a review's publish-ready attention when a post lands (from any client). Best-effort. */
+  const clearPublishReady = (reviewId: string): void => {
+    deps.acknowledgeAttention?.({ attentionId: `publish-ready:${reviewId}` });
   };
 
   // In-flight REAL posts, keyed by the deterministic idempotency marker (issue #21
@@ -771,6 +879,10 @@ export function createDispatch(
         }
         case "review.setDisposition": {
           const input = parseCommandInput(name, rawInput);
+          // Path safety at ingestion (#382 M2 finding 8): refuse an absolute or traversing path.
+          if (!isRepoRelativePath(input.path)) {
+            throw new Error(`Disposition refused: unsafe path (${input.path})`);
+          }
           const review = service.setDisposition(
             input.commandId,
             input.reviewId,
@@ -812,6 +924,11 @@ export function createDispatch(
           // Refuse to mint a token for a stale or unknown review id; only the current
           // review can be published from this session.
           const review = requireReviewById(input.reviewId);
+          // Compose-binding integrity (#382 M2 finding 2): when the artifact was daemon-composed
+          // (the phone flow carries `compositionId`), recompute the binding from the CURRENT review
+          // and refuse a stale-revision or cross-review mint. Recomputing from the current
+          // dispositions is what catches a disposition edit landing between preview and post.
+          assertCompositionFresh(review, "review", input.payload, input.compositionId);
           const target = toForgeReviewTarget(input.target);
           // Bind the mint to the review's OWN pull request (issue #21): a local capture
           // (no postTarget) or a mismatched target cannot even obtain a token, so the
@@ -844,6 +961,10 @@ export function createDispatch(
               "Publish refused: this is a retrospective review — it is read-only and nothing can be posted.",
             );
           }
+          // Compose-binding integrity (#382 M2 finding 2): a daemon-composed artifact carries its
+          // binding; recompute it from the CURRENT review and refuse a stale/cross-review post
+          // (dry-run included, so the fault surfaces as a refusal rather than a plausible request).
+          assertCompositionFresh(addressed, "review", input.payload, input.compositionId);
 
           const target = toForgeReviewTarget(input.target);
 
@@ -908,6 +1029,9 @@ export function createDispatch(
             realPostInFlight.add(post.marker);
             try {
               const outcome = await deps.publishPort.publishReview(post);
+              // The post landed — clear any publish-ready attention on this review everywhere
+              // (#382 M2). The taxonomy clears publish-ready on the post happening, from any client.
+              clearPublishReady(input.reviewId);
               return parseCommandOutput(name, {
                 dryRun: false,
                 request: deps.publishPort.buildReviewRequest(post),
@@ -952,6 +1076,10 @@ export function createDispatch(
           if (canonicalPrSubmissionPayload(input.submission) !== input.payload) {
             throw new Error("Submit refused: the PR submission payload does not match its content");
           }
+          // Compose-binding integrity (#382 M2 finding 2): a daemon-composed submission carries its
+          // binding; recompute it over the posted payload + current patchset and refuse a
+          // cross-review or advanced-patchset (stale) submission before pushing anything.
+          assertCompositionFresh(review, "pr", input.payload, input.compositionId);
 
           // (2) The head must be a real BRANCH ref (#107) — a detached HEAD has no branch
           // to open a PR from. MAIN is authoritative on the branch to push: the persisted
@@ -980,7 +1108,122 @@ export function createDispatch(
             headRef,
             submission: input.submission,
           });
+          // The PR opened (or was reused) — clear any publish-ready attention on this review
+          // everywhere (#382 M2), the same clear-on-post the review egress does.
+          clearPublishReady(review.id);
           return parseCommandOutput(name, outcome);
+        }
+        // ── publish.compose: the daemon composes the outbound artifact (issue #382 M2) ─
+        case "publish.compose": {
+          // A projected client (the phone) cannot compose the byte-exact payload — the DOM ui
+          // layer owns the editable collation model and the mobile boundary forbids importing it.
+          // So the DAEMON composes it (core is node-free and in-boundary here) and the phone POSTS
+          // exactly these bytes. `mode` selects the loop; a mode that does not fit the review is
+          // honestly `unavailable`. Finding C ruling (a): BOTH loops end on the phone.
+          const input = parseCommandInput(name, rawInput);
+          const review = requireReviewById(input.reviewId);
+          if (review.retrospective) {
+            return parseCommandOutput(name, {
+              status: "unavailable",
+              reason: "This is a retrospective review — it is read-only and posts nothing.",
+            });
+          }
+
+          if (input.mode === "review") {
+            // A team-PR review posts a review event to a real PR. Only a review with a postTarget
+            // can post one; a branch-only capture has no PR to comment on (it opens a PR instead).
+            if (!review.postTarget) {
+              return parseCommandOutput(name, {
+                status: "unavailable",
+                reason:
+                  "This review has no pull request to post to — open one from the own-branch flow instead.",
+              });
+            }
+            // Compose the DEFAULT (unedited) comments from the review's dispositions — the phone
+            // does not edit (publish decision 4), so the default IS the product. The payload and
+            // verdict are core's, so publish.review re-verifies these very bytes (single-source).
+            const comments = reviewCommentsFromDispositions(review.dispositions);
+            // Path safety at compose (#382 M2 finding 8): refuse to compose an outbound review whose
+            // comments carry an absolute or traversing path — such a path would post outside the
+            // repo (or is corruption). Ingestion (`canvas.disposition`) already rejects them; this is
+            // the defence-in-depth at the egress boundary.
+            const badPath = comments.find((c) => !isRepoRelativePath(c.path));
+            if (badPath) {
+              return parseCommandOutput(name, {
+                status: "unavailable",
+                reason: `A review comment has an unsafe path (${badPath.path}); it cannot be posted.`,
+              });
+            }
+            const payload = canonicalReviewPayload(comments);
+            const verdict = deriveReviewEvent(comments);
+            const target = review.postTarget;
+            const destination = `${target.repo.owner}/${target.repo.name}#${target.number}`;
+            const compositionId = publishCompositionId({
+              reviewId: review.id,
+              patchsetId: review.activePatchsetId,
+              mode: "review",
+              payload,
+            });
+            // A composed draft is now ready to post (#382 M2, both modes): raise publish-ready so
+            // an away client learns it and deep-links to the preview. Idempotent by derived id.
+            raisePublishReady(review, destination, destination);
+            return parseCommandOutput(name, {
+              status: "review",
+              comments,
+              payload,
+              verdict,
+              destination,
+              title: destination,
+              compositionId,
+            });
+          }
+
+          // input.mode === "pr": the own-branch submission. A team-PR review posts a review, not a
+          // new PR; refuse "pr" there so the caller uses "review".
+          if (review.postTarget) {
+            return parseCommandOutput(name, {
+              status: "unavailable",
+              reason:
+                'This is a team-PR review — post it as a review (mode "review"), not a new pull request.',
+            });
+          }
+          const patchset = activePatchsetOf(review);
+          const headRef = patchset.repository.headRef;
+          if (headRef === undefined) {
+            return parseCommandOutput(name, {
+              status: "unavailable",
+              reason: "HEAD is detached — there is no branch to open a pull request from.",
+            });
+          }
+          const base = patchset.repository.baseRef;
+          // Draft the PR body (daemon-composed) when a drafter is wired; else a deterministic
+          // title/body. Either way the payload is derived from the SAME submission returned, so
+          // publish.submitPr round-trips it exactly (self-consistent, R33-honest).
+          const drafted = deps.draftPrBody
+            ? await deps.draftPrBody({ review, base, head: headRef, dispositions: [] })
+            : undefined;
+          const title = drafted?.status === "drafted" ? drafted.title : headRef;
+          const body = drafted?.status === "drafted" ? drafted.body : "";
+          const submission = { title, body, base, head: headRef, draft: true };
+          const payload = canonicalPrSubmissionPayload(submission);
+          const destination = `${basename(review.repositoryRoot)}:${headRef} → ${base}`;
+          const compositionId = publishCompositionId({
+            reviewId: review.id,
+            patchsetId: review.activePatchsetId,
+            mode: "pr",
+            payload,
+          });
+          // A composed own-branch draft is now ready to post (#382 M2, both modes): raise
+          // publish-ready. Idempotent by derived id with the review.draftPrBody raise.
+          raisePublishReady(review, destination, title);
+          return parseCommandOutput(name, {
+            status: "pr",
+            submission,
+            payload,
+            destination,
+            title,
+            compositionId,
+          });
         }
         case "review.canvases": {
           const input = parseCommandInput(name, rawInput);
@@ -1210,6 +1453,18 @@ export function createDispatch(
           // current review; there is no permission gate and no consent token, and a
           // question always answers against the latest code rather than ever refusing.
           const review = requireReviewById(input.reviewId);
+          // Shade-answer binding (#382 M2 finding 3): a chip answer from the notification carries
+          // the ask's attention id. Atomically CONSUME it (acknowledge) BEFORE running the turn, so
+          // exactly one answer lands: a duplicate tap finds the item already consumed and is refused
+          // truthfully; a forged/stale id matches no active item and is refused too. This runs
+          // before the first await, so two concurrent taps cannot both consume. Only enforced when
+          // attention is wired (a build without it has no shade-answer path to dedup).
+          if (input.attentionId !== undefined && deps.acknowledgeAttention) {
+            const consumed = deps.acknowledgeAttention({ attentionId: input.attentionId });
+            if (consumed === 0) {
+              throw new Error("This ask was already answered.");
+            }
+          }
           const mode = input.mode ?? "orchestrator";
           // #251 streaming: with a thread + turn AND a push channel, stream the
           // orchestrator's tokens live and emit a terminal event per channel. Absent →
@@ -1220,14 +1475,18 @@ export function createDispatch(
               ? { threadId: input.threadId, turnId: input.turnId, emit: ctx.emitAskStream }
               : undefined;
           const onOrchestratorDelta = stream
-            ? (delta: string) =>
+            ? (delta: string) => {
+                // Grow the registry's live body (#382 M2 finding 5) so a mid-turn reattach
+                // resumes the real cursor, then echo the delta on the stream.
+                deps.liveTurns?.appendDelta(stream.turnId, delta);
                 stream.emit({
                   kind: "ask-delta",
                   threadId: stream.threadId,
                   turnId: stream.turnId,
                   channel: "orchestrator",
                   delta,
-                })
+                });
+              }
             : undefined;
           const onOrchestratorFocus = ctx?.emitAskStream
             ? (anchor: string) =>
@@ -1285,7 +1544,15 @@ export function createDispatch(
           // quit-abort cancels both. A one-shot ask with no turnId still registers under a
           // fresh key, so it too is reaped. No registry wired ⇒ no controller ⇒ back-compat.
           const turnKey = stream?.turnId ?? randomUUID();
-          const liveTurn = deps.liveTurns?.register(turnKey);
+          // Index the turn by reviewId so a client "Stop" (`review.interrupt`, #382 M2) can
+          // abort THIS review's in-flight turn — the same signal `before-quit` fires, scoped.
+          // A streaming turn also registers its live descriptor so `review.reattach` resumes its
+          // real in-flight body (#382 M2 finding 5) instead of recovering it as interrupted.
+          const liveTurn = deps.liveTurns?.register(
+            turnKey,
+            input.reviewId,
+            stream ? { threadId: stream.threadId, channel: "orchestrator" } : undefined,
+          );
           // Attention (#383 batch, families ask-pending + turn-failed). Only a STREAMING ask —
           // a tracked, backgroundable turn (threadId+turnId) — raises attention; a one-shot #139
           // ask is a synchronous foreground call the caller is already waiting on. Raise
@@ -1313,6 +1580,41 @@ export function createDispatch(
               body: why,
             });
           };
+          // Emit the terminal `ask-interrupted` on the stream once, when the turn was aborted
+          // (the client "Stop", or a quit reap) — so every watcher renders the interrupted
+          // outcome truthfully rather than a turn that just stops streaming. Guarded to fire
+          // at most once and only for a tracked, streaming turn.
+          let interruptEmitted = false;
+          const emitInterrupted = (why: string): void => {
+            if (!stream || interruptEmitted) return;
+            interruptEmitted = true;
+            stream.emit({
+              kind: "ask-interrupted",
+              threadId: stream.threadId,
+              turnId: stream.turnId,
+              channel: "orchestrator",
+              reason: why,
+            });
+          };
+          // Persist the interrupted turn's replacement (#382 M2 finding 6): overwrite the
+          // `streaming` placeholder (same id) with an explicit `interrupted` message carrying the
+          // partial body that streamed, so a store reload reads it back as interrupted directly.
+          // Idempotent (once per turn) so the success and catch abort branches never double-write.
+          let interruptPersisted = false;
+          const persistInterrupted = (p: NonNullable<typeof persist>): void => {
+            if (interruptPersisted) return;
+            interruptPersisted = true;
+            p.store.putMessage({
+              reviewId: p.reviewId,
+              threadId: p.threadId,
+              message: {
+                id: p.orchestratorId,
+                author: "harness",
+                body: deps.liveTurns?.bodyOf(turnKey) ?? "",
+                status: "interrupted",
+              },
+            });
+          };
           try {
             const result = await askReview(mode, input.question, {
               askOrchestrator: (question) =>
@@ -1335,7 +1637,13 @@ export function createDispatch(
             // codex is one-shot (no token stream) so its whole answer lands as its
             // completion. Both carry the SAME final answer the invoke returns — the stream
             // is a live echo, never a second source of truth.
-            if (stream) {
+            //
+            // EXACTLY ONE terminal event (#382 M2 finding 6): if this turn's controller was
+            // aborted (a leg that SWALLOWED its abort and returned reaches here), skip
+            // `ask-complete` entirely — the single terminal is the `ask-interrupted` emitted
+            // below. Emitting complete THEN interrupted would give every watcher two terminals
+            // and let a killed turn flash a "completed" answer first.
+            if (stream && !liveTurn?.signal.aborted) {
               stream.emit({
                 kind: "ask-complete",
                 threadId: stream.threadId,
@@ -1394,19 +1702,39 @@ export function createDispatch(
                   },
                 });
               }
+            } else if (persist) {
+              // The turn was aborted (a swallowed abort that returned). REPLACE the streaming
+              // placeholder with an explicit `interrupted` message carrying the partial body that
+              // actually streamed (#382 M2 finding 6) — so it survives a store reload as
+              // interrupted directly, not only via the crash-recovery transform.
+              persistInterrupted(persist);
             }
             // The ask settled. An interrupted turn (its controller was aborted but the leg
             // swallowed the abort and returned) is a truthful "turn failed"; otherwise the ask
             // is simply no longer pending. Either way, ask-pending clears.
             clearAskPending();
-            if (liveTurn?.signal.aborted)
+            if (liveTurn?.signal.aborted) {
+              // The leg swallowed its abort and returned — still an interrupted turn. Emit the
+              // stream terminal AND raise turn-failed so watchers and the needs-you badge agree.
+              emitInterrupted("The turn was interrupted before it finished.");
               raiseTurnFailed("The turn was interrupted before it finished.");
+            }
             return parseCommandOutput(name, result);
           } catch (error) {
-            // The turn threw (a real failure, or a quit-abort rejecting the in-flight turn):
-            // clear the pending flag and raise turn-failed with the truthful cause, then rethrow.
+            // The turn threw (a real failure, or a quit/Stop abort rejecting the in-flight turn):
+            // clear the pending flag, tell the stream the truthful outcome, and raise turn-failed,
+            // then rethrow. An abort reads as "interrupted"; any other throw as a genuine failure.
             clearAskPending();
-            raiseTurnFailed(error instanceof Error ? error.message : "The turn failed.");
+            const why = error instanceof Error ? error.message : "The turn failed.";
+            if (liveTurn?.signal.aborted) {
+              // The aborted leg threw. Persist the interrupted replacement (#382 M2 finding 6)
+              // and emit the single terminal, so the turn survives reload as interrupted.
+              if (persist) persistInterrupted(persist);
+              emitInterrupted("The turn was interrupted before it finished.");
+              raiseTurnFailed("The turn was interrupted before it finished.");
+            } else {
+              raiseTurnFailed(why);
+            }
             throw error;
           } finally {
             // The turn settled — completed, errored, or aborted-on-quit — so it leaves the
@@ -1429,6 +1757,19 @@ export function createDispatch(
             return parseCommandOutput(name, { threads: [], inFlight: [] });
           }
           return parseCommandOutput(name, await deps.reattachThreads({ reviewId: input.reviewId }));
+        }
+        // ── review.interrupt: stop a review's in-flight turn (issue #382 M2) ────────
+        case "review.interrupt": {
+          // The client "Stop" (wireframe 22). Resolve the review ONCE (a stale/unknown id is
+          // refused, exactly like ask/reattach), then abort its in-flight turn(s) via the live-
+          // turn registry — the same AbortController `before-quit` fires, scoped to this review.
+          // The aborted turn's own handler emits `ask-interrupted`, clears ask-pending, and
+          // raises turn-failed (it observes `signal.aborted`); this command only requests the
+          // stop and reports how many turns it signalled. Idempotent: nothing in flight ⇒ 0.
+          const input = parseCommandInput(name, rawInput);
+          requireReviewById(input.reviewId);
+          const interrupted = deps.liveTurns?.abortReview(input.reviewId) ?? 0;
+          return parseCommandOutput(name, { interrupted });
         }
         // ── Refine a rough note into a clean comment (issue #19) ───────────────────
         case "review.refine": {
@@ -1578,6 +1919,13 @@ export function createDispatch(
             carriedForward: updated.dispositions.length,
             orphaned: updated.orphaned?.length ?? 0,
           };
+          // The handoff-completed family goes live (#382 M2): raise with the delta summary as
+          // substance so a backgrounded phone learns the write turn landed and what it changed.
+          const orphanNote = result.orphaned > 0 ? `, ${result.orphaned} to re-review` : "";
+          raiseHandoffCompleted(
+            updated,
+            `${basename(updated.repositoryRoot)} · ${result.filesTouched.length} files changed, ${result.carriedForward} carried${orphanNote}`,
+          );
           return parseCommandOutput(name, { status: "ran", result });
         }
         // ── Draft the PR title + body (issue #74, M26) ─────────────────────────────
@@ -1598,18 +1946,27 @@ export function createDispatch(
               reason: "PR-body drafting is not available in this build",
             });
           }
-          return parseCommandOutput(
-            name,
-            await deps.draftPrBody({
+          const drafted = await deps.draftPrBody({
+            review,
+            base: input.base,
+            head: input.head,
+            dispositions: input.dispositions,
+            ...(input.narration === undefined ? {} : { narration: input.narration }),
+            ...(input.requirements === undefined ? {} : { requirements: input.requirements }),
+            ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
+          });
+          // The composed own-branch draft is now ready (#382 M2): raise publish-ready with the
+          // destination + drafted title as substance, so a phone that is away learns a draft is
+          // waiting to post and deep-links to the preview. Only on a real draft — an
+          // unavailable/failed turn composes nothing to wait on.
+          if (drafted.status === "drafted") {
+            raisePublishReady(
               review,
-              base: input.base,
-              head: input.head,
-              dispositions: input.dispositions,
-              ...(input.narration === undefined ? {} : { narration: input.narration }),
-              ...(input.requirements === undefined ? {} : { requirements: input.requirements }),
-              ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
-            }),
-          );
+              `${basename(review.repositoryRoot)}:${input.head}`,
+              drafted.title,
+            );
+          }
+          return parseCommandOutput(name, drafted);
         }
         case "review.deltaDigest": {
           // Rephrase the successor review's DETERMINISTIC delta account into a one-glance
@@ -1734,6 +2091,13 @@ export function createDispatch(
           // A span/side (issue #78) makes it span-grained (the Spec view's per-node
           // review); absent, it stays path-grained exactly as before.
           const input = parseCommandInput(name, rawInput);
+          // Path safety at ingestion (#382 M2 finding 8): a disposition path must name a file INSIDE
+          // the repo. Refuse an absolute or traversing path so it can never be stored (and later
+          // composed into an outbound review). Diff paths are always repo-relative; this only
+          // rejects a crafted or corrupt one.
+          if (!isRepoRelativePath(input.path)) {
+            throw new Error(`Disposition refused: unsafe path (${input.path})`);
+          }
           const review = service.setDisposition(
             input.commandId,
             input.reviewId,

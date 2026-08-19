@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { buildGitHubReviewRequest } from "@rennet/adapters";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildGitHubReviewRequest, FileThreadStore } from "@rennet/adapters";
 import {
   type AskAnswer,
   type ComposePort,
@@ -7,6 +10,7 @@ import {
   canonicalReviewPayload,
   composeHandoffBundle,
   decompose,
+  deriveReviewEvent,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -185,6 +189,8 @@ function harness(
     acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
     raiseAttention?: DispatchDeps["raiseAttention"];
     inFlightReviews?: DispatchDeps["inFlightReviews"];
+    threadPersistence?: DispatchDeps["threadPersistence"];
+    reattachThreads?: DispatchDeps["reattachThreads"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -360,7 +366,8 @@ function harness(
     readUiEvidence: extra.readUiEvidence ?? (() => Promise.resolve(null)),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
-    threadPersistence,
+    threadPersistence: extra.threadPersistence ?? threadPersistence,
+    ...(extra.reattachThreads ? { reattachThreads: extra.reattachThreads } : {}),
     refineComment: refineCommentSpy,
     draftPrBody: draftPrBodySpy,
     symbolLookup: opts.symbolLookup,
@@ -2166,6 +2173,294 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
   });
 });
 
+describe("createDispatch — publish.compose + publish-ready + handoff-completed (#382 M2)", () => {
+  function ownBranchCapture(): PatchsetCapturePort {
+    return {
+      capture: () =>
+        Promise.resolve({
+          ...patchset(),
+          repository: { ...patchset().repository, headRef: "feat/reviewed", baseRef: "main" },
+        }),
+    };
+  }
+
+  it("publish.compose composes an own-branch submission the engine's publish.submitPr round-trips exactly", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/9",
+      number: 9,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      { capturePort: ownBranchCapture(), submitPullRequest },
+    );
+    const review = await capturedReview(dispatch);
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as { status: string; submission: unknown; payload: string; destination: string };
+    expect(composed.status).toBe("pr");
+    // The payload is byte-consistent with the composed submission — so posting it round-trips.
+    expect(composed.payload).toBe(canonicalPrSubmissionPayload(composed.submission as never));
+    expect(composed.destination).toContain("feat/reviewed");
+
+    // The phone posts EXACTLY what compose returned — the engine accepts it and opens one PR.
+    const out = (await dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      submission: composed.submission as never,
+      payload: composed.payload,
+    })) as { url: string };
+    expect(out.url).toBe("https://github.com/acme/widget/pull/9");
+    expect(submitPullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("publish.compose is honestly unavailable when HEAD is detached (no own branch)", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as { status: string; reason?: string };
+    expect(composed.status).toBe("unavailable");
+    expect(composed.reason).toMatch(/detached|branch/i);
+  });
+
+  it("publish.compose (mode review) composes a team-PR review the engine's publish.review posts byte-exact", async () => {
+    // A postable review (postTarget = SANDBOX_TARGET) with a real disposition to collate.
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    await dispatch("canvas.disposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "rename this",
+    });
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as {
+      status: string;
+      comments: ReviewCommentInput[];
+      payload: string;
+      verdict: ForgeReviewEvent;
+      destination: string;
+    };
+    expect(composed.status).toBe("review");
+    // One-source: the composed comments come from the review's dispositions, the payload is core's
+    // canonical bytes, and the verdict is derived — exactly what publish.review re-verifies.
+    expect(composed.comments.length).toBe(1);
+    expect(composed.payload).toBe(canonicalReviewPayload(composed.comments));
+    // The daemon composed the comments straight off the review's disposition (one-source): a
+    // path-grained request-change becomes a file-level RIGHT comment carrying the body.
+    expect(composed.comments[0]).toMatchObject({
+      path: "src/a.ts",
+      side: "RIGHT",
+      type: "request-change",
+      body: "rename this",
+    });
+    expect(composed.verdict).toBe(deriveReviewEvent(composed.comments));
+    expect(composed.verdict).toBe("REQUEST_CHANGES");
+    expect(composed.destination).toContain("rennet-egress-sandbox#1");
+
+    // The phone posts EXACTLY what compose returned — a real send lands one review.
+    const { authorization } = (await dispatch("publish.requestConsent", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      payload: composed.payload,
+      verdict: composed.verdict,
+    })) as { authorization: string };
+    const out = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments: composed.comments,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      authorization,
+      dryRun: false,
+    })) as { dryRun: boolean; outcome: { url: string | null } | null };
+    expect(out.dryRun).toBe(false);
+    expect(out.outcome).not.toBeNull();
+  });
+
+  it("binds the composed artifact and refuses a stale-revision post (#382 M2 finding 2)", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    await dispatch("canvas.disposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "rename this",
+    });
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as { compositionId: string; payload: string; verdict: ForgeReviewEvent };
+    expect(composed.compositionId).toBeTruthy();
+    // Fresh preview: a post carrying the binding is accepted (a token is minted).
+    const consent = (await dispatch("publish.requestConsent", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      compositionId: composed.compositionId,
+    })) as { authorization: string };
+    expect(consent.authorization).toBeTruthy();
+    // A disposition edit lands AFTER the preview (another client edited) — the phone still holds
+    // the old binding. The daemon recomputes it from the CURRENT dispositions and refuses.
+    await dispatch("canvas.disposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "actually, rename it to something else entirely",
+    });
+    await expect(
+      dispatch("publish.requestConsent", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        payload: composed.payload,
+        verdict: composed.verdict,
+        compositionId: composed.compositionId,
+      }),
+    ).rejects.toThrow(/stale|another review/i);
+    // publish.review refuses the stale binding too (dry-run included).
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments: publishComments(),
+        payload: composed.payload,
+        verdict: composed.verdict,
+        compositionId: composed.compositionId,
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/stale|another review/i);
+  });
+
+  it("refuses a disposition with an unsafe path at ingestion (#382 M2 finding 8)", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    await expect(
+      dispatch("canvas.disposition", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        path: "../../etc/passwd",
+        disposition: "comment",
+        body: "escape",
+      }),
+    ).rejects.toThrow(/unsafe path/i);
+    await expect(
+      dispatch("review.setDisposition", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        path: "/etc/shadow",
+        disposition: "comment",
+        body: "escape",
+      }),
+    ).rejects.toThrow(/unsafe path/i);
+  });
+
+  it("publish.compose refuses a mismatched mode truthfully (pr on a team-PR review)", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch); // has a postTarget
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as { status: string; reason?: string };
+    expect(composed.status).toBe("unavailable");
+    expect(composed.reason).toMatch(/team-PR|review/i);
+  });
+
+  it("publish.compose (mode review) is unavailable on an own-branch review (no PR to post to)", async () => {
+    const { dispatch } = harness(fakePublishPort(), {}, { capturePort: ownBranchCapture() });
+    const review = await capturedReview(dispatch); // no postTarget
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as { status: string; reason?: string };
+    expect(composed.status).toBe("unavailable");
+    expect(composed.reason).toMatch(/pull request|own-branch/i);
+  });
+
+  it("publish-ready raises when the own-branch draft is composed, and clears on the post", async () => {
+    const raised: { family: string }[] = [];
+    const acknowledged: { attentionId?: string }[] = [];
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/9",
+      number: 9,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        submitPullRequest,
+        raiseAttention: (event) => {
+          raised.push({ family: event.family });
+          return `${event.family}:${event.reviewId ?? "-"}`;
+        },
+        acknowledgeAttention: (selector) => {
+          acknowledged.push(selector);
+          return 1;
+        },
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    await dispatch("review.draftPrBody", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      base: "main",
+      head: "feat/reviewed",
+      dispositions: [],
+    });
+    expect(raised.some((r) => r.family === "publish-ready")).toBe(true);
+
+    await dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      submission: {
+        title: "Reviewed change",
+        body: "b",
+        base: "main",
+        head: "feat/reviewed",
+        draft: true,
+      },
+      payload: canonicalPrSubmissionPayload({
+        title: "Reviewed change",
+        body: "b",
+        base: "main",
+        head: "feat/reviewed",
+        draft: true,
+      }),
+    });
+    expect(acknowledged.some((a) => a.attentionId === `publish-ready:${review.id}`)).toBe(true);
+  });
+});
+
 describe("createDispatch — review.openPr (the GitHub PR front door)", () => {
   it("opens a PR into a review and grants access to its root", async () => {
     const { dispatch, allowedRoots } = harness();
@@ -2715,6 +3010,52 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     const askPending = raised.find((r) => r.family === "ask-pending");
     expect(raised.some((r) => r.family === "turn-failed")).toBe(true);
     expect(cleared).toContainEqual({ attentionId: askPending?.id });
+  });
+
+  it("a shade answer binds to the attention id: consumed once, a duplicate is refused (#382 M2 finding 3)", async () => {
+    // Model the attention registry's active set: acknowledge(id) returns 1 the first time (it was
+    // active) and 0 afterwards (already consumed) — the exact dedup the shade answer binds to.
+    const active = new Set<string>();
+    const h = harness(
+      fakePublishPort(),
+      {},
+      {
+        acknowledgeAttention: (sel) => {
+          if (sel.attentionId && active.delete(sel.attentionId)) return 1;
+          return 0;
+        },
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+    const attentionId = `ask-pending:${review.id}`;
+    active.add(attentionId);
+    // First shade tap: the ask is active ⇒ consumed ⇒ the turn runs.
+    await h.dispatch(
+      "review.ask",
+      { commandId: randomUUID(), reviewId: review.id, question: "yes", attentionId },
+      { emitAskStream: () => undefined },
+    );
+    expect(h.reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
+    // Second (duplicate) shade tap of the SAME push: the item is no longer active ⇒ refused
+    // truthfully, and the turn does NOT run a second time.
+    await expect(
+      h.dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "yes",
+        attentionId,
+      }),
+    ).rejects.toThrow(/already answered/i);
+    expect(h.reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
+    // A forged/stale attention id (never active) is refused for the same reason.
+    await expect(
+      h.dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "yes",
+        attentionId: "ask-pending:forged",
+      }),
+    ).rejects.toThrow(/already answered/i);
   });
 
   it("a ONE-SHOT (#139) ask raises no attention — it is a synchronous foreground call (#383 batch)", async () => {
@@ -3784,23 +4125,46 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
   // A recording registry that hands out REAL AbortControllers, so a test can assert the
   // exact controller instance reaches each leg and that register/settle bracket the turn.
   function spyRegistry(): {
-    registered: { turnId: string; controller: AbortController }[];
+    registered: { turnId: string; reviewId?: string; controller: AbortController }[];
     settled: string[];
     liveTurns: NonNullable<DispatchDeps["liveTurns"]>;
   } {
-    const registered: { turnId: string; controller: AbortController }[] = [];
+    const registered: { turnId: string; reviewId?: string; controller: AbortController }[] = [];
     const settled: string[] = [];
+    const active = new Map<
+      string,
+      { reviewId?: string; controller: AbortController; body: string }
+    >();
     return {
       registered,
       settled,
       liveTurns: {
-        register(turnId: string): AbortController {
+        register(turnId: string, reviewId?: string): AbortController {
           const controller = new AbortController();
-          registered.push({ turnId, controller });
+          registered.push({ turnId, reviewId, controller });
+          active.set(turnId, { reviewId, controller, body: "" });
           return controller;
         },
         settle(turnId: string): void {
           settled.push(turnId);
+          active.delete(turnId);
+        },
+        appendDelta(turnId: string, delta: string): void {
+          const turn = active.get(turnId);
+          if (turn) turn.body += delta;
+        },
+        bodyOf(turnId: string): string {
+          return active.get(turnId)?.body ?? "";
+        },
+        abortReview(reviewId: string): number {
+          let count = 0;
+          for (const turn of active.values()) {
+            if (turn.reviewId === reviewId) {
+              turn.controller.abort();
+              count += 1;
+            }
+          }
+          return count;
         },
       },
     };
@@ -3838,6 +4202,91 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     expect(codexArg.abortController).toBe(controller);
     // Left the registry when the turn settled.
     expect(reg.settled).toEqual(["tn"]);
+  });
+
+  it("review.interrupt aborts the in-flight turn, emits ask-interrupted, clears ask-pending, raises turn-failed (#382 M2)", async () => {
+    const reg = spyRegistry();
+    const raised: { family: string; body: string }[] = [];
+    const acknowledged: { attentionId?: string; reviewId?: string }[] = [];
+    const h = harness(
+      undefined,
+      {},
+      {
+        liveTurns: reg.liveTurns,
+        raiseAttention: (event) => {
+          raised.push({ family: event.family, body: event.body });
+          return `${event.family}:${event.reviewId ?? "-"}`;
+        },
+        acknowledgeAttention: (selector) => {
+          acknowledged.push(selector);
+          return 1;
+        },
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+
+    // The orchestrator blocks until its abort fires, then swallows it and returns — the
+    // "leg swallowed its abort and returned" path (still an interrupted turn).
+    let entered!: () => void;
+    const enteredP = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(
+      async ({ abortController }: { abortController?: AbortController }) => {
+        entered();
+        await new Promise<void>((resolve) =>
+          abortController?.signal.addEventListener("abort", () => resolve()),
+        );
+        return { model: "Orchestrator · Claude", answer: "partial" };
+      },
+    );
+
+    const events: ReviewAskStreamEvent[] = [];
+    const askPromise = h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "orchestrator",
+        question: "which fix?",
+        threadId: "th",
+        turnId: "tn",
+        anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+      },
+      { emitAskStream: (event) => events.push(event) },
+    );
+
+    await enteredP; // the turn is registered and the orchestrator is blocked on its abort
+    const interrupt = (await h.dispatch("review.interrupt", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { interrupted: number };
+    expect(interrupt).toEqual({ interrupted: 1 });
+
+    await askPromise;
+
+    // The stream carries EXACTLY ONE terminal event (#382 M2 finding 6): the swallowed abort
+    // must NOT emit `ask-complete` and THEN `ask-interrupted` — a killed turn would flash a
+    // completed answer first. One `ask-interrupted`, zero `ask-complete`.
+    const terminals = events.filter(
+      (e) => e.kind === "ask-complete" || e.kind === "ask-interrupted",
+    );
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.kind).toBe("ask-interrupted");
+    // The badges agree: ask-pending cleared, turn-failed raised with the interrupted cause.
+    expect(raised.some((r) => r.family === "ask-pending")).toBe(true);
+    expect(raised.some((r) => r.family === "turn-failed")).toBe(true);
+    expect(acknowledged.some((a) => a.attentionId === `ask-pending:${review.id}`)).toBe(true);
+  });
+
+  it("review.interrupt with nothing in flight is a truthful no-op (a double-tap Stop)", async () => {
+    const reg = spyRegistry();
+    const { dispatch, review } = await openReview(reg.liveTurns);
+    const out = (await dispatch("review.interrupt", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { interrupted: number };
+    expect(out).toEqual({ interrupted: 0 });
   });
 
   it("SETTLES the turn even when the ask throws — the leak guard on the aborted/errored path", async () => {
@@ -3938,21 +4387,46 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
       { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
       { emitAskStream: () => undefined },
     );
-    // The orchestrator id was written EXACTLY once — the streaming placeholder — and never
-    // replaced. Drop the `!liveTurn.signal.aborted` guard and this reddens at length 2,
-    // the second write being the durable `a partial answer…` body.
+    // Two writes: the streaming placeholder, then the INTERRUPTED replacement (#382 M2 finding 6).
+    // The swallowed answer NEVER persists as a durable completion — the second write is an
+    // `interrupted` message carrying only the partial body that actually streamed (none here).
     const orch = orchWritesFrom(h.threadPersistence);
-    expect(orch).toHaveLength(1);
+    expect(orch).toHaveLength(2);
     expect(orch[0]?.status).toBe("streaming");
-    expect(orch[0]?.body).toBe("");
+    expect(orch[1]?.status).toBe("interrupted");
+    expect(orch.some((m) => m.body === "a partial answer that must NOT persist")).toBe(false);
   });
 
   it("does NOT persist a durable completion when the aborted leg THROWS (placeholder survives)", async () => {
     const reg = spyRegistry();
     const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
     const review = await capturedReview(h.dispatch);
-    // The other arrival: the aborted leg rejects (the SDK's observed throw-on-abort).
-    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("Request was cancelled"));
+    // The other arrival: the leg rejects WITHOUT the controller being aborted — a GENUINE
+    // failure (not a Stop). No interrupted replacement is persisted (that is only for an
+    // aborted turn, #382 M2 finding 6); the placeholder survives and recovers as interrupted.
+    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("boom"));
+    await expect(
+      h.dispatch(
+        "review.ask",
+        { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/boom/);
+    // Only the streaming placeholder, no completion. The throw skips the completion-persist.
+    const orch = orchWritesFrom(h.threadPersistence);
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+  });
+
+  it("PERSISTS the interrupted replacement when an aborted leg THROWS (#382 M2 finding 6)", async () => {
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // The Stop path in production: the controller is aborted, THEN the SDK throws its cancel.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      throw new Error("Request was cancelled");
+    });
     await expect(
       h.dispatch(
         "review.ask",
@@ -3960,11 +4434,11 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
         { emitAskStream: () => undefined },
       ),
     ).rejects.toThrow(/cancelled/);
-    // Same durable-state outcome by a different route: only the streaming placeholder, no
-    // completion. The throw skips the completion-persist by control flow.
+    // Two writes: the streaming placeholder, then the INTERRUPTED replacement the catch persists —
+    // so the turn survives a store reload as interrupted directly, not only via crash-recovery.
     const orch = orchWritesFrom(h.threadPersistence);
-    expect(orch).toHaveLength(1);
-    expect(orch[0]?.status).toBe("streaming");
+    expect(orch).toHaveLength(2);
+    expect(orch[1]?.status).toBe("interrupted");
   });
 
   it("abort during the CODEX leg (orchestrator already returned genuinely) persists NO completion and NO codex record", async () => {
@@ -4002,15 +4476,72 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
       { emitAskStream: () => undefined },
     );
     const messages = h.threadPersistence.putMessage.mock.calls.map(
-      ([arg]) => (arg as { message: { id: string; status?: string } }).message,
+      ([arg]) => (arg as { message: { id: string; status?: string; body: string } }).message,
     );
-    // Orchestrator: only the streaming placeholder, never replaced by the genuine answer.
+    // Orchestrator: the streaming placeholder, then the INTERRUPTED replacement (#382 M2 finding
+    // 6) — the genuine answer is NEVER persisted as a durable completion (the turn was killed).
     const orch = messages.filter((m) => m.id === "tn::orchestrator");
-    expect(orch).toHaveLength(1);
+    expect(orch).toHaveLength(2);
     expect(orch[0]?.status).toBe("streaming");
+    expect(orch[1]?.status).toBe("interrupted");
+    expect(orch.some((m) => m.body === "a genuine, complete orchestrator answer")).toBe(false);
     // Codex: no record at all — the cancel is NOT persisted as a codex failure. Drop the
     // guard and this reddens (a `tn::codex` "could not answer" message appears).
     expect(messages.some((m) => m.id === "tn::codex")).toBe(false);
+  });
+
+  // ⭐ THE REATTACH CONTRACT (Finding A, #382 M2). The interrupted outcome must LAND IN THE
+  // PERSISTED MESSAGES — a client that reattaches after a Stop/kill sees the turn as
+  // `interrupted` in `threads`, never a turn hung forever in `inFlight`. The abort guard keeps
+  // the streaming placeholder on disk; the store's crash-recovery transform reads it back as
+  // `interrupted`; reattach returns it in `threads` with `inFlight` empty. Wired to a REAL
+  // FileThreadStore (temp dir) so putMessage→loadThreads round-trips the real transform, not a
+  // spy. This is the end-to-end proof the settle path gives for free — asserted, per the ruling.
+  it("an interrupted turn lands in the persisted thread messages, not a hung inFlight (reattach contract)", async () => {
+    const store = new FileThreadStore(mkdtempSync(join(tmpdir(), "rennet-threads-")));
+    const reg = spyRegistry();
+    const h = harness(
+      undefined,
+      {},
+      {
+        liveTurns: reg.liveTurns,
+        threadPersistence: {
+          upsertThread: (input) => store.upsertThread(input.reviewId, input),
+          putMessage: (input) => store.putMessage(input.reviewId, input.threadId, input.message),
+        },
+        reattachThreads: async ({ reviewId }) => ({
+          threads: store.loadThreads(reviewId),
+          inFlight: [],
+        }),
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+    // The Stop path: the controller is aborted, then the SDK throws its cancel — so the catch
+    // persists the explicit interrupted replacement (#382 M2 finding 6) into the real store.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      throw new Error("Request was cancelled");
+    });
+    await expect(
+      h.dispatch(
+        "review.ask",
+        { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/cancelled/);
+    // Reattach sees the interrupted turn IN the persisted messages, and NOTHING hung in-flight.
+    const reattached = (await h.dispatch("review.reattach", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as {
+      threads: { messages: { id: string; status?: string }[] }[];
+      inFlight: unknown[];
+    };
+    expect(reattached.inFlight).toEqual([]);
+    const orch = reattached.threads
+      .flatMap((thread) => thread.messages)
+      .find((message) => message.id === "tn::orchestrator");
+    expect(orch?.status).toBe("interrupted");
   });
 });
 

@@ -1191,12 +1191,19 @@ export type TurnStatus = z.infer<typeof turnStatusSchema>;
 // in main — whereas project.process's narration dies with its command. The kind
 // literals are `ask-*`, DELIBERATELY disjoint from projectProcessEvent's own "done",
 // so the two event families can never collide on a shared discriminator.
+// A per-review MONOTONIC sequence number the daemon stamps on every emitted ask-stream event
+// (#382 M2 finding 5, additive). `ask-delta` is the one event that APPENDS rather than sets, so a
+// re-delivered delta (a reconnect that replays, a doubled broadcast) would duplicate text; the
+// reducer rejects any event whose seq it has already applied. Optional for back-compat: a daemon
+// that predates the field sends none and the reducer keeps its by-id idempotence for set-events.
+const askStreamSeqSchema = z.number().int().nonnegative().optional();
 export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("ask-focus"),
     anchor: z.string().min(1),
     threadId: z.string().min(1).optional(),
     turnId: z.string().min(1).optional(),
+    seq: askStreamSeqSchema,
   }),
   z.object({
     kind: z.literal("ask-delta"),
@@ -1204,6 +1211,7 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
     turnId: z.string().min(1),
     channel: streamChannelSchema,
     delta: z.string(),
+    seq: askStreamSeqSchema,
   }),
   z.object({
     kind: z.literal("ask-complete"),
@@ -1212,6 +1220,7 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
     channel: streamChannelSchema,
     model: z.string().min(1),
     finalBody: z.string(),
+    seq: askStreamSeqSchema,
   }),
   z.object({
     kind: z.literal("ask-interrupted"),
@@ -1219,6 +1228,7 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
     turnId: z.string().min(1),
     channel: streamChannelSchema,
     reason: z.string().optional(),
+    seq: askStreamSeqSchema,
   }),
 ]);
 export type ReviewAskStreamEvent = z.infer<typeof reviewAskStreamEventSchema>;
@@ -2091,6 +2101,13 @@ export const commandDefinitions = {
        * at `publish.review`.
        */
       verdict: forgeReviewEventSchema,
+      /**
+       * The compose integrity binding (#382 M2 finding 2), when the artifact was daemon-composed
+       * (the phone flow). Optional/additive: the desktop composes locally and omits it. When
+       * present, the daemon recomputes it from the CURRENT review and refuses a stale/cross-review
+       * mint before a token is issued.
+       */
+      compositionId: z.string().min(1).optional(),
     }),
     output: z.object({
       /** The opaque, single-use authorization bound to (review, target, payload, verdict). */
@@ -2130,6 +2147,10 @@ export const commandDefinitions = {
       verdict: forgeReviewEventSchema.optional(),
       /** The single-use consent token from `publish.requestConsent` (real send only). */
       authorization: z.string().min(1).optional(),
+      /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
+       *  Optional/additive; when present the daemon recomputes it and refuses a stale/cross-review
+       *  post (dry-run included) before building the request. */
+      compositionId: z.string().min(1).optional(),
       /** Default TRUE: an omitted flag never posts. Real egress must opt in with false. */
       dryRun: z.boolean().optional().default(true),
     }),
@@ -2169,6 +2190,10 @@ export const commandDefinitions = {
       submission: prSubmissionSchema,
       /** The canonical `pr-submission` bytes the sheet previewed + signed (round-trip check). */
       payload: z.string(),
+      /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
+       *  Optional/additive; when present the daemon recomputes it and refuses a stale (advanced
+       *  patchset) or cross-review submission before pushing. */
+      compositionId: z.string().min(1).optional(),
     }),
     output: z.object({
       /** The created (or reused) pull request's web URL. */
@@ -2178,6 +2203,72 @@ export const commandDefinitions = {
       /** True when an open PR from this head already existed and was reused (idempotent). */
       reused: z.boolean(),
     }),
+  },
+  // ── publish.compose: the daemon composes the outbound artifact (issue #382 M2) ─
+  // A projected client (the phone) cannot compose the byte-exact outbound payload —
+  // the DOM `ui` layer owns the editable collation model and the mobile boundary
+  // forbids importing it (and `layer:ui` may not import `layer:core`, so it cannot
+  // be shimmed there either). So the DAEMON composes it — `layer:server` imports
+  // `@rennet/core`'s node-free `reviewCommentsFromDispositions`/`canonicalReviewPayload`
+  // /`canonicalPrSubmissionPayload` — and the phone POSTS exactly what it returns: the
+  // preview and the post use the SAME bytes, single-source and R33-honest (Finding C
+  // ruling (a): BOTH loops end on the phone).
+  //
+  // `mode` selects which loop:
+  //  • "review" — a team-PR review to post. Composes the default (unedited) comments
+  //    from the review's dispositions + the derived verdict; the phone previews them and
+  //    posts via `publish.review`, which re-verifies these very bytes.
+  //  • "pr" — the OWN-BRANCH PR submission (title/body/base/head + canonical payload);
+  //    the phone posts via `publish.submitPr`, which round-trips the payload exactly.
+  // A mode that does not fit the review (a "pr" compose of a team-PR review, a "review"
+  // compose of a branch-only review, a retrospective, or a detached HEAD) returns
+  // `unavailable` with a truthful reason. Reads only readiness state — no consent
+  // internals, no egress, nothing secret. COMPAT: a pre-M2 daemon does not implement
+  // this command; the phone's publish surface says the daemon needs updating (truthful,
+  // like Stop) rather than pretending it can post.
+  "publish.compose": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** Which loop to compose: a team-PR "review" to post, or an own-branch "pr" to open. */
+      mode: z.enum(["review", "pr"]),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("review"),
+        /** The composed team-PR comments the phone previews AND posts verbatim via `publish.review`. */
+        comments: z.array(reviewCommentSchema),
+        /** The canonical bytes, derived from `comments` — the round-trip `publish.review` verifies. */
+        payload: z.string(),
+        /** The derived review verdict (the GitHub review event the post will carry). */
+        verdict: forgeReviewEventSchema,
+        /** A human destination line for the preview (e.g. `owner/name#7`). */
+        destination: z.string(),
+        /** A short headline for the preview (the repo/PR the review posts to). */
+        title: z.string(),
+        /**
+         * Integrity binding (#382 M2 finding 2): a deterministic id over (reviewId, active
+         * patchset, mode, target, canonical payload). The phone carries it to `publish.review`,
+         * which recomputes it from the CURRENT review and refuses a cross-review or stale-revision
+         * post — pure integrity, no ceremony. A pre-M2 daemon omits it (the post skips the check).
+         */
+        compositionId: z.string().min(1),
+      }),
+      z.object({
+        status: z.literal("pr"),
+        /** The composed own-branch submission the phone posts verbatim via `publish.submitPr`. */
+        submission: prSubmissionSchema,
+        /** The canonical bytes, derived from `submission` — the round-trip `publish.submitPr` verifies. */
+        payload: z.string(),
+        /** A human destination line for the preview (e.g. `atlas:feat/x → main`). */
+        destination: z.string(),
+        /** The PR title, surfaced as the preview's headline. */
+        title: z.string(),
+        /** Integrity binding (#382 M2 finding 2), recomputed + validated by `publish.submitPr`. */
+        compositionId: z.string().min(1),
+      }),
+      z.object({ status: z.literal("unavailable"), reason: z.string() }),
+    ]),
   },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────
   // The renderer reaches the canvas engine ONLY through this command map (R20).
@@ -2453,6 +2544,15 @@ export const commandDefinitions = {
       // The reviewer's RAW question for this turn (not the folded transcript), persisted
       // as the "you" message so a re-attached thread shows what was asked. #251.
       turnBody: z.string().optional(),
+      /**
+       * The attention item this answer resolves (#382 M2 finding 3, shade answering). Carried ONLY
+       * by a shade answer: the ask push carries its attention id, the chip-tap invokes `review.ask`
+       * with it, and the daemon consumes that attention atomically BEFORE running the turn — so a
+       * duplicate tap (the item already consumed) is refused truthfully as "already answered", and a
+       * forged/stale id (no such active item) is refused too. Absent for an in-app answer (which
+       * interrupts + asks) and for a pre-M2 client. Additive.
+       */
+      attentionId: z.string().min(1).optional(),
     }),
     output: askReviewResultSchema,
   },
@@ -2468,6 +2568,25 @@ export const commandDefinitions = {
       reviewId: z.string().min(1),
     }),
     output: reattachResultSchema,
+  },
+  // ── review.interrupt: stop a review's in-flight turn (issue #382 M2) ──────────
+  // The mobile "Stop" (wireframe 22) and any client's turn interrupt. Aborts the
+  // review's currently-streaming turn(s) via the live-turn registry — the same abort
+  // signal `before-quit` fires, but scoped to ONE review and client-triggered. The
+  // aborted turn emits `ask-interrupted` on its stream (so every watcher renders the
+  // interrupted outcome truthfully), its ask-pending attention clears, and turn-failed
+  // raises with the truthful "interrupted" cause. Additive and idempotent: interrupting
+  // a review with nothing in flight returns `interrupted: 0` (a no-op, never an error) —
+  // a double-tap Stop is safe. No new egress, no gate: stopping your own turn just runs.
+  "review.interrupt": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+    }),
+    output: z.object({
+      /** How many in-flight turns were signalled to stop (0 ⇒ nothing was running). */
+      interrupted: z.number().int().nonnegative(),
+    }),
   },
   // ── review.refine: refine one rough note into a clean comment (issue #19) ────
   // Rai's headline feature. A real model turn cleans the user's raw note into a

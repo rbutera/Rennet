@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   askStreamEventFrameSchema,
   attentionEventFrameSchema,
+  attentionItemSchema,
   checkProtocolCompatibility,
   helloFrameSchema,
   MIN_COMPATIBLE_PROTOCOL_VERSION,
@@ -219,5 +220,62 @@ describe("version constants", () => {
   it("exports the version-window constants at their initial values", () => {
     expect(PROTOCOL_VERSION).toBe(1);
     expect(MIN_COMPATIBLE_PROTOCOL_VERSION).toBe(1);
+  });
+});
+
+describe("attentionItemSchema — refined actions (#382 M2 finding 11)", () => {
+  const ask = {
+    id: "ask-pending:r1",
+    family: "ask-pending" as const,
+    reviewId: "r1",
+    deepLink: "rennet://review/r1/ask",
+    title: "Ask pending",
+    body: "a question",
+  };
+
+  it("accepts bounded, unique actions on an ask-pending item", () => {
+    const ok = attentionItemSchema.safeParse({
+      ...ask,
+      actions: [
+        { id: "a", label: "Approve" },
+        { id: "b", label: "Reject" },
+      ],
+    });
+    expect(ok.success).toBe(true);
+  });
+
+  it("rejects actions on a non-ask-pending family", () => {
+    const bad = attentionItemSchema.safeParse({
+      ...ask,
+      id: "publish-ready:r1",
+      family: "publish-ready",
+      deepLink: "rennet://review/r1/publish",
+      actions: [{ id: "a", label: "x" }],
+    });
+    expect(bad.success).toBe(false);
+  });
+
+  it("rejects duplicate action ids", () => {
+    const bad = attentionItemSchema.safeParse({
+      ...ask,
+      actions: [
+        { id: "dup", label: "One" },
+        { id: "dup", label: "Two" },
+      ],
+    });
+    expect(bad.success).toBe(false);
+  });
+
+  it("rejects more than the bounded number of actions and an over-long label", () => {
+    const tooMany = attentionItemSchema.safeParse({
+      ...ask,
+      actions: [1, 2, 3, 4, 5].map((n) => ({ id: `a${n}`, label: `L${n}` })),
+    });
+    expect(tooMany.success).toBe(false);
+    const longLabel = attentionItemSchema.safeParse({
+      ...ask,
+      actions: [{ id: "a", label: "x".repeat(200) }],
+    });
+    expect(longLabel.success).toBe(false);
   });
 });

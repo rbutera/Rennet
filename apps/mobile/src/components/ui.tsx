@@ -116,6 +116,65 @@ export function OutlineButton({
   );
 }
 
+/** A tappable answer chip (the ask card's decision chips). `selected` fills it ink. */
+export function AnswerChip({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected?: boolean;
+  onPress?: () => void;
+}): ReactNode {
+  const t = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.answerChip,
+        {
+          backgroundColor: selected ? t.ink : t.card,
+          borderColor: selected ? t.ink : t.line2,
+        },
+      ]}
+    >
+      <Text
+        style={{ color: selected ? t.canvas : t.text, fontSize: type.control, fontWeight: "500" }}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+/** A destructive/stop control (the live turn's visible Stop). Disabled ⇒ visibly dimmed and
+ *  inert (a pre-M2 daemon cannot interrupt; the control tells the truth rather than no-opping). */
+export function StopButton({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress?: () => void;
+  disabled?: boolean;
+}): ReactNode {
+  const t = useTheme();
+  return (
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      accessibilityState={{ disabled: Boolean(disabled) }}
+      style={[
+        styles.stopBtn,
+        { backgroundColor: t.amberBg, borderColor: t.amberLine },
+        disabled ? { opacity: 0.4 } : null,
+      ]}
+    >
+      <Text style={{ color: t.amber, fontSize: type.control, fontWeight: "600" }}>{label}</Text>
+    </Pressable>
+  );
+}
+
 /** A monospaced diff hunk block. Additions read green, deletions amber, per the material law. */
 export function HunkBlock({ diff }: { diff: string }): ReactNode {
   const t = useTheme();
@@ -205,6 +264,20 @@ export const styles = StyleSheet.create({
   },
   btnOutline: { borderWidth: 1, backgroundColor: "transparent" },
   btnLabel: { fontSize: type.body, fontWeight: type.weightMedium },
+  answerChip: {
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignSelf: "flex-start",
+  },
+  stopBtn: {
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignSelf: "flex-start",
+  },
   hunk: { borderWidth: 1, borderRadius: radii.md, padding: space.md, marginVertical: space.sm },
   // Genuine code/diff surface: the ONE place monospace is sanctioned by the kit (--code).
   hunkLine: {

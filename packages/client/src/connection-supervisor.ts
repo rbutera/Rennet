@@ -25,7 +25,7 @@ import type {
   RennetBridge,
   ReviewAskStreamEvent,
 } from "@rennet/protocol";
-import { ATTENTION_FEATURE } from "@rennet/protocol";
+import { ACT_FEATURE, ATTENTION_FEATURE } from "@rennet/protocol";
 import { ConnectionError } from "./connection-error";
 import type { ReplicaStore, StoredReplica, TokenStore } from "./stores";
 import type { BridgeLifecycleEvent, CapturedServerInfo } from "./ws-bridge";
@@ -432,6 +432,16 @@ export class ConnectionSupervisor implements RennetBridge {
   /** Whether the connected daemon advertised the attention/presence capability (public read). */
   attentionAdvertised(): boolean {
     return this.#bridge?.serverInfo?.features?.[ATTENTION_FEATURE] === true;
+  }
+
+  /**
+   * Whether the connected daemon advertised the `act` capability — the M2 acting seams
+   * (`review.interrupt`, `publish.compose`). A client gates its Stop and publish affordances on
+   * this so a pre-M2 daemon shows them disabled / needs-updating rather than silently no-opping
+   * (issue #382 M2, Finding A + Finding C). Public read.
+   */
+  actAdvertised(): boolean {
+    return this.#bridge?.serverInfo?.features?.[ACT_FEATURE] === true;
   }
 
   /** Send current presence iff online and the daemon advertised `attention`. */

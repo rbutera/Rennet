@@ -10,10 +10,13 @@
 
 import type { ConnectionStatus, Presence, StoredReplica } from "@rennet/client";
 import type {
+  AttentionAction,
   AttentionEventFrame,
   CommandInput,
   CommandName,
   CommandOutput,
+  ProjectProcessEvent,
+  ReviewAskStreamEvent,
 } from "@rennet/protocol";
 
 /** A paired daemon as the app tracks it. */
@@ -42,12 +45,26 @@ export interface DaemonSupervisor {
   setPresence(presence: Partial<Presence>): void;
   /** Subscribe to this daemon's attention broadcasts (#383 batch) — keeps needs-you live. */
   onAttention(listener: (event: AttentionEventFrame) => void): () => void;
+  /**
+   * Subscribe to a review's live ask-stream (#382 M2). Rebind-safe: the supervisor re-attaches
+   * this listener to a fresh socket on reconnect, so a mid-turn network change keeps the timeline
+   * flowing without the consumer re-subscribing (#389). Returns an unsubscribe.
+   */
+  onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /** Subscribe to a long-running command's progress (kickoff `onProgress`, #382 M2), by commandId. */
+  onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
   /** The last-known replica surface (offline paint), or undefined if never synced. */
   readonly replica: StoredReplica | undefined;
   /** Save a freshly reconciled bootstrap surface as this daemon's replica. */
   saveReplica(surface: unknown): void;
   /** Whether this daemon advertised the attention capability (gates push registration, #383). */
   attentionAdvertised(): boolean;
+  /**
+   * Whether this daemon advertised the `act` capability — the M2 acting seams (`review.interrupt`,
+   * `publish.compose`). The turn screen's Stop and the publish surface gate on it so a pre-M2
+   * daemon shows them truthfully disabled / needs-updating, never a silent no-op (#382 M2).
+   */
+  actAdvertised(): boolean;
   close(): void;
 }
 
@@ -64,12 +81,20 @@ export class DaemonRegistry {
   // attention ids. A review is needs-you while any high-priority attention on it is unresolved.
   readonly #attentionIdsByReview = new Map<string, Set<string>>();
   readonly #reviewByAttentionId = new Map<string, string>();
+  // The answer chips carried on the latest ask-pending attention per review (#382 M2), so the
+  // turn/ask screen renders the daemon's chips when it attaches them. Cleared when the ask clears.
+  readonly #askActionsByReview = new Map<string, readonly AttentionAction[]>();
 
   constructor(private readonly createSupervisor: SupervisorFactory) {}
 
   /** The live needs-you review set from attention broadcasts (augments the projected summary). */
   needsYouReviewIds(): ReadonlySet<string> {
     return new Set(this.#attentionIdsByReview.keys());
+  }
+
+  /** The answer chips on a review's active ask, or [] — the shade/in-app answer options (#382 M2). */
+  askActionsFor(reviewId: string): readonly AttentionAction[] {
+    return this.#askActionsByReview.get(reviewId) ?? [];
   }
 
   /** Apply one attention frame to the live needs-you set; emits if it changed anything. */
@@ -81,6 +106,9 @@ export class DaemonRegistry {
       const set = this.#attentionIdsByReview.get(reviewId) ?? new Set<string>();
       set.add(id);
       this.#attentionIdsByReview.set(reviewId, set);
+      // Keep the ask's answer chips for the screen (#382 M2); a non-ask family carries none.
+      if (family === "ask-pending" && frame.item.actions)
+        this.#askActionsByReview.set(reviewId, frame.item.actions);
       this.#emit();
     } else if (frame.event === "cleared" && frame.clearedIds) {
       let changed = false;
@@ -91,6 +119,7 @@ export class DaemonRegistry {
         const set = this.#attentionIdsByReview.get(reviewId);
         set?.delete(id);
         if (set && set.size === 0) this.#attentionIdsByReview.delete(reviewId);
+        if (id.startsWith("ask-pending:")) this.#askActionsByReview.delete(reviewId);
         changed = true;
       }
       if (changed) this.#emit();

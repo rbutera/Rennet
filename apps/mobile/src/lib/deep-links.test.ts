@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { parseDeepLink, parsePairingLink, resolvePushHref, routeHref } from "./deep-links";
+import {
+  askReviewIdOf,
+  parseAttentionPushData,
+  parseDeepLink,
+  parsePairingLink,
+  resolvePushHref,
+  routeHref,
+} from "./deep-links";
+
+describe("askReviewIdOf — the ask a shade answer targets (#382 M2 finding 4)", () => {
+  it("extracts the review id from an ask deep-link", () => {
+    expect(askReviewIdOf("rennet://review/rev-9/ask")).toBe("rev-9");
+  });
+
+  it("ignores a non-ask link (only an ask push answers) and a missing link", () => {
+    expect(askReviewIdOf("rennet://review/rev-9/digest")).toBeUndefined();
+    expect(askReviewIdOf("rennet://project/p1")).toBeUndefined();
+    expect(askReviewIdOf(undefined)).toBeUndefined();
+  });
+});
 
 describe("parsePairingLink (task 4.1)", () => {
   it("parses a pairing link's url, code, and name", () => {
@@ -43,15 +62,22 @@ describe("deep-link routing table (task 6.2)", () => {
     expect(parseDeepLink("https://example.com")).toBeNull();
   });
 
-  it("builds daemon-scoped expo-router hrefs; M2 surfaces land on the digest", () => {
+  it("builds daemon-scoped expo-router hrefs; ask→turn, publish→publish (#382 M2)", () => {
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "digest" })).toBe(
       "/daemon/d1/review/r1/digest",
     );
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "error" })).toBe(
       "/daemon/d1/review/r1/error",
     );
-    // ask/publish are M2 screens → digest for now (review still reachable, no dead link).
+    // ask lands on the live turn screen, publish on the publish preview (M2 surfaces).
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "ask" })).toBe(
+      "/daemon/d1/review/r1/turn",
+    );
+    expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "publish" })).toBe(
+      "/daemon/d1/review/r1/publish",
+    );
+    // handoff lands on the digest (its dedicated surface is secondary).
+    expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "handoff" })).toBe(
       "/daemon/d1/review/r1/digest",
     );
     expect(routeHref("d1", { kind: "project", projectId: "p1" })).toBe("/daemon/d1/project/p1");
@@ -72,5 +98,36 @@ describe("deep-link routing table (task 6.2)", () => {
     );
     expect(unknownDaemon).toBeNull();
     expect(resolvePushHref({ family: "review-finished" }, () => "d")).toBeNull();
+  });
+});
+
+describe("parseAttentionPushData (#382 M2 findings 3 + 11 — parse before use)", () => {
+  it("parses a well-formed ask push, keeping attentionId and validated actions", () => {
+    const parsed = parseAttentionPushData({
+      deviceId: "d1",
+      deepLink: "rennet://review/r1/ask",
+      family: "ask-pending",
+      attentionId: "ask-pending:r1",
+      actions: [{ id: "a", label: "Approve" }],
+      extra: "stripped",
+    });
+    expect(parsed).toEqual({
+      deviceId: "d1",
+      deepLink: "rennet://review/r1/ask",
+      family: "ask-pending",
+      attentionId: "ask-pending:r1",
+      actions: [{ id: "a", label: "Approve" }],
+    });
+  });
+
+  it("returns null for a non-object payload", () => {
+    expect(parseAttentionPushData(null)).toBeNull();
+    expect(parseAttentionPushData("nope")).toBeNull();
+  });
+
+  it("rejects a payload whose actions are malformed (over-long label)", () => {
+    expect(
+      parseAttentionPushData({ deviceId: "d", actions: [{ id: "a", label: "x".repeat(200) }] }),
+    ).toBeNull();
   });
 });

@@ -18,6 +18,12 @@ export interface ExpoPushMessage {
   /** The deep-link payload the app reads on tap (`{ deviceId, deepLink, family }`). */
   readonly data: Record<string, unknown>;
   readonly priority?: "default" | "normal" | "high";
+  /**
+   * The notification category the app registered for this push's answer chips (#382 M2, ask
+   * pushes only). Maps to `categoryIdentifier` on the device so the shade renders the chips as
+   * actions. Absent on every other family.
+   */
+  readonly categoryId?: string;
 }
 
 type FetchLike = (
@@ -77,6 +83,7 @@ export async function sendExpoPushes(
           body: m.body,
           data: m.data,
           priority: m.priority ?? "high",
+          ...(m.categoryId ? { categoryId: m.categoryId } : {}),
         })),
       ),
     });

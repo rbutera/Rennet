@@ -102,6 +102,20 @@ describe("WS listener server-request wire support (#380)", () => {
     expect(serverInfo.features).toMatchObject({ serverRequests: true });
   });
 
+  it("advertises features.act only when the M2 acting seams are wired (#382 M2)", async () => {
+    // With `act`, the phone renders Stop / publish truthfully; without it, a pre-M2-shaped
+    // daemon must NOT advertise it (the flag is the honest pre-M2 signal, Finding A + C).
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    const withAct = await startWsListener({ dispatch, serverVersion: "test", act: true });
+    listeners.push(withAct);
+    expect((await connect(withAct)).serverInfo.features).toMatchObject({ act: true });
+
+    const withoutAct = await startWsListener({ dispatch, serverVersion: "test" });
+    listeners.push(withoutAct);
+    const { serverInfo } = await connect(withoutAct);
+    expect((serverInfo.features as Record<string, unknown>).act).toBeUndefined();
+  });
+
   it("askConnection round-trips an answer and sends a resolved frame", async () => {
     let capturedConnectionId: string | undefined;
     const dispatch = vi.fn(

@@ -88,6 +88,7 @@ added.
 |---|---|---|
 | `serverRequests` | always, on current daemons | The daemon can send `serverRequest` frames and understands `serverResponse` (see the [frame vocabulary](#the-frame-vocabulary)). A client that reads this flag as true may register an `onServerRequest` handler; one that does not never sees a server-initiated request. No product flow raises one yet — the flag reserves the capability so a future client negotiates it once, at handshake. |
 | `attention` | when the daemon wires the attention system (issue #383 M1) | The daemon consumes client `presence` frames, delivers attention events presence-aware, and accepts `device.registerPush` / `attention.acknowledge`. A client that reads this flag as true transmits its `presence` frame (and re-sends it on every reconnect), registers a push token, and receives `attentionEvent` frames; one that does not (an M0-era daemon never advertises it) sends no presence, registers no token, and its presence seam stays a wire-silent no-op. Checked once at handshake, one path — the standard feature-gate. |
+| `act` | when the daemon wires the M2 acting seams (issue #382 M2) | The daemon implements `review.interrupt` (client Stop) and `publish.compose` (daemon-composed publish preview). A client that reads this flag as true renders those affordances live — a working Stop on a running turn, a composed publish preview it can post; one that does not (a pre-M2 daemon never advertises it) renders them TRUTHFULLY inert instead of letting them silently no-op: the phone shows Stop visibly disabled ("update daemon") and the publish surface says the daemon needs updating, rather than firing an unknown command. Checked once at handshake — the same feature-gate as `attention`. |
 
 ## Inbound decoders are tolerant
 
@@ -151,11 +152,27 @@ The taxonomy is a closed six-family set, but not every family is raised from a
 real source in M1. **Live in M1:** `review-finished` (wired to the capture / openPr
 / regenerate pipeline outcomes), `ask-pending` and `turn-failed` (both wired to the
 streaming `review.ask` turn lifecycle — an in-flight ask raises `ask-pending`,
-clears on settle, and raises `turn-failed` on error or interrupt). **Seam-only
-until M2:** `handoff-completed` and `publish-ready` — the planner, registry, and
-`raiseAttention` path are ready, but the handoff and publish flows that would raise
-them are M2 scope, so nothing raises them yet. `processing-finished` is silent by
-taxonomy: it updates the in-app badge but never pushes. The `device.registerPush`
+clears on settle, and raises `turn-failed` on error or interrupt). **Now live (M2):**
+`handoff-completed` raises from `review.handoff.run`'s outcome (delta summary as
+substance) and `publish-ready` from a composed draft becoming ready — both loops:
+`review.draftPrBody` and either mode of `publish.compose` raise it (idempotent by derived
+id) — clearing on post or on viewing the preview, so all six families now raise from real
+lifecycles. `processing-finished` is silent by taxonomy: it updates the in-app badge
+but never pushes.
+
+`attentionItemSchema` gained an additive optional `actions` array (issue #382 M2) —
+answer chips (`{ id, label }`) an ask-pending item carries, so the app can register them
+as notification actions and answer the ask from the shade (the reply composes chip label +
+free-text direction into one `review.ask`). It rides the `attentionEvent` frame and the
+Expo push payload (alongside a `categoryId`); it is absent on every other family and on any
+daemon that predates it, stripped harmlessly by the tolerant decoder. Two additive
+`commandDefinitions` entries landed with M2, ordinary token-bearing commands under the same
+rules: `review.interrupt` (the client Stop — aborts a review's in-flight turn, emits
+`ask-interrupted`) and `publish.compose` (the daemon composes the outbound artifact +
+byte-exact payload for a projected client that cannot import the `ui` composition layer —
+`mode: "review"` returns the team-PR comments/verdict from the review's dispositions,
+`mode: "pr"` the own-branch submission; the phone previews AND posts exactly those bytes, so
+both publish loops end on the phone). The `device.registerPush`
 input also carries an additive optional `disabledFamilies` — families a device
 muted in its notification settings, which the daemon suppresses pushes for; a
 high-priority family (ask-pending / review-finished / turn-failed) always reaches

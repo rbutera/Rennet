@@ -33,6 +33,7 @@ import type {
   SessionFrame,
 } from "@rennet/protocol";
 import {
+  ACT_FEATURE,
   ATTENTION_FEATURE,
   MIN_COMPATIBLE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
@@ -59,6 +60,8 @@ import {
   ProjectionResolveError,
   projectCommandOutput,
   projectProgressEvent,
+  redactAbsolutePaths,
+  redactAbsolutePathsDeep,
   resolveCommandInput,
   scrubProjectedValue,
   scrubRoots,
@@ -110,6 +113,13 @@ export interface WsListenerDeps {
    * Absent ⇒ M0 behaviour unchanged: no `attention` flag, presence frames ignored, no pushes.
    */
   readonly attention?: AttentionDeps;
+  /**
+   * Whether this daemon wires the M2 acting seams (`review.interrupt`, `publish.compose`).
+   * Present ⇒ the daemon advertises the `act` feature so a client renders Stop and the publish
+   * surface truthfully; absent ⇒ pre-M2, and those affordances show disabled / needs-updating
+   * rather than silently no-opping (issue #382 M2, Finding A + Finding C).
+   */
+  readonly act?: boolean;
 }
 
 /** Default delay before the single post-send receipt poll (#383 batch). */
@@ -351,6 +361,9 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
 
   const connections = new Set<Connection>();
   const byId = new Map<string, Connection>();
+  // Per-review monotonic ask-stream seq (#382 M2 finding 5): the last seq broadcast for a review,
+  // stamped on every outgoing ask-stream event so the client reducer can reject a re-delivered one.
+  const askSeqByReview = new Map<string, number>();
   let boundPort = 0;
 
   const httpServer: HttpServer = createServer((req, res) => {
@@ -480,10 +493,13 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           type: "rpcError",
           requestId,
           code: "command_failed",
-          message: ctx ? scrubRoots(message, ctx) : message,
+          // Projected errors: scrub known roots/home, THEN redact any absolute path the
+          // substitution missed (a `/var/…` / `C:\…` outside every known root), so a raw host
+          // path never reaches a projected client (#382 M2 finding 8).
+          message: ctx ? redactAbsolutePaths(scrubRoots(message, ctx)) : message,
           ...(details === undefined
             ? {}
-            : { details: ctx ? scrubProjectedValue(details, ctx) : details }),
+            : { details: ctx ? redactAbsolutePathsDeep(details, ctx) : details }),
         });
       }
     };
@@ -550,6 +566,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             features: {
               serverRequests: true,
               ...(deps.attention ? { [ATTENTION_FEATURE]: true } : {}),
+              ...(deps.act ? { [ACT_FEATURE]: true } : {}),
             },
           });
           // Connect-time replay (#383 batch): hand THIS newly authorized socket the outstanding
@@ -715,10 +732,16 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   // `pairing-only` (no valid token) is excluded, exactly as `broadcastProgress` excludes it.
   // Per-review subscription routing and bandwidth filtering arrive with the presence phase.
   const broadcastAskStream = (reviewId: string, event: ReviewAskStreamEvent): void => {
+    // Stamp a per-review MONOTONIC seq (#382 M2 finding 5) at this single choke point so every
+    // emitted event carries one, regardless of which socket triggered the turn. The reducer
+    // rejects an already-applied seq, making the append-not-idempotent `ask-delta` safe under a
+    // reconnect that re-delivers. A never-shrinking counter per review; process-lifetime memory.
+    const seq = (askSeqByReview.get(reviewId) ?? 0) + 1;
+    askSeqByReview.set(reviewId, seq);
     const payload = JSON.stringify({
       type: "askStreamEvent",
       reviewId,
-      event,
+      event: { ...event, seq },
     } satisfies SessionFrame);
     for (const connection of connections) {
       if (connection.socket.readyState !== WebSocket.OPEN) continue;
@@ -754,20 +777,42 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   const raiseAttention = (event: RaisedAttention): AttentionItem | null => {
     const attention = deps.attention;
     if (!attention) return null;
-    const item = attentionRegistry.raise(event);
+    const { item, changed } = attentionRegistry.raiseIfChanged(event);
+    // Suppress a redundant refresh (#382 M2 finding 10): an identical item is already active (e.g.
+    // publish.compose re-raising publish-ready on every preview re-render), so re-broadcasting and
+    // re-pushing would re-buzz a device for a state it already holds. Nothing changed ⇒ nothing to
+    // deliver; the item stays active for a fresh client to hydrate.
+    if (!changed) return item;
     // Live in-app: every authorized socket gets the raised frame (its needs-you badge appears).
     broadcastAttention({ type: "attentionEvent", event: "raised", item });
     // Push: every registered device NOT connected-and-focused on this review (planner decision).
     const registrations = attention.pushTokens.list();
     const plan = planDelivery(item, connectedClients(), registrations);
     if (plan.push.length > 0) {
+      // The ask category id must match the app's `askCategoryId(reviewId)` = `ask:${reviewId}`, so
+      // the shade renders the chips this push carries as notification actions (#382 M2).
+      const categoryId =
+        item.family === "ask-pending" && item.actions && item.reviewId
+          ? `ask:${item.reviewId}`
+          : undefined;
       const messages: ExpoPushMessage[] = plan.push.map((registration) => ({
         to: registration.token,
         title: item.title,
         body: item.body,
         // The app maps `deviceId` back to the delivering daemon and resolves `deepLink` under it.
-        data: { deviceId: registration.deviceId, deepLink: item.deepLink, family: item.family },
+        // `actions` (ask-pending only, #382 M2) rides the payload so the shade can register answer
+        // chips as notification actions; absent on every other family (undefined is dropped by JSON).
+        data: {
+          deviceId: registration.deviceId,
+          deepLink: item.deepLink,
+          family: item.family,
+          // The attention id (#382 M2 finding 3): a shade answer invokes `review.ask` with it so
+          // the daemon consumes exactly this ask atomically (dedup + forgery guard).
+          attentionId: item.id,
+          ...(item.actions ? { actions: item.actions } : {}),
+        },
         priority: plan.priority === "high" ? "high" : "normal",
+        ...(categoryId ? { categoryId } : {}),
       }));
       // Map token → device once; both the synchronous dead-token prune and the async receipt
       // poll below drop by device id.

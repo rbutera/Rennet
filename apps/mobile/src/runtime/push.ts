@@ -5,10 +5,17 @@
 // Expo/RN calls live here (typecheck-only from tests); the routing itself is the pure table in
 // lib/deep-links, unit-tested there.
 
-import type { AttentionFamily } from "@rennet/protocol";
+import type { AttentionAction, AttentionFamily } from "@rennet/protocol";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { type AttentionPushData, resolvePushHref } from "../lib/deep-links";
+import { type AttentionPushData, askReviewIdOf, resolvePushHref } from "../lib/deep-links";
+import { newCommandId } from "../lib/ids";
+import {
+  askCategoryId,
+  askReplyInvoke,
+  chipLabelForAction,
+  shadeActionsFor,
+} from "../lib/notification-actions";
 import type { DaemonRegistry } from "./daemon-registry";
 
 /** This device's platform tag for `device.registerPush`. */
@@ -78,4 +85,94 @@ export async function clearPushOnAllDaemons(registry: DaemonRegistry): Promise<v
 /** Resolve a tapped push's data payload into the in-app href to navigate to (or null). */
 export function hrefForPush(data: AttentionPushData, registry: DaemonRegistry): string | null {
   return resolvePushHref(data, (deviceId) => registry.daemonIdForDevice(deviceId));
+}
+
+/** The ask push's answer chips, when present in its (already-parsed) data payload (#382 M2). */
+export function askActionsOf(data: AttentionPushData): readonly AttentionAction[] {
+  return data.actions ?? [];
+}
+
+/**
+ * Register an ask push's answer chips as an OS notification category so the lock-screen ask shows
+ * its chips as actions (#382 M2, task 3.2). Best-effort; on a platform/permission that denies it,
+ * the action falls back to opening the app pre-filled. Background=false ⇒ the action opens the app.
+ */
+export async function registerAskCategory(
+  reviewId: string,
+  actions: readonly AttentionAction[],
+  background = true,
+): Promise<void> {
+  if (actions.length === 0) return;
+  try {
+    await Notifications.setNotificationCategoryAsync(
+      askCategoryId(reviewId),
+      shadeActionsFor(actions, background).map((a) => ({
+        identifier: a.identifier,
+        buttonTitle: a.buttonTitle,
+        options: { opensAppToForeground: a.opensAppToForeground },
+      })),
+    );
+  } catch {
+    // Non-fatal: without the category the push still deep-links; the ask is answered in-app.
+  }
+}
+
+/**
+ * Update the shade to say a shade answer did NOT land (#382 M2 finding 4). Presented before the
+ * routing deep-links into the ask, so the user is told the truth (never a silently dropped answer)
+ * and can finish it in-app. Best-effort: a platform/permission that denies a local notification
+ * still gets the deep-link. `deepLink` is carried through so tapping the update re-opens the ask.
+ */
+export async function notifyShadeAnswerFailed(data: AttentionPushData): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Answer didn't land",
+        body: "Tap to finish answering in the app.",
+        data: { deviceId: data.deviceId, deepLink: data.deepLink, family: data.family },
+      },
+      trigger: null, // present immediately
+    });
+  } catch {
+    // Non-fatal: the routing still deep-links into the ask; the answer is never silently dropped.
+  }
+}
+
+/** The outcome of answering an ask from the shade — truthful, never a silent drop (#382 M2). */
+export type ShadeAnswerOutcome =
+  | { readonly status: "sent" }
+  | { readonly status: "no-daemon" }
+  | { readonly status: "no-chip" }
+  | { readonly status: "failed"; readonly reason: string };
+
+/**
+ * Answer an ask from a tapped notification action: resolve the chip, compose the SAME review.ask
+ * reply the in-app card would, and send it to the delivering daemon. The daemon's superseded-turn
+ * refusal is the dedup; a failure (unreachable / superseded) returns truthfully so the caller can
+ * update the notification and deep-link — an answer is never silently dropped or duplicated.
+ */
+export async function answerAskFromShade(
+  registry: DaemonRegistry,
+  data: AttentionPushData,
+  actionIdentifier: string,
+): Promise<ShadeAnswerOutcome> {
+  const reviewId = askReviewIdOf(data.deepLink);
+  if (!data.deviceId || !reviewId) return { status: "no-daemon" };
+  const daemonId = registry.daemonIdForDevice(data.deviceId);
+  const connection = daemonId ? registry.get(daemonId) : undefined;
+  if (!connection) return { status: "no-daemon" };
+  const chipLabel = chipLabelForAction(askActionsOf(data), actionIdentifier);
+  if (!chipLabel) return { status: "no-chip" };
+  try {
+    // The reply binds to the ask's attention id (#382 M2 finding 3): the daemon consumes exactly
+    // this ask atomically, so a duplicate tap is refused "already answered" and a stale/forged id
+    // is refused too. Absent ⇒ the daemon runs it unbound (a pre-M2 daemon has no such id).
+    await connection.supervisor.invoke(
+      "review.ask",
+      askReplyInvoke({ reviewId, chipLabel, attentionId: data.attentionId, newId: newCommandId }),
+    );
+    return { status: "sent" };
+  } catch (error) {
+    return { status: "failed", reason: error instanceof Error ? error.message : "unreachable" };
+  }
 }

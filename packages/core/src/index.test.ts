@@ -6,7 +6,13 @@ import {
   type Review,
 } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { fileContentDigest, foldReview, payloadDigest, type ReviewEvent } from "./index";
+import {
+  fileContentDigest,
+  foldReview,
+  isRepoRelativePath,
+  payloadDigest,
+  type ReviewEvent,
+} from "./index";
 
 const repository = {
   id: "repo",
@@ -368,5 +374,29 @@ describe("review fold", () => {
 
   it("creates stable payload digests independent of key order", () => {
     expect(payloadDigest({ b: 2, a: 1 })).toBe(payloadDigest({ a: 1, b: 2 }));
+  });
+});
+
+describe("isRepoRelativePath (issue #382 M2 finding 8)", () => {
+  it("accepts ordinary repo-relative paths", () => {
+    for (const p of ["a.ts", "src/a.ts", "src/nested/dir/file.tsx", "a/b/c"]) {
+      expect(isRepoRelativePath(p)).toBe(true);
+    }
+  });
+
+  it("rejects empty, absolute, and traversing paths", () => {
+    for (const p of [
+      "",
+      "/etc/passwd",
+      "/absolute/file.ts",
+      "\\\\unc\\share",
+      "C:\\Windows\\system32",
+      "../secret",
+      "src/../../escape",
+      "a/b/../../../c",
+      "..",
+    ]) {
+      expect(isRepoRelativePath(p)).toBe(false);
+    }
   });
 });
