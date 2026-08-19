@@ -9,10 +9,15 @@
 // cut here (elementDiffs is flat); the load-bearing "readable to the end, virtualized" is met.
 
 import { useLocalSearchParams } from "expo-router";
-import { type ReactNode, useEffect, useState } from "react";
-import { FlatList, Text, View } from "react-native";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { FlatList, Pressable, Text, View } from "react-native";
 import { Card, HunkBlock, Screen } from "../../../../../src/components/ui";
-import { type CanvasRow, flattenCanvasRows } from "../../../../../src/lib/canvas-rows";
+import {
+  type CanvasCohort,
+  type CanvasElement,
+  type CanvasRow,
+  flattenCanvasByCohort,
+} from "../../../../../src/lib/canvas-rows";
 import { newCommandId } from "../../../../../src/lib/ids";
 import {
   useConnection,
@@ -31,9 +36,12 @@ export default function Canvas(): ReactNode {
   // never the daemon's current bootstrap review — a deep-linked review may be a different one.
   const loaded = useReviewLoad(daemonId, reviewId);
   const repoKey = loaded.review?.repositoryRoot.repoKey;
-  // Flattened rows: a file header + one row per hunk, so a large file diff is virtualized hunk
-  // by hunk rather than mounted as one giant row (#383 batch, finding 16).
-  const [rows, setRows] = useState<CanvasRow[]>([]);
+  // The projected canvas: elements keyed by elementKey + the sequence canvas's cohorts, so the
+  // rows fold under cohort headers with judged-cohort collapse (#382 M2, task 6.3). Virtualization
+  // is kept — a collapsed cohort mounts no hunks, and each file is windowed hunk by hunk.
+  const [elementsByKey, setElements] = useState<Map<string, CanvasElement>>(new Map());
+  const [cohorts, setCohorts] = useState<CanvasCohort[]>([]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!connection || !repoKey) return;
@@ -46,14 +54,19 @@ export default function Canvas(): ReactNode {
         repoPath: repoKey as string,
       });
       if (cancelled) return;
-      setRows(
-        flattenCanvasRows(
-          Object.entries(canvases.elementDiffs).map(([key, diff]) => ({
-            key,
-            path: diff.path,
-            diff: diff.diff,
-          })),
-        ),
+      const map = new Map<string, CanvasElement>();
+      for (const [key, diff] of Object.entries(canvases.elementDiffs)) {
+        map.set(key, { key, path: diff.path, diff: diff.diff });
+      }
+      setElements(map);
+      // Cohorts come from the sequence canvas (reading order); absent ⇒ one flat group.
+      const sequenceCohorts = canvases.canvases.sequence.layers.analysis.cohorts;
+      setCohorts(
+        sequenceCohorts.map((c) => ({
+          cohortKey: c.cohortKey,
+          title: c.title,
+          elementKeys: c.elementKeys,
+        })),
       );
     }
     void load().catch(() => undefined);
@@ -61,6 +74,17 @@ export default function Canvas(): ReactNode {
       cancelled = true;
     };
   }, [connection, reviewId, repoKey]);
+
+  const toggleCohort = useCallback((cohortKey: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(cohortKey)) next.delete(cohortKey);
+      else next.add(cohortKey);
+      return next;
+    });
+  }, []);
+
+  const rows: CanvasRow[] = flattenCanvasByCohort(cohorts, elementsByKey, collapsed);
 
   return (
     <Screen>
@@ -71,13 +95,29 @@ export default function Canvas(): ReactNode {
         data={rows}
         keyExtractor={(item) => item.key}
         renderItem={({ item }) =>
-          item.type === "file" ? (
+          item.type === "cohort" ? (
+            <Pressable
+              onPress={() => toggleCohort(item.cohortKey)}
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginTop: space.md,
+                marginBottom: space.xs,
+              }}
+            >
+              <Text style={{ color: t.ink, fontSize: type.body, fontWeight: "600" }}>
+                {item.collapsed ? "▸" : "▾"} {item.title}
+              </Text>
+              <Text style={{ color: t.faint, fontSize: type.control }}>{item.count}</Text>
+            </Pressable>
+          ) : item.type === "file" ? (
             <Text
               style={{
                 color: t.text,
                 fontSize: type.control,
                 fontWeight: "600",
-                marginTop: space.md,
+                marginTop: space.sm,
                 marginBottom: space.xs,
               }}
             >

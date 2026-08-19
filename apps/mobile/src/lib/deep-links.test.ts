@@ -43,15 +43,22 @@ describe("deep-link routing table (task 6.2)", () => {
     expect(parseDeepLink("https://example.com")).toBeNull();
   });
 
-  it("builds daemon-scoped expo-router hrefs; M2 surfaces land on the digest", () => {
+  it("builds daemon-scoped expo-router hrefs; ask→turn, publish→publish (#382 M2)", () => {
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "digest" })).toBe(
       "/daemon/d1/review/r1/digest",
     );
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "error" })).toBe(
       "/daemon/d1/review/r1/error",
     );
-    // ask/publish are M2 screens → digest for now (review still reachable, no dead link).
+    // ask lands on the live turn screen, publish on the publish preview (M2 surfaces).
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "ask" })).toBe(
+      "/daemon/d1/review/r1/turn",
+    );
+    expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "publish" })).toBe(
+      "/daemon/d1/review/r1/publish",
+    );
+    // handoff lands on the digest (its dedicated surface is secondary).
+    expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "handoff" })).toBe(
       "/daemon/d1/review/r1/digest",
     );
     expect(routeHref("d1", { kind: "project", projectId: "p1" })).toBe("/daemon/d1/project/p1");

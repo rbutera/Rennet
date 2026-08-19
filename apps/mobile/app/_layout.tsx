@@ -22,6 +22,7 @@ export default function RootLayout(): ReactNode {
         <Stack.Screen name="index" options={{ title: "Rennet" }} />
         <Stack.Screen name="pair" options={{ title: "Pair a daemon" }} />
         <Stack.Screen name="connections" options={{ title: "Connections" }} />
+        <Stack.Screen name="kickoff" options={{ title: "New review" }} />
         <Stack.Screen name="settings/notifications" options={{ title: "Notifications" }} />
       </Stack>
     </RuntimeProvider>

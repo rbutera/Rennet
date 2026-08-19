@@ -43,11 +43,10 @@ export function parseDeepLink(url: string): LinkTarget | null {
 }
 
 /**
- * The expo-router href for a target under a specific daemon. M1 builds the digest, finding,
- * canvas and error review surfaces; `ask` and `publish` are M2 screens, so their deep-links
- * land on the review digest for now (the review is still reachable — no dead link, no lie:
- * the ask/publish surfaces simply are not built yet). `handoff` lands on the digest too (its
- * dedicated surface is secondary per the ideation doc).
+ * The expo-router href for a target under a specific daemon. `ask` lands on the live turn screen
+ * (the ask is answered there, wireframe 22) and `publish` on the publish preview (wireframe 23) —
+ * both M2 surfaces. `handoff` lands on the digest (its dedicated surface is secondary per the
+ * ideation doc; the review is fully readable there — no dead link, no lie).
  */
 export function routeHref(daemonId: string, target: LinkTarget): string {
   const base = `/daemon/${encodeURIComponent(daemonId)}`;
@@ -58,10 +57,12 @@ export function routeHref(daemonId: string, target: LinkTarget): string {
   switch (target.surface) {
     case "error":
       return `${review}/error`;
+    case "ask": // the live turn screen — reattach paint + live stream + the ask card
+      return `${review}/turn`;
+    case "publish": // the publish preview → one-tap post
+      return `${review}/publish`;
     case "digest":
-    case "ask": // M2 surface — land on the digest, where the review is fully readable
     case "handoff":
-    case "publish":
       return `${review}/digest`;
   }
 }

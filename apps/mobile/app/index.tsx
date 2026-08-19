@@ -104,7 +104,8 @@ function ReviewList({ reviews }: { reviews: ReviewSummary[] }): ReactNode {
         )}
 
         <View style={{ marginTop: space.md }}>
-          <PrimaryButton label="+ Pair another daemon" onPress={() => router.push("/pair")} />
+          <PrimaryButton label="+ New review" onPress={() => router.push("/kickoff")} />
+          <OutlineButton label="Pair another daemon" onPress={() => router.push("/pair")} />
         </View>
       </ScrollView>
     </Screen>

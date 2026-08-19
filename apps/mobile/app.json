@@ -8,7 +8,15 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": { "supportsTablet": false },
-    "android": {},
+    "android": {
+      "intentFilters": [
+        {
+          "action": "SEND",
+          "category": ["DEFAULT"],
+          "data": [{ "mimeType": "text/plain" }]
+        }
+      ]
+    },
     "plugins": [
       "expo-router",
       "expo-secure-store",
