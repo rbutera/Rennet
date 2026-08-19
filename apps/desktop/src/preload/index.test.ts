@@ -60,7 +60,7 @@ beforeEach(async () => {
 
 describe("preload update surface", () => {
   it("exposes exactly the declared contract keys (#386 — no silent drift)", () => {
-    expect(Object.keys(preload()).sort()).toEqual([...RENNET_PRELOAD_KEYS]);
+    expect(Object.keys(preload()).sort()).toEqual([...RENNET_PRELOAD_KEYS].sort());
   });
 
   it("delivers pushed readiness with a valid payload", () => {

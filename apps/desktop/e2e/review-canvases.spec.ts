@@ -60,9 +60,12 @@ test("renders every review lens and the structured OpenSpec viewer", async () =>
 
     // Files: the raw diff of the reviewed code file.
     await page.getByRole("tab", { name: "Files" }).click();
-    // The filename appears on the file row AND the chunk discuss control; the
-    // FILE ROW is the navigation target here.
-    await page.locator("button.file-row", { hasText: "counter.ts" }).click();
+    // The filename appears on the file row AND the chunk discuss control; scope
+    // through the a11y tree to the changed-files panel for the row.
+    await page
+      .getByRole("complementary", { name: "Changed files" })
+      .getByRole("button", { name: /counter\.ts/ })
+      .click();
     await expect(page.locator("pre.diff")).toContainText("step + 1");
 
     // Dispose: the v4.0 nav rail replaced the drawn back button — Home is the

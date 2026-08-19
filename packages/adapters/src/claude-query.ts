@@ -157,10 +157,13 @@ export async function createClaudeHarness(
   deps: ClaudeHarnessDeps = {},
 ): Promise<ClaudeHarnessResult> {
   // The hermetic-test hook (#386): discovery probes ABSOLUTE locations
-  // (/opt/homebrew/bin, /usr/local/bin) that no amount of HOME/PATH surgery can
-  // scrub, so a deterministic e2e sets RENNET_DISABLE_HARNESS=1 and the app
-  // renders its model-free floor. An honest unavailable health, never a crash.
-  if ((deps.env ?? process.env).RENNET_DISABLE_HARNESS === "1") {
+  // (/opt/homebrew/bin, /usr/local/bin, ChatGPT.app) that no amount of HOME/PATH
+  // surgery can scrub, so a deterministic e2e sets RENNET_DISABLE_HARNESS=1 and
+  // the app renders its model-free floor. Honoured only from the EXPLICITLY
+  // passed env (never ambient process.env in library code), and disclosed in the
+  // health detail. Caveat, accepted for a test hook: a daemon launched with the
+  // flag reports harnesses as not installed.
+  if (deps.env?.RENNET_DISABLE_HARNESS === "1") {
     return {
       adapter: null,
       discovery: {

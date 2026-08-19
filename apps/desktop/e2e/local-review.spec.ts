@@ -44,7 +44,7 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
       // The exact contract, imported from the preload's own key list (#386): a new
       // capability updates contract.ts and this assertion follows — while anything
       // exposed WITHOUT being declared there still fails the equality.
-      bridge: [...RENNET_PRELOAD_KEYS],
+      bridge: [...RENNET_PRELOAD_KEYS].sort(),
     });
 
     // "Review directly" is palette-only since the v4.0 nav pass: ⌘K, then the row.
@@ -53,9 +53,13 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
 
     // A captured review opens on Canvases by default; the raw diff is the Files tab.
     await page.getByRole("tab", { name: "Files" }).click();
-    // Two buttons carry the filename (the file row and the open-in-editor header
-    // affordance); the FILE ROW is the one this step is about.
-    await expect(page.locator("button.file-row", { hasText: "review-me.ts" })).toBeVisible();
+    // Two buttons carry the filename; scope through the a11y tree to the changed-
+    // files panel — the file row is the one this step is about, named as AT sees it.
+    await expect(
+      page
+        .getByRole("complementary", { name: "Changed files" })
+        .getByRole("button", { name: /review-me\.ts/ }),
+    ).toBeVisible();
     await expect(page.locator("pre.diff")).toContainText("export const value = 2;");
 
     // Editing the file on disk invalidates the pinned review (the freshness watcher).
