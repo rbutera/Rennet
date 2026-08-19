@@ -159,7 +159,33 @@ through update.electronjs.org, which resolves the same GitHub Releases — eithe
 way there is no Rennet backend. When a newer version has downloaded, the
 Rennet mark in the window chrome grows a small dot on its corner. Click it to
 restart into the new version, or dismiss the prompt and keep working; the badge
-stays until you choose to apply, and nothing ever restarts on its own.
+stays until you choose to apply, and nothing ever restarts on its own. The tray
+icon carries the same dot while a window is closed, and its menu gains a
+**Restart Rennet to update** line — the same restart, from either surface.
+
+## Rennet lives in the tray
+
+Rennet keeps a presence in the tray (the macOS menu bar, the Windows system
+tray) so it is reachable even with no window open. **Closing the window does not
+quit Rennet** — the review daemon and any streaming review keep running in the
+background, exactly as they do when the window is open. On macOS the Dock icon
+steps aside while no window is open and returns when you reopen one. On Windows,
+where closing usually quits an app, Rennet instead stays in the tray; the tray
+icon is always there so it is easy to find again.
+
+The tray menu is deliberately small:
+
+- **Open Rennet** — brings the window back (or focuses it if it is already
+  open); a closed-then-reopened window reattaches to the running daemon and
+  repaints the live state, so a review that was streaming is still there.
+- **Restart Rennet to update** — appears only when an update is staged.
+- the version, and
+- **Quit** — the only complete exit. Its label tells you what it will do: **Quit
+  Rennet and stop daemon** when Rennet is running its own local daemon, or **Quit
+  Rennet** when it is not. Quitting stops that owned daemon gracefully — an
+  in-progress review is saved as interrupted and resumes on next start — with no
+  confirmation dialog. A daemon on another machine you have paired with is never
+  touched.
 
 ## Next steps
 

@@ -17,8 +17,16 @@ import {
 import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
-import { ensureDaemon } from "./daemon-supervisor";
+import { ensureDaemon, isOwnedDaemonRunning, stopOwnedDaemon } from "./daemon-supervisor";
 import { applyMenuUpdate } from "./menu";
+import {
+  acquireSingleInstance,
+  createDockCoordinator,
+  createTray,
+  ensureWindow,
+  residencyOnAllWindowsClosed,
+  type TrayController,
+} from "./tray";
 import { brandWindowIcon, isExternalHttpUrl, resolveAppUserModelId } from "./window-identity";
 
 // Squirrel (the win32 installer) launches the freshly-installed exe with a
@@ -186,7 +194,66 @@ async function createWindow(wsPort: number): Promise<void> {
   await window.loadURL(`${APP_ORIGIN}/`);
 }
 
+// The daemon's WS port for THIS run, so tray "Open Rennet" / macOS `activate` can recreate a
+// window that re-dials the same daemon after the last one closed (tray-presence residency).
+let activeWsPort: number | undefined;
+// Retained at module scope so the tray is never garbage-collected — Electron drops a Tray whose
+// only reference is a local, and in dev nothing else holds it, leaving a window-less, tray-less,
+// un-quittable resident app (review finding 1). Destroyed on `will-quit`.
+let trayController: TrayController | null = null;
+
+// Coordinates macOS Dock show/hide so a rapid close→reopen never trips the documented
+// "hide is a no-op within ~1s of show" quirk (review finding 4). Off darwin, show/hide are
+// no-ops, so this is inert on Windows/Linux.
+const dock = createDockCoordinator({
+  show: () => (process.platform === "darwin" ? app.dock?.show() : undefined),
+  hide: () => {
+    if (process.platform === "darwin") app.dock?.hide();
+  },
+  now: Date.now,
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (handle) => clearTimeout(handle),
+});
+
+/** Focus the live window, or recreate one (Dock back first) — shared by tray Open and activate. */
+async function ensureWindowShared(): Promise<void> {
+  await ensureWindow({
+    hasWindow: () => BrowserWindow.getAllWindows().some((w) => !w.isDestroyed()),
+    focusExisting: () => {
+      const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+      if (!w) return;
+      if (w.isMinimized()) w.restore();
+      w.focus();
+    },
+    showDock: () => dock.show(),
+    recreate: async () => {
+      if (activeWsPort !== undefined) await createWindow(activeWsPort);
+    },
+  });
+  // A window lifecycle event is a cue that owned-daemon state may have moved — re-probe so the
+  // tray Quit label stays truthful between the low-frequency refreshes (review finding 5).
+  void trayController?.refreshOwnership();
+}
+
+// Single-instance guard (review finding 3): the primary holds the lock and routes a relaunch's
+// `second-instance` back to its existing window; a later instance quits before doing any startup
+// work (the whenReady body returns early when this is false), so no second daemon/tray appears.
+const isPrimaryInstance = acquireSingleInstance({
+  requestLock: () => app.requestSingleInstanceLock(),
+  quit: () => app.quit(),
+  onPrimary: () => app.on("second-instance", () => void ensureWindowShared()),
+});
+
+/** Tray "Quit completely": stop the OWNED daemon (graceful), then exit. No prompt (spec). */
+async function quitCompletely(dataDir: string): Promise<void> {
+  await stopOwnedDaemon(dataDir);
+  app.quit();
+}
+
 app.whenReady().then(async () => {
+  // A second instance lost the single-instance lock and already called quit — do no startup
+  // work (no daemon spawn, no window, no tray). The primary handles the relaunch.
+  if (!isPrimaryInstance) return;
   // Stable Windows taskbar/toast identity — set before any window so grouping,
   // pinning, and notifications attach to this AUMID instead of a per-exe default. On
   // a Squirrel install we must match the id Squirrel stamped on the shortcut, or
@@ -194,11 +261,6 @@ app.whenReady().then(async () => {
   if (process.platform === "win32") {
     app.setAppUserModelId(resolveAppUserModelId(process.platform, process.execPath, existsSync));
   }
-  // Auto-update, packaged builds only — dev/test runs have no release to pull and no
-  // Squirrel/Squirrel.Mac feed. Best-effort and self-silencing (see auto-update.ts):
-  // on unsigned macOS it no-ops instead of crashing; on Windows it activates once
-  // Squirrel artifacts ship in a release.
-  if (app.isPackaged) startAutoUpdate(isTrustedAppUrl);
   // The shell is a supervisor + client now (#379): the composition root runs in a DETACHED
   // daemon, not in-process. Find a healthy daemon for this data dir or spawn one, then dial
   // it exactly as phase 2 dialed the in-process listener. The daemon owns the Electron-free
@@ -227,10 +289,37 @@ app.whenReady().then(async () => {
   registerMenuHandler();
   registerDialogHandler();
   await createWindow(wsPort);
+  activeWsPort = wsPort;
+
+  // Tray-resident presence (tray-presence). The updater and the tray share ONE readiness
+  // store and ONE apply path: the tray subscribes to the same store the renderer badge
+  // rides, and its update line calls the same apply. Auto-update is packaged-only (dev/test
+  // have no feed); the tray always exists.
+  const update = app.isPackaged ? startAutoUpdate(isTrustedAppUrl) : undefined;
+  const tray = createTray({
+    baseDir: __dirname,
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    version: app.getVersion(),
+    // Health-verified, cached, and self-refreshing — see createTray / isOwnedDaemonRunning.
+    probeOwnedDaemon: () => isOwnedDaemonRunning(dataDir),
+    openWindow: () => void ensureWindowShared(),
+    applyUpdate: () => update?.applyUpdate(),
+    quitCompletely: () => void quitCompletely(dataDir),
+  });
+  trayController = tray;
+  update?.readiness.subscribe(() => tray.setUpdateReady(true));
+  // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
+  if (update?.readiness.ready) tray.setUpdateReady(true);
 });
 
-// App quit stops NOTHING (#379): the daemon and any running review turn outlive the window.
-// No `before-quit` shutdown — that implicit teardown was the thing this phase removes.
+// Reopen from the Dock/menu bar (macOS) recreates or focuses the window without a relaunch.
+app.on("activate", () => void ensureWindowShared());
+
+// App quit stops NOTHING implicitly (#379): the daemon and any running review turn outlive
+// the window. No `before-quit` shutdown. The tray's "Quit completely" is the ONE explicit,
+// scoped teardown (it stops the owned daemon first, then exits) — see ADR 0001.
 // The system right-click menu (copy/paste/select-all, link copy, spellcheck) on
 // every window this app ever creates. Contextual: an empty template shows nothing.
 app.on("web-contents-created", (_event, contents) => {
@@ -244,4 +333,16 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
-app.on("window-all-closed", () => app.quit());
+// Closing the last window keeps Rennet tray-resident: it does NOT quit and stops nothing;
+// macOS hides the Dock icon while window-less (the coordinator defers a too-soon hide;
+// ensureWindow shows it again on reopen).
+app.on("window-all-closed", () =>
+  residencyOnAllWindowsClosed({ hideDock: () => dock.requestHide() }),
+);
+
+// The tray is retained at module scope (finding 1); release it as the app actually exits so
+// the icon does not linger. This is teardown of an OWNED UI resource — it stops no daemon.
+app.on("will-quit", () => {
+  trayController?.destroy();
+  trayController = null;
+});

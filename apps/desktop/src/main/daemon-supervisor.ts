@@ -12,6 +12,7 @@ import {
   type DaemonVerdict,
   findHealthyDaemon,
   readDaemonFile,
+  removeDaemonFile,
   type SpawnDaemonOptions,
   spawnDaemon,
   waitForHealthy,
@@ -28,6 +29,93 @@ export function resolveServerBundle(): string {
     return join(`${app.getAppPath()}.unpacked`, "dist", "server", "index.cjs");
   }
   return resolve(__dirname, "../server/index.cjs");
+}
+
+/**
+ * Whether this app owns a RUNNING daemon (drives the tray Quit label, tray-presence). The
+ * daemon.json claim is "a claim to verify, never truth" (daemon-file.ts) — a health probe
+ * confirms the process at that pid/port really is our daemon, so a stale claim whose pid was
+ * reused by an unrelated process never reads as owned (review finding 5). Both `healthy` and
+ * `incompatible` mean a verified live owned daemon (identity/port matched); `stale`/`absent`
+ * mean nothing is owned here.
+ */
+export async function isOwnedDaemonRunning(
+  dataDir: string,
+  probe: (dataDir: string) => Promise<DaemonVerdict> = findHealthyDaemon,
+): Promise<boolean> {
+  const verdict = await probe(dataDir);
+  return verdict.kind === "healthy" || verdict.kind === "incompatible";
+}
+
+export interface StopOwnedDaemonDeps {
+  readonly probe: (dataDir: string) => Promise<DaemonVerdict>;
+  readonly removeClaim: (dataDir: string, expectedPid: number) => boolean;
+  readonly readClaim: (dataDir: string) => DaemonInfo | null;
+  readonly kill: (pid: number, signal: "SIGTERM") => void;
+  readonly now: () => number;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly warn: (message: string) => void;
+  readonly timeoutMs: number;
+}
+
+/**
+ * Stop the OWNED daemon the same way `rennet stop` does (tray "Quit completely",
+ * design D3): HEALTH-VERIFY the claim first, then SIGTERM only a pid the probe confirmed is
+ * our daemon (which triggers its graceful shutdown — in-flight turns persist as resumable
+ * `interrupted`), and poll — bounded — for the claim to clear. It NEVER signals an unverified
+ * pid: a stale claim (dead pid, or a pid the OS reused for an unrelated process) is REMOVED,
+ * not killed (review finding 2), so tray Quit can never take down someone else's process.
+ * No claim/absent ⇒ nothing to stop. A pid that races to gone (ESRCH) is success. On timeout
+ * it warns truthfully and returns — the caller exits regardless, exactly as `rennet stop`
+ * exits after its bounded wait; the claim-file protocol keeps the next launch honest either way.
+ */
+export async function stopOwnedDaemon(
+  dataDir: string,
+  overrides: Partial<StopOwnedDaemonDeps> = {},
+): Promise<void> {
+  const deps: StopOwnedDaemonDeps = {
+    probe: findHealthyDaemon,
+    removeClaim: removeDaemonFile,
+    readClaim: readDaemonFile,
+    kill: (pid, signal) => {
+      process.kill(pid, signal);
+    },
+    now: Date.now,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    warn: console.warn,
+    timeoutMs: 5_000,
+    ...overrides,
+  };
+  const verdict = await deps.probe(dataDir);
+  if (verdict.kind === "absent") return; // nothing owned here — remote-only or already stopped.
+  if (verdict.kind === "stale") {
+    // The pid did not answer /healthz (dead, or reused by an unrelated process): remove the
+    // claim, signal NOTHING. Mirrors `rennet stop`'s stale-pidfile branch.
+    deps.removeClaim(dataDir, verdict.claim.pid);
+    return;
+  }
+  // healthy | incompatible: the probe verified this pid/port IS our daemon — safe to signal.
+  const claim = verdict.claim;
+  try {
+    deps.kill(claim.pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      deps.removeClaim(dataDir, claim.pid); // raced to gone between probe and signal.
+      return;
+    }
+    deps.warn(
+      `rennet: failed to signal owned daemon pid ${claim.pid}: ${(error as Error).message}`,
+    );
+    return;
+  }
+  const deadline = deps.now() + deps.timeoutMs;
+  while (deps.now() < deadline) {
+    if (deps.readClaim(dataDir)?.pid !== claim.pid) return; // claim cleared — clean stop.
+    await deps.sleep(100);
+  }
+  deps.warn(
+    `rennet: sent SIGTERM to owned daemon pid ${claim.pid} but daemon.json is still present after ${deps.timeoutMs}ms; exiting anyway`,
+  );
 }
 
 /** Wait (bounded) for the signalled daemon to stop owning the claim after SIGTERM. */

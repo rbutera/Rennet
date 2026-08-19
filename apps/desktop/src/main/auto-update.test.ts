@@ -79,6 +79,16 @@ describe("createUpdateReadiness", () => {
     expect(broadcast).toHaveBeenCalledWith({ version: "0.2.3" });
   });
 
+  it("notifies subscribers (the tray) on each download, alongside the window broadcast", () => {
+    const broadcast = vi.fn();
+    const readiness = createUpdateReadiness(broadcast);
+    const trayListener = vi.fn();
+    readiness.subscribe(trayListener);
+    readiness.markDownloaded("0.2.4");
+    expect(trayListener).toHaveBeenCalledWith({ version: "0.2.4" });
+    expect(broadcast).toHaveBeenCalledWith({ version: "0.2.4" });
+  });
+
   it("treats a non-string or blank release name as version-unknown, still ready", () => {
     const broadcast = vi.fn();
     const readiness = createUpdateReadiness(broadcast);
@@ -110,6 +120,19 @@ describe("startAutoUpdate wiring", () => {
     expect(window.webContents.send).toHaveBeenCalledWith(UPDATE_READY_CHANNEL, {
       version: "0.9.9",
     });
+  });
+
+  it("reaches a windowless tray subscriber through the real wiring (no window needed)", () => {
+    // The tray subscribes to the handle's readiness store; a download must reach it even with
+    // zero windows open (the whole point of tray residency). This drives startAutoUpdate's own
+    // update-downloaded wiring — not a manual markDownloaded — with harness.windows empty
+    // (review finding 6).
+    const handle = startAutoUpdate(isTrusted, quietLogger);
+    const trayListener = vi.fn();
+    handle.readiness.subscribe(trayListener);
+    expect(harness.windows).toHaveLength(0); // windowless
+    autoUpdaterMock.emit("update-downloaded", {}, "notes", "3.1.4");
+    expect(trayListener).toHaveBeenCalledWith({ version: "3.1.4" });
   });
 
   it("replays cached readiness to a trusted late subscriber and null before any download", () => {

@@ -21,3 +21,20 @@ No implementation detail lives here; decisions go to `docs/` and ADRs.
 - **Not-connected / token-invalid / insufficient-scope** — the three distinct
   renderer-safe failure states of GitHub auth, each with its own copy. Never
   collapsed into one "GitHub unavailable".
+
+## Desktop presence
+
+- **Owned daemon** — the local review daemon this app is responsible for: the
+  one claimed by the discovery file in the app's own data directory, regardless
+  of who spawned it (the app or the CLI). The only daemon the app's complete
+  exit is allowed to stop.
+- **Attached daemon** — a daemon the app is merely a client of, running
+  somewhere the app does not own (e.g. another machine). The app never stops
+  it; that daemon belongs to its own host.
+- **Tray-resident** — the state of the desktop shell when it has no open window
+  but is still present and reachable from the tray (macOS menu bar, Windows
+  tray), daemon and streams untouched. Closing the last window enters it;
+  quitting completely is the only way out.
+- **Update-ready** — an update has been downloaded and staged, ready to apply
+  on restart. A single state surfaced in two places at once: the in-app badge
+  and the tray (its icon dot and restart line).
