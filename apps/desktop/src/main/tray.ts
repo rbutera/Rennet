@@ -51,13 +51,74 @@ export function buildTrayMenuTemplate(
   return items;
 }
 
+export interface DockCoordinatorDeps {
+  /** `app.dock.show()` — resolves once the Dock icon is actually back. */
+  readonly show: () => Promise<void> | void;
+  /** `app.dock.hide()`. */
+  readonly hide: () => void;
+  readonly now: () => number;
+  readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void;
+  /**
+   * How long the Dock icon must stay visible before a hide takes effect. macOS silently
+   * ignores `app.dock.hide()` within ~1s of a `show()`, so a too-soon hide is DEFERRED to
+   * this boundary instead of being dropped. Default 1100ms (just past the documented window).
+   */
+  readonly minVisibleMs?: number;
+}
+
+export interface DockCoordinator {
+  /** Show the Dock icon (cancelling any pending hide) and resolve once it is back. */
+  show(): Promise<void>;
+  /** Hide the Dock icon — deferred to the min-visible boundary if `show()` was too recent. */
+  requestHide(): void;
+}
+
+/**
+ * Coordinates macOS Dock show/hide so the tray-residency toggle never trips the documented
+ * "hide is a no-op within ~1s of show" quirk (tray-presence, review finding 4). A hide that
+ * arrives too soon after a show is deferred to the min-visible boundary; a subsequent show
+ * cancels that pending hide, so a rapid close→reopen leaves the icon up. All timing is
+ * injected, so the machine is unit-testable without a real clock or Dock.
+ */
+export function createDockCoordinator(deps: DockCoordinatorDeps): DockCoordinator {
+  const minVisibleMs = deps.minVisibleMs ?? 1100;
+  let shownAt = Number.NEGATIVE_INFINITY;
+  let pendingHide: ReturnType<typeof setTimeout> | null = null;
+  const cancelPending = () => {
+    if (pendingHide !== null) {
+      deps.clearTimer(pendingHide);
+      pendingHide = null;
+    }
+  };
+  return {
+    async show() {
+      cancelPending();
+      await deps.show();
+      shownAt = deps.now();
+    },
+    requestHide() {
+      cancelPending();
+      const elapsed = deps.now() - shownAt;
+      if (elapsed >= minVisibleMs) {
+        deps.hide();
+        return;
+      }
+      pendingHide = deps.setTimer(() => {
+        pendingHide = null;
+        deps.hide();
+      }, minVisibleMs - elapsed);
+    },
+  };
+}
+
 export interface EnsureWindowDeps {
   /** A live (non-destroyed) window already exists. */
   readonly hasWindow: () => boolean;
   /** Bring the existing window forward. */
   readonly focusExisting: () => void;
-  /** Restore the macOS Dock icon before recreating (no-op off darwin / when already shown). */
-  readonly showDock: () => void;
+  /** Restore the macOS Dock icon before recreating (awaited — no-op off darwin). */
+  readonly showDock: () => Promise<void> | void;
   /** Recreate a window through the normal window-creation path. */
   readonly recreate: () => Promise<void> | void;
 }
@@ -73,7 +134,7 @@ export async function ensureWindow(deps: EnsureWindowDeps): Promise<void> {
     deps.focusExisting();
     return;
   }
-  deps.showDock();
+  await deps.showDock();
   await deps.recreate();
 }
 
@@ -84,6 +145,31 @@ export async function ensureWindow(deps: EnsureWindowDeps): Promise<void> {
  */
 export function residencyOnAllWindowsClosed(deps: { readonly hideDock: () => void }): void {
   deps.hideDock();
+}
+
+export interface SingleInstanceDeps {
+  /** `app.requestSingleInstanceLock()` — true for the first (primary) instance. */
+  readonly requestLock: () => boolean;
+  /** Quit this (losing) instance. */
+  readonly quit: () => void;
+  /** Runs only in the primary — e.g. wire `second-instance` to focus the existing window. */
+  readonly onPrimary: () => void;
+}
+
+/**
+ * Single-instance startup (tray-presence, review finding 3). Under close-to-tray a relaunch
+ * (Windows Start menu, macOS reopen) would otherwise spin up a SECOND app + tray, and one
+ * could stop the daemon out from under the other. The primary instance holds the lock and
+ * wires its `second-instance` handler to surface the existing window; a later instance fails
+ * to get the lock and quits immediately. Returns whether this instance is the primary.
+ */
+export function acquireSingleInstance(deps: SingleInstanceDeps): boolean {
+  if (!deps.requestLock()) {
+    deps.quit();
+    return false;
+  }
+  deps.onPrimary();
+  return true;
 }
 
 /**
@@ -97,20 +183,19 @@ export function trayAssetDir(baseDir: string, resourcesPath: string, isPackaged:
 }
 
 /**
- * The tray image for a platform + update state. macOS uses TEMPLATE images (alpha-only,
- * recoloured to the menu-bar theme); the wide mark. Windows/Linux use the visible square
- * badge. Electron auto-loads the `@2x` sibling for HiDPI. The `Update` variants carry a dot.
+ * The tray icon FILE for a platform + update state. macOS uses TEMPLATE PNGs (alpha-only,
+ * recoloured to the menu-bar theme; the wide mark, `@2x` sibling auto-loaded for HiDPI).
+ * Windows uses the multi-resolution `.ico` (the native tray format — the shell picks the
+ * size per DPI). Linux uses the square PNG. The `Update` variants carry a dot.
  */
+export function trayIconFile(platform: NodeJS.Platform, updateReady: boolean): string {
+  if (platform === "darwin") return updateReady ? "rennetUpdateTemplate.png" : "rennetTemplate.png";
+  if (platform === "win32") return updateReady ? "rennetUpdate.ico" : "rennet.ico";
+  return updateReady ? "rennetUpdate.png" : "rennet.png";
+}
+
 function trayImage(dir: string, platform: NodeJS.Platform, updateReady: boolean) {
-  const file =
-    platform === "darwin"
-      ? updateReady
-        ? "rennetUpdateTemplate.png"
-        : "rennetTemplate.png"
-      : updateReady
-        ? "rennetUpdate.png"
-        : "rennet.png";
-  const image = nativeImage.createFromPath(join(dir, file));
+  const image = nativeImage.createFromPath(join(dir, trayIconFile(platform, updateReady)));
   if (platform === "darwin") image.setTemplateImage(true);
   return image;
 }
@@ -122,34 +207,52 @@ export interface CreateTrayDeps {
   readonly isPackaged: boolean;
   readonly platform: NodeJS.Platform;
   readonly version: string;
-  /** Read afresh on every menu build so the Quit label matches live daemon state. */
-  readonly ownedDaemonRunning: () => boolean;
+  /**
+   * Health-verify whether an owned daemon is running (drives the Quit LABEL). Async because a
+   * truthful answer requires a `/healthz` probe, not just a live-pid check — a stale claim
+   * whose pid was reused must not read as "running" (review finding 5). Its result is CACHED;
+   * the tray re-probes on a low-frequency interval and whenever a lifecycle event calls
+   * `refreshOwnership()`, so `rennet stop`, a crash, or a late spawn stops the label lying.
+   */
+  readonly probeOwnedDaemon: () => Promise<boolean>;
   readonly openWindow: () => void;
   readonly applyUpdate: () => void;
   readonly quitCompletely: () => void;
+  /** How often to re-probe owned-daemon state for the label. Default 20s. */
+  readonly ownershipRefreshMs?: number;
+  readonly setInterval?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
+  readonly clearInterval?: (handle: ReturnType<typeof setInterval>) => void;
 }
 
 export interface TrayController {
   /** Flip the staged-update state: swaps the icon variant and rebuilds the menu. */
   setUpdateReady(ready: boolean): void;
+  /** Re-probe owned-daemon state now (call on window lifecycle events / Windows tray click). */
+  refreshOwnership(): Promise<void>;
   destroy(): void;
 }
 
 /**
- * Wire the Electron Tray. Thin: it owns the icon and the context menu, rebuilding both from
- * `buildTrayMenuTemplate` whenever the update state flips (the menu also re-reads the owned-
- * daemon state each build, so the Quit label stays truthful without extra plumbing).
+ * Wire the Electron Tray. Thin: it owns the icon and the context menu, rebuilding both when a
+ * signal that the menu reflects actually changes — the staged-update flip OR a change in the
+ * CACHED, health-verified owned-daemon state. macOS `setContextMenu` has no pre-open hook, so
+ * the label cannot be computed lazily on open; instead it is refreshed by a low-frequency
+ * probe and by `refreshOwnership()` (wired to window lifecycle + the Windows tray click), and
+ * a rebuild only happens when the probed value actually differs (review finding 5).
  */
 export function createTray(deps: CreateTrayDeps): TrayController {
   const dir = trayAssetDir(deps.baseDir, deps.resourcesPath, deps.isPackaged);
+  const schedule = deps.setInterval ?? setInterval;
+  const unschedule = deps.clearInterval ?? clearInterval;
   let updateReady = false;
+  let ownedRunning = false;
   const tray = new Tray(trayImage(dir, deps.platform, updateReady));
   tray.setToolTip("Rennet");
 
   const rebuild = () => {
     tray.setImage(trayImage(dir, deps.platform, updateReady));
     const template = buildTrayMenuTemplate(
-      { ownedDaemonRunning: deps.ownedDaemonRunning(), updateReady, version: deps.version },
+      { ownedDaemonRunning: ownedRunning, updateReady, version: deps.version },
       {
         openWindow: deps.openWindow,
         applyUpdate: deps.applyUpdate,
@@ -160,13 +263,26 @@ export function createTray(deps: CreateTrayDeps): TrayController {
   };
   rebuild();
 
+  const refreshOwnership = async () => {
+    const next = await deps.probeOwnedDaemon();
+    if (next !== ownedRunning) {
+      ownedRunning = next;
+      rebuild();
+    }
+  };
+  // Seed the label from a first probe, then keep it fresh on a low-frequency timer.
+  void refreshOwnership();
+  const timer = schedule(() => void refreshOwnership(), deps.ownershipRefreshMs ?? 20_000);
+
   return {
     setUpdateReady(ready: boolean) {
       if (ready === updateReady) return;
       updateReady = ready;
       rebuild();
     },
+    refreshOwnership,
     destroy() {
+      unschedule(timer);
       tray.destroy();
     },
   };

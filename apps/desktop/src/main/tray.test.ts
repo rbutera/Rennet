@@ -49,12 +49,24 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  acquireSingleInstance,
   buildTrayMenuTemplate,
+  createDockCoordinator,
   createTray,
   ensureWindow,
   residencyOnAllWindowsClosed,
   trayAssetDir,
+  trayIconFile,
 } from "./tray";
+
+/** An injected scheduler that never actually fires — keeps the interval out of the test loop. */
+const noSchedule = {
+  setInterval: (() => 0) as unknown as (
+    fn: () => void,
+    ms: number,
+  ) => ReturnType<typeof setInterval>,
+  clearInterval: () => undefined,
+};
 
 const actions = { openWindow: vi.fn(), applyUpdate: vi.fn(), quitCompletely: vi.fn() };
 
@@ -149,7 +161,9 @@ describe("ensureWindow (focus-or-recreate; close then reopen)", () => {
     const deps = {
       hasWindow: () => false,
       focusExisting: vi.fn(),
-      showDock: vi.fn(() => order.push("dock")),
+      showDock: vi.fn(() => {
+        order.push("dock");
+      }),
       recreate: vi.fn(() => {
         order.push("recreate");
       }),
@@ -178,10 +192,12 @@ describe("createTray update surface (one readiness, tray reflects it)", () => {
       isPackaged: false,
       platform: "darwin",
       version: "0.2.0",
-      ownedDaemonRunning: () => true,
+      // Default: no owned daemon, so the seed probe never changes state (no extra rebuild).
+      probeOwnedDaemon: () => Promise.resolve(false),
       openWindow: vi.fn(),
       applyUpdate: vi.fn(),
       quitCompletely: vi.fn(),
+      ...noSchedule,
       ...overrides,
     });
     const rec = trayInstances[0];
@@ -220,5 +236,207 @@ describe("createTray update surface (one readiness, tray reflects it)", () => {
     controller.setUpdateReady(true);
     controller.setUpdateReady(true);
     expect(rec.menus.length).toBe(menusAfterInit + 1);
+  });
+});
+
+describe("trayIconFile (platform + update-state icon selection)", () => {
+  it("macOS uses the alpha template PNGs (recoloured to the menu-bar theme)", () => {
+    expect(trayIconFile("darwin", false)).toBe("rennetTemplate.png");
+    expect(trayIconFile("darwin", true)).toBe("rennetUpdateTemplate.png");
+  });
+
+  it("Windows uses the multi-resolution .ico (the native tray format)", () => {
+    expect(trayIconFile("win32", false)).toBe("rennet.ico");
+    expect(trayIconFile("win32", true)).toBe("rennetUpdate.ico");
+  });
+
+  it("Linux uses the square PNG badge", () => {
+    expect(trayIconFile("linux", false)).toBe("rennet.png");
+    expect(trayIconFile("linux", true)).toBe("rennetUpdate.png");
+  });
+});
+
+describe("createTray owned-daemon label (driven by the real health probe, not a boolean)", () => {
+  it("shows the plain Quit label until the probe verifies an owned daemon, then rebuilds", async () => {
+    trayInstances.length = 0;
+    let owned = false;
+    const controller = createTray({
+      baseDir: "/repo/apps/desktop/dist/main",
+      resourcesPath: "/x",
+      isPackaged: false,
+      platform: "darwin",
+      version: "0.2.0",
+      // The label derives from THIS probe (as isOwnedDaemonRunning does in prod), never a
+      // supplied boolean — a stale/absent probe reads as not-owned (review finding 5).
+      probeOwnedDaemon: () => Promise.resolve(owned),
+      openWindow: vi.fn(),
+      applyUpdate: vi.fn(),
+      quitCompletely: vi.fn(),
+      ...noSchedule,
+    });
+    const rec = trayInstances[0];
+    if (!rec) throw new Error("tray was not constructed");
+
+    // Seed probe resolves false: quit label is the plain one.
+    await controller.refreshOwnership();
+    expect(labels(rec.menus.at(-1) as Array<{ label?: string }>)).toContain("Quit Rennet");
+
+    // The owned daemon comes up; the next refresh flips the label truthfully.
+    owned = true;
+    await controller.refreshOwnership();
+    expect(labels(rec.menus.at(-1) as Array<{ label?: string }>)).toContain(
+      "Quit Rennet and stop daemon",
+    );
+  });
+
+  it("refreshOwnership does not rebuild when the probed value is unchanged", async () => {
+    trayInstances.length = 0;
+    const controller = createTray({
+      baseDir: "/repo/apps/desktop/dist/main",
+      resourcesPath: "/x",
+      isPackaged: false,
+      platform: "darwin",
+      version: "0.2.0",
+      probeOwnedDaemon: () => Promise.resolve(false),
+      openWindow: vi.fn(),
+      applyUpdate: vi.fn(),
+      quitCompletely: vi.fn(),
+      ...noSchedule,
+    });
+    const rec = trayInstances[0];
+    if (!rec) throw new Error("tray was not constructed");
+    await controller.refreshOwnership();
+    const menus = rec.menus.length;
+    await controller.refreshOwnership();
+    expect(rec.menus.length).toBe(menus);
+  });
+
+  it("destroy() clears the refresh interval and destroys the tray", () => {
+    trayInstances.length = 0;
+    const cleared: number[] = [];
+    const controller = createTray({
+      baseDir: "/repo/apps/desktop/dist/main",
+      resourcesPath: "/x",
+      isPackaged: false,
+      platform: "darwin",
+      version: "0.2.0",
+      probeOwnedDaemon: () => Promise.resolve(false),
+      openWindow: vi.fn(),
+      applyUpdate: vi.fn(),
+      quitCompletely: vi.fn(),
+      setInterval: (() => 7) as unknown as (
+        fn: () => void,
+        ms: number,
+      ) => ReturnType<typeof setInterval>,
+      clearInterval: ((h: number) => cleared.push(h)) as unknown as (
+        h: ReturnType<typeof setInterval>,
+      ) => void,
+    });
+    controller.destroy();
+    expect(cleared).toEqual([7]);
+    expect(trayInstances[0]?.destroyed).toBe(true);
+  });
+});
+
+describe("createDockCoordinator (macOS dock hide/show timing, review finding 4)", () => {
+  function harness(minVisibleMs = 1100) {
+    let clock = 0;
+    const events: string[] = [];
+    const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
+    let nextId = 1;
+    const coord = createDockCoordinator({
+      show: () => {
+        events.push("show");
+      },
+      hide: () => {
+        events.push("hide");
+      },
+      now: () => clock,
+      setTimer: (fn, ms) => {
+        const id = nextId++;
+        timers.push({ id, fn, ms });
+        return id as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: (h) => {
+        const i = timers.findIndex((t) => t.id === (h as unknown as number));
+        if (i >= 0) timers.splice(i, 1);
+      },
+      minVisibleMs,
+    });
+    return {
+      coord,
+      events,
+      timers,
+      advance: (ms: number) => {
+        clock += ms;
+      },
+      fireTimers: () => {
+        for (const t of timers.splice(0)) t.fn();
+      },
+    };
+  }
+
+  it("hides immediately when the window has been up longer than the min-visible window", async () => {
+    const h = harness();
+    await h.coord.show();
+    h.advance(2000); // well past 1100ms
+    h.coord.requestHide();
+    expect(h.events).toEqual(["show", "hide"]);
+    expect(h.timers).toHaveLength(0);
+  });
+
+  it("defers a hide that lands within ~1s of a show (macOS ignores it otherwise)", async () => {
+    const h = harness();
+    await h.coord.show();
+    h.advance(200); // too soon
+    h.coord.requestHide();
+    expect(h.events).toEqual(["show"]); // hide deferred, not dropped
+    expect(h.timers).toHaveLength(1);
+    expect(h.timers[0]?.ms).toBe(900); // 1100 - 200
+    h.fireTimers();
+    expect(h.events).toEqual(["show", "hide"]);
+  });
+
+  it("a reopen cancels a pending hide, so a rapid close→reopen leaves the icon up", async () => {
+    const h = harness();
+    await h.coord.show();
+    h.advance(200);
+    h.coord.requestHide(); // schedules a deferred hide
+    expect(h.timers).toHaveLength(1);
+    await h.coord.show(); // reopen cancels it
+    expect(h.timers).toHaveLength(0);
+    h.fireTimers(); // nothing pending
+    expect(h.events).toEqual(["show", "show"]); // never hid
+  });
+});
+
+describe("acquireSingleInstance (relaunch routing, review finding 3)", () => {
+  it("primary: keeps the lock, wires the second-instance handler, returns true", () => {
+    const quit = vi.fn();
+    const onPrimary = vi.fn();
+    const primary = acquireSingleInstance({ requestLock: () => true, quit, onPrimary });
+    expect(primary).toBe(true);
+    expect(onPrimary).toHaveBeenCalledOnce();
+    expect(quit).not.toHaveBeenCalled();
+  });
+
+  it("loser: fails the lock, quits, wires nothing, returns false", () => {
+    const quit = vi.fn();
+    const onPrimary = vi.fn();
+    const primary = acquireSingleInstance({ requestLock: () => false, quit, onPrimary });
+    expect(primary).toBe(false);
+    expect(quit).toHaveBeenCalledOnce();
+    expect(onPrimary).not.toHaveBeenCalled();
+  });
+
+  it("routes a relaunch to the existing window via the onPrimary handler", () => {
+    const ensureWindowShared = vi.fn();
+    // onPrimary is where prod registers `second-instance` → ensureWindowShared; prove the wire.
+    acquireSingleInstance({
+      requestLock: () => true,
+      quit: vi.fn(),
+      onPrimary: () => ensureWindowShared(),
+    });
+    expect(ensureWindowShared).toHaveBeenCalledOnce();
   });
 });

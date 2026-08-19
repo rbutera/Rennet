@@ -122,6 +122,19 @@ describe("startAutoUpdate wiring", () => {
     });
   });
 
+  it("reaches a windowless tray subscriber through the real wiring (no window needed)", () => {
+    // The tray subscribes to the handle's readiness store; a download must reach it even with
+    // zero windows open (the whole point of tray residency). This drives startAutoUpdate's own
+    // update-downloaded wiring — not a manual markDownloaded — with harness.windows empty
+    // (review finding 6).
+    const handle = startAutoUpdate(isTrusted, quietLogger);
+    const trayListener = vi.fn();
+    handle.readiness.subscribe(trayListener);
+    expect(harness.windows).toHaveLength(0); // windowless
+    autoUpdaterMock.emit("update-downloaded", {}, "notes", "3.1.4");
+    expect(trayListener).toHaveBeenCalledWith({ version: "3.1.4" });
+  });
+
   it("replays cached readiness to a trusted late subscriber and null before any download", () => {
     startAutoUpdate(isTrusted, quietLogger);
     const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
