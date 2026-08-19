@@ -1,3 +1,4 @@
+import type { Disposition } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import type { ForgeCapabilities } from "./forge-port";
 import {
@@ -11,6 +12,7 @@ import {
   forgeTargetKey,
   markerComment,
   type ReviewCommentInput,
+  reviewCommentsFromDispositions,
 } from "./publish-review";
 
 const TARGET: ForgeReviewTarget = {
@@ -57,6 +59,60 @@ describe("canonicalReviewPayload (issue #21) — the egress round-trip bytes", (
       { path: "a", line: 1, side: "RIGHT", type: "comment", body: "hellp" },
     ];
     expect(canonicalReviewPayload(base)).not.toBe(canonicalReviewPayload(flipped));
+  });
+});
+
+describe("reviewCommentsFromDispositions (issue #382 M2) — the daemon's one-source review compose", () => {
+  const disp = (
+    path: string,
+    type: Disposition["type"],
+    body: string,
+    span?: { startLine: number; side: "additions" | "deletions" | "context" },
+  ): Disposition => ({
+    anchor: {
+      path,
+      contentDigest: "d",
+      ...(span ? { span: { startLine: span.startLine }, side: span.side, spanDigest: "s" } : {}),
+    },
+    type,
+    body,
+  });
+
+  it("maps each disposition to one comment: span→line+side, path-grained→file-level", () => {
+    const comments = reviewCommentsFromDispositions([
+      disp("src/a.ts", "comment", "note", { startLine: 12, side: "additions" }),
+      disp("src/a.ts", "request-change", "deleted here", { startLine: 3, side: "deletions" }),
+      disp("README.md", "approve", "file-level ok"),
+    ]);
+    // Ordered path-then-line: README before src/a.ts; within src/a.ts line 3 before line 12.
+    expect(comments).toEqual([
+      { path: "README.md", side: "RIGHT", type: "approve", body: "file-level ok" },
+      { path: "src/a.ts", line: 3, side: "LEFT", type: "request-change", body: "deleted here" },
+      { path: "src/a.ts", line: 12, side: "RIGHT", type: "comment", body: "note" },
+    ]);
+  });
+
+  it("its payload round-trips through canonicalReviewPayload byte-exact (preview == post)", () => {
+    const dispositions = [
+      disp("src/a.ts", "comment", "note", { startLine: 12, side: "context" }),
+      disp("README.md", "question", "why?"),
+    ];
+    const comments = reviewCommentsFromDispositions(dispositions);
+    // The bytes the phone previews are the bytes publish.review re-verifies.
+    expect(() => JSON.parse(canonicalReviewPayload(comments))).not.toThrow();
+    expect(deriveReviewEvent(comments)).toBe("COMMENT");
+  });
+
+  it("verdict derives from disposition types (a request-change escalates the whole review)", () => {
+    const comments = reviewCommentsFromDispositions([
+      disp("a", "approve", "ok"),
+      disp("b", "request-change", "no"),
+    ]);
+    expect(deriveReviewEvent(comments)).toBe("REQUEST_CHANGES");
+  });
+
+  it("empty dispositions compose an empty (honest) review, not a throw", () => {
+    expect(reviewCommentsFromDispositions([])).toEqual([]);
   });
 });
 

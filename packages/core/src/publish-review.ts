@@ -1,5 +1,5 @@
 import { sha256Hex } from "@rennet/protocol";
-import type { DispositionType } from "@rennet/types";
+import type { Disposition, DispositionType } from "@rennet/types";
 import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
 
 /**
@@ -109,6 +109,46 @@ export function canonicalReviewPayload(comments: readonly ReviewCommentInput[]):
       body: comment.body,
     })),
   });
+}
+
+/**
+ * Compose the DEFAULT (unedited) outbound comments for a team-PR review from a
+ * review's stored dispositions — the daemon-side, node-free composition a projected
+ * client (the phone) posts through `publish.compose` (issue #382 M2, Finding C
+ * ruling (a)). The phone by publish decision 4 never edits the outbound review, so
+ * the default is the whole product: one comment per disposition, in a deterministic
+ * path-then-line order (the same initial order the desktop's collation draft shows,
+ * `draftFromBatch` in the ui layer). This is the one-source composition — the daemon
+ * composes it, the phone previews AND posts exactly it, and `publish.review`
+ * re-verifies these very bytes via {@link canonicalReviewPayload}.
+ *
+ * Anchor mapping mirrors the ui `reviewComments`: a span-grained disposition
+ * (`anchor.span`/`anchor.side` present, #78) posts at `span.startLine` on the side
+ * its `AnchorSide` selects (`deletions` → the pre-image `LEFT`, `additions`/`context`
+ * → the post-image `RIGHT`); a path-grained disposition has no line and posts
+ * file-level. The comment `type` and `body` are the disposition's own.
+ */
+export function reviewCommentsFromDispositions(
+  dispositions: readonly Disposition[],
+): ReviewCommentInput[] {
+  return [...dispositions]
+    .sort((left, right) => {
+      if (left.anchor.path !== right.anchor.path) {
+        return left.anchor.path < right.anchor.path ? -1 : 1;
+      }
+      return (left.anchor.span?.startLine ?? 0) - (right.anchor.span?.startLine ?? 0);
+    })
+    .map((disposition) => {
+      const line = disposition.anchor.span?.startLine;
+      const side: "LEFT" | "RIGHT" = disposition.anchor.side === "deletions" ? "LEFT" : "RIGHT";
+      return {
+        path: disposition.anchor.path,
+        ...(line === undefined ? {} : { line }),
+        side,
+        type: disposition.type,
+        body: disposition.body,
+      };
+    });
 }
 
 /** A reference to the exact PR + head a review is pinned to. */
