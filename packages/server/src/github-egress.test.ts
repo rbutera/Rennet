@@ -21,16 +21,11 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  createGitHubOctokit,
-  GitHubPublishAdapter,
-  isGitHubNetworkError,
-  withRequestTimeout,
-} from "@rennet/adapters";
+import { createGitHubOctokit, GitHubPublishAdapter, isGitHubNetworkError } from "@rennet/adapters";
 import type { ForgeReviewTarget } from "@rennet/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer } from "./create-server";
-import { withConnectResilience } from "./github-fetch";
+import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 
 /** A transport that stalls forever but honors its abort signal, like real undici. */
@@ -388,7 +383,7 @@ describe("publish egress rides the SAME bounded transport (unit-level middle gro
   // publish octokit wiring to an unbounded transport turns this red (it hangs).
   it("a stalled GraphQL during the publish reconcile settles within the bound as a network error", async () => {
     const stalling = stallingFetch();
-    const publishHttp = withRequestTimeout(withConnectResilience(stalling.fetch), 150);
+    const publishHttp = composeGitHubTransport(stalling.fetch, 150);
     const adapter = new GitHubPublishAdapter({
       resolveOctokit: async () =>
         createGitHubOctokit({ fetch: publishHttp, token: "gho_perfectly_fine" }),

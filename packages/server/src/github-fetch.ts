@@ -12,6 +12,8 @@
  *    is unreachable — check the network" instead of leaking undici internals.
  */
 
+import { withRequestTimeout } from "@rennet/adapters";
+
 /** Undici error codes that mean the CONNECTION never happened. */
 const CONNECT_PHASE_CODES = new Set([
   "UND_ERR_CONNECT_TIMEOUT",
@@ -84,4 +86,16 @@ export function withConnectResilience(
       }
     }
   };
+}
+
+/**
+ * THE production GitHub transport stack — the one place it is assembled. The
+ * deadline wraps OUTSIDE the retry (one absolute budget spans both attempts),
+ * and tests consume this same factory so a mutation here bites them.
+ */
+export function composeGitHubTransport(
+  raw: typeof globalThis.fetch,
+  timeoutMs: number,
+): typeof globalThis.fetch {
+  return withRequestTimeout(withConnectResilience(raw), timeoutMs);
 }

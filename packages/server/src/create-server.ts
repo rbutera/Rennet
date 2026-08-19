@@ -93,7 +93,6 @@ import {
   SqliteReviewStore,
   snapshotStoreFor,
   validateGitHubToken,
-  withRequestTimeout,
   wslDiscoveryDeps,
 } from "@rennet/adapters";
 import {
@@ -174,7 +173,7 @@ import { stampBlockingStates } from "./flagged-blocking-states";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
-import { withConnectResilience } from "./github-fetch";
+import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { InFlightReviews } from "./in-flight-reviews";
@@ -558,8 +557,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const rawGitHubHttp: typeof globalThis.fetch =
     options.httpFetch ??
     (() => Promise.reject(new Error("Rennet server: options.httpFetch was not provided")));
-  const publishHttp: typeof globalThis.fetch = withRequestTimeout(
-    withConnectResilience(rawGitHubHttp),
+  const publishHttp: typeof globalThis.fetch = composeGitHubTransport(
+    rawGitHubHttp,
     options.httpTimeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS,
   );
 
