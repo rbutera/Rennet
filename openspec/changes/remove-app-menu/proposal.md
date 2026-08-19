@@ -9,6 +9,7 @@ The application menu duplicates the command palette with a worse taxonomy: top-l
 - **BREAKING (internal surface)**: the registry-projected application menu is removed. macOS gets a static roles-only menu (`appMenu`, `editMenu`, `windowMenu`) set once at startup; Windows/Linux get `Menu.setApplicationMenu(null)` (no menu strip on the native frame; Alt menu access is deliberately gone).
 - Delete the `menuTemplate()` projection in `@rennet/ui` and the renderer's menu push in `app.tsx`.
 - Delete the `rennet:menu-update` IPC channel, the preload `updateMenu` bridge, and the `menuTemplateSectionSchema` / `MenuTemplateSection` / `updateMenu` contract slot in `@rennet/protocol`.
+- Delete the menu-click return path too, now dead with no command items to click: the `rennet:menu-run` MAIN→renderer channel, the preload `onMenuRun` bridge, and `menuRunPayloadSchema` / `MenuRunPayload` in `@rennet/protocol`.
 - Replace `apps/desktop/src/main/menu.ts` (registry builder, `applyMenuUpdate`, the platform accelerator-display workaround) with the static roles-only template; delete the tests that covered projection, validation, and accelerator display.
 - Command discoverability remains the palette and the settings Keyboard section; `COMMAND_CATALOGUE`, key dispatch, keybinding overrides, and conflict disclosure are untouched — the catalogue simply loses its menu consumer.
 - Docs updated in the same change: `getting-started.md` ("The menu bar mirrors the palette" section) and a supersession note on the `delivery-order.md` #44 entry.
