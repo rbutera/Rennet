@@ -45,6 +45,14 @@ Switching daemons remounts the app against the chosen one — its reviews and th
 live on that daemon, so you are moving between worlds, not merging them. The desktop
 app attaching to a remote daemon never disturbs its own local one.
 
+If the connection to the daemon drops — the daemon crashed, the tablet left the
+tailnet — every surface says so: a banner appears saying the connection is lost and
+Rennet is reconnecting, with how long it has been gone. The window keeps showing
+what it has; nothing blocks. When the daemon comes back, the banner turns into a
+brief reconnected note and clears itself. If the daemon refuses the connection
+outright (a protocol mismatch, a revoked device token), the banner says that
+instead and offers **Retry**.
+
 ## What the browser shell does differently
 
 Two small things differ from the desktop window, both by design:

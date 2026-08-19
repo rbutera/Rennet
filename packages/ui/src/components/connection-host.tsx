@@ -34,6 +34,8 @@ export type BridgeFactory = (target: ConnectionTarget) => RennetBridge & { close
 export type ConnectionState = "idle" | "connecting" | "online" | "offline" | "error";
 export interface ConnectionStatus {
   readonly state: ConnectionState;
+  /** Epoch ms of this transition — the outage banner's elapsed-time anchor. */
+  readonly since?: number;
   /** The cause, present only when `state === "error"`. */
   readonly error?: string;
 }
@@ -176,6 +178,50 @@ function parseHostPort(raw: string): { host: string; port?: number } | null {
   return endpoint;
 }
 
+/** How long the reconnected note stays up before clearing itself. */
+const RESTORED_NOTE_MS = 4000;
+
+/** Outage elapsed time in plain units — a stale window can sit dead for hours. */
+function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}m ${total % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * The daemon-lost banner (PR #405 follow-up). When the socket drops, every surface says
+ * so instead of sitting on innocent loading copy — a fixed, non-modal strip; the app
+ * keeps rendering whatever it has. `outage` holds through the supervisor's own
+ * connecting/offline retry oscillation (no flicker), `failed` is the supervisor's
+ * terminal error (it stopped retrying; Retry re-dials), and `restored` is a brief
+ * reconnected note that clears itself. Null while the connection has never faltered —
+ * the initial connect is the indicator's job, not a banner.
+ */
+type BannerState =
+  | { readonly kind: "outage"; readonly since: number }
+  | { readonly kind: "failed"; readonly reason: string }
+  | { readonly kind: "restored" };
+
+/** Fold one reachability transition into the banner state (pure, so it is testable). */
+function nextBanner(current: BannerState | null, status: ConnectionStatus): BannerState | null {
+  switch (status.state) {
+    case "offline":
+      return current?.kind === "outage"
+        ? current
+        : { kind: "outage", since: status.since ?? Date.now() };
+    case "error":
+      return { kind: "failed", reason: status.error ?? "connection failed" };
+    case "online":
+      if (current === null || current.kind === "restored") return current;
+      return { kind: "restored" };
+    default:
+      // connecting/idle: a reconnect attempt in flight keeps the outage banner up.
+      return current;
+  }
+}
+
 /**
  * The connection indicator's truthful announcement + dot state. A null status (legacy
  * `createBridge` path, no reachability) reads as connected — the label it always had, so
@@ -253,16 +299,42 @@ export function ConnectionHost({
   // null ⇒ the connection reports no status (legacy `createBridge` path): the indicator keeps
   // its plain connected label. A supervisor-backed connection drives it through every state.
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
+  const [banner, setBanner] = useState<BannerState | null>(null);
+  // The re-dial seam: Retry bumps the nonce, tearing down the dead connection and
+  // dialing afresh through the same effect — no parallel supervision machinery.
+  const [retryNonce, setRetryNonce] = useState(0);
   useEffect(() => {
+    void retryNonce;
     const connection = makeConnection(activeTarget);
     setActiveBridge({ target: activeTarget, bridge: connection.bridge });
     setStatus(null);
-    const unsubscribe = connection.subscribe?.((next) => setStatus(next));
+    setBanner(null);
+    const unsubscribe = connection.subscribe?.((next) => {
+      setStatus(next);
+      setBanner((current) => nextBanner(current, next));
+    });
     return () => {
       unsubscribe?.();
       connection.close();
     };
-  }, [activeTarget, makeConnection]);
+  }, [activeTarget, makeConnection, retryNonce]);
+  // Tick the outage clock once a second while the banner shows elapsed time. The banner
+  // object is identity-stable across the retry oscillation, so the interval survives it.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (banner?.kind !== "outage") return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [banner]);
+  // The reconnected note clears itself; an outage arriving meanwhile wins the race.
+  useEffect(() => {
+    if (banner?.kind !== "restored") return;
+    const timer = setTimeout(() => {
+      setBanner((current) => (current?.kind === "restored" ? null : current));
+    }, RESTORED_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [banner]);
   const bridge = activeBridge?.target === activeTarget ? activeBridge.bridge : null;
 
   const switchTo = useCallback(
@@ -441,7 +513,37 @@ export function ConnectionHost({
     </div>
   );
 
+  const daemonBanner =
+    banner === null ? null : (
+      <div className="connection-banner" data-kind={banner.kind} role="status">
+        {banner.kind === "outage" ? (
+          <span className="connection-banner-text">
+            Connection to the review daemon lost — reconnecting… (
+            {formatElapsed(now - banner.since)})
+          </span>
+        ) : banner.kind === "failed" ? (
+          <>
+            <span className="connection-banner-text">
+              Connection to the review daemon failed: {banner.reason}
+            </span>
+            <button
+              type="button"
+              className="connection-banner-retry"
+              onClick={() => setRetryNonce((nonce) => nonce + 1)}
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <span className="connection-banner-text">Reconnected to the review daemon.</span>
+        )}
+      </div>
+    );
+
   return bridge ? (
-    <RennetApp key={activeId} bridge={bridge} connectionSlot={connectionBar} />
+    <>
+      <RennetApp key={activeId} bridge={bridge} connectionSlot={connectionBar} />
+      {daemonBanner}
+    </>
   ) : null;
 }
