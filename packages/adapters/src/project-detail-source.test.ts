@@ -633,6 +633,8 @@ describe("the fan-out cap is SHARED per source instance (overlapping loads)", ()
     await expect(
       loadProjectDetail(depsFor(makeGit(fixtures), roots, prSource), repoProject("/r0")),
     ).rejects.toThrow("GraphQL schema drift");
+    // Let the in-flight stragglers finish: they must COMPLETE, not pick up more.
+    await new Promise((resolve) => setTimeout(resolve, 40));
     // The initial worker pool launches 4; the rejection stops every later pick-up.
     expect(launches).toBe(4);
   });
