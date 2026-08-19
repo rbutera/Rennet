@@ -10,7 +10,7 @@ import type { Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";
-import { act, fireEvent, mount, waitFor } from "./test/dom";
+import { fireEvent, mount, waitFor } from "./test/dom";
 
 const review: Review = {
   id: "review",
@@ -72,11 +72,11 @@ function bridge(keybindings: Record<string, string | null>): RennetBridge {
 function interactiveBridge(initial: Record<string, string | null> = {}): {
   bridge: RennetBridge;
   writes: { id: string; keybinding?: string | null }[];
-  fireMenuRun(id: string): void;
 } {
-  const keybindings = { ...initial };
+  // Bind nav.settings to a chord so tests reach the Settings screen by real dispatch —
+  // the workspace has no menu and no settings button (that button lives on the front door).
+  const keybindings: Record<string, string | null> = { "nav.settings": "mod+g", ...initial };
   const writes: { id: string; keybinding?: string | null }[] = [];
-  let menuRun: ((id: string) => void) | undefined;
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
     if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "review.checkFreshness") return { review };
@@ -102,19 +102,12 @@ function interactiveBridge(initial: Record<string, string | null> = {}): {
     }
     throw new Error(`unhandled ${name}`);
   };
-  return {
-    bridge: {
-      invoke,
-      onMenuRun: (listener) => {
-        menuRun = listener;
-        return () => {
-          menuRun = undefined;
-        };
-      },
-    } as RennetBridge,
-    writes,
-    fireMenuRun: (id) => act(() => menuRun?.(id)),
-  };
+  return { bridge: { invoke } as RennetBridge, writes };
+}
+
+/** Open Settings by dispatching its bound chord (interactiveBridge binds nav.settings). */
+function openSettings(): void {
+  fireEvent.keyDown(window, { key: "g", metaKey: true });
 }
 
 function keyRow(container: HTMLElement, label: string): HTMLElement {
@@ -185,7 +178,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     const { container, getByRole, getByLabelText } = mount(<RennetApp bridge={harness.bridge} />);
     await waitFor(() => expect(container.querySelector(".navigation-shell")).not.toBeNull());
 
-    harness.fireMenuRun("nav.settings");
+    openSettings();
     await waitFor(() => expect(container.querySelector(".settings")).not.toBeNull());
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
@@ -201,7 +194,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     await waitFor(() => expect(container.querySelector(".command-palette")).not.toBeNull());
     fireEvent.keyDown(getByLabelText("Search commands"), { key: "Escape" });
 
-    harness.fireMenuRun("nav.settings");
+    openSettings();
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
     clickRowButton(keyRow(container, "Toggle command palette"), "Unbind");
@@ -210,7 +203,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     fireEvent.keyDown(window, { key: "j", metaKey: true });
     expect(container.querySelector(".command-palette")).toBeNull();
 
-    harness.fireMenuRun("nav.settings");
+    openSettings();
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
     clickRowButton(keyRow(container, "Toggle command palette"), "Reset");
@@ -224,7 +217,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     const harness = interactiveBridge();
     const { container, getByRole, getByLabelText } = mount(<RennetApp bridge={harness.bridge} />);
     await waitFor(() => expect(container.querySelector(".navigation-shell")).not.toBeNull());
-    harness.fireMenuRun("nav.settings");
+    openSettings();
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
     clickRowButton(keyRow(container, "Back"), "Set");
@@ -247,7 +240,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     fireEvent.keyDown(container.querySelector(".command-palette-input") as HTMLInputElement, {
       key: "Escape",
     });
-    harness.fireMenuRun("nav.settings");
+    openSettings();
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() =>
       expect(container.querySelector(".settings-key-invalid")?.textContent).toContain("mod+"),

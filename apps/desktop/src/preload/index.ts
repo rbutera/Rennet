@@ -1,11 +1,10 @@
-import { menuRunPayloadSchema } from "@rennet/protocol";
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 
 // The preload no longer forwards commands or filters push streams — those moved to the
 // loopback WS transport (#378), which the renderer reaches through @rennet/client's
 // WsRennetBridge. What remains is the Electron-native residue the renderer merges with
-// that bridge: the host platform, the WS port to dial, and the menu-run channel.
-const MENU_RUN_CHANNEL = "rennet:menu-run";
+// that bridge: the host platform, the WS port to dial, the directory picker, and the
+// host-app updater channels.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
@@ -30,8 +29,6 @@ export interface RennetPreload {
   readonly platform: string;
   /** The loopback WS port the server bound (#378), read from the injected argv flag. */
   readonly wsPort: number;
-  /** Subscribe to menu-item activations (#44); returns an unsubscribe. */
-  onMenuRun(listener: (id: string) => void): () => void;
   /**
    * Open the native directory picker and resolve the chosen path, or null if cancelled
    * (#379). A detached daemon cannot open a dialog, so the renderer obtains the path here
@@ -56,14 +53,6 @@ const wsPort = wsPortArg ? Number.parseInt(wsPortArg.slice(WS_PORT_ARG.length), 
 const preload: RennetPreload = {
   platform: process.platform,
   wsPort,
-  onMenuRun: (listener) => {
-    const handler = (_event: IpcRendererEvent, payload: unknown): void => {
-      const parsed = menuRunPayloadSchema.safeParse(payload);
-      if (parsed.success) listener(parsed.data.id);
-    };
-    ipcRenderer.on(MENU_RUN_CHANNEL, handler);
-    return () => ipcRenderer.removeListener(MENU_RUN_CHANNEL, handler);
-  },
   chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
   onUpdateReady: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: unknown): void => {

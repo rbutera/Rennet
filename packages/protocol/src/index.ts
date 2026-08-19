@@ -3018,12 +3018,6 @@ export interface RennetBridge {
    */
   onAttention?(listener: (event: AttentionEventFrame) => void): () => void;
   /**
-   * Subscribe to menu-item activations (#44): MAIN sends the clicked command's id, and
-   * the renderer runs the SAME handler the palette would. Returns an unsubscribe.
-   * Optional: a host without a menu that dispatches commands omits it.
-   */
-  onMenuRun?(listener: (id: string) => void): () => void;
-  /**
    * Subscribe to host-app update readiness: fires when a newer Rennet release has
    * been downloaded and is ready to apply (badge on the chrome logo). The host
    * replays its cached state to a late subscriber, so a renderer that mounts after
@@ -3045,11 +3039,6 @@ export interface UpdateReadyInfo {
   /** Release name when the platform updater supplied one; absent otherwise. */
   version?: string;
 }
-
-/** The menu-run wire shape (#44): MAIN → renderer command-id activation. */
-export const menuRunPayloadSchema = z.object({ id: z.string().min(1) }).strict();
-
-export type MenuRunPayload = z.infer<typeof menuRunPayloadSchema>;
 
 // ── R19 public projection (issue #380) — the recipient-specific public contract ──
 //

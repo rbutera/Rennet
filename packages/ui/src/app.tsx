@@ -2444,14 +2444,6 @@ export function RennetApp({
   // Publish the live dispatch list for the stable window keydown listener (above).
   dispatchRef.current = { commands: dispatchCommands, overrides: keybindingOverrides };
 
-  // A menu-item activation runs the SAME handler the palette would (single dispatcher).
-  // A `menu:run` for a command the live context no longer offers is dropped without a
-  // throw (the disabled state raced the click).
-  useEffect(() => {
-    return bridge.onMenuRun?.((id) => {
-      dispatchRef.current.commands.find((command) => command.id === id)?.run();
-    });
-  }, [bridge]);
   // Host-app update readiness → badge on the chrome marks. Hosts without an
   // updater omit the member and this is a no-op (spec: desktop-update-notification).
   useEffect(() => {

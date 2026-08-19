@@ -5,7 +5,6 @@ import {
   dispositionSchema,
   globalConfigSchema,
   isCommandName,
-  menuRunPayloadSchema,
   parseCommandInput,
   parseCommandOutput,
   settingsLayerSchema,
@@ -78,13 +77,6 @@ describe("command protocol", () => {
       reviewId: "r1",
     });
     expect(() => parseCommandInput("attention.acknowledge", {})).toThrow();
-  });
-});
-
-describe("menu-run wire protocol (#44)", () => {
-  it("parses a valid run payload and rejects an empty id", () => {
-    expect(menuRunPayloadSchema.parse({ id: "nav.back" })).toEqual({ id: "nav.back" });
-    expect(menuRunPayloadSchema.safeParse({ id: "" }).success).toBe(false);
   });
 });
 
