@@ -8,10 +8,14 @@
 import type { AttentionAction, AttentionFamily } from "@rennet/protocol";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { composeAskReply } from "../lib/ask-reply";
-import { type AttentionPushData, resolvePushHref } from "../lib/deep-links";
+import { type AttentionPushData, askReviewIdOf, resolvePushHref } from "../lib/deep-links";
 import { newCommandId } from "../lib/ids";
-import { askCategoryId, chipLabelForAction, shadeActionsFor } from "../lib/notification-actions";
+import {
+  askCategoryId,
+  askReplyInvoke,
+  chipLabelForAction,
+  shadeActionsFor,
+} from "../lib/notification-actions";
 import type { DaemonRegistry } from "./daemon-registry";
 
 /** This device's platform tag for `device.registerPush`. */
@@ -152,31 +156,21 @@ export async function answerAskFromShade(
   data: AttentionPushData,
   actionIdentifier: string,
 ): Promise<ShadeAnswerOutcome> {
-  const deviceId = data.deviceId;
-  const deepLink = data.deepLink ?? "";
-  const reviewId = /review\/([^/]+)\/ask/.exec(deepLink)?.[1];
-  if (!deviceId || !reviewId) return { status: "no-daemon" };
-  const daemonId = registry.daemonIdForDevice(deviceId);
+  const reviewId = askReviewIdOf(data.deepLink);
+  if (!data.deviceId || !reviewId) return { status: "no-daemon" };
+  const daemonId = registry.daemonIdForDevice(data.deviceId);
   const connection = daemonId ? registry.get(daemonId) : undefined;
   if (!connection) return { status: "no-daemon" };
   const chipLabel = chipLabelForAction(askActionsOf(data), actionIdentifier);
   if (!chipLabel) return { status: "no-chip" };
-  const question = composeAskReply({ chipLabel });
   try {
-    await connection.supervisor.invoke("review.ask", {
-      commandId: newCommandId(),
-      reviewId,
-      question,
-      mode: "orchestrator",
-      threadId: reviewId,
-      turnId: newCommandId(),
-      anchor: { kind: "fragment", label: "steer", key: reviewId },
-      turnBody: question,
-      // Bind the answer to the ask's attention id (#382 M2 finding 3): the daemon consumes exactly
-      // this ask atomically, so a duplicate tap is refused "already answered" and a stale/forged id
-      // is refused too. Absent ⇒ the daemon runs it unbound (a pre-M2 daemon has no such id).
-      ...(data.attentionId ? { attentionId: data.attentionId } : {}),
-    });
+    // The reply binds to the ask's attention id (#382 M2 finding 3): the daemon consumes exactly
+    // this ask atomically, so a duplicate tap is refused "already answered" and a stale/forged id
+    // is refused too. Absent ⇒ the daemon runs it unbound (a pre-M2 daemon has no such id).
+    await connection.supervisor.invoke(
+      "review.ask",
+      askReplyInvoke({ reviewId, chipLabel, attentionId: data.attentionId, newId: newCommandId }),
+    );
     return { status: "sent" };
   } catch (error) {
     return { status: "failed", reason: error instanceof Error ? error.message : "unreachable" };

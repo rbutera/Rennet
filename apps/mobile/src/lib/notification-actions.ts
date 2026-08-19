@@ -9,7 +9,8 @@
 // and answering in the app send identical bytes. Exactly-once is the daemon's: the reply carries
 // the review id and the daemon's superseded-turn refusal dedups a late/duplicate answer.
 
-import type { AttentionAction } from "@rennet/protocol";
+import type { AttentionAction, CommandInput } from "@rennet/protocol";
+import { composeAskReply } from "./ask-reply";
 
 /** A notification action as the OS layer registers it (id ⇒ button label). */
 export interface ShadeAction {
@@ -51,4 +52,32 @@ export function chipLabelForAction(
   identifier: string,
 ): string | undefined {
   return (actions ?? []).find((a) => a.id === identifier)?.label;
+}
+
+/**
+ * Build the `review.ask` reply a shade answer sends — the SINGLE source both the foreground
+ * (live supervisor) and background (headless one-shot bridge) paths compose, so answering from a
+ * warm app and answering from a terminated one send identical bytes (#382 M2 findings 3 + 4). The
+ * reply carries `attentionId` when the push had one, so the daemon consumes exactly that ask
+ * atomically (dedup + forgery guard). `newId` is injected so the frame builds without a native
+ * crypto module in tests.
+ */
+export function askReplyInvoke(params: {
+  reviewId: string;
+  chipLabel: string;
+  attentionId?: string;
+  newId: () => string;
+}): CommandInput<"review.ask"> {
+  const question = composeAskReply({ chipLabel: params.chipLabel });
+  return {
+    commandId: params.newId(),
+    reviewId: params.reviewId,
+    question,
+    mode: "orchestrator",
+    threadId: params.reviewId,
+    turnId: params.newId(),
+    anchor: { kind: "fragment", label: "steer", key: params.reviewId },
+    turnBody: question,
+    ...(params.attentionId ? { attentionId: params.attentionId } : {}),
+  };
 }

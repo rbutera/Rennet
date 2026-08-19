@@ -74,6 +74,17 @@ export function routeHref(daemonId: string, target: LinkTarget): string {
   }
 }
 
+/**
+ * The review id an ASK deep-link names (`rennet://review/<id>/ask`), or undefined for any other
+ * link (#382 M2). One source for the reviewId a shade answer targets — the live tap handler, the
+ * background task, and the category-registration path all resolve it here, never their own regex.
+ */
+export function askReviewIdOf(deepLink: string | undefined): string | undefined {
+  if (!deepLink) return undefined;
+  const target = parseDeepLink(deepLink);
+  return target?.kind === "review" && target.surface === "ask" ? target.reviewId : undefined;
+}
+
 /** A parsed pairing offer — the daemon URL, the one-time code, and a suggested name. */
 export interface PairingOffer {
   readonly url: string;

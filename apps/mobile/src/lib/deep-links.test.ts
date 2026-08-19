@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
+  askReviewIdOf,
   parseAttentionPushData,
   parseDeepLink,
   parsePairingLink,
   resolvePushHref,
   routeHref,
 } from "./deep-links";
+
+describe("askReviewIdOf — the ask a shade answer targets (#382 M2 finding 4)", () => {
+  it("extracts the review id from an ask deep-link", () => {
+    expect(askReviewIdOf("rennet://review/rev-9/ask")).toBe("rev-9");
+  });
+
+  it("ignores a non-ask link (only an ask push answers) and a missing link", () => {
+    expect(askReviewIdOf("rennet://review/rev-9/digest")).toBeUndefined();
+    expect(askReviewIdOf("rennet://project/p1")).toBeUndefined();
+    expect(askReviewIdOf(undefined)).toBeUndefined();
+  });
+});
 
 describe("parsePairingLink (task 4.1)", () => {
   it("parses a pairing link's url, code, and name", () => {

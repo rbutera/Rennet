@@ -12,7 +12,8 @@
 import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
-import { type AttentionPushData, parseAttentionPushData } from "../lib/deep-links";
+import { Platform } from "react-native";
+import { type AttentionPushData, askReviewIdOf, parseAttentionPushData } from "../lib/deep-links";
 import { useRuntime } from "./context";
 import {
   answerAskFromShade,
@@ -35,11 +36,6 @@ function dataOf(notification: Notifications.Notification | null): AttentionPushD
 const handledResponses = new Set<string>();
 function responseKey(response: Notifications.NotificationResponse): string {
   return `${response.notification.request.identifier}:${response.actionIdentifier}`;
-}
-
-/** The reviewId an ask deep-link names, for registering its category. */
-function askReviewId(data: AttentionPushData): string | null {
-  return /review\/([^/]+)\/ask/.exec(data.deepLink ?? "")?.[1] ?? null;
 }
 
 /**
@@ -90,13 +86,14 @@ export function useNotificationRouting(): void {
     const receiveSub = Notifications.addNotificationReceivedListener((notification) => {
       const data = dataOf(notification);
       if (!data) return;
-      const reviewId = askReviewId(data);
+      const reviewId = askReviewIdOf(data.deepLink);
       const actions = askActionsOf(data);
-      // Open-app fallback (#382 M2 finding 4): without a registered background-response task the
-      // action cannot be honoured while the app is closed, so it opens the app — the deduped
-      // cold/warm handler then sends the answer (still one tap). True background execution needs
-      // expo-task-manager (a dependency decision flagged to the lead).
-      if (reviewId && actions.length > 0) void registerAskCategory(reviewId, actions, false);
+      // On Android the chip action is honoured in the background/terminated by the module-scope
+      // TaskManager task (#382 M2 finding 4), so register it background-capable (the app stays
+      // closed). On iOS — no background action-tap task — the action opens the app pre-filled and
+      // the deduped cold/warm handler sends the answer (still one tap). Either way, never dropped.
+      if (reviewId && actions.length > 0)
+        void registerAskCategory(reviewId, actions, Platform.OS === "android");
     });
 
     return () => {
