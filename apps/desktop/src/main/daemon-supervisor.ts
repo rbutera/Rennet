@@ -12,6 +12,7 @@ import {
   type DaemonVerdict,
   findHealthyDaemon,
   readDaemonFile,
+  removeDaemonFile,
   type SpawnDaemonOptions,
   spawnDaemon,
   waitForHealthy,
@@ -30,28 +31,25 @@ export function resolveServerBundle(): string {
   return resolve(__dirname, "../server/index.cjs");
 }
 
-/** The daemon this app owns, if any: the live claim in its own data dir (tray-presence). */
-export function ownedDaemon(
+/**
+ * Whether this app owns a RUNNING daemon (drives the tray Quit label, tray-presence). The
+ * daemon.json claim is "a claim to verify, never truth" (daemon-file.ts) — a health probe
+ * confirms the process at that pid/port really is our daemon, so a stale claim whose pid was
+ * reused by an unrelated process never reads as owned (review finding 5). Both `healthy` and
+ * `incompatible` mean a verified live owned daemon (identity/port matched); `stale`/`absent`
+ * mean nothing is owned here.
+ */
+export async function isOwnedDaemonRunning(
   dataDir: string,
-  readClaim: (dataDir: string) => DaemonInfo | null = readDaemonFile,
-  alive: (pid: number) => boolean = isPidAlive,
-): DaemonInfo | null {
-  const claim = readClaim(dataDir);
-  return claim && alive(claim.pid) ? claim : null;
-}
-
-/** True if `pid` is a signalable process. `process.kill(pid, 0)` probes without signalling. */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM = alive but not ours to signal; ESRCH = gone.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+  probe: (dataDir: string) => Promise<DaemonVerdict> = findHealthyDaemon,
+): Promise<boolean> {
+  const verdict = await probe(dataDir);
+  return verdict.kind === "healthy" || verdict.kind === "incompatible";
 }
 
 export interface StopOwnedDaemonDeps {
+  readonly probe: (dataDir: string) => Promise<DaemonVerdict>;
+  readonly removeClaim: (dataDir: string, expectedPid: number) => boolean;
   readonly readClaim: (dataDir: string) => DaemonInfo | null;
   readonly kill: (pid: number, signal: "SIGTERM") => void;
   readonly now: () => number;
@@ -62,19 +60,22 @@ export interface StopOwnedDaemonDeps {
 
 /**
  * Stop the OWNED daemon the same way `rennet stop` does (tray "Quit completely",
- * design D3): read the claim, SIGTERM the pid (which triggers the daemon's graceful
- * shutdown — in-flight turns persist as resumable `interrupted`), then poll — bounded —
- * for the claim to clear. Never signals anything but this data dir's own daemon, so an
- * attached remote daemon is untouched. No claim ⇒ nothing to stop. A pid already gone
- * (ESRCH) is success. On timeout it warns truthfully and returns — the caller exits the
- * app regardless, exactly as `rennet stop` exits after its bounded wait; the claim-file
- * protocol keeps the next launch honest either way.
+ * design D3): HEALTH-VERIFY the claim first, then SIGTERM only a pid the probe confirmed is
+ * our daemon (which triggers its graceful shutdown — in-flight turns persist as resumable
+ * `interrupted`), and poll — bounded — for the claim to clear. It NEVER signals an unverified
+ * pid: a stale claim (dead pid, or a pid the OS reused for an unrelated process) is REMOVED,
+ * not killed (review finding 2), so tray Quit can never take down someone else's process.
+ * No claim/absent ⇒ nothing to stop. A pid that races to gone (ESRCH) is success. On timeout
+ * it warns truthfully and returns — the caller exits regardless, exactly as `rennet stop`
+ * exits after its bounded wait; the claim-file protocol keeps the next launch honest either way.
  */
 export async function stopOwnedDaemon(
   dataDir: string,
   overrides: Partial<StopOwnedDaemonDeps> = {},
 ): Promise<void> {
   const deps: StopOwnedDaemonDeps = {
+    probe: findHealthyDaemon,
+    removeClaim: removeDaemonFile,
     readClaim: readDaemonFile,
     kill: (pid, signal) => {
       process.kill(pid, signal);
@@ -85,12 +86,23 @@ export async function stopOwnedDaemon(
     timeoutMs: 5_000,
     ...overrides,
   };
-  const claim = deps.readClaim(dataDir);
-  if (!claim) return; // nothing owned here — remote-only or already stopped.
+  const verdict = await deps.probe(dataDir);
+  if (verdict.kind === "absent") return; // nothing owned here — remote-only or already stopped.
+  if (verdict.kind === "stale") {
+    // The pid did not answer /healthz (dead, or reused by an unrelated process): remove the
+    // claim, signal NOTHING. Mirrors `rennet stop`'s stale-pidfile branch.
+    deps.removeClaim(dataDir, verdict.claim.pid);
+    return;
+  }
+  // healthy | incompatible: the probe verified this pid/port IS our daemon — safe to signal.
+  const claim = verdict.claim;
   try {
     deps.kill(claim.pid, "SIGTERM");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return; // already gone.
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      deps.removeClaim(dataDir, claim.pid); // raced to gone between probe and signal.
+      return;
+    }
     deps.warn(
       `rennet: failed to signal owned daemon pid ${claim.pid}: ${(error as Error).message}`,
     );
