@@ -81,7 +81,25 @@ export async function ensureDaemon(
     ...overrides,
   };
   const verdict = await deps.probe(dataDir);
-  if (verdict.kind === "healthy") return verdict.identity.wsPort;
+  if (verdict.kind === "healthy") {
+    if (verdict.identity.version === deps.serverVersion) return verdict.identity.wsPort;
+    // The daemon updates WITH the app (the header doctrine) — but the protocol-only
+    // check let a healthy OLDER daemon serve a freshly updated shell forever.
+    // Field bug, lancelot 2026-08-19: a 0.2.14 daemon kept serving a 0.2.18 app,
+    // so none of the shipped egress fixes were live and every project.detail
+    // waited undici's 300s headers timeout ("5 minutes plus"). Same posture as
+    // protocol skew: restart with no ceremony. In-flight turns fold to
+    // `interrupted` via lazy crash recovery; reviews persist in sqlite.
+    deps.warn(
+      `rennet: daemon runs server ${verdict.identity.version} but the app ships ${deps.serverVersion}; restarting the bundled daemon`,
+    );
+    try {
+      deps.kill(verdict.claim.pid, "SIGTERM");
+    } catch {
+      // Already gone — the next spawn overwrites the stale claim.
+    }
+    await waitForClaimGone(dataDir, verdict.claim.pid, deps.readClaim);
+  }
 
   if (verdict.kind === "incompatible") {
     // D3/D10: the shell owns the newer bundle, so it restarts — no ceremony, just a log.
