@@ -153,9 +153,10 @@ server in the middle.
 
 ## Updates arrive as a badge, not a dialog
 
-Rennet checks for a new release every five minutes while it runs. The check
-talks only to update.electronjs.org, which resolves the project's public GitHub
-Releases — there is no Rennet backend. When a newer version has downloaded, the
+Rennet checks for a new release every five minutes while it runs. On Windows
+the check asks the project's public GitHub Releases directly; on macOS it goes
+through update.electronjs.org, which resolves the same GitHub Releases — either
+way there is no Rennet backend. When a newer version has downloaded, the
 Rennet mark in the window chrome grows a small dot on its corner. Click it to
 restart into the new version, or dismiss the prompt and keep working; the badge
 stays until you choose to apply, and nothing ever restarts on its own.

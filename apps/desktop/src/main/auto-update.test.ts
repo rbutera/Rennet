@@ -34,6 +34,7 @@ vi.mock("electron", () => ({
 
 vi.mock("update-electron-app", () => ({
   updateElectronApp: (options: unknown) => harness.updateElectronApp(options),
+  UpdateSourceType: { ElectronPublicUpdateService: 0, StaticStorage: 1 },
 }));
 
 import {
@@ -93,7 +94,11 @@ describe("startAutoUpdate wiring", () => {
   it("configures the update client at the 5-minute minimum with the stock dialog off", () => {
     startAutoUpdate(isTrusted, quietLogger);
     expect(updateElectronApp).toHaveBeenCalledWith(
-      expect.objectContaining({ updateInterval: "5 minutes", notifyUser: false }),
+      expect.objectContaining({
+        updateInterval: "5 minutes",
+        notifyUser: false,
+        updateSource: expect.objectContaining({ type: expect.anything() }),
+      }),
     );
   });
 
@@ -194,5 +199,27 @@ describe("staged-at-boot seeding", () => {
     const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
     if (!replay) throw new Error("replay handler not registered");
     expect(replay(trusted)).toBeNull();
+  });
+});
+
+describe("updateSourceFor", () => {
+  it("points win32 straight at GitHub Releases latest/download", async () => {
+    const { updateSourceFor, UPDATE_REPO } = await import("./auto-update");
+    expect(updateSourceFor("win32", UPDATE_REPO)).toEqual({
+      type: 1,
+      baseUrl: "https://github.com/rbutera/rennet/releases/latest/download",
+    });
+  });
+
+  it("keeps darwin (and others) on the Electron update service", async () => {
+    const { updateSourceFor } = await import("./auto-update");
+    expect(updateSourceFor("darwin", "rbutera/rennet")).toEqual({
+      type: 0,
+      repo: "rbutera/rennet",
+    });
+    expect(updateSourceFor("linux", "rbutera/rennet")).toEqual({
+      type: 0,
+      repo: "rbutera/rennet",
+    });
   });
 });
