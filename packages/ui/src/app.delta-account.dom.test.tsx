@@ -65,8 +65,13 @@ const bridge: RennetBridge = {
 describe("RennetApp — delta-account hunk navigation", () => {
   it("clicking a hunk row focuses its path and exact span in the Files diff", async () => {
     const { container } = mount(<RennetApp bridge={bridge} />);
-    await waitFor(() =>
-      expect(container.querySelector('[data-testid="delta-account-hunk"]')).not.toBeNull(),
+    // Full-app mount + review navigation is this suite's heaviest path; the
+    // focus attribute is DECLARATIVE (render-derived), so these waits can only
+    // be late, never wrong — testing-library's 1s default grazed real CI runs
+    // (auto-release 32272116190 failed on exactly this assertion under load).
+    await waitFor(
+      () => expect(container.querySelector('[data-testid="delta-account-hunk"]')).not.toBeNull(),
+      { timeout: 5000 },
     );
 
     fireEvent.click(
@@ -75,15 +80,18 @@ describe("RennetApp — delta-account hunk navigation", () => {
       ) as HTMLButtonElement,
     );
 
-    await waitFor(() => {
-      expect(container.querySelector(".diff-toolbar strong")?.textContent).toBe("src/x.ts");
-      const focused = container.querySelectorAll('.diff-line[data-delta-focus="true"]');
-      expect([...focused].map((line) => line.getAttribute("data-file-line"))).toEqual([
-        "40",
-        "41",
-        "42",
-      ]);
-      expect(document.activeElement).toBe(focused[0]);
-    });
+    await waitFor(
+      () => {
+        expect(container.querySelector(".diff-toolbar strong")?.textContent).toBe("src/x.ts");
+        const focused = container.querySelectorAll('.diff-line[data-delta-focus="true"]');
+        expect([...focused].map((line) => line.getAttribute("data-file-line"))).toEqual([
+          "40",
+          "41",
+          "42",
+        ]);
+        expect(document.activeElement).toBe(focused[0]);
+      },
+      { timeout: 5000 },
+    );
   });
 });
