@@ -729,6 +729,8 @@ export const gitHubAuthStatusSchema = z.discriminatedUnion("state", [
   }),
   z.object({ state: z.literal("not-connected"), copy: z.string().min(1) }),
   z.object({ state: z.literal("token-invalid"), copy: z.string().min(1) }),
+  /** GitHub is unreachable (timeout/DNS/offline) — says nothing about the token. */
+  z.object({ state: z.literal("network"), copy: z.string().min(1) }),
   z.object({
     state: z.literal("insufficient-scope"),
     copy: z.string().min(1),
@@ -953,7 +955,9 @@ export const projectDetailSchema = z.object({
    * were fetched. Present when the PR source was not wired — a missing token renders
    * as an honest hint, never as "zero PRs".
    */
-  authUnavailable: z.enum(["not-connected", "token-invalid", "insufficient-scope"]).optional(),
+  authUnavailable: z
+    .enum(["not-connected", "token-invalid", "insufficient-scope", "network"])
+    .optional(),
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 

@@ -160,7 +160,17 @@ export function GitHubConnectCard({ bridge }: { bridge: RennetBridge }) {
   const account = useGitHubAccount(bridge);
   const [dismissed, setDismissed] = useState(() => readDismissed());
 
-  if (dismissed || !account.status?.state || account.status.state === "connected") return null;
+  // "network" hides the card too: GitHub being unreachable says nothing about
+  // whether an account is connected, and a connect attempt cannot succeed offline.
+  // Settings still shows the honest unreachable copy.
+  if (
+    dismissed ||
+    !account.status?.state ||
+    account.status.state === "connected" ||
+    account.status.state === "network"
+  ) {
+    return null;
+  }
 
   return (
     <aside className="github-card">

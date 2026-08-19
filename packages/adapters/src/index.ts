@@ -229,6 +229,11 @@ export {
   runGitHubDeviceFlow,
   type Verification,
 } from "./github-device-flow";
+export {
+  GITHUB_REQUEST_TIMEOUT_MS,
+  isGitHubNetworkError,
+  withRequestTimeout,
+} from "./github-fetch";
 export { GitHubForgeAdapter, type GitHubForgeConfig } from "./github-forge";
 export {
   createGitHubOctokit,

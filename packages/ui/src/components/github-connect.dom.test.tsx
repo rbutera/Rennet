@@ -18,6 +18,10 @@ const CONNECTED: GitHubAuthStatus = {
   login: "rbutera",
   scopes: ["repo", "workflow"],
 };
+const NETWORK: GitHubAuthStatus = {
+  state: "network",
+  copy: "GitHub is unreachable right now — showing local work only. Your connection and token are untouched.",
+};
 
 interface FakeConfig {
   status?: GitHubAuthStatus;
@@ -85,6 +89,14 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
     expect(container.querySelector(".github-card")).toBeNull();
   });
 
+  it("renders NOTHING when GitHub is unreachable — a connect cannot succeed offline", async () => {
+    const { bridge, calls } = fakeBridge({ status: NETWORK });
+    const { container } = mount(<GitHubConnectCard bridge={bridge} />);
+    await waitFor(() => expect(calls.some((c) => c.name === "github.status")).toBe(true));
+    // Unreachable says nothing about whether an account is connected: no connect nag.
+    expect(container.querySelector(".github-card")).toBeNull();
+  });
+
   it("skip dismisses the card and REMEMBERS on this machine", async () => {
     const first = fakeBridge();
     const mounted = mount(<GitHubConnectCard bridge={first.bridge} />);
@@ -126,6 +138,16 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
 });
 
 describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
+  it("shows the honest unreachable copy when GitHub is down — never a connect lie", async () => {
+    const { bridge } = fakeBridge({ status: NETWORK });
+    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    await waitFor(() =>
+      expect(container.querySelector(".github-problem")?.textContent).toContain(
+        "GitHub is unreachable right now",
+      ),
+    );
+  });
+
   it("shows connected-as fact and Disconnect; disconnect forgets and re-reads", async () => {
     const { bridge, calls } = fakeBridge({ status: CONNECTED });
     const { container } = mount(<GitHubAccountRows bridge={bridge} />);
