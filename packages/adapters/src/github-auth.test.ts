@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { resolveGitHubAuth, type SecretStore, validateGitHubToken } from "./github-auth";
+import type { GitHubCredential } from "./github-device-flow";
+import { GitHubOAuthDeclined } from "./github-device-flow";
 import { createGitHubOctokit } from "./github-octokit";
 
 /** A fake GitHub: routes by path, returns real `Response`s (octokit's transport). */
@@ -37,14 +39,41 @@ function octokitFor(routes: Record<string, () => Response>) {
   return createGitHubOctokit({ fetch: fakeGitHub(routes) });
 }
 
-const emptyStore = { getGitHubToken: () => Promise.resolve(null) };
-const storeWith = (token: string) => ({ getGitHubToken: () => Promise.resolve(token) });
+/** An in-memory credential store with a recording write. */
+function memoryStore(initial: GitHubCredential | null): SecretStore & {
+  current: () => GitHubCredential | null;
+  writes: GitHubCredential[];
+  setGitHubCredentialSync?: (next: GitHubCredential) => void;
+} {
+  let credential = initial;
+  const writes: GitHubCredential[] = [];
+  return {
+    getGitHubCredential: () => Promise.resolve(credential),
+    setGitHubCredential: (next) => {
+      credential = next;
+      if (next) writes.push(next);
+      return Promise.resolve();
+    },
+    current: () => credential,
+    writes,
+    setGitHubCredentialSync: (next: GitHubCredential) => {
+      credential = next;
+    },
+  };
+}
+
+const storeWith = (token: string) => memoryStore({ token });
+const emptyStore = () => memoryStore(null);
+
+const NOW = Date.parse("2026-08-19T12:00:00.000Z");
+const SOON = new Date(NOW + 60 * 1000).toISOString(); // inside the 5-min skew
+const LATER = new Date(NOW + 6 * 60 * 60 * 1000).toISOString(); // hours away
 
 describe("resolveGitHubAuth — the distinct failure states", () => {
-  it("not-connected: no stored token, and the network is never touched", async () => {
+  it("not-connected: no stored credential, and the network is never touched", async () => {
     const fetch = vi.fn();
     const octokit = createGitHubOctokit({ fetch: fetch as unknown as typeof globalThis.fetch });
-    const state = await resolveGitHubAuth({ octokit, secretStore: emptyStore });
+    const state = await resolveGitHubAuth({ octokit, secretStore: emptyStore() });
     expect(state.ok).toBe(false);
     if (state.ok) throw new Error("unreachable");
     expect(state.reason).toBe("not-connected");
@@ -77,7 +106,7 @@ describe("resolveGitHubAuth — the distinct failure states", () => {
   it("the three failure states are pairwise DISTINCT in both reason and copy", async () => {
     const notConnected = await resolveGitHubAuth({
       octokit: octokitFor({}),
-      secretStore: emptyStore,
+      secretStore: emptyStore(),
     });
     const invalid = await resolveGitHubAuth({
       octokit: octokitFor({ "/rate_limit": () => json(401, {}, {}) }),
@@ -137,15 +166,169 @@ describe("resolveGitHubAuth — success", () => {
     expect(state.login).toBeNull();
   });
 
-  it("resolution never WRITES the secret store", async () => {
-    const setToken = vi.fn();
-    const store: SecretStore = {
-      getGitHubToken: () => Promise.resolve("gho_valid"),
-      setGitHubToken: setToken,
-    };
+  it("resolution never WRITES the store when nothing needed refreshing", async () => {
+    const store = storeWith("gho_valid");
     const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
     await resolveGitHubAuth({ octokit, secretStore: store });
-    expect(setToken).not.toHaveBeenCalled();
+    expect(store.writes).toEqual([]);
+  });
+});
+
+describe("resolveGitHubAuth — the refresh half (expiring-token apps)", () => {
+  const ROTATED: GitHubCredential = {
+    token: "gho_rotated",
+    expiresAt: new Date(NOW + 8 * 60 * 60 * 1000).toISOString(),
+    refreshToken: "ghr_next",
+    refreshTokenExpiresAt: new Date(NOW + 180 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+
+  it("refreshes PROACTIVELY near expiry, persists the rotated pair, uses the new token", async () => {
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_1" });
+    let validated: string | null = null;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (new URL(String(input)).pathname === "/rate_limit") {
+        validated = new Headers(init?.headers).get("authorization");
+        return Promise.resolve(rateLimitOk());
+      }
+      return Promise.resolve(userOk());
+    };
+    const refresh = vi.fn(() => Promise.resolve(ROTATED));
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch }),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+    });
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(refresh).toHaveBeenCalledWith("ghr_1");
+    expect(state.token).toBe("gho_rotated");
+    expect(validated).toBe("Bearer gho_rotated"); // the dying token never hit GitHub
+    // The rotated pair is PERSISTED — GitHub killed the old one on exchange.
+    expect(store.current()).toEqual(ROTATED);
+  });
+
+  it("does NOT refresh a credential whose expiry is comfortably away", async () => {
+    const store = memoryStore({ token: "gho_fresh", expiresAt: LATER, refreshToken: "ghr_1" });
+    const refresh = vi.fn(() => Promise.resolve(ROTATED));
+    const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
+    const state = await resolveGitHubAuth({
+      octokit,
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+    });
+    expect(state.ok).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("refreshes REACTIVELY on an unexpected 401, once, then re-validates", async () => {
+    const store = memoryStore({ token: "gho_revoked", expiresAt: LATER, refreshToken: "ghr_1" });
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      const auth = new Headers(init?.headers).get("authorization");
+      if (new URL(String(input)).pathname === "/rate_limit") {
+        return Promise.resolve(auth === "Bearer gho_rotated" ? rateLimitOk() : json(401, {}, {}));
+      }
+      return Promise.resolve(userOk());
+    };
+    const refresh = vi.fn(() => Promise.resolve(ROTATED));
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch }),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+    });
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.token).toBe("gho_rotated");
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(store.current()).toEqual(ROTATED);
+  });
+
+  it("a DECLINED refresh is token-invalid with the renewal copy — reconnect is the fix", async () => {
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_dead" });
+    const refresh = vi.fn(() => Promise.reject(new GitHubOAuthDeclined("bad_refresh_token")));
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({}),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+    });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("token-invalid");
+    expect(state.copy).toContain("could not be renewed");
+    // Nothing was persisted; the store still holds the old credential.
+    expect(store.writes).toEqual([]);
+  });
+
+  it("a transport failure during refresh PROPAGATES (never a lying dead-session)", async () => {
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_1" });
+    const refresh = vi.fn(() => Promise.reject(new Error("ECONNRESET")));
+    await expect(
+      resolveGitHubAuth({ octokit: octokitFor({}), secretStore: store, refresh, now: () => NOW }),
+    ).rejects.toThrow("ECONNRESET");
+  });
+
+  it("a MALFORMED expiresAt refreshes immediately (self-heals, never silently disables)", async () => {
+    const store = memoryStore({ token: "gho_odd", expiresAt: "not-a-date", refreshToken: "ghr_1" });
+    const refresh = vi.fn(() => Promise.resolve(ROTATED));
+    const fetch: typeof globalThis.fetch = (input) =>
+      Promise.resolve(new URL(String(input)).pathname === "/rate_limit" ? rateLimitOk() : userOk());
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch }),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+    });
+    expect(state.ok).toBe(true);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(store.current()).toEqual(ROTATED);
+  });
+
+  it("a resolution that LOST the rotation race adopts the winner's pair, never re-refreshes", async () => {
+    // The exclusive section re-reads the credential: by the time this caller gets
+    // the lock, another resolution already rotated. Burning the old refresh token
+    // again would kill the session — the loser must adopt, not exchange.
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_old" });
+    const refresh = vi.fn(() => Promise.resolve(ROTATED));
+    const withLock = async <T>(section: () => Promise<T>): Promise<T> => {
+      // Simulate the winner completing while this caller waited for the lock.
+      store.setGitHubCredentialSync?.(ROTATED);
+      return section();
+    };
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (new URL(String(input)).pathname === "/rate_limit") {
+        const auth = new Headers(init?.headers).get("authorization");
+        return Promise.resolve(auth === "Bearer gho_rotated" ? rateLimitOk() : json(401, {}, {}));
+      }
+      return Promise.resolve(userOk());
+    };
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch }),
+      secretStore: store,
+      refresh,
+      withLock,
+      now: () => NOW,
+    });
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.token).toBe("gho_rotated");
+    expect(refresh).not.toHaveBeenCalled(); // the loser adopted; no second exchange
+  });
+
+  it("a credential with NO refresh token (pasted PAT) never attempts a refresh", async () => {
+    const store = memoryStore({ token: "ghp_pat", expiresAt: SOON });
+    const refresh = vi.fn(() => Promise.resolve(ROTATED));
+    const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
+    const state = await resolveGitHubAuth({
+      octokit,
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+    });
+    expect(state.ok).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
   });
 });
 
@@ -178,10 +361,7 @@ describe("resolveGitHubAuth — fine-grained tokens", () => {
 describe("validateGitHubToken — the pre-store paste check", () => {
   it("rejects a bad paste as token-invalid WITHOUT any store involvement", async () => {
     const octokit = octokitFor({ "/rate_limit": () => json(401, {}, {}) });
-    const state = await validateGitHubToken("ghp_typo", {
-      octokit,
-      secretStore: emptyStore,
-    });
+    const state = await validateGitHubToken("ghp_typo", { octokit });
     expect(state.ok).toBe(false);
     if (state.ok) throw new Error("unreachable");
     expect(state.reason).toBe("token-invalid");
@@ -189,7 +369,7 @@ describe("validateGitHubToken — the pre-store paste check", () => {
 
   it("accepts a good paste, carrying its login for the settings row", async () => {
     const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
-    const state = await validateGitHubToken("ghp_good", { octokit, secretStore: emptyStore });
+    const state = await validateGitHubToken("ghp_good", { octokit });
     expect(state.ok).toBe(true);
     if (!state.ok) throw new Error("unreachable");
     expect(state.login).toBe("rbutera");

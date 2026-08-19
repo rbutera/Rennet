@@ -103,7 +103,6 @@ snapshot.
 | Electron fuses | `@electron/fuses` | `2.1.3` | Live |
 | Claude integration | `@anthropic-ai/claude-agent-sdk` | `0.3.223` | Live; invokes the user's installed `claude` |
 | GitHub client | `@octokit/core` | `7.0.7` | Live; plugin-free, adapters own retry semantics |
-| GitHub sign-in | `@octokit/auth-oauth-device` | `8.0.4` | Live; device flow, no client secret |
 | Runtime schemas | `zod` | `4.4.3` | Live in protocol and adapters |
 | Child processes | `execa` | `10.0.0` | Live in adapters |
 | Change hints | `chokidar` | `5.0.0` | Live; Git remains truth |
@@ -256,11 +255,15 @@ NOT used — the publish path owns its rate-limit semantics (`ForgeRateLimited`,
 backoff on GitHub's schedule, never a hidden retry storm). Webhook machinery and
 GitHub Apps remain out of the product shape.
 
-GitHub authentication is Rennet's own OAuth device flow
-(`@octokit/auth-oauth-device` against Rennet's public OAuth App client id — no
-client secret, no Rennet backend): the minted token, or a pasted personal access
-token, is kept in an owner-only file under the daemon's data directory. Rennet
-does not parse any other tool's auth files.
+GitHub authentication is Rennet's own OAuth device flow, implemented directly
+against github.com's two login endpoints (Rennet's public OAuth App client id —
+no client secret, no Rennet backend, no flow library: the octokit device-flow
+strategy drops the refresh half of an expiring-token response, so Rennet owns
+the exchange). The minted credential — access token plus the rotating refresh
+token an expiring-token app configuration returns — or a pasted personal access
+token is kept in an owner-only file under the daemon's data directory, and
+expiring credentials renew transparently before expiry. Rennet does not parse
+any other tool's auth files.
 
 The Claude adapter uses the official Agent SDK but passes
 `pathToClaudeCodeExecutable` for the user's installed binary. Packaging strips the

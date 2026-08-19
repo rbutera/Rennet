@@ -220,9 +220,12 @@ export {
 } from "./github-changeset-source";
 export {
   type DeviceFlowOptions,
-  type DeviceVerification,
+  type GitHubCredential,
+  GitHubOAuthDeclined,
   RENNET_GITHUB_CLIENT_ID,
   RENNET_GITHUB_SCOPES,
+  type RefreshOptions,
+  refreshGitHubCredential,
   runGitHubDeviceFlow,
   type Verification,
 } from "./github-device-flow";

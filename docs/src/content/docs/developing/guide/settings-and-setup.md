@@ -48,8 +48,9 @@ GitHub is an account, not a CLI to detect. First run shows a skippable
 **Connect GitHub** card (an OAuth device sign-in: a one-time code entered at
 github.com/login/device, scopes `repo` and `workflow`); Settings carries the
 permanent rows — connected-as, Disconnect, and the paste-a-token side door. The
-stored token lives in an owner-only file under the daemon's data directory and
-is validated lazily when project detail or publication first needs GitHub, so
+stored credential lives in an owner-only file under the daemon's data directory
+and is validated lazily when project detail or publication first needs GitHub —
+renewing itself automatically when the app mints expiring tokens — so
 opening the app does not imply the account has already been validated. A pasted
 personal access token is validated before it is stored — a bad paste keeps
 nothing.
