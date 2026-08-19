@@ -26,4 +26,4 @@
 
 ## 5. Gate
 
-- [ ] 5.1 Run `pnpm check` (full gate) and fix anything it surfaces; confirm a positive control (deliberately broken test fails, then restore).
+- [x] 5.1 Run `pnpm check` (full gate) and fix anything it surfaces; confirm a positive control (deliberately broken test fails, then restore).
