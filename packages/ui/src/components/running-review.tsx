@@ -38,18 +38,34 @@ export function RunningReview() {
     // `role="status"` already implies an `aria-live="polite"` region (no separate
     // aria-live needed). The heading announces once; the elapsed clock is aria-hidden so
     // its tick doesn't re-announce, and the stalled line below announces once when it appears.
-    <section className="canvas-primer" role="status">
-      <p className="eyebrow">AI REVIEW</p>
-      <h2>Running the review…</h2>
-      <p>Reading the diff and drafting review angles.</p>
-      <div className="canvas-primer-track" data-testid="running-review-track" aria-hidden="true">
-        <span className="canvas-primer-track-fill" />
+    <section
+      className="canvas-primer mx-auto my-[72px] flex max-w-[540px] flex-col items-start gap-2.5 p-7"
+      role="status"
+    >
+      <p className="eyebrow m-0 text-2xs font-bold tracking-widest text-ink-faint">AI REVIEW</p>
+      <h2 className="m-0 font-display text-xl font-semibold text-ink">Running the review…</h2>
+      <p className="m-0 text-base leading-relaxed text-ink-soft">
+        Reading the diff and drafting review angles.
+      </p>
+      <div
+        className="canvas-primer-track relative mt-1 h-0.5 w-full overflow-hidden rounded-micro bg-accent-soft"
+        data-testid="running-review-track"
+        aria-hidden="true"
+      >
+        <span className="canvas-primer-track-fill absolute left-0 top-0 h-full w-[35%] animate-[busy_1s_ease-in-out_infinite_alternate] rounded-micro bg-accent motion-reduce:w-full motion-reduce:animate-none motion-reduce:opacity-40" />
       </div>
-      <p className="canvas-primer-elapsed" data-testid="running-review-elapsed" aria-hidden="true">
+      <p
+        className="canvas-primer-elapsed text-sm tabular-nums text-ink-faint"
+        data-testid="running-review-elapsed"
+        aria-hidden="true"
+      >
         {formatElapsed(elapsed)} elapsed
       </p>
       {elapsed >= STALLED_AFTER_SECONDS ? (
-        <p className="canvas-primer-stalled" data-testid="running-review-stalled">
+        <p
+          className="canvas-primer-stalled text-sm text-ink-faint"
+          data-testid="running-review-stalled"
+        >
           Still working — large changesets can take several minutes.
         </p>
       ) : null}

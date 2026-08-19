@@ -18,7 +18,7 @@ flowchart LR
   decisions["Decisions<br/>judgment queues"]
   flagged["Flagged<br/>finding index"]
   noise["Noise<br/>visible remainder"]
-  blast["Blast radius<br/>explainable amber paint"]
+  blast["Blast radius<br/>explainable gold paint"]
 
   patch --> sequence
   patch --> spec

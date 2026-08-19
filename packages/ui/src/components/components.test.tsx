@@ -37,7 +37,7 @@ describe("DecisionsCanvas — roll-up, honest counts, no truncation", () => {
     );
     // Ten cohorts, each honest "12 decisions"; none expanded, so no decision rows.
     expect(countOccurrences(html, "12 decisions")).toBe(10);
-    expect(countOccurrences(html, 'class="decision"')).toBe(0);
+    expect(countOccurrences(html, 'class="decision ')).toBe(0);
   });
 
   it("renders every one of 120 decisions with zero truncation when expanded", () => {
@@ -54,7 +54,7 @@ describe("DecisionsCanvas — roll-up, honest counts, no truncation", () => {
       />,
     );
     expect(canvas.layers.analysis.elements).toHaveLength(120);
-    expect(countOccurrences(html, 'class="decision"')).toBe(120);
+    expect(countOccurrences(html, 'class="decision ')).toBe(120);
   });
 
   it("paints the blast-radius cohort amber when the overlay is ON (overlay, not a queue)", () => {
@@ -69,7 +69,7 @@ describe("DecisionsCanvas — roll-up, honest counts, no truncation", () => {
       />,
     );
     // c8 is painted in the fixture overlay.
-    expect(html).toContain("cohort is-blast");
+    expect(html).toContain("is-blast");
   });
 
   it("paints NO amber when the overlay is OFF — it follows the toggle (#35 F1)", () => {
@@ -83,7 +83,7 @@ describe("DecisionsCanvas — roll-up, honest counts, no truncation", () => {
         onSelectElement={noop}
       />,
     );
-    expect(html).not.toContain("cohort is-blast");
+    expect(html).not.toContain("is-blast");
   });
 });
 
@@ -196,7 +196,7 @@ describe("CanvasWorkspace — the l3-strip is demoted to a navigating index (iss
     );
     // The strip that HOUSED marks is gone; the index that NAVIGATES to them is present.
     expect(html).not.toContain('class="l3-strip"');
-    expect(html).toContain('class="l3-index"');
+    expect(html).toContain('class="l3-index ');
     // A placeable mark (the demo annotation on a real hunk c6-h1) is a jump button.
     expect(html).toContain("l3-index-jump");
     expect(html).toContain('data-jump="ann-1"');

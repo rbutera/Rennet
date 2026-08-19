@@ -71,21 +71,30 @@ export function DeltaAccountPanel({
 
   return (
     <section
-      className="delta-account"
+      className="delta-account flex flex-col gap-2 border-b border-line bg-surface px-5 py-3"
       data-testid="delta-account"
       aria-label="Delta re-review account"
     >
-      <p className="delta-account-eyebrow">Since you last reviewed</p>
+      <p className="delta-account-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        Since you last reviewed
+      </p>
 
       {digest ? (
-        <div className="delta-account-digest" data-testid="delta-account-digest">
-          <p className="delta-account-digest-lead">{digest}</p>
-          <p className="delta-account-digest-tag">written from the facts below · light model</p>
+        <div
+          className="delta-account-digest flex flex-col gap-1 py-0.5"
+          data-testid="delta-account-digest"
+        >
+          <p className="delta-account-digest-lead m-0 font-serif text-base leading-relaxed text-ink">
+            {digest}
+          </p>
+          <p className="delta-account-digest-tag m-0 text-2xs tracking-wide text-ink-faint">
+            written from the facts below · light model
+          </p>
         </div>
       ) : null}
 
       {hasAsks ? (
-        <ul className="delta-account-asks">
+        <ul className="delta-account-asks m-0 flex list-none flex-col gap-0.5 p-0">
           {account.asks.map((ask) => (
             <li
               key={`${ask.path}:${ask.side ?? ""}:${ask.span?.startLine ?? ""}:${ask.span?.endLine ?? ""}`}
@@ -94,20 +103,32 @@ export function DeltaAccountPanel({
             >
               <button
                 type="button"
-                className="delta-account-item"
+                className="delta-account-item flex w-full cursor-pointer items-baseline gap-2.5 rounded-chip border-0 bg-transparent px-2 py-1.5 text-left text-ink hover:bg-raised"
                 onClick={() =>
                   ask.span ? onAnchor(ask.path, ask.span, ask.side) : onAnchor(ask.path)
                 }
               >
-                <span className="delta-account-status" data-status={ask.status}>
+                <span
+                  className="delta-account-status min-w-[116px] flex-none text-2xs font-semibold data-[status=addressed]:text-green data-[status=partially-addressed]:text-accent data-[status=untouched]:text-ink-faint"
+                  data-status={ask.status}
+                >
                   {STATUS_LABEL[ask.status]}
                 </span>
-                <code className="delta-account-path">{ask.path}</code>
-                {ask.summary ? <span className="delta-account-summary">{ask.summary}</span> : null}
+                <code className="delta-account-path flex-none font-mono text-sm text-ink-soft">
+                  {ask.path}
+                </code>
+                {ask.summary ? (
+                  <span className="delta-account-summary min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-ink-soft">
+                    {ask.summary}
+                  </span>
+                ) : null}
                 {/* The composed task that ran this ask on a handoff run (#73 wave 3) —
                     narration only, 1-based for the human ("task 2 — 'Tighten the parser'"). */}
                 {ask.handoffTask ? (
-                  <span className="delta-account-task" data-testid="delta-account-task">
+                  <span
+                    className="delta-account-task flex-none text-2xs text-ink-faint"
+                    data-testid="delta-account-task"
+                  >
                     task {ask.handoffTask.index + 1} — “{ask.handoffTask.title}”
                   </span>
                 ) : null}
@@ -118,20 +139,26 @@ export function DeltaAccountPanel({
       ) : null}
 
       {hasBeyond ? (
-        <div className="delta-account-beyond" data-testid="delta-account-beyond" role="alert">
-          <p className="delta-account-beyond-title">
+        <div
+          className="delta-account-beyond flex flex-col gap-1 rounded-control border border-accent-line bg-accent-surface px-2.5 py-2"
+          data-testid="delta-account-beyond"
+          role="alert"
+        >
+          <p className="delta-account-beyond-title m-0 text-sm font-semibold text-ink">
             {account.beyondAsks.length} change{account.beyondAsks.length === 1 ? "" : "s"} beyond
             your asks
           </p>
-          <ul className="delta-account-beyond-list">
+          <ul className="delta-account-beyond-list m-0 flex list-none flex-col gap-0.5 p-0">
             {account.beyondAsks.map((path) => (
               <li key={path}>
                 <button
                   type="button"
-                  className="delta-account-item delta-account-beyond-item"
+                  className="delta-account-item delta-account-beyond-item flex w-full cursor-pointer items-baseline gap-2.5 rounded-chip border-0 bg-transparent px-1.5 py-0.5 text-left text-ink hover:bg-raised"
                   onClick={() => onAnchor(path)}
                 >
-                  <code className="delta-account-path">{path}</code>
+                  <code className="delta-account-path flex-none font-mono text-sm text-ink-soft">
+                    {path}
+                  </code>
                 </button>
               </li>
             ))}
@@ -145,7 +172,10 @@ export function DeltaAccountPanel({
           case (a change inside a file you asked about, outside the asked lines) that path
           grain cannot show. Never a violation, never a gate (Rule Zero). */}
       {hasHunks ? (
-        <ul className="delta-account-hunks" data-testid="delta-account-hunks">
+        <ul
+          className="delta-account-hunks m-0 flex list-none flex-col gap-0.5 p-0"
+          data-testid="delta-account-hunks"
+        >
           {hunks.map((hunk) => (
             <li
               key={`${hunk.path}:${hunk.side ?? ""}:${hunk.span.startLine}:${hunk.span.endLine ?? ""}`}
@@ -153,16 +183,24 @@ export function DeltaAccountPanel({
             >
               <button
                 type="button"
-                className="delta-account-item delta-account-hunk-item"
+                className="delta-account-item delta-account-hunk-item group flex w-full cursor-pointer items-baseline gap-2 rounded-chip border-0 bg-transparent px-1.5 py-0.5 text-left text-ink hover:bg-raised"
                 data-testid="delta-account-hunk"
                 data-bucket={hunk.bucket}
                 onClick={() => onAnchor(hunk.path, hunk.span, hunk.side)}
               >
-                <code className="delta-account-path">{hunk.path}</code>
-                <span className="delta-account-hunk-span">{formatSpan(hunk.span)}</span>
-                <span className="delta-account-hunk-bucket">{BUCKET_LABEL[hunk.bucket]}</span>
+                <code className="delta-account-path flex-none font-mono text-sm text-ink-soft">
+                  {hunk.path}
+                </code>
+                <span className="delta-account-hunk-span flex-none text-2xs text-ink-soft">
+                  {formatSpan(hunk.span)}
+                </span>
+                <span className="delta-account-hunk-bucket flex-none text-2xs text-ink-faint group-data-[bucket=unasked-file]:text-ink">
+                  {BUCKET_LABEL[hunk.bucket]}
+                </span>
                 {hunk.excerpt ? (
-                  <code className="delta-account-hunk-excerpt">{hunk.excerpt}</code>
+                  <code className="delta-account-hunk-excerpt min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-2xs text-ink-faint">
+                    {hunk.excerpt}
+                  </code>
                 ) : null}
               </button>
             </li>

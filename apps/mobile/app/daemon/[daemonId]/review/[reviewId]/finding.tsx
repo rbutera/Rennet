@@ -152,7 +152,7 @@ export default function FindingDetail(): ReactNode {
           <View style={{ marginTop: space.md }}>
             <Text
               style={{
-                color: t.amber,
+                color: t.accent,
                 fontSize: type.pill,
                 letterSpacing: 1,
                 marginBottom: space.xs,

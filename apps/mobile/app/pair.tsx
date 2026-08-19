@@ -88,7 +88,7 @@ export default function Pair(): ReactNode {
           backgroundColor: t.card,
         }}
       />
-      {error && <Text style={{ color: t.amber, marginTop: space.sm }}>{error}</Text>}
+      {error && <Text style={{ color: t.danger, marginTop: space.sm }}>{error}</Text>}
       <PrimaryButton label={pairing ? "Pairing…" : "Pair"} onPress={() => void pair(link)} />
     </Screen>
   );

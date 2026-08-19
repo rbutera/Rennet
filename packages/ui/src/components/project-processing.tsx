@@ -89,13 +89,20 @@ export function ProjectProcessing({
 
   if (phase === "failed") {
     return (
-      <div className="processing">
-        <p className="processing-failed" role="alert">
+      <div className="processing self-center w-[min(520px,100%)] mt-5 flex flex-col gap-5">
+        <p
+          className="processing-failed flex items-center gap-2 mt-5 px-3.5 py-3 rounded-chip border border-danger bg-danger-soft text-ink text-base"
+          role="alert"
+        >
           <TriangleIcon size={15} />
           Could not start processing. {startError}
         </p>
-        <div className="processing-actions">
-          <button type="button" className="primary" onClick={onDone}>
+        <div className="processing-actions flex items-center gap-3 mt-1">
+          <button
+            type="button"
+            className="primary ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105"
+            onClick={onDone}
+          >
             Back to projects
           </button>
         </div>
@@ -110,10 +117,14 @@ export function ProjectProcessing({
   const succeeded = done && !allFailed;
   const outcome = done ? (allFailed ? "failed" : "ok") : undefined;
   return (
-    <div className="processing" data-phase={phase} data-outcome={outcome}>
-      <div className="processing-hero">
+    <div
+      className="processing self-center w-[min(520px,100%)] mt-5 flex flex-col gap-5"
+      data-phase={phase}
+      data-outcome={outcome}
+    >
+      <div className="processing-hero flex flex-col items-center text-center gap-2 pt-5 pb-1.5">
         <span
-          className={`processing-orb${succeeded ? " is-done" : ""}${allFailed ? " is-failed" : ""}`}
+          className={`processing-orb relative inline-flex items-center justify-center w-16 h-16 rounded-full ${allFailed ? "is-failed text-danger bg-danger-soft" : succeeded ? "is-done text-accent-ink bg-accent-fill" : "text-accent bg-accent-surface"}`}
           aria-hidden="true"
         >
           {allFailed ? (
@@ -124,14 +135,14 @@ export function ProjectProcessing({
             <SparkleIcon size={20} />
           )}
         </span>
-        <p className="processing-headline" aria-live="polite">
+        <p className="processing-headline mt-1.5 font-display text-2xl text-ink" aria-live="polite">
           {allFailed
             ? `Couldn't process ${project.name}`
             : succeeded
               ? `${project.name} is ready`
               : view.headline}
         </p>
-        <p className="processing-sub">
+        <p className="processing-sub text-base text-ink-faint">
           {allFailed ? view.failedSummary : done ? view.doneSummary : view.sub}
         </p>
       </div>
@@ -144,12 +155,20 @@ export function ProjectProcessing({
       />
 
       {done ? (
-        <div className="processing-actions">
-          <button type="button" className="ghost" onClick={onDone}>
+        <div className="processing-actions flex items-center gap-3 mt-1">
+          <button
+            type="button"
+            className="ghost px-4 py-2.5 rounded-control border border-line text-ink-soft font-semibold hover:bg-raised hover:text-ink"
+            onClick={onDone}
+          >
             Back to projects
           </button>
           {succeeded ? (
-            <button type="button" className="primary" onClick={onOpen}>
+            <button
+              type="button"
+              className="primary ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105"
+              onClick={onOpen}
+            >
               Open {project.name}
               <ArrowRightIcon size={13} />
             </button>

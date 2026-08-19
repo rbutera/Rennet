@@ -1036,7 +1036,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
   return (
     <div
-      className="canvas-app"
+      className="canvas-app flex min-h-screen flex-col bg-canvas pr-[var(--destination-gutter,300px)] font-sans text-ink"
       data-scheme={scheme === "light" ? "light" : "dark"}
       role="application"
       aria-label="Rennet canvases"
@@ -1059,21 +1059,31 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           unmeasured rather than read as clear. Paint, never a gate. */}
       {overlayOn ? <BlastNotAssessed signals={blastNotAssessed(canvas)} /> : null}
 
-      <div className="zoom-bar" role="toolbar" aria-label="Zoom">
+      <div
+        className="zoom-bar flex items-center gap-3 border-b border-line px-5 py-2 text-sm text-ink-faint"
+        role="toolbar"
+        aria-label="Zoom"
+      >
         <button
           type="button"
+          className="inline-flex h-8 items-center rounded-control border border-line px-3 text-sm text-ink-soft hover:bg-raised"
           onClick={() => store.getState().setZoom(zoomReducer(zoom, { type: "zoomOut" }))}
         >
           Zoom out
         </button>
-        <span className="zoom-level">{ZOOM_LABELS[zoom.level]}</span>
+        <span className="zoom-level font-semibold text-ink">{ZOOM_LABELS[zoom.level]}</span>
         <button
           type="button"
+          className="inline-flex h-8 items-center rounded-control border border-line px-3 text-sm text-ink-soft hover:bg-raised"
           onClick={() => store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }))}
         >
           Zoom in
         </button>
-        {overlayOn ? <span className="overlay-legend">Blast radius painted amber</span> : null}
+        {overlayOn ? (
+          <span className="overlay-legend ml-auto text-sm text-ink">
+            Blast radius painted amber
+          </span>
+        ) : null}
       </div>
 
       {/* The demoted l3-strip: a navigating INDEX, not the marks' home. The marks
@@ -1082,7 +1092,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
       {marks.length > 0 ? <MarkIndex entries={markEntries} onNavigate={navigateToMark} /> : null}
 
       <main
-        className="canvas-surface"
+        className="canvas-surface min-h-0 flex-1 overflow-auto px-5 pt-4 pb-10"
         id="canvas-surface-panel"
         role="tabpanel"
         aria-labelledby={`lens-tab-${angle}`}
@@ -1095,17 +1105,24 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
             check themselves. Collapsible (narrative-first, never a trap). Placement is
             not in the wireframes (invented per Design Doctrine §3.2). */}
         {hypothesisFrame ? (
-          <section className="hypothesis-panel" aria-label="Review hypothesis">
+          <section
+            className="hypothesis-panel mb-4 overflow-hidden rounded-surface border border-line bg-surface"
+            aria-label="Review hypothesis"
+          >
             <button
               type="button"
-              className="hypothesis-panel-toggle"
+              className="hypothesis-panel-toggle flex w-full items-center justify-between gap-3 border-0 bg-transparent px-4 py-2.5 text-left text-ink"
               aria-expanded={hypothesisOpen}
               onClick={toggleHypothesisOpen}
             >
-              <span className="hypothesis-panel-title">Reading frame</span>
-              <span className="hypothesis-panel-counts">
-                <span className="hypothesis-panel-open">{hypothesisFrame.counts.open} open</span>
-                <span className="hypothesis-panel-addressed">
+              <span className="hypothesis-panel-title text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                Reading frame
+              </span>
+              <span className="hypothesis-panel-counts inline-flex gap-2 text-xs font-semibold">
+                <span className="hypothesis-panel-open text-accent">
+                  {hypothesisFrame.counts.open} open
+                </span>
+                <span className="hypothesis-panel-addressed text-ink-faint">
                   {hypothesisFrame.counts.confirmed} related
                 </span>
               </span>
@@ -1137,8 +1154,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
             // The Spec angle is EXHAUSTIVE (wireframes #9): a change renders the viewer,
             // no change renders this honest empty state — never a fixture, and never a
             // silent fall-through to the FlatCanvas diff.
-            <div className="openspec-empty" role="status">
-              <p className="canvas-empty">No OpenSpec change in this review.</p>
+            <div className="openspec-empty p-5" role="status">
+              <p className="canvas-empty py-5 italic text-ink-faint">
+                No OpenSpec change in this review.
+              </p>
             </div>
           )
         ) : angle === "flagged" ? (
@@ -1199,8 +1218,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                 />
               ) : null;
             return (
-              <div className={`diff-zoom${pinned ? " diff-zoom--split" : ""}`}>
-                <div className="diff-zoom-main">
+              <div
+                className={`diff-zoom px-5 pb-8${pinned ? " diff-zoom--split flex items-start gap-5" : ""}`}
+              >
+                <div className="diff-zoom-main min-w-0 flex-1">
                   <CodeView
                     path={diff.path}
                     diff={diff.diff}
@@ -1225,14 +1246,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                   />
                   {pinned ? null : inspector}
                 </div>
-                {pinned ? <div className="diff-zoom-rail">{inspector}</div> : null}
+                {pinned ? (
+                  <div className="diff-zoom-rail sticky top-3 shrink-0 basis-[380px] self-start max-w-[42%]">
+                    {inspector}
+                  </div>
+                ) : null}
               </div>
             );
           })()
         : null}
 
       {hasAuthoringDock ? (
-        <aside className="authoring-dock" aria-label="Disposition authoring">
+        <aside
+          className="authoring-dock mx-5 mb-8 flex flex-col gap-4 rounded-surface border border-line bg-surface p-5"
+          aria-label="Disposition authoring"
+        >
           {props.mosaic ? (
             <CoverageMosaicView mosaic={props.mosaic} onGotoNextUnread={props.onGotoNextUnread} />
           ) : null}

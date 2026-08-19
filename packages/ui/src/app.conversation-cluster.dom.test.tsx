@@ -184,7 +184,7 @@ describe("RennetApp — the aligned conversation margin ships (issue #356, no re
     const diffBefore = diffColumn();
     const beforeNodes = diffBefore?.querySelectorAll("*").length ?? -1;
     expect(beforeNodes).toBeGreaterThan(0);
-    expect(diffBefore?.className).toBe("diff-column");
+    expect(diffBefore?.className).toContain("diff-column");
 
     // Open a thread in the margin — the aligned rail grows, the diff column does not.
     const panelShell = container.querySelector<HTMLElement>(".conversation-panel-shell");
@@ -196,9 +196,9 @@ describe("RennetApp — the aligned conversation margin ships (issue #356, no re
     const diffAfter = diffColumn();
     expect(diffAfter).toBe(diffBefore);
     expect(diffAfter?.querySelectorAll("*").length).toBe(beforeNodes);
-    expect(diffAfter?.className).toBe("diff-column");
+    expect(diffAfter?.className).toContain("diff-column");
     const panelShellAfter = container.querySelector<HTMLElement>(".conversation-panel-shell");
-    expect(panelShellAfter?.className).toBe("conversation-panel-shell");
+    expect(panelShellAfter?.className).toContain("conversation-panel-shell");
   });
 
   it("asks a thread turn from the margin directly, with no permission step", async () => {

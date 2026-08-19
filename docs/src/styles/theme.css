@@ -1,106 +1,109 @@
 /*
- * Rennet documentation theme — Starlight override.
+ * Rennet documentation theme — Starlight override, "The Affineur's Bench".
  *
  * PROVENANCE. Every colour, radius, and type role below is taken from — or
- * derived by stated interpolation from — the marketing site's palette, so the
- * docs read as the same public surface:
- *   - apps/marketing/src/styles/global.css — canonical marketing palette
- *     (warm light canvas #f4f2ed, cool dark canvas #0e1116, blue/amber/green).
+ * derived by stated interpolation from — the shared Rennet theme, so the docs
+ * read as the same public surface as the app and marketing site:
+ *   - packages/theme/src/theme.css — the ONE source of visual truth (the
+ *     --rn-* palette). Tailwind v4 consumes it in packages/ui and
+ *     apps/marketing; this file transposes the same values into Starlight's
+ *     --sl-color-* tokens by hand (Starlight owns its own token vocabulary).
  *   - DESIGN.md (repo root) — type roles, semantic hues, radii, do's/don'ts.
- * When the marketing palette changes, update the hex values here in the same
- * change. Neutral-ramp intermediates (gray-1/2/7, inline-code chip) are stated
- * interpolations between marketing ink/ink-soft/line/canvas, not new hues.
+ * When packages/theme changes, update the hex values here in the same change.
  *
  * DOCTRINE (kept, not reinvented):
- *   - Monochrome carries the identity. Three semantic hues only:
- *       review blue (--accent / --private), decision amber, evidence green.
- *   - Editorial restraint: flat by default, 1px structural hairlines, opaque
- *     code surfaces, no gradients-as-identity, no neon, no decorative glass.
- *   - System font stacks only. No webfont fetch, no third-party anything.
- *
- * Starlight applies dark values on :root and light values on
- * :root[data-theme='light']. This file is unlayered, so it wins over
- * Starlight's @layer styles without specificity hacks.
+ *   - One seamless, opaque window: canvas = chrome = toolbar, one warm ground.
+ *     No glass, no vibrancy, no translucent chrome. Separation is surface steps
+ *     (canvas → surface → raised) and 1px warm hairlines, never hard contrast.
+ *   - Monochrome carries the identity. ONE accent hue: gold. It is also the
+ *     decision register (accent and decision merged 2026-08-19; the old review
+ *     blue and separate decision amber are retired). Evidence green and danger
+ *     red are the only other functional hues.
+ *   - Self-hosted variable fonts: DM Sans (interface/body), Fraunces (display
+ *     headings). Monospace is code only.
  */
 
+@import "@fontsource-variable/dm-sans";
+@import "@fontsource-variable/fraunces";
+
 /* ============================================================ *
- *  DARK — "bioluminescent twilight" (default)                  *
+ *  DARK — warm near-black (default)                            *
  * ============================================================ */
 :root {
   /* Neutral ramp. Starlight semantics: --sl-color-white = highest-contrast
      (headings/strong), gray-2 = body text, gray-3 = muted, gray-5 = borders,
      gray-6 = sidebar/nav surface, black = page canvas. */
-  --sl-color-white: #f1f0eb; /* marketing --ink */
-  --sl-color-gray-1: #d9dad6;
-  --sl-color-gray-2: #c1c6cb; /* body text */
-  --sl-color-gray-3: #a8b0ba; /* muted (marketing --ink-soft) */
-  --sl-color-gray-4: #4d5660; /* marketing --line-strong */
-  --sl-color-gray-5: #2d333b; /* borders (marketing --line) */
-  --sl-color-gray-6: #15191f; /* sidebar / nav surface (marketing --surface) */
-  --sl-color-gray-7: #12151b;
-  --sl-color-black: #0e1116; /* canvas (marketing --canvas) */
+  --sl-color-white: #f2ede4; /* --rn-ink */
+  --sl-color-gray-1: #ddd6c9;
+  --sl-color-gray-2: #cbc4b7; /* body text */
+  --sl-color-gray-3: #a9a196; /* muted (--rn-ink-soft) */
+  --sl-color-gray-4: #6a6458;
+  --sl-color-gray-5: #2a2723; /* borders (--rn-line) */
+  --sl-color-gray-6: #151413; /* sidebar / nav surface (--rn-surface) */
+  --sl-color-gray-7: #1b1a18; /* raised step (--rn-raised) */
+  --sl-color-black: #0e0d0c; /* canvas (--rn-canvas) */
 
-  /* Review blue — the one link/selection/structure hue. */
-  --sl-color-accent-low: #1c303d; /* subtle fill (marketing --blue-soft) */
-  --sl-color-accent: #5f96bd; /* mid: indicators, borders */
-  --sl-color-accent-high: #8bbddd; /* bright: link text (marketing --blue) */
+  /* Gold — the one link/selection/structure/decision hue. */
+  --sl-color-accent-low: #241c0e; /* subtle fill (--rn-accent-surface) */
+  --sl-color-accent: #e0a52e; /* mid: indicators, borders, fills */
+  --sl-color-accent-high: #e8b13c; /* bright: link text (--rn-accent) */
 
-  /* Semantic aside hues on Starlight's blue/orange/red + a green for tip.
-     Solid *-soft fills and hue-derived 1px borders, per marketing. */
-  --sl-color-blue: rgba(139, 189, 221, 0.35); /* note border */
-  --sl-color-blue-high: #a9cee7;
-  --sl-color-blue-low: #1c303d; /* note fill (marketing --blue-soft) */
-  --sl-color-orange: rgba(221, 166, 100, 0.38); /* caution border */
-  --sl-color-orange-high: #dda664; /* marketing --amber */
-  --sl-color-orange-low: #342619; /* marketing --amber-soft */
-  --sl-color-red: rgba(217, 139, 131, 0.4); /* danger border */
-  --sl-color-red-high: #d98b83; /* marketing --red */
-  --sl-color-red-low: #3b2424; /* marketing --red-soft */
+  /* Semantic aside hues. New world: no blue. Note is a quiet neutral surface;
+     tip = evidence green; caution = gold (amber merged into the accent);
+     danger = red. Solid *-low fills, hue-derived 1px borders. */
+  --sl-color-blue: rgba(240, 232, 215, 0.14); /* note border (neutral) */
+  --sl-color-blue-high: #cbc4b7;
+  --sl-color-blue-low: #1b1a18; /* note fill (--rn-raised) */
+  --sl-color-orange: rgba(232, 177, 60, 0.35); /* caution border (gold) */
+  --sl-color-orange-high: #e8b13c; /* --rn-accent (dark) */
+  --sl-color-orange-low: #241c0e; /* --rn-accent-surface */
+  --sl-color-red: rgba(219, 122, 106, 0.4); /* danger border */
+  --sl-color-red-high: #db7a6a; /* --rn-danger */
+  --sl-color-red-low: #2e211e; /* --rn-del */
   --sl-color-green: rgba(136, 188, 155, 0.38); /* tip border */
-  --sl-color-green-high: #88bc9b; /* marketing --green */
-  --sl-color-green-low: #1d3026; /* marketing --green-soft */
+  --sl-color-green-high: #88bc9b; /* --rn-green */
+  --sl-color-green-low: #16241c; /* --rn-add */
 
   --sl-color-text: var(--sl-color-gray-2);
   --sl-color-text-accent: var(--sl-color-accent-high);
   --sl-color-text-invert: var(--sl-color-black);
 
   --sl-color-bg: var(--sl-color-black);
-  --sl-color-bg-nav: #0e1116; /* opaque chrome */
+  --sl-color-bg-nav: #0e0d0c; /* seamless opaque chrome — same ground as canvas */
   --sl-color-bg-sidebar: var(--sl-color-gray-6);
-  --sl-color-bg-inline-code: #1a1f27; /* solid chip (marketing --surface-strong) */
+  --sl-color-bg-inline-code: #1b1a18; /* quiet chip (--rn-raised) */
   --sl-color-bg-accent: var(--sl-color-accent-high);
 
   --sl-color-hairline: var(--sl-color-gray-5);
-  --sl-color-hairline-light: rgba(255, 255, 255, 0.06);
+  --sl-color-hairline-light: rgb(240 232 215 / 0.09); /* --rn-line */
   --sl-color-hairline-shade: rgba(0, 0, 0, 0.4);
 
-  /* Flat by default: a single soft ambient shadow with a real downward offset,
-     used only where the design earns lift (hero button, splash cards on hover). */
+  /* Flat by default: shadow only on true overlays, with a real downward offset
+     and broad blur (--rn-shadow-overlay). */
   --sl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --sl-shadow-md: 0 2px 10px rgba(0, 0, 0, 0.35);
-  --sl-shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.5);
+  --sl-shadow-lg: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
 
-  /* Type roles (system stacks only). */
-  --sl-font: "Avenir Next", "Source Sans 3 Variable", system-ui, sans-serif;
+  /* Type roles. Self-hosted variable fonts; monospace is code only. */
+  --sl-font: "DM Sans Variable", system-ui, sans-serif;
   --sl-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-  --rennet-display: "Helvetica Neue", "Instrument Sans Variable", Arial, sans-serif;
+  --rennet-display: "Fraunces Variable", Georgia, serif;
 
-  /* Button ink (marketing --inverse / --inverse-text). */
-  --rennet-btn-bg: #e9e7e1;
-  --rennet-btn-text: #12151a;
-  --rennet-btn-border: rgba(255, 255, 255, 0.5);
+  /* Primary button: gold fill with near-black ink (the one saturated object). */
+  --rennet-btn-bg: #e8b13c; /* --rn-accent-fill (dark) */
+  --rennet-btn-text: #191307; /* --rn-accent-ink */
+  --rennet-btn-border: transparent;
 
-  /* Selection: tinted from review blue. */
-  --rennet-selection: rgba(139, 189, 221, 0.25);
+  /* Selection: tinted from gold. */
+  --rennet-selection: rgb(232 177 60 / 0.22);
 
-  /* Code frame surface (expressive-code): opaque, 1px hairline, 12px radius.
-     Marketing --surface for the code field, gray-7 for tab bars. */
-  --ec-codeBg: #15191f;
-  --ec-frm-edBg: #15191f;
-  --ec-frm-trmBg: #15191f;
-  --ec-frm-edTabBarBg: #12151b;
-  --ec-frm-edActTabBg: #15191f;
-  --ec-frm-trmTtbBg: #12151b;
+  /* Code frame (expressive-code): opaque surface, 1px hairline, 12px radius. */
+  --ec-codeBg: #151413; /* --rn-surface */
+  --ec-frm-edBg: #151413;
+  --ec-frm-trmBg: #151413;
+  --ec-frm-edTabBarBg: #121110;
+  --ec-frm-edActTabBg: #151413;
+  --ec-frm-trmTtbBg: #121110;
   --ec-brdCol: var(--sl-color-gray-5);
   --ec-frm-edTabBarBrdBtmCol: var(--sl-color-gray-5);
   --ec-frm-trmTtbBrdBtmCol: var(--sl-color-gray-5);
@@ -120,69 +123,69 @@
 }
 
 /* ============================================================ *
- *  LIGHT — "bright room"                                        *
+ *  LIGHT — warm near-white (the bright room)                   *
  * ============================================================ */
 :root[data-theme="light"] {
-  --sl-color-white: #111419; /* darkest text/headings (marketing --ink) */
-  --sl-color-gray-1: #23272d;
-  --sl-color-gray-2: #343a41; /* body text */
-  --sl-color-gray-3: #59616b; /* muted (marketing --ink-soft) */
-  --sl-color-gray-4: #aaa8a2; /* marketing --line-strong */
-  --sl-color-gray-5: #d7d4cd; /* borders (marketing --line, warm) */
-  --sl-color-gray-6: #fcfbf8; /* sidebar / nav surface (marketing --surface) */
-  --sl-color-gray-7: #f7f5f0;
-  --sl-color-black: #f4f2ed; /* canvas (marketing --canvas, warm) */
+  --sl-color-white: #1e1b16; /* darkest text/headings (--rn-ink) */
+  --sl-color-gray-1: #2e2a22;
+  --sl-color-gray-2: #3d382e; /* body text */
+  --sl-color-gray-3: #57534a; /* muted (--rn-ink-soft) */
+  --sl-color-gray-4: #8a8578;
+  --sl-color-gray-5: #e2ddd2; /* borders (--rn-line, warm) */
+  --sl-color-gray-6: #ffffff; /* sidebar / nav surface (--rn-surface) */
+  --sl-color-gray-7: #f3f1ec; /* raised step (--rn-raised) */
+  --sl-color-black: #fbfaf7; /* canvas (--rn-canvas, warm) */
 
-  --sl-color-accent-low: #e0ebf1; /* marketing --blue-soft */
-  --sl-color-accent: #4a7fa4; /* mid: indicators, borders */
-  --sl-color-accent-high: #396f96; /* links (marketing --blue) */
+  /* Gold is a FILL hue in light; gold TEXT uses the ochre (AA on white). */
+  --sl-color-accent-low: #f6ecd6; /* --rn-accent-surface */
+  --sl-color-accent: #8a5d0b; /* --rn-accent (ochre) */
+  --sl-color-accent-high: #8a5d0b; /* links — ochre, AA on white */
 
-  --sl-color-blue: rgba(57, 111, 150, 0.32); /* note border */
-  --sl-color-blue-high: #2e5a7a;
-  --sl-color-blue-low: #e0ebf1; /* marketing --blue-soft */
-  --sl-color-orange: rgba(168, 97, 37, 0.32); /* caution */
-  --sl-color-orange-high: #8a4f1e; /* darkened marketing --amber for text */
-  --sl-color-orange-low: #f1e2d0; /* marketing --amber-soft */
-  --sl-color-red: rgba(170, 76, 69, 0.34); /* danger */
-  --sl-color-red-high: #8f3f39; /* darkened marketing --red for text */
-  --sl-color-red-low: #f1dfdc; /* marketing --red-soft */
+  --sl-color-blue: rgba(60, 50, 30, 0.12); /* note border (neutral) */
+  --sl-color-blue-high: #3d382e;
+  --sl-color-blue-low: #f3f1ec; /* note fill (--rn-raised) */
+  --sl-color-orange: rgba(138, 93, 11, 0.3); /* caution (gold) */
+  --sl-color-orange-high: #8a5d0b; /* --rn-accent */
+  --sl-color-orange-low: #f6ecd6; /* --rn-accent-surface */
+  --sl-color-red: rgba(178, 59, 43, 0.32); /* danger */
+  --sl-color-red-high: #8f3f39; /* darkened --rn-danger for text */
+  --sl-color-red-low: #f7e7e2;
   --sl-color-green: rgba(65, 116, 91, 0.3); /* tip */
-  --sl-color-green-high: #35604b; /* darkened marketing --green for text */
-  --sl-color-green-low: #dce9e0; /* marketing --green-soft */
+  --sl-color-green-high: #35604b; /* darkened --rn-green for text */
+  --sl-color-green-low: #e5efe8;
 
-  --sl-color-bg-nav: #f4f2ed; /* opaque chrome */
-  --sl-color-bg-inline-code: #edeae3; /* warm chip between line and canvas */
+  --sl-color-bg-nav: #fbfaf7; /* seamless opaque chrome */
+  --sl-color-bg-inline-code: #f0ece3; /* warm chip between line and canvas */
 
-  --sl-color-hairline-light: rgba(17, 20, 25, 0.05);
-  --sl-color-hairline-shade: rgba(26, 31, 37, 0.14);
+  --sl-color-hairline-light: rgb(60 50 30 / 0.06);
+  --sl-color-hairline-shade: rgba(30, 27, 22, 0.14);
 
-  --sl-shadow-sm: 0 1px 2px rgba(26, 31, 37, 0.12);
-  --sl-shadow-md: 0 2px 10px rgba(26, 31, 37, 0.12);
-  --sl-shadow-lg: 0 14px 40px rgba(26, 31, 37, 0.18);
+  --sl-shadow-sm: 0 1px 2px rgb(30 20 5 / 0.1);
+  --sl-shadow-md: 0 2px 10px rgb(30 20 5 / 0.12);
+  --sl-shadow-lg: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
 
-  --rennet-btn-bg: #11151a; /* marketing --inverse: dark ink on a light field */
-  --rennet-btn-text: #f5f3ee; /* marketing --inverse-text */
-  --rennet-btn-border: #0f1115;
+  --rennet-btn-bg: #e0a52e; /* --rn-accent-fill (light) */
+  --rennet-btn-text: #191307; /* --rn-accent-ink */
+  --rennet-btn-border: transparent;
 
-  --rennet-selection: rgba(57, 111, 150, 0.16);
+  --rennet-selection: rgb(138 93 11 / 0.16);
 
-  --ec-codeBg: #ffffff; /* marketing --surface-strong */
+  --ec-codeBg: #ffffff; /* --rn-surface */
   --ec-frm-edBg: #ffffff;
   --ec-frm-trmBg: #ffffff;
-  --ec-frm-edTabBarBg: #f7f5f0;
+  --ec-frm-edTabBarBg: #f3f1ec;
   --ec-frm-edActTabBg: #ffffff;
-  --ec-frm-trmTtbBg: #f7f5f0;
+  --ec-frm-trmTtbBg: #f3f1ec;
 
   --pagefind-ui-background: #ffffff;
 }
 
 /* ============================================================ *
- *  Type — display voice on headings, comfortable body rhythm   *
+ *  Type — Fraunces display voice on h1/h2, DM Sans body        *
  * ============================================================ */
 
 /* The header identity is the traced lockup SVG (replacesTitle in
-   astro.config.mjs) — same asset the marketing site mastheads. Size it to the
-   header and never restyle its geometry. */
+   astro.config.mjs). Size it to the header and never restyle its geometry. */
 .site-title img {
   height: 1.75rem;
   width: auto;
@@ -194,17 +197,19 @@
   --sl-content-width: 40rem; /* 640px: keeps body measure near 75ch */
 }
 
-.sl-markdown-content :is(h1, h2, h3, h4) {
+/* Fraunces carries the brand voice at h1/h2; h3+ stays in DM Sans (heavier),
+   per DESIGN.md — display serif never carries dense chrome. */
+.sl-markdown-content :is(h1, h2) {
   font-family: var(--rennet-display);
   color: var(--sl-color-white);
+  font-weight: 500;
+  letter-spacing: -0.018em;
+  line-height: 1.08;
 }
-.sl-markdown-content :is(h1, h2, h3) {
-  font-weight: 560;
-  letter-spacing: -0.025em;
-}
-.sl-markdown-content :is(h4, h5, h6) {
+.sl-markdown-content :is(h3, h4, h5, h6) {
+  color: var(--sl-color-white);
   font-weight: 600;
-  letter-spacing: -0.012em;
+  letter-spacing: -0.01em;
 }
 /* Space above > below (Starlight ships uniform margins). */
 .sl-markdown-content :is(h2, h3, h4):not(:where(.not-content *)):not(:first-child) {
@@ -220,10 +225,10 @@
 .content-panel h1,
 .sl-markdown-content h1 {
   font-family: var(--rennet-display);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.022em;
 }
 
-/* Links: review blue with a themed, offset underline. */
+/* Links: gold with a themed, offset underline. */
 .sl-markdown-content a:not(:where(.not-content *)) {
   color: var(--sl-color-text-accent);
   text-decoration-color: color-mix(in srgb, var(--sl-color-text-accent) 40%, transparent);
@@ -267,6 +272,9 @@
   color: var(--sl-color-white);
 }
 .starlight-aside--note {
+  /* Neutral quiet surface — the default aside carries no hue. */
+  --sl-color-asides-text-accent: var(--sl-color-white);
+  --sl-color-asides-border: var(--sl-color-hairline);
   --sl-color-asides-bg: var(--sl-color-blue-low);
 }
 .starlight-aside--tip {
@@ -288,13 +296,13 @@
 .sidebar-pane {
   border-inline-end: 1px solid var(--sl-color-hairline);
 }
-/* Opaque chrome: DESIGN.md reserves translucent glass for the desktop shell. */
+/* Seamless opaque chrome: same ground as the canvas, one hairline below. */
 header.header {
   border-bottom: 1px solid var(--sl-color-hairline);
   background-color: var(--sl-color-bg-nav);
 }
 
-/* Sidebar current page: restrained accent, no heavy saturated fill. */
+/* Sidebar current page: restrained gold, no heavy saturated fill. */
 .sidebar-content a[aria-current="page"],
 .sidebar-content a[aria-current="page"]:hover,
 .sidebar-content a[aria-current="page"]:focus {
@@ -314,15 +322,15 @@ starlight-toc a[aria-current="true"] {
  * ============================================================ */
 .hero h1 {
   font-family: var(--rennet-display);
-  font-weight: 560;
-  letter-spacing: -0.035em;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   line-height: 1.02;
 }
 .hero .tagline {
   color: var(--sl-color-gray-2);
 }
 
-/* Primary action: inverted ink button, 8px corner, hover lift + soft shadow. */
+/* Primary action: gold fill with near-black ink, 8px corner, hover lift. */
 .hero .sl-link-button.primary {
   background: var(--rennet-btn-bg);
   border: 1px solid var(--rennet-btn-border);
@@ -338,7 +346,7 @@ starlight-toc a[aria-current="true"] {
   transform: translateY(-2px);
   box-shadow: var(--sl-shadow-md);
 }
-/* Secondary action: quiet, hairline, accent on hover. */
+/* Secondary action: quiet, hairline, gold on hover. */
 .hero .sl-link-button.secondary {
   border: 1px solid var(--sl-color-hairline);
   color: var(--sl-color-white);
@@ -381,7 +389,6 @@ starlight-toc a[aria-current="true"] {
 }
 .sl-markdown-content th:not(:where(.not-content *)) {
   color: var(--sl-color-white);
-  font-family: var(--rennet-display);
   font-weight: 600;
   letter-spacing: -0.01em;
   border-bottom: 1px solid var(--sl-color-hairline);

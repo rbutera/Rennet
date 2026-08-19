@@ -40,26 +40,37 @@ export function BatchView({
     batch.find((draft) => draft.path === path);
 
   return (
-    <section className="batch-view" aria-label="Staged dispositions">
-      <header className="batch-header">
-        <span className="batch-title">Staged</span>
-        <span className="batch-destination">{DESTINATION_COPY[destination]}</span>
-        <span className="batch-count">{entries.length} staged</span>
+    <section
+      className="batch-view flex flex-col gap-3 rounded-surface border border-line bg-surface p-4 font-sans"
+      aria-label="Staged dispositions"
+    >
+      <header className="batch-header flex items-baseline gap-2">
+        <span className="batch-title text-sm font-semibold text-ink">Staged</span>
+        <span className="batch-destination text-xs text-ink-soft">
+          {DESTINATION_COPY[destination]}
+        </span>
+        <span className="batch-count ml-auto text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+          {entries.length} staged
+        </span>
       </header>
       {entries.length === 0 ? (
-        <p className="batch-empty">Nothing staged. Dispose something and it stages here.</p>
+        <p className="batch-empty m-0 py-6 text-center text-sm text-ink-faint">
+          Nothing staged. Dispose something and it stages here.
+        </p>
       ) : (
-        <ol className="batch-entries">
+        <ol className="batch-entries m-0 flex list-none flex-col gap-2 p-0">
           {entries.map((entry) => (
             <li
-              className="batch-entry"
+              className="batch-entry flex flex-wrap items-center gap-2 rounded-control border border-line bg-raised p-3"
               data-path={entry.path}
               data-type={entry.type}
               key={entry.path}
             >
-              <span className="batch-entry-path">{entry.path}</span>
+              <span className="batch-entry-path min-w-0 flex-1 truncate font-mono text-sm text-ink">
+                {entry.path}
+              </span>
               <select
-                className="batch-entry-type"
+                className="batch-entry-type h-8 rounded-control border border-line bg-surface px-2 text-sm text-ink"
                 aria-label={`Type for ${entry.path}`}
                 value={entry.type}
                 onChange={(event) =>
@@ -73,7 +84,7 @@ export function BatchView({
                 ))}
               </select>
               <textarea
-                className="batch-entry-body"
+                className="batch-entry-body w-full resize-y rounded-control border border-line bg-surface px-2.5 py-2 text-base leading-relaxed text-ink"
                 aria-label={`Body for ${entry.path}`}
                 value={draftFor(entry.path)?.raw ?? entry.body}
                 placeholder="Raw note — lazy is fine"
@@ -81,7 +92,7 @@ export function BatchView({
               />
               <button
                 type="button"
-                className="batch-entry-withdraw"
+                className="batch-entry-withdraw h-8 rounded-control px-3 text-sm text-danger hover:bg-danger-soft"
                 onClick={() => onWithdraw?.(entry.path)}
               >
                 Withdraw
@@ -91,8 +102,12 @@ export function BatchView({
         </ol>
       )}
       {entries.length > 0 ? (
-        <footer className="batch-footer">
-          <button type="button" className="batch-publish" onClick={() => onPublish?.()}>
+        <footer className="batch-footer flex">
+          <button
+            type="button"
+            className="batch-publish h-9 rounded-control bg-accent-fill px-4 text-base font-semibold text-accent-ink"
+            onClick={() => onPublish?.()}
+          >
             {destination === "publish" ? "Publish to PR" : "Hand off"}
           </button>
         </footer>

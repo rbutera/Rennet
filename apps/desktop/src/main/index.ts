@@ -9,6 +9,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeTheme,
   net,
   protocol,
   session,
@@ -121,27 +122,15 @@ async function createWindow(wsPort: number): Promise<void> {
     height: 900,
     minWidth: 980,
     minHeight: 640,
-    // Real glass (issue #61): the CHROME is genuinely translucent over the actual
-    // desktop, not a painted in-app gradient — the OS compositor supplies the
-    // blurred material behind the frosted chrome. On macOS that is native window
-    // vibrancy over a transparent window. On Windows transparency only works on a
-    // FRAMELESS window (no titlebar, no drag) and gets NO compositor blur — the
-    // raw desktop showed straight through — so win32 keeps the NATIVE frame
-    // (titlebar, snap, drag) and asks DWM for the acrylic material instead
-    // (Windows 11; older builds just get a dark solid backing). Content surfaces
-    // (panels, cards, code, paper) paint their own SOLID backgrounds on top, so
-    // legibility never rides on the wallpaper (the #115 correction: glass is the
-    // frame, not the content).
-    ...(process.platform === "darwin"
-      ? {
-          transparent: true,
-          backgroundColor: "#00000000",
-          vibrancy: "under-window" as const,
-          visualEffectState: "active" as const,
-        }
-      : process.platform === "win32"
-        ? { backgroundMaterial: "acrylic" as const, backgroundColor: "#00000000" }
-        : { transparent: true, backgroundColor: "#00000000" }),
+    // One seamless OPAQUE window (2026-08-19 overhaul; root DESIGN.md §Material).
+    // Glass/vibrancy/acrylic are retired: the whole window paints the theme's warm
+    // canvas, titlebar included. The pre-paint backgroundColor matches the resolved
+    // scheme's canvas so there is no white/black flash before the renderer loads.
+    // macOS hides the native titlebar (traffic lights overlay the in-app bar, which
+    // reserves their inset via [data-platform="darwin"]); win32/linux keep the
+    // native frame (titlebar, snap, drag) above the web content.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0e0d0c" : "#fbfaf7",
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
     // Version in the native titlebar (visible on the win32 native frame; macOS shows
     // it in the standard titlebar too). `page-title-updated` is suppressed below so
     // the renderer's static <title>Rennet</title> can't overwrite it after load.

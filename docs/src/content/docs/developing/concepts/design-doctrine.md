@@ -11,20 +11,22 @@ work, not a mood board to consult at the end.
 
 ```mermaid
 flowchart LR
-  glass["Glass<br/>working interface"] -->|compose and refine| preview["Preview<br/>published outcome"]
-  code["Code<br/>opaque source truth"] --> glass
+  interface["Interface<br/>seamless working surface"] -->|compose and refine| preview["Preview<br/>published outcome"]
+  code["Code<br/>opaque source truth"] --> interface
 ```
 
-- **Glass is the working interface.** Navigation, lenses, controls, drafts, and
-  private annotations can be translucent. Glass says “still being formed.”
-- **Code is opaque.** Diff and source surfaces need stable contrast. Decorative
-  glass must never make code harder to read.
-- **The preview is the outbound object.** It is the one solid surface, not
-  translucent glass. Editing happens back on the glass draft; publishing freezes
-  the result that leaves Rennet.
+- **The interface is one seamless, opaque surface.** Navigation, lenses,
+  controls, drafts, and private annotations share the same warm ground,
+  separated by small surface steps and 1px hairlines, never by glass or
+  translucency. A quiet surface step says “still being formed.”
+- **Code is opaque.** Diff and source surfaces need stable contrast and always
+  sit on an opaque surface. Decoration must never make code harder to read.
+- **The preview is the outbound object.** It is the warm handoff sheet — cream
+  in the light scheme, espresso in the dark, serif ink. Editing happens back on
+  the working surface; publishing freezes the result that leaves Rennet.
 
-The collation draft is intentionally glass. Publishing is the phase change from
-glass to the solid preview.
+The collation draft is an intentionally provisional working surface. Publishing
+is the phase change from that draft to the solid outbound preview.
 
 ## Two registers
 
@@ -34,11 +36,14 @@ thing go?
 | Register | Meaning | Typical use |
 |---|---|---|
 | Ink | Public or publish-bound | PR content, the posted review, material already visible to the team |
-| Backlight blue | Private to the local review | Notes, local worktrees, orchestrator annotations, working context |
+| Gold backlight | Private to the local review | Notes, local worktrees, orchestrator annotations, working context |
 
-Amber has one narrow job: blast radius, disagreement, and other review signals
-that deserve attention. It is not a general accent. Do not add a fourth
-semantic hue to make a screen lively.
+Gold is the one accent hue, and it is also the decision register: links,
+selection, focus, primary actions, reconstructed decisions, disagreement, and
+blast radius all carry it. The private/local register is a derived tint of that
+same gold — a soft backlight glow and a gold-tinted surface, never its own hue.
+Evidence green and danger red are the only other functional hues; do not add a
+fourth to make a screen lively.
 
 ## The fixed-point rule
 
@@ -113,7 +118,7 @@ may breathe when brevity would make them cryptic.
 
 - Every pointer action needs a keyboard route and a visible focus state.
 - Respect reduced-motion preferences; removing animation must not remove status.
-- Secondary text still needs readable contrast on glass and the preview.
+- Secondary text still needs readable contrast on every surface and the preview.
 - Use the shared icon components for real controls. Do not use emoji or arbitrary
   text glyphs as the only meaning-bearing icon.
 - Keep labels or accessible names when a compact glyph replaces visible text.
@@ -145,5 +150,5 @@ Before a UI change is done, check:
 ## Where to go next
 
 - [Canvas model](/developing/concepts/canvas-model/) explains the layers that these materials render.
-- [Collation and publishing](/developing/concepts/collation-and-publishing/) follows glass becoming the solid preview.
+- [Collation and publishing](/developing/concepts/collation-and-publishing/) follows the collation draft becoming the solid outbound preview.
 - [Architecture overview](/developing/concepts/architecture-overview/) places the renderer in the wider system.

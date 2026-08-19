@@ -76,26 +76,39 @@ export function FrontDoor({
   }
 
   return (
-    <div className="rennet-glass front-door" data-scheme={scheme ?? "dark"}>
-      <header className="front-door-bar">
+    <div
+      className="rennet-glass front-door min-h-screen flex flex-col items-center bg-canvas px-6 pb-24"
+      data-scheme={scheme ?? "dark"}
+    >
+      <header className="front-door-bar w-full max-w-[760px] flex items-center gap-3 pt-8 pb-3">
         {flow ? (
-          <span className="front-door-mark" aria-hidden="true">
+          <span
+            className="front-door-mark flex-none w-8 h-8 grid place-items-center rounded-control border border-accent-line bg-accent-soft text-accent"
+            aria-hidden="true"
+          >
             {flow.step === "processing" ? <SparkleIcon size={18} /> : <PlusIcon size={16} />}
           </span>
         ) : (
-          <ChromeMark size={16} className="front-door-mark" />
+          <ChromeMark
+            size={16}
+            className="front-door-mark flex-none w-8 h-8 grid place-items-center rounded-control border border-accent-line bg-accent-soft text-accent"
+          />
         )}
-        <h1>
+        <h1 className="font-display text-display leading-none text-ink">
           {flow?.step === "processing" ? flow.project.name : flow ? "Add a project" : "Rennet"}
         </h1>
         {flow && flow.step !== "processing" ? (
-          <span className="front-door-step">step {flow.step === "type-path" ? 1 : 2} of 2</span>
+          <span className="front-door-step ml-auto text-sm text-ink-faint">
+            step {flow.step === "type-path" ? 1 : 2} of 2
+          </span>
         ) : null}
-        {flow?.step === "processing" ? <span className="front-door-step">processing</span> : null}
+        {flow?.step === "processing" ? (
+          <span className="front-door-step ml-auto text-sm text-ink-faint">processing</span>
+        ) : null}
         {onOpenSettings && !flow ? (
           <button
             type="button"
-            className="front-door-settings"
+            className="front-door-settings ml-auto flex-none w-8 h-8 grid place-items-center rounded-control border border-line text-ink-soft hover:bg-raised hover:text-ink"
             onClick={onOpenSettings}
             title="Settings"
             aria-label="Settings"
@@ -105,7 +118,11 @@ export function FrontDoor({
         ) : null}
       </header>
 
-      {error ? <p className="front-door-error">{error}</p> : null}
+      {error ? (
+        <p className="front-door-error w-full max-w-[760px] mb-3 px-3.5 py-2.5 rounded-chip border border-danger bg-danger-soft text-ink text-base">
+          {error}
+        </p>
+      ) : null}
 
       {flow ? (
         <AddProject
@@ -145,55 +162,74 @@ function ProjectsList({
   onAdd(): void;
   onOpen(project: Project): void;
 }) {
-  if (projects === null) return <p className="front-door-loading">Loading projects…</p>;
+  if (projects === null)
+    return <p className="front-door-loading mt-20 text-base text-ink-faint">Loading projects…</p>;
 
   const empty = projects.length === 0;
   return (
-    <div className="projects">
-      <p className="eyebrow projects-eyebrow">
+    <div className="projects w-full max-w-[760px] flex flex-col">
+      <p className="eyebrow projects-eyebrow mt-1.5 mb-5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
         {empty ? "PROJECTS · NONE YET" : `PROJECTS · ${projects.length}`}
       </p>
 
       {empty ? (
-        <button type="button" className="add-card" onClick={onAdd}>
-          <span className="add-card-plus" aria-hidden="true">
+        <button
+          type="button"
+          className="add-card self-center w-[min(420px,100%)] flex flex-col items-center gap-2 mt-6 px-6 py-10 rounded-surface border border-dashed border-line-strong text-ink transition-colors hover:border-accent-line hover:bg-accent-soft"
+          onClick={onAdd}
+        >
+          <span
+            className="add-card-plus w-11 h-11 grid place-items-center mb-2 rounded-surface border border-line-strong text-ink-soft"
+            aria-hidden="true"
+          >
             <PlusIcon size={20} />
           </span>
-          <span className="add-card-title">Add a project</span>
-          <span className="add-card-sub">Point Rennet at a workspace or a repo.</span>
+          <span className="add-card-title font-display text-2xl text-ink">Add a project</span>
+          <span className="add-card-sub font-serif text-base text-ink-soft">
+            Point Rennet at a workspace or a repo.
+          </span>
         </button>
       ) : (
-        <div className="project-rows">
+        <div className="project-rows flex flex-col gap-2">
           {projects.map((project) => (
             <button
               type="button"
               key={project.id}
-              className="project-row"
+              className="project-row flex items-center gap-3.5 px-4 py-3 rounded-surface border border-line bg-surface text-ink text-left transition-colors hover:bg-raised"
               onClick={() => onOpen(project)}
             >
-              <span className="project-row-icon" aria-hidden="true">
+              <span
+                className="project-row-icon flex-none w-8 h-8 grid place-items-center rounded-control border border-line text-accent"
+                aria-hidden="true"
+              >
                 {project.kind === "workspace" ? (
                   <MonitorIcon size={16} />
                 ) : (
                   <GitBranchIcon size={16} />
                 )}
               </span>
-              <span className="project-row-main">
-                <span className="project-row-name">{project.name}</span>
-                <span className="project-row-path">{project.path}</span>
+              <span className="project-row-main flex flex-col gap-0.5 min-w-0">
+                <span className="project-row-name text-lg font-semibold">{project.name}</span>
+                <span className="project-row-path text-sm text-ink-faint truncate">
+                  {project.path}
+                </span>
               </span>
-              <span className="project-row-meta">
+              <span className="project-row-meta ml-auto text-sm text-ink-soft whitespace-nowrap">
                 {project.kind === "workspace"
                   ? `${project.repoCount} ${plural(project.repoCount, "repo")} · ${project.branchCount} ${plural(project.branchCount, "branch", "branches")}`
                   : `${project.branchCount} ${plural(project.branchCount, "branch", "branches")}`}
               </span>
-              <span className="project-row-branch">
+              <span className="project-row-branch flex-none inline-flex items-center gap-1.5 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm">
                 <GitBranchIcon size={12} />
                 {project.primaryBranch}
               </span>
             </button>
           ))}
-          <button type="button" className="add-row" onClick={onAdd}>
+          <button
+            type="button"
+            className="add-row inline-flex items-center gap-2 self-start mt-1 px-3.5 py-2.5 rounded-chip border border-dashed border-line-strong text-ink-soft text-base font-semibold hover:text-ink hover:border-accent-line"
+            onClick={onAdd}
+          >
             <PlusIcon size={14} />
             Add a project
           </button>
@@ -210,11 +246,11 @@ function ProjectsList({
 function HarnessLine({ detected }: { detected: DetectedHarness[] | null }) {
   if (!detected || detected.length === 0) return null;
   return (
-    <p className="harness-line">
+    <p className="harness-line inline-flex items-center gap-2 self-center mt-7 px-3.5 py-2.5 rounded-chip border border-accent-line bg-accent-soft text-ink text-base font-semibold shadow-[inset_0_0_18px_var(--rn-accent-soft)]">
       <SparkleIcon size={13} />
       <span>
         {detected.map((harness) => harnessLabel(harness.id)).join(" · ")}
-        <span className="harness-line-tail"> detected</span>
+        <span className="harness-line-tail text-ink-faint font-normal"> detected</span>
       </span>
     </p>
   );
@@ -329,9 +365,11 @@ function TypeAndPath({
   }
 
   return (
-    <div className="add-flow">
-      <p className="eyebrow">WHAT ARE YOU POINTING AT</p>
-      <div className="type-choice">
+    <div className="add-flow w-full max-w-[760px] flex flex-col">
+      <p className="eyebrow mt-2 mb-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        WHAT ARE YOU POINTING AT
+      </p>
+      <div className="type-choice grid grid-cols-2 gap-3">
         <TypeCard
           selected={flow.kind === "workspace"}
           icon={<MonitorIcon size={18} />}
@@ -348,36 +386,47 @@ function TypeAndPath({
         />
       </div>
 
-      <p className="eyebrow">PATH</p>
-      <div className="path-row">
-        <span className="path-field" data-empty={flow.path ? "false" : "true"}>
+      <p className="eyebrow mt-4 mb-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        PATH
+      </p>
+      <div className="path-row flex gap-2">
+        <span
+          className={`path-field flex-1 min-w-0 inline-flex items-center gap-2 px-3.5 py-2.5 rounded-control border border-line-strong bg-surface text-base truncate [&>svg]:flex-none [&>svg]:text-ink-faint ${flow.path ? "text-ink" : "text-ink-faint"}`}
+          data-empty={flow.path ? "false" : "true"}
+        >
           <FolderIcon size={14} />
           {flow.path ?? "Choose a folder…"}
         </span>
-        <button type="button" className="path-browse" onClick={() => void browse()}>
+        <button
+          type="button"
+          className="path-browse flex-none px-4 rounded-control border border-line-strong bg-raised text-ink font-semibold hover:border-accent-line"
+          onClick={() => void browse()}
+        >
           Browse
         </button>
       </div>
 
       {projects.length > 0 ? (
-        <div className="recents">
-          <p className="eyebrow recents-eyebrow">RECENT</p>
+        <div className="recents mt-1 rounded-control border border-line overflow-hidden bg-surface">
+          <p className="eyebrow recents-eyebrow m-0 px-3.5 py-2.5 border-b border-line bg-raised text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            RECENT
+          </p>
           {recentPaths(projects).map((recent) => (
             <button
               type="button"
               key={`${recent.kind}:${recent.path}`}
-              className="recent-row"
+              className="recent-row w-full flex items-center gap-2.5 px-3.5 py-2.5 border-t border-line bg-transparent text-ink text-left text-base hover:bg-raised [&:first-of-type]:border-t-0"
               onClick={() => onFlow({ ...flow, kind: recent.kind, path: recent.path })}
             >
-              <span className="recent-icon" aria-hidden="true">
+              <span className="recent-icon flex-none inline-flex text-ink-faint" aria-hidden="true">
                 {recent.kind === "workspace" ? (
                   <MonitorIcon size={14} />
                 ) : (
                   <GitBranchIcon size={14} />
                 )}
               </span>
-              <span className="recent-path">{recent.path}</span>
-              <span className="recent-count">
+              <span className="recent-path min-w-0 truncate">{recent.path}</span>
+              <span className="recent-count ml-auto flex-none px-2 py-0.5 rounded-chip border border-accent-line bg-accent-soft text-ink text-sm">
                 {recent.repoCount} {plural(recent.repoCount, "repo")}
               </span>
             </button>
@@ -385,13 +434,18 @@ function TypeAndPath({
         </div>
       ) : null}
 
-      <div className="add-flow-actions">
-        <button type="button" className="ghost" onClick={() => onFlow(null)} disabled={flow.busy}>
+      <div className="add-flow-actions flex items-center gap-3 mt-6">
+        <button
+          type="button"
+          className="ghost px-4 py-2.5 rounded-control border border-line text-ink-soft font-semibold hover:bg-raised hover:text-ink"
+          onClick={() => onFlow(null)}
+          disabled={flow.busy}
+        >
           Cancel
         </button>
         <button
           type="button"
-          className="primary"
+          className="primary ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={() => void proceed()}
           disabled={!flow.path || flow.busy}
         >
@@ -419,16 +473,19 @@ function TypeCard({
   return (
     <button
       type="button"
-      className={`type-card${selected ? " is-selected" : ""}`}
+      className={`type-card flex items-center gap-3 p-4 rounded-surface border bg-raised text-ink text-left transition ${selected ? "is-selected border-accent ring-2 ring-accent-soft" : "border-line"}`}
       aria-pressed={selected}
       onClick={onSelect}
     >
-      <span className="type-card-icon" aria-hidden="true">
+      <span
+        className="type-card-icon flex-none w-8 h-8 grid place-items-center rounded-control border border-line text-accent"
+        aria-hidden="true"
+      >
         {icon}
       </span>
-      <span className="type-card-body">
-        <span className="type-card-title">{title}</span>
-        <span className="type-card-sub">{sub}</span>
+      <span className="type-card-body flex flex-col gap-0.5">
+        <span className="type-card-title text-lg font-semibold">{title}</span>
+        <span className="type-card-sub text-sm text-ink-soft">{sub}</span>
       </span>
     </button>
   );
@@ -477,30 +534,36 @@ function WorktreeConfig({
   const nothingFound = discovery.repos.length === 0;
 
   return (
-    <div className="add-flow">
-      <p className="found-in">
-        <span className="found-in-icon" aria-hidden="true">
+    <div className="add-flow w-full max-w-[760px] flex flex-col">
+      <p className="found-in flex items-center gap-2 mt-2 mb-3.5 text-base font-semibold text-ink">
+        <span className="found-in-icon inline-flex text-ink-soft" aria-hidden="true">
           {flow.kind === "workspace" ? <MonitorIcon size={15} /> : <GitBranchIcon size={15} />}
         </span>
-        Found in <span className="found-in-path">{flow.path}</span>
+        Found in <span className="found-in-path text-ink-soft font-normal">{flow.path}</span>
       </p>
 
       {nothingFound ? (
-        <p className="worktree-empty">
+        <p className="worktree-empty my-2 p-5 rounded-surface border border-dashed border-line-strong text-ink-soft text-center">
           {flow.kind === "repo"
             ? "This folder is not a git repository."
             : "No git repositories under this folder."}
         </p>
       ) : (
-        <div className="worktree-rows">
+        <div className="worktree-rows flex flex-col gap-2">
           {discovery.repos.map((repo) => (
-            <div className="worktree-row" key={repo.name}>
-              <span className="worktree-icon" aria-hidden="true">
+            <div
+              className="worktree-row flex items-center gap-3.5 px-4 py-3 rounded-surface border border-line bg-surface"
+              key={repo.name}
+            >
+              <span
+                className="worktree-icon flex-none w-8 h-8 grid place-items-center rounded-control border border-line text-ink-soft"
+                aria-hidden="true"
+              >
                 <GitBranchIcon size={15} />
               </span>
-              <span className="worktree-main">
-                <span className="worktree-name">{repo.name}</span>
-                <span className="worktree-sub">
+              <span className="worktree-main flex flex-col gap-0.5 min-w-0">
+                <span className="worktree-name text-base font-semibold text-ink">{repo.name}</span>
+                <span className="worktree-sub text-sm text-ink-faint">
                   {repo.branches} {plural(repo.branches, "branch", "branches")}
                   {repo.remote ? ` · ${repo.remote}` : ""}
                   {repo.note ? ` · ${repo.note}` : ""}
@@ -514,12 +577,12 @@ function WorktreeConfig({
             </div>
           ))}
 
-          <div className="primary-branch">
-            <span className="primary-branch-label">Primary branch</span>
+          <div className="primary-branch flex items-center gap-2.5 px-4 py-3 rounded-surface border border-line bg-surface">
+            <span className="primary-branch-label text-ink-soft text-base">Primary branch</span>
             {flow.editingBranch ? (
               <input
                 type="text"
-                className="primary-branch-input"
+                className="primary-branch-input px-2.5 py-1.5 rounded-chip border border-accent bg-raised text-ink text-base"
                 value={flow.primaryBranch}
                 spellCheck={false}
                 autoCapitalize="off"
@@ -530,14 +593,14 @@ function WorktreeConfig({
                 onBlur={() => onFlow({ ...flow, editingBranch: false })}
               />
             ) : (
-              <span className="primary-branch-value">
+              <span className="primary-branch-value inline-flex items-center gap-1.5 text-ink font-semibold text-base">
                 <GitBranchIcon size={12} />
                 {flow.primaryBranch}
               </span>
             )}
             <button
               type="button"
-              className="primary-branch-edit"
+              className="primary-branch-edit ml-auto text-accent text-base hover:underline"
               onClick={() => onFlow({ ...flow, editingBranch: !flow.editingBranch })}
             >
               {flow.editingBranch ? "done" : "edit"}
@@ -547,16 +610,19 @@ function WorktreeConfig({
       )}
 
       {discovery.reconciliation ? (
-        <p className="reconciliation" role="note">
-          <ChevronIcon size={12} className="reconciliation-mark" />
+        <p
+          className="reconciliation flex items-start gap-2 mt-3 px-3.5 py-2.5 rounded-chip border border-accent-line bg-accent-surface text-ink text-base"
+          role="note"
+        >
+          <ChevronIcon size={12} className="reconciliation-mark flex-none mt-0.5" />
           {discovery.reconciliation}
         </p>
       ) : null}
 
-      <div className="add-flow-actions">
+      <div className="add-flow-actions flex items-center gap-3 mt-6">
         <button
           type="button"
-          className="ghost"
+          className="ghost px-4 py-2.5 rounded-control border border-line text-ink-soft font-semibold hover:bg-raised hover:text-ink"
           onClick={() =>
             onFlow({ step: "type-path", kind: flow.kind, path: flow.path, busy: false })
           }
@@ -564,12 +630,12 @@ function WorktreeConfig({
         >
           Back
         </button>
-        <span className="included-count">
+        <span className="included-count ml-auto text-ink-faint text-base">
           {includedSet.size} of {discovery.repos.length} included
         </span>
         <button
           type="button"
-          className="primary"
+          className="primary inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={() => void confirm()}
           disabled={flow.busy || includedSet.size === 0}
         >
@@ -585,13 +651,16 @@ function Toggle({ on, label, onToggle }: { on: boolean; label: string; onToggle(
   return (
     <button
       type="button"
-      className={`toggle${on ? " is-on" : ""}`}
+      className={`toggle flex-none ml-auto w-10 h-6 p-0.5 rounded-full border transition ${on ? "is-on border-accent-line bg-accent-soft shadow-[inset_0_0_10px_var(--rn-accent-soft)]" : "border-line-strong bg-raised"}`}
       role="switch"
       aria-checked={on}
       aria-label={label}
       onClick={onToggle}
     >
-      <span className="toggle-knob" aria-hidden="true" />
+      <span
+        className={`toggle-knob block w-[17px] h-[17px] rounded-full transition-transform ${on ? "translate-x-[17px] bg-accent" : "bg-ink-faint"}`}
+        aria-hidden="true"
+      />
     </button>
   );
 }

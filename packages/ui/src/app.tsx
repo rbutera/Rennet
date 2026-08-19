@@ -101,7 +101,6 @@ import {
   TriangleIcon,
 } from "./components/icons";
 import { ANGLE_LABELS } from "./components/lens";
-import { NavRail } from "./components/nav-rail";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { SettingsScreen } from "./components/settings-screen";
@@ -284,6 +283,20 @@ function rowIsFocused(row: RegistryRow, focus: DiffFocus | undefined): boolean {
   return row.side !== "deletions";
 }
 
+// Shared secondary-button idiom (brief: `border border-line text-ink hover:bg-raised`).
+// One source for the three `.secondary` sites so the re-skin stays consistent.
+const SECONDARY_BUTTON =
+  "secondary inline-flex cursor-pointer items-center gap-2 rounded-control border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft hover:bg-raised hover:text-ink";
+
+// The changed-file status chip's gold/green/red fill, by git status. Decisions and
+// accent are one hue now, so a modified file's square is the gold fill (brief).
+const STATUS_CHIP: Record<string, string> = {
+  added: "bg-add text-add-ink",
+  modified: "bg-accent-fill text-accent-ink",
+  deleted: "bg-del text-del-ink",
+  renamed: "bg-accent-soft text-accent",
+};
+
 export function ReviewWorkspace({
   review,
   selectedPath,
@@ -328,75 +341,115 @@ export function ReviewWorkspace({
     : 100;
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="topbar-title">
-          <ChromeMark size={16} className="topbar-mark" />
+    <div className="app-shell flex min-h-screen flex-col bg-canvas text-ink">
+      <header className="topbar flex h-14 items-center justify-between gap-4 border-b border-line bg-canvas px-6">
+        <div className="topbar-title flex items-center gap-3">
+          <ChromeMark
+            size={16}
+            className="topbar-mark grid h-[30px] flex-none place-items-center rounded-control border border-accent-line bg-accent-soft px-2"
+          />
           <div>
-            <p className="eyebrow">LOCAL REVIEW</p>
-            <h1>{patchset.repository.root.split("/").at(-1)}</h1>
+            <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+              LOCAL REVIEW
+            </p>
+            <h1 className="m-0 font-display text-xl font-medium text-ink">
+              {patchset.repository.root.split("/").at(-1)}
+            </h1>
           </div>
         </div>
-        <div className="provenance" title={patchset.id}>
+        <div
+          className="provenance flex items-center gap-2.5 text-sm text-ink-faint"
+          title={patchset.id}
+        >
           <span>{patchset.repository.baseRef}</span>
-          <code>{patchset.repository.baseOid.slice(0, 8)}</code>
-          <ArrowRightIcon size={12} className="provenance-arrow" />
-          <code>{patchset.repository.headOid.slice(0, 8)}</code>
+          <code className="rounded-micro bg-raised px-2 py-1 font-mono text-ink">
+            {patchset.repository.baseOid.slice(0, 8)}
+          </code>
+          <ArrowRightIcon size={12} className="provenance-arrow text-ink-faint opacity-70" />
+          <code className="rounded-micro bg-raised px-2 py-1 font-mono text-ink">
+            {patchset.repository.headOid.slice(0, 8)}
+          </code>
         </div>
       </header>
 
       {review.status === "invalid" ? (
-        <section className="invalid-banner" role="status">
-          <div>
+        <section
+          className="invalid-banner flex items-center justify-between gap-5 border-b border-accent-line bg-accent-surface px-6 py-3 text-ink"
+          role="status"
+        >
+          <div className="flex flex-wrap items-center gap-2.5">
             <strong>Your code changed.</strong>
             <span>Pinned to the previous patchset until you regenerate.</span>
           </div>
-          <button type="button" onClick={onRegenerate}>
+          <button
+            type="button"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-3.5 py-2 font-semibold text-accent-ink"
+            onClick={onRegenerate}
+          >
             Regenerate affected review
           </button>
         </section>
       ) : null}
 
-      <section className="progress-row" aria-label={`${percentage}% of changed files read`}>
+      <section
+        className="progress-row grid h-[34px] grid-cols-[58px_1fr_58px] items-center gap-2.5 border-b border-line bg-canvas px-6 text-xs text-ink-faint"
+        aria-label={`${percentage}% of changed files read`}
+      >
         <span>{readPaths.size} read</span>
-        <div className="progress-track">
-          <span style={{ width: `${percentage}%` }} />
+        <div className="progress-track h-[3px] overflow-hidden rounded-control bg-raised">
+          <span className="block h-full bg-accent-fill" style={{ width: `${percentage}%` }} />
         </div>
         <span>{patchset.files.length} files</span>
       </section>
 
-      <main className="review-grid">
-        <aside className="file-panel" aria-label="Changed files">
-          <div className="panel-title">Changes</div>
+      <main className="review-grid grid min-h-0 flex-1 grid-cols-[260px_minmax(440px,1fr)_240px]">
+        <aside
+          className="file-panel min-w-0 border-r border-line bg-surface"
+          aria-label="Changed files"
+        >
+          <div className="panel-title flex h-11 items-center gap-2 px-4 pt-4 text-2xs font-semibold uppercase tracking-wide text-ink-soft">
+            Changes
+          </div>
           {patchset.files.length === 0 ? (
-            <p className="muted">No changes against {patchset.repository.baseRef}.</p>
+            <p className="muted px-4 text-sm leading-relaxed text-ink-faint">
+              No changes against {patchset.repository.baseRef}.
+            </p>
           ) : (
             patchset.files.map((file) => {
               const read = readPaths.has(file.path);
               return (
                 <button
                   type="button"
-                  className={`file-row ${selected?.path === file.path ? "selected" : ""}`}
+                  className={`file-row grid h-10 w-full grid-cols-[22px_minmax(0,1fr)_12px] items-center gap-2 border-l-2 border-transparent text-left text-ink-soft hover:bg-raised ${selected?.path === file.path ? "selected border-accent bg-raised text-ink" : ""}`}
                   key={file.path}
                   onClick={() => onSelectPath(file.path)}
                 >
-                  <span className={`status status-${file.status}`}>
+                  <span
+                    className={`status status-${file.status} grid h-[17px] w-[18px] place-items-center rounded-micro font-mono text-2xs font-bold ${STATUS_CHIP[file.status] ?? "bg-raised text-ink-soft"}`}
+                  >
                     {file.status[0]?.toUpperCase()}
                   </span>
-                  <span className="file-name">{file.path}</span>
-                  <span className={`read-dot ${read ? "is-read" : ""}`} aria-hidden="true" />
+                  <span className="file-name overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs">
+                    {file.path}
+                  </span>
+                  <span
+                    className={`read-dot size-[7px] rounded-full border border-line-strong ${read ? "is-read border-accent bg-accent" : ""}`}
+                    aria-hidden="true"
+                  />
                 </button>
               );
             })
           )}
         </aside>
 
-        <section className="diff-panel">
-          <div className="diff-toolbar">
-            <div>
-              <strong>{selected?.path ?? "No changed file selected"}</strong>
+        <section className="diff-panel flex min-w-0 flex-col bg-code">
+          <div className="diff-toolbar flex h-11 flex-none items-center justify-between gap-4 border-b border-line bg-canvas px-3.5">
+            <div className="flex min-w-0 items-baseline gap-2.5">
+              <strong className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs font-semibold text-ink">
+                {selected?.path ?? "No changed file selected"}
+              </strong>
               {selected ? (
-                <span>
+                <span className="whitespace-nowrap text-xs text-ink-faint">
                   +{selected.additions ?? "–"} −{selected.deletions ?? "–"}
                 </span>
               ) : null}
@@ -404,21 +457,24 @@ export function ReviewWorkspace({
             {selected ? (
               <button
                 type="button"
-                className="secondary"
+                className={SECONDARY_BUTTON}
                 onClick={() => onSetRead(selected.path, !readPaths.has(selected.path))}
               >
                 {readPaths.has(selected.path) ? "Mark unread" : "Mark read"}
               </button>
             ) : null}
           </div>
-          <pre className="diff" ref={diffRef}>
+          <pre
+            className="diff m-0 flex-1 overflow-auto whitespace-pre px-[18px] pt-4 pb-10 font-mono text-sm leading-relaxed text-ink-soft [tab-size:2]"
+            ref={diffRef}
+          >
             {selected
               ? diffRows.map((row, index) => {
                   const focused = focus?.path === selected.path && rowIsFocused(row, focus);
                   return (
                     <span
                       key={row.rawIndex}
-                      className={`diff-line${focused ? " is-delta-focus" : ""}`}
+                      className={`diff-line${focused ? " is-delta-focus bg-accent-soft text-ink" : ""}`}
                       data-delta-focus={focused ? "true" : undefined}
                       data-file-line={row.fileLine ?? undefined}
                       data-side={row.side ?? undefined}
@@ -433,33 +489,44 @@ export function ReviewWorkspace({
           </pre>
         </section>
 
-        <aside className="angle-panel" aria-label="Review angles">
-          <div className="panel-title">Angles</div>
+        <aside
+          className="angle-panel min-w-0 border-l border-line bg-surface pb-5"
+          aria-label="Review angles"
+        >
+          <div className="panel-title flex h-11 items-center gap-2 px-4 pt-4 text-2xs font-semibold uppercase tracking-wide text-ink-soft">
+            Angles
+          </div>
           {/* The loud outline honesty travels with the data (real-AI-default): when
               the loaded set is the deterministic mechanical outline, the counts below
               are diff STRUCTURE, and the rail says so — never passing them off as AI
               findings. The Canvases view carries the full banner + retry. */}
-          {outlineFallback ? <p className="muted">Structural outline — not AI findings.</p> : null}
+          {outlineFallback ? (
+            <p className="muted px-4 text-sm leading-relaxed text-ink-faint">
+              Structural outline — not AI findings.
+            </p>
+          ) : null}
           {/* Each row is the REAL state of that canvas angle (critique P2), and a
               row navigates to its canvas lens — the plumbing the Canvases view
               already exposes (`setAngle` + the view toggle), no new machinery. */}
           {angleRail.map((row) => (
             <button
               type="button"
-              className="angle-row"
+              className="angle-row mx-3 flex h-9 w-[calc(100%-24px)] cursor-pointer items-center justify-between border-b border-line text-left text-sm text-ink-soft hover:text-ink"
               key={row.angle}
               onClick={() => onOpenAngle(row.angle)}
             >
               <span>{row.label}</span>
-              <span className={`angle-state${row.state === "ran" ? " is-ran" : ""}`}>
+              <span
+                className={`angle-state text-2xs uppercase tracking-wide text-ink-faint${row.state === "ran" ? " is-ran text-ink-soft" : ""}`}
+              >
                 {row.state === "ran" ? row.detail : ANGLE_STATE_TEXT[row.state]}
               </span>
             </button>
           ))}
-          <div className="snapshot-card">
-            <span>PATCHSET</span>
-            <code>{patchset.id.slice(0, 12)}</code>
-            <small>
+          <div className="snapshot-card mx-3 my-4 grid gap-2 rounded-control border border-line bg-raised p-3">
+            <span className="text-2xs uppercase tracking-wide text-ink-faint">PATCHSET</span>
+            <code className="font-mono text-sm text-accent">{patchset.id.slice(0, 12)}</code>
+            <small className="leading-snug text-ink-faint">
               {patchset.truncated
                 ? `Showing a capped view of ${patchset.byteLength.toLocaleString()} bytes`
                 : `${patchset.byteLength.toLocaleString()} captured bytes`}
@@ -1673,7 +1740,7 @@ export function RennetApp({
   // staged flows through here; signing this shell performs NO Git/GitHub mutation
   // (the #21 pipeline is a later slice) — it clears the draft to demonstrate the
   // full journey ending somewhere. The `.rennet-glass` wrapper carries the glass +
-  // paper tokens (scoped alongside `.canvas-app` in tokens.css) WITHOUT the
+  // paper tokens (the shared @rennet/theme tokens) WITHOUT the
   // full-screen `.canvas-app` layout, so the fixed frame and the overlays theme
   // correctly. `data-scheme="dark"` gives the warm-dark paper (the R40 fix); the
   // bright-room cream lives under `[data-scheme="light"]`.
@@ -1948,10 +2015,16 @@ export function RennetApp({
   // the renderer half of the no-post guarantee; MAIN's `publish.review` refusal is the
   // structural half, so even without this the command cannot egress.
   const destinationChrome = review?.retrospective ? (
-    <div className="rennet-glass" data-scheme={effectiveScheme}>
-      <section className="retrospective-notice" role="note" data-testid="retrospective-notice">
-        <p className="eyebrow">RETROSPECTIVE REVIEW</p>
-        <p>
+    <div className="rennet-glass contents" data-scheme={effectiveScheme}>
+      <section
+        className="retrospective-notice grid gap-1.5 px-[18px] py-4"
+        role="note"
+        data-testid="retrospective-notice"
+      >
+        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+          RETROSPECTIVE REVIEW
+        </p>
+        <p className="m-0 text-base leading-normal text-ink">
           Reading an already-merged pull request. Your dispositions stay local — nothing is posted
           back to GitHub.
         </p>
@@ -1959,7 +2032,7 @@ export function RennetApp({
     </div>
   ) : (
     <div
-      className="rennet-glass"
+      className="rennet-glass contents"
       data-scheme={effectiveScheme}
       {...(currentSurface.kind === "draft" ||
       currentSurface.kind === "paper" ||
@@ -2039,7 +2112,7 @@ export function RennetApp({
         // dialog semantics, so the paper sits OVER the destination frame rather than
         // in document flow beneath a still-active frame. (C4.)
         <div
-          className="publish-sheet-backdrop"
+          className="publish-sheet-backdrop fixed inset-0 z-40 grid place-items-center bg-black/70 p-8"
           role="dialog"
           aria-modal="true"
           aria-label="Handoff"
@@ -2053,24 +2126,26 @@ export function RennetApp({
             />
           ) : (
             <section
-              className="handoff-pending"
+              className="handoff-pending grid gap-4 rounded-window bg-overlay p-6 shadow-overlay"
               role="status"
               data-compose-state={handoffComposeState}
             >
               <button
                 type="button"
-                className="handoff-paper-back"
+                className="handoff-paper-back cursor-pointer justify-self-start rounded-control border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft hover:text-ink"
                 onClick={() => navigate(navigateBack())}
               >
                 Back
               </button>
               {handoffComposeState === "error" ? (
-                <p className="handoff-compose-error" role="alert">
+                <p className="handoff-compose-error m-0 text-base text-danger" role="alert">
                   Composing the handoff failed. Go back and reopen, or change a disposition, to try
                   again.
                 </p>
               ) : (
-                <p className="handoff-composing">Composing the handoff…</p>
+                <p className="handoff-composing m-0 text-base text-ink-soft">
+                  Composing the handoff…
+                </p>
               )}
             </section>
           )}
@@ -2488,9 +2563,35 @@ export function RennetApp({
       currentSurface.kind === "paper" ||
       currentSurface.kind === "handoff";
     return (
-      <div className="navigation-shell">
-        <header className="navigation-titlebar">
-          <ChromeMark size={16} className="navigation-titlebar-mark" />
+      <div className="navigation-shell min-h-screen bg-canvas text-ink">
+        <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
+          <ChromeMark
+            size={16}
+            className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+          />
+          {/* History is a paired control: the rail is gone, back/forward live here. */}
+          <div className="navigation-history flex flex-none items-center gap-0.5">
+            <button
+              type="button"
+              className="navigation-history-button flex size-8 items-center justify-center rounded-control text-ink-soft hover:bg-raised hover:text-ink disabled:pointer-events-none disabled:opacity-35"
+              aria-label="Back"
+              title="Back"
+              disabled={navigation.stack.length <= 1}
+              onClick={goBack}
+            >
+              <ArrowLeftIcon size={16} />
+            </button>
+            <button
+              type="button"
+              className="navigation-history-button flex size-8 items-center justify-center rounded-control text-ink-soft hover:bg-raised hover:text-ink disabled:pointer-events-none disabled:opacity-35"
+              aria-label="Forward"
+              title="Forward"
+              disabled={navigation.future.length === 0}
+              onClick={goForward}
+            >
+              <ArrowRightIcon size={16} />
+            </button>
+          </div>
           <Breadcrumb
             crumb={deriveCrumb(navigation.stack, surfaceLabels)}
             onAscend={(index) => {
@@ -2499,11 +2600,14 @@ export function RennetApp({
             }}
           />
           {inReview && patchset ? (
-            <div className="navigation-titlebar-context">
-              <span className="navigation-mode-pill">
+            <div className="navigation-titlebar-context ml-auto flex items-center gap-2">
+              <span className="navigation-mode-pill rounded-chip border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-ink-soft">
                 {deepReviewOn ? "Dual review" : "Quick review"}
               </span>
-              <code className="navigation-patchset-chip" title={patchset.id}>
+              <code
+                className="navigation-patchset-chip rounded-chip border border-line bg-surface px-2.5 py-1 font-mono text-xs text-ink-soft"
+                title={patchset.id}
+              >
                 {patchset.id.slice(0, 12)}
               </code>
             </div>
@@ -2511,11 +2615,13 @@ export function RennetApp({
           {inReview && review && !review.retrospective ? (
             <button
               type="button"
-              className="navigation-draft-cta"
+              className="navigation-draft-cta inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-3.5 py-1.5 text-sm font-semibold text-accent-ink"
               onClick={() => navigate(pushSurface({ kind: "draft", reviewId: review.id }))}
             >
               {draft.length > 0 ? (
-                <span className="navigation-draft-count">{draft.length}</span>
+                <span className="navigation-draft-count inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent-ink px-1 text-2xs font-bold text-accent-fill">
+                  {draft.length}
+                </span>
               ) : null}
               Preview
               <ArrowRightIcon size={12} />
@@ -2523,29 +2629,26 @@ export function RennetApp({
           ) : null}
           {connectionSlot}
         </header>
-        <NavRail
-          canBack={navigation.stack.length > 1}
-          canForward={navigation.future.length > 0}
-          onBack={goBack}
-          onForward={goForward}
-          onHome={goToProjects}
-          onProjects={goToProjects}
-        />
-        <div className="navigation-surface-content">{content}</div>
+        <div className="navigation-surface-content min-h-screen pt-14">{content}</div>
       </div>
     );
   }
 
   if (review === undefined) {
     return (
-      <div className="navigation-shell">
-        <header className="navigation-titlebar">
-          <ChromeMark size={16} className="navigation-titlebar-mark" />
+      <div className="navigation-shell min-h-screen bg-canvas text-ink">
+        <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
+          <ChromeMark
+            size={16}
+            className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+          />
           <Breadcrumb crumb={deriveCrumb([{ kind: "projects" }])} onAscend={() => undefined} />
           {connectionSlot}
         </header>
-        <div className="navigation-surface-content">
-          <div className="loading">Restoring local review…</div>
+        <div className="navigation-surface-content min-h-screen pt-14">
+          <div className="loading px-8 py-10 font-serif text-base text-ink-soft">
+            Restoring local review…
+          </div>
         </div>
       </div>
     );
@@ -2556,7 +2659,11 @@ export function RennetApp({
   if (settingsOpen) {
     return (
       <>
-        {error ? <div className="error-toast">{error}</div> : null}
+        {error ? (
+          <div className="error-toast fixed left-1/2 top-3.5 z-10 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
+            {error}
+          </div>
+        ) : null}
         <SettingsScreen
           bridge={bridge}
           scheme={effectiveScheme}
@@ -2573,28 +2680,49 @@ export function RennetApp({
       <>
         {palette}
         {updatePrompt}
-        <main className="empty-state">
-          <button type="button" className="entry-back" onClick={() => setDirectEntryOpen(false)}>
+        <main className="empty-state grid min-h-screen place-content-center justify-items-center bg-canvas p-8 text-center">
+          <button
+            type="button"
+            className="entry-back fixed left-4 top-3 z-[12] inline-flex cursor-pointer items-center gap-1.5 rounded-control border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink-soft hover:text-ink"
+            onClick={() => setDirectEntryOpen(false)}
+          >
             <ArrowLeftIcon size={13} />
             Back
           </button>
-          <div className="mark" aria-hidden="true">
+          <div
+            className="mark mb-4 grid size-[54px] place-items-center rounded-window border border-accent-line bg-accent-soft text-accent -rotate-[4deg]"
+            aria-hidden="true"
+          >
             <RennetBrandMark size={26} />
           </div>
-          <p className="eyebrow">RENNET</p>
-          <h1>Start a review.</h1>
-          <p>Capture local git changes into one patchset.</p>
-          <button type="button" disabled={busy} onClick={chooseRepository}>
+          <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            RENNET
+          </p>
+          <h1 className="my-2.5 max-w-[620px] font-display text-display font-medium tracking-tight text-ink">
+            Start a review.
+          </h1>
+          <p className="max-w-[560px] leading-relaxed text-ink-soft">
+            Capture local git changes into one patchset.
+          </p>
+          <button
+            type="button"
+            className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-4 py-3 font-semibold text-accent-ink disabled:cursor-wait disabled:opacity-60"
+            disabled={busy}
+            onClick={chooseRepository}
+          >
             <FolderIcon size={15} />
             {busy ? "Working…" : "Choose a repository"}
           </button>
 
-          <div className="entry-divider" aria-hidden="true">
+          <div
+            className="entry-divider mb-1 mt-6 flex w-[min(440px,82vw)] items-center gap-3 text-xs uppercase tracking-wide text-ink-faint before:h-px before:flex-1 before:bg-line before:content-[''] after:h-px after:flex-1 after:bg-line after:content-['']"
+            aria-hidden="true"
+          >
             <span>or a pull request</span>
           </div>
 
           <form
-            className="pr-door"
+            className="pr-door mt-3.5 flex w-[min(440px,82vw)] flex-wrap gap-2"
             onSubmit={(submitEvent) => {
               submitEvent.preventDefault();
               void openPullRequest();
@@ -2602,7 +2730,7 @@ export function RennetApp({
           >
             <input
               type="text"
-              className="pr-input"
+              className="pr-input min-w-0 flex-1 rounded-control border border-line-strong bg-surface px-3 py-2.5 font-mono text-base text-ink placeholder:text-ink-faint"
               value={prRef}
               onChange={(inputEvent) => setPrRef(inputEvent.target.value)}
               placeholder="owner/repo#42  or  a GitHub PR URL"
@@ -2614,14 +2742,15 @@ export function RennetApp({
             />
             <button
               type="submit"
-              className="secondary"
+              className={`${SECONDARY_BUTTON} whitespace-nowrap`}
               disabled={busy || prRef.trim().length === 0}
             >
               {busy ? "Opening…" : "Open pull request"}
             </button>
-            <label className="pr-retrospective">
+            <label className="pr-retrospective flex basis-full cursor-pointer items-start gap-2 text-left text-xs leading-snug text-ink-faint">
               <input
                 type="checkbox"
+                className="mt-0.5 flex-none"
                 checked={prRetrospective}
                 onChange={(inputEvent) => setPrRetrospective(inputEvent.target.checked)}
                 disabled={busy}
@@ -2629,9 +2758,9 @@ export function RennetApp({
               <span>Retrospective review — read an already-merged PR. Nothing is posted back.</span>
             </label>
           </form>
-          <p className="pr-hint">Pick the local clone next.</p>
+          <p className="pr-hint mt-2.5 text-xs text-ink-faint">Pick the local clone next.</p>
 
-          {error ? <p className="error">{error}</p> : null}
+          {error ? <p className="error text-danger">{error}</p> : null}
         </main>
       </>
     );
@@ -2654,8 +2783,12 @@ export function RennetApp({
   if (surfaceRehydrating) {
     return navigationSurface(
       <>
-        {error ? <div className="error-toast">{error}</div> : null}
-        <div className="loading">Reopening…</div>
+        {error ? (
+          <div className="error-toast fixed left-1/2 top-3.5 z-10 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
+            {error}
+          </div>
+        ) : null}
+        <div className="loading px-8 py-10 font-serif text-base text-ink-soft">Reopening…</div>
       </>,
     );
   }
@@ -2666,8 +2799,14 @@ export function RennetApp({
   if (currentSurface.kind === "project" && projectDetail?.id === currentSurface.projectId) {
     return navigationSurface(
       <>
-        {error ? <div className="error-toast">{error}</div> : null}
-        {busy ? <div className="busy-bar" /> : null}
+        {error ? (
+          <div className="error-toast fixed left-1/2 top-3.5 z-10 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
+            {error}
+          </div>
+        ) : null}
+        {busy ? (
+          <div className="busy-bar fixed left-0 top-0 z-[11] h-0.5 w-[35%] bg-accent-fill" />
+        ) : null}
         <ProjectDetail
           key={projectDetail.id}
           bridge={bridge}
@@ -2688,8 +2827,14 @@ export function RennetApp({
   if (currentSurface.kind === "projects" || !review) {
     return navigationSurface(
       <>
-        {error ? <div className="error-toast">{error}</div> : null}
-        {busy ? <div className="busy-bar" /> : null}
+        {error ? (
+          <div className="error-toast fixed left-1/2 top-3.5 z-10 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
+            {error}
+          </div>
+        ) : null}
+        {busy ? (
+          <div className="busy-bar fixed left-0 top-0 z-[11] h-0.5 w-[35%] bg-accent-fill" />
+        ) : null}
         <FrontDoor
           bridge={bridge}
           onOpenProject={(project) => {
@@ -2708,14 +2853,23 @@ export function RennetApp({
 
   return navigationSurface(
     <>
-      {error ? <div className="error-toast">{error}</div> : null}
-      {busy ? <div className="busy-bar" /> : null}
+      {error ? (
+        <div className="error-toast fixed left-1/2 top-3.5 z-10 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
+          {error}
+        </div>
+      ) : null}
+      {busy ? (
+        <div className="busy-bar fixed left-0 top-0 z-[11] h-0.5 w-[35%] bg-accent-fill" />
+      ) : null}
       {/* The worktree-gone status (#324): a reopened review whose original repository
           root no longer exists shows the persisted review as captured, plainly stated.
           Informational — it blocks nothing (Rule Zero); the files, dispositions, and
           delta account below all render from persisted state. */}
       {!repositoryPresent ? (
-        <div className="worktree-gone-status" role="status">
+        <div
+          className="worktree-gone-status border-b border-line bg-surface px-6 py-3 text-sm text-ink-soft"
+          role="status"
+        >
           The original worktree is gone — showing the review as captured.
         </div>
       ) : null}
@@ -2752,12 +2906,16 @@ export function RennetApp({
           a real manifest came back; absent ⇒ nothing renders (honest not-available,
           never a fabricated stand-in). Informational and gate-free (Rule Zero). */}
       {shownContextManifest ? <ContextManifestPanel manifest={shownContextManifest} /> : null}
-      <div className="view-toggle" role="tablist" aria-label="Workspace view">
+      <div
+        className="view-toggle fixed right-4 top-3 z-[21] inline-flex items-center gap-1.5"
+        role="tablist"
+        aria-label="Workspace view"
+      >
         <button
           type="button"
           role="tab"
           aria-selected={view === "review"}
-          className={view === "review" ? "is-active" : ""}
+          className={`inline-flex cursor-pointer items-center gap-1.5 rounded-control border px-3 py-1.5 text-xs font-semibold ${view === "review" ? "is-active border-accent-line bg-accent-soft text-accent" : "border-line bg-surface text-ink-soft hover:text-ink"}`}
           onClick={() => setView("review")}
         >
           <FileDiffIcon size={13} />
@@ -2767,7 +2925,7 @@ export function RennetApp({
           type="button"
           role="tab"
           aria-selected={view === "canvases"}
-          className={view === "canvases" ? "is-active" : ""}
+          className={`inline-flex cursor-pointer items-center gap-1.5 rounded-control border px-3 py-1.5 text-xs font-semibold ${view === "canvases" ? "is-active border-accent-line bg-accent-soft text-accent" : "border-line bg-surface text-ink-soft hover:text-ink"}`}
           onClick={() => setView("canvases")}
         >
           <LayersIcon size={13} />
@@ -2780,13 +2938,24 @@ export function RennetApp({
             {/* The loud fallback (real-AI-default): when no model ran, say so at the
                 top of the review — never let the mechanical outline pass as AI. */}
             {engine && !engine.aiReview ? (
-              <div className="engine-fallback" role="alert">
-                <TriangleIcon size={18} className="engine-fallback-icon" />
-                <div className="engine-fallback-copy">
-                  <strong>{mechanicalFallbackTitle(engine)}</strong>
-                  <span>{mechanicalFallbackDetail(engine)}</span>
+              <div
+                className="engine-fallback flex items-center gap-4 border-b border-accent-line bg-accent-surface py-3 pl-5 pr-[300px]"
+                role="alert"
+              >
+                <TriangleIcon size={18} className="engine-fallback-icon flex-none text-accent" />
+                <div className="engine-fallback-copy flex min-w-0 flex-1 flex-col gap-0.5">
+                  <strong className="text-base font-semibold text-ink">
+                    {mechanicalFallbackTitle(engine)}
+                  </strong>
+                  <span className="text-sm leading-normal text-ink opacity-85">
+                    {mechanicalFallbackDetail(engine)}
+                  </span>
                 </div>
-                <button type="button" className="secondary" onClick={retryLiveLoad}>
+                <button
+                  type="button"
+                  className={`${SECONDARY_BUTTON} flex-none`}
+                  onClick={retryLiveLoad}
+                >
                   Retry the AI review
                 </button>
               </div>
@@ -2796,8 +2965,8 @@ export function RennetApp({
                 changes only the margin — the diff column is a fixed point that never
                 reflows. This is the shipped structure the `.review-heart-split` /
                 `.diff-column` contract needs; without it the margin stacked below. */}
-            <div className="review-heart-split">
-              <div className="diff-column">
+            <div className="review-heart-split flex items-start gap-4">
+              <div className="diff-column min-w-0 flex-1">
                 <CanvasWorkspace
                   store={viewStore}
                   canvases={canvases}
@@ -2918,28 +3087,49 @@ export function RennetApp({
           // tree to run, so it is honestly unavailable — never a doomed load, never a
           // demo. The captured Files, dispositions, and delta account remain fully
           // readable (the review surface above renders them from persisted state).
-          <section className="canvas-primer" role="status">
-            <p className="eyebrow">AI REVIEW</p>
-            <h2>The live review needs the original repository.</h2>
-            <p>
+          <section
+            className="canvas-primer mx-auto my-[72px] flex max-w-[540px] flex-col items-start gap-2.5 p-7"
+            role="status"
+          >
+            <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+              AI REVIEW
+            </p>
+            <h2 className="m-0 font-display text-xl font-medium text-ink">
+              The live review needs the original repository.
+            </h2>
+            <p className="m-0 text-base leading-normal text-ink-soft">
               The worktree this review was captured from is gone, so the AI review can't run. The
               captured diff and your dispositions are all still here.
             </p>
           </section>
         ) : loadFailed ? (
-          <section className="canvas-primer" role="alert">
-            <p className="eyebrow">AI REVIEW</p>
-            <h2>The review failed.</h2>
-            <p>The engine returned nothing.</p>
-            <button type="button" onClick={retryLiveLoad}>
+          <section
+            className="canvas-primer mx-auto my-[72px] flex max-w-[540px] flex-col items-start gap-2.5 p-7"
+            role="alert"
+          >
+            <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+              AI REVIEW
+            </p>
+            <h2 className="m-0 font-display text-xl font-medium text-ink">The review failed.</h2>
+            <p className="m-0 text-base leading-normal text-ink-soft">
+              The engine returned nothing.
+            </p>
+            <button
+              type="button"
+              className="mt-1.5 inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-4 py-2.5 font-semibold text-accent-ink"
+              onClick={retryLiveLoad}
+            >
               Try again
             </button>
           </section>
         ) : (
           <>
-            <div className="ai-loading-bar" role="status">
-              <span className="ai-loading-bar-fill" />
-              <span className="ai-loading-bar-label">AI review loading…</span>
+            <div
+              className="ai-loading-bar relative flex h-7 items-center gap-2.5 overflow-hidden border-b border-line bg-accent-soft px-5 text-xs font-semibold text-accent"
+              role="status"
+            >
+              <span className="ai-loading-bar-fill absolute left-0 top-0 h-full w-[35%] bg-accent-fill opacity-[0.08]" />
+              <span className="ai-loading-bar-label relative">AI review loading…</span>
             </div>
             <ReviewWorkspace
               review={review}

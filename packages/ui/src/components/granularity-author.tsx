@@ -71,15 +71,20 @@ export function GranularityAuthor({
   onAuthor(act: AuthoringAct): void;
 }) {
   return (
-    <fieldset className="granularity-author" aria-label="Author at any granularity">
+    <fieldset
+      className="granularity-author m-0 flex flex-col gap-1.5 rounded-surface border border-line bg-surface p-4"
+      aria-label="Author at any granularity"
+    >
       {LADDER.map((rung) => {
         const available = rung.build(context, "approve") !== null;
         return (
           <div
-            className={`granularity-rung granularity-${rung.granularity}`}
+            className={`granularity-rung granularity-${rung.granularity} flex items-center justify-between gap-3`}
             key={rung.granularity}
           >
-            <span className="granularity-label">{rung.label}</span>
+            <span className="granularity-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+              {rung.label}
+            </span>
             {available ? (
               <DispositionBar
                 scopeLabel={rung.label}
@@ -91,7 +96,7 @@ export function GranularityAuthor({
               />
             ) : (
               <span
-                className="granularity-unavailable"
+                className="granularity-unavailable text-ink-faint"
                 title={`Select a ${rung.label.toLowerCase()} first`}
               >
                 —

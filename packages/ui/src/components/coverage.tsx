@@ -7,6 +7,14 @@ import type { CoverageMosaic } from "../canvas/read-state";
 
 const STATE_LABEL = { read: "Read", skimmed: "Skimmed", unread: "Unread" } as const;
 
+// Cell fill by read-state: read is evidence (green), skimmed a light gold, unread a
+// neutral step. The title + aria-label carry the state — colour is never the only cue.
+const CELL_BG = {
+  read: "bg-green-soft",
+  skimmed: "bg-accent-soft",
+  unread: "bg-raised",
+} as const;
+
 export function CoverageMosaicView({
   mosaic,
   onGotoNextUnread,
@@ -15,25 +23,25 @@ export function CoverageMosaicView({
   onGotoNextUnread?: (fromIndex: number) => void;
 }) {
   return (
-    <section className="coverage-mosaic" aria-label="Review coverage">
-      <header className="coverage-figures">
-        <span className="coverage-read">{mosaic.read} read</span>
-        <span className="coverage-skimmed">{mosaic.skimmed} skimmed</span>
-        <span className="coverage-unread">{mosaic.unread} unread</span>
-        <span className="coverage-total">of {mosaic.total}</span>
+    <section className="coverage-mosaic flex flex-col gap-2" aria-label="Review coverage">
+      <header className="coverage-figures flex flex-wrap items-center gap-3 text-sm text-ink-soft">
+        <span className="coverage-read text-green">{mosaic.read} read</span>
+        <span className="coverage-skimmed text-ink-soft">{mosaic.skimmed} skimmed</span>
+        <span className="coverage-unread text-ink-faint">{mosaic.unread} unread</span>
+        <span className="coverage-total text-ink-faint">of {mosaic.total}</span>
         <button
           type="button"
-          className="coverage-next-unread"
+          className="coverage-next-unread ml-auto cursor-pointer rounded-control border border-line bg-transparent px-3 py-1.5 text-sm text-ink hover:bg-raised disabled:cursor-default disabled:opacity-50"
           disabled={mosaic.unread === 0}
           onClick={() => onGotoNextUnread?.(-1)}
         >
           Next unread
         </button>
       </header>
-      <ol className="coverage-cells">
+      <ol className="coverage-cells m-0 flex list-none flex-wrap gap-1 p-0">
         {mosaic.cells.map((cell, index) => (
           <li
-            className={`coverage-cell coverage-cell-${cell.state}`}
+            className={`coverage-cell coverage-cell-${cell.state} h-4 w-4 rounded-micro border border-line ${CELL_BG[cell.state]}`}
             data-state={cell.state}
             data-path={cell.path}
             title={`${cell.path} — ${STATE_LABEL[cell.state]}`}
@@ -41,7 +49,7 @@ export function CoverageMosaicView({
           >
             <button
               type="button"
-              className="coverage-cell-goto"
+              className="coverage-cell-goto h-full w-full cursor-pointer border-0 bg-transparent"
               aria-label={`${cell.path} (${STATE_LABEL[cell.state]})`}
               onClick={() => onGotoNextUnread?.(index)}
             />

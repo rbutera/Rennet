@@ -5,7 +5,7 @@
 
 import type { ReactNode } from "react";
 import { Platform, Pressable, StyleSheet, Switch, Text, View, type ViewStyle } from "react-native";
-import { radii, space, type } from "../theme/tokens";
+import { fontFamily, radii, space, type } from "../theme/tokens";
 import { useTheme } from "../theme/use-theme";
 
 /** A screen container with the canvas background and comfortable padding. */
@@ -20,7 +20,7 @@ export function SectionLabel({ children }: { children: ReactNode }): ReactNode {
   return <Text style={[styles.sectionLabel, { color: t.faint }]}>{children}</Text>;
 }
 
-/** A card surface — the review-row / connection-row container. `backlit` gives the blue focus glow. */
+/** A card surface — the review-row / connection-row container. `backlit` gives the gold focus glow. */
 export function Card({
   children,
   onPress,
@@ -32,8 +32,8 @@ export function Card({
 }): ReactNode {
   const t = useTheme();
   const style: ViewStyle = {
-    backgroundColor: backlit ? t.blueBg : t.card,
-    borderColor: backlit ? t.blueLine : t.line2,
+    backgroundColor: backlit ? t.accentSoft : t.card,
+    borderColor: backlit ? t.accentLine : t.line2,
   };
   if (onPress) {
     return (
@@ -45,16 +45,15 @@ export function Card({
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-export type ChipTone = "neutral" | "blue" | "amber" | "green";
+export type ChipTone = "neutral" | "accent" | "green";
 
 /** A status chip (running / needs-you / fresh / stale …), toned per the material law. */
 export function Chip({ label, tone = "neutral" }: { label: string; tone?: ChipTone }): ReactNode {
   const t = useTheme();
   const map = {
     neutral: { fg: t.muted, bg: t.card, bd: t.line2 },
-    blue: { fg: t.blueInk, bg: t.blueBg, bd: t.blueLine },
-    amber: { fg: t.amber, bg: t.amberBg, bd: t.amberLine },
-    green: { fg: t.green, bg: t.greenBg, bd: t.greenLine },
+    accent: { fg: t.accent, bg: t.accentSoft, bd: t.accentLine },
+    green: { fg: t.green, bg: t.greenSoft, bd: t.greenLine },
   }[tone];
   return (
     <Text style={[styles.chip, { color: map.fg, backgroundColor: map.bg, borderColor: map.bd }]}>
@@ -74,8 +73,7 @@ export function StatTile({
   tone?: ChipTone;
 }): ReactNode {
   const t = useTheme();
-  const color =
-    tone === "green" ? t.green : tone === "amber" ? t.amber : tone === "blue" ? t.blueInk : t.ink;
+  const color = tone === "green" ? t.green : tone === "accent" ? t.accent : t.ink;
   return (
     <View style={[styles.tile, { backgroundColor: t.card, borderColor: t.line2 }]}>
       <Text style={[styles.tileValue, { color }]}>{value}</Text>
@@ -139,7 +137,11 @@ export function AnswerChip({
       ]}
     >
       <Text
-        style={{ color: selected ? t.canvas : t.text, fontSize: type.control, fontWeight: "500" }}
+        style={{
+          color: selected ? t.canvas : t.text,
+          fontSize: type.control,
+          fontFamily: fontFamily.sansMedium,
+        }}
       >
         {label}
       </Text>
@@ -166,22 +168,26 @@ export function StopButton({
       accessibilityState={{ disabled: Boolean(disabled) }}
       style={[
         styles.stopBtn,
-        { backgroundColor: t.amberBg, borderColor: t.amberLine },
+        { backgroundColor: t.dangerSoft, borderColor: t.danger },
         disabled ? { opacity: 0.4 } : null,
       ]}
     >
-      <Text style={{ color: t.amber, fontSize: type.control, fontWeight: "600" }}>{label}</Text>
+      <Text
+        style={{ color: t.danger, fontSize: type.control, fontFamily: fontFamily.sansSemibold }}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
-/** A monospaced diff hunk block. Additions read green, deletions amber, per the material law. */
+/** A monospaced diff hunk block. Additions read green, deletions danger, per the material law. */
 export function HunkBlock({ diff }: { diff: string }): ReactNode {
   const t = useTheme();
   return (
     <View style={[styles.hunk, { backgroundColor: t.card, borderColor: t.line2 }]}>
       {diff.split("\n").map((line, i) => {
-        const color = line.startsWith("+") ? t.green : line.startsWith("-") ? t.amber : t.text;
+        const color = line.startsWith("+") ? t.green : line.startsWith("-") ? t.danger : t.text;
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are a static, never-reordered list; the index is the stable identity.
           <Text key={`${i}-${line}`} style={[styles.hunkLine, { color }]}>
@@ -224,6 +230,7 @@ export function SwitchRow({
 export const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: space.lg, paddingTop: space.lg },
   sectionLabel: {
+    fontFamily: fontFamily.sansMedium,
     fontSize: type.pill,
     letterSpacing: 1.2,
     textTransform: "uppercase",
@@ -237,6 +244,7 @@ export const styles = StyleSheet.create({
     marginBottom: space.sm,
   },
   chip: {
+    fontFamily: fontFamily.sansMedium,
     fontSize: type.chip,
     borderWidth: 1,
     borderRadius: radii.sm,
@@ -253,8 +261,8 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     marginHorizontal: 3,
   },
-  tileValue: { fontSize: type.title, fontWeight: type.weightSemibold },
-  tileLabel: { fontSize: type.chip, marginTop: 2 },
+  tileValue: { fontFamily: fontFamily.display, fontSize: type.title },
+  tileLabel: { fontFamily: fontFamily.sans, fontSize: type.chip, marginTop: 2 },
   btn: {
     borderRadius: radii.md,
     paddingVertical: 14,
@@ -263,7 +271,7 @@ export const styles = StyleSheet.create({
     marginTop: space.sm,
   },
   btnOutline: { borderWidth: 1, backgroundColor: "transparent" },
-  btnLabel: { fontSize: type.body, fontWeight: type.weightMedium },
+  btnLabel: { fontFamily: fontFamily.sansMedium, fontSize: type.body },
   answerChip: {
     borderWidth: 1,
     borderRadius: radii.sm,
@@ -287,6 +295,6 @@ export const styles = StyleSheet.create({
   },
   switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   switchText: { flex: 1, paddingRight: space.md },
-  rowTitle: { fontSize: type.body, fontWeight: type.weightSemibold },
-  rowSub: { fontSize: type.control, marginTop: 2 },
+  rowTitle: { fontFamily: fontFamily.sansSemibold, fontSize: type.body },
+  rowSub: { fontFamily: fontFamily.sans, fontSize: type.control, marginTop: 2 },
 });

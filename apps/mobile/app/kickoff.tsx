@@ -200,7 +200,7 @@ export default function Kickoff(): ReactNode {
                     {project.primaryBranch}
                   </Text>
                 </View>
-                <Text style={{ color: t.blueInk, fontSize: type.control }}>review ›</Text>
+                <Text style={{ color: t.accent, fontSize: type.control }}>review ›</Text>
               </View>
             </Card>
           ))
@@ -212,7 +212,7 @@ export default function Kickoff(): ReactNode {
           </Text>
         ) : null}
         {state.status === "failed" ? (
-          <Text style={{ color: t.amber, fontSize: type.control, marginTop: space.md }}>
+          <Text style={{ color: t.danger, fontSize: type.control, marginTop: space.md }}>
             {state.reason}
           </Text>
         ) : null}

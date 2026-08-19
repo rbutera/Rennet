@@ -136,16 +136,22 @@ export function useGitHubAccount(bridge: RennetBridge) {
 /** The in-flight device flow: the one-time code and where to enter it. */
 function DeviceFlowPrompt({ flow, onCancel }: { flow: DeviceFlow; onCancel(): void }) {
   return (
-    <div className="github-flow">
-      <span className="github-code">{flow.userCode}</span>
-      <span className="github-flow-hint">
+    <div className="github-flow flex items-center gap-3 min-w-0 flex-1">
+      <span className="github-code font-mono text-lg font-bold tracking-[0.12em] px-2.5 py-1.5 rounded-control border border-line-strong bg-raised text-ink whitespace-nowrap">
+        {flow.userCode}
+      </span>
+      <span className="github-flow-hint text-sm text-ink-faint min-w-0 [&_a]:text-inherit [&_a]:underline">
         Enter this code at{" "}
         <a href={flow.verificationUri} target="_blank" rel="noreferrer">
           {flow.verificationUri.replace(/^https:\/\//, "")}
         </a>
         {" · waiting for GitHub…"}
       </span>
-      <button type="button" className="github-btn" onClick={onCancel}>
+      <button
+        type="button"
+        className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
+        onClick={onCancel}
+      >
         Cancel
       </button>
     </div>
@@ -173,23 +179,23 @@ export function GitHubConnectCard({ bridge }: { bridge: RennetBridge }) {
   }
 
   return (
-    <aside className="github-card">
-      <span className="github-card-icon" aria-hidden="true">
+    <aside className="github-card flex items-center gap-3 self-center w-[min(560px,100%)] mt-3.5 px-4 py-3 rounded-surface border border-line bg-surface text-base">
+      <span className="github-card-icon inline-flex text-ink" aria-hidden="true">
         <GitHubIcon size={18} />
       </span>
       {account.flow ? (
         <DeviceFlowPrompt flow={account.flow} onCancel={() => void account.cancel()} />
       ) : (
         <>
-          <span className="github-card-main">
-            <span className="github-card-title">Connect GitHub</span>
-            <span className="github-card-sub">
+          <span className="github-card-main flex flex-col gap-0.5 min-w-0">
+            <span className="github-card-title font-semibold text-ink">Connect GitHub</span>
+            <span className="github-card-sub text-sm text-ink-faint">
               One-time device sign-in. Only needed when a review touches GitHub.
             </span>
           </span>
           <button
             type="button"
-            className="github-skip"
+            className="github-skip ml-auto px-1.5 py-1 text-sm text-ink-faint hover:text-ink"
             onClick={() => {
               writeDismissed();
               setDismissed(true);
@@ -197,12 +203,18 @@ export function GitHubConnectCard({ bridge }: { bridge: RennetBridge }) {
           >
             Skip for now
           </button>
-          <button type="button" className="github-btn" onClick={() => void account.connect()}>
+          <button
+            type="button"
+            className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
+            onClick={() => void account.connect()}
+          >
             Connect
           </button>
         </>
       )}
-      {account.error ? <span className="github-error">{account.error}</span> : null}
+      {account.error ? (
+        <span className="github-error text-sm text-ink mt-2">{account.error}</span>
+      ) : null}
     </aside>
   );
 }
@@ -224,23 +236,25 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
   const status = account.status;
   return (
     <>
-      <div className="settings-row">
-        <div className="settings-row-label">
-          <span className="settings-k">GitHub</span>
-          <span className="settings-d">device sign-in · scopes repo, workflow</span>
+      <div className="settings-row flex items-center gap-3.5 py-3.5 border-b border-line">
+        <div className="settings-row-label flex flex-col gap-0.5">
+          <span className="settings-k text-base font-semibold text-ink">GitHub</span>
+          <span className="settings-d text-base text-ink-faint">
+            device sign-in · scopes repo, workflow
+          </span>
         </div>
-        <div className="settings-row-value github-row-value">
+        <div className="settings-row-value github-row-value ml-auto flex items-center gap-2.5">
           {account.flow ? (
             <DeviceFlowPrompt flow={account.flow} onCancel={() => void account.cancel()} />
           ) : status?.state === "connected" ? (
             <>
-              <span className="github-connected">
+              <span className="github-connected inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-ink whitespace-nowrap">
                 <GitHubIcon size={14} />
                 connected{status.login ? ` · @${status.login}` : ""}
               </span>
               <button
                 type="button"
-                className="github-btn"
+                className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
                 onClick={() => void account.disconnect()}
               >
                 Disconnect
@@ -249,25 +263,33 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
           ) : (
             <>
               {status && status.state !== "not-connected" ? (
-                <span className="github-problem">{status.copy}</span>
+                <span className="github-problem text-sm text-ink max-w-[340px]">{status.copy}</span>
               ) : (
-                <span className="github-problem faint">not connected</span>
+                <span className="github-problem faint text-sm text-ink-faint max-w-[340px]">
+                  not connected
+                </span>
               )}
-              <button type="button" className="github-btn" onClick={() => void account.connect()}>
+              <button
+                type="button"
+                className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
+                onClick={() => void account.connect()}
+              >
                 Connect
               </button>
             </>
           )}
         </div>
       </div>
-      <div className="settings-row">
-        <div className="settings-row-label">
-          <span className="settings-k">Access token</span>
-          <span className="settings-d">the side door: paste a token instead of signing in</span>
+      <div className="settings-row flex items-center gap-3.5 py-3.5 border-b border-line">
+        <div className="settings-row-label flex flex-col gap-0.5">
+          <span className="settings-k text-base font-semibold text-ink">Access token</span>
+          <span className="settings-d text-base text-ink-faint">
+            the side door: paste a token instead of signing in
+          </span>
         </div>
-        <div className="settings-row-value github-row-value">
+        <div className="settings-row-value github-row-value ml-auto flex items-center gap-2.5">
           <input
-            className="github-token-input"
+            className="github-token-input w-[220px] px-2.5 py-1.5 rounded-control border border-line-strong bg-raised text-ink font-mono text-sm placeholder:text-ink-faint"
             type="password"
             placeholder="Paste token…"
             value={token}
@@ -279,7 +301,7 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
           />
           <button
             type="button"
-            className="github-btn"
+            className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
             disabled={token.trim().length === 0 || saving}
             onClick={() => void paste()}
           >
@@ -287,7 +309,7 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
           </button>
         </div>
       </div>
-      {account.error ? <p className="github-error">{account.error}</p> : null}
+      {account.error ? <p className="github-error text-sm text-ink mt-2">{account.error}</p> : null}
     </>
   );
 }

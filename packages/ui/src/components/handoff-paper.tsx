@@ -40,19 +40,27 @@ function RunOutcome({ state }: { state: HandoffRunState }) {
       return null;
     case "pending":
       return (
-        <p className="handoff-run-pending" role="status" data-run-status="pending">
+        <p
+          className="handoff-run-pending m-0 text-sm text-sheet-soft"
+          role="status"
+          data-run-status="pending"
+        >
           Running the write session…
         </p>
       );
     case "ran": {
       const { result } = state;
       return (
-        <div className="handoff-run-outcome" role="status" data-run-status="ran">
-          <p className="handoff-run-success">
+        <div
+          className="handoff-run-outcome flex flex-col gap-1"
+          role="status"
+          data-run-status="ran"
+        >
+          <p className="handoff-run-success m-0 text-base font-semibold text-sheet-ink">
             Handoff ran — {result.filesTouched.length} file
             {result.filesTouched.length === 1 ? "" : "s"} changed.
           </p>
-          <p className="handoff-run-carry">
+          <p className="handoff-run-carry m-0 text-sm text-sheet-soft">
             {result.carriedForward} carried forward · {result.orphaned} reopened for re-review.
           </p>
         </div>
@@ -60,26 +68,40 @@ function RunOutcome({ state }: { state: HandoffRunState }) {
     }
     case "refused":
       return (
-        <p className="handoff-run-refused" role="alert" data-run-status="refused">
+        <p
+          className="handoff-run-refused m-0 text-base font-semibold leading-snug text-sheet-ink"
+          role="alert"
+          data-run-status="refused"
+        >
           Refused: {state.reason}
         </p>
       );
     case "unavailable":
       return (
-        <p className="handoff-run-unavailable" role="alert" data-run-status="unavailable">
+        <p
+          className="handoff-run-unavailable m-0 text-base font-semibold leading-snug text-sheet-ink"
+          role="alert"
+          data-run-status="unavailable"
+        >
           No coding harness is available: {state.reason}
         </p>
       );
     case "failed":
       return (
-        <div className="handoff-run-outcome" role="alert" data-run-status="failed">
-          <p className="handoff-run-failed">The write session failed: {state.reason}</p>
+        <div
+          className="handoff-run-outcome flex flex-col gap-1"
+          role="alert"
+          data-run-status="failed"
+        >
+          <p className="handoff-run-failed m-0 text-base font-semibold leading-snug text-sheet-ink">
+            The write session failed: {state.reason}
+          </p>
           {state.filesTouched.length === 0 ? null : (
             // A failed agent can still have MUTATED files before it failed. The
             // protocol carries `filesTouched` on failure precisely so the human is
             // never told "it failed" while a partial write sits unmentioned — surface
             // exactly what changed on disk.
-            <p className="handoff-run-touched">
+            <p className="handoff-run-touched m-0 text-sm leading-snug text-sheet-soft">
               {state.filesTouched.length} file
               {state.filesTouched.length === 1 ? "" : "s"} changed before it failed:{" "}
               {state.filesTouched.join(", ")}
@@ -114,52 +136,80 @@ export function HandoffPaper({
   const runnable = runState.status === "idle";
   return (
     <section
-      className="handoff-paper"
+      className="handoff-paper flex flex-col w-[min(760px,100%)] max-h-[calc(100vh-64px)] gap-5 mx-auto px-8 py-7 rounded-window border border-sheet-line bg-sheet text-sheet-ink"
       aria-label="Handoff preview"
       data-composed={preview.composed}
     >
-      <header className="handoff-paper-header">
+      <header className="handoff-paper-header flex flex-wrap items-baseline gap-3 pb-3.5 border-b border-sheet-line">
         {onBack ? (
-          <button type="button" className="handoff-paper-back" onClick={() => onBack()}>
+          <button
+            type="button"
+            className="handoff-paper-back flex-none rounded-control border border-sheet-line bg-transparent px-2.5 py-1 text-xs font-semibold text-sheet-soft hover:text-sheet-ink"
+            onClick={() => onBack()}
+          >
             Back
           </button>
         ) : null}
-        <span className="handoff-paper-title">Handoff</span>
-        <span className="handoff-paper-authoring">
+        <span className="handoff-paper-title font-display text-2xl font-medium tracking-tight">
+          Handoff
+        </span>
+        <span className="handoff-paper-authoring text-2xs font-bold uppercase tracking-wide text-sheet-soft">
           {preview.composed ? "Composed" : "Un-composed (mechanical order)"}
         </span>
-        <span className="handoff-paper-count">
+        <span className="handoff-paper-count ml-auto text-sm text-sheet-soft">
           {preview.taskCount} task{preview.taskCount === 1 ? "" : "s"} · {preview.askCount} note
           {preview.askCount === 1 ? "" : "s"}
         </span>
       </header>
       {preview.taskCount === 0 ? (
-        <p className="handoff-paper-empty">Nothing to hand off.</p>
+        <p className="handoff-paper-empty m-0 italic text-sheet-soft">Nothing to hand off.</p>
       ) : (
-        <ol className="handoff-paper-tasks">
+        <ol className="handoff-paper-tasks min-h-0 list-none m-0 p-0 flex flex-col gap-5 overflow-y-auto">
           {preview.tasks.map((task) => (
-            <li className="handoff-paper-task" data-order={task.order} key={task.order}>
-              <div className="handoff-paper-task-head">
-                <span className="handoff-paper-task-heading">
+            <li
+              className="handoff-paper-task flex flex-col gap-2"
+              data-order={task.order}
+              key={task.order}
+            >
+              <div className="handoff-paper-task-head flex flex-wrap items-baseline gap-2.5">
+                <span
+                  className={`handoff-paper-task-heading text-lg ${
+                    preview.composed
+                      ? "font-semibold text-sheet-ink"
+                      : "font-medium text-sheet-soft"
+                  }`}
+                >
                   {task.order}. {task.heading}
                 </span>
                 {task.title === "" ? null : (
-                  <span className="handoff-paper-task-title" data-preview-only="true">
-                    <span className="handoff-paper-preview-badge">preview only</span> {task.title}
+                  <span
+                    className="handoff-paper-task-title inline-flex items-baseline gap-1.5 text-base italic text-sheet-soft"
+                    data-preview-only="true"
+                  >
+                    <span className="handoff-paper-preview-badge not-italic text-2xs font-bold uppercase tracking-wide text-sheet-soft border border-sheet-line rounded-full px-2 py-px">
+                      preview only
+                    </span>{" "}
+                    {task.title}
                   </span>
                 )}
               </div>
-              <ul className="handoff-paper-asks">
+              <ul
+                className={`handoff-paper-asks list-none m-0 py-0 pr-0 pl-4 flex flex-col gap-2.5 border-l ${
+                  preview.composed ? "border-sheet-line" : "border-transparent"
+                }`}
+              >
                 {task.asks.map((ask) => (
                   <li
-                    className="handoff-paper-ask"
+                    className="handoff-paper-ask flex flex-col gap-1"
                     data-path={ask.path}
                     key={`${ask.path}:${ask.anchor}`}
                   >
-                    <span className="handoff-paper-ask-anchor">
+                    <span className="handoff-paper-ask-anchor font-mono text-2xs font-semibold text-sheet-soft">
                       {ask.typeLabel} — {ask.path} ({ask.anchor})
                     </span>
-                    <p className="handoff-paper-ask-body">{ask.body}</p>
+                    <p className="handoff-paper-ask-body m-0 text-base font-serif leading-relaxed text-sheet-ink">
+                      {ask.body}
+                    </p>
                   </li>
                 ))}
               </ul>
@@ -168,10 +218,10 @@ export function HandoffPaper({
         </ol>
       )}
       {onRun ? (
-        <footer className="handoff-paper-foot">
+        <footer className="handoff-paper-foot flex flex-col gap-2.5 pt-4 border-t border-sheet-line">
           <button
             type="button"
-            className="handoff-paper-run"
+            className="handoff-paper-run self-start rounded-control bg-accent-fill text-accent-ink px-4 py-2 text-sm font-semibold disabled:opacity-50 disabled:cursor-default"
             disabled={!runnable || preview.taskCount === 0}
             onClick={() => onRun()}
           >

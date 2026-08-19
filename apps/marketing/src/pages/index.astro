@@ -1,6 +1,7 @@
 ---
-import "@fontsource-variable/instrument-sans/wdth.css";
-import "@fontsource-variable/source-sans-3/wght.css";
+import "@fontsource-variable/fraunces/wght.css";
+import "@fontsource-variable/dm-sans/wght.css";
+import "@fontsource-variable/source-serif-4/wght.css";
 import logoWhite from "../../../../brand/exports/logo/svg/lockup-horizontal-white.svg?url";
 import markWhite from "../../../../brand/exports/logo/svg/mark-small-white.svg?url";
 import CategoryStatement from "../components/CategoryStatement.astro";
@@ -39,7 +40,7 @@ const lenses = [
       name="description"
       content="Rennet is a free, local-first macOS review harness for understanding, questioning, and refining large AI-generated code changes."
     />
-    <meta id="theme-color" name="theme-color" content="#f4f2ed" />
+    <meta id="theme-color" name="theme-color" content="#fbfaf7" />
     <meta property="og:title" content="Rennet — Make code digestible" />
     <meta
       property="og:description"
@@ -61,7 +62,7 @@ const lenses = [
         document.documentElement.dataset.scheme = scheme;
         document.querySelector("#theme-color")?.setAttribute(
           "content",
-          scheme === "dark" ? "#0e1116" : "#f4f2ed",
+          scheme === "dark" ? "#0e0d0c" : "#fbfaf7",
         );
       })();
     </script>
@@ -355,7 +356,7 @@ const lenses = [
         toggle?.setAttribute("aria-pressed", String(dark));
         document.querySelector("#theme-color")?.setAttribute(
           "content",
-          dark ? "#0e1116" : "#f4f2ed",
+          dark ? "#0e0d0c" : "#fbfaf7",
         );
       };
       updateToggle();

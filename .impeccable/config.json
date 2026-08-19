@@ -4,6 +4,41 @@
     "ignoreFiles": [],
     "ignoreValues": [
       {
+        "rule": "design-system-color",
+        "value": "#8a857a",
+        "files": ["apps/marketing/src/styles/global.css"],
+        "createdAt": "2026-08-19T00:00:00.000Z",
+        "reason": "Illustrative always-dark diff-proof panel: neutral diff-line ink. Hardcoded by design so the code window does not flip with the page scheme."
+      },
+      {
+        "rule": "design-system-color",
+        "value": "#c0604f",
+        "files": ["apps/marketing/src/styles/global.css"],
+        "createdAt": "2026-08-19T00:00:00.000Z",
+        "reason": "Illustrative always-dark diff-proof panel: removed-line marker on the dark diff mass."
+      },
+      {
+        "rule": "design-system-color",
+        "value": "#241c0e",
+        "files": ["apps/marketing/src/styles/global.css"],
+        "createdAt": "2026-08-19T00:00:00.000Z",
+        "reason": "Illustrative always-dark code-question panel: warm gold-tinted removed-hunk background."
+      },
+      {
+        "rule": "design-system-color",
+        "value": "#182219",
+        "files": ["apps/marketing/src/styles/global.css"],
+        "createdAt": "2026-08-19T00:00:00.000Z",
+        "reason": "Illustrative always-dark code-question panel: warm green-tinted added-hunk background."
+      },
+      {
+        "rule": "design-system-color",
+        "value": "#6b6558",
+        "files": ["apps/marketing/src/styles/global.css"],
+        "createdAt": "2026-08-19T00:00:00.000Z",
+        "reason": "Illustrative always-light product-frame window chrome label (matches DESIGN ink-faint)."
+      },
+      {
         "rule": "side-tab",
         "value": "*",
         "files": ["packages/ui/src/canvas.css"],
@@ -349,6 +384,13 @@
         "rule": "design-system-color",
         "value": "rgba(0, 0, 0, 0.5)",
         "createdAt": "2026-08-18T19:39:08.266Z"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": ["packages/ui/src/index.css"],
+        "createdAt": "2026-08-19T19:15:56.712Z",
+        "reason": "cv-focus-pulse keyframe: transient 700ms deixis flash that animates to transparent, not a resting side-tab border (design law: conversation pointing at code pulses the row)"
       }
     ]
   }

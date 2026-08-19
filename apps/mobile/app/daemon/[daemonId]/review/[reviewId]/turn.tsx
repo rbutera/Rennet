@@ -84,7 +84,7 @@ export default function Turn(): ReactNode {
   return (
     <Screen>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={{ color: t.blueInk, fontSize: type.control }}>
+        <Text style={{ color: t.accent, fontSize: type.control }}>
           {running ? "turn running · reattached" : "reattached"}
         </Text>
         {running ? (
@@ -129,7 +129,7 @@ export default function Turn(): ReactNode {
           }}
           style={{ alignSelf: "center", paddingVertical: space.xs }}
         >
-          <Text style={{ color: t.blueInk, fontSize: type.control }}>↓ return to tail</Text>
+          <Text style={{ color: t.accent, fontSize: type.control }}>↓ return to tail</Text>
         </Pressable>
       ) : null}
 
@@ -152,7 +152,7 @@ function TimelineRow({ entry }: { entry: TimelineEntry }): ReactNode {
     <Card>
       <Text
         style={{
-          color: entry.status === "interrupted" ? t.amber : t.faint,
+          color: entry.status === "interrupted" ? t.danger : t.faint,
           fontSize: type.pill,
           letterSpacing: 0.6,
           textTransform: "uppercase",
@@ -296,7 +296,7 @@ function AskComposer({
         </Pressable>
       </View>
 
-      <Text style={{ color: failed ? t.amber : t.faint, fontSize: type.control, marginTop: 6 }}>
+      <Text style={{ color: failed ? t.danger : t.faint, fontSize: type.control, marginTop: 6 }}>
         {failed ??
           (running ? "send interrupts · hold to send without interrupting" : "hold to send")}
       </Text>

@@ -27,7 +27,7 @@ import {
   useReviewFocus,
   useReviewLoad,
 } from "../../../../../src/runtime/use-connection";
-import { space, type } from "../../../../../src/theme/tokens";
+import { fontFamily, space, type } from "../../../../../src/theme/tokens";
 import { useTheme } from "../../../../../src/theme/use-theme";
 
 type ReviewComment = {
@@ -248,13 +248,18 @@ export default function Publish(): ReactNode {
         <View style={{ alignItems: "center", marginTop: space.xxl }}>
           <Text style={{ fontSize: 44, color: t.green }}>✓</Text>
           <Text
-            style={{ color: t.ink, fontSize: type.title, fontWeight: "600", marginTop: space.md }}
+            style={{
+              color: t.ink,
+              fontSize: type.title,
+              fontFamily: fontFamily.display,
+              marginTop: space.md,
+            }}
           >
             Posted
           </Text>
           <Text
             style={{
-              color: t.blueInk,
+              color: t.accent,
               fontSize: type.body,
               marginTop: space.sm,
               textAlign: "center",
@@ -286,7 +291,7 @@ export default function Publish(): ReactNode {
               <Text style={{ color: t.faint, fontSize: type.control }}>{composed.destination}</Text>
               <Text
                 style={{
-                  color: composed.verdict === "REQUEST_CHANGES" ? t.amber : t.green,
+                  color: composed.verdict === "REQUEST_CHANGES" ? t.accent : t.green,
                   fontSize: type.control,
                   fontWeight: "600",
                   marginTop: 4,
@@ -351,11 +356,11 @@ export default function Publish(): ReactNode {
             />
           </>
         ) : (
-          <Text style={{ color: t.amber }}>{composed.reason}</Text>
+          <Text style={{ color: t.accent }}>{composed.reason}</Text>
         )}
 
         {posting.phase === "failed" ? (
-          <Text style={{ color: t.amber, fontSize: type.control, marginTop: space.sm }}>
+          <Text style={{ color: t.danger, fontSize: type.control, marginTop: space.sm }}>
             {posting.reason}
           </Text>
         ) : null}

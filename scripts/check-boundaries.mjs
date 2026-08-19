@@ -7,6 +7,7 @@ const workspaceRoot = resolve(import.meta.dirname, "..");
 assertPnpmCommandShape();
 const allowed = new Map([
   ["@rennet/types", new Set()],
+  ["@rennet/theme", new Set()],
   ["@rennet/protocol", new Set(["@rennet/types"])],
   ["@rennet/instructions", new Set(["@rennet/types"])],
   ["@rennet/core", new Set(["@rennet/types", "@rennet/protocol", "@rennet/instructions"])],
@@ -24,7 +25,7 @@ const allowed = new Map([
       "@rennet/adapters",
     ]),
   ],
-  ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol"])],
+  ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol", "@rennet/theme"])],
   ["@rennet/client", new Set(["@rennet/types", "@rennet/protocol"])],
 ]);
 

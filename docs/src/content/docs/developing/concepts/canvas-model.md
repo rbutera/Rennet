@@ -22,7 +22,7 @@ The intended product has five review canvases:
 | Flagged | What did the automated review find, and where? |
 | Noise | What changed but probably needs little attention? |
 
-Blast radius is different. It is amber paint laid over the other canvases, not
+Blast radius is different. It is gold paint laid over the other canvases, not
 another queue to work through.
 
 Those surfaces are intentionally different species: Sequence is a reading path;
@@ -42,7 +42,7 @@ flowchart TB
   l2["L2 · Dispositions<br/>approve · request change · comment · question"]
   l1["L1 · Analysis<br/>validated RSP documents placed by the engine"]
   l0["L0 · Substrate<br/>immutable hunks · chunks · requirements"]
-  overlay["Blast-radius overlay<br/>amber paint, no surface of its own"]
+  overlay["Blast-radius overlay<br/>gold paint, no surface of its own"]
 
   l3 --> l2 --> l1 --> l0
   overlay -. paints .-> l3

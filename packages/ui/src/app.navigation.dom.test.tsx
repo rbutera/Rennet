@@ -374,8 +374,8 @@ describe("RennetApp navigation spine", () => {
     fireEvent.click(container.querySelector(".smart-row-action") as HTMLButtonElement);
     await waitFor(() => expect(container.querySelector(".canvas-app")).not.toBeNull());
     fireEvent.click(
-      within(container.querySelector(".nav-rail") as HTMLElement).getByRole("button", {
-        name: "Projects",
+      within(container.querySelector(".nav-breadcrumb") as HTMLElement).getByRole("button", {
+        name: /Projects/,
       }),
     );
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());

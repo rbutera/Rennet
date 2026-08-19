@@ -1,0 +1,240 @@
+/* Rennet shared theme — "The Affineur's Bench" (root DESIGN.md, ratified 2026-08-19).
+ *
+ * The ONE source of visual truth for every Rennet surface: desktop + browser
+ * (packages/ui via Tailwind v4), marketing (apps/marketing via Tailwind v4),
+ * the docsite (docs/ Starlight custom CSS), and mobile (apps/mobile transposes
+ * these values into src/theme/tokens.ts — keep them in sync by hand, there is
+ * no DOM there).
+ *
+ * Structure:
+ *   1. Font faces (self-hosted variable fonts via fontsource).
+ *   2. Raw palette as --rn-* custom properties: light on :root (default),
+ *      dark under [data-scheme="dark"], plus a prefers-color-scheme fallback
+ *      for surfaces that never stamp a scheme (docs, marketing first paint).
+ *      The desktop app resolves and stamps data-scheme before paint.
+ *   3. `@theme inline` maps the palette into Tailwind namespaces, so
+ *      `bg-canvas`, `text-ink-soft`, `rounded-control`, `font-display`,
+ *      `text-2xs` … are the component vocabulary.
+ *
+ * Doctrine encoded here:
+ *   - One seamless window: canvas = chrome = toolbar. No glass, no vibrancy.
+ *   - Warm neutrals, never pure gray; near-black dark, near-white light.
+ *   - ONE accent: gold. It is also the decision register (accent and decision
+ *     merged 2026-08-19; review blue and decision amber are retired).
+ *     In light scheme gold TEXT uses the ochre --rn-accent (AA on white);
+ *     gold FILLS use --rn-accent-fill with near-black ink.
+ *   - Evidence green and danger red are the only other functional hues.
+ *   - Serif (Source Serif 4) is the review's voice; sans (DM Sans) is the
+ *     interface; Fraunces is the display voice; monospace is code only.
+ */
+
+@import "@fontsource-variable/dm-sans";
+@import "@fontsource-variable/fraunces";
+@import "@fontsource-variable/source-serif-4";
+
+:root {
+  /* ground */
+  --rn-canvas: #fbfaf7;
+  --rn-surface: #ffffff;
+  --rn-raised: #f3f1ec;
+  --rn-overlay: #ffffff;
+  --rn-code: #faf8f4;
+  /* ink */
+  --rn-ink: #1e1b16;
+  --rn-ink-soft: #57534a;
+  --rn-ink-faint: #6b6558;
+  /* structure */
+  --rn-line: rgb(60 50 30 / 0.12);
+  --rn-line-strong: rgb(60 50 30 / 0.2);
+  /* gold — accent AND decision register. Text form (ochre, AA on white),
+     fill form (true gold), ink on fills. */
+  --rn-accent: #8a5d0b;
+  --rn-accent-fill: #e0a52e;
+  --rn-accent-ink: #191307;
+  --rn-accent-soft: rgb(138 93 11 / 0.1);
+  --rn-accent-line: rgb(138 93 11 / 0.32);
+  --rn-accent-surface: #f6ecd6;
+  /* evidence green */
+  --rn-green: #41745b;
+  --rn-green-soft: rgb(65 116 91 / 0.12);
+  --rn-green-line: rgb(65 116 91 / 0.3);
+  /* danger */
+  --rn-danger: #b23b2b;
+  --rn-danger-soft: rgb(178 59 43 / 0.1);
+  /* paper — what leaves the machine (cream in the bright room) */
+  --rn-sheet: #f7f5ef;
+  --rn-sheet-ink: #23211c;
+  --rn-sheet-soft: #57534a;
+  --rn-sheet-line: #e3dfd4;
+  /* diff */
+  --rn-add: #e9f2ec;
+  --rn-add-ink: #276c31;
+  --rn-del: #f8ece8;
+  --rn-del-ink: #a14434;
+  --rn-code-ln: #9ba196;
+  /* syntax (code content, not interface color) */
+  --rn-syn-kw: #8a5d0b;
+  --rn-syn-str: #5f6e33;
+  --rn-syn-cmt: #8a8e82;
+  --rn-syn-num: #8a5a1e;
+  --rn-syn-type: #2b7d6e;
+  --rn-syn-fn: #6b4b9e;
+  --rn-syn-prop: #6e5a2f;
+  --rn-syn-var: #8a5a1e;
+  /* the brand mark's single ink (paper on dark, ink on light) */
+  --rn-mark-ink: #0b0d10;
+  /* depth — true overlays only */
+  --rn-shadow-overlay: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
+}
+
+[data-scheme="dark"] {
+  --rn-canvas: #0e0d0c;
+  --rn-surface: #151413;
+  --rn-raised: #1b1a18;
+  --rn-overlay: #090807;
+  --rn-code: #0a0909;
+  --rn-ink: #f2ede4;
+  --rn-ink-soft: #a9a196;
+  --rn-ink-faint: #948d80;
+  --rn-line: rgb(240 232 215 / 0.09);
+  --rn-line-strong: rgb(240 232 215 / 0.16);
+  --rn-accent: #e8b13c;
+  --rn-accent-fill: #e8b13c;
+  --rn-accent-ink: #191307;
+  --rn-accent-soft: rgb(232 177 60 / 0.14);
+  --rn-accent-line: rgb(232 177 60 / 0.35);
+  --rn-accent-surface: #241c0e;
+  --rn-green: #88bc9b;
+  --rn-green-soft: rgb(136 188 155 / 0.14);
+  --rn-green-line: rgb(136 188 155 / 0.36);
+  --rn-danger: #db7a6a;
+  --rn-danger-soft: rgb(219 122 106 / 0.14);
+  --rn-sheet: #1c1712;
+  --rn-sheet-ink: #efe7db;
+  --rn-sheet-soft: #b6ab99;
+  --rn-sheet-line: #322a20;
+  --rn-add: #16241c;
+  --rn-add-ink: #88bc9b;
+  --rn-del: #2e211e;
+  --rn-del-ink: #d08a76;
+  --rn-code-ln: #6a6458;
+  --rn-syn-kw: #d8b878;
+  --rn-syn-str: #afbc86;
+  --rn-syn-cmt: #7c8272;
+  --rn-syn-num: #d0a978;
+  --rn-syn-type: #9fd0c0;
+  --rn-syn-fn: #c8b6e8;
+  --rn-syn-prop: #cbb98f;
+  --rn-syn-var: #d9a77a;
+  --rn-mark-ink: #f7f4ee;
+  --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+}
+
+/* Surfaces that never stamp a scheme (docs, marketing before hydration) follow
+ * the OS. The desktop app stamps data-scheme before paint, which wins. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-scheme="light"]) {
+    --rn-canvas: #0e0d0c;
+    --rn-surface: #151413;
+    --rn-raised: #1b1a18;
+    --rn-overlay: #090807;
+    --rn-code: #0a0909;
+    --rn-ink: #f2ede4;
+    --rn-ink-soft: #a9a196;
+    --rn-ink-faint: #948d80;
+    --rn-line: rgb(240 232 215 / 0.09);
+    --rn-line-strong: rgb(240 232 215 / 0.16);
+    --rn-accent: #e8b13c;
+    --rn-accent-fill: #e8b13c;
+    --rn-accent-ink: #191307;
+    --rn-accent-soft: rgb(232 177 60 / 0.14);
+    --rn-accent-line: rgb(232 177 60 / 0.35);
+    --rn-accent-surface: #241c0e;
+    --rn-green: #88bc9b;
+    --rn-green-soft: rgb(136 188 155 / 0.14);
+    --rn-green-line: rgb(136 188 155 / 0.36);
+    --rn-danger: #db7a6a;
+    --rn-danger-soft: rgb(219 122 106 / 0.14);
+    --rn-sheet: #1c1712;
+    --rn-sheet-ink: #efe7db;
+    --rn-sheet-soft: #b6ab99;
+    --rn-sheet-line: #322a20;
+    --rn-add: #16241c;
+    --rn-add-ink: #88bc9b;
+    --rn-del: #2e211e;
+    --rn-del-ink: #d08a76;
+    --rn-code-ln: #6a6458;
+    --rn-syn-kw: #d8b878;
+    --rn-syn-str: #afbc86;
+    --rn-syn-cmt: #7c8272;
+    --rn-syn-num: #d0a978;
+    --rn-syn-type: #9fd0c0;
+    --rn-syn-fn: #c8b6e8;
+    --rn-syn-prop: #cbb98f;
+    --rn-syn-var: #d9a77a;
+    --rn-mark-ink: #f7f4ee;
+    --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+  }
+}
+
+@theme inline {
+  /* grounds */
+  --color-canvas: var(--rn-canvas);
+  --color-surface: var(--rn-surface);
+  --color-raised: var(--rn-raised);
+  --color-overlay: var(--rn-overlay);
+  --color-code: var(--rn-code);
+  /* ink */
+  --color-ink: var(--rn-ink);
+  --color-ink-soft: var(--rn-ink-soft);
+  --color-ink-faint: var(--rn-ink-faint);
+  /* structure */
+  --color-line: var(--rn-line);
+  --color-line-strong: var(--rn-line-strong);
+  /* gold */
+  --color-accent: var(--rn-accent);
+  --color-accent-fill: var(--rn-accent-fill);
+  --color-accent-ink: var(--rn-accent-ink);
+  --color-accent-soft: var(--rn-accent-soft);
+  --color-accent-line: var(--rn-accent-line);
+  --color-accent-surface: var(--rn-accent-surface);
+  /* semantics */
+  --color-green: var(--rn-green);
+  --color-green-soft: var(--rn-green-soft);
+  --color-green-line: var(--rn-green-line);
+  --color-danger: var(--rn-danger);
+  --color-danger-soft: var(--rn-danger-soft);
+  /* paper */
+  --color-sheet: var(--rn-sheet);
+  --color-sheet-ink: var(--rn-sheet-ink);
+  --color-sheet-soft: var(--rn-sheet-soft);
+  --color-sheet-line: var(--rn-sheet-line);
+  /* diff */
+  --color-add: var(--rn-add);
+  --color-add-ink: var(--rn-add-ink);
+  --color-del: var(--rn-del);
+  --color-del-ink: var(--rn-del-ink);
+
+  /* type — three voices plus code (root DESIGN.md §Typography) */
+  --font-sans: "DM Sans Variable", system-ui, -apple-system, sans-serif;
+  --font-serif: "Source Serif 4 Variable", Georgia, serif;
+  --font-display: "Fraunces Variable", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* the desktop ramp (packages/ui/DESIGN.md): 11/12/14/16/18/20/24 + display clamp.
+   * Tailwind defaults cover xs(12)–2xl(24); 2xs and display are ours. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1.3;
+  --text-display: clamp(2.125rem, 5vw, 3.5rem);
+  --text-display--line-height: 1.02;
+
+  /* radius scale: micro/chip/control/surface/window (+ rounded-full pills) */
+  --radius-micro: 0.25rem;
+  --radius-chip: 0.375rem;
+  --radius-control: 0.5rem;
+  --radius-surface: 0.75rem;
+  --radius-window: 1rem;
+
+  /* depth — true overlays only */
+  --shadow-overlay: var(--rn-shadow-overlay);
+}

@@ -519,9 +519,9 @@ export function ConversationHost({
   const discussable = anchors.filter((anchor) => !openAnchorKeys.has(anchor.key));
 
   return (
-    <div className="conversation-host">
+    <div className="conversation-host flex flex-col gap-3">
       {discussable.length > 0 ? (
-        <div className="conversation-host-discuss">
+        <div className="conversation-host-discuss flex flex-wrap gap-2">
           {discussable.map((anchor) => (
             <DiscussControl key={anchor.key} anchor={anchor} onDiscuss={openConversation} />
           ))}
@@ -642,27 +642,36 @@ function GeneralAskPanel({
 
   return (
     <aside
-      className="conversation-general is-private"
+      className="conversation-general is-private flex flex-col overflow-hidden rounded-surface border border-line bg-surface shadow-[inset_0_0_18px_var(--rn-accent-soft)]"
       data-lane="blue"
       aria-label="Ask the orchestrator"
     >
-      <header className="conversation-head">
-        <span className="conversation-head-lock" aria-hidden="true">
+      <header className="conversation-head flex items-baseline gap-2 px-4 py-3 border-b border-line">
+        <span
+          className="conversation-head-lock inline-flex self-center text-accent"
+          aria-hidden="true"
+        >
           <LockIcon size={12} />
         </span>
-        <span className="conversation-head-title">Ask the orchestrator</span>
+        <span className="conversation-head-title font-sans text-2xs font-semibold uppercase tracking-wide text-ink-soft">
+          Ask the orchestrator
+        </span>
       </header>
-      <div className="conversation-messages">
+      <div className="conversation-messages flex flex-col gap-3 p-4">
         {messages.map((message) => (
           <MessageCard key={message.id} message={message} />
         ))}
         {pending ? (
-          <p className="conversation-pending" role="status" aria-live="polite">
+          <p
+            className="conversation-pending m-0 font-sans text-sm text-ink-soft"
+            role="status"
+            aria-live="polite"
+          >
             Asking the orchestrator…
           </p>
         ) : null}
         {error ? (
-          <p className="conversation-error" role="alert">
+          <p className="conversation-error m-0 font-sans text-sm text-danger" role="alert">
             {error}
           </p>
         ) : null}

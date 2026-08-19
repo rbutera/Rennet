@@ -46,37 +46,52 @@ function DecisionDetailView({ element }: { element: AnalysisElement }) {
   const hasEvidence = detail.evidence.length > 0;
   const hasAlternatives = detail.alternatives.length > 0;
   return (
-    <div className="decision-detail">
+    <div className="decision-detail flex flex-col gap-2">
       {hasEvidence ? (
-        <ul className="decision-evidence" aria-label="Evidence this decision was drawn from">
+        <ul
+          className="decision-evidence flex list-none flex-col gap-1.5"
+          aria-label="Evidence this decision was drawn from"
+        >
           {detail.evidence.map((chip) => (
             <li
-              className={`evidence-chip evidence-${chip.kind}`}
+              className={`evidence-chip evidence-${chip.kind} flex items-baseline gap-2 rounded-control border border-green-line bg-green-soft px-2.5 py-1.5`}
               key={`${chip.kind}:${chip.label}:${chip.detail}`}
             >
-              <span className="evidence-kind">{EVIDENCE_KIND_LABEL[chip.kind]}</span>
-              <span className="evidence-label">{chip.label}</span>
-              <span className="evidence-detail">{chip.detail}</span>
+              <span className="evidence-kind flex-none rounded-full border border-green-line px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide text-green">
+                {EVIDENCE_KIND_LABEL[chip.kind]}
+              </span>
+              <span className="evidence-label flex-none font-mono text-xs text-ink-faint">
+                {chip.label}
+              </span>
+              <span className="evidence-detail text-sm text-ink-soft">{chip.detail}</span>
             </li>
           ))}
         </ul>
       ) : null}
       {detail.why ? (
-        <p className="decision-why">
+        <p className="decision-why flex flex-col gap-1">
           {/* The marker is load-bearing: an inferred rationale is never presented
               as a stated fact. */}
-          <span className="decision-why-tag">why · reconstructed</span>
-          <span className="decision-why-text">{detail.why.text}</span>
+          <span className="decision-why-tag text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            why · reconstructed
+          </span>
+          <span className="decision-why-text font-serif text-base italic text-ink-soft">
+            {detail.why.text}
+          </span>
         </p>
       ) : (
-        <p className="decision-why decision-why-none">
-          <span className="decision-why-tag">why · none discerned</span>
+        <p className="decision-why decision-why-none flex flex-col gap-1 opacity-70">
+          <span className="decision-why-tag text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            why · none discerned
+          </span>
         </p>
       )}
       {hasAlternatives ? (
-        <div className="decision-alternatives">
-          <span className="decision-alternatives-tag">alternatives not taken</span>
-          <ul className="decision-alternatives-list">
+        <div className="decision-alternatives flex flex-col gap-1">
+          <span className="decision-alternatives-tag text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+            alternatives not taken
+          </span>
+          <ul className="decision-alternatives-list list-disc pl-4 text-sm text-ink-soft">
             {detail.alternatives.map((alt) => (
               <li key={alt}>{alt}</li>
             ))}
@@ -107,27 +122,39 @@ function Cohort({
   onSelectElement(elementKey: string): void;
 }) {
   return (
-    <section className={`cohort ${painted ? "is-blast" : ""}`}>
-      <header className="cohort-head">
+    <section
+      className={`cohort mb-2.5 overflow-hidden rounded-surface border ${painted ? "is-blast border-accent-line bg-accent-surface" : "border-line bg-surface"}`}
+    >
+      <header className="cohort-head flex items-center justify-between gap-3 px-4 py-3">
         <button
           type="button"
-          className="cohort-toggle"
+          className="cohort-toggle group flex cursor-pointer items-center gap-2.5 border-0 bg-transparent p-0 text-left font-semibold text-ink"
           aria-expanded={expanded}
           onClick={() => onToggle(cohort.cohortKey)}
         >
-          <span className={`cohort-chevron ${expanded ? "is-open" : ""}`} aria-hidden="true">
+          <span
+            className={`cohort-chevron inline-flex text-ink-faint transition-transform ${expanded ? "is-open rotate-0" : "-rotate-90"}`}
+            aria-hidden="true"
+          >
             <ChevronIcon size={13} />
           </span>
-          <span className="cohort-title">{cohort.title}</span>
+          <span className="cohort-title text-base">{cohort.title}</span>
           {/* Honest count: the true number of decisions, collapsed or not. */}
-          <span className="cohort-count">{cohort.elementKeys.length} decisions</span>
+          <span className="cohort-count text-sm font-normal text-ink-faint">
+            {cohort.elementKeys.length} decisions
+          </span>
           {painted ? (
-            <span className="cohort-blast" title={blastReason ?? "In the blast radius"}>
+            <span
+              className="cohort-blast text-2xs font-semibold uppercase tracking-wide text-ink"
+              title={blastReason ?? "In the blast radius"}
+            >
               blast
             </span>
           ) : null}
         </button>
-        {painted && blastReason ? <p className="cohort-blast-reason">{blastReason}</p> : null}
+        {painted && blastReason ? (
+          <p className="cohort-blast-reason text-sm text-ink">{blastReason}</p>
+        ) : null}
         <DispositionBar
           scopeLabel={`cohort ${cohort.title}`}
           compact
@@ -137,13 +164,16 @@ function Cohort({
         />
       </header>
       {expanded ? (
-        <ol className="cohort-elements">
+        <ol className="cohort-elements list-none border-t border-line pb-1.5">
           {elements.map((element) => (
-            <li className="decision" key={element.elementKey}>
-              <div className="decision-head">
+            <li
+              className="decision flex flex-col gap-2 border-b border-line py-2.5 pl-8 pr-4 last:border-b-0"
+              key={element.elementKey}
+            >
+              <div className="decision-head flex items-center justify-between gap-3">
                 <button
                   type="button"
-                  className="decision-select"
+                  className="decision-select cursor-pointer border-0 bg-transparent p-0 text-left text-base font-semibold text-ink-soft hover:text-ink"
                   onClick={() => onSelectElement(element.elementKey)}
                 >
                   {element.title}
@@ -199,14 +229,21 @@ export function DecisionsCanvas({
   // A runner that did not complete — never conflated with "nothing discerned".
   if (runStatus.status === "failed") {
     return (
-      <div className="decisions-canvas">
-        <div className="decisions-failed" role="status">
-          <p className="decisions-failed-head">Couldn't reconstruct decisions</p>
-          <p className="decisions-failed-body">
+      <div className="decisions-canvas flex flex-col">
+        <div
+          className="decisions-failed rounded-surface border border-accent-line bg-accent-surface p-4"
+          role="status"
+        >
+          <p className="decisions-failed-head text-base font-semibold text-ink">
+            Couldn't reconstruct decisions
+          </p>
+          <p className="decisions-failed-body mt-1.5 text-ink-soft">
             The decision-extraction runner did not complete, so this is not "no decisions were
             made".
           </p>
-          <p className="decisions-failed-reason">{runStatus.reason}</p>
+          <p className="decisions-failed-reason mt-1.5 font-mono text-xs text-ink-faint">
+            {runStatus.reason}
+          </p>
         </div>
       </div>
     );
@@ -221,17 +258,17 @@ export function DecisionsCanvas({
   // the failed-runner banner above.
   if (canvas.layers.analysis.cohorts.length === 0) {
     return (
-      <div className="decisions-canvas">
-        <p className="decisions-empty">
+      <div className="decisions-canvas flex flex-col">
+        <p className="decisions-empty px-1 py-6 text-base italic text-ink-faint">
           Reviewed. No decisions were discerned from this diff — this angle ran, it was not skipped.
         </p>
       </div>
     );
   }
   return (
-    <div className="decisions-canvas">
-      <div className="canvas-toolbar">
-        <span className="canvas-coverage">
+    <div className="decisions-canvas flex flex-col">
+      <div className="canvas-toolbar mb-4 flex items-center justify-between gap-4 border-b border-line pb-3">
+        <span className="canvas-coverage text-sm font-semibold text-ink">
           {coverage.unread} unread of {coverage.total}
         </span>
         <DispositionBar

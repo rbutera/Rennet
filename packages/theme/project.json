@@ -1,0 +1,13 @@
+{
+  "name": "rennet-theme",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/theme/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:theme"],
+  "targets": {
+    "lint": {
+      "command": "pnpm exec biome check packages/theme/src"
+    },
+    "test": { "command": "pnpm exec vitest run --passWithNoTests packages/theme/src" }
+  }
+}

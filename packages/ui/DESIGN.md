@@ -1,25 +1,27 @@
 ---
 name: Rennet Desktop
-description: The dense desktop product scale the review app renders at.
+description: The comfortable desktop product scale the review app renders at.
 typography:
   display:
-    fontFamily: "Helvetica Neue, Instrument Sans Variable, Arial, sans-serif"
+    fontFamily: "Fraunces Variable, Georgia, serif"
     fontSize: "clamp(34px, 5vw, 56px)"
+  serif:
+    fontFamily: "Source Serif 4 Variable, Georgia, serif"
+    fontSize: "18px"
   body:
-    fontFamily: "Avenir Next, Source Sans 3 Variable, system-ui, sans-serif"
-    fontSize: "16px"
+    fontFamily: "DM Sans Variable, system-ui, sans-serif"
+    fontSize: "18px"
   label:
-    fontFamily: "Avenir Next, Source Sans 3 Variable, system-ui, sans-serif"
-    fontSize: "13px"
+    fontFamily: "DM Sans Variable, system-ui, sans-serif"
+    fontSize: "14px"
   scale:
-    micro: "10px"
-    meta: "11px"
-    chrome: "12px"
-    reading: "13px"
-    emphasis: "14px"
-    body: "16px"
-    section: "19px"
-    title: "22px"
+    micro: "11px"
+    meta: "12px"
+    chrome: "14px"
+    reading: "16px"
+    body: "18px"
+    section: "20px"
+    title: "24px"
 rounded:
   micro: "4px"
   chip: "6px"
@@ -36,34 +38,38 @@ This file is the machine-readable design system for `packages/ui` — the deskto
 review app. It exists here, next to the CSS it governs, because the impeccable
 design detector resolves a design system by walking up from the file it scans and
 stops at the first package boundary (`packages/ui/package.json`); the root
-`DESIGN.md` (the marketing + shared narrative) is never reached from inside this
-package. So the desktop ramp lives where the lint can actually read it, and the
-root `DESIGN.md` documents the same ramp in prose for humans.
+`DESIGN.md` (the shared world) is never reached from inside this package. So the
+desktop ramp lives where the lint can actually read it, and the root `DESIGN.md`
+documents the same ramp in prose for humans.
 
-The full design system — colour, semantics, elevation, components, do's and
-don'ts — is the root [`DESIGN.md`](../../DESIGN.md). This file records only the two
-things the desktop material scales differently from marketing: the **type ramp**
-and the **radius scale**. The design detector checks `font-size` longhand and
+The full design system — colour, semantics, material, components, do's and
+don'ts — is the root [`DESIGN.md`](../../DESIGN.md). This file records only the
+things the desktop material scales differently: the **type ramp** and the
+**radius scale**. The design detector checks `font-size` longhand and
 `border-radius`; the UI package's design-ramp test also checks `font:` shorthand
 sizes and the radius-bearing tokens in `tokens.css`.
 
 ## Type ramp
 
-`10 / 11 / 12 / 13 / 14 / 16 / 19 / 22` px, plus the front-door display expression
-`clamp(34px, 5vw, 56px)`. Fractional px sizes are banned — every one was a
-split-the-difference nudge between two undocumented steps.
+`11 / 12 / 14 / 16 / 18 / 20 / 24` px, plus the front-door display expression
+`clamp(34px, 5vw, 56px)`. This ramp replaced the dense `10–22` ramp in the
+2026-08-19 overhaul: crowding was a defect, not a style. It is **authored in rem**
+(the px values are the 16px-root equivalents) and deliberately snaps to Tailwind's
+type scale, so components speak utilities, never raw sizes:
 
-| px | role | used for |
-|----|------|----------|
-| 10 | micro | uppercase micro-caps, the smallest legible chrome |
-| 11 | meta | dense secondary metadata, counts, pins |
-| 12 | chrome | the standard chrome label and control text |
-| 13 | reading | in-canvas reading text and descriptions |
-| 14 | emphasis | emphasised labels and dense titles |
-| 16 | body | comfortable body and input text (shared with marketing) |
-| 19 | section | screen and section headings |
-| 22 | title | the largest in-app screen title |
-| `clamp(34–56)` | display | the front-door display headline only |
+| px | rem | utility | role | used for |
+|----|-----|---------|------|----------|
+| 11 | 0.6875 | `text-2xs` | micro | uppercase micro-caps, the smallest legible chrome |
+| 12 | 0.75 | `text-xs` | meta | secondary metadata, counts, pins |
+| 14 | 0.875 | `text-sm` | chrome | the standard chrome label and control text |
+| 16 | 1 | `text-base` | reading | reading text, emphasised labels, inputs |
+| 18 | 1.125 | `text-lg` | body | comfortable body and the annotation serif |
+| 20 | 1.25 | `text-xl` | section | screen and section headings |
+| 24 | 1.5 | `text-2xl` | title | the largest in-app screen title |
+| `clamp(34–56)` | — | `text-display` | display | the front-door display headline only |
+
+Arbitrary font sizes (`text-[…]`, raw `font-size`) are off-ramp; the package's
+design-ramp test forbids them in `packages/ui` sources.
 
 ## Radius scale
 

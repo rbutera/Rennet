@@ -1,6 +1,4 @@
-import "./styles.css";
-import "./tokens.css";
-import "./canvas.css";
+import "./index.css";
 
 export { RennetApp, ReviewWorkspace } from "./app";
 // The Ask surface (issue #139): per-thread routing memory + the ordered answer

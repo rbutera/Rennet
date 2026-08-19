@@ -20,7 +20,7 @@ export default function ReviewError(): ReactNode {
   return (
     <Screen>
       <Card>
-        <Text style={{ color: t.amber, fontSize: type.body, fontWeight: "600" }}>
+        <Text style={{ color: t.danger, fontSize: type.body, fontWeight: "600" }}>
           A turn failed or was interrupted
         </Text>
         <Text

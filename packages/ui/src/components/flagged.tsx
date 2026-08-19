@@ -49,22 +49,42 @@ export interface DeepReviewControl {
 
 const SEVERITY_LABEL = { high: "high", medium: "medium", low: "low" } as const;
 
+/** Severity chip hue: high wears the gold register border, the rest stay quiet. */
+const SEVERITY_TONE = {
+  high: "border-accent-line text-ink",
+  medium: "border-line-strong text-ink-soft",
+  low: "border-line text-ink-faint",
+} as const;
+
 function Agreement({ row }: { row: FlaggedRow }) {
   if (row.agreement.kind === "concur") {
     return (
-      <span className="flag-agreement flag-concur" data-agreement="concur">
+      <span
+        className="flag-agreement flag-concur mt-2 inline-block rounded-full border border-green-line bg-green-soft px-2.5 py-1 text-xs font-semibold text-green"
+        data-agreement="concur"
+      >
         both models concur {row.agreement.agree}/{row.agreement.total}
       </span>
     );
   }
   return (
-    <div className="flag-agreement flag-disagree" data-agreement="disagree">
-      <span className="flag-disagree-flare">models disagree</span>
-      <div className="flag-answers">
+    <div
+      className="flag-agreement flag-disagree mt-2 rounded-surface border border-accent-line bg-accent-surface p-3"
+      data-agreement="disagree"
+    >
+      <span className="flag-disagree-flare mb-2 block text-2xs font-semibold uppercase tracking-wide text-ink">
+        models disagree
+      </span>
+      <div className="flag-answers grid grid-cols-2 gap-2.5">
         {row.agreement.answers.map((answer) => (
-          <div className="flag-answer" key={answer.model}>
-            <span className="flag-answer-model">{answer.model}</span>
-            <span className="flag-answer-text">{answer.answer}</span>
+          <div
+            className="flag-answer flex flex-col gap-1 rounded-control border border-line bg-surface px-2.5 py-2"
+            key={answer.model}
+          >
+            <span className="flag-answer-model flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wide text-ink before:h-1.5 before:w-1.5 before:flex-none before:rounded-full before:bg-accent-fill before:content-['']">
+              {answer.model}
+            </span>
+            <span className="flag-answer-text text-base text-ink-soft">{answer.answer}</span>
           </div>
         ))}
       </div>
@@ -90,16 +110,31 @@ const ADJUDICATION_LABEL = {
  * is Rennet chrome; the `evidence` is the adjudicator's own account and breathes, and
  * `adjudicatedBy` names the seat so the reader sees whose opinion this is.
  */
+const ADJUDICATION_TONE: Record<FindingAdjudication["verdict"], { box: string; label: string }> = {
+  supported: { box: "border-green-line bg-green-soft", label: "text-green" },
+  contradicted: { box: "border-accent-line bg-accent-surface", label: "text-accent" },
+  insufficient: { box: "border-line", label: "text-ink-faint" },
+};
+
 function Adjudication({ adjudication }: { adjudication?: FindingAdjudication }) {
   if (!adjudication) return null;
+  const tone = ADJUDICATION_TONE[adjudication.verdict];
   return (
     <div
-      className={`flag-adjudication flag-adjudication-${adjudication.verdict}`}
+      className={`flag-adjudication flag-adjudication-${adjudication.verdict} mt-2 flex flex-wrap items-baseline gap-2.5 rounded-control border px-2.5 py-2 ${tone.box}`}
       data-adjudication={adjudication.verdict}
     >
-      <span className="flag-adjudication-label">{ADJUDICATION_LABEL[adjudication.verdict]}</span>
-      <span className="flag-adjudication-evidence">{adjudication.evidence}</span>
-      <span className="flag-adjudication-seat">adjudicated by {adjudication.adjudicatedBy}</span>
+      <span
+        className={`flag-adjudication-label flex-none text-2xs font-semibold uppercase tracking-wide ${tone.label}`}
+      >
+        {ADJUDICATION_LABEL[adjudication.verdict]}
+      </span>
+      <span className="flag-adjudication-evidence text-base text-ink-soft">
+        {adjudication.evidence}
+      </span>
+      <span className="flag-adjudication-seat flex-none text-xs text-ink-faint">
+        adjudicated by {adjudication.adjudicatedBy}
+      </span>
     </div>
   );
 }
@@ -115,7 +150,7 @@ function DualBadge({ dual }: { dual?: DualReviewNote }) {
   if (dual.secondSeatUnavailable) {
     return (
       <span
-        className="flag-dual flag-dual-degraded"
+        className="flag-dual flag-dual-degraded rounded-full border border-accent-line bg-accent-surface px-2.5 py-1 text-xs font-semibold text-accent"
         data-dual="degraded"
         title={dual.secondSeatUnavailable}
       >
@@ -124,7 +159,10 @@ function DualBadge({ dual }: { dual?: DualReviewNote }) {
     );
   }
   return (
-    <span className="flag-dual flag-dual-full" data-dual="full">
+    <span
+      className="flag-dual flag-dual-full rounded-full border border-green-line bg-green-soft px-2.5 py-1 text-xs font-semibold text-green"
+      data-dual="full"
+    >
       reconciled by {dual.seats.join(" + ")}
     </span>
   );
@@ -138,12 +176,16 @@ function CiFailureLine({ failure }: { failure: CiFailure }) {
         ? "change-caused CI failure (no offered hunk to place it on)"
         : "Rennet could not attribute this — check it yourself";
   return (
-    <li className={`ci-signal-failure ci-signal-${failure.verdict}`}>
-      <span className="ci-signal-failure-label">{label}</span>
-      <span className="ci-signal-check-name">{failure.checkName}</span>
-      <span className="ci-signal-evidence">{failure.evidence}</span>
+    <li
+      className={`ci-signal-failure ci-signal-${failure.verdict} grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 border-t border-line py-1.5 first:border-t-0`}
+    >
+      <span className="ci-signal-failure-label text-2xs font-semibold uppercase tracking-wide text-accent">
+        {label}
+      </span>
+      <span className="ci-signal-check-name font-semibold text-ink">{failure.checkName}</span>
+      <span className="ci-signal-evidence col-span-full text-ink-soft">{failure.evidence}</span>
       {failure.detailsUrl ? (
-        <a className="ci-signal-details" href={failure.detailsUrl}>
+        <a className="ci-signal-details col-span-full text-accent" href={failure.detailsUrl}>
           check details
         </a>
       ) : null}
@@ -169,7 +211,7 @@ export function CiSignalPanel({ signal }: { signal?: CiSignal }) {
     content = (
       <>
         {signal.incomplete ? (
-          <p className="ci-signal-incomplete">
+          <p className="ci-signal-incomplete mt-2 text-accent">
             CI results are incomplete — omitted checks may still be failing
           </p>
         ) : signal.overall === "passing" ? (
@@ -185,7 +227,7 @@ export function CiSignalPanel({ signal }: { signal?: CiSignal }) {
           </p>
         ) : null}
         {panelFailures.length > 0 ? (
-          <ul className="ci-signal-failures">
+          <ul className="ci-signal-failures list-none">
             {panelFailures.map((failure) => (
               <CiFailureLine key={failure.checkId} failure={failure} />
             ))}
@@ -196,9 +238,13 @@ export function CiSignalPanel({ signal }: { signal?: CiSignal }) {
   }
 
   return (
-    <details className="ci-signal-panel" open>
-      <summary>CI on reviewed head</summary>
-      <div className="ci-signal-body">{content}</div>
+    <details className="ci-signal-panel mb-3 rounded-surface border border-line bg-surface" open>
+      <summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold text-ink-soft">
+        CI on reviewed head
+      </summary>
+      <div className="ci-signal-body border-t border-line px-3 py-2.5 text-base text-ink-soft [&_p]:m-0">
+        {content}
+      </div>
     </details>
   );
 }
@@ -218,13 +264,17 @@ function Verification({ verification }: { verification: FlaggedRow["verification
   const reproduced = verification.verdict === "reproduced";
   return (
     <div
-      className={`flag-verification flag-verification-${verification.verdict}`}
+      className={`flag-verification flag-verification-${verification.verdict} mt-2 flex items-baseline gap-2.5 rounded-control border px-2.5 py-2 ${reproduced ? "border-green-line bg-green-soft" : "border-accent-line bg-accent-surface"}`}
       data-verdict={verification.verdict}
     >
-      <span className="flag-verification-label">
+      <span
+        className={`flag-verification-label flex-none text-2xs font-semibold uppercase tracking-wide ${reproduced ? "text-green" : "text-accent"}`}
+      >
         {reproduced ? "reproduced" : "couldn't verify"}
       </span>
-      <span className="flag-verification-evidence">{verification.evidence}</span>
+      <span className="flag-verification-evidence text-base text-ink-soft">
+        {verification.evidence}
+      </span>
     </div>
   );
 }
@@ -259,19 +309,19 @@ function UiEvidenceThumb({
     };
   }, [load, screenshot.path]);
   if (dataUrl === "loading") {
-    return <span className="ui-evidence-loading">{screenshot.label}</span>;
+    return <span className="ui-evidence-loading text-xs text-ink-faint">{screenshot.label}</span>;
   }
   if (dataUrl === null) {
     return (
-      <span className="ui-evidence-missing" role="note">
+      <span className="ui-evidence-missing text-xs text-ink-faint" role="note">
         {screenshot.label}: screenshot unavailable
       </span>
     );
   }
   return (
-    <figure className="ui-evidence-shot">
-      <img src={dataUrl} alt={screenshot.label} />
-      <figcaption>{screenshot.label}</figcaption>
+    <figure className="ui-evidence-shot m-0 overflow-hidden rounded-chip border border-line bg-code">
+      <img className="block h-auto max-w-[180px]" src={dataUrl} alt={screenshot.label} />
+      <figcaption className="px-1.5 py-1 text-xs text-ink-soft">{screenshot.label}</figcaption>
     </figure>
   );
 }
@@ -295,9 +345,15 @@ function UiVerificationStrip({
   if (!status || status.status === "not-ui") return null;
   if (status.status === "pending") {
     return (
-      <div className="ui-verification ui-verification-pending" role="note" data-status="pending">
-        <span className="ui-verification-label">verify-ui</span>
-        <span className="ui-verification-reason">
+      <div
+        className="ui-verification ui-verification-pending mt-2 flex flex-col gap-2 rounded-control border border-line px-2.5 py-2"
+        role="note"
+        data-status="pending"
+      >
+        <span className="ui-verification-label flex-none text-2xs font-semibold uppercase tracking-wide text-ink-soft">
+          verify-ui
+        </span>
+        <span className="ui-verification-reason text-base text-ink-soft">
           UI check still running — the current findings are available, but this is not a full
           all-clear.
         </span>
@@ -307,12 +363,14 @@ function UiVerificationStrip({
   if (status.status === "unavailable") {
     return (
       <div
-        className="ui-verification ui-verification-unavailable"
+        className="ui-verification ui-verification-unavailable mt-2 flex flex-col gap-2 rounded-control border border-line px-2.5 py-2"
         role="note"
         data-status="unavailable"
       >
-        <span className="ui-verification-label">verify-ui</span>
-        <span className="ui-verification-reason">
+        <span className="ui-verification-label flex-none text-2xs font-semibold uppercase tracking-wide text-ink-soft">
+          verify-ui
+        </span>
+        <span className="ui-verification-reason text-base text-ink-soft">
           Couldn't check the rendered UI, so this is not an all-clear: {status.reason}
         </span>
       </div>
@@ -320,20 +378,20 @@ function UiVerificationStrip({
   }
   return (
     <div
-      className="ui-verification ui-verification-ran"
+      className="ui-verification ui-verification-ran mt-2 flex flex-col gap-2 rounded-control border border-green-line bg-green-soft px-2.5 py-2"
       data-status="ran"
       data-mounted={status.mounted}
     >
-      <div className="ui-verification-head">
-        <span className="ui-verification-label">
+      <div className="ui-verification-head flex items-baseline justify-between gap-2.5">
+        <span className="ui-verification-label flex-none text-2xs font-semibold uppercase tracking-wide text-ink">
           {status.mounted ? "verify-ui · mounted" : "verify-ui · static review"}
         </span>
-        <span className="ui-verification-count">
+        <span className="ui-verification-count flex-none text-xs text-ink-faint">
           {status.observationCount} {status.observationCount === 1 ? "observation" : "observations"}
         </span>
       </div>
       {status.screenshots.length > 0 && loadUiEvidence ? (
-        <div className="ui-verification-shots">
+        <div className="ui-verification-shots flex flex-wrap gap-2">
           {status.screenshots.map((screenshot) => (
             <UiEvidenceThumb key={screenshot.path} screenshot={screenshot} load={loadUiEvidence} />
           ))}
@@ -351,20 +409,28 @@ function FlagRow({
   onJumpToAnchor(anchor: string): void;
 }) {
   return (
-    <li className="flag" data-severity={row.severity} data-finding-id={row.findingId}>
-      <div className="flag-head">
-        <span className={`flag-severity flag-severity-${row.severity}`}>
+    <li
+      className="flag mb-2 rounded-surface border border-line bg-surface px-3.5 py-3"
+      data-severity={row.severity}
+      data-finding-id={row.findingId}
+    >
+      <div className="flag-head flex items-baseline gap-3">
+        <span
+          className={`flag-severity flag-severity-${row.severity} flex-none rounded-full border bg-raised px-2.5 py-1 text-2xs font-semibold uppercase tracking-wide ${SEVERITY_TONE[row.severity]}`}
+        >
           {SEVERITY_LABEL[row.severity]}
         </span>
         {/* The lens is an index: the row jumps to the mark at its anchor. */}
         <button
           type="button"
-          className="flag-jump"
+          className="flag-jump group flex cursor-pointer flex-col gap-0.5 border-0 bg-transparent p-0 text-left text-ink"
           data-jump-anchor={row.anchor}
           onClick={() => onJumpToAnchor(row.anchor)}
         >
-          <span className="flag-summary">{row.summary}</span>
-          <span className="flag-anchor">{row.anchor}</span>
+          <span className="flag-summary font-semibold text-ink group-hover:text-accent">
+            {row.summary}
+          </span>
+          <span className="flag-anchor font-mono text-xs text-ink-faint">{row.anchor}</span>
         </button>
       </div>
       <Agreement row={row} />
@@ -396,20 +462,25 @@ export function BlockedIngestionDisclosure({
 }) {
   if (states.length === 0) return null;
   return (
-    <div className="flagged-blocked-ingestion" role="note">
-      <p className="flagged-blocked-head">{heading}</p>
-      <ul className="flagged-blocked-list">
+    <div
+      className="flagged-blocked-ingestion mt-3 rounded-surface border border-accent-line bg-accent-soft p-4"
+      role="note"
+    >
+      <p className="flagged-blocked-head mb-2 text-sm font-semibold text-ink">{heading}</p>
+      <ul className="flagged-blocked-list flex list-none flex-col gap-1.5">
         {states.map((state) => (
           <li
             // Keyed on reason + path + detail: the detail line is unique per blocker
             // (each names its own file/reason), so no array index is needed and the
             // list is render-only regardless.
             key={`${state.reason}:${state.path ?? "*"}:${state.detail}`}
-            className="flagged-blocked-item"
+            className="flagged-blocked-item flex items-baseline gap-2.5"
             data-reason={state.reason}
           >
-            <span className="flagged-blocked-reason">{BLOCKING_REASON_LABEL[state.reason]}</span>
-            <span className="flagged-blocked-detail">{state.detail}</span>
+            <span className="flagged-blocked-reason flex-none text-2xs font-semibold uppercase tracking-wide text-accent">
+              {BLOCKING_REASON_LABEL[state.reason]}
+            </span>
+            <span className="flagged-blocked-detail text-base text-ink-soft">{state.detail}</span>
           </li>
         ))}
       </ul>
@@ -443,13 +514,18 @@ export function FlaggedLens({
   // A runner that did not complete — kept LOUDLY distinct from "nothing flagged".
   if (index.state === "failed") {
     return (
-      <div className="flagged-canvas">
-        <div className="flagged-failed" role="status">
-          <p className="flagged-failed-head">Couldn't check</p>
-          <p className="flagged-failed-body">
+      <div className="flagged-canvas flex flex-col">
+        <div
+          className="flagged-failed rounded-surface border border-accent-line bg-accent-surface p-4"
+          role="status"
+        >
+          <p className="flagged-failed-head text-base font-semibold text-ink">Couldn't check</p>
+          <p className="flagged-failed-body mt-1.5 text-ink-soft">
             The automated review runner did not complete, so this is not an all-clear.
           </p>
-          <p className="flagged-failed-reason">{index.reason}</p>
+          <p className="flagged-failed-reason mt-1.5 font-mono text-xs text-ink-faint">
+            {index.reason}
+          </p>
         </div>
         <BlockedIngestionDisclosure states={index.blockingStates ?? []} />
         <CiSignalPanel signal={index.ciSignal} />
@@ -463,23 +539,29 @@ export function FlaggedLens({
   const blockingStates = index.blockingStates ?? [];
 
   return (
-    <div className="flagged-canvas">
-      <div className="canvas-toolbar">
-        <span className="canvas-coverage">
+    <div className="flagged-canvas flex flex-col">
+      <div className="canvas-toolbar mb-4 flex items-center justify-between gap-4 border-b border-line pb-3">
+        <span className="canvas-coverage text-sm font-semibold text-ink">
           {index.total} {index.total === 1 ? "flag" : "flags"}
         </span>
         {index.total > 0 ? (
-          <span className="flag-counts">
-            <span className="flag-count flag-count-high">{index.counts.high} high</span>
-            <span className="flag-count flag-count-medium">{index.counts.medium} medium</span>
-            <span className="flag-count flag-count-low">{index.counts.low} low</span>
+          <span className="flag-counts inline-flex gap-2">
+            <span className="flag-count flag-count-high text-xs font-semibold text-ink-faint">
+              {index.counts.high} high
+            </span>
+            <span className="flag-count flag-count-medium text-xs font-semibold text-ink-faint">
+              {index.counts.medium} medium
+            </span>
+            <span className="flag-count flag-count-low text-xs font-semibold text-ink-faint">
+              {index.counts.low} low
+            </span>
           </span>
         ) : null}
         <DualBadge dual={index.dual} />
         {deepReview ? (
           <button
             type="button"
-            className="flag-deep-review"
+            className="flag-deep-review ml-auto cursor-pointer rounded-full border border-line bg-raised px-3 py-1 text-xs font-semibold text-ink-soft hover:border-accent-line hover:text-ink"
             data-active={deepReview.active}
             aria-pressed={deepReview.active}
             onClick={deepReview.onToggle}
@@ -492,29 +574,29 @@ export function FlaggedLens({
       <UiVerificationStrip status={index.uiVerification} loadUiEvidence={loadUiEvidence} />
       {index.total === 0 ? (
         index.uiVerification?.status === "pending" ? (
-          <p className="flagged-empty flagged-empty-qualified">
+          <p className="flagged-empty flagged-empty-qualified px-1 py-6 text-base italic text-ink-faint">
             Nothing has been flagged yet — the UI check is still running, so this is not a full
             all-clear.
           </p>
         ) : index.uiVerification?.status === "unavailable" ? (
-          <p className="flagged-empty flagged-empty-qualified">
+          <p className="flagged-empty flagged-empty-qualified px-1 py-6 text-base italic text-ink-faint">
             Nothing was flagged, but Rennet couldn't check the UI — this is not a full all-clear.
           </p>
         ) : blockingStates.length > 0 ? (
           // Blocked ingestion makes the unconditional "ran clean" copy a lie: nothing
           // was flagged only IN WHAT COULD BE READ. Qualified copy + the disclosure
           // replace it (R18/#309). This is honest copy, not a gate.
-          <p className="flagged-empty flagged-empty-qualified">
+          <p className="flagged-empty flagged-empty-qualified px-1 py-6 text-base italic text-ink-faint">
             Nothing was flagged in what could be read — but some content was not ingested, so this
             is not a full all-clear.
           </p>
         ) : (
-          <p className="flagged-empty">
+          <p className="flagged-empty px-1 py-6 text-base italic text-ink-faint">
             Reviewed. Nothing was flagged — this angle ran clean, it was not skipped.
           </p>
         )
       ) : (
-        <ol className="flags">
+        <ol className="flags list-none">
           {index.rows.map((row) => (
             <FlagRow key={row.findingId} row={row} onJumpToAnchor={onJumpToAnchor} />
           ))}

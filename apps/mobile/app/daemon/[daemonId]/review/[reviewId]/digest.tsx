@@ -55,9 +55,9 @@ export default function Digest(): ReactNode {
         <SectionLabel>Delta digest</SectionLabel>
         <View style={{ flexDirection: "row", marginHorizontal: -3, marginBottom: space.sm }}>
           <StatTile value={counts.addressed} label="addressed" tone="green" />
-          <StatTile value={counts.partially} label="partial" tone="amber" />
-          <StatTile value={counts.untouched} label="untouched" tone="amber" />
-          <StatTile value={counts.beyond} label="beyond" tone="blue" />
+          <StatTile value={counts.partially} label="partial" tone="accent" />
+          <StatTile value={counts.untouched} label="untouched" tone="accent" />
+          <StatTile value={counts.beyond} label="beyond" tone="accent" />
         </View>
         <Card>
           <Text style={{ color: t.text, fontSize: type.body, lineHeight: 22 }}>

@@ -27,6 +27,17 @@ import { ArrowRightIcon, TargetIcon } from "./icons";
 
 const MODES: DestinationMode[] = ["own-branch", "other-pr"];
 
+// The disposition-type badge wash (issue #109). Approve reads evidence-green;
+// request-change and question share the gold register (accent and decision merged,
+// 2026-08-19); comment stays neutral. Soft washes keep the letter legible in both
+// schemes without an on-colour contrast trap.
+const TYPE_BADGE: Record<string, string> = {
+  approve: "bg-green-soft text-green",
+  "request-change": "bg-accent-soft text-accent",
+  question: "bg-accent-soft text-accent",
+  comment: "bg-raised text-ink-faint",
+};
+
 export function DestinationFrame({
   draft,
   mode,
@@ -59,7 +70,7 @@ export function DestinationFrame({
 
   return (
     <aside
-      className="destination-frame"
+      className="destination-frame fixed right-4 top-14 z-[11] hidden max-h-[calc(100vh-76px)] w-[268px] flex-col gap-3 overflow-hidden rounded-window border border-line bg-surface p-4 font-sans [[data-destination-visible]_&]:flex"
       data-mode={mode}
       data-staged-count={items.length}
       data-publish-count={lanes.ink}
@@ -67,16 +78,24 @@ export function DestinationFrame({
       aria-label={`Destination: ${variant.title}`}
     >
       <header className="destination-head">
-        <p className="destination-eyebrow">
+        <p className="destination-eyebrow m-0 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
           <TargetIcon size={11} />
           STAGING TOWARD
         </p>
-        <h2 className="destination-title">{variant.title}</h2>
-        <p className="destination-summary">{variant.summary}</p>
+        <h2 className="destination-title mt-1 font-display text-lg font-semibold text-ink">
+          {variant.title}
+        </h2>
+        <p className="destination-summary mt-1 text-sm leading-snug text-ink-soft">
+          {variant.summary}
+        </p>
       </header>
 
       {onSelectMode ? (
-        <div className="destination-modes" role="tablist" aria-label="Destination variant">
+        <div
+          className="destination-modes flex gap-1 rounded-control border border-line bg-raised p-1"
+          role="tablist"
+          aria-label="Destination variant"
+        >
           {MODES.map((candidate) => {
             const framing = destinationVariant(candidate);
             return (
@@ -84,7 +103,9 @@ export function DestinationFrame({
                 type="button"
                 role="tab"
                 aria-selected={candidate === mode}
-                className={candidate === mode ? "is-active" : ""}
+                className={`flex-1 rounded-chip px-3 py-1.5 text-xs font-semibold ${
+                  candidate === mode ? "is-active bg-accent-soft text-accent" : "text-ink-soft"
+                }`}
                 key={candidate}
                 onClick={() => onSelectMode(candidate)}
               >
@@ -95,39 +116,56 @@ export function DestinationFrame({
         </div>
       ) : null}
 
-      <div className="destination-body">
-        <div className="destination-count">
-          <strong>{items.length}</strong>
-          <span>collated</span>
+      <div className="destination-body flex flex-col gap-2 overflow-y-auto">
+        <div className="destination-count flex items-baseline gap-1.5">
+          <strong className="text-2xl font-semibold text-accent">{items.length}</strong>
+          <span className="text-sm text-ink-soft">collated</span>
           {lanes.blue > 0 ? (
-            <span className="destination-private-pill" data-private-count={lanes.blue}>
+            <span
+              className="destination-private-pill rounded-chip border border-accent-line bg-accent-soft px-2 py-0.5 text-2xs font-semibold text-accent"
+              data-private-count={lanes.blue}
+            >
               {lanes.blue} private
             </span>
           ) : null}
         </div>
         {empty ? (
-          <p className="destination-empty">
+          <p className="destination-empty m-0 text-sm leading-snug text-ink-faint">
             The draft is empty. Dispose something and it collates here toward{" "}
             {variant.signLabel.toLowerCase()}.
           </p>
         ) : (
-          <ol className="destination-staged" aria-label="Collated dispositions">
+          <ol
+            className="destination-staged m-0 flex list-none flex-col gap-1 p-0"
+            aria-label="Collated dispositions"
+          >
             {draft.map((entry) => (
-              <li className="destination-staged-item" data-path={entry.path} key={entry.id}>
-                <span className="destination-staged-type" data-type={entry.type}>
+              <li
+                className="destination-staged-item flex items-center gap-2 rounded-control bg-raised px-2 py-1.5"
+                data-path={entry.path}
+                key={entry.id}
+              >
+                <span
+                  className={`destination-staged-type grid size-[18px] shrink-0 place-items-center rounded-chip text-2xs font-bold ${
+                    TYPE_BADGE[entry.type] ?? TYPE_BADGE.comment
+                  }`}
+                  data-type={entry.type}
+                >
                   {entry.type[0]?.toUpperCase()}
                 </span>
-                <span className="destination-staged-path">{entry.path}</span>
+                <span className="destination-staged-path min-w-0 truncate font-mono text-xs text-ink-soft">
+                  {entry.path}
+                </span>
               </li>
             ))}
           </ol>
         )}
       </div>
 
-      <footer className="destination-foot">
+      <footer className="destination-foot flex flex-col gap-2">
         <button
           type="button"
-          className="destination-open-draft"
+          className="destination-open-draft inline-flex h-9 w-full items-center justify-center gap-2 rounded-control bg-accent-fill px-3 text-base font-semibold text-accent-ink disabled:bg-raised disabled:text-ink-faint"
           disabled={empty}
           onClick={() => onOpenDraft?.()}
         >
@@ -135,7 +173,11 @@ export function DestinationFrame({
           <ArrowRightIcon size={14} />
         </button>
         {canHandoff ? (
-          <button type="button" className="destination-handoff" onClick={() => onHandoff?.()}>
+          <button
+            type="button"
+            className="destination-handoff inline-flex h-9 w-full items-center justify-center gap-2 rounded-control border border-line px-3 text-base font-semibold text-ink hover:bg-raised"
+            onClick={() => onHandoff?.()}
+          >
             Hand off to agent
             <ArrowRightIcon size={14} />
           </button>

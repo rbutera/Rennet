@@ -11,15 +11,17 @@ describe("theme tokens (task 3.2 — kit transpose)", () => {
     expect(resolveTheme("dark")).toBe(darkPalette);
   });
 
-  it("keeps the canonical review-blue hue from the kit", () => {
-    expect(lightPalette.blue).toBe("#396f96");
-    expect(darkPalette.blue).toBe("#8bbddd");
+  it("uses the canonical gold accent (blue retired, merged into accent)", () => {
+    expect(lightPalette.accent).toBe("#8a5d0b");
+    expect(darkPalette.accent).toBe("#e8b13c");
+    expect("blue" in lightPalette).toBe(false);
+    expect("amber" in lightPalette).toBe(false);
   });
 
-  it("every colour is a hex string", () => {
+  it("every colour is a hex or rgba string", () => {
     for (const palette of [lightPalette, darkPalette]) {
       for (const value of Object.values(palette)) {
-        expect(value).toMatch(/^#[0-9a-f]{6}$/);
+        expect(value).toMatch(/^(#[0-9a-f]{6}|rgba?\([0-9.,\s]+\))$/);
       }
     }
   });
