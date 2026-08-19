@@ -91,6 +91,9 @@ describe("RennetApp — delta-account hunk navigation", () => {
         ]);
         expect(document.activeElement).toBe(focused[0]);
       },
+      // 5s, not the 1s default: the focus lands after a render + effect chain that a
+      // loaded runner can stretch past 1s — this exact waitFor sank the v0.2.5
+      // release run (2026-08-18) and a local gate (2026-08-19) as a flake.
       { timeout: 5000 },
     );
   });

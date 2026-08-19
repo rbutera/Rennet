@@ -395,6 +395,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     let resolution = codexResolutions.get(key);
     if (!resolution) {
       resolution = (async (): Promise<CodexResolution> => {
+        // The hermetic-test hook (#386): see createClaudeHarness.
+        if (env.RENNET_DISABLE_HARNESS === "1") {
+          return {
+            availability: { available: false, version: null },
+            port: null,
+            executor: null,
+            agenticPort: null,
+            binPath: null,
+            version: null,
+          };
+        }
         const explicitBin = env.RENNET_CODEX_BIN;
         const discoveryDeps =
           locus.kind === "wsl" ? await wslDiscoveryDeps(locus.distro) : defaultCodexDiscoveryDeps();
@@ -484,6 +495,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   let ompResolution: Promise<OmpResolution> | null = null;
   function getOmpResolution(): Promise<OmpResolution> {
     ompResolution ??= (async (): Promise<OmpResolution> => {
+      // The hermetic-test hook (#386): see createClaudeHarness.
+      if (env.RENNET_DISABLE_HARNESS === "1") return { agenticPort: null, version: null };
       const explicitBin = env.RENNET_OMP_BIN;
       const result = await discoverOmp(defaultOmpDiscoveryDeps(), {
         ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
@@ -523,7 +536,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   function detectHarnesses(): Promise<DetectedHarness[]> {
     harnessDetection ??= (async (): Promise<DetectedHarness[]> => {
       const [claude, codex] = await Promise.all([
-        discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
+        env.RENNET_DISABLE_HARNESS === "1"
+          ? Promise.resolve(null)
+          : discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
         getCodexAvailability().catch(() => null),
       ]);
       const detected: DetectedHarness[] = [];

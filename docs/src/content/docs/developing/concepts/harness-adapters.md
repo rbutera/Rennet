@@ -257,6 +257,14 @@ Rennet therefore:
 5. ranks usable absolute paths and records health as ready, degraded, or
    unavailable.
 
+Because step 2 probes absolute install locations (Homebrew's bin directories,
+the codex bundled inside ChatGPT desktop), no test can make discovery find
+nothing by scrubbing `HOME` and `PATH` alone. Hermetic tests therefore set
+`RENNET_DISABLE_HARNESS=1` — a test-only switch honoured by every discovery
+seam — so the app renders its deterministic model-free floor. The desktop e2e
+suite sets it; a daemon launched with it reports every harness as not
+installed.
+
 Codex discovery also skips broken shims by probing with closed stdin and a hard
 timeout, then probes the chosen candidate for app-server capability (the
 `app-server` subcommand answering an `initialize` handshake); a binary that

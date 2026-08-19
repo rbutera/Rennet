@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { launchRennet, makeTempDir, seedOpenSpecRepo } from "./harness";
+import { launchRennet, makeTempDir, openDirectEntry, seedOpenSpecRepo } from "./harness";
 
 // The Canvases surface, end to end in a launched app: opening a review, the review
 // lenses (Decisions / Flagged / Noise), the structured OpenSpec viewer on the Spec
@@ -16,7 +16,7 @@ import { launchRennet, makeTempDir, seedOpenSpecRepo } from "./harness";
 /** Land on the front door, open the direct entry, and capture the test repo. */
 async function openReviewDirectly(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible();
-  await page.getByRole("button", { name: "Review directly" }).click();
+  await openDirectEntry(page);
   await page.getByRole("button", { name: "Choose a repository" }).click();
   // A captured review opens on Canvases; the lens tabs appear once the set loads.
   await expect(page.getByRole("tab", { name: "Decisions" })).toBeVisible({ timeout: 60_000 });
@@ -60,11 +60,17 @@ test("renders every review lens and the structured OpenSpec viewer", async () =>
 
     // Files: the raw diff of the reviewed code file.
     await page.getByRole("tab", { name: "Files" }).click();
-    await page.getByRole("button", { name: /counter\.ts/ }).click();
+    // The filename appears on the file row AND the chunk discuss control; scope
+    // through the a11y tree to the changed-files panel for the row.
+    await page
+      .getByRole("complementary", { name: "Changed files" })
+      .getByRole("button", { name: /counter\.ts/ })
+      .click();
     await expect(page.locator("pre.diff")).toContainText("step + 1");
 
-    // Dispose: step back out of the review to the projects front door.
-    await page.getByRole("button", { name: "Back to projects" }).click();
+    // Dispose: the v4.0 nav rail replaced the drawn back button — Home is the
+    // front door.
+    await page.getByRole("button", { name: "Home", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible();
   } finally {
     await application.close();
