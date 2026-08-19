@@ -71,12 +71,10 @@ function bridge(keybindings: Record<string, string | null>): RennetBridge {
 
 function interactiveBridge(initial: Record<string, string | null> = {}): {
   bridge: RennetBridge;
-  posted: unknown[][];
   writes: { id: string; keybinding?: string | null }[];
   fireMenuRun(id: string): void;
 } {
   const keybindings = { ...initial };
-  const posted: unknown[][] = [];
   const writes: { id: string; keybinding?: string | null }[] = [];
   let menuRun: ((id: string) => void) | undefined;
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
@@ -107,7 +105,6 @@ function interactiveBridge(initial: Record<string, string | null> = {}): {
   return {
     bridge: {
       invoke,
-      updateMenu: (sections) => posted.push(sections),
       onMenuRun: (listener) => {
         menuRun = listener;
         return () => {
@@ -115,7 +112,6 @@ function interactiveBridge(initial: Record<string, string | null> = {}): {
         };
       },
     } as RennetBridge,
-    posted,
     writes,
     fireMenuRun: (id) => act(() => menuRun?.(id)),
   };
@@ -184,25 +180,21 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     await waitFor(() => expect(container.querySelector(".settings")).not.toBeNull());
   });
 
-  it("settings set, unbind, and reset update live dispatch and repost the menu", async () => {
+  it("settings set, unbind, and reset update live dispatch", async () => {
     const harness = interactiveBridge();
     const { container, getByRole, getByLabelText } = mount(<RennetApp bridge={harness.bridge} />);
     await waitFor(() => expect(container.querySelector(".navigation-shell")).not.toBeNull());
-    await waitFor(() => expect(harness.posted.length).toBeGreaterThan(0));
 
     harness.fireMenuRun("nav.settings");
     await waitFor(() => expect(container.querySelector(".settings")).not.toBeNull());
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
-    const beforeSet = harness.posted.length;
     clickRowButton(keyRow(container, "Toggle command palette"), "Set");
     fireEvent.keyDown(getByLabelText("Press the new chord for Toggle command palette"), {
       key: "j",
       metaKey: true,
     });
     await waitFor(() => expect(harness.writes).toHaveLength(1));
-    await waitFor(() => expect(harness.posted.length).toBeGreaterThan(beforeSet));
-    expect(JSON.stringify(harness.posted.at(-1))).toContain("mod+j");
 
     fireEvent.click(container.querySelector(".settings-back") as HTMLButtonElement);
     fireEvent.keyDown(window, { key: "j", metaKey: true });
@@ -247,10 +239,9 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
   it("falls back from mod+ end to end and reports the raw invalid override", async () => {
     const harness = interactiveBridge({ "palette.toggle": "mod+" });
     const { container, getByRole } = mount(<RennetApp bridge={harness.bridge} />);
-    await waitFor(() => expect(harness.posted.length).toBeGreaterThan(0));
-    expect(JSON.stringify(harness.posted.at(-1))).toContain('"accelerator":"mod+k"');
-    expect(JSON.stringify(harness.posted.at(-1))).not.toContain('"accelerator":"mod+"');
+    await waitFor(() => expect(container.querySelector(".navigation-shell")).not.toBeNull());
 
+    // The invalid stored chord falls back to the default ⌘K at dispatch.
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     await waitFor(() => expect(container.querySelector(".command-palette")).not.toBeNull());
     fireEvent.keyDown(container.querySelector(".command-palette-input") as HTMLInputElement, {

@@ -12,7 +12,6 @@ import {
   formatKeybinding,
   fuzzyScore,
   matchKeybinding,
-  menuTemplate,
   normalizeChord,
   type Screen,
 } from "./commands";
@@ -247,7 +246,7 @@ describe("command catalogue (single source)", () => {
     expect(catalogueDef("lens.spec")).toBeUndefined();
   });
 
-  it("pins the full id/title/group/keybinding matrix across catalogue, palette, and menu contexts", () => {
+  it("pins the full id/title/group/keybinding matrix across catalogue and palette contexts", () => {
     const expected = [
       ["palette.toggle", "Toggle command palette", "General", "mod+k"],
       ["nav.back", "Back", "Navigate", "mod+["],
@@ -270,9 +269,12 @@ describe("command catalogue (single source)", () => {
       ["door.choose", "Choose a repository", "Start", null],
     ];
     const workspace = context();
-    const matrix = menuTemplate(workspace).flatMap((section) =>
-      section.items.map((item) => [item.id, item.label, section.group, item.accelerator ?? null]),
-    );
+    const matrix = COMMAND_CATALOGUE.map((def) => [
+      def.id,
+      typeof def.title === "function" ? def.title(workspace) : def.title,
+      def.group,
+      def.keybinding ?? null,
+    ]);
     expect(matrix).toEqual(expected);
 
     const contexts = [
@@ -287,22 +289,19 @@ describe("command catalogue (single source)", () => {
         scheme: "light",
       }),
     ];
+    // Every command the palette builds agrees with its catalogue def (the single source):
+    // same title (resolved for this context), group, and default keybinding.
     for (const ctx of contexts) {
-      const menu = new Map(
-        menuTemplate(ctx)
-          .flatMap((section) => section.items.map((item) => ({ ...item, group: section.group })))
-          .map((item) => [item.id, item]),
-      );
       for (const command of buildCommands(ctx)) {
-        const item = menu.get(command.id);
-        if (!item) continue;
+        const def = catalogueDef(command.id);
+        if (!def) continue;
+        const label = typeof def.title === "function" ? def.title(ctx) : def.title;
         expect([command.title, command.group, command.keybinding ?? null]).toEqual([
-          item.label,
-          item.group,
-          item.accelerator ?? null,
+          label,
+          def.group,
+          def.keybinding ?? null,
         ]);
       }
-      expect([...menu.keys()]).toEqual(COMMAND_CATALOGUE.map((definition) => definition.id));
     }
   });
 });
@@ -443,40 +442,5 @@ describe("findConflicts", () => {
       { "zoom.in": "mod+[" },
     );
     expect(conflicts.get("mod+[")).toEqual(["nav.back", "zoom.in"]);
-  });
-});
-
-describe("menuTemplate", () => {
-  it("labels/accelerators from the catalogue+overrides, disables out-of-context, excludes dynamic", () => {
-    const sections = menuTemplate(context({ screen: "frontDoor", surfaceKind: "projects" }), {
-      "nav.back": "mod+e",
-    });
-    const items = sections.flatMap((section) => section.items);
-    const byId = new Map(items.map((item) => [item.id, item]));
-
-    // No dynamic entries ever.
-    expect(items.some((item) => item.id.startsWith("recent."))).toBe(false);
-    expect(items.some((item) => item.id.startsWith("lens."))).toBe(false);
-
-    // The override rides the accelerator (mod+ token preserved for MAIN to translate).
-    expect(byId.get("nav.back")?.accelerator).toBe("mod+e");
-
-    // On the front door, zoom.in is not offered → disabled, not absent.
-    expect(byId.get("zoom.in")?.enabled).toBe(false);
-    expect(byId.has("zoom.in")).toBe(true);
-
-    // The palette toggle is always enabled.
-    expect(byId.get("palette.toggle")?.enabled).toBe(true);
-
-    // A command the front door DOES offer is enabled.
-    expect(byId.get("nav.settings")?.enabled).toBe(true);
-  });
-
-  it("falls back from an invalid stored chord and never projects the invalid token", () => {
-    const sections = menuTemplate(context(), { "nav.back": "mod+" });
-    const back = sections
-      .flatMap((section) => section.items)
-      .find((item) => item.id === "nav.back");
-    expect(back?.accelerator).toBe("mod+[");
   });
 });

@@ -74,7 +74,6 @@ import {
   commandFromCatalogue,
   type KeybindingOverrides,
   matchKeybinding,
-  menuTemplate,
   type Screen,
 } from "./command/commands";
 import { RennetBrandMark } from "./components/brand-mark";
@@ -2445,16 +2444,6 @@ export function RennetApp({
   // Publish the live dispatch list for the stable window keydown listener (above).
   dispatchRef.current = { commands: dispatchCommands, overrides: keybindingOverrides };
 
-  // The application menu (#44): project the registry into a serializable template and
-  // post it to MAIN, but only when the serialized template actually changed — a context
-  // flicker or an override edit reposts, an identical render does not.
-  const menuJson = commandContext
-    ? JSON.stringify(menuTemplate(commandContext, keybindingOverrides))
-    : null;
-  useEffect(() => {
-    if (!menuJson) return;
-    bridge.updateMenu?.(JSON.parse(menuJson));
-  }, [menuJson, bridge]);
   // A menu-item activation runs the SAME handler the palette would (single dispatcher).
   // A `menu:run` for a command the live context no longer offers is dropped without a
   // throw (the disabled state raced the click).

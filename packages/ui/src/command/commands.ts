@@ -1,4 +1,3 @@
-import type { MenuTemplateSection } from "@rennet/protocol";
 import type { CanvasAngle } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import type { ZoomLevel } from "../canvas/logic";
@@ -115,9 +114,9 @@ const ANGLE_LABELS: Partial<Record<CanvasAngle, string>> = {
 // The catalogue — the SINGLE source of every stable command's title, group, and
 // default keybinding. `buildCommands` reads its emitted commands' presentation from
 // here (so there is no second table of titles or chords), key dispatch matches
-// against these defaults overlaid by user overrides, the settings Keyboard section
-// lists these, and the application menu projects from these. Dynamic entries
-// (`recent.*`, `lens.*`) are generated per context and deliberately NOT catalogued.
+// against these defaults overlaid by user overrides, and the settings Keyboard
+// section lists these. Dynamic entries (`recent.*`, `lens.*`) are generated per
+// context and deliberately NOT catalogued.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A catalogued command definition. `title` may depend on live context (toggles). */
@@ -498,43 +497,4 @@ export function findConflicts(
     if (ids.length < 2) byChord.delete(key);
   }
   return byChord;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The application menu is PROJECTED from the same catalogue: the renderer derives a
-// serializable template, MAIN builds the Electron menu from it. Labels come from the
-// catalogue titles, accelerators from the effective `mod+` token (MAIN translates),
-// enabled from whether the live context currently offers the command — an out-of-
-// context command is disabled, never missing.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Project the catalogue + live context + overrides into serializable menu sections.
- * Dynamic entries (`recent.*`, `lens.*`) are not catalogued, so they never appear.
- * A catalogued command absent from `buildCommands(ctx)` projects `enabled: false`
- * (disabled, not omitted); the palette-toggle is always enabled (it works anywhere).
- */
-export function menuTemplate(
-  ctx: CommandContext,
-  overrides: KeybindingOverrides = {},
-): MenuTemplateSection[] {
-  const live = new Set(buildCommands(ctx).map((command) => command.id));
-  const sections: MenuTemplateSection[] = [];
-  for (const def of COMMAND_CATALOGUE) {
-    const label = typeof def.title === "function" ? def.title(ctx) : def.title;
-    const token = effectiveKeybinding(def, overrides);
-    const item = {
-      id: def.id,
-      label,
-      enabled: def.id === "palette.toggle" ? true : live.has(def.id),
-      ...(token ? { accelerator: token } : {}),
-    };
-    let section = sections.find((entry) => entry.group === def.group);
-    if (!section) {
-      section = { group: def.group, items: [] };
-      sections.push(section);
-    }
-    section.items.push(item);
-  }
-  return sections;
 }
