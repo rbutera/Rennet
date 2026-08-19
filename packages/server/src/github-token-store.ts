@@ -1,6 +1,6 @@
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { GitHubStoredCredential, SecretStore } from "@rennet/adapters";
+import type { GitHubCredential, SecretStore } from "@rennet/adapters";
 
 /**
  * The daemon's GitHub credential vault (v4.3 — the `SecretStore` implementation).
@@ -19,11 +19,19 @@ import type { GitHubStoredCredential, SecretStore } from "@rennet/adapters";
 
 const FILE_NAME = "github-token";
 
-function parseStored(raw: string): GitHubStoredCredential | null {
+function parseStored(raw: string): GitHubCredential | null {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
   if (trimmed.startsWith("{")) {
-    const parsed = JSON.parse(trimmed) as GitHubStoredCredential;
+    // Corrupt JSON (a torn write predating the atomic rename, a hand edit) reads
+    // as not-connected — the one-click recovery is reconnecting, and a thrown
+    // SyntaxError here would brick status() and every egress instead.
+    let parsed: GitHubCredential;
+    try {
+      parsed = JSON.parse(trimmed) as GitHubCredential;
+    } catch {
+      return null;
+    }
     if (typeof parsed.token !== "string" || parsed.token.length === 0) return null;
     return parsed;
   }
@@ -34,7 +42,7 @@ function parseStored(raw: string): GitHubStoredCredential | null {
 export function createGitHubTokenStore(dataDir: string): SecretStore {
   const filePath = join(dataDir, FILE_NAME);
   return {
-    async getGitHubCredential(): Promise<GitHubStoredCredential | null> {
+    async getGitHubCredential(): Promise<GitHubCredential | null> {
       let raw: string;
       try {
         raw = await readFile(filePath, "utf8");
@@ -47,17 +55,21 @@ export function createGitHubTokenStore(dataDir: string): SecretStore {
       }
       return parseStored(raw);
     },
-    async setGitHubCredential(credential: GitHubStoredCredential | null): Promise<void> {
+    async setGitHubCredential(credential: GitHubCredential | null): Promise<void> {
       if (credential === null) {
         await rm(filePath, { force: true });
         return;
       }
       await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, `${JSON.stringify(credential)}\n`, { mode: 0o600 });
-      // `writeFile`'s mode applies only on CREATE; an overwrite keeps the old bits.
-      // Enforce owner-only on every write so a pre-existing permissive file never
-      // keeps exposing the fresh credential.
-      await chmod(filePath, 0o600);
+      // Write-then-RENAME: GitHub rotates on refresh, so this file may hold the
+      // only living credential — an in-place truncating write interrupted mid-way
+      // would leave corrupt JSON and a dead session. The rename is atomic on the
+      // same filesystem; the temp file is created 0600 and re-tightened because
+      // `writeFile`'s mode applies only on CREATE.
+      const tempPath = `${filePath}.tmp`;
+      await writeFile(tempPath, `${JSON.stringify(credential)}\n`, { mode: 0o600 });
+      await chmod(tempPath, 0o600);
+      await rename(tempPath, filePath);
     },
   };
 }

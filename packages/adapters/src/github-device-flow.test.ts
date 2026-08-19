@@ -130,6 +130,21 @@ describe("runGitHubDeviceFlow", () => {
     ).rejects.toThrow();
   });
 
+  it("enforces the device code's OWN deadline even if GitHub never says expired", async () => {
+    // A spec-violating upstream (or a proxy mangling the error) keeps answering
+    // authorization_pending forever; the local expires_in deadline still ends it.
+    let clock = Date.parse("2026-08-19T12:00:00.000Z");
+    const fetch: typeof globalThis.fetch = async (input) => {
+      if (String(input).includes("/login/device/code"))
+        return json({ ...VERIFICATION, expires_in: 1 }); // 1-second code lifetime
+      clock += 10_000; // each poll costs 10s of wall clock
+      return json({ error: "authorization_pending" });
+    };
+    await expect(
+      runGitHubDeviceFlow({ fetch, onVerification: () => undefined, now: () => clock }),
+    ).rejects.toThrow(/expired_token/);
+  });
+
   it("exports the committed client id and the repo+workflow scopes", () => {
     expect(RENNET_GITHUB_CLIENT_ID).toMatch(/^Ov23li/);
     expect(RENNET_GITHUB_SCOPES).toEqual(["repo", "workflow"]);

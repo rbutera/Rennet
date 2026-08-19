@@ -46,19 +46,20 @@ export interface Verification {
   interval: number;
 }
 
-export type DeviceVerification = Verification;
-
 /**
- * One minted credential: the access token plus the expiry/refresh half that an
- * expiring-token app configuration returns (nulls when expiration is off).
+ * THE GitHub credential: the access token plus the expiry/refresh half that an
+ * expiring-token app configuration returns. One type end to end — the device
+ * flow mints it (filling every field, nulls when expiration is off), the store
+ * persists it (a pasted PAT or legacy file is `{ token }` alone), the auth
+ * ladder resolves and refreshes it.
  */
-export interface GitHubMintedCredential {
+export interface GitHubCredential {
   token: string;
-  /** ISO timestamp the access token dies at, or null for a non-expiring token. */
-  expiresAt: string | null;
-  refreshToken: string | null;
-  /** ISO timestamp the refresh token dies at (GitHub: ~6 months), or null. */
-  refreshTokenExpiresAt: string | null;
+  /** ISO timestamp the access token dies at; null/absent for a non-expiring token. */
+  expiresAt?: string | null;
+  refreshToken?: string | null;
+  /** ISO timestamp the refresh token dies at (GitHub: ~6 months); null/absent. */
+  refreshTokenExpiresAt?: string | null;
 }
 
 /**
@@ -77,7 +78,7 @@ export interface DeviceFlowOptions {
   /** The outbound HTTP transport (the daemon's fetch). */
   fetch: typeof globalThis.fetch;
   /** Receives the user code + verification URI as soon as GitHub mints them. */
-  onVerification: (verification: DeviceVerification) => void;
+  onVerification: (verification: Verification) => void;
   /** Aborts the poll (user dismissed the connect card). */
   signal?: AbortSignal;
   /** Overrides for tests. */
@@ -114,7 +115,7 @@ async function postLogin(
   return (await res.json()) as TokenExchangeResponse & Verification;
 }
 
-function toCredential(response: TokenExchangeResponse, now: () => number): GitHubMintedCredential {
+function toCredential(response: TokenExchangeResponse, now: () => number): GitHubCredential {
   if (!response.access_token) {
     throw new Error("GitHub token exchange returned no access_token");
   }
@@ -144,9 +145,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /** Run the device flow to completion; resolves with the minted credential. */
-export async function runGitHubDeviceFlow(
-  options: DeviceFlowOptions,
-): Promise<GitHubMintedCredential> {
+export async function runGitHubDeviceFlow(options: DeviceFlowOptions): Promise<GitHubCredential> {
   const base = options.loginBaseUrl ?? LOGIN_BASE;
   const clientId = options.clientId ?? RENNET_GITHUB_CLIENT_ID;
   const now = options.now ?? Date.now;
@@ -160,9 +159,15 @@ export async function runGitHubDeviceFlow(
   );
   options.onVerification(verification);
 
+  // The device code itself has a lifetime (GitHub: ~15 minutes). GitHub normally
+  // answers `expired_token` past it, but a local deadline means a stalled fetch or
+  // an endlessly-pending poll can never outlive the code it is polling for.
+  const deadline = now() + verification.expires_in * 1000;
   let intervalSeconds = verification.interval || DEFAULT_INTERVAL_SECONDS;
   for (;;) {
-    await sleep(intervalSeconds * 1000, signal);
+    const remaining = deadline - now();
+    if (remaining <= 0) throw new GitHubOAuthDeclined("expired_token");
+    await sleep(Math.min(intervalSeconds * 1000, remaining), signal);
     const poll = await postLogin(
       fetch,
       `${base}/login/oauth/access_token`,
@@ -201,9 +206,7 @@ export interface RefreshOptions {
  * alone. Throws `GitHubOAuthDeclined` when GitHub rejects the refresh token
  * (expired, already rotated, revoked) — the sign-in must be re-run.
  */
-export async function refreshGitHubCredential(
-  options: RefreshOptions,
-): Promise<GitHubMintedCredential> {
+export async function refreshGitHubCredential(options: RefreshOptions): Promise<GitHubCredential> {
   const base = options.loginBaseUrl ?? LOGIN_BASE;
   const response = await postLogin(options.fetch, `${base}/login/oauth/access_token`, {
     client_id: options.clientId ?? RENNET_GITHUB_CLIENT_ID,

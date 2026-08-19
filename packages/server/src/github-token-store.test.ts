@@ -73,6 +73,12 @@ describe("createGitHubTokenStore", () => {
     expect((await store.getGitHubCredential())?.token).toBe("gho_fresh");
   });
 
+  it("corrupt JSON reads as null (reconnect is the recovery), never a SyntaxError", async () => {
+    const { dir, store } = await freshStore();
+    await writeFile(join(dir, "github-token"), '{"token": "gho_torn', { mode: 0o600 });
+    expect(await store.getGitHubCredential()).toBeNull();
+  });
+
   it("SURFACES a non-ENOENT read failure instead of lying not-connected", async () => {
     const { dir, store } = await freshStore();
     // A directory at the credential path is unreadable as a file (EISDIR) — that

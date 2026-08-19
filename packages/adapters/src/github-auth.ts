@@ -1,6 +1,6 @@
 import type { Octokit } from "@octokit/core";
 import type { SsoState } from "@rennet/core";
-import { type GitHubMintedCredential, GitHubOAuthDeclined } from "./github-device-flow";
+import { type GitHubCredential, GitHubOAuthDeclined } from "./github-device-flow";
 import { headerGet, requestErrorStatus } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
@@ -19,22 +19,11 @@ import { parseGitHubSso } from "./github-sso";
  * them as different problems, not one "GitHub unavailable".
  */
 
-/**
- * The stored credential: the access token plus the optional expiry/refresh
- * half. A pasted PAT is `{ token }` alone. `null` clears it (disconnect). The
- * token never reaches the renderer.
- */
-export interface GitHubStoredCredential {
-  token: string;
-  expiresAt?: string | null;
-  refreshToken?: string | null;
-  refreshTokenExpiresAt?: string | null;
-}
-
-/** The host credential vault. */
+/** The host credential vault. `null` clears it (disconnect); the token never
+ * reaches the renderer. */
 export interface SecretStore {
-  getGitHubCredential(): Promise<GitHubStoredCredential | null>;
-  setGitHubCredential(credential: GitHubStoredCredential | null): Promise<void>;
+  getGitHubCredential(): Promise<GitHubCredential | null>;
+  setGitHubCredential(credential: GitHubCredential | null): Promise<void>;
 }
 
 /**
@@ -65,10 +54,17 @@ export interface ResolveAuthDeps {
   /**
    * The refresh exchange (`refreshGitHubCredential` bound to the daemon's
    * fetch). Absent ⇒ expiring credentials simply die at expiry (token-invalid).
-   * The CALLER must serialize resolutions: GitHub rotates the refresh token on
-   * use, so two concurrent refreshes would kill the session.
    */
-  refresh?: (refreshToken: string) => Promise<GitHubMintedCredential>;
+  refresh?: (refreshToken: string) => Promise<GitHubCredential>;
+  /**
+   * An exclusive-section runner for the refresh exchange (the daemon's account
+   * lock). GitHub ROTATES the refresh token on use, so two concurrent refreshes
+   * would kill the session; the credential is RE-READ inside the section, so a
+   * caller that lost the race adopts the winner's rotation instead of burning
+   * the already-dead refresh token. Validation runs OUTSIDE it — a hung GitHub
+   * request must never block a disconnect. Defaults to no exclusion.
+   */
+  withLock?: <T>(section: () => Promise<T>) => Promise<T>;
   /** The clock, for the near-expiry check. Tests inject; defaults to Date.now. */
   now?: () => number;
 }
@@ -149,33 +145,51 @@ export async function validateGitHubToken(
 }
 
 /** Whether the access token is dead or dies within the refresh skew. */
-function nearExpiry(credential: GitHubStoredCredential, now: number): boolean {
+function nearExpiry(credential: GitHubCredential, now: number): boolean {
   if (!credential.expiresAt) return false;
   const expiresAt = Date.parse(credential.expiresAt);
-  return !Number.isNaN(expiresAt) && expiresAt - now < REFRESH_SKEW_MS;
+  // A malformed expiry reads as ALREADY EXPIRED, not as non-expiring: refreshing
+  // self-heals the corrupt field, while skipping would silently disable renewal.
+  if (Number.isNaN(expiresAt)) return true;
+  return expiresAt - now < REFRESH_SKEW_MS;
+}
+
+/** The one declined-refresh outcome (proactive and reactive branches share it). */
+function refreshDeclinedState(): GitHubAuthState {
+  return { ok: false, reason: "token-invalid", copy: COPY.refreshDeclined };
 }
 
 /**
- * Run the refresh exchange and PERSIST the rotated pair (GitHub kills the old
- * access and refresh token on success, so persistence is not optional). Returns
- * null when GitHub declines — the sign-in must be re-run; transport errors
- * propagate so a network blip never reads as a dead session.
+ * Run the refresh exchange inside the exclusive section and PERSIST the rotated
+ * pair (GitHub kills the old access and refresh token on success, so persistence
+ * is not optional). The stored credential is RE-READ inside the section: when a
+ * concurrent resolution already rotated, ITS fresh pair is adopted instead of
+ * burning a refresh token that is already dead. Returns null when GitHub
+ * declines — the sign-in must be re-run; transport errors propagate so a
+ * network blip never reads as a dead session.
  */
 async function refreshAndPersist(
-  refreshToken: string,
+  expected: GitHubCredential,
   deps: ResolveAuthDeps,
-): Promise<GitHubStoredCredential | null> {
+): Promise<GitHubCredential | null> {
   const refresh = deps.refresh;
   if (!refresh) return null;
-  let minted: GitHubMintedCredential;
-  try {
-    minted = await refresh(refreshToken);
-  } catch (error) {
-    if (error instanceof GitHubOAuthDeclined) return null;
-    throw error;
-  }
-  await deps.secretStore.setGitHubCredential(minted);
-  return minted;
+  const exclusively = deps.withLock ?? (<T>(section: () => Promise<T>) => section());
+  return exclusively(async () => {
+    const current = await deps.secretStore.getGitHubCredential();
+    if (!current) return null; // disconnected while we waited for the lock
+    if (current.token !== expected.token) return current; // another caller rotated
+    if (!current.refreshToken) return null;
+    let minted: GitHubCredential;
+    try {
+      minted = await refresh(current.refreshToken);
+    } catch (error) {
+      if (error instanceof GitHubOAuthDeclined) return null;
+      throw error;
+    }
+    await deps.secretStore.setGitHubCredential(minted);
+    return minted;
+  });
 }
 
 /**
@@ -191,14 +205,12 @@ export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAu
   }
   const now = (deps.now ?? Date.now)();
 
-  let credential: GitHubStoredCredential = stored;
+  let credential: GitHubCredential = stored;
   let refreshed = false;
   // Proactive: renew before GitHub starts rejecting, so no request ever fails.
   if (deps.refresh && stored.refreshToken && nearExpiry(stored, now)) {
-    const next = await refreshAndPersist(stored.refreshToken, deps);
-    if (next === null) {
-      return { ok: false, reason: "token-invalid", copy: COPY.refreshDeclined };
-    }
+    const next = await refreshAndPersist(stored, deps);
+    if (next === null) return refreshDeclinedState();
     credential = next;
     refreshed = true;
   }
@@ -213,10 +225,8 @@ export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAu
     deps.refresh &&
     stored.refreshToken
   ) {
-    const next = await refreshAndPersist(stored.refreshToken, deps);
-    if (next === null) {
-      return { ok: false, reason: "token-invalid", copy: COPY.refreshDeclined };
-    }
+    const next = await refreshAndPersist(stored, deps);
+    if (next === null) return refreshDeclinedState();
     return validateGitHubToken(next.token, deps);
   }
   return state;
