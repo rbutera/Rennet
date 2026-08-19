@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { buildGitHubReviewRequest } from "@rennet/adapters";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildGitHubReviewRequest, FileThreadStore } from "@rennet/adapters";
 import {
   type AskAnswer,
   type ComposePort,
@@ -186,6 +189,8 @@ function harness(
     acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
     raiseAttention?: DispatchDeps["raiseAttention"];
     inFlightReviews?: DispatchDeps["inFlightReviews"];
+    threadPersistence?: DispatchDeps["threadPersistence"];
+    reattachThreads?: DispatchDeps["reattachThreads"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -361,7 +366,8 @@ function harness(
     readUiEvidence: extra.readUiEvidence ?? (() => Promise.resolve(null)),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
-    threadPersistence,
+    threadPersistence: extra.threadPersistence ?? threadPersistence,
+    ...(extra.reattachThreads ? { reattachThreads: extra.reattachThreads } : {}),
     refineComment: refineCommentSpy,
     draftPrBody: draftPrBodySpy,
     symbolLookup: opts.symbolLookup,
@@ -4305,6 +4311,56 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     // Codex: no record at all — the cancel is NOT persisted as a codex failure. Drop the
     // guard and this reddens (a `tn::codex` "could not answer" message appears).
     expect(messages.some((m) => m.id === "tn::codex")).toBe(false);
+  });
+
+  // ⭐ THE REATTACH CONTRACT (Finding A, #382 M2). The interrupted outcome must LAND IN THE
+  // PERSISTED MESSAGES — a client that reattaches after a Stop/kill sees the turn as
+  // `interrupted` in `threads`, never a turn hung forever in `inFlight`. The abort guard keeps
+  // the streaming placeholder on disk; the store's crash-recovery transform reads it back as
+  // `interrupted`; reattach returns it in `threads` with `inFlight` empty. Wired to a REAL
+  // FileThreadStore (temp dir) so putMessage→loadThreads round-trips the real transform, not a
+  // spy. This is the end-to-end proof the settle path gives for free — asserted, per the ruling.
+  it("an interrupted turn lands in the persisted thread messages, not a hung inFlight (reattach contract)", async () => {
+    const store = new FileThreadStore(mkdtempSync(join(tmpdir(), "rennet-threads-")));
+    const reg = spyRegistry();
+    const h = harness(
+      undefined,
+      {},
+      {
+        liveTurns: reg.liveTurns,
+        threadPersistence: {
+          upsertThread: (input) => store.upsertThread(input.reviewId, input),
+          putMessage: (input) => store.putMessage(input.reviewId, input.threadId, input.message),
+        },
+        reattachThreads: async ({ reviewId }) => ({
+          threads: store.loadThreads(reviewId),
+          inFlight: [],
+        }),
+      },
+    );
+    const review = await capturedReview(h.dispatch);
+    // The aborted leg rejects (the SDK's observed throw-on-abort) — the Stop path.
+    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("Request was cancelled"));
+    await expect(
+      h.dispatch(
+        "review.ask",
+        { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/cancelled/);
+    // Reattach sees the interrupted turn IN the persisted messages, and NOTHING hung in-flight.
+    const reattached = (await h.dispatch("review.reattach", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as {
+      threads: { messages: { id: string; status?: string }[] }[];
+      inFlight: unknown[];
+    };
+    expect(reattached.inFlight).toEqual([]);
+    const orch = reattached.threads
+      .flatMap((thread) => thread.messages)
+      .find((message) => message.id === "tn::orchestrator");
+    expect(orch?.status).toBe("interrupted");
   });
 });
 
