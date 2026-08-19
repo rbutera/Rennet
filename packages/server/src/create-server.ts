@@ -171,6 +171,7 @@ import { stampBlockingStates } from "./flagged-blocking-states";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
+import { withConnectResilience } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { InFlightReviews } from "./in-flight-reviews";
@@ -535,9 +536,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // OAuth device flow or pasted as a PAT, kept in the daemon's 0600 token file —
   // resolved LAZILY on the FIRST real egress, never at launch and never for a
   // dry-run (which constructs the request without a credential).
-  const publishHttp: typeof globalThis.fetch =
+  // Connect-phase resilience: one retry on a momentary network blip, and a
+  // plain-language error (never a raw undici internal) when GitHub is unreachable.
+  const publishHttp: typeof globalThis.fetch = withConnectResilience(
     options.httpFetch ??
-    (() => Promise.reject(new Error("Rennet server: options.httpFetch was not provided")));
+      (() => Promise.reject(new Error("Rennet server: options.httpFetch was not provided"))),
+  );
 
   const gitHubSecretStore = createGitHubTokenStore(dataDir);
   /** An UNAUTHENTICATED client for validation; candidate tokens ride as headers. */
