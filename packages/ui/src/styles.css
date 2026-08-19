@@ -4140,6 +4140,15 @@ button {
   border-radius: 50%;
   background: var(--green, var(--accent));
 }
+/* The dot tells the truth the banner tells (PR #405 follow-up): green only when online.
+ * A non-text graphic cue — the indicator's aria-label carries the meaning. */
+.connection-dot[data-state="connecting"] {
+  background: var(--text-faint);
+}
+.connection-dot[data-state="offline"],
+.connection-dot[data-state="error"] {
+  background: var(--amber);
+}
 .connection-name {
   font-size: 12px;
   color: var(--text);

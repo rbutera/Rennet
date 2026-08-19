@@ -47,11 +47,13 @@ app attaching to a remote daemon never disturbs its own local one.
 
 If the connection to the daemon drops — the daemon crashed, the tablet left the
 tailnet — every surface says so: a banner appears saying the connection is lost and
-Rennet is reconnecting, with how long it has been gone. The window keeps showing
-what it has; nothing blocks. When the daemon comes back, the banner turns into a
-brief reconnected note and clears itself. If the daemon refuses the connection
-outright (a protocol mismatch, a revoked device token), the banner says that
-instead and offers **Retry**.
+Rennet is reconnecting, with how long it has been gone. A daemon that was never
+reached in the first place gets honest wording too: the banner says Rennet can't
+reach it and is retrying. The window keeps showing what it has; nothing blocks.
+When a lost daemon comes back, the banner turns into a brief reconnected note and
+clears itself; a first successful connection just clears. If the daemon refuses
+the connection outright (a protocol mismatch, a revoked device token), the banner
+says that instead and offers **Retry**.
 
 ## What the browser shell does differently
 

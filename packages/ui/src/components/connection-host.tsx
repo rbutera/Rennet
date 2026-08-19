@@ -194,28 +194,50 @@ function formatElapsed(ms: number): string {
  * The daemon-lost banner (PR #405 follow-up). When the socket drops, every surface says
  * so instead of sitting on innocent loading copy — a fixed, non-modal strip; the app
  * keeps rendering whatever it has. `outage` holds through the supervisor's own
- * connecting/offline retry oscillation (no flicker), `failed` is the supervisor's
- * terminal error (it stopped retrying; Retry re-dials), and `restored` is a brief
- * reconnected note that clears itself. Null while the connection has never faltered —
- * the initial connect is the indicator's job, not a banner.
+ * connecting/offline retry oscillation (no flicker, and the `since` anchor of the FIRST
+ * drop survives newer transitions), `failed` is the supervisor's terminal error (it
+ * stopped retrying; Retry re-dials), and `restored` is a brief reconnected note that
+ * clears itself. Null while the connection has never faltered — the initial connect is
+ * the indicator's job, not a banner.
+ *
+ * `everOnline` keeps the copy honest: a failed INITIAL dial also surfaces as lifecycle
+ * "offline" (ws-bridge maps every non-handshake close there), so a cold boot against an
+ * unreachable daemon must say "can't reach" — never "lost", which claims a connection
+ * that never existed — and its first successful handshake clears silently instead of
+ * announcing "Reconnected" for a connection that was never established.
  */
 type BannerState =
   | { readonly kind: "outage"; readonly since: number }
   | { readonly kind: "failed"; readonly reason: string }
   | { readonly kind: "restored" };
 
+interface BannerFold {
+  readonly everOnline: boolean;
+  readonly banner: BannerState | null;
+}
+
+const INITIAL_FOLD: BannerFold = { everOnline: false, banner: null };
+
 /** Fold one reachability transition into the banner state (pure, so it is testable). */
-function nextBanner(current: BannerState | null, status: ConnectionStatus): BannerState | null {
+function foldStatus(current: BannerFold, status: ConnectionStatus): BannerFold {
+  const { everOnline, banner } = current;
   switch (status.state) {
     case "offline":
-      return current?.kind === "outage"
+      return banner?.kind === "outage"
         ? current
-        : { kind: "outage", since: status.since ?? Date.now() };
+        : { everOnline, banner: { kind: "outage", since: status.since ?? Date.now() } };
     case "error":
-      return { kind: "failed", reason: status.error ?? "connection failed" };
+      return {
+        everOnline,
+        banner: { kind: "failed", reason: status.error ?? "connection failed" },
+      };
     case "online":
-      if (current === null || current.kind === "restored") return current;
-      return { kind: "restored" };
+      // Only a LOST established connection earns a reconnected note; a first handshake
+      // after a can't-reach spell (or a clean boot) clears silently.
+      return {
+        everOnline: true,
+        banner: banner?.kind === "outage" && everOnline ? { kind: "restored" } : null,
+      };
     default:
       // connecting/idle: a reconnect attempt in flight keeps the outage banner up.
       return current;
@@ -299,7 +321,8 @@ export function ConnectionHost({
   // null ⇒ the connection reports no status (legacy `createBridge` path): the indicator keeps
   // its plain connected label. A supervisor-backed connection drives it through every state.
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
-  const [banner, setBanner] = useState<BannerState | null>(null);
+  const [fold, setFold] = useState(INITIAL_FOLD);
+  const banner = fold.banner;
   // The re-dial seam: Retry bumps the nonce, tearing down the dead connection and
   // dialing afresh through the same effect — no parallel supervision machinery.
   const [retryNonce, setRetryNonce] = useState(0);
@@ -308,10 +331,10 @@ export function ConnectionHost({
     const connection = makeConnection(activeTarget);
     setActiveBridge({ target: activeTarget, bridge: connection.bridge });
     setStatus(null);
-    setBanner(null);
+    setFold(INITIAL_FOLD);
     const unsubscribe = connection.subscribe?.((next) => {
       setStatus(next);
-      setBanner((current) => nextBanner(current, next));
+      setFold((current) => foldStatus(current, next));
     });
     return () => {
       unsubscribe?.();
@@ -331,7 +354,9 @@ export function ConnectionHost({
   useEffect(() => {
     if (banner?.kind !== "restored") return;
     const timer = setTimeout(() => {
-      setBanner((current) => (current?.kind === "restored" ? null : current));
+      setFold((current) =>
+        current.banner?.kind === "restored" ? { ...current, banner: null } : current,
+      );
     }, RESTORED_NOTE_MS);
     return () => clearTimeout(timer);
   }, [banner]);
@@ -518,7 +543,9 @@ export function ConnectionHost({
       <div className="connection-banner" data-kind={banner.kind} role="status">
         {banner.kind === "outage" ? (
           <span className="connection-banner-text">
-            Connection to the review daemon lost — reconnecting… (
+            {fold.everOnline
+              ? "Connection to the review daemon lost — reconnecting… ("
+              : "Can't reach the review daemon — retrying… ("}
             {formatElapsed(now - banner.since)})
           </span>
         ) : banner.kind === "failed" ? (

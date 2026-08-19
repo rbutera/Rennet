@@ -281,56 +281,106 @@ describe("ConnectionHost (#381)", () => {
 // The daemon-lost banner (PR #405 follow-up). Field-diagnosed failure: the daemon
 // crashed, the renderer's queue-mode invokes waited forever, and every surface sat
 // on innocent loading copy with zero indication the daemon was gone. The banner is
-// the honest disclosure — these pin its appearance, its persistence through the
-// retry oscillation, the self-clearing reconnected note, and the terminal-error
-// Retry re-dial. Reverting the ConnectionHost wiring must red these.
+// the honest disclosure — these pin its appearance and exact `since` anchoring, its
+// persistence through the retry oscillation (the original anchor survives newer
+// transitions), the never-online honesty split (a cold boot against an unreachable
+// daemon says "can't reach", never "lost", and clears silently on first handshake),
+// the self-clearing reconnected note, and the terminal-error Retry re-dial (which
+// closes the dead connection exactly once before dialing afresh). Reverting the
+// ConnectionHost wiring must red these.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("ConnectionHost — daemon-lost banner (PR #405 follow-up)", () => {
-  /** A supervisor-backed connection stub whose reachability the test scripts. */
-  function scriptedConnection() {
+  /** A supervisor-backed connection stub whose reachability the test scripts.
+   *  `first` is the status the subscribe fires immediately (the supervisor fires with
+   *  its current state on subscribe); `events` records create/close ordering. */
+  function scriptedConnection(first: ConnectionStatus = { state: "online", since: 0 }) {
     let emit: ((status: ConnectionStatus) => void) | undefined;
-    const closes: number[] = [];
-    const create = vi.fn(
-      (): Connection => ({
+    const events: string[] = [];
+    const create = vi.fn((): Connection => {
+      events.push("create");
+      return {
         bridge: stubBridge(),
         subscribe: (listener) => {
           emit = listener;
-          listener({ state: "online", since: Date.now() });
+          listener(first);
           return () => undefined;
         },
-        close: () => void closes.push(Date.now()),
-      }),
-    );
-    return { create, closes, emit: (status: ConnectionStatus) => act(() => emit?.(status)) };
+        close: () => void events.push("close"),
+      };
+    });
+    return { create, events, emit: (status: ConnectionStatus) => act(() => emit?.(status)) };
   }
 
-  it("shows the lost banner with elapsed time when the connection drops — and not before", () => {
-    const { create, emit } = scriptedConnection();
-    const { container, getByRole } = mount(
+  it("anchors the lost banner to the drop's `since` and ticks elapsed from it", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    try {
+      const { create, emit } = scriptedConnection();
+      const { container, getByRole } = mount(
+        <ConnectionHost createConnection={create} defaultTarget={LOCAL} />,
+      );
+
+      // Online: no banner. The initial connect is the indicator's job, not a banner.
+      expect(container.querySelector(".connection-banner")).toBeNull();
+
+      // The socket dropped 5s before the transition was delivered: elapsed reads the
+      // anchor, not the delivery time.
+      emit({ state: "offline", since: 95_000 });
+      expect(getByRole("status").textContent).toBe(
+        "Connection to the review daemon lost — reconnecting… (5s)",
+      );
+      act(() => vi.advanceTimersByTime(3000));
+      expect(getByRole("status").textContent).toBe(
+        "Connection to the review daemon lost — reconnecting… (8s)",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds the ORIGINAL anchor through the connecting/offline retry oscillation", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    try {
+      const { create, emit } = scriptedConnection();
+      const { getByRole } = mount(
+        <ConnectionHost createConnection={create} defaultTarget={LOCAL} />,
+      );
+
+      emit({ state: "offline", since: 100_000 });
+      act(() => vi.advanceTimersByTime(15_000));
+      // Each retry attempt carries a NEWER `since`; the banner must not re-anchor.
+      emit({ state: "connecting", since: 115_000 });
+      emit({ state: "offline", since: 115_000 });
+      expect(getByRole("status").textContent).toBe(
+        "Connection to the review daemon lost — reconnecting… (15s)",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never claims 'lost' for a connection that never existed — cold boot says can't-reach, first handshake clears silently", () => {
+    // ws-bridge maps a failed INITIAL dial to lifecycle "offline" too, so a slow or
+    // unreachable daemon at boot lands here without any established connection.
+    const { create, emit } = scriptedConnection({ state: "connecting", since: Date.now() });
+    const { container, getByRole, queryByText } = mount(
       <ConnectionHost createConnection={create} defaultTarget={LOCAL} />,
     );
 
-    // Online: no banner. The initial connect is the indicator's job, not a banner.
-    expect(container.querySelector(".connection-banner")).toBeNull();
-
-    emit({ state: "offline", since: Date.now() - 5000 });
+    emit({ state: "offline", since: Date.now() });
     const banner = getByRole("status");
-    expect(banner.textContent).toContain("Connection to the review daemon lost — reconnecting…");
-    expect(banner.textContent).toMatch(/\(\d+s\)/);
+    expect(banner.textContent).toContain("Can't reach the review daemon — retrying…");
+    expect(banner.textContent).not.toContain("lost");
+
+    // First successful handshake: no "Reconnected" note for a never-established
+    // connection — the banner just goes away.
+    emit({ state: "online", since: Date.now() });
+    expect(container.querySelector(".connection-banner")).toBeNull();
+    expect(queryByText(/Reconnected/)).toBeNull();
   });
 
-  it("holds the banner through the supervisor's connecting/offline retry oscillation", () => {
-    const { create, emit } = scriptedConnection();
-    const { getByRole } = mount(<ConnectionHost createConnection={create} defaultTarget={LOCAL} />);
-
-    emit({ state: "offline", since: Date.now() });
-    emit({ state: "connecting", since: Date.now() });
-    expect(getByRole("status").textContent).toContain("Connection to the review daemon lost");
-    emit({ state: "offline", since: Date.now() });
-    expect(getByRole("status").textContent).toContain("Connection to the review daemon lost");
-  });
-
-  it("swaps to a reconnected note on online, which clears itself", () => {
+  it("swaps to a reconnected note when an ESTABLISHED connection comes back, which clears itself", () => {
     vi.useFakeTimers();
     try {
       const { create, emit } = scriptedConnection();
@@ -349,12 +399,12 @@ describe("ConnectionHost — daemon-lost banner (PR #405 follow-up)", () => {
     }
   });
 
-  it("says a terminal error plainly and Retry re-dials a fresh connection", async () => {
-    const { create, emit } = scriptedConnection();
+  it("says a terminal error plainly and Retry closes the dead connection, then re-dials", async () => {
+    const { create, events, emit } = scriptedConnection();
     const { getByRole, getByText, user } = mount(
       <ConnectionHost createConnection={create} defaultTarget={LOCAL} />,
     );
-    expect(create).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["create"]);
 
     emit({ state: "error", since: Date.now(), error: "device token was revoked" });
     expect(getByRole("status").textContent).toContain(
@@ -362,8 +412,8 @@ describe("ConnectionHost — daemon-lost banner (PR #405 follow-up)", () => {
     );
 
     await user.click(getByText("Retry"));
-    // The re-dial seam: the dead connection is torn down and a fresh one dialed.
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    // The re-dial seam: exactly one close of the dead connection BEFORE the fresh dial.
+    await waitFor(() => expect(events).toEqual(["create", "close", "create"]));
     // The fresh connection reports online (its subscribe fires immediately): banner gone.
     expect(getByRole("button", { name: /Connected to This machine/ })).toBeTruthy();
   });
