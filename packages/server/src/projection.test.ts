@@ -463,6 +463,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "review.canvases.output.elementDiffs.path",
     "publish.review.input.comments.path",
     "publish.review.output.ledger.path",
+    "publish.compose.output.comments.path",
     "canvas.disposition.input.path",
     "flagged.review.output.uiVerification.screenshots.path",
     "flagged.review.output.blockingStates.path",

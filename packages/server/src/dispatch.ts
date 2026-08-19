@@ -8,6 +8,7 @@ import {
   buildHandoffBundle,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
+  deriveReviewEvent,
   detectLocus,
   disclosureFor,
   type ForgePrSubmission,
@@ -19,6 +20,7 @@ import {
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
+  reviewCommentsFromDispositions,
   verifyComposedBundle,
 } from "@rennet/core";
 import {
@@ -1031,10 +1033,11 @@ export function createDispatch(
         }
         // ── publish.compose: the daemon composes the outbound artifact (issue #382 M2) ─
         case "publish.compose": {
-          // A projected client (the phone) cannot compose the byte-exact payload — that lives in
-          // the DOM ui layer, off-limits to the mobile boundary. Compose the OWN-BRANCH submission
-          // here from the review's provenance so the phone posts EXACTLY these bytes. A team-PR
-          // (postTarget present) or a retrospective/branchless review is honestly unavailable.
+          // A projected client (the phone) cannot compose the byte-exact payload — the DOM ui
+          // layer owns the editable collation model and the mobile boundary forbids importing it.
+          // So the DAEMON composes it (core is node-free and in-boundary here) and the phone POSTS
+          // exactly these bytes. `mode` selects the loop; a mode that does not fit the review is
+          // honestly `unavailable`. Finding C ruling (a): BOTH loops end on the phone.
           const input = parseCommandInput(name, rawInput);
           const review = requireReviewById(input.reviewId);
           if (review.retrospective) {
@@ -1043,11 +1046,45 @@ export function createDispatch(
               reason: "This is a retrospective review — it is read-only and posts nothing.",
             });
           }
+
+          if (input.mode === "review") {
+            // A team-PR review posts a review event to a real PR. Only a review with a postTarget
+            // can post one; a branch-only capture has no PR to comment on (it opens a PR instead).
+            if (!review.postTarget) {
+              return parseCommandOutput(name, {
+                status: "unavailable",
+                reason:
+                  "This review has no pull request to post to — open one from the own-branch flow instead.",
+              });
+            }
+            // Compose the DEFAULT (unedited) comments from the review's dispositions — the phone
+            // does not edit (publish decision 4), so the default IS the product. The payload and
+            // verdict are core's, so publish.review re-verifies these very bytes (single-source).
+            const comments = reviewCommentsFromDispositions(review.dispositions);
+            const payload = canonicalReviewPayload(comments);
+            const verdict = deriveReviewEvent(comments);
+            const target = review.postTarget;
+            const destination = `${target.repo.owner}/${target.repo.name}#${target.number}`;
+            // A composed draft is now ready to post (#382 M2, both modes): raise publish-ready so
+            // an away client learns it and deep-links to the preview. Idempotent by derived id.
+            raisePublishReady(review, destination, destination);
+            return parseCommandOutput(name, {
+              status: "review",
+              comments,
+              payload,
+              verdict,
+              destination,
+              title: destination,
+            });
+          }
+
+          // input.mode === "pr": the own-branch submission. A team-PR review posts a review, not a
+          // new PR; refuse "pr" there so the caller uses "review".
           if (review.postTarget) {
             return parseCommandOutput(name, {
               status: "unavailable",
               reason:
-                "Composing a team-PR review to post is on the desktop for now; the phone can preview it and answer with a refine turn.",
+                'This is a team-PR review — post it as a review (mode "review"), not a new pull request.',
             });
           }
           const patchset = activePatchsetOf(review);
@@ -1069,11 +1106,15 @@ export function createDispatch(
           const body = drafted?.status === "drafted" ? drafted.body : "";
           const submission = { title, body, base, head: headRef, draft: true };
           const payload = canonicalPrSubmissionPayload(submission);
+          const destination = `${basename(review.repositoryRoot)}:${headRef} → ${base}`;
+          // A composed own-branch draft is now ready to post (#382 M2, both modes): raise
+          // publish-ready. Idempotent by derived id with the review.draftPrBody raise.
+          raisePublishReady(review, destination, title);
           return parseCommandOutput(name, {
             status: "pr",
             submission,
             payload,
-            destination: `${basename(review.repositoryRoot)}:${headRef} → ${base}`,
+            destination,
             title,
           });
         }

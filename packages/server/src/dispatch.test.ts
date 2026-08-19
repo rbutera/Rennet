@@ -7,6 +7,7 @@ import {
   canonicalReviewPayload,
   composeHandoffBundle,
   decompose,
+  deriveReviewEvent,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -2193,6 +2194,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     const composed = (await dispatch("publish.compose", {
       commandId: randomUUID(),
       reviewId: review.id,
+      mode: "pr",
     })) as { status: string; submission: unknown; payload: string; destination: string };
     expect(composed.status).toBe("pr");
     // The payload is byte-consistent with the composed submission — so posting it round-trips.
@@ -2216,9 +2218,97 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     const composed = (await dispatch("publish.compose", {
       commandId: randomUUID(),
       reviewId: review.id,
+      mode: "pr",
     })) as { status: string; reason?: string };
     expect(composed.status).toBe("unavailable");
     expect(composed.reason).toMatch(/detached|branch/i);
+  });
+
+  it("publish.compose (mode review) composes a team-PR review the engine's publish.review posts byte-exact", async () => {
+    // A postable review (postTarget = SANDBOX_TARGET) with a real disposition to collate.
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    await dispatch("canvas.disposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "rename this",
+    });
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as {
+      status: string;
+      comments: ReviewCommentInput[];
+      payload: string;
+      verdict: ForgeReviewEvent;
+      destination: string;
+    };
+    expect(composed.status).toBe("review");
+    // One-source: the composed comments come from the review's dispositions, the payload is core's
+    // canonical bytes, and the verdict is derived — exactly what publish.review re-verifies.
+    expect(composed.comments.length).toBe(1);
+    expect(composed.payload).toBe(canonicalReviewPayload(composed.comments));
+    // The daemon composed the comments straight off the review's disposition (one-source): a
+    // path-grained request-change becomes a file-level RIGHT comment carrying the body.
+    expect(composed.comments[0]).toMatchObject({
+      path: "src/a.ts",
+      side: "RIGHT",
+      type: "request-change",
+      body: "rename this",
+    });
+    expect(composed.verdict).toBe(deriveReviewEvent(composed.comments));
+    expect(composed.verdict).toBe("REQUEST_CHANGES");
+    expect(composed.destination).toContain("rennet-egress-sandbox#1");
+
+    // The phone posts EXACTLY what compose returned — a real send lands one review.
+    const { authorization } = (await dispatch("publish.requestConsent", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      payload: composed.payload,
+      verdict: composed.verdict,
+    })) as { authorization: string };
+    const out = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments: composed.comments,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      authorization,
+      dryRun: false,
+    })) as { dryRun: boolean; outcome: { url: string | null } | null };
+    expect(out.dryRun).toBe(false);
+    expect(out.outcome).not.toBeNull();
+  });
+
+  it("publish.compose refuses a mismatched mode truthfully (pr on a team-PR review)", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch); // has a postTarget
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as { status: string; reason?: string };
+    expect(composed.status).toBe("unavailable");
+    expect(composed.reason).toMatch(/team-PR|review/i);
+  });
+
+  it("publish.compose (mode review) is unavailable on an own-branch review (no PR to post to)", async () => {
+    const { dispatch } = harness(fakePublishPort(), {}, { capturePort: ownBranchCapture() });
+    const review = await capturedReview(dispatch); // no postTarget
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as { status: string; reason?: string };
+    expect(composed.status).toBe("unavailable");
+    expect(composed.reason).toMatch(/pull request|own-branch/i);
   });
 
   it("publish-ready raises when the own-branch draft is composed, and clears on the post", async () => {
