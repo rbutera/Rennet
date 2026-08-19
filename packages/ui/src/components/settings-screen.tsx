@@ -141,7 +141,7 @@ export function SettingsScreen({
   onBack(): void;
   /** Lets the host consume the chosen scheme app-wide (as `data-scheme`). */
   onSchemeChange?(scheme: AppearanceScheme): void;
-  /** Publishes a successful Keyboard write to the app's live dispatcher/menu state. */
+  /** Publishes a successful Keyboard write to the app's live dispatcher state. */
   onKeybindingsChange?(overrides: KeybindingOverrides): void;
 }) {
   const [view, setView] = useState<SettingsView | null>(null);

@@ -364,7 +364,7 @@ export function formatKeybinding(token: string, mac: boolean = isMacPlatform()):
 // ─────────────────────────────────────────────────────────────────────────────
 // Keyboard dispatch over the registry. A pressed key becomes a normalized chord;
 // the effective binding (default overlaid by the user's override) is what dispatch
-// matches, what the palette and menu display, and what conflict detection inspects.
+// matches, what the palette displays, and what conflict detection inspects.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A normalized chord: modifier (Cmd/Ctrl) state + the lowercased key. */

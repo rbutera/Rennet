@@ -20,8 +20,9 @@ if (preload.platform) {
 // loopback port the preload injected), reached with the native directory picker for
 // `repository.choose`. A SAVED remote target is a `WsRennetBridge` at its host with its
 // device token; a browser-style path prompt stands in for the native picker (a remote
-// choose is server-side). The Electron-native menu residue merges onto every target — it
-// operates whichever daemon the window is attached to. Switching a target is a clean
+// choose is server-side). The Electron-native preload residue (platform, the app-updater
+// channels) merges onto every target — it operates whichever daemon the window is attached
+// to, since those are about the installed app, not the daemon. Switching a target is a clean
 // RennetApp remount; the desktop's own daemon spawn/supervision is untouched (remote
 // attach is purely a renderer-level bridge choice).
 
@@ -55,7 +56,7 @@ function composeBridge(
     onProgress: supervisor.onProgress.bind(supervisor),
     onAskStream: supervisor.onAskStream.bind(supervisor),
     platform: preload.platform,
-    // App-binary update readiness rides every target like the menu residue — the
+    // App-binary update readiness rides every target like the platform residue — the
     // update is about THIS installed app, not whichever daemon the window watches.
     onUpdateReady: preload.onUpdateReady,
     applyUpdate: preload.applyUpdate,
