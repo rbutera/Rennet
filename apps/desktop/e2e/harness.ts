@@ -10,7 +10,7 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { type ElectronApplication, _electron as electron } from "@playwright/test";
+import { type ElectronApplication, _electron as electron, type Page } from "@playwright/test";
 
 const require = createRequire(import.meta.url);
 const electronExecutable = require("electron") as string;
@@ -87,13 +87,10 @@ function resolveGitDir(): string {
  *     user-profile entries a `claude`/`codex` install lives on (while still giving
  *     the app the `node` it needs to spawn its own subprocesses).
  *
- * This is NOT fully hermetic: harness discovery also probes the ABSOLUTE
- * `/opt/homebrew/bin` and `/usr/local/bin`, so a brew-installed model binary is
- * still found. The specs therefore assert MODEL-AGNOSTIC structure (the surfaces
- * render, navigation wires up, the model-free OpenSpec parse), never model output —
- * so they are correct whether the floor or a live turn produced the canvases. A
- * fully hermetic canvas e2e wants a test-only harness-disable hook in main (a
- * documented follow-up), not more environment surgery here.
+ * Hermeticity is guaranteed by RENNET_DISABLE_HARNESS=1 (the test-only discovery
+ * hook, #386) — the env surgery above is defence in depth, and the specs still
+ * assert MODEL-AGNOSTIC structure (the surfaces render, navigation wires up, the
+ * model-free OpenSpec parse), never model output.
  */
 export function modelFreeEnv(homeDir: string): NodeJS.ProcessEnv {
   const systemPath = [
@@ -109,7 +106,25 @@ export function modelFreeEnv(homeDir: string): NodeJS.ProcessEnv {
     HOME: homeDir,
     SHELL: "/usr/bin/true",
     PATH: systemPath,
+    // The decisive switch (#386): discovery also probes ABSOLUTE locations
+    // (/opt/homebrew/bin, /usr/local/bin) that the env surgery above cannot
+    // scrub — on a machine with a brew-installed model binary the app would
+    // fire a REAL, timeoutless model turn against this unauthenticated HOME
+    // and the canvases would never load. The hook forces the deterministic
+    // floor everywhere; the env surgery stays as defence in depth.
+    RENNET_DISABLE_HARNESS: "1",
   };
+}
+
+/**
+ * Open the legacy direct repo/PR entry from the front door. Since the v4.0 nav
+ * pass the drawn "Review directly" button is GONE — the door is palette-only
+ * (wireframe 16: "The legacy 'Review directly' door lives here too — palette-only,
+ * no drawn button"), so the e2e goes the way a user does: ⌘K, then the command row.
+ */
+export async function openDirectEntry(page: Page): Promise<void> {
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.getByRole("button", { name: "Review directly" }).click();
 }
 
 export interface LaunchedRennet {

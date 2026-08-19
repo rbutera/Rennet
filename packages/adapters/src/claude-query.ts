@@ -156,6 +156,24 @@ export interface ClaudeHarnessResult {
 export async function createClaudeHarness(
   deps: ClaudeHarnessDeps = {},
 ): Promise<ClaudeHarnessResult> {
+  // The hermetic-test hook (#386): discovery probes ABSOLUTE locations
+  // (/opt/homebrew/bin, /usr/local/bin) that no amount of HOME/PATH surgery can
+  // scrub, so a deterministic e2e sets RENNET_DISABLE_HARNESS=1 and the app
+  // renders its model-free floor. An honest unavailable health, never a crash.
+  if ((deps.env ?? process.env).RENNET_DISABLE_HARNESS === "1") {
+    return {
+      adapter: null,
+      discovery: {
+        candidates: [],
+        chosen: null,
+        health: {
+          state: "unavailable",
+          reason: "not-found",
+          detail: "Harness discovery is disabled (RENNET_DISABLE_HARNESS=1).",
+        },
+      },
+    };
+  }
   const range = deps.range ?? CLAUDE_TESTED_RANGE;
   const locus = deps.locus ?? HOST_LOCUS;
   const discoveryDeps =

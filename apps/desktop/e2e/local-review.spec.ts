@@ -1,6 +1,14 @@
 import { rmSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-import { git, initRepo, launchRennet, makeTempDir, writeRepoFile } from "./harness";
+import { RENNET_PRELOAD_KEYS } from "../src/preload/contract";
+import {
+  git,
+  initRepo,
+  launchRennet,
+  makeTempDir,
+  openDirectEntry,
+  writeRepoFile,
+} from "./harness";
 
 // The local single-repo review-and-invalidate loop, driven through the CURRENT
 // front door: launch lands on the projects list, "Review directly" opens the direct
@@ -33,16 +41,21 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
       })),
     ).toEqual({
       process: "undefined",
-      bridge: ["chooseDirectory", "onMenuRun", "platform", "updateMenu", "wsPort"],
+      // The exact contract, imported from the preload's own key list (#386): a new
+      // capability updates contract.ts and this assertion follows — while anything
+      // exposed WITHOUT being declared there still fails the equality.
+      bridge: [...RENNET_PRELOAD_KEYS],
     });
 
-    // "Review directly" reveals the legacy repo/PR entry with "Choose a repository".
-    await page.getByRole("button", { name: "Review directly" }).click();
+    // "Review directly" is palette-only since the v4.0 nav pass: ⌘K, then the row.
+    await openDirectEntry(page);
     await page.getByRole("button", { name: "Choose a repository" }).click();
 
     // A captured review opens on Canvases by default; the raw diff is the Files tab.
     await page.getByRole("tab", { name: "Files" }).click();
-    await expect(page.getByRole("button", { name: /review-me\.ts/ })).toBeVisible();
+    // Two buttons carry the filename (the file row and the open-in-editor header
+    // affordance); the FILE ROW is the one this step is about.
+    await expect(page.locator("button.file-row", { hasText: "review-me.ts" })).toBeVisible();
     await expect(page.locator("pre.diff")).toContainText("export const value = 2;");
 
     // Editing the file on disk invalidates the pinned review (the freshness watcher).
