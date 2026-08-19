@@ -2,12 +2,12 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { menuRunPayloadSchema } from "@rennet/protocol";
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
 import { ensureDaemon } from "./daemon-supervisor";
 import { applyMenuUpdate } from "./menu";
-import { brandWindowIcon, resolveAppUserModelId } from "./window-identity";
+import { brandWindowIcon, isExternalHttpUrl, resolveAppUserModelId } from "./window-identity";
 
 // Squirrel (the win32 installer) launches the freshly-installed exe with a
 // `--squirrel-install`/`--squirrel-updated`/`--squirrel-uninstall` argv while it
@@ -153,9 +153,20 @@ async function createWindow(wsPort: number): Promise<void> {
   // Keep the versioned title: Electron replaces the window title with the page's
   // <title> on every load unless the update is prevented.
   window.on("page-title-updated", (event) => event.preventDefault());
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // External links open in the OS BROWSER, never a second Electron window. The
+  // renderer's `target="_blank"` anchors (e.g. the GitHub device-flow "enter this
+  // code" link) land here — a bare deny made them silent no-ops (field bug,
+  // 2026-08-19: the connect flow's verification link did nothing). Only http(s)
+  // leaves; every other scheme stays denied outright.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
   window.webContents.on("will-navigate", (event, destination) => {
-    if (!isTrustedAppUrl(destination)) event.preventDefault();
+    if (isTrustedAppUrl(destination)) return;
+    event.preventDefault();
+    // Same policy for in-page anchors without target="_blank".
+    if (isExternalHttpUrl(destination)) void shell.openExternal(destination);
   });
   // No `window.removeMenu()` — the application menu is now built from the registry
   // (#44) once the renderer sends its first `menu.update`. Until then Electron's
