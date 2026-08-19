@@ -122,6 +122,9 @@ export function updateSourceFor(platform: NodeJS.Platform, repo: string): IUpdat
   return { type: UpdateSourceType.ElectronPublicUpdateService, repo };
 }
 
+/** How often the staged-sibling state is re-checked (matches the update-check cadence). */
+export const STAGED_POLL_INTERVAL_MS = 5 * 60_000;
+
 /** The public repository updates come from. */
 export const UPDATE_REPO = "rbutera/rennet";
 
@@ -191,14 +194,30 @@ export function startAutoUpdate(
 
   autoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
     liveDownloadSeen = true;
+    logger.error("[auto-update] update-downloaded:", releaseName);
     readiness.markDownloaded(releaseName);
   });
-  // A previous run may already have staged the update (see stagedNewerVersion) —
-  // in that state no update-downloaded will ever fire again, so seed readiness
-  // from disk. Windows exist later than this call; the preload's replay invoke
-  // delivers the cached state to every renderer as it loads.
-  const staged = detectStaged();
-  if (staged) readiness.markDownloaded(staged);
+  // The badge is a DISK FACT, not an event hope. Electron's live
+  // `update-downloaded` was observed not firing on real Windows installs
+  // (lancelot, 2026-08-19: stagings performed live by the running app produced
+  // no event/badge, while every boot-seeded instance badged instantly). So the
+  // staged-sibling state is polled on the same cadence as the update checks —
+  // boot AND every 5 minutes — and readiness seeds whenever a newer version
+  // appears. Idempotent: re-seeding fires only on a version CHANGE, so a
+  // standing badge never re-broadcasts into churn. The live event above stays
+  // wired as the fast path for whenever it does fire.
+  let lastSeeded: string | null = null;
+  const seedFromDisk = (): void => {
+    const staged = detectStaged();
+    if (staged && staged !== lastSeeded) {
+      lastSeeded = staged;
+      readiness.markDownloaded(staged);
+    }
+  };
+  seedFromDisk();
+  const stagedPoll = setInterval(seedFromDisk, STAGED_POLL_INTERVAL_MS);
+  // Never hold the process open past app quit.
+  stagedPoll.unref?.();
   autoUpdater.on("error", (error) => {
     logger.error("[auto-update] updater error (ignored):", error?.message ?? error);
   });
