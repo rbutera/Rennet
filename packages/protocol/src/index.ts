@@ -1191,12 +1191,19 @@ export type TurnStatus = z.infer<typeof turnStatusSchema>;
 // in main — whereas project.process's narration dies with its command. The kind
 // literals are `ask-*`, DELIBERATELY disjoint from projectProcessEvent's own "done",
 // so the two event families can never collide on a shared discriminator.
+// A per-review MONOTONIC sequence number the daemon stamps on every emitted ask-stream event
+// (#382 M2 finding 5, additive). `ask-delta` is the one event that APPENDS rather than sets, so a
+// re-delivered delta (a reconnect that replays, a doubled broadcast) would duplicate text; the
+// reducer rejects any event whose seq it has already applied. Optional for back-compat: a daemon
+// that predates the field sends none and the reducer keeps its by-id idempotence for set-events.
+const askStreamSeqSchema = z.number().int().nonnegative().optional();
 export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("ask-focus"),
     anchor: z.string().min(1),
     threadId: z.string().min(1).optional(),
     turnId: z.string().min(1).optional(),
+    seq: askStreamSeqSchema,
   }),
   z.object({
     kind: z.literal("ask-delta"),
@@ -1204,6 +1211,7 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
     turnId: z.string().min(1),
     channel: streamChannelSchema,
     delta: z.string(),
+    seq: askStreamSeqSchema,
   }),
   z.object({
     kind: z.literal("ask-complete"),
@@ -1212,6 +1220,7 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
     channel: streamChannelSchema,
     model: z.string().min(1),
     finalBody: z.string(),
+    seq: askStreamSeqSchema,
   }),
   z.object({
     kind: z.literal("ask-interrupted"),
@@ -1219,6 +1228,7 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
     turnId: z.string().min(1),
     channel: streamChannelSchema,
     reason: z.string().optional(),
+    seq: askStreamSeqSchema,
   }),
 ]);
 export type ReviewAskStreamEvent = z.infer<typeof reviewAskStreamEventSchema>;

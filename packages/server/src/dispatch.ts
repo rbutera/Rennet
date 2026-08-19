@@ -381,9 +381,18 @@ export interface DispatchDeps {
    * flight. The registered controller is threaded into BOTH model legs.
    */
   readonly liveTurns?: {
-    /** `reviewId` (#382 M2) indexes the turn so `review.interrupt` can abort it by review. */
-    register(turnId: string, reviewId?: string): AbortController;
+    /** `reviewId` (#382 M2) indexes the turn so `review.interrupt` can abort it by review; `stream`
+     *  marks a live streaming turn so `review.reattach` resumes its real in-flight body (finding 5). */
+    register(
+      turnId: string,
+      reviewId?: string,
+      stream?: { threadId: string; channel: "orchestrator" | "codex" },
+    ): AbortController;
     settle(turnId: string): void;
+    /** Grow a live turn's coalesced body as deltas stream (the reattach cursor, #382 M2 finding 5). */
+    appendDelta(turnId: string, delta: string): void;
+    /** The coalesced body streamed so far — the truthful partial persisted on interrupt (finding 6). */
+    bodyOf(turnId: string): string;
     /** Abort every in-flight turn on a review (the client "Stop", #382 M2); returns the count. */
     abortReview(reviewId: string): number;
   };
@@ -1356,14 +1365,18 @@ export function createDispatch(
               ? { threadId: input.threadId, turnId: input.turnId, emit: ctx.emitAskStream }
               : undefined;
           const onOrchestratorDelta = stream
-            ? (delta: string) =>
+            ? (delta: string) => {
+                // Grow the registry's live body (#382 M2 finding 5) so a mid-turn reattach
+                // resumes the real cursor, then echo the delta on the stream.
+                deps.liveTurns?.appendDelta(stream.turnId, delta);
                 stream.emit({
                   kind: "ask-delta",
                   threadId: stream.threadId,
                   turnId: stream.turnId,
                   channel: "orchestrator",
                   delta,
-                })
+                });
+              }
             : undefined;
           const onOrchestratorFocus = ctx?.emitAskStream
             ? (anchor: string) =>
@@ -1423,7 +1436,13 @@ export function createDispatch(
           const turnKey = stream?.turnId ?? randomUUID();
           // Index the turn by reviewId so a client "Stop" (`review.interrupt`, #382 M2) can
           // abort THIS review's in-flight turn — the same signal `before-quit` fires, scoped.
-          const liveTurn = deps.liveTurns?.register(turnKey, input.reviewId);
+          // A streaming turn also registers its live descriptor so `review.reattach` resumes its
+          // real in-flight body (#382 M2 finding 5) instead of recovering it as interrupted.
+          const liveTurn = deps.liveTurns?.register(
+            turnKey,
+            input.reviewId,
+            stream ? { threadId: stream.threadId, channel: "orchestrator" } : undefined,
+          );
           // Attention (#383 batch, families ask-pending + turn-failed). Only a STREAMING ask —
           // a tracked, backgroundable turn (threadId+turnId) — raises attention; a one-shot #139
           // ask is a synchronous foreground call the caller is already waiting on. Raise
@@ -1467,6 +1486,25 @@ export function createDispatch(
               reason: why,
             });
           };
+          // Persist the interrupted turn's replacement (#382 M2 finding 6): overwrite the
+          // `streaming` placeholder (same id) with an explicit `interrupted` message carrying the
+          // partial body that streamed, so a store reload reads it back as interrupted directly.
+          // Idempotent (once per turn) so the success and catch abort branches never double-write.
+          let interruptPersisted = false;
+          const persistInterrupted = (p: NonNullable<typeof persist>): void => {
+            if (interruptPersisted) return;
+            interruptPersisted = true;
+            p.store.putMessage({
+              reviewId: p.reviewId,
+              threadId: p.threadId,
+              message: {
+                id: p.orchestratorId,
+                author: "harness",
+                body: deps.liveTurns?.bodyOf(turnKey) ?? "",
+                status: "interrupted",
+              },
+            });
+          };
           try {
             const result = await askReview(mode, input.question, {
               askOrchestrator: (question) =>
@@ -1489,7 +1527,13 @@ export function createDispatch(
             // codex is one-shot (no token stream) so its whole answer lands as its
             // completion. Both carry the SAME final answer the invoke returns — the stream
             // is a live echo, never a second source of truth.
-            if (stream) {
+            //
+            // EXACTLY ONE terminal event (#382 M2 finding 6): if this turn's controller was
+            // aborted (a leg that SWALLOWED its abort and returned reaches here), skip
+            // `ask-complete` entirely — the single terminal is the `ask-interrupted` emitted
+            // below. Emitting complete THEN interrupted would give every watcher two terminals
+            // and let a killed turn flash a "completed" answer first.
+            if (stream && !liveTurn?.signal.aborted) {
               stream.emit({
                 kind: "ask-complete",
                 threadId: stream.threadId,
@@ -1548,6 +1592,12 @@ export function createDispatch(
                   },
                 });
               }
+            } else if (persist) {
+              // The turn was aborted (a swallowed abort that returned). REPLACE the streaming
+              // placeholder with an explicit `interrupted` message carrying the partial body that
+              // actually streamed (#382 M2 finding 6) — so it survives a store reload as
+              // interrupted directly, not only via the crash-recovery transform.
+              persistInterrupted(persist);
             }
             // The ask settled. An interrupted turn (its controller was aborted but the leg
             // swallowed the abort and returned) is a truthful "turn failed"; otherwise the ask
@@ -1567,6 +1617,9 @@ export function createDispatch(
             clearAskPending();
             const why = error instanceof Error ? error.message : "The turn failed.";
             if (liveTurn?.signal.aborted) {
+              // The aborted leg threw. Persist the interrupted replacement (#382 M2 finding 6)
+              // and emit the single terminal, so the turn survives reload as interrupted.
+              if (persist) persistInterrupted(persist);
               emitInterrupted("The turn was interrupted before it finished.");
               raiseTurnFailed("The turn was interrupted before it finished.");
             } else {

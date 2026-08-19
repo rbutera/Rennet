@@ -14,6 +14,12 @@
 // the seams they already expose: the claude turn via the SDK's `abortController`
 // option, and the codex exec via execa's `cancelSignal`.
 //
+// The registry ALSO tracks a streaming turn's coalesced body (issue #382 M2,
+// finding 5): a turn that is genuinely still running in a surviving main process is
+// LIVE, not interrupted. `review.reattach` reads `inFlightFor(reviewId)` so the
+// phone resumes the real in-flight body (the cursor) instead of the crash-recovery
+// transform painting a still-running turn as stopped.
+//
 // ⚠️ THE HONESTY BOUNDARY (Rule 80, and this whole issue's doctrine). `abortAll`
 // reports how many turns it SIGNALLED — an abort REQUEST count — never how many
 // children stopped. Codex's exec is force-killed by execa. But the claude child's
@@ -23,31 +29,65 @@
 // ever asserts the first. It does not, and structurally cannot, claim the second.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { InFlightTurn, StreamChannel } from "@rennet/protocol";
+
 /** The outcome of a bulk abort: the number of turns SIGNALLED (an abort request
  *  count, never a confirmed-exit count — see the honesty boundary above). */
 export interface AbortAllOutcome {
   readonly signalled: number;
 }
 
+/** The live-stream descriptor a STREAMING (backgroundable) turn registers so reattach can
+ *  report it as real in-flight state. A one-shot ask has none and is never in `inFlightFor`. */
+interface LiveStream {
+  readonly threadId: string;
+  readonly channel: StreamChannel;
+  /** Known only at completion; while streaming the reattach model label falls back to "harness". */
+  model?: string;
+  /** The coalesced deltas so far — the cursor the phone resumes on reattach. */
+  body: string;
+}
+
+interface LiveTurn {
+  readonly controller: AbortController;
+  readonly reviewId?: string;
+  readonly stream?: LiveStream;
+}
+
 export class LiveTurnRegistry {
-  private readonly turns = new Map<string, AbortController>();
-  /** turnId → the reviewId it runs on, so a client can abort a review's turn(s) by review
-   *  (issue #382 M2, `review.interrupt`). Optional per turn — a one-shot ask with no review
-   *  scope simply is not in this index and is never reached by `abortReview`. */
-  private readonly reviewOf = new Map<string, string>();
+  private readonly turns = new Map<string, LiveTurn>();
 
   /**
    * Enter a turn. Returns the AbortController whose `.signal` the caller threads into
    * the model backends. The caller MUST `settle(turnId)` when the turn finishes (in a
-   * `finally`), or the registry leaks a controller for a turn that is already done. A
-   * repeated id replaces the prior controller (a fresh turn reusing an id) rather than
-   * silently dropping the new one. `reviewId`, when given, indexes the turn so
-   * `abortReview` can stop it (the client "Stop"); omitted ⇒ abortable only in bulk on quit.
+   * `finally`), or the registry leaks a controller for a turn that is already done.
+   *
+   * REJECTS a duplicate LIVE id (issue #382 M2, finding 7): registering a turnId that is
+   * already in flight throws rather than replacing the prior controller. A `Map` keyed by
+   * turnId can hold exactly one controller per id, so a silent replace would orphan turn A's
+   * controller (unstoppable, unreapable) and let a "Stop" or settle aimed at B reach A. Turn
+   * ids are unique per live turn; a collision is a bug, surfaced truthfully. A SEQUENTIAL reuse
+   * (a fresh turn reusing an id after the prior settled) is fine — the id is free once settled.
+   *
+   * `reviewId`, when given, scopes the turn so `abortReview` (the client "Stop") can stop it.
+   * `stream`, when given, marks the turn as a live streaming turn `inFlightFor` reports.
    */
-  register(turnId: string, reviewId?: string): AbortController {
+  register(
+    turnId: string,
+    reviewId?: string,
+    stream?: { threadId: string; channel: StreamChannel },
+  ): AbortController {
+    if (this.turns.has(turnId)) {
+      throw new Error(
+        `LiveTurnRegistry: turn ${turnId} is already in flight — a duplicate live id would orphan the prior turn`,
+      );
+    }
     const controller = new AbortController();
-    this.turns.set(turnId, controller);
-    if (reviewId !== undefined) this.reviewOf.set(turnId, reviewId);
+    this.turns.set(turnId, {
+      controller,
+      ...(reviewId === undefined ? {} : { reviewId }),
+      ...(stream === undefined ? {} : { stream: { ...stream, body: "" } }),
+    });
     return controller;
   }
 
@@ -55,7 +95,37 @@ export class LiveTurnRegistry {
    *  turn that is not (or no longer) tracked is a no-op. */
   settle(turnId: string): void {
     this.turns.delete(turnId);
-    this.reviewOf.delete(turnId);
+  }
+
+  /** Append a streamed delta to a live turn's coalesced body (the reattach cursor). A turn with
+   *  no live descriptor, or an unknown id, is a no-op. */
+  appendDelta(turnId: string, delta: string): void {
+    const turn = this.turns.get(turnId);
+    if (turn?.stream) turn.stream.body += delta;
+  }
+
+  /** The coalesced body streamed so far for a turn, or "" — used to persist the partial answer
+   *  of an interrupted turn truthfully rather than a blank. */
+  bodyOf(turnId: string): string {
+    return this.turns.get(turnId)?.stream?.body ?? "";
+  }
+
+  /** The turns still genuinely streaming on ONE review (main-alive live case, #382 M2 finding 5),
+   *  as the `inFlight` re-attach reports so the phone resumes the real body, never a stopped turn.
+   *  While streaming the model is usually unknown, so it falls back to the renderer's own label. */
+  inFlightFor(reviewId: string): InFlightTurn[] {
+    const out: InFlightTurn[] = [];
+    for (const [turnId, turn] of this.turns) {
+      if (turn.reviewId !== reviewId || !turn.stream) continue;
+      out.push({
+        threadId: turn.stream.threadId,
+        turnId,
+        channel: turn.stream.channel,
+        model: turn.stream.model ?? "harness",
+        bodySoFar: turn.stream.body,
+      });
+    }
+    return out;
   }
 
   /**
@@ -69,9 +139,9 @@ export class LiveTurnRegistry {
    */
   abortReview(reviewId: string): number {
     let signalled = 0;
-    for (const [turnId, controller] of this.turns) {
-      if (this.reviewOf.get(turnId) !== reviewId) continue;
-      controller.abort();
+    for (const turn of this.turns.values()) {
+      if (turn.reviewId !== reviewId) continue;
+      turn.controller.abort();
       signalled += 1;
     }
     return signalled;
@@ -95,12 +165,11 @@ export class LiveTurnRegistry {
    */
   abortAll(): AbortAllOutcome {
     let signalled = 0;
-    for (const controller of this.turns.values()) {
-      controller.abort();
+    for (const turn of this.turns.values()) {
+      turn.controller.abort();
       signalled += 1;
     }
     this.turns.clear();
-    this.reviewOf.clear();
     return { signalled };
   }
 }

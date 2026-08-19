@@ -359,6 +359,9 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
 
   const connections = new Set<Connection>();
   const byId = new Map<string, Connection>();
+  // Per-review monotonic ask-stream seq (#382 M2 finding 5): the last seq broadcast for a review,
+  // stamped on every outgoing ask-stream event so the client reducer can reject a re-delivered one.
+  const askSeqByReview = new Map<string, number>();
   let boundPort = 0;
 
   const httpServer: HttpServer = createServer((req, res) => {
@@ -724,10 +727,16 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   // `pairing-only` (no valid token) is excluded, exactly as `broadcastProgress` excludes it.
   // Per-review subscription routing and bandwidth filtering arrive with the presence phase.
   const broadcastAskStream = (reviewId: string, event: ReviewAskStreamEvent): void => {
+    // Stamp a per-review MONOTONIC seq (#382 M2 finding 5) at this single choke point so every
+    // emitted event carries one, regardless of which socket triggered the turn. The reducer
+    // rejects an already-applied seq, making the append-not-idempotent `ask-delta` safe under a
+    // reconnect that re-delivers. A never-shrinking counter per review; process-lifetime memory.
+    const seq = (askSeqByReview.get(reviewId) ?? 0) + 1;
+    askSeqByReview.set(reviewId, seq);
     const payload = JSON.stringify({
       type: "askStreamEvent",
       reviewId,
-      event,
+      event: { ...event, seq },
     } satisfies SessionFrame);
     for (const connection of connections) {
       if (connection.socket.readyState !== WebSocket.OPEN) continue;

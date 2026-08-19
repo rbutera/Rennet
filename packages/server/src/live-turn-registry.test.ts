@@ -103,4 +103,40 @@ describe("LiveTurnRegistry — scoped reaping on quit (issue #251, criterion 4)"
     expect(() => registry.settle("never-registered")).not.toThrow();
     expect(registry.size).toBe(1);
   });
+
+  it("REJECTS a duplicate live id so Stop on B can never abort A (#382 M2, finding 7)", () => {
+    const registry = new LiveTurnRegistry();
+    const a = registry.register("dup", "review-a");
+    // A second turn reusing an in-flight id is a collision — refused, not silently replaced.
+    expect(() => registry.register("dup", "review-b")).toThrow(/already in flight/);
+    // A's controller is intact and still the one the registry holds: Stop on review-b touches
+    // nothing (B never registered), and A is still reapable.
+    expect(registry.abortReview("review-b")).toBe(0);
+    expect(a.signal.aborted).toBe(false);
+    expect(registry.abortReview("review-a")).toBe(1);
+    expect(a.signal.aborted).toBe(true);
+    // After the turn settles the id is free for a fresh (sequential) turn — no false collision.
+    registry.settle("dup");
+    expect(() => registry.register("dup", "review-c")).not.toThrow();
+  });
+
+  it("reports a still-streaming turn as real in-flight state, resuming its body (#382 M2, finding 5)", () => {
+    const registry = new LiveTurnRegistry();
+    registry.register("t1", "rev", { threadId: "th", channel: "orchestrator" });
+    registry.appendDelta("t1", "abc");
+    registry.appendDelta("t1", "def");
+    // A one-shot ask (no stream descriptor) is never reported as in-flight.
+    registry.register("oneshot", "rev");
+
+    expect(registry.bodyOf("t1")).toBe("abcdef");
+    expect(registry.inFlightFor("rev")).toEqual([
+      { threadId: "th", turnId: "t1", channel: "orchestrator", model: "harness", bodySoFar: "abcdef" },
+    ]);
+    // Another review's live turns are not reported.
+    expect(registry.inFlightFor("other")).toEqual([]);
+    // Once settled, the turn is no longer in-flight (reattach would fall back to persisted state).
+    registry.settle("t1");
+    expect(registry.inFlightFor("rev")).toEqual([]);
+    expect(registry.bodyOf("t1")).toBe("");
+  });
 });

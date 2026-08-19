@@ -2224,14 +2224,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       claudePort: claudeAdapterForRepo,
       codexExecutor: codexExecutorForRepo,
     }),
-    // #251 re-attach: reload the conversation threads persisted for a review, crash-
-    // recovered (a turn left streaming by a dead process reads back interrupted). No
-    // live in-flight registry yet, so `inFlight` is empty — the main-alive live-reattach
-    // case is a follow-on; the crash/kill → interrupted path is what this closes.
-    reattachThreads: async ({ reviewId }) => ({
-      threads: threadStore.loadThreads(reviewId),
-      inFlight: [],
-    }),
+    // #251 / #382 M2 finding 5 re-attach: reload the persisted threads AND the turns still
+    // genuinely streaming in this surviving main process. A turn still LIVE in the registry is
+    // NOT interrupted — the crash-recovery transform in `loadThreads` painted its placeholder
+    // `interrupted`, so drop that placeholder and report the turn in `inFlight` (with its real
+    // coalesced body) instead, letting the phone resume the live cursor. Only a turn whose main
+    // process actually died stays `interrupted`. `channelKey` matches the persisted placeholder
+    // id (`${turnId}::orchestrator`) the reducer would otherwise fold as a stopped turn.
+    reattachThreads: async ({ reviewId }) => {
+      const inFlight = liveTurns.inFlightFor(reviewId);
+      const liveIds = new Set(inFlight.map((t) => `${t.turnId}::${t.channel}`));
+      const threads = threadStore.loadThreads(reviewId).map((thread) => ({
+        ...thread,
+        messages: thread.messages.filter((m) => !liveIds.has(m.id)),
+      }));
+      return { threads, inFlight };
+    },
     // #251 persistence: the write side of durability — a streaming placeholder on disk
     // before the turn runs (recovers as interrupted on a kill), replaced by the durable
     // answer on completion.

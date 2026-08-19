@@ -3998,7 +3998,7 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
   } {
     const registered: { turnId: string; reviewId?: string; controller: AbortController }[] = [];
     const settled: string[] = [];
-    const active = new Map<string, { reviewId?: string; controller: AbortController }>();
+    const active = new Map<string, { reviewId?: string; controller: AbortController; body: string }>();
     return {
       registered,
       settled,
@@ -4006,12 +4006,19 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
         register(turnId: string, reviewId?: string): AbortController {
           const controller = new AbortController();
           registered.push({ turnId, reviewId, controller });
-          active.set(turnId, { reviewId, controller });
+          active.set(turnId, { reviewId, controller, body: "" });
           return controller;
         },
         settle(turnId: string): void {
           settled.push(turnId);
           active.delete(turnId);
+        },
+        appendDelta(turnId: string, delta: string): void {
+          const turn = active.get(turnId);
+          if (turn) turn.body += delta;
+        },
+        bodyOf(turnId: string): string {
+          return active.get(turnId)?.body ?? "";
         },
         abortReview(reviewId: string): number {
           let count = 0;
@@ -4122,9 +4129,13 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
 
     await askPromise;
 
-    // The stream carries the truthful terminal, and the badges agree: ask-pending cleared,
-    // turn-failed raised with the interrupted cause.
-    expect(events.some((e) => e.kind === "ask-interrupted")).toBe(true);
+    // The stream carries EXACTLY ONE terminal event (#382 M2 finding 6): the swallowed abort
+    // must NOT emit `ask-complete` and THEN `ask-interrupted` — a killed turn would flash a
+    // completed answer first. One `ask-interrupted`, zero `ask-complete`.
+    const terminals = events.filter((e) => e.kind === "ask-complete" || e.kind === "ask-interrupted");
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.kind).toBe("ask-interrupted");
+    // The badges agree: ask-pending cleared, turn-failed raised with the interrupted cause.
     expect(raised.some((r) => r.family === "ask-pending")).toBe(true);
     expect(raised.some((r) => r.family === "turn-failed")).toBe(true);
     expect(acknowledged.some((a) => a.attentionId === `ask-pending:${review.id}`)).toBe(true);
@@ -4238,21 +4249,46 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
       { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
       { emitAskStream: () => undefined },
     );
-    // The orchestrator id was written EXACTLY once — the streaming placeholder — and never
-    // replaced. Drop the `!liveTurn.signal.aborted` guard and this reddens at length 2,
-    // the second write being the durable `a partial answer…` body.
+    // Two writes: the streaming placeholder, then the INTERRUPTED replacement (#382 M2 finding 6).
+    // The swallowed answer NEVER persists as a durable completion — the second write is an
+    // `interrupted` message carrying only the partial body that actually streamed (none here).
     const orch = orchWritesFrom(h.threadPersistence);
-    expect(orch).toHaveLength(1);
+    expect(orch).toHaveLength(2);
     expect(orch[0]?.status).toBe("streaming");
-    expect(orch[0]?.body).toBe("");
+    expect(orch[1]?.status).toBe("interrupted");
+    expect(orch.some((m) => m.body === "a partial answer that must NOT persist")).toBe(false);
   });
 
   it("does NOT persist a durable completion when the aborted leg THROWS (placeholder survives)", async () => {
     const reg = spyRegistry();
     const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
     const review = await capturedReview(h.dispatch);
-    // The other arrival: the aborted leg rejects (the SDK's observed throw-on-abort).
-    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("Request was cancelled"));
+    // The other arrival: the leg rejects WITHOUT the controller being aborted — a GENUINE
+    // failure (not a Stop). No interrupted replacement is persisted (that is only for an
+    // aborted turn, #382 M2 finding 6); the placeholder survives and recovers as interrupted.
+    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("boom"));
+    await expect(
+      h.dispatch(
+        "review.ask",
+        { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/boom/);
+    // Only the streaming placeholder, no completion. The throw skips the completion-persist.
+    const orch = orchWritesFrom(h.threadPersistence);
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+  });
+
+  it("PERSISTS the interrupted replacement when an aborted leg THROWS (#382 M2 finding 6)", async () => {
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // The Stop path in production: the controller is aborted, THEN the SDK throws its cancel.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      throw new Error("Request was cancelled");
+    });
     await expect(
       h.dispatch(
         "review.ask",
@@ -4260,11 +4296,11 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
         { emitAskStream: () => undefined },
       ),
     ).rejects.toThrow(/cancelled/);
-    // Same durable-state outcome by a different route: only the streaming placeholder, no
-    // completion. The throw skips the completion-persist by control flow.
+    // Two writes: the streaming placeholder, then the INTERRUPTED replacement the catch persists —
+    // so the turn survives a store reload as interrupted directly, not only via crash-recovery.
     const orch = orchWritesFrom(h.threadPersistence);
-    expect(orch).toHaveLength(1);
-    expect(orch[0]?.status).toBe("streaming");
+    expect(orch).toHaveLength(2);
+    expect(orch[1]?.status).toBe("interrupted");
   });
 
   it("abort during the CODEX leg (orchestrator already returned genuinely) persists NO completion and NO codex record", async () => {
@@ -4302,12 +4338,15 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
       { emitAskStream: () => undefined },
     );
     const messages = h.threadPersistence.putMessage.mock.calls.map(
-      ([arg]) => (arg as { message: { id: string; status?: string } }).message,
+      ([arg]) => (arg as { message: { id: string; status?: string; body: string } }).message,
     );
-    // Orchestrator: only the streaming placeholder, never replaced by the genuine answer.
+    // Orchestrator: the streaming placeholder, then the INTERRUPTED replacement (#382 M2 finding
+    // 6) — the genuine answer is NEVER persisted as a durable completion (the turn was killed).
     const orch = messages.filter((m) => m.id === "tn::orchestrator");
-    expect(orch).toHaveLength(1);
+    expect(orch).toHaveLength(2);
     expect(orch[0]?.status).toBe("streaming");
+    expect(orch[1]?.status).toBe("interrupted");
+    expect(orch.some((m) => m.body === "a genuine, complete orchestrator answer")).toBe(false);
     // Codex: no record at all — the cancel is NOT persisted as a codex failure. Drop the
     // guard and this reddens (a `tn::codex` "could not answer" message appears).
     expect(messages.some((m) => m.id === "tn::codex")).toBe(false);
@@ -4339,8 +4378,12 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
       },
     );
     const review = await capturedReview(h.dispatch);
-    // The aborted leg rejects (the SDK's observed throw-on-abort) — the Stop path.
-    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("Request was cancelled"));
+    // The Stop path: the controller is aborted, then the SDK throws its cancel — so the catch
+    // persists the explicit interrupted replacement (#382 M2 finding 6) into the real store.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      throw new Error("Request was cancelled");
+    });
     await expect(
       h.dispatch(
         "review.ask",

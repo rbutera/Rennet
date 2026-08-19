@@ -35,6 +35,13 @@ export interface TimelineEntry {
   readonly body: string;
   /** streaming ⇒ still running; complete ⇒ settled; interrupted ⇒ stopped truthfully. */
   readonly status: "streaming" | "complete" | "interrupted";
+  /**
+   * The highest ask-stream seq applied to THIS entry (#382 M2 finding 5). `ask-delta` APPENDS, so
+   * re-applying a re-delivered event would duplicate text; an event at or below this high-water is
+   * rejected. Keyed per entry (per turn+channel), so a daemon restart — a new turnId, hence a new
+   * entry — starts a fresh seq space and never collides with a prior turn's high-water.
+   */
+  readonly appliedSeq?: number;
 }
 
 /** The timeline state: the ordered entries. Order is insertion order (reading order). */
@@ -84,12 +91,15 @@ function foldThread(
   let next = entries;
   for (const message of thread.messages) {
     const status = message.status ?? "complete";
+    const existing = next.find((e) => e.id === message.id);
     next = upsert(next, {
       id: message.id,
       author: message.author,
       ...(message.model === undefined ? {} : { model: message.model }),
       body: message.body,
       status,
+      // Keep the seq high-water: reattach must not reopen the dedup window it already closed.
+      ...(existing?.appliedSeq === undefined ? {} : { appliedSeq: existing.appliedSeq }),
     });
   }
   return next;
@@ -114,6 +124,8 @@ function foldInFlight(
     channel: turn.channel,
     body,
     status,
+    // Keep the seq high-water: reattach must not reopen the dedup window it already closed.
+    ...(existing?.appliedSeq === undefined ? {} : { appliedSeq: existing.appliedSeq }),
   });
 }
 
@@ -125,12 +137,21 @@ function foldInFlight(
  * same entry — the caught-up event never renders twice.
  */
 export function foldStreamEvent(state: TimelineState, event: ReviewAskStreamEvent): TimelineState {
+  if (event.kind === "ask-focus") return state;
+  const id = channelKey(event.turnId, event.channel);
+  const existing = entryOf(state, id);
+  // Reject an already-applied seq (#382 M2 finding 5): a re-delivered `ask-delta` would otherwise
+  // append its text twice. The daemon stamps a monotonic seq; anything at or below this entry's
+  // high-water is a duplicate. An event without a seq (a daemon predating the field) is always
+  // applied — the set-events stay idempotent by id, matching the pre-seq behaviour.
+  if (event.seq !== undefined && existing?.appliedSeq !== undefined && event.seq <= existing.appliedSeq) {
+    return state;
+  }
+  const appliedSeq =
+    event.seq !== undefined ? Math.max(existing?.appliedSeq ?? -1, event.seq) : existing?.appliedSeq;
+  const seqField = appliedSeq === undefined ? {} : { appliedSeq };
   switch (event.kind) {
-    case "ask-focus":
-      return state;
-    case "ask-delta": {
-      const id = channelKey(event.turnId, event.channel);
-      const existing = entryOf(state, id);
+    case "ask-delta":
       return {
         entries: upsert(state.entries, {
           id,
@@ -139,11 +160,10 @@ export function foldStreamEvent(state: TimelineState, event: ReviewAskStreamEven
           ...(existing?.model === undefined ? {} : { model: existing.model }),
           body: (existing?.body ?? "") + event.delta,
           status: "streaming",
+          ...seqField,
         }),
       };
-    }
-    case "ask-complete": {
-      const id = channelKey(event.turnId, event.channel);
+    case "ask-complete":
       return {
         entries: upsert(state.entries, {
           id,
@@ -152,12 +172,10 @@ export function foldStreamEvent(state: TimelineState, event: ReviewAskStreamEven
           model: event.model,
           body: event.finalBody,
           status: "complete",
+          ...seqField,
         }),
       };
-    }
-    case "ask-interrupted": {
-      const id = channelKey(event.turnId, event.channel);
-      const existing = entryOf(state, id);
+    case "ask-interrupted":
       return {
         entries: upsert(state.entries, {
           id,
@@ -166,9 +184,9 @@ export function foldStreamEvent(state: TimelineState, event: ReviewAskStreamEven
           ...(existing?.model === undefined ? {} : { model: existing.model }),
           body: existing?.body ?? "",
           status: "interrupted",
+          ...seqField,
         }),
       };
-    }
   }
 }
 
