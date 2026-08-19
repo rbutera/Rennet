@@ -375,3 +375,68 @@ describe("validateGitHubToken — the pre-store paste check", () => {
     expect(state.login).toBe("rbutera");
   });
 });
+
+describe("resolveGitHubAuth — network failure (the lancelot field bug)", () => {
+  /** What undici throws through octokit when GitHub is unreachable. */
+  const unreachable = () => {
+    const undici = Object.assign(new Error("Connect Timeout Error"), {
+      code: "UND_ERR_CONNECT_TIMEOUT",
+    });
+    return Object.assign(new TypeError("fetch failed"), { cause: undici });
+  };
+  const unreachableFetch: typeof globalThis.fetch = () => Promise.reject(unreachable());
+
+  it("an unreachable GitHub is reason network — NEVER token-invalid", async () => {
+    const octokit = createGitHubOctokit({ fetch: unreachableFetch });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_fine") });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("network");
+    expect(state.copy).toContain("unreachable");
+  });
+
+  it("a deadline abort (TimeoutError) is reason network too", async () => {
+    const timedOut: typeof globalThis.fetch = () =>
+      Promise.reject(
+        Object.assign(new Error("The operation was aborted due to timeout"), {
+          name: "TimeoutError",
+        }),
+      );
+    const octokit = createGitHubOctokit({ fetch: timedOut });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_fine") });
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("network");
+  });
+
+  it("a transport failure during the PROACTIVE refresh degrades to network — session untouched", async () => {
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_1" });
+    const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
+    const state = await resolveGitHubAuth({
+      octokit,
+      secretStore: store,
+      refresh: () => Promise.reject(unreachable()),
+      now: () => NOW,
+    });
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("network");
+    // The stored pair survives: GitHub only rotates on success, so nothing is lost.
+    expect(store.writes).toEqual([]);
+    expect(store.current()?.refreshToken).toBe("ghr_1");
+  });
+
+  it("a transport failure during the REACTIVE refresh is network, not a dead session", async () => {
+    const store = memoryStore({ token: "gho_revoked", expiresAt: LATER, refreshToken: "ghr_1" });
+    const octokit = octokitFor({
+      "/rate_limit": () => json(401, {}, { message: "Bad credentials" }),
+    });
+    const state = await resolveGitHubAuth({
+      octokit,
+      secretStore: store,
+      refresh: () => Promise.reject(unreachable()),
+      now: () => NOW,
+    });
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("network");
+    expect(store.writes).toEqual([]);
+  });
+});

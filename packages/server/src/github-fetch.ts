@@ -12,6 +12,8 @@
  *    is unreachable — check the network" instead of leaking undici internals.
  */
 
+import { withRequestTimeout } from "@rennet/adapters";
+
 /** Undici error codes that mean the CONNECTION never happened. */
 const CONNECT_PHASE_CODES = new Set([
   "UND_ERR_CONNECT_TIMEOUT",
@@ -21,6 +23,30 @@ const CONNECT_PHASE_CODES = new Set([
 ]);
 
 const RETRY_DELAY_MS = 750;
+
+/**
+ * Sleep that an abort interrupts. The retry pause must NOT be a blind spot: the
+ * composed request deadline (and a caller cancel) arrives as `init.signal`, and a
+ * pause that ignored it would extend the total budget past the deadline — the
+ * aggregate bound is the contract, so the abort wins mid-pause too.
+ */
+function abortableDelay(ms: number, signal: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 function connectPhaseCode(error: unknown): string | null {
   const cause = (error as { cause?: { code?: unknown } })?.cause;
@@ -39,7 +65,8 @@ export function withConnectResilience(
     } catch (first) {
       const code = connectPhaseCode(first);
       if (code === null) throw first;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : null);
+      await abortableDelay(delayMs, signal);
       try {
         return await fetchImpl(input, init);
       } catch (second) {
@@ -59,4 +86,16 @@ export function withConnectResilience(
       }
     }
   };
+}
+
+/**
+ * THE production GitHub transport stack — the one place it is assembled. The
+ * deadline wraps OUTSIDE the retry (one absolute budget spans both attempts),
+ * and tests consume this same factory so a mutation here bites them.
+ */
+export function composeGitHubTransport(
+  raw: typeof globalThis.fetch,
+  timeoutMs: number,
+): typeof globalThis.fetch {
+  return withRequestTimeout(withConnectResilience(raw), timeoutMs);
 }

@@ -1,6 +1,7 @@
 import type { Octokit } from "@octokit/core";
 import type { SsoState } from "@rennet/core";
 import { type GitHubCredential, GitHubOAuthDeclined } from "./github-device-flow";
+import { isGitHubNetworkError } from "./github-fetch";
 import { headerGet, requestErrorStatus } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
@@ -15,8 +16,11 @@ import { parseGitHubSso } from "./github-sso";
  * the rotated pair. A non-expiring configuration carries no refresh half and
  * never refreshes. Validation reads `GET /rate_limit` (`X-OAuth-Scopes` scope
  * gate, expiry header, poll budget) and resolves the login via `GET /user`.
- * The failure states are DISTINCT, each with its own copy, so the UI renders
- * them as different problems, not one "GitHub unavailable".
+ * The failure states are DISTINCT — not-connected, token-invalid,
+ * insufficient-scope, network — each with its own copy, so the UI renders them
+ * as different problems, not one "GitHub unavailable". A network failure is
+ * NEVER token-invalid: an unreachable GitHub says nothing about the token, and
+ * resolution degrades honestly instead of throwing raw transport errors.
  */
 
 /** The host credential vault. `null` clears it (disconnect); the token never
@@ -43,7 +47,8 @@ export type GitHubAuthState =
     }
   | { ok: false; reason: "not-connected"; copy: string }
   | { ok: false; reason: "token-invalid"; copy: string }
-  | { ok: false; reason: "insufficient-scope"; copy: string; scopes: string[] };
+  | { ok: false; reason: "insufficient-scope"; copy: string; scopes: string[] }
+  | { ok: false; reason: "network"; copy: string };
 
 export interface ResolveAuthDeps {
   /** An UNAUTHENTICATED client; the candidate token rides as an explicit header. */
@@ -81,6 +86,8 @@ const COPY = {
     "The GitHub sign-in expired and could not be renewed. Reconnect with the one-time device sign-in.",
   insufficientScope:
     "This token is missing the `repo` scope needed to read pull requests. Reconnect to re-authorize, or paste a token that has it.",
+  network:
+    "GitHub is unreachable right now — showing local work only. Your connection and token are untouched.",
 } as const;
 
 function parseScopes(header: string | null): string[] {
@@ -109,6 +116,12 @@ export async function validateGitHubToken(
     // A revoked or expired token is a 401 — its own problem, never "missing scope".
     if (requestErrorStatus(error) === 401) {
       return { ok: false, reason: "token-invalid", copy: COPY.tokenInvalid };
+    }
+    // An unreachable GitHub (timeout, DNS, refused connection) is the NETWORK's
+    // failure, never the token's — mislabeling it token-invalid would prompt the
+    // user to disconnect a perfectly fine token.
+    if (isGitHubNetworkError(error)) {
+      return { ok: false, reason: "network", copy: COPY.network };
     }
     throw error;
   }
@@ -209,7 +222,18 @@ export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAu
   let refreshed = false;
   // Proactive: renew before GitHub starts rejecting, so no request ever fails.
   if (deps.refresh && stored.refreshToken && nearExpiry(stored, now)) {
-    const next = await refreshAndPersist(stored, deps);
+    let next: GitHubCredential | null;
+    try {
+      next = await refreshAndPersist(stored, deps);
+    } catch (error) {
+      // A transport blip during the refresh POST is the NETWORK's failure: the
+      // stored pair is untouched (GitHub only rotates on success), so degrade
+      // honestly instead of throwing raw or reading it as a dead session.
+      if (isGitHubNetworkError(error)) {
+        return { ok: false, reason: "network", copy: COPY.network };
+      }
+      throw error;
+    }
     if (next === null) return refreshDeclinedState();
     credential = next;
     refreshed = true;
@@ -225,7 +249,17 @@ export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAu
     deps.refresh &&
     stored.refreshToken
   ) {
-    const next = await refreshAndPersist(stored, deps);
+    let next: GitHubCredential | null;
+    try {
+      next = await refreshAndPersist(stored, deps);
+    } catch (error) {
+      // Same honesty as the proactive branch: an unreachable GitHub during the
+      // reactive refresh never invalidates the session.
+      if (isGitHubNetworkError(error)) {
+        return { ok: false, reason: "network", copy: COPY.network };
+      }
+      throw error;
+    }
     if (next === null) return refreshDeclinedState();
     return validateGitHubToken(next.token, deps);
   }

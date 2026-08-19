@@ -1,3 +1,4 @@
+import { withRequestTimeout } from "@rennet/adapters";
 import { describe, expect, it, vi } from "vitest";
 import { withConnectResilience } from "./github-fetch";
 
@@ -69,5 +70,82 @@ describe("withConnectResilience", () => {
     });
     const fetch = withConnectResilience(inner as unknown as typeof globalThis.fetch, 1);
     await expect(fetch("https://api.github.com/user")).resolves.toBeInstanceOf(Response);
+  });
+});
+
+describe("the composed egress stack — ONE absolute budget (create-server order)", () => {
+  // The exact create-server composition: deadline OUTSIDE the retry, so a slow
+  // connect failure + the pause + a stalled second attempt share one budget.
+  const composed = (
+    raw: typeof globalThis.fetch,
+    delayMs: number,
+    timeoutMs: number,
+  ): typeof globalThis.fetch => withRequestTimeout(withConnectResilience(raw, delayMs), timeoutMs);
+
+  const stallOnSignal = (): typeof globalThis.fetch =>
+    ((_input: unknown, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as typeof globalThis.fetch;
+
+  it("connect failure + retry + stall settles within the AGGREGATE deadline, not per-attempt", async () => {
+    let calls = 0;
+    const stalling = stallOnSignal();
+    const raw: typeof globalThis.fetch = (input, init) => {
+      calls += 1;
+      if (calls === 1) return Promise.reject(connectTimeout());
+      return stalling(input, init);
+    };
+    const bound = composed(raw, 50, 200);
+    const started = Date.now();
+    const error = await bound("https://api.github.com/graphql").catch((e: unknown) => e as Error);
+    const elapsed = Date.now() - started;
+    expect((error as Error).name).toBe("TimeoutError");
+    expect(calls).toBe(2);
+    // Per-attempt deadlines would chain to ~200+50+200; the aggregate budget is ~200.
+    expect(elapsed).toBeLessThan(400);
+  });
+
+  it("the deadline interrupts the retry PAUSE — the second attempt never launches", async () => {
+    let calls = 0;
+    const raw: typeof globalThis.fetch = () => {
+      calls += 1;
+      return Promise.reject(connectTimeout());
+    };
+    const bound = composed(raw, 10_000, 100);
+    const started = Date.now();
+    const error = await bound("https://api.github.com/rate_limit").catch(
+      (e: unknown) => e as Error,
+    );
+    expect((error as Error).name).toBe("TimeoutError");
+    expect(calls).toBe(1); // aborted mid-pause; no doomed second request
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("a caller cancel interrupts the pause the same way", async () => {
+    const controller = new AbortController();
+    const raw: typeof globalThis.fetch = () => Promise.reject(connectTimeout());
+    const bound = composed(raw, 10_000, 60_000);
+    const pending = bound("https://api.github.com/x", { signal: controller.signal }).catch(
+      (e: unknown) => e as Error,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    const error = await pending;
+    expect((error as Error).name).toBe("AbortError");
+  });
+
+  it("a deadline abort is NEVER classified as a connect failure (no replay of a stall)", async () => {
+    let calls = 0;
+    const stalling = stallOnSignal();
+    const raw: typeof globalThis.fetch = (input, init) => {
+      calls += 1;
+      return stalling(input, init);
+    };
+    const bound = composed(raw, 1, 80);
+    await expect(bound("https://api.github.com/graphql")).rejects.toMatchObject({
+      name: "TimeoutError",
+    });
+    expect(calls).toBe(1);
   });
 });

@@ -2,12 +2,13 @@ import type { Project, PullRequest } from "@rennet/protocol";
 import { projectDetailSchema } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { GitExec } from "./git-range-diff";
+import { createGitHubOctokit } from "./github-octokit";
 import {
   defaultProjectDetailSourceDeps,
   loadProjectDetail,
   type ProjectDetailSourceDeps,
 } from "./project-detail-source";
-import type { ProjectPrSource } from "./project-pr-source";
+import { createGitHubProjectPrSource, type ProjectPrSource } from "./project-pr-source";
 
 /** A canned PullRequest for the B2 merge tests. */
 const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
@@ -475,5 +476,166 @@ describe("defaultProjectDetailSourceDeps.resolveRepoRoots", () => {
   it("returns the open path for a repo-kind project", async () => {
     const deps = defaultProjectDetailSourceDeps(makeGit({}));
     await expect(deps.resolveRepoRoots(repoProject("/solo"))).resolves.toEqual(["/solo"]);
+  });
+});
+
+describe("loadProjectDetail — the post-establishment outage (bounded, honest)", () => {
+  const depsFor = (
+    git: GitExec,
+    roots: readonly string[],
+    prSource: ProjectPrSource,
+  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+
+  const netError = () =>
+    Object.assign(new Error("Connect Timeout Error"), { code: "UND_ERR_CONNECT_TIMEOUT" });
+
+  it("a network failure in the live PR load degrades to local-only with the honest hint", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1, "feat/z": 2 },
+        aheadBehind: { "feat/z": { ahead: 1, behind: 0 } },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: () => Promise.reject(netError()),
+    };
+    const detail = await loadProjectDetail(depsFor(git, ["/repo"], prSource), repoProject("/repo"));
+    expect(detail.authUnavailable).toBe("network");
+    expect(detail.prs).toEqual([]);
+    expect(detail.truncated).toBe(false);
+    // The local half survives the outage.
+    expect(detail.locals.length).toBeGreaterThan(0);
+  });
+
+  it("a NON-network failure still throws — a broken response never fakes an empty list", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1 },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: () => Promise.reject(new Error("GraphQL schema drift")),
+    };
+    await expect(
+      loadProjectDetail(depsFor(git, ["/repo"], prSource), repoProject("/repo")),
+    ).rejects.toThrow("GraphQL schema drift");
+  });
+
+  it("caps the per-repo PR fan-out at 4 in flight (each request carries a 15s worst case)", async () => {
+    const roots = Array.from({ length: 8 }, (_, i) => `/r${i}`);
+    const fixtures = Object.fromEntries(
+      roots.map((root, i) => [
+        root,
+        { remoteUrl: `git@github.com:acme/repo${i}.git`, userName: "rai", branches: { main: 1 } },
+      ]),
+    );
+    const git = makeGit(fixtures);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight -= 1;
+        return { prs: [], truncated: false };
+      },
+    };
+    await loadProjectDetail(depsFor(git, roots, prSource), repoProject("/r0"));
+    expect(maxInFlight).toBeGreaterThan(0);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("the fan-out cap is SHARED per source instance (overlapping loads)", () => {
+  const depsFor = (
+    git: GitExec,
+    roots: readonly string[],
+    prSource: ProjectPrSource,
+  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+
+  const eightForgeRepos = (prefix: string) => {
+    const roots = Array.from({ length: 8 }, (_, i) => `/${prefix}${i}`);
+    const fixtures = Object.fromEntries(
+      roots.map((root, i) => [
+        root,
+        {
+          remoteUrl: `git@github.com:acme/${prefix}${i}.git`,
+          userName: "rai",
+          branches: { main: 1 },
+        },
+      ]),
+    );
+    return { roots, fixtures };
+  };
+
+  it("two overlapping loadProjectDetail on ONE real source stay ≤ 4 in flight combined", async () => {
+    const a = eightForgeRepos("a");
+    const b = eightForgeRepos("b");
+    let inFlight = 0;
+    let maxInFlight = 0;
+    // The REAL GitHub source (where the shared semaphore lives) over a counting
+    // transport: the viewer query answers immediately, each PR page takes 10ms.
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        query?: string;
+      };
+      const graphqlResponse = (data: unknown) =>
+        new Response(JSON.stringify({ data }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      if (!body.query?.includes("pullRequests")) {
+        return graphqlResponse({ viewer: { login: "octocat" } });
+      }
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      return graphqlResponse({
+        repository: {
+          pullRequests: {
+            totalCount: 0,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [],
+          },
+        },
+      });
+    };
+    const source = createGitHubProjectPrSource({ octokit: createGitHubOctokit({ fetch }) });
+    await Promise.all([
+      loadProjectDetail(depsFor(makeGit(a.fixtures), a.roots, source), repoProject("/a0")),
+      loadProjectDetail(depsFor(makeGit(b.fixtures), b.roots, source), repoProject("/b0")),
+    ]);
+    expect(maxInFlight).toBeGreaterThan(0);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+
+  it("after the first rejection, workers launch NO new PR fetches (the call is doomed)", async () => {
+    const { roots, fixtures } = eightForgeRepos("r");
+    let launches = 0;
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: async (repository) => {
+        launches += 1;
+        if (repository === "acme/r0") throw new Error("GraphQL schema drift");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { prs: [], truncated: false };
+      },
+    };
+    await expect(
+      loadProjectDetail(depsFor(makeGit(fixtures), roots, prSource), repoProject("/r0")),
+    ).rejects.toThrow("GraphQL schema drift");
+    // Let the in-flight stragglers finish: they must COMPLETE, not pick up more.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // The initial worker pool launches 4; the rejection stops every later pick-up.
+    expect(launches).toBe(4);
   });
 });

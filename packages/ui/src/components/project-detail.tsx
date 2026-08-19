@@ -164,7 +164,9 @@ export function ProjectDetail({
                 ? "Pull requests unavailable — GitHub is not connected. Connect in Settings."
                 : detail.authUnavailable === "token-invalid"
                   ? "Pull requests unavailable — the GitHub token was revoked or expired. Reconnect in Settings."
-                  : "Pull requests unavailable — the GitHub token is missing the repo scope."}
+                  : detail.authUnavailable === "network"
+                    ? "GitHub is unreachable right now — showing local work only."
+                    : "Pull requests unavailable — the GitHub token is missing the repo scope."}
             </p>
           ) : null}
 

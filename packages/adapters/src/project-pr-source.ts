@@ -172,9 +172,39 @@ function mapNode(node: GraphqlPrNode, repository: string, viewerLogin: string | 
   };
 }
 
+/**
+ * How many per-repo PR list fetches one source instance runs at once — shared
+ * across EVERY load through the instance, not per call. The source is a memoized
+ * singleton on the server, so two overlapping `project.detail` loads would
+ * otherwise stack their per-call caps (2 x 4 = 8 in flight); one semaphore at
+ * construction keeps the instance-wide worst case at 4 x the request deadline.
+ */
+const MAX_CONCURRENT_LIST_FETCHES = 4;
+
+/** A slot-passing semaphore: release hands the slot straight to the next waiter. */
+function createSemaphore(limit: number): <T>(run: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiters: (() => void)[] = [];
+  const release = () => {
+    const waiter = waiters.shift();
+    if (waiter) waiter();
+    else active -= 1;
+  };
+  return async (run) => {
+    if (active < limit) active += 1;
+    else await new Promise<void>((resolve) => waiters.push(resolve));
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  };
+}
+
 /** The GitHub GraphQL implementation of `ProjectPrSource`. */
 export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig): ProjectPrSource {
   const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
+  const withListSlot = createSemaphore(MAX_CONCURRENT_LIST_FETCHES);
   let viewerLogin: string | null | undefined;
 
   async function graphql<T>(
@@ -241,5 +271,8 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     return { prs, truncated: hasNext || sawPartial };
   }
 
-  return { resolveViewer, listOpenPullRequests };
+  return {
+    resolveViewer,
+    listOpenPullRequests: (repository) => withListSlot(() => listOpenPullRequests(repository)),
+  };
 }

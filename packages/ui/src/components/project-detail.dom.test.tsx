@@ -139,6 +139,20 @@ function fakeBridge(
 }
 
 describe("ProjectDetail — the unified smart list", () => {
+  it("renders the unreachable-GitHub hint and still shows local work", async () => {
+    const { bridge } = fakeBridge(detail({ prs: [], authUnavailable: "network" }));
+    const { container } = mount(
+      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".project-detail-auth-hint")?.textContent).toContain(
+        "GitHub is unreachable right now — showing local work only.",
+      ),
+    );
+    // The local half still renders — degraded, never empty-or-hung.
+    expect(container.querySelectorAll(".smart-row").length).toBeGreaterThan(0);
+  });
+
   it("dedupes a local branch that has a PR into a single PR row with an annotation", async () => {
     const { bridge } = fakeBridge(detail());
     const { container } = mount(
