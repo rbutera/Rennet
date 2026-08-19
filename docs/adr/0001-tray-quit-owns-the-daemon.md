@@ -24,6 +24,11 @@ The tray's Quit is the **one** explicit, scoped teardown:
   app's own data directory, regardless of who spawned it — via the same graceful
   path as `rennet stop` (SIGTERM → the daemon settles in-flight turns as
   persisted, resumable `interrupted` state → the claim clears). Then the app exits.
+- The claim is **health-verified before any signal**. `daemon.json` is a claim to
+  verify, never truth: Quit probes `/healthz` and signals only a pid whose identity
+  and port the probe confirmed. A stale claim — a dead pid, or one the OS reused for
+  an unrelated process — is removed, never killed, so tray Quit can never take down
+  someone else's process.
 - It exits even if the daemon does not confirm death within a bounded wait,
   reporting that truthfully in the log, exactly as `rennet stop` does. The
   claim-file protocol keeps the next launch honest either way.
