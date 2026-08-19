@@ -291,13 +291,18 @@ describe("ConnectionHost (#381)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("ConnectionHost — daemon-lost banner (PR #405 follow-up)", () => {
   /** A supervisor-backed connection stub whose reachability the test scripts.
-   *  `first` is the status the subscribe fires immediately (the supervisor fires with
-   *  its current state on subscribe); `events` records create/close ordering. */
-  function scriptedConnection(first: ConnectionStatus = { state: "online", since: 0 }) {
+   *  `firsts[n]` is the status the n-th dial's subscribe fires immediately (the
+   *  supervisor fires with its current state on subscribe); the last entry repeats for
+   *  later dials. `events` records create/close ordering. */
+  function scriptedConnection(...firsts: ConnectionStatus[]) {
+    if (firsts.length === 0) firsts = [{ state: "online", since: 0 }];
     let emit: ((status: ConnectionStatus) => void) | undefined;
     const events: string[] = [];
+    let dials = 0;
     const create = vi.fn((): Connection => {
       events.push("create");
+      const first = firsts[Math.min(dials, firsts.length - 1)] as ConnectionStatus;
+      dials += 1;
       return {
         bridge: stubBridge(),
         subscribe: (listener) => {
@@ -397,6 +402,47 @@ describe("ConnectionHost — daemon-lost banner (PR #405 follow-up)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps can't-reach wording across a Retry against a never-reached target", async () => {
+    const { create, emit } = scriptedConnection({ state: "connecting", since: Date.now() });
+    const { getByRole, getByText, user } = mount(
+      <ConnectionHost createConnection={create} defaultTarget={LOCAL} />,
+    );
+
+    emit({ state: "error", since: Date.now(), error: "dial failed" });
+    await user.click(getByText("Retry"));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+
+    emit({ state: "offline", since: Date.now() });
+    const text = getByRole("status").textContent ?? "";
+    expect(text).toContain("Can't reach the review daemon — retrying…");
+    expect(text).not.toContain("lost");
+  });
+
+  it("keeps the ever-online latch across a same-target Retry — still 'lost', and the reconnect earns its note", async () => {
+    // First dial establishes; the Retry redial starts connecting (no instant handshake).
+    const { create, emit } = scriptedConnection(
+      { state: "online", since: 0 },
+      { state: "connecting", since: 0 },
+    );
+    const { getByRole, getByText, user } = mount(
+      <ConnectionHost createConnection={create} defaultTarget={LOCAL} />,
+    );
+
+    emit({ state: "offline", since: Date.now() });
+    emit({ state: "error", since: Date.now(), error: "handshake rejected" });
+    await user.click(getByText("Retry"));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+
+    // Still down after the redial: this daemon WAS reached — the copy must say lost,
+    // not imply it never existed.
+    emit({ state: "offline", since: Date.now() });
+    expect(getByRole("status").textContent).toContain("Connection to the review daemon lost");
+
+    // And when it comes back, the established-connection latch earns the note.
+    emit({ state: "online", since: Date.now() });
+    expect(getByRole("status").textContent).toContain("Reconnected to the review daemon.");
   });
 
   it("says a terminal error plainly and Retry closes the dead connection, then re-dials", async () => {

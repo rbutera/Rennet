@@ -1,5 +1,5 @@
 import type { RennetBridge } from "@rennet/protocol";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RennetApp } from "../app";
 
 // The connections surface (issue #381, design D3). ONE component both shells mount —
@@ -326,12 +326,26 @@ export function ConnectionHost({
   // The re-dial seam: Retry bumps the nonce, tearing down the dead connection and
   // dialing afresh through the same effect — no parallel supervision machinery.
   const [retryNonce, setRetryNonce] = useState(0);
+  // Which target the fold belongs to. A same-target redial (Retry) keeps the ever-online
+  // latch and carries the failed banner into an outage — only a TARGET change resets the
+  // fold, or an established-then-lost daemon would read "Can't reach" (implying it never
+  // connected) after a Retry, and its eventual reconnect would lose the note.
+  const foldTargetId = useRef<string | null>(null);
   useEffect(() => {
     void retryNonce;
     const connection = makeConnection(activeTarget);
     setActiveBridge({ target: activeTarget, bridge: connection.bridge });
     setStatus(null);
-    setFold(INITIAL_FOLD);
+    const sameTarget = foldTargetId.current === activeTarget.id;
+    foldTargetId.current = activeTarget.id;
+    setFold((current) => {
+      if (!sameTarget) return INITIAL_FOLD;
+      // Retry on a terminal error: the redial is in flight, so the banner becomes an
+      // outage ("lost" / "can't reach" per the latch) instead of vanishing mid-dial.
+      return current.banner?.kind === "failed"
+        ? { everOnline: current.everOnline, banner: { kind: "outage", since: Date.now() } }
+        : current;
+    });
     const unsubscribe = connection.subscribe?.((next) => {
       setStatus(next);
       setFold((current) => foldStatus(current, next));
