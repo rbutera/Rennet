@@ -242,9 +242,10 @@ The classes:
 | `settings.setKeybinding` | Binds desktop keyboard chords; the phone locus has no hardware keyboard or chord surface. |
 | `pairing.mint` | Minting a pairing offer is the trusted seat's act — the desk prints the QR the phone scans. The phone consumes offers via `pairing.exchange`. |
 
-The bridge's menu channels (`updateMenu` / `onMenuRun`) are Electron
-application-menu plumbing, not commands, and stay desktop-only by the same
-locus logic.
+The macOS application menu is a static platform-role menu installed in Electron
+main (app/Edit/Window, no commands; Windows and Linux have none) — Electron
+plumbing, not a command surface, and desktop-only by the same locus logic with
+no renderer bridge involved.
 
 ## Jobs
 

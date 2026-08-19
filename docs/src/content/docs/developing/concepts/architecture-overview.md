@@ -24,7 +24,7 @@ coding harnesses.
 flowchart LR
   user[Reviewer]
   ui["Renderer<br/>@rennet/ui + @rennet/client"]
-  preload["Preload<br/>platform · menu · WS port"]
+  preload["Preload<br/>platform · WS port"]
   main["Electron main<br/>shell"]
   server["@rennet/server<br/>composition root + WS listener"]
   core["Review engine<br/>@rennet/core"]
