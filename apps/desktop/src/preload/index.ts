@@ -1,15 +1,10 @@
-import {
-  type MenuTemplateSection,
-  menuRunPayloadSchema,
-  menuTemplateSectionsSchema,
-} from "@rennet/protocol";
+import { menuRunPayloadSchema } from "@rennet/protocol";
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 
 // The preload no longer forwards commands or filters push streams — those moved to the
 // loopback WS transport (#378), which the renderer reaches through @rennet/client's
 // WsRennetBridge. What remains is the Electron-native residue the renderer merges with
-// that bridge: the host platform, the WS port to dial, and the application-menu channels.
-const MENU_UPDATE_CHANNEL = "rennet:menu-update";
+// that bridge: the host platform, the WS port to dial, and the menu-run channel.
 const MENU_RUN_CHANNEL = "rennet:menu-run";
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
@@ -35,8 +30,6 @@ export interface RennetPreload {
   readonly platform: string;
   /** The loopback WS port the server bound (#378), read from the injected argv flag. */
   readonly wsPort: number;
-  /** Push the projected application-menu template to MAIN (#44). One-way. */
-  updateMenu(sections: MenuTemplateSection[]): void;
   /** Subscribe to menu-item activations (#44); returns an unsubscribe. */
   onMenuRun(listener: (id: string) => void): () => void;
   /**
@@ -63,8 +56,6 @@ const wsPort = wsPortArg ? Number.parseInt(wsPortArg.slice(WS_PORT_ARG.length), 
 const preload: RennetPreload = {
   platform: process.platform,
   wsPort,
-  updateMenu: (sections) =>
-    ipcRenderer.send(MENU_UPDATE_CHANNEL, menuTemplateSectionsSchema.parse(sections)),
   onMenuRun: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: unknown): void => {
       const parsed = menuRunPayloadSchema.safeParse(payload);

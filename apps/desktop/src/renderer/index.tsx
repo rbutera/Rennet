@@ -55,7 +55,6 @@ function composeBridge(
     onProgress: supervisor.onProgress.bind(supervisor),
     onAskStream: supervisor.onAskStream.bind(supervisor),
     platform: preload.platform,
-    updateMenu: preload.updateMenu,
     onMenuRun: preload.onMenuRun,
     // App-binary update readiness rides every target like the menu residue — the
     // update is about THIS installed app, not whichever daemon the window watches.

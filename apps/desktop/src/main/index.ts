@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { menuRunPayloadSchema } from "@rennet/protocol";
 import {
   app,
   BrowserWindow,
@@ -18,7 +17,7 @@ import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
 import { ensureDaemon, isOwnedDaemonRunning, stopOwnedDaemon } from "./daemon-supervisor";
-import { applyMenuUpdate } from "./menu";
+import { buildStaticMenu } from "./menu";
 import {
   acquireSingleInstance,
   createDockCoordinator,
@@ -38,16 +37,9 @@ if (squirrelStartup) {
   app.quit();
 }
 
-// The application menu channels (#44): the renderer PROJECTS the registry into menu
-// sections and pushes them on `menu-update`; MAIN builds `Menu.setApplicationMenu` and
-// routes an item click back on `menu-run` as a command id the renderer runs. These are
-// the ONLY remaining IPC channels — command invocation and the progress/ask-stream push
-// streams moved to the loopback WS transport (#378), where the renderer is client #1.
-const MENU_UPDATE_CHANNEL = "rennet:menu-update";
-const MENU_RUN_CHANNEL = "rennet:menu-run";
 // The native directory picker (#379): the detached daemon cannot open a dialog, so the
 // renderer asks MAIN for the path and forwards it to `repository.choose`. Electron-native
-// residue, same family as the menu channels.
+// residue.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 const APP_ORIGIN = "app://rennet";
 // The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
@@ -75,23 +67,13 @@ function isTrustedAppUrl(value: string): boolean {
   );
 }
 
-function registerMenuHandler(): void {
-  // The renderer projects the registry into serializable sections (#44); MAIN builds
-  // the Electron menu and sets it. A menu item click routes back as a command id the
-  // renderer runs through the same handler the palette uses (single dispatcher). The
-  // command accelerators are display-only, so a chord never double-fires.
-  ipcMain.on(MENU_UPDATE_CHANNEL, (event, payload: unknown) => {
-    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return;
-    applyMenuUpdate(payload, {
-      isMac: process.platform === "darwin",
-      onRun: (id) => {
-        const runPayload = menuRunPayloadSchema.parse({ id });
-        if (!event.sender.isDestroyed()) event.sender.send(MENU_RUN_CHANNEL, runPayload);
-      },
-      buildFromTemplate: (template) => Menu.buildFromTemplate(template),
-      setApplicationMenu: (menu) => Menu.setApplicationMenu(menu),
-    });
-  });
+function installApplicationMenu(): void {
+  // A STATIC platform menu, not a registry projection (the command-built menu was removed
+  // by `remove-app-menu`). macOS gets the standard app/edit/window roles; Windows/Linux get
+  // no application menu. The palette (mod+k) and settings Keyboard section are the command
+  // surfaces. Set once at startup — it never depends on renderer state.
+  const template = buildStaticMenu(process.platform === "darwin");
+  Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null);
 }
 
 function registerDialogHandler(): void {
@@ -188,9 +170,8 @@ async function createWindow(wsPort: number): Promise<void> {
     // Same policy for in-page anchors without target="_blank".
     if (isExternalHttpUrl(destination)) void shell.openExternal(destination);
   });
-  // No `window.removeMenu()` — the application menu is now built from the registry
-  // (#44) once the renderer sends its first `menu.update`. Until then Electron's
-  // default menu stands (Edit/Window roles), never a missing menu bar.
+  // The application menu is installed once at startup (installApplicationMenu): the
+  // static macOS role menu, or none on Windows/Linux. It never depends on this window.
   await window.loadURL(`${APP_ORIGIN}/`);
 }
 
@@ -286,7 +267,7 @@ app.whenReady().then(async () => {
     callback(false);
   });
   registerAppProtocol();
-  registerMenuHandler();
+  installApplicationMenu();
   registerDialogHandler();
   await createWindow(wsPort);
   activeWsPort = wsPort;
