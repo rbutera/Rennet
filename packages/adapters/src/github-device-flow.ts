@@ -1,28 +1,26 @@
-import { createOAuthDeviceAuth } from "@octokit/auth-oauth-device";
-import { createGitHubOctokit } from "./github-octokit";
-
-/** The device-code verification payload GitHub mints (auth-oauth-device's shape). */
-export interface Verification {
-  device_code: string;
-  user_code: string;
-  verification_uri: string;
-  expires_in: number;
-  interval: number;
-}
-
 /**
- * The GitHub OAuth device flow (v4.2 — the gh-CLI piggyback's replacement).
+ * The GitHub OAuth device flow + token refresh (v4.2/v4.3 — the gh-CLI
+ * piggyback's replacement, now expiration-aware).
  *
  * A public OAuth App client: the client id is a public identifier (safe to
- * commit), there is no client secret and no Rennet backend — the flow is two
- * calls straight to github.com (`POST /login/device/code`, then a poll of
- * `POST /login/oauth/access_token`), both performed by the user's own machine.
- * `onVerification` surfaces the one-time user code + verification URI; the
- * returned promise resolves with the minted token once the user authorizes at
- * github.com/login/device, or rejects on abort/expiry.
+ * commit), there is no client secret and no Rennet backend — every call goes
+ * straight to github.com's login endpoints from the user's own machine. GitHub
+ * documents that device-flow-minted tokens refresh with the client id ALONE, so
+ * expiring-token app configurations work without ever holding a secret.
  *
- * `@octokit/auth-oauth-device` owns the polling protocol (interval, slow-down,
- * expiry); this module owns only Rennet's identity and the abort seam.
+ * Two flows live here:
+ *  • `runGitHubDeviceFlow` — mint a device code (`POST /login/device/code`),
+ *    surface the one-time user code, poll `POST /login/oauth/access_token`
+ *    until the user authorizes. Honours GitHub's `interval` and `slow_down`
+ *    pacing, and aborts through the injected signal.
+ *  • `refreshGitHubCredential` — exchange a refresh token for a fresh pair
+ *    (`grant_type=refresh_token`). GitHub ROTATES on use: the old access AND
+ *    refresh token die the moment the exchange succeeds, so the caller must
+ *    persist the returned pair immediately and never refresh concurrently.
+ *
+ * Both return the same credential shape. An app with token expiration DISABLED
+ * simply returns no `expires_in`/`refresh_token` — the credential carries nulls
+ * and the auth ladder never refreshes.
  */
 
 /** The Rennet OAuth App (owner: rbutera). A public identifier, not a secret. */
@@ -35,7 +33,45 @@ export const RENNET_GITHUB_CLIENT_ID = "Ov23liDxpY9ZfNnJXYPS";
  */
 export const RENNET_GITHUB_SCOPES = ["repo", "workflow"];
 
+const LOGIN_BASE = "https://github.com";
+/** GitHub's device-flow poll default, seconds; the response's `interval` overrides. */
+const DEFAULT_INTERVAL_SECONDS = 5;
+
+/** The device-code verification payload GitHub mints. */
+export interface Verification {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+}
+
 export type DeviceVerification = Verification;
+
+/**
+ * One minted credential: the access token plus the expiry/refresh half that an
+ * expiring-token app configuration returns (nulls when expiration is off).
+ */
+export interface GitHubMintedCredential {
+  token: string;
+  /** ISO timestamp the access token dies at, or null for a non-expiring token. */
+  expiresAt: string | null;
+  refreshToken: string | null;
+  /** ISO timestamp the refresh token dies at (GitHub: ~6 months), or null. */
+  refreshTokenExpiresAt: string | null;
+}
+
+/**
+ * GitHub declined the exchange at the OAuth level (`access_denied`,
+ * `expired_token`, `bad_refresh_token`, …) — re-running the device sign-in is
+ * the only recovery. Distinct from a transport failure, which may be retried.
+ */
+export class GitHubOAuthDeclined extends Error {
+  constructor(readonly code: string) {
+    super(`GitHub declined the OAuth exchange: ${code}`);
+    this.name = "GitHubOAuthDeclined";
+  }
+}
 
 export interface DeviceFlowOptions {
   /** The outbound HTTP transport (the daemon's fetch). */
@@ -47,30 +83,135 @@ export interface DeviceFlowOptions {
   /** Overrides for tests. */
   clientId?: string;
   scopes?: string[];
-  baseUrl?: string;
+  loginBaseUrl?: string;
+  now?: () => number;
 }
 
-/** Run the device flow to completion; resolves with the minted OAuth token. */
-export async function runGitHubDeviceFlow(options: DeviceFlowOptions): Promise<{ token: string }> {
-  const { signal } = options;
-  // The abort seam: auth-oauth-device has no signal input, so the injected fetch
-  // carries it — an abort fails the in-flight (or next) poll request, which
-  // rejects the auth() promise.
-  const fetchWithSignal: typeof globalThis.fetch = (url, init) => {
-    if (signal?.aborted) return Promise.reject(new Error("GitHub connect was cancelled"));
-    return options.fetch(url, { ...init, ...(signal === undefined ? {} : { signal }) });
+interface TokenExchangeResponse {
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  refresh_token_expires_in?: number;
+  error?: string;
+  interval?: number;
+}
+
+async function postLogin(
+  fetch: typeof globalThis.fetch,
+  url: string,
+  body: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<TokenExchangeResponse & Verification> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`GitHub login endpoint responded ${res.status}: ${await res.text()}`);
+  }
+  return (await res.json()) as TokenExchangeResponse & Verification;
+}
+
+function toCredential(response: TokenExchangeResponse, now: () => number): GitHubMintedCredential {
+  if (!response.access_token) {
+    throw new Error("GitHub token exchange returned no access_token");
+  }
+  const at = (seconds: number | undefined): string | null =>
+    seconds === undefined ? null : new Date(now() + seconds * 1000).toISOString();
+  return {
+    token: response.access_token,
+    expiresAt: at(response.expires_in),
+    refreshToken: response.refresh_token ?? null,
+    refreshTokenExpiresAt: at(response.refresh_token_expires_in),
   };
-  const octokit = createGitHubOctokit({
-    fetch: fetchWithSignal,
-    ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("GitHub connect was cancelled"));
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort(): void {
+      clearTimeout(timer);
+      reject(new Error("GitHub connect was cancelled"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
-  const auth = createOAuthDeviceAuth({
-    clientType: "oauth-app",
-    clientId: options.clientId ?? RENNET_GITHUB_CLIENT_ID,
-    scopes: options.scopes ?? RENNET_GITHUB_SCOPES,
-    onVerification: options.onVerification,
-    request: octokit.request,
+}
+
+/** Run the device flow to completion; resolves with the minted credential. */
+export async function runGitHubDeviceFlow(
+  options: DeviceFlowOptions,
+): Promise<GitHubMintedCredential> {
+  const base = options.loginBaseUrl ?? LOGIN_BASE;
+  const clientId = options.clientId ?? RENNET_GITHUB_CLIENT_ID;
+  const now = options.now ?? Date.now;
+  const { fetch, signal } = options;
+
+  const verification = await postLogin(
+    fetch,
+    `${base}/login/device/code`,
+    { client_id: clientId, scope: (options.scopes ?? RENNET_GITHUB_SCOPES).join(" ") },
+    signal,
+  );
+  options.onVerification(verification);
+
+  let intervalSeconds = verification.interval || DEFAULT_INTERVAL_SECONDS;
+  for (;;) {
+    await sleep(intervalSeconds * 1000, signal);
+    const poll = await postLogin(
+      fetch,
+      `${base}/login/oauth/access_token`,
+      {
+        client_id: clientId,
+        device_code: verification.device_code,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      },
+      signal,
+    );
+    if (poll.access_token) return toCredential(poll, now);
+    switch (poll.error) {
+      case "authorization_pending":
+        continue;
+      case "slow_down":
+        // GitHub's back-pressure: it names the new interval (else +5s per spec).
+        intervalSeconds = poll.interval ?? intervalSeconds + 5;
+        continue;
+      default:
+        throw new GitHubOAuthDeclined(poll.error ?? "unknown");
+    }
+  }
+}
+
+export interface RefreshOptions {
+  fetch: typeof globalThis.fetch;
+  refreshToken: string;
+  clientId?: string;
+  loginBaseUrl?: string;
+  now?: () => number;
+}
+
+/**
+ * Exchange a refresh token for a fresh credential pair. No client secret: the
+ * pair was minted by the device flow, which GitHub refreshes on client id
+ * alone. Throws `GitHubOAuthDeclined` when GitHub rejects the refresh token
+ * (expired, already rotated, revoked) — the sign-in must be re-run.
+ */
+export async function refreshGitHubCredential(
+  options: RefreshOptions,
+): Promise<GitHubMintedCredential> {
+  const base = options.loginBaseUrl ?? LOGIN_BASE;
+  const response = await postLogin(options.fetch, `${base}/login/oauth/access_token`, {
+    client_id: options.clientId ?? RENNET_GITHUB_CLIENT_ID,
+    grant_type: "refresh_token",
+    refresh_token: options.refreshToken,
   });
-  const { token } = await auth({ type: "oauth" });
-  return { token };
+  if (!response.access_token) {
+    throw new GitHubOAuthDeclined(response.error ?? "unknown");
+  }
+  return toCredential(response, options.now ?? Date.now);
 }

@@ -203,6 +203,7 @@ export {
 } from "./git-range-diff";
 export {
   type GitHubAuthState,
+  type GitHubStoredCredential,
   type ResolveAuthDeps,
   resolveGitHubAuth,
   type SecretStore,
@@ -221,8 +222,12 @@ export {
 export {
   type DeviceFlowOptions,
   type DeviceVerification,
+  type GitHubMintedCredential,
+  GitHubOAuthDeclined,
   RENNET_GITHUB_CLIENT_ID,
   RENNET_GITHUB_SCOPES,
+  type RefreshOptions,
+  refreshGitHubCredential,
   runGitHubDeviceFlow,
   type Verification,
 } from "./github-device-flow";

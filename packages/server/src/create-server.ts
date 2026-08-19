@@ -80,6 +80,7 @@ import {
   RepoWatcher,
   readOpenSpecChange,
   readUiEvidence,
+  refreshGitHubCredential,
   repoHasSubmodules,
   repoRecordOf,
   resolveBaseRef,
@@ -541,8 +542,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const gitHubSecretStore = createGitHubTokenStore(dataDir);
   /** An UNAUTHENTICATED client for validation; candidate tokens ride as headers. */
   const bareOctokit = createGitHubOctokit({ fetch: publishHttp });
+  // Resolution runs under the account lock: an expiring credential may REFRESH
+  // (and rotate) mid-resolution, and two concurrent rotations would kill the
+  // session — GitHub invalidates the old refresh token the moment one succeeds.
   const resolveAuth = () =>
-    resolveGitHubAuth({ octokit: bareOctokit, secretStore: gitHubSecretStore });
+    withAccountLock(() =>
+      resolveGitHubAuth({
+        octokit: bareOctokit,
+        secretStore: gitHubSecretStore,
+        refresh: (refreshToken) => refreshGitHubCredential({ fetch: publishHttp, refreshToken }),
+      }),
+    );
 
   /** Resolve the GitHub bearer for a real egress; throws (never posts) when unavailable. */
   async function resolveGitHubToken(): Promise<string> {
@@ -658,12 +668,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           signal: controller.signal,
           onVerification: resolveVerification,
         })
-          .then(async ({ token }) => {
+          .then(async (minted) => {
             // Generation guard: a flow that was cancelled, replaced, or raced by a
-            // disconnect must NOT store its token — the user has moved on.
+            // disconnect must NOT store its credential — the user has moved on.
             const stored = await withAccountLock(async () => {
               if (deviceFlow !== flow) return false;
-              await gitHubSecretStore.setGitHubToken(token);
+              await gitHubSecretStore.setGitHubCredential(minted);
               invalidateGitHubMemos();
               return true;
             });
@@ -689,13 +699,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     async setToken(token: string): Promise<GitHubAuthStatus> {
       // The side door: validate BEFORE storing — a bad paste persists nothing.
-      const state = await validateGitHubToken(token, {
-        octokit: bareOctokit,
-        secretStore: gitHubSecretStore,
-      });
+      // A PAT has no refresh half; the credential is the token alone.
+      const state = await validateGitHubToken(token, { octokit: bareOctokit });
       if (state.ok) {
         await withAccountLock(async () => {
-          await gitHubSecretStore.setGitHubToken(token);
+          await gitHubSecretStore.setGitHubCredential({ token });
           invalidateGitHubMemos();
         });
       }
@@ -705,7 +713,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       deviceFlow?.controller.abort();
       deviceFlow = null;
       await withAccountLock(async () => {
-        await gitHubSecretStore.setGitHubToken(null);
+        await gitHubSecretStore.setGitHubCredential(null);
         invalidateGitHubMemos();
       });
     },

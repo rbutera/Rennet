@@ -19,6 +19,8 @@ GitHub asks again at its point of need.
 
 The token is stored in a private file (owner-only permissions) under Rennet's
 own data directory, never in project files, and it never reaches the renderer.
+If the OAuth app is configured with expiring user tokens, Rennet renews the
+token automatically before it expires — the one-time sign-in stays one-time.
 The side door is pasting a personal access token in Settings; it feeds the same
 store and is validated before it is kept. The current forge adapter targets
 github.com; GitHub Enterprise hosts are not wired yet.

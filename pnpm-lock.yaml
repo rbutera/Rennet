@@ -286,9 +286,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(zod@4.4.3)
-      '@octokit/auth-oauth-device':
-        specifier: 8.0.4
-        version: 8.0.4
       '@octokit/core':
         specifier: 7.0.7
         version: 7.0.7
@@ -2673,10 +2670,6 @@ packages:
   '@nx/workspace@23.1.0':
     resolution: {integrity: sha512-cobC05wJX7c2bWJ6s3g0IOuu6YLCEPrmpkZdX4xPEtt3GX96BsDnBpqSaqdrKhmhaa16oIERisU3AozmxmV6DA==}
 
-  '@octokit/auth-oauth-device@8.0.4':
-    resolution: {integrity: sha512-M/+34rmkxMvUnnTo/uqNeVRCXJoJ+5N34eNTbL1KMtIyJpedCTsu/iFL1cWdL+w5hQMlYt6xzXoyux2gn0OVnw==}
-    engines: {node: '>= 20'}
-
   '@octokit/auth-token@6.0.0':
     resolution: {integrity: sha512-P4YJBPdPSpWTQ1NU4XYdvHvXJJDxM6YwpS0FZHRgP7YFkdVxsWcpWGy/NVqlAA7PcPCnMacXlRm1y2PFZRWL/w==}
     engines: {node: '>= 20'}
@@ -2691,14 +2684,6 @@ packages:
 
   '@octokit/graphql@9.0.4':
     resolution: {integrity: sha512-5s15CCiY8XXQ+FG+b1YQcl6Z2FA++nwAz/tg2VUrTmnMncP+2nnGUEYANImdnxsA2Fnq+Mbl7hDjUTw7cFAwcg==}
-    engines: {node: '>= 20'}
-
-  '@octokit/oauth-authorization-url@8.0.0':
-    resolution: {integrity: sha512-7QoLPRh/ssEA/HuHBHdVdSgF8xNLz/Bc5m9fZkArJE5bb6NmVkDm3anKxXPmN1zh6b5WKZPRr3697xKT/yM3qQ==}
-    engines: {node: '>= 20'}
-
-  '@octokit/oauth-methods@6.0.4':
-    resolution: {integrity: sha512-96RsnxS7Hk/BQhUA1Qo2pmcYP6LWQRWMdo7bVbNE7ZCkFLhSUYBXVUj9tVnvhl4jzbwHYt/dcIG+ioY427b2sg==}
     engines: {node: '>= 20'}
 
   '@octokit/openapi-types@28.0.0':
@@ -12473,13 +12458,6 @@ snapshots:
       - '@swc-node/register'
       - '@swc/core'
 
-  '@octokit/auth-oauth-device@8.0.4':
-    dependencies:
-      '@octokit/oauth-methods': 6.0.4
-      '@octokit/request': 10.0.13
-      '@octokit/types': 17.0.0
-      universal-user-agent: 7.0.3
-
   '@octokit/auth-token@6.0.0': {}
 
   '@octokit/core@7.0.7':
@@ -12502,15 +12480,6 @@ snapshots:
       '@octokit/request': 10.0.13
       '@octokit/types': 17.0.0
       universal-user-agent: 7.0.3
-
-  '@octokit/oauth-authorization-url@8.0.0': {}
-
-  '@octokit/oauth-methods@6.0.4':
-    dependencies:
-      '@octokit/oauth-authorization-url': 8.0.0
-      '@octokit/request': 10.0.13
-      '@octokit/request-error': 7.1.1
-      '@octokit/types': 17.0.0
 
   '@octokit/openapi-types@28.0.0': {}
 
@@ -14421,7 +14390,7 @@ snapshots:
     dependencies:
       bytes: 3.1.2
       content-type: 2.0.0
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3
       http-errors: 2.0.1
       iconv-lite: 0.7.3
       on-finished: 2.4.1
@@ -14864,6 +14833,10 @@ snapshots:
       ms: 2.0.0
 
   debug@3.2.7:
+    dependencies:
+      ms: 2.1.3
+
+  debug@4.4.3:
     dependencies:
       ms: 2.1.3
 
@@ -15580,7 +15553,7 @@ snapshots:
 
   express-rate-limit@8.6.1(express@5.2.1):
     dependencies:
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3
       express: 5.2.1
       ip-address: 10.3.1
     transitivePeerDependencies:
@@ -15630,7 +15603,7 @@ snapshots:
       content-type: 1.0.5
       cookie: 0.7.2
       cookie-signature: 1.2.2
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3
       depd: 2.0.0
       encodeurl: 2.0.0
       escape-html: 1.0.3
@@ -15780,7 +15753,7 @@ snapshots:
 
   finalhandler@2.1.1:
     dependencies:
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3
       encodeurl: 2.0.0
       escape-html: 1.0.3
       on-finished: 2.4.1
@@ -18939,7 +18912,7 @@ snapshots:
 
   router@2.2.0:
     dependencies:
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3
       depd: 2.0.0
       is-promise: 4.0.0
       parseurl: 1.3.3
@@ -19020,7 +18993,7 @@ snapshots:
 
   send@1.2.1:
     dependencies:
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3
       encodeurl: 2.0.0
       escape-html: 1.0.3
       etag: 1.8.1
