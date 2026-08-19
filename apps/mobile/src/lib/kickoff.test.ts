@@ -65,8 +65,18 @@ describe("matchProjectRepoKey (#382 M2, task 5.1)", () => {
   it("PREFERS an exact owner/repo over an ambiguous bare name (#382 M2 finding 9)", () => {
     // Two clones share the repo name `rennet` under different owners — a fork and its upstream.
     const forks: KickoffProject[] = [
-      { id: "a", name: "rennet", repo: { repoKey: "key-mine", displayName: "me/rennet" }, primaryBranch: "main" },
-      { id: "b", name: "rennet", repo: { repoKey: "key-theirs", displayName: "you/rennet" }, primaryBranch: "main" },
+      {
+        id: "a",
+        name: "rennet",
+        repo: { repoKey: "key-mine", displayName: "me/rennet" },
+        primaryBranch: "main",
+      },
+      {
+        id: "b",
+        name: "rennet",
+        repo: { repoKey: "key-theirs", displayName: "you/rennet" },
+        primaryBranch: "main",
+      },
     ];
     // Exact owner/repo routes to the right clone, never a guess.
     const mine = parsePrRef("me/rennet#7");

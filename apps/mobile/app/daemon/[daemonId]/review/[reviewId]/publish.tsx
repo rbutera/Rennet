@@ -303,14 +303,19 @@ export default function Publish(): ReactNode {
                 outbound review, never a "3 comments collated" summary that hides what posts
                 (#382 M2 finding 1). This is the product's core promise: what you preview is what
                 posts. */}
-            {composed.comments.map((c, i) => (
-              <Card key={`${c.path}:${c.line ?? "file"}:${i}`}>
+            {composed.comments.map((c) => (
+              <Card key={`${c.path}:${c.line ?? "file"}:${c.side}:${c.type}`}>
                 <Text style={{ color: t.faint, fontSize: type.control }}>
                   {c.path}
                   {c.line !== undefined ? `:${c.line}` : ""} · {c.side} · {c.type}
                 </Text>
                 <Text
-                  style={{ color: t.text, fontSize: type.body, lineHeight: 22, marginTop: space.xs }}
+                  style={{
+                    color: t.text,
+                    fontSize: type.body,
+                    lineHeight: 22,
+                    marginTop: space.xs,
+                  }}
                 >
                   {c.body}
                 </Text>

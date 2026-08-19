@@ -4131,7 +4131,10 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
   } {
     const registered: { turnId: string; reviewId?: string; controller: AbortController }[] = [];
     const settled: string[] = [];
-    const active = new Map<string, { reviewId?: string; controller: AbortController; body: string }>();
+    const active = new Map<
+      string,
+      { reviewId?: string; controller: AbortController; body: string }
+    >();
     return {
       registered,
       settled,
@@ -4265,7 +4268,9 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     // The stream carries EXACTLY ONE terminal event (#382 M2 finding 6): the swallowed abort
     // must NOT emit `ask-complete` and THEN `ask-interrupted` — a killed turn would flash a
     // completed answer first. One `ask-interrupted`, zero `ask-complete`.
-    const terminals = events.filter((e) => e.kind === "ask-complete" || e.kind === "ask-interrupted");
+    const terminals = events.filter(
+      (e) => e.kind === "ask-complete" || e.kind === "ask-interrupted",
+    );
     expect(terminals).toHaveLength(1);
     expect(terminals[0]?.kind).toBe("ask-interrupted");
     // The badges agree: ask-pending cleared, turn-failed raised with the interrupted cause.

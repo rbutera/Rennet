@@ -171,7 +171,7 @@ export function scrubProjectedValue(value: unknown, ctx: ProjectionContext): unk
 // the home dir. The negative lookbehind excludes a `/` that follows a word char, `:`, `/`, `>`, or
 // `~`, so a URL (`https://host/path`), a repo-relative remainder after a `<root>` substitution, and
 // a `~/…` home path are all left intact — only a genuine absolute path is caught (#382 M2 finding 8).
-const ABSOLUTE_PATH_RE = /(?<![\w:/>~])(?:[a-zA-Z]:\\[^\s"']+|\/(?:[\w.\-]+\/)+[\w.\-]+)/g;
+const ABSOLUTE_PATH_RE = /(?<![\w:/>~])(?:[a-zA-Z]:\\[^\s"']+|\/(?:[\w.-]+\/)+[\w.-]+)/g;
 
 /** Redact absolute filesystem paths a root/home substitution missed — for projected error text so a
  *  raw `/var/...` or `C:\...` never reaches a projected client (#382 M2 finding 8). */

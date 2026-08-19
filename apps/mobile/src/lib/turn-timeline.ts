@@ -144,11 +144,17 @@ export function foldStreamEvent(state: TimelineState, event: ReviewAskStreamEven
   // append its text twice. The daemon stamps a monotonic seq; anything at or below this entry's
   // high-water is a duplicate. An event without a seq (a daemon predating the field) is always
   // applied — the set-events stay idempotent by id, matching the pre-seq behaviour.
-  if (event.seq !== undefined && existing?.appliedSeq !== undefined && event.seq <= existing.appliedSeq) {
+  if (
+    event.seq !== undefined &&
+    existing?.appliedSeq !== undefined &&
+    event.seq <= existing.appliedSeq
+  ) {
     return state;
   }
   const appliedSeq =
-    event.seq !== undefined ? Math.max(existing?.appliedSeq ?? -1, event.seq) : existing?.appliedSeq;
+    event.seq !== undefined
+      ? Math.max(existing?.appliedSeq ?? -1, event.seq)
+      : existing?.appliedSeq;
   const seqField = appliedSeq === undefined ? {} : { appliedSeq };
   switch (event.kind) {
     case "ask-delta":

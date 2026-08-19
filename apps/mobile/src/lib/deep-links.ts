@@ -7,7 +7,11 @@
 //
 // Routes are scoped by daemon id (the Paseo shape: many daemons coexist in one nav tree).
 
-import { type AttentionAction, attentionActionSchema, MAX_ATTENTION_ACTIONS } from "@rennet/protocol";
+import {
+  type AttentionAction,
+  attentionActionSchema,
+  MAX_ATTENTION_ACTIONS,
+} from "@rennet/protocol";
 import { z } from "zod";
 
 /** A parsed attention target — the surface the user should land on. */
