@@ -2293,6 +2293,93 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(out.outcome).not.toBeNull();
   });
 
+  it("binds the composed artifact and refuses a stale-revision post (#382 M2 finding 2)", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    await dispatch("canvas.disposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "rename this",
+    });
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as { compositionId: string; payload: string; verdict: ForgeReviewEvent };
+    expect(composed.compositionId).toBeTruthy();
+    // Fresh preview: a post carrying the binding is accepted (a token is minted).
+    const consent = (await dispatch("publish.requestConsent", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      compositionId: composed.compositionId,
+    })) as { authorization: string };
+    expect(consent.authorization).toBeTruthy();
+    // A disposition edit lands AFTER the preview (another client edited) — the phone still holds
+    // the old binding. The daemon recomputes it from the CURRENT dispositions and refuses.
+    await dispatch("canvas.disposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "actually, rename it to something else entirely",
+    });
+    await expect(
+      dispatch("publish.requestConsent", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        payload: composed.payload,
+        verdict: composed.verdict,
+        compositionId: composed.compositionId,
+      }),
+    ).rejects.toThrow(/stale|another review/i);
+    // publish.review refuses the stale binding too (dry-run included).
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments: publishComments(),
+        payload: composed.payload,
+        verdict: composed.verdict,
+        compositionId: composed.compositionId,
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/stale|another review/i);
+  });
+
+  it("refuses a disposition with an unsafe path at ingestion (#382 M2 finding 8)", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    await expect(
+      dispatch("canvas.disposition", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        path: "../../etc/passwd",
+        disposition: "comment",
+        body: "escape",
+      }),
+    ).rejects.toThrow(/unsafe path/i);
+    await expect(
+      dispatch("review.setDisposition", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        path: "/etc/shadow",
+        disposition: "comment",
+        body: "escape",
+      }),
+    ).rejects.toThrow(/unsafe path/i);
+  });
+
   it("publish.compose refuses a mismatched mode truthfully (pr on a team-PR review)", async () => {
     const { dispatch } = harness();
     const review = await postableReview(dispatch); // has a postTarget

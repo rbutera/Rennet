@@ -17,6 +17,7 @@ import {
   type ForgeReviewTarget,
   forgeTargetKey,
   type HandoffTurnOutcome,
+  isRepoRelativePath,
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
@@ -41,6 +42,7 @@ import {
   parseCommandOutput,
   type ReattachResult,
   type ReviewAskStreamEvent,
+  sha256Hex,
 } from "@rennet/protocol";
 import type {
   AnchorSide,
@@ -592,6 +594,60 @@ const RUNNING_TURN_COMMANDS = new Set<CommandName>([
 ]);
 
 /** The reviewId a running-turn command operates on, or undefined if it is not one / has none. */
+/**
+ * The compose integrity binding (#382 M2 finding 2). A deterministic id over (reviewId, active
+ * patchset, mode, canonical payload) — the payload already canonicalises the comments/submission,
+ * so binding those four is enough to pin the artifact to one review AT one revision. `publish.compose`
+ * returns it; the post commands recompute it from the CURRENT review and refuse a mismatch, so a
+ * cross-review or stale-revision artifact cannot post. Pure integrity (recomputable, not a secret):
+ * it catches accidental drift and confusion, not adversarial forgery — Rennet is single-user.
+ */
+function publishCompositionId(fields: {
+  reviewId: string;
+  patchsetId: string;
+  mode: "review" | "pr";
+  payload: string;
+}): string {
+  return sha256Hex(
+    JSON.stringify([fields.reviewId, fields.patchsetId, fields.mode, fields.payload]),
+  );
+}
+
+/**
+ * Refuse a post whose compose binding no longer matches the current review (#382 M2 finding 2).
+ * A no-op when `compositionId` is absent (the desktop composes locally and posts without one —
+ * additive/back-compat). For a team-PR "review" the expected binding is recomputed from the CURRENT
+ * dispositions, so a disposition edit that landed between preview and post is caught (stale). For a
+ * "pr" submission the payload is model-drafted (not re-derivable), so the binding is recomputed over
+ * the posted payload + current patchset — catching a cross-review post or an advanced patchset; the
+ * existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload to its content.
+ */
+function assertCompositionFresh(
+  review: Review,
+  mode: "review" | "pr",
+  payload: string,
+  compositionId: string | undefined,
+): void {
+  if (compositionId === undefined) return;
+  const boundPayload =
+    mode === "review"
+      ? canonicalReviewPayload(reviewCommentsFromDispositions(review.dispositions))
+      : payload;
+  const expected = publishCompositionId({
+    reviewId: review.id,
+    patchsetId: review.activePatchsetId,
+    mode,
+    payload: boundPayload,
+  });
+  if (compositionId !== expected) {
+    throw new Error(
+      mode === "review"
+        ? "Publish refused: this preview is stale or from another review — recompose before posting."
+        : "Submit refused: this preview is stale or from another review — recompose before submitting.",
+    );
+  }
+}
+
 function runningReviewIdOf(name: CommandName, rawInput: unknown): string | undefined {
   if (!RUNNING_TURN_COMMANDS.has(name)) return undefined;
   const reviewId = (rawInput as { reviewId?: unknown } | null | undefined)?.reviewId;
@@ -823,6 +879,10 @@ export function createDispatch(
         }
         case "review.setDisposition": {
           const input = parseCommandInput(name, rawInput);
+          // Path safety at ingestion (#382 M2 finding 8): refuse an absolute or traversing path.
+          if (!isRepoRelativePath(input.path)) {
+            throw new Error(`Disposition refused: unsafe path (${input.path})`);
+          }
           const review = service.setDisposition(
             input.commandId,
             input.reviewId,
@@ -864,6 +924,11 @@ export function createDispatch(
           // Refuse to mint a token for a stale or unknown review id; only the current
           // review can be published from this session.
           const review = requireReviewById(input.reviewId);
+          // Compose-binding integrity (#382 M2 finding 2): when the artifact was daemon-composed
+          // (the phone flow carries `compositionId`), recompute the binding from the CURRENT review
+          // and refuse a stale-revision or cross-review mint. Recomputing from the current
+          // dispositions is what catches a disposition edit landing between preview and post.
+          assertCompositionFresh(review, "review", input.payload, input.compositionId);
           const target = toForgeReviewTarget(input.target);
           // Bind the mint to the review's OWN pull request (issue #21): a local capture
           // (no postTarget) or a mismatched target cannot even obtain a token, so the
@@ -896,6 +961,10 @@ export function createDispatch(
               "Publish refused: this is a retrospective review — it is read-only and nothing can be posted.",
             );
           }
+          // Compose-binding integrity (#382 M2 finding 2): a daemon-composed artifact carries its
+          // binding; recompute it from the CURRENT review and refuse a stale/cross-review post
+          // (dry-run included, so the fault surfaces as a refusal rather than a plausible request).
+          assertCompositionFresh(addressed, "review", input.payload, input.compositionId);
 
           const target = toForgeReviewTarget(input.target);
 
@@ -1007,6 +1076,10 @@ export function createDispatch(
           if (canonicalPrSubmissionPayload(input.submission) !== input.payload) {
             throw new Error("Submit refused: the PR submission payload does not match its content");
           }
+          // Compose-binding integrity (#382 M2 finding 2): a daemon-composed submission carries its
+          // binding; recompute it over the posted payload + current patchset and refuse a
+          // cross-review or advanced-patchset (stale) submission before pushing anything.
+          assertCompositionFresh(review, "pr", input.payload, input.compositionId);
 
           // (2) The head must be a real BRANCH ref (#107) — a detached HEAD has no branch
           // to open a PR from. MAIN is authoritative on the branch to push: the persisted
@@ -1070,10 +1143,27 @@ export function createDispatch(
             // does not edit (publish decision 4), so the default IS the product. The payload and
             // verdict are core's, so publish.review re-verifies these very bytes (single-source).
             const comments = reviewCommentsFromDispositions(review.dispositions);
+            // Path safety at compose (#382 M2 finding 8): refuse to compose an outbound review whose
+            // comments carry an absolute or traversing path — such a path would post outside the
+            // repo (or is corruption). Ingestion (`canvas.disposition`) already rejects them; this is
+            // the defence-in-depth at the egress boundary.
+            const badPath = comments.find((c) => !isRepoRelativePath(c.path));
+            if (badPath) {
+              return parseCommandOutput(name, {
+                status: "unavailable",
+                reason: `A review comment has an unsafe path (${badPath.path}); it cannot be posted.`,
+              });
+            }
             const payload = canonicalReviewPayload(comments);
             const verdict = deriveReviewEvent(comments);
             const target = review.postTarget;
             const destination = `${target.repo.owner}/${target.repo.name}#${target.number}`;
+            const compositionId = publishCompositionId({
+              reviewId: review.id,
+              patchsetId: review.activePatchsetId,
+              mode: "review",
+              payload,
+            });
             // A composed draft is now ready to post (#382 M2, both modes): raise publish-ready so
             // an away client learns it and deep-links to the preview. Idempotent by derived id.
             raisePublishReady(review, destination, destination);
@@ -1084,6 +1174,7 @@ export function createDispatch(
               verdict,
               destination,
               title: destination,
+              compositionId,
             });
           }
 
@@ -1116,6 +1207,12 @@ export function createDispatch(
           const submission = { title, body, base, head: headRef, draft: true };
           const payload = canonicalPrSubmissionPayload(submission);
           const destination = `${basename(review.repositoryRoot)}:${headRef} → ${base}`;
+          const compositionId = publishCompositionId({
+            reviewId: review.id,
+            patchsetId: review.activePatchsetId,
+            mode: "pr",
+            payload,
+          });
           // A composed own-branch draft is now ready to post (#382 M2, both modes): raise
           // publish-ready. Idempotent by derived id with the review.draftPrBody raise.
           raisePublishReady(review, destination, title);
@@ -1125,6 +1222,7 @@ export function createDispatch(
             payload,
             destination,
             title,
+            compositionId,
           });
         }
         case "review.canvases": {
@@ -1981,6 +2079,13 @@ export function createDispatch(
           // A span/side (issue #78) makes it span-grained (the Spec view's per-node
           // review); absent, it stays path-grained exactly as before.
           const input = parseCommandInput(name, rawInput);
+          // Path safety at ingestion (#382 M2 finding 8): a disposition path must name a file INSIDE
+          // the repo. Refuse an absolute or traversing path so it can never be stored (and later
+          // composed into an outbound review). Diff paths are always repo-relative; this only
+          // rejects a crafted or corrupt one.
+          if (!isRepoRelativePath(input.path)) {
+            throw new Error(`Disposition refused: unsafe path (${input.path})`);
+          }
           const review = service.setDisposition(
             input.commandId,
             input.reviewId,

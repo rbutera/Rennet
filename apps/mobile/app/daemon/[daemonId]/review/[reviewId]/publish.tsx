@@ -44,6 +44,14 @@ type PostTarget = {
   headOid: string;
 };
 
+type PrSubmission = {
+  readonly title: string;
+  readonly body: string;
+  readonly base: string;
+  readonly head: string;
+  readonly draft: boolean;
+};
+
 type Composed =
   | { readonly status: "loading" }
   | {
@@ -54,13 +62,15 @@ type Composed =
       readonly destination: string;
       readonly title: string;
       readonly target: PostTarget;
+      readonly compositionId: string;
     }
   | {
       readonly status: "pr";
-      readonly submission: unknown;
+      readonly submission: PrSubmission;
       readonly payload: string;
       readonly destination: string;
       readonly title: string;
+      readonly compositionId: string;
     }
   | { readonly status: "unavailable"; readonly reason: string };
 
@@ -98,6 +108,11 @@ export default function Publish(): ReactNode {
     review === undefined ? undefined : review.postTarget ? "review" : "pr";
 
   useEffect(() => {
+    // Reset per-review state on every route/mode change (#382 M2 finding 2): expo-router reuses
+    // this component across params, so without this the PREVIOUS review's composed preview (and a
+    // stale "posted" screen) would flash while the new one loads. Always start from a clean slate.
+    setComposed({ status: "loading" });
+    setPosting({ phase: "idle" });
     if (!connection || mode === undefined) return;
     let cancelled = false;
     // A pre-M2 daemon never advertises `act`, so it has no `publish.compose`. Say so truthfully
@@ -131,6 +146,7 @@ export default function Publish(): ReactNode {
             destination: result.destination,
             title: result.title,
             target,
+            compositionId: result.compositionId,
           });
         } else if (result.status === "pr") {
           setComposed({
@@ -139,6 +155,7 @@ export default function Publish(): ReactNode {
             payload: result.payload,
             destination: result.destination,
             title: result.title,
+            compositionId: result.compositionId,
           });
         } else {
           setComposed({ status: "unavailable", reason: result.reason });
@@ -169,6 +186,7 @@ export default function Publish(): ReactNode {
         target: c.target as never,
         payload: c.payload,
         verdict: c.verdict,
+        compositionId: c.compositionId,
       });
       const outcome = await connection.supervisor.invoke("publish.review", {
         commandId: newCommandId(),
@@ -178,6 +196,7 @@ export default function Publish(): ReactNode {
         payload: c.payload,
         verdict: c.verdict,
         authorization,
+        compositionId: c.compositionId,
         dryRun: false,
       });
       if (!outcome.outcome) {
@@ -193,7 +212,7 @@ export default function Publish(): ReactNode {
     }
   }
 
-  async function postPr(submission: unknown, payload: string): Promise<void> {
+  async function postPr(c: Extract<Composed, { status: "pr" }>): Promise<void> {
     if (!connection) return;
     setPosting({ phase: "posting" });
     try {
@@ -201,8 +220,9 @@ export default function Publish(): ReactNode {
       const outcome = await connection.supervisor.invoke("publish.submitPr", {
         commandId: newCommandId(),
         reviewId,
-        submission: submission as never,
-        payload,
+        submission: c.submission as never,
+        payload: c.payload,
+        compositionId: c.compositionId,
       });
       setPosting({ phase: "posted", url: outcome.url });
     } catch (error) {
@@ -265,14 +285,28 @@ export default function Publish(): ReactNode {
               >
                 {verdictLabel(composed.verdict)}
               </Text>
-              <Text style={{ color: t.text, fontSize: type.body, marginTop: space.xs }}>
-                {composed.comments.length} comment{composed.comments.length === 1 ? "" : "s"}{" "}
-                collated · your dispositions · your voice
-              </Text>
-              <Text style={{ color: t.muted, fontSize: type.control, marginTop: space.sm }}>
-                One neutral review event · posts exactly one review
+              <Text style={{ color: t.muted, fontSize: type.control, marginTop: space.xs }}>
+                {composed.comments.length} comment{composed.comments.length === 1 ? "" : "s"} ·
+                exactly what posts
               </Text>
             </Card>
+            {/* Show EVERY comment in full — path (+line) and body — so the preview is the whole
+                outbound review, never a "3 comments collated" summary that hides what posts
+                (#382 M2 finding 1). This is the product's core promise: what you preview is what
+                posts. */}
+            {composed.comments.map((c, i) => (
+              <Card key={`${c.path}:${c.line ?? "file"}:${i}`}>
+                <Text style={{ color: t.faint, fontSize: type.control }}>
+                  {c.path}
+                  {c.line !== undefined ? `:${c.line}` : ""} · {c.side} · {c.type}
+                </Text>
+                <Text
+                  style={{ color: t.text, fontSize: type.body, lineHeight: 22, marginTop: space.xs }}
+                >
+                  {c.body}
+                </Text>
+              </Card>
+            ))}
             <PrimaryButton
               label={posting.phase === "posting" ? "Posting…" : "↗ Post review"}
               onPress={() => void postReview(composed)}
@@ -283,15 +317,23 @@ export default function Publish(): ReactNode {
             <Card>
               <Text style={{ color: t.faint, fontSize: type.control }}>{composed.destination}</Text>
               <Text style={{ color: t.text, fontSize: type.body, fontWeight: "600", marginTop: 4 }}>
-                {composed.title}
+                {composed.submission.title}
               </Text>
-              <Text style={{ color: t.muted, fontSize: type.control, marginTop: space.sm }}>
-                Own branch · drafted body · opens exactly one PR
+              {/* The full PR the phone opens: base ← head, draft flag, and the whole drafted body —
+                  the preview IS the pull request, nothing hidden (#382 M2 finding 1). */}
+              <Text style={{ color: t.faint, fontSize: type.control, marginTop: space.xs }}>
+                {composed.submission.base} ← {composed.submission.head}
+                {composed.submission.draft ? " · draft" : ""}
+              </Text>
+              <Text
+                style={{ color: t.text, fontSize: type.body, lineHeight: 22, marginTop: space.sm }}
+              >
+                {composed.submission.body || "(no body)"}
               </Text>
             </Card>
             <PrimaryButton
               label={posting.phase === "posting" ? "Posting…" : "↗ Open pull request"}
-              onPress={() => void postPr(composed.submission, composed.payload)}
+              onPress={() => void postPr(composed)}
             />
           </>
         ) : (

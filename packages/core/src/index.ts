@@ -243,6 +243,21 @@ export function anchorKey(anchor: Pick<DispositionAnchor, "path" | "span" | "sid
   return anchor.path;
 }
 
+/**
+ * True when `path` is a safe repo-relative path (issue #382 M2 finding 8): a review comment /
+ * disposition / PR path must name a file INSIDE the repo, never escape it. Rejects an empty path, a
+ * POSIX or Windows absolute path (`/etc`, `C:\`, `\\unc`), and any `..` traversal segment. Used at
+ * BOTH ingestion (`canvas.disposition`) and compose (`publish.compose`) so a crafted path can
+ * neither be stored nor leave the machine on a post. Node-free (pure string), so it stays in the
+ * portable core the daemon and any client import.
+ */
+export function isRepoRelativePath(path: string): boolean {
+  if (path.length === 0) return false;
+  if (path.startsWith("/") || path.startsWith("\\")) return false;
+  if (/^[a-zA-Z]:/.test(path)) return false;
+  return !path.split(/[/\\]/).includes("..");
+}
+
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 /**

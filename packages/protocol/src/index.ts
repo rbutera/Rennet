@@ -2101,6 +2101,13 @@ export const commandDefinitions = {
        * at `publish.review`.
        */
       verdict: forgeReviewEventSchema,
+      /**
+       * The compose integrity binding (#382 M2 finding 2), when the artifact was daemon-composed
+       * (the phone flow). Optional/additive: the desktop composes locally and omits it. When
+       * present, the daemon recomputes it from the CURRENT review and refuses a stale/cross-review
+       * mint before a token is issued.
+       */
+      compositionId: z.string().min(1).optional(),
     }),
     output: z.object({
       /** The opaque, single-use authorization bound to (review, target, payload, verdict). */
@@ -2140,6 +2147,10 @@ export const commandDefinitions = {
       verdict: forgeReviewEventSchema.optional(),
       /** The single-use consent token from `publish.requestConsent` (real send only). */
       authorization: z.string().min(1).optional(),
+      /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
+       *  Optional/additive; when present the daemon recomputes it and refuses a stale/cross-review
+       *  post (dry-run included) before building the request. */
+      compositionId: z.string().min(1).optional(),
       /** Default TRUE: an omitted flag never posts. Real egress must opt in with false. */
       dryRun: z.boolean().optional().default(true),
     }),
@@ -2179,6 +2190,10 @@ export const commandDefinitions = {
       submission: prSubmissionSchema,
       /** The canonical `pr-submission` bytes the sheet previewed + signed (round-trip check). */
       payload: z.string(),
+      /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
+       *  Optional/additive; when present the daemon recomputes it and refuses a stale (advanced
+       *  patchset) or cross-review submission before pushing. */
+      compositionId: z.string().min(1).optional(),
     }),
     output: z.object({
       /** The created (or reused) pull request's web URL. */
@@ -2231,6 +2246,13 @@ export const commandDefinitions = {
         destination: z.string(),
         /** A short headline for the preview (the repo/PR the review posts to). */
         title: z.string(),
+        /**
+         * Integrity binding (#382 M2 finding 2): a deterministic id over (reviewId, active
+         * patchset, mode, target, canonical payload). The phone carries it to `publish.review`,
+         * which recomputes it from the CURRENT review and refuses a cross-review or stale-revision
+         * post — pure integrity, no ceremony. A pre-M2 daemon omits it (the post skips the check).
+         */
+        compositionId: z.string().min(1),
       }),
       z.object({
         status: z.literal("pr"),
@@ -2242,6 +2264,8 @@ export const commandDefinitions = {
         destination: z.string(),
         /** The PR title, surfaced as the preview's headline. */
         title: z.string(),
+        /** Integrity binding (#382 M2 finding 2), recomputed + validated by `publish.submitPr`. */
+        compositionId: z.string().min(1),
       }),
       z.object({ status: z.literal("unavailable"), reason: z.string() }),
     ]),

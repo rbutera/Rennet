@@ -12,6 +12,7 @@ import {
   ProjectionResolveError,
   projectCommandOutput,
   projectProgressEvent,
+  redactAbsolutePaths,
   resolveCommandInput,
   scrubRoots,
   toRepoReference,
@@ -149,6 +150,17 @@ describe("outbound structural projection", () => {
   it("scrubs known roots and home dir in free text", () => {
     expect(scrubRoots(`built ${REPO}/src`, ctx)).toBe("built <rennet>/src");
     expect(scrubRoots(`home is ${HOME}/x`, ctx)).toBe("home is ~/x");
+  });
+
+  it("redacts absolute paths a root/home substitution missed (#382 M2 finding 8)", () => {
+    // A leftover absolute path outside every known root — redacted.
+    expect(redactAbsolutePaths("ENOENT open /etc/passwd here")).toBe("ENOENT open <path> here");
+    expect(redactAbsolutePaths("failed at /var/lib/thing/x.db")).toBe("failed at <path>");
+    expect(redactAbsolutePaths("C:\\Users\\rai\\secret.txt bad")).toBe("<path> bad");
+    // A URL, a `<root>`-scrubbed remainder, and a `~/…` home path are left intact.
+    expect(redactAbsolutePaths("see https://example.com/a/b")).toBe("see https://example.com/a/b");
+    expect(redactAbsolutePaths("built <rennet>/src/a.ts")).toBe("built <rennet>/src/a.ts");
+    expect(redactAbsolutePaths("home is ~/x/y")).toBe("home is ~/x/y");
   });
 
   it("projects a progress event's summary path and scrubs its detail", () => {

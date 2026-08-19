@@ -166,6 +166,32 @@ export function scrubProjectedValue(value: unknown, ctx: ProjectionContext): unk
   return value;
 }
 
+// A leftover absolute filesystem path — POSIX (`/etc/passwd`, ≥2 segments) or Windows
+// (`C:\Users\…`) — that `scrubRoots` did NOT convert because it lies outside every known root and
+// the home dir. The negative lookbehind excludes a `/` that follows a word char, `:`, `/`, `>`, or
+// `~`, so a URL (`https://host/path`), a repo-relative remainder after a `<root>` substitution, and
+// a `~/…` home path are all left intact — only a genuine absolute path is caught (#382 M2 finding 8).
+const ABSOLUTE_PATH_RE = /(?<![\w:/>~])(?:[a-zA-Z]:\\[^\s"']+|\/(?:[\w.\-]+\/)+[\w.\-]+)/g;
+
+/** Redact absolute filesystem paths a root/home substitution missed — for projected error text so a
+ *  raw `/var/...` or `C:\...` never reaches a projected client (#382 M2 finding 8). */
+export function redactAbsolutePaths(text: string): string {
+  return text.replace(ABSOLUTE_PATH_RE, "<path>");
+}
+
+/** Deep variant for a structured `details` payload: scrub roots/home, then redact any leftover
+ *  absolute path in every string. Used only on the projected `rpcError` details. */
+export function redactAbsolutePathsDeep(value: unknown, ctx: ProjectionContext): unknown {
+  if (typeof value === "string") return redactAbsolutePaths(scrubRoots(value, ctx));
+  if (Array.isArray(value)) return value.map((item) => redactAbsolutePathsDeep(item, ctx));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value)) out[key] = redactAbsolutePathsDeep(val, ctx);
+    return out;
+  }
+  return value;
+}
+
 // ── Structural projectors (host-path fields → repo references) ────────────────
 
 function projectProvenance(

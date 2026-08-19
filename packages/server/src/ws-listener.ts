@@ -60,6 +60,8 @@ import {
   ProjectionResolveError,
   projectCommandOutput,
   projectProgressEvent,
+  redactAbsolutePaths,
+  redactAbsolutePathsDeep,
   resolveCommandInput,
   scrubProjectedValue,
   scrubRoots,
@@ -491,10 +493,13 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           type: "rpcError",
           requestId,
           code: "command_failed",
-          message: ctx ? scrubRoots(message, ctx) : message,
+          // Projected errors: scrub known roots/home, THEN redact any absolute path the
+          // substitution missed (a `/var/…` / `C:\…` outside every known root), so a raw host
+          // path never reaches a projected client (#382 M2 finding 8).
+          message: ctx ? redactAbsolutePaths(scrubRoots(message, ctx)) : message,
           ...(details === undefined
             ? {}
-            : { details: ctx ? scrubProjectedValue(details, ctx) : details }),
+            : { details: ctx ? redactAbsolutePathsDeep(details, ctx) : details }),
         });
       }
     };
