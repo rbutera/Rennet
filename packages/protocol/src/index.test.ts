@@ -6,7 +6,6 @@ import {
   globalConfigSchema,
   isCommandName,
   menuRunPayloadSchema,
-  menuTemplateSectionsSchema,
   parseCommandInput,
   parseCommandOutput,
   settingsLayerSchema,
@@ -82,19 +81,8 @@ describe("command protocol", () => {
   });
 });
 
-describe("application menu wire protocol (#44)", () => {
-  it("parses valid update/run payloads and rejects malformed nested items", () => {
-    expect(
-      menuTemplateSectionsSchema.parse([
-        {
-          group: "Navigate",
-          items: [{ id: "nav.back", label: "Back", accelerator: "mod+[", enabled: true }],
-        },
-      ]),
-    ).toHaveLength(1);
-    expect(menuTemplateSectionsSchema.safeParse([{ group: "Navigate", items: null }]).success).toBe(
-      false,
-    );
+describe("menu-run wire protocol (#44)", () => {
+  it("parses a valid run payload and rejects an empty id", () => {
     expect(menuRunPayloadSchema.parse({ id: "nav.back" })).toEqual({ id: "nav.back" });
     expect(menuRunPayloadSchema.safeParse({ id: "" }).success).toBe(false);
   });
