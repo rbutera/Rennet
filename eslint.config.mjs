@@ -60,11 +60,21 @@ export default [
               onlyDependOnLibsWithTags: ["layer:theme"],
             },
             {
+              // layer:ui-kit is the vendored shadcn/Base UI component kit
+              // (@rennet/ui): headless primitives themed by tokens only. It may
+              // import types + theme and nothing else — no protocol, no core.
+              sourceTag: "layer:ui-kit",
+              onlyDependOnLibsWithTags: ["layer:types", "layer:theme", "layer:ui-kit"],
+            },
+            {
+              // layer:ui is @rennet/app-ui, Rennet's composites/screens: it
+              // consumes the kit (layer:ui-kit) plus protocol + theme.
               sourceTag: "layer:ui",
               onlyDependOnLibsWithTags: [
                 "layer:types",
                 "layer:protocol",
                 "layer:theme",
+                "layer:ui-kit",
                 "layer:ui",
               ],
             },
@@ -119,19 +129,27 @@ export default [
     },
   },
   {
-    // No hardcoded hex colours in the UI package: every colour comes from the
-    // shared @rennet/theme tokens (Tailwind utilities or var(--rn-…)), and
+    // No hardcoded hex colours in EITHER UI package — the vendored kit
+    // (packages/ui) and the composites (packages/app-ui): every colour comes from
+    // the shared @rennet/theme tokens (Tailwind utilities or var(--rn-…)), and
     // packages/theme/src/theme.css is the ONLY place raw hex lives (issue #11,
     // re-homed in the 2026-08-19 overhaul). Test files and fixtures are exempt —
     // the hex-lint test lints code strings through the ESLint API (hex-lint.test.ts).
-    files: ["packages/ui/src/**/*.ts", "packages/ui/src/**/*.tsx"],
+    files: [
+      "packages/ui/src/**/*.ts",
+      "packages/ui/src/**/*.tsx",
+      "packages/app-ui/src/**/*.ts",
+      "packages/app-ui/src/**/*.tsx",
+    ],
     ignores: [
       "packages/ui/src/**/*.test.ts",
       "packages/ui/src/**/*.test.tsx",
-      "packages/ui/src/canvas/fixtures.ts",
+      "packages/app-ui/src/**/*.test.ts",
+      "packages/app-ui/src/**/*.test.tsx",
+      "packages/app-ui/src/canvas/fixtures.ts",
       // A REAL parsed OpenSpec change (data, not styling): its spec text carries
       // issue refs like #178 that the hex selector would false-match.
-      "packages/ui/src/canvas/openspec.fixture.ts",
+      "packages/app-ui/src/canvas/openspec.fixture.ts",
     ],
     rules: {
       "no-restricted-syntax": [
@@ -139,7 +157,7 @@ export default [
         {
           selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
           message:
-            "No hardcoded hex colours in packages/ui — use a theme utility or var(--rn-…) token from @rennet/theme.",
+            "No hardcoded hex colours in the UI packages — use a theme utility or var(--rn-…) token from @rennet/theme.",
         },
       ],
     },

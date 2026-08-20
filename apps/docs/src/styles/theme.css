@@ -9,7 +9,7 @@
  * non-palette values (black scrims/shadows) and two AA-tuned text colours the
  * palette hue can't hit on white; both are called out at their line.
  *   - packages/theme/src/palette.css — the shared palette (Tailwind consumes it
- *     in packages/ui; marketing and this file import it directly as plain CSS).
+ *     in packages/app-ui; marketing and this file import it directly as plain CSS).
  *   - DESIGN.md (repo root) — type roles, semantic hues, radii, do's/don'ts.
  * palette.css puts light on :root and dark on [data-theme="dark"] — the exact
  * data-theme Starlight stamps — so one var(--rn-*) reference resolves correctly

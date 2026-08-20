@@ -1,11 +1,11 @@
-import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
-import type { RennetBridge } from "@rennet/protocol";
 import {
   type Connection,
   ConnectionHost,
   type ConnectionTarget,
   type DaemonResolution,
-} from "@rennet/ui";
+} from "@rennet/app-ui";
+import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
+import type { RennetBridge } from "@rennet/protocol";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { resolveDaemonTarget as resolveWslDaemonTarget } from "./wsl-connect";

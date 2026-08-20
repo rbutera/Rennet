@@ -488,7 +488,11 @@ function isConfig(path: string): boolean {
 
 function isUi(path: string): boolean {
   if (/\.(tsx|jsx|css|scss|less|html)$/.test(path)) return true;
-  return segments(path).some((s) => s === "ui" || s === "components" || s === "renderer");
+  // `ui` is the vendored kit (packages/ui); `app-ui` is Rennet's composites
+  // (packages/app-ui, renamed from packages/ui) — both are UI, not core.
+  return segments(path).some(
+    (s) => s === "ui" || s === "app-ui" || s === "components" || s === "renderer",
+  );
 }
 
 function layerOf(path: string): number {

@@ -7,7 +7,7 @@ The application menu duplicates the command palette with a worse taxonomy: top-l
 ## What Changes
 
 - **BREAKING (internal surface)**: the registry-projected application menu is removed. macOS gets a static roles-only menu (`appMenu`, `editMenu`, `windowMenu`) set once at startup; Windows/Linux get `Menu.setApplicationMenu(null)` (no menu strip on the native frame; Alt menu access is deliberately gone).
-- Delete the `menuTemplate()` projection in `@rennet/ui` and the renderer's menu push in `app.tsx`.
+- Delete the `menuTemplate()` projection in `@rennet/app-ui` and the renderer's menu push in `app.tsx`.
 - Delete the `rennet:menu-update` IPC channel, the preload `updateMenu` bridge, and the `menuTemplateSectionSchema` / `MenuTemplateSection` / `updateMenu` contract slot in `@rennet/protocol`.
 - Delete the menu-click return path too, now dead with no command items to click: the `rennet:menu-run` MAIN→renderer channel, the preload `onMenuRun` bridge, and `menuRunPayloadSchema` / `MenuRunPayload` in `@rennet/protocol`.
 - Replace `apps/desktop/src/main/menu.ts` (registry builder, `applyMenuUpdate`, the platform accelerator-display workaround) with the static roles-only template; delete the tests that covered projection, validation, and accelerator display.
@@ -26,7 +26,7 @@ None.
 
 ## Impact
 
-- `packages/ui`: `menuTemplate()` + tests deleted; `app.tsx` menu-push effect deleted.
+- `packages/app-ui`: `menuTemplate()` + tests deleted; `app.tsx` menu-push effect deleted.
 - `packages/protocol`: menu template schemas/types and the `updateMenu` contract member deleted (+ tests).
 - `apps/desktop`: `main/menu.ts` reduced to a static roles template (macOS) / null (elsewhere); `main/index.ts` drops the `rennet:menu-update` listener; `preload` drops `updateMenu`; tests updated.
 - Docs: `docs/src/content/docs/using/guide/getting-started.md`, `docs/src/content/docs/developing/reference/delivery-order.md`.

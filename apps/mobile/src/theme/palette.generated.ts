@@ -44,6 +44,7 @@ export const palette = {
     synProp: "#6e5a2f",
     synVar: "#8a5a1e",
     markInk: "#0b0d10",
+    scrim: "#0e0d0c",
   },
   dark: {
     canvas: "#0e0d0c",
@@ -85,6 +86,7 @@ export const palette = {
     synProp: "#cbb98f",
     synVar: "#d9a77a",
     markInk: "#f7f4ee",
+    scrim: "#0e0d0c",
   },
 } as const;
 

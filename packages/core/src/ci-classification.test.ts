@@ -109,7 +109,7 @@ describe("ciFindingsFor", () => {
   const manifest: OfferedManifest = {
     occurrences: [
       { id: "h1", kind: "hunk", path: "packages/core/src/pipeline.ts" },
-      { id: "h2", kind: "hunk", path: "packages/ui/src/app.tsx" },
+      { id: "h2", kind: "hunk", path: "packages/app-ui/src/app.tsx" },
     ],
   };
   const failure: CiFailure = {

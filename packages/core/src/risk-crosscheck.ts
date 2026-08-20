@@ -161,7 +161,7 @@ export function crossCheckRisks(
  *
  * The result rides the review's `ok` variant additively, so the Flagged lens
  * boundary and every existing consumer are unchanged; `buildHypothesisFrame`
- * (`@rennet/ui`) folds the same `RiskCrossCheck[]` next to the hypothesis into the
+ * (`@rennet/app-ui`) folds the same `RiskCrossCheck[]` next to the hypothesis into the
  * reader's frame, defaulting any risk it cannot match to `open`.
  */
 export function attachRiskCrossCheck(

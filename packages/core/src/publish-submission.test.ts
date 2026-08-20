@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalPrSubmissionPayload, type ForgePrSubmission } from "./publish-submission";
 
 // The canonical `pr-submission` bytes MUST stay byte-identical to the ui layer's
-// `prSubmissionPayload` (`packages/ui/src/canvas/publish.ts`): same `kind`, same
+// `prSubmissionPayload` (`packages/app-ui/src/canvas/publish.ts`): same `kind`, same
 // EXACT field order (kind, title, body, base, head, draft). MAIN round-trips the
 // signed payload against these bytes and fails CLOSED on any drift, so this pins the
 // cross-layer twin — a change to one copy that is not mirrored here breaks the test.

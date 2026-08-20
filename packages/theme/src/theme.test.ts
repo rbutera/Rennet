@@ -126,6 +126,15 @@ describe("computed WCAG contrast", () => {
       ).toBeGreaterThanOrEqual(4.5);
     });
 
+    it(`accent-foreground clears AA on bg-accent — the kit menu/select focus reads (${label})`, () => {
+      // --color-accent-foreground maps to --rn-surface, painted on bg-accent
+      // (--rn-accent) by every dropdown/select focus row. accent-INK here would
+      // be 3.21:1 in light (fails) — surface is the scheme-flipping pair.
+      expect(
+        contrast(hex(scope, "--rn-surface"), hex(scope, "--rn-accent")),
+      ).toBeGreaterThanOrEqual(4.5);
+    });
+
     it(`diff glyphs clear AA on their rows (${label})`, () => {
       expect(contrast(hex(scope, "--rn-add-ink"), hex(scope, "--rn-add"))).toBeGreaterThanOrEqual(
         4.5,

@@ -50,7 +50,7 @@ export interface ForgePrSubmissionOutcome {
  * egress boundary can verify them independently of the renderer.
  *
  * ⚠️ These bytes MUST stay byte-identical to the ui layer's `prSubmissionPayload`
- * (`packages/ui/src/canvas/publish.ts`): same `kind`, same field order. The two are
+ * (`packages/app-ui/src/canvas/publish.ts`): same `kind`, same field order. The two are
  * separate copies across a layer boundary (ui cannot be imported by core), so a
  * change to one must change the other. The failure direction is SAFE — a drift makes
  * the round-trip check refuse a legitimate submission (fail closed), it never lets a

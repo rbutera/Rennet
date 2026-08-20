@@ -4,7 +4,8 @@
  * consumer map). This file is the TAILWIND face of it: it loads the
  * self-hosted variable fonts and maps the --rn-* vars into Tailwind
  * namespaces, so `bg-canvas`, `text-ink-soft`, `rounded-control`,
- * `font-display`, `text-2xs` … are the component vocabulary in packages/ui.
+ * `font-display`, `text-2xs` … are the component vocabulary in the UI packages
+ * (`packages/ui` kit and `packages/app-ui`).
  * Plain-CSS surfaces (marketing, docs) import palette.css directly instead.
  */
 
@@ -57,7 +58,7 @@
   --font-display: var(--rn-font-display);
   --font-mono: var(--rn-font-mono);
 
-  /* the desktop ramp (packages/ui/DESIGN.md): 11/12/14/16/18/20/24 + display clamp.
+  /* the desktop ramp (packages/app-ui/DESIGN.md): 11/12/14/16/18/20/24 + display clamp.
    * Tailwind defaults cover xs(12)–2xl(24); 2xs and display are ours. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1.3;
@@ -73,4 +74,39 @@
 
   /* depth — true overlays only */
   --shadow-overlay: var(--rn-shadow-overlay);
+
+  /* shadcn/ui semantic aliases — vendored kit vocabulary, all resolving to
+   * --rn-* palette truth. No new colors exist here. */
+  --color-background: var(--rn-canvas);
+  --color-foreground: var(--rn-ink);
+  --color-card: var(--rn-surface);
+  --color-card-foreground: var(--rn-ink);
+  --color-popover: var(--rn-overlay);
+  --color-popover-foreground: var(--rn-ink);
+  --color-primary: var(--rn-accent-fill);
+  --color-primary-foreground: var(--rn-accent-ink);
+  --color-secondary: var(--rn-raised);
+  --color-secondary-foreground: var(--rn-ink);
+  --color-muted: var(--rn-raised);
+  --color-muted-foreground: var(--rn-ink-soft);
+  --color-destructive: var(--rn-danger);
+  --color-destructive-foreground: var(--rn-surface);
+  --color-border: var(--rn-line);
+  --color-input: var(--rn-line-strong);
+  --color-ring: var(--rn-accent-line);
+  /* accent surface + its ink: the pulled menus/selects paint focus/hover with
+   * bg-accent + text-accent-foreground. --color-accent is the gold (kept per the
+   * port plan). Its foreground must be the SURFACE colour, not accent-ink:
+   * surface flips with the scheme opposite the accent (white on light ochre,
+   * near-black on dark gold), clearing AA both ways (5.75:1 / 9.45:1) — whereas
+   * near-black accent-ink on the light ochre is only 3.21:1 (theme.test enforces). */
+  --color-accent-foreground: var(--rn-surface);
+  /* modal backdrop scrim (dialog/sheet), opacity applied at the call site */
+  --color-scrim: var(--rn-scrim);
+  /* radius aliases: shadcn classes ↔ Rennet ramp, 1:1 by value */
+  --radius-sm: var(--radius-micro);
+  --radius-md: var(--radius-chip);
+  --radius-lg: var(--radius-control);
+  --radius-xl: var(--radius-surface);
+  --radius-2xl: var(--radius-window);
 }

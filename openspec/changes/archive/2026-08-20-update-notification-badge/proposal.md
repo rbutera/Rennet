@@ -25,6 +25,6 @@ Releases ship continuously through auto-release (a merge to `main` cuts a patch 
 
 - `apps/desktop/src/main/auto-update.ts`: interval change, `notifyUser` off, `update-downloaded` listener, quit-and-install IPC handler.
 - `apps/desktop/src/main/index.ts` + preload: one new main→renderer event (update ready) and one renderer→main invoke (apply update).
-- `packages/ui`: badge rendering on the chrome logo sites and the confirm-prompt interaction; host hook is optional so the browser shell is unaffected.
+- `packages/app-ui`: badge rendering on the chrome logo sites and the confirm-prompt interaction; host hook is optional so the browser shell is unaffected.
 - No new dependencies (`update-electron-app` 3.3.0 already present). No Rennet backend; the poll continues to hit update.electronjs.org / GitHub Releases only, which existing copy already discloses.
 - macOS remains a silent no-op until Developer ID signing lands (issue #42) — unchanged posture, now explicit in the spec.

@@ -131,7 +131,20 @@ Desktop components use `11 / 12 / 14 / 16 / 18 / 20 / 24` px, plus `text-display
 - `text-xl`, 20px: section headings
 - `text-2xl`, 24px: screen titles
 
-Do not use arbitrary font sizes in `packages/ui`. [`packages/ui/DESIGN.md`](packages/ui/DESIGN.md) is the machine-readable package design file, and the design-ramp test checks component sources.
+`11 / 12 / 14 / 16 / 18 / 20 / 24` px (`text-2xs` through `text-2xl`), plus the
+front-door display expression `text-display` = `clamp(2.125rem, 5vw, 3.5rem)`.
+
+- **11px / `text-2xs`** micro — uppercase micro-caps, the smallest legible chrome.
+- **12px / `text-xs`** meta — secondary metadata, counts, pins.
+- **14px / `text-sm`** chrome — the standard chrome label and control text.
+- **16px / `text-base`** reading — reading text, emphasised labels, inputs.
+- **18px / `text-lg`** body — comfortable body and the annotation serif.
+- **20px / `text-xl`** section — screen and section headings.
+- **24px / `text-2xl`** title — the largest in-app screen title.
+
+Arbitrary sizes (`text-[…]`, raw `font-size`) are off-ramp. The machine-readable
+source is [`packages/app-ui/DESIGN.md`](packages/app-ui/DESIGN.md); the package's
+design-ramp test enforces the ramp over the component sources.
 
 ## Layout
 
@@ -192,6 +205,33 @@ Name Claude Code and Codex with their provider marks and plain labels. They are 
 ### Theme control
 
 Use one 44px icon button with a visible focus state and an accessible action label. The icon shows the scheme the action will select. The operating-system preference remains the default.
+
+### Component kit
+
+The primitives are a **vendored shadcn/ui kit built on Base UI**, owned in
+`packages/ui` (`@rennet/ui`): Button, Input, Textarea, Label, Dialog, Sheet,
+Popover, DropdownMenu, Select, Switch, Checkbox, Tabs, Tooltip, ScrollArea, Badge,
+Skeleton, Separator, Toast, and the `cmdk` Command palette. `@rennet/app-ui`
+composes them into Rennet's screens; the hand-rolled component layer they replaced
+is retired (2026-08-20 port). Base UI is the one primitive family — Radix is
+allowed only where a shadcn component brings it (`cmdk`). The kit's lucide icons
+render at the same **1.6px identity stroke** as the app-ui `Icon` wrapper, so the
+whole app reads at one line weight.
+
+The kit is authored in shadcn's semantic Tailwind vocabulary, and
+`packages/theme` aliases that vocabulary onto the `--rn-*` palette above — no new
+colour or radius exists in the alias layer, it is a rename:
+
+- **Semantic colour:** `background`→canvas, `foreground`→ink, `card`→surface,
+  `popover`→overlay, `primary`→accent-fill (`primary-foreground`→accent-ink),
+  `secondary`/`muted`→raised, `muted-foreground`→ink-soft, `destructive`→danger,
+  `border`→line, `input`→line-strong, `ring`→accent-line, `accent`→gold with
+  `accent-foreground`→surface (the AA-safe flip), and `scrim`→the modal backdrop.
+- **Radius:** `sm`→micro (4px), `md`→chip (6px), `lg`→control (8px),
+  `xl`→surface (12px), `2xl`→window (16px).
+
+The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme.css);
+`packages/app-ui/DESIGN.md` records the same for the desktop package.
 
 ## Required design behavior
 

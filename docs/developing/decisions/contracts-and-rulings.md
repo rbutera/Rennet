@@ -71,8 +71,8 @@ Apply the sources by scope:
 | **R17** | Commands produce receipts and events. Projections rebuild from durable history. Publication represents `outcome-unknown` and queries before retrying. |
 | **R18** | Diff ingestion preserves bytes and represents binaries, submodules, mode-only changes, oversize splits, and incomplete capture explicitly. |
 | **R19** | Public protocol is transport-neutral and JSON-Schema-first. Private commands and events are Zod-first. Remote clients receive recipient-specific projections without host paths. |
-| **R20** | `@rennet/ui` imports only `types`, `protocol`, `theme`, and browser-safe dependencies. |
-| **R21** | Production packages are `types`, `theme`, `protocol`, `instructions`, `core`, `adapters`, `server`, `client`, and `ui`, with apps as composition roots. CI checks the dependency arrows. |
+| **R20** | The UI splits in two: `@rennet/ui` (the vendored shadcn/Base UI component kit) imports only `types` and `theme`; `@rennet/app-ui` (Rennet's composites and screens) imports only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies. Neither imports `core`. |
+| **R21** | Production packages are `types`, `theme`, `protocol`, `instructions`, `core`, `adapters`, `server`, `client`, `ui`, and `app-ui`, with apps as composition roots. CI checks the dependency arrows. |
 | **R24** | Forge behavior sits behind capability-based `ForgePort`. Core does not contain scattered GitHub conditionals. |
 | **R28** | A review edition is an immutable patchset. Source movement creates a successor patchset. |
 | **R29** | Exact unaffected analysis may carry forward. Direct changes invalidate; dependency, context, and ambiguity changes become potentially invalid. |

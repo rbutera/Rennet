@@ -1449,7 +1449,7 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
 export type ReviewAskStreamEvent = z.infer<typeof reviewAskStreamEventSchema>;
 
 /** The IPC representation of a conversation anchor. The UI `ConversationAnchor` lives in
- *  `@rennet/ui`, which protocol cannot import; the renderer maps to and from this shape. */
+ *  `@rennet/app-ui`, which protocol cannot import; the renderer maps to and from this shape. */
 export const conversationAnchorSchema = z.object({
   kind: z.enum(["line", "range", "chunk", "fragment"]),
   label: z.string().min(1),

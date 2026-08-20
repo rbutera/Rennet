@@ -86,7 +86,7 @@ Confirmed public claims are:
 - Repository map: [`monorepo-map.md`](docs/developing/reference/monorepo-map.md)
 - Desktop packaging: [`apps/desktop/PACKAGING.md`](apps/desktop/PACKAGING.md)
 - Brand assets: [`brand/README.md`](brand/README.md)
-- Product UI: [`apps/desktop/`](apps/desktop/) and [`packages/ui/`](packages/ui/)
+- Product UI: [`apps/desktop/`](apps/desktop/) and [`packages/app-ui/`](packages/app-ui/)
 
 Rennet has no confirmed testimonials, customer logos, usage totals, time-saved metrics, review-quality benchmarks, press quotes, or pricing comparisons. Do not invent them.
 

@@ -1,6 +1,6 @@
 ## 1. Pure model: turn status, orphaned anchor, stream coalescer (layer:ui, no Electron)
 
-- [x] 1.1 Add a per-turn status (`streaming` | `complete` | `interrupted`) and an `orphaned` flag to the conversation model in `packages/ui/src/canvas/conversation.ts`, without changing the privacy law or the `answerInThread` completed-message shape. Unit-test the state transitions.
+- [x] 1.1 Add a per-turn status (`streaming` | `complete` | `interrupted`) and an `orphaned` flag to the conversation model in `packages/app-ui/src/canvas/conversation.ts`, without changing the privacy law or the `answerInThread` completed-message shape. Unit-test the state transitions.
 - [x] 1.2 Add a pure `StreamCoalescer` (clock/scheduler injected) that folds a `(turnId, channel)` delta sequence into one body; unit-test that a replayed sequence under a hand-advanced fake clock is byte-identical every run (spec: clock-driven coalescing).
 - [x] 1.3 Prove two channels coalesce independently: orchestrator completes with its full body while the Codex channel is marked failed, not empty-success. Red-proof: make the coalescer share one buffer across channels and watch the independence test fire.
 

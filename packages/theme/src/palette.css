@@ -1,8 +1,8 @@
 /* Rennet shared palette — "The Affineur's Bench" (root DESIGN.md, 2026-08-19).
  *
  * THE one file where palette values exist. Every surface consumes it:
- *   - packages/ui (Tailwind v4): via theme.css, which imports this file and
- *     maps the vars into Tailwind namespaces.
+ *   - packages/ui + packages/app-ui (Tailwind v4): via theme.css, which imports
+ *     this file and maps the vars into Tailwind namespaces.
  *   - apps/marketing + docs/ (plain CSS): import this file directly and
  *     reference var(--rn-*). They define NO --rn-* of their own and restate
  *     no palette hex — palette-sync.test.ts enforces both.
@@ -85,6 +85,11 @@
   --rn-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* depth — true overlays only */
   --rn-shadow-overlay: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
+  /* scrim — the modal backdrop dim. A warm near-black; its VALUE is constant
+   * across schemes (a scrim darkens content behind it in light AND dark), but the
+   * palette contract requires every --rn-* token in both blocks, so it is restated
+   * (same value) below. Apply opacity at the call site (bg-scrim/10). */
+  --rn-scrim: #0e0d0c;
 }
 
 [data-scheme="dark"],
@@ -129,6 +134,7 @@
   --rn-syn-var: #d9a77a;
   --rn-mark-ink: #f7f4ee;
   --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+  --rn-scrim: #0e0d0c;
 }
 
 /* Surfaces that never stamp a scheme follow the OS. A stamped data-scheme or
@@ -175,5 +181,6 @@
     --rn-syn-var: #d9a77a;
     --rn-mark-ink: #f7f4ee;
     --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+    --rn-scrim: #0e0d0c;
   }
 }

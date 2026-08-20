@@ -10,7 +10,7 @@ export type { RefinementResult };
 // up → clean version lands on the PR." The user writes a lazy/vague note on a
 // hunk; a real model turn returns a cleaned, well-phrased comment in the user's
 // OWN first-person voice. The cleaned form becomes the item's `refined` body, and
-// `effectiveBody` (packages/ui) prefers it through to the published payload — but
+// `effectiveBody` (packages/app-ui) prefers it through to the published payload — but
 // ONLY after the user keeps it (refinement is an offer, never a silent rewrite).
 //
 // This module is the STRUCTURAL SIBLING of `review-ask.ts`, not the pipeline

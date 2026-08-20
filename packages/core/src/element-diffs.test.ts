@@ -231,7 +231,7 @@ describe("buildElementDiffs", () => {
   });
 
   // #250 real-shape PROVENANCE: this pins the exact producer output the workspace
-  // mark index (packages/ui) must own — a proposal chunk element whose anchor is
+  // mark index (packages/app-ui) must own — a proposal chunk element whose anchor is
   // NOT in the floor substrate, the floor hunk that IS in the substrate (so the
   // coarse verdict says "placed"), and the diff's `hunkOccurrences` carrying that
   // floor hunk (the ownership signal the fix reads). The UI component test

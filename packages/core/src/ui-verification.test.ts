@@ -45,8 +45,12 @@ describe("classifyUiSurface (#183) — the deterministic gate", () => {
     }
   });
 
-  it("classifies a .ts/.js file as UI ONLY under a renderer/components/ui path segment", () => {
+  it("classifies a .ts/.js file as UI ONLY under a renderer/components/ui/app-ui path segment", () => {
     expect(isUiSurfacePath("packages/ui/src/tokens.ts")).toBe(true);
+    // packages/app-ui is Rennet's composites package (renamed from packages/ui);
+    // its .ts files under app-ui/ are UI surface too (regression: the rename must
+    // not silently drop app-ui/*.ts from UI verification).
+    expect(isUiSurfacePath("packages/app-ui/src/canvas/collation.ts")).toBe(true);
     expect(isUiSurfacePath("apps/desktop/src/renderer/store.ts")).toBe(true);
     expect(isUiSurfacePath("src/components/format.js")).toBe(true);
     // No UI segment ⇒ a plain script is NOT UI surface.

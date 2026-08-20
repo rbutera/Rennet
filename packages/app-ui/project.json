@@ -1,0 +1,15 @@
+{
+  "name": "rennet-app-ui",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/app-ui/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:ui"],
+  "targets": {
+    "build": { "command": "pnpm exec tsc -p packages/app-ui/tsconfig.json" },
+    "lint": {
+      "command": "pnpm exec eslint packages/app-ui/src --max-warnings=0 && pnpm exec biome check packages/app-ui/src"
+    },
+    "typecheck": { "command": "pnpm exec tsc -p packages/app-ui/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run --passWithNoTests packages/app-ui/src" }
+  }
+}

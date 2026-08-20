@@ -30,6 +30,6 @@ Explicitly NOT changing: R54 doctrine (two-layer Repo Map stands), the primer (r
 - `packages/types`: `KnowledgeStatus` union gains `"rejected"`.
 - `packages/protocol`: three new command definitions + output schemas.
 - `packages/server`: dispatch cases + create-server deps (reusing existing stores/readers/ports).
-- `packages/ui`: `Surface` union, app routing/rehydration, breadcrumb label, Project Detail nav-out, new context-map screen component + dom test.
+- `packages/app-ui`: `Surface` union, app routing/rehydration, breadcrumb label, Project Detail nav-out, new context-map screen component + dom test.
 - `docs`: new Using page; settings-and-setup already covers `rennet map --enrich`.
 - No new dependencies.

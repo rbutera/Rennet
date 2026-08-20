@@ -2,7 +2,7 @@
 
 ## Context
 
-The current menu pipeline: `menuTemplate(ctx, overrides)` in `packages/ui/src/command/commands.ts` projects `COMMAND_CATALOGUE` + live context into `MenuTemplateSection[]`; an effect in `packages/ui/src/app.tsx` (~line 2452) serializes it and calls the preload `updateMenu`; preload validates with `menuTemplateSectionsSchema` and sends `rennet:menu-update`; `apps/desktop/src/main/index.ts` listens and calls `applyMenuUpdate` in `main/menu.ts`, which re-validates, wraps in role scaffolding, and installs via `Menu.setApplicationMenu`. Command items carry a display-only accelerator workaround (`registerAccelerator: false` off-macOS; inert `sublabel` text on macOS) so the renderer stays the sole chord dispatcher.
+The current menu pipeline: `menuTemplate(ctx, overrides)` in `packages/app-ui/src/command/commands.ts` projects `COMMAND_CATALOGUE` + live context into `MenuTemplateSection[]`; an effect in `packages/app-ui/src/app.tsx` (~line 2452) serializes it and calls the preload `updateMenu`; preload validates with `menuTemplateSectionsSchema` and sends `rennet:menu-update`; `apps/desktop/src/main/index.ts` listens and calls `applyMenuUpdate` in `main/menu.ts`, which re-validates, wraps in role scaffolding, and installs via `Menu.setApplicationMenu`. Command items carry a display-only accelerator workaround (`registerAccelerator: false` off-macOS; inert `sublabel` text on macOS) so the renderer stays the sole chord dispatcher.
 
 The menus this produces are palette groups verbatim (unidiomatic, several one-item menus, unconventional order). The palette + settings Keyboard section already cover command discoverability.
 

@@ -7,7 +7,7 @@
 // bundle can't take. So the locus regex is duplicated here from packages/core/src/locus.ts.
 // ponytail: ~3-line regex twins mirror core; the alternative (bundling core into the renderer)
 // breaks the build. Keep them in lockstep with core's `detectLocus` / `toDistroPath`.
-import type { ConnectionTarget, DaemonResolution } from "@rennet/ui";
+import type { ConnectionTarget, DaemonResolution } from "@rennet/app-ui";
 import type { WslConnectLogEntry } from "../preload/index";
 
 const WSL_UNC_RE = /^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(?:\\(.*))?$/i;

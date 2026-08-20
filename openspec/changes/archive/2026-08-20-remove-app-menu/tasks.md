@@ -4,10 +4,10 @@
 
 - [x] 1.1 Delete `menuTemplateItemSchema`, `menuTemplateSectionSchema`, `menuTemplateSectionsSchema`, and the `MenuTemplateSection` type from `packages/protocol/src/index.ts`; delete the `updateMenu` member from the preload contract type (~line 3027); remove their tests from `packages/protocol/src/index.test.ts`.
 
-## 2. Renderer (packages/ui)
+## 2. Renderer (packages/app-ui)
 
-- [x] 2.1 Delete `menuTemplate()` from `packages/ui/src/command/commands.ts` (and its `MenuTemplateSection` import); delete its tests in `packages/ui/src/command/commands.test.ts`.
-- [x] 2.2 Delete the menu-push effect in `packages/ui/src/app.tsx` (~line 2452: the `menuTemplate(...)` serialization and the `updateMenu` call) and the now-unused import.
+- [x] 2.1 Delete `menuTemplate()` from `packages/app-ui/src/command/commands.ts` (and its `MenuTemplateSection` import); delete its tests in `packages/app-ui/src/command/commands.test.ts`.
+- [x] 2.2 Delete the menu-push effect in `packages/app-ui/src/app.tsx` (~line 2452: the `menuTemplate(...)` serialization and the `updateMenu` call) and the now-unused import.
 
 ## 3. Desktop main + preload
 

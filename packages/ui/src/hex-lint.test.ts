@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 // The hex-forbidding selector, mirrored from eslint.config.mjs. If the two drift,
 // this test (which lints code strings through the ESLint API) still proves the
 // rule catches a hardcoded hex and passes `var(--token)` — the acceptance
-// criterion "a fixture component with a hardcoded hex fails lint".
+// criterion "a fixture component with a hardcoded hex fails lint". Second copy of
+// the app-ui test, pointed at the kit; the two packages' allowlists may diverge.
 const HEX_SELECTOR = "Literal[value=/#[0-9a-fA-F]{3,8}/]";
 
 function lint() {
@@ -28,7 +29,7 @@ function lint() {
 // repo hex rule exempts test files, but this keeps the corpus clean regardless).
 const HEX = `#${"ff00aa"}`;
 
-describe("no-hardcoded-hex — the glass-token discipline", () => {
+describe("no-hardcoded-hex — the glass-token discipline (kit)", () => {
   it("fails a component that hardcodes a hex colour", async () => {
     const results = await lint().lintText(
       `export const Swatch = () => <div style={{ color: "${HEX}" }} />;\n`,
