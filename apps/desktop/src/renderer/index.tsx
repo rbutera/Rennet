@@ -125,6 +125,7 @@ createRoot(root).render(
       createConnection={createConnection}
       defaultTarget={DEFAULT_TARGET}
       resolveDaemonTarget={resolveDaemonTarget}
+      logWslConnect={preload.logWslConnect}
     />
   </StrictMode>,
 );
