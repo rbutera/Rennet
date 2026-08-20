@@ -1,11 +1,11 @@
-# orchestrator-session Specification
+# Orchestrator session specification
 
 ## Purpose
-TBD - created by archiving change build-orchestrator-session. Update Purpose after archive.
+Define the deterministic review primer, structured context updates, current-view injection, and canvasOps tools attached to an orchestrator session.
 ## Requirements
 ### Requirement: The orchestrator boots with a lean map-not-container primer
 
-The system SHALL assemble a deterministic, versioned primer for a fresh orchestrator session as a MAP of the review, not a container of it. The primer SHALL contain B1 review identity (workspace/repo, reviewId, patchsetId, lineage position, mode), B2 freshness verdicts (per-repo lines up to a deterministic cap, then a single rollup line carrying the count and aggregate current/not-current verdicts of the remaining repos), B3 count-level canvas state (per-canvas lines up to a deterministic cap, then a single rollup line carrying the count and aggregate counts of the remaining canvases; counts only, never contents, and the decisions list SHALL NOT be inlined), B4 the protocol card, B5 a tool index derived from the live `canvasOps@2` surface (names + when-to-use one-liners, schemas deferred), and B6 the run-ledger headline. The assembled primer SHALL be ≤ 4,096 bytes, and the ceiling SHALL hold for large multi-repo reviews by bounding B2/B3 — the fail-closed overrun error remains only as the backstop. `failed` and `updating` freshness SHALL count as not current, never as stale. Rolled-up repos and canvases SHALL remain reachable via the tool surface (map, not container).
+The system SHALL assemble a deterministic, versioned primer that maps the review without embedding its full contents. B1 SHALL identify the workspace, repository, review, patchset, lineage position, and mode. B2 SHALL list repository freshness up to a fixed cap, followed by one aggregate line for the remainder. B3 SHALL list per-canvas counts up to a fixed cap, followed by aggregate counts for the remainder. It SHALL include counts only and SHALL NOT inline the decisions list. B4 SHALL contain the protocol card. B5 SHALL index the live `canvasOps@2` tool names and their one-line usage guidance without schemas. B6 SHALL contain the run-ledger headline. The primer SHALL remain at or below 4,096 bytes for large multi-repository reviews. An overrun error SHALL remain as a backstop. `failed` and `updating` freshness SHALL count as not current. Rolled-up repositories and canvases SHALL remain available through tools.
 
 #### Scenario: A fresh session answers orientation from the bootstrap without a tool call
 
@@ -15,7 +15,7 @@ The system SHALL assemble a deterministic, versioned primer for a fresh orchestr
 #### Scenario: Count-level state never inlines contents
 
 - **WHEN** the primer's B3 canvas state is assembled for a review with many decisions
-- **THEN** it carries the decision COUNT and never the decision bodies or titles — the decisions list is reachable via the tool surface, not inlined
+- **THEN** it carries the decision count without decision bodies or titles, and the decisions list remains reachable through tools
 
 #### Scenario: A large multi-repo review assembles under the ceiling without throwing
 
@@ -24,7 +24,7 @@ The system SHALL assemble a deterministic, versioned primer for a fresh orchestr
 - **AND** shuffled copies of that fixture produce the identical tails, bytes, and digest
 
 ### Requirement: Primer assembly is deterministic and the card is a versioned template
-Primer assembly SHALL be a pure function of the review state: the same state SHALL produce identical bytes and an identical digest. The primer's SHA-256 digest SHALL be recorded in the orchestrator session's provenance. The protocol card SHALL be a versioned base instruction: a fixed template with a version identifier, matched byte-for-byte, carrying the four-actor contract, the two product principles (logical ordering; roll-up/zoom), what the orchestrator can never do, and the ask protocol (can-ask / how-to-ask / answer-shapes) including "never answer about the base branch or unexamined code from recall — retrieve or ask first".
+Primer assembly SHALL be a pure function of review state. Equal state SHALL produce identical bytes and an identical digest. The orchestrator session provenance SHALL record the primer's SHA-256 digest. The protocol card SHALL be a fixed, versioned base instruction matched byte-for-byte. It SHALL contain the four-actor contract, logical ordering, roll-up and zoom behavior, the orchestrator's excluded actions, and the ask protocol. The ask protocol SHALL include: "never answer about the base branch or unexamined code from recall; retrieve or ask first".
 
 #### Scenario: Same state assembles to the same bytes and digest
 - **WHEN** `assemblePrimer` is called twice with equal inputs
@@ -35,7 +35,7 @@ Primer assembly SHALL be a pure function of the review state: the same state SHA
 - **THEN** the primer's card section equals the versioned `PROTOCOL_CARD` template, the card carries its version identifier, and the session's provenance records the primer digest and versions
 
 ### Requirement: User acts are pushed as structured events into the orchestrator's context
-The system SHALL push user acts into the orchestrator's context as structured events: `{selected}` (anchor + element summary), `{disposed}` (anchor + type + body), `{proposal-adjudicated}` (proposalId + outcome + edited payload — dismissals teach), and `{viewing}` (canvas + cohort — cheap deixis). The system SHALL NOT collect or derive dwell or pace metrics. Every delivered event SHALL be appended to the open-assembled-prompt panel and be inspectable byte-for-byte.
+The system SHALL push user actions into orchestrator context as structured events. `{selected}` SHALL carry an anchor and element summary. `{disposed}` SHALL carry an anchor, type, and body. `{proposal-adjudicated}` SHALL carry the proposal id, outcome, and edited payload. `{viewing}` SHALL carry the canvas and cohort. The system SHALL NOT collect or derive dwell or pace metrics. The open assembled-prompt panel SHALL append every delivered event and show its exact bytes.
 
 #### Scenario: A user selection appears in the next-turn context
 - **WHEN** the user selects an element and the orchestrator takes its next turn
@@ -52,8 +52,8 @@ When the user asks a question, the system SHALL inject the user's current canvas
 - **WHEN** the user is viewing the decisions lens and asks a question
 - **THEN** the request built for the orchestrator carries the decisions lens (`angle: "decisions"`) and the current view context at request time
 
-### Requirement: The stream consumes the change feed and batches deixis under an injected clock (R35, not Rx)
-The context-update stream SHALL NOT be an Rx pipeline. It SHALL consume issue #10's post-commit `CanvasChangeFeed` plus direct user-act events, delivered in store/seq order; consumers MAY coalesce but SHALL NOT reorder. The `{viewing}` deixis batching SHALL be a hand-rolled batcher under an injected clock with a bounded buffer that coalesces by canvas key (later viewing replaces earlier) and is never silent: a coalesced delivery SHALL state the seq range it covers.
+### Requirement: The stream consumes the change feed and batches view context under an injected clock
+The context-update stream SHALL use `CanvasChangeFeed` and direct user-action events, delivered in store sequence order. It SHALL NOT use an Rx pipeline. Consumers MAY coalesce events but SHALL NOT reorder them. A bounded batcher under an injected clock SHALL coalesce `{viewing}` events by canvas key, with the later view replacing the earlier one. A coalesced delivery SHALL state the sequence range it covers.
 
 #### Scenario: Two viewings of one canvas coalesce into one non-silent delivery
 - **WHEN** the user views a canvas, then views it again within the batch window, and the clock advances past the window
@@ -73,4 +73,3 @@ A booted orchestrator session SHALL expose a tool index equal to the live `canva
 #### Scenario: The adapter builds the MCP server without spawning a model
 - **WHEN** `attachOrchestratorSession` is called with a backend and a fake SDK loader
 - **THEN** it returns the core session and an in-process MCP server registering exactly the canvasOps@2 tool set, with no model invoked
-

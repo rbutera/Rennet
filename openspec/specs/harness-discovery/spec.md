@@ -1,7 +1,7 @@
-# harness-discovery Specification
+# Harness discovery specification
 
 ## Purpose
-TBD - created by archiving change build-harness-adapter-protocol. Update Purpose after archive.
+Define how Rennet finds and probes model harnesses in each execution environment without relying on an interactive shell or unverified version claims.
 ## Requirements
 ### Requirement: Discovery resolves the harness without asking a shell to resolve a binary
 Discovery SHALL harvest the login-shell PATH where a POSIX login shell exists, union it with a curated set of known locations for the current platform, resolve candidate binaries itself by directory listing plus an executable check, and SHALL NOT use `which`, `command -v`, or `where` to resolve a binary name. On Windows, harvesting SHALL use the process environment (no POSIX shell), the PATH delimiter SHALL be the platform's (`;`), candidate matching SHALL recognise directly launchable Windows executable shims (`.exe`, `.cmd`, `.bat`), and curated locations SHALL cover Windows per-user install directories. A `.ps1` file SHALL NOT be reported as executable because the shipped no-shell launcher cannot run it directly.
@@ -38,7 +38,7 @@ Discovery SHALL run against the project's execution locus and report which locus
 
 ### Requirement: A runtime-dependent harness reports its missing runtime as the health reason
 
-For a harness whose binary requires a separate runtime to execute (omp requires Bun), discovery SHALL resolve and prove the runtime before executing the harness script, enforce its declared minimum version, and carry the exact proven runtime path into process composition. It SHALL fold a missing, below-floor, or unrunnable runtime into the slot's health with a reason naming the runtime — not a spawn-time crash, and not an `unavailable`/`not-found` that hides the real cause behind "no binary". Candidate ranking SHALL demote an asdf harness shim behind a real install, and Windows filename matching SHALL consume the candidate locus's actual `PATHEXT`.
+For a harness that needs a separate runtime, discovery SHALL resolve and prove that runtime before executing the harness script. It SHALL enforce the runtime's minimum version and carry the proven absolute path into process composition. A missing, below-minimum, or unrunnable runtime SHALL make the slot unavailable with a reason that names the runtime. Candidate ranking SHALL place an asdf harness shim behind a direct install. Windows filename matching SHALL use the candidate environment's `PATHEXT`.
 
 #### Scenario: The harness binary resolves but its runtime does not
 
@@ -71,7 +71,7 @@ Codex discovery SHALL include the ChatGPT-desktop-bundled codex binary as a cand
 
 ### Requirement: Codex candidates carry app-server capability evidence
 
-A chosen codex candidate SHALL be probed for app-server capability (the `app-server` subcommand answering an `initialize` request), and the recorded health SHALL reflect the probe: a binary whose `app-server` cannot complete the handshake is `unavailable` with the probe detail — never silently driven through a different invocation mode.
+A chosen Codex candidate SHALL be probed for app-server capability by sending an `initialize` request to the `app-server` subcommand. A binary that cannot complete this handshake SHALL be `unavailable` with the probe detail. Rennet SHALL NOT switch it to another invocation mode.
 
 #### Scenario: An old binary without app-server
 

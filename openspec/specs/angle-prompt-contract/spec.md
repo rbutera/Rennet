@@ -1,10 +1,10 @@
 # angle-prompt-contract Specification
 
 ## Purpose
-TBD - created by archiving change build-decomposition-angle-generation. Update Purpose after archive.
+Defines the versioned instruction contract and deterministic layer assembly used by every model-generated review angle.
 ## Requirements
 ### Requirement: A base instruction is a filled seven-slot uniform contract
-Every per-angle base instruction SHALL be produced from one uniform `PromptContract` with exactly seven slots — role, emit, input, discipline, failure valve, ordering, and guidance slot — so that the versioned instruction bytes are attributable slot by slot. `renderBaseInstruction` SHALL be a deterministic pure function of the contract.
+Every per-angle base instruction SHALL be produced from one uniform `PromptContract` with exactly seven slots: role, emit, input, discipline, failure valve, ordering, and guidance slot. This makes the versioned instruction bytes attributable slot by slot. `renderBaseInstruction` SHALL be a deterministic pure function of the contract.
 
 #### Scenario: All seven slots render
 - **WHEN** a base instruction is rendered from a contract
@@ -25,7 +25,7 @@ A base instruction SHALL name the document type and version it must emit but SHA
 - **THEN** it names the docType `decomposition.skeleton` and its version and does not contain a JSON Schema object
 
 ### Requirement: Prompt assembly is fixed-order, layer-labelled, and never truncates the base
-`assemblePrompt` SHALL compose layers in the fixed order base, general, angle, task, files, context, then payload; SHALL label every emitted layer; and, when a byte budget is set and the layers overflow, SHALL drop later layers first and SHALL NEVER truncate the base instruction.
+`assemblePrompt` SHALL compose layers in this fixed order: base, general, angle, task, files, context, and payload. It SHALL label every emitted layer. When a byte budget is set and the layers overflow, it SHALL drop later layers first and preserve the complete base instruction.
 
 #### Scenario: The base survives a tight budget
 - **WHEN** a prompt is assembled with a byte budget smaller than the sum of all layers
@@ -34,4 +34,3 @@ A base instruction SHALL name the document type and version it must emit but SHA
 #### Scenario: Assembly order is deterministic
 - **WHEN** the same layers are assembled twice
 - **THEN** the assembled text is byte-identical and lists its contributing layers in the fixed order
-

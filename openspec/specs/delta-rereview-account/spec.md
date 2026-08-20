@@ -1,16 +1,16 @@
 # delta-rereview-account Specification
 
 ## Purpose
-The deterministic, model-free account of what a returned (successor) patchset did relative to the reviewer's staged asks: per-ask addressed / partially-addressed / untouched, plus every change the agent made beyond any ask — at hunk grain where the substrate permits, path grain otherwise. It is the entry point of the delta re-review (journey stage 7): pure narration that gates nothing.
+Defines the deterministic account of how a successor patchset addressed each staged ask and which changes fell outside those asks. It reports hunk detail when available and path detail otherwise, without gating any action.
 ## Requirements
 ### Requirement: The deterministic account is complete without any model call
 
-When a patchset activation succeeds a distinct prior patchset that carried staged asks, the system SHALL stamp a delta account computed entirely by deterministic arithmetic over the lineage carry and the prior-vs-successor content comparison — no model call. Per ask: an ask whose flagged target no longer exists byte-identically SHALL be reported `addressed`; an ask whose target carried byte-identically (matched by a rename-surviving identity) SHALL be reported `untouched` when its file otherwise did not change in content and `partially-addressed` when it did. Every path the successor changed that no ask covers SHALL be listed beyond-asks, so the changed set is partitioned totally — covered by an ask or beyond it, never dropped. The account SHALL be informational only: it gates no action and requires no acknowledgement.
+When a patchset activation succeeds a distinct prior patchset with staged asks, the system SHALL compute a delta account without a model call. It SHALL use lineage carry and compare the prior and successor content. An ask whose flagged target no longer exists byte-identically SHALL be `addressed`. An ask whose target carried byte-identically through rename-surviving identity SHALL be `untouched` when the file content did not otherwise change and `partially-addressed` when it did. Every changed path not covered by an ask SHALL appear in beyond-asks. The account SHALL be informational and require no acknowledgement.
 
 #### Scenario: the four-fact fixture is stated in full
 
 - **WHEN** a successor patchset addresses two of three staged asks, leaves the third untouched, and adds an unrequested change
-- **THEN** the account states all four facts — two asks `addressed`, one `untouched`, and the unrequested change surfaced beyond-asks — with no model invoked
+- **THEN** the account states that two asks were `addressed`, one was `untouched`, and one unrequested change appears in beyond-asks, with no model invoked
 
 #### Scenario: a first capture carries no account
 
@@ -19,12 +19,12 @@ When a patchset activation succeeds a distinct prior patchset that carried stage
 
 ### Requirement: Beyond-asks is surfaced at hunk grain
 
-The account SHALL compute the successor's NEW hunks — hunks of the successor's per-file patch whose changed-line content (added plus deleted line bytes) appears in no hunk of the prior patch for that file or its rename source — and SHALL classify each new hunk against the asks: a hunk is COVERED when an ask targets its file path-grained, or when the ask's anchored span (at its carried, current path; deletions matched on the old-file range, otherwise the new-file range) intersects the hunk's range. Every uncovered new hunk SHALL be reported beyond-asks with its path and line range, in one of two named buckets: a hunk in a file NO ask targets (the loud scope-creep bucket), or a hunk inside an asked file but outside every asked span. Both buckets are honest narration of work the agent was allowed to do — the account SHALL NOT present a beyond-ask hunk as a violation, a warning to acknowledge, or a reason to block anything. The existing path-grain beyond-asks list SHALL remain present alongside the hunk-grain detail.
+The account SHALL compute the successor's new hunks. A new hunk is one whose added and deleted line bytes appear in no prior hunk for the file or its rename source. It SHALL classify a new hunk as covered when an ask targets the whole path or when the ask's current anchored span intersects the hunk's range. Deletions SHALL match against the old-file range, and other changes SHALL match against the new-file range. Every uncovered new hunk SHALL appear in beyond-asks with its path and line range. Hunks in files targeted by no ask SHALL use the unasked-file bucket. Hunks outside every asked span in an asked file SHALL use the asked-file bucket. Neither bucket SHALL imply a violation or block an action. The path-level beyond-asks list SHALL remain present beside hunk detail.
 
 #### Scenario: an unrequested hunk inside an asked file is surfaced
 
 - **WHEN** the successor changes an asked file both at the asked span and in a second, non-overlapping hunk no ask targets
-- **THEN** the account reports the ask against its span AND reports the second hunk beyond-asks in the asked-file bucket, with its line range — it does not vanish into "partially addressed"
+- **THEN** the account reports the ask against its span and reports the second hunk in the asked-file beyond-asks bucket with its line range
 
 #### Scenario: a hunk in an unasked file lands in the loud bucket
 
@@ -38,21 +38,21 @@ The account SHALL compute the successor's NEW hunks — hunks of the successor's
 
 ### Requirement: Hunk claims degrade honestly to path grain
 
-When a file's patch text is content-lossy (it carries the diff truncation marker) in either the prior or the successor patchset, the account SHALL make no hunk-grain claim for that file and SHALL report it at path grain only. An account produced before hunk grain existed (a persisted snapshot without the hunk fields) SHALL remain valid and SHALL render as the path-grain account it is. The system SHALL never display hunk precision it did not compute.
+When either patchset carries the diff truncation marker for a file, the account SHALL make no hunk-level claim for that file and SHALL report only path detail. A persisted account without hunk fields SHALL remain valid and render its path-level data. The system SHALL never display precision it did not compute.
 
 #### Scenario: a truncated patch yields path grain for that file
 
 - **WHEN** the successor's patch for a changed file carries the truncation marker
 - **THEN** that file appears in the path-grain beyond-asks (or its ask's status) with no hunk-grain rows, while untruncated files keep hunk grain
 
-#### Scenario: a pre-existing persisted account still validates and renders
+#### Scenario: An account without hunk fields validates and renders
 
-- **WHEN** a review persisted before this change (its account has no hunk-grain fields) is reloaded
+- **WHEN** a persisted review has an account without hunk fields
 - **THEN** it validates and the panel renders the path-grain account unchanged
 
 ### Requirement: A handoff run's asks are attributed to their composed tasks
 
-When the successor patchset was captured by a handoff run, the account SHALL attribute each staged ask to the composed task that carried it — the task index from the verified bundle's traceMap, plus that task's preview title — matched from the ask trace the run hands to the capture. A capture with no handoff trace (a plain regenerate) SHALL carry no attribution and SHALL otherwise compute identically. Attribution is narration: it SHALL NOT alter any ask's status or gate anything.
+When a handoff run captures the successor patchset, the account SHALL attribute each staged ask to its composed task. It SHALL use the task index from the verified bundle's traceMap and the task's preview title, matched through the ask trace supplied to capture. A capture without a handoff trace SHALL carry no attribution and compute the same statuses. Attribution SHALL NOT alter status or gate an action.
 
 #### Scenario: an ask names the task that ran it
 
@@ -66,7 +66,7 @@ When the successor patchset was captured by a handoff run, the account SHALL att
 
 ### Requirement: The rendered account anchors at hunk grain and its prose stays grounded in the account
 
-The account panel SHALL render the beyond-ask hunks with their buckets, and activating a hunk-grain item SHALL navigate the diff to that hunk's span (not merely its file). The optional light-tier prose digest SHALL be built from ONLY the structured account including its hunk-grain facts — no diff text, no repository content — so it can state no fact the account does not carry; when the account has no hunk-grain detail the digest prompt carries the path-grain facts as before.
+The account panel SHALL render beyond-ask hunks with their buckets. Activating a hunk item SHALL navigate the diff to that hunk's span, not only its file. The optional light-tier digest SHALL use only the structured account, including its hunk facts. It SHALL receive no diff text or repository content. When the account has no hunk detail, the digest prompt SHALL carry only path facts.
 
 #### Scenario: tapping a beyond-ask hunk navigates to the hunk
 
@@ -77,4 +77,3 @@ The account panel SHALL render the beyond-ask hunks with their buckets, and acti
 
 - **WHEN** the digest prompt is assembled over an account with hunk-grain beyond-asks
 - **THEN** the prompt lists each beyond hunk's path, range, and bucket, and contains no content outside the structured account
-

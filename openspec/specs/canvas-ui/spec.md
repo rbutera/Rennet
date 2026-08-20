@@ -1,11 +1,11 @@
 # canvas-ui Specification
 
 ## Purpose
-TBD - created by archiving change build-canvas-ui. Update Purpose after archive.
+Defines canvas navigation, disposition authoring, diff rendering, shared visual tokens, and anchored conversation layout in the review workspace.
 ## Requirements
-### Requirement: Lens switcher over six angles, blast-radius is overlay-only
+### Requirement: The lens switcher has four canvases and one overlay
 
-The workspace SHALL present a lens switcher over the five angles. Four (spec, sequence, decisions, noise) are selectable canvases. Blast-radius SHALL be an amber overlay TOGGLE that paints the active canvas, never a selectable fifth canvas or its own queue. There SHALL be no Claims canvas: the ground it covered belongs to the Decisions lens (Rai's verdict, 2026-08-16, issue #221), and no switcher entry, rotation stop, or canvas queue for `claims` SHALL exist.
+The workspace SHALL present four selectable canvases: spec, sequence, decisions, and noise. Blast radius SHALL be an amber overlay toggle that paints the active canvas, never a selectable canvas or its own queue. The Decisions lens owns decision claims, so no switcher entry, rotation stop, or canvas queue for `claims` SHALL exist.
 
 #### Scenario: blast-radius is not a canvas
 
@@ -34,7 +34,7 @@ The decisions canvas SHALL render cohorts collapsed by default with honest count
 
 ### Requirement: Approve at any granularity, one user act fans out
 
-The user SHALL be able to apply a disposition (approve / request-change / comment / question) at whole-roll-up, cohort, partial selection, or single anchor. A group act SHALL be ONE user act that fans out to per-anchor L2 dispositions.
+The user SHALL be able to approve, request a change, comment, or ask a question at whole-roll-up, cohort, partial-selection, or single-anchor granularity. A group action SHALL remain one user action that creates per-anchor L2 dispositions.
 
 #### Scenario: cohort approve creates per-anchor L2 in one act
 
@@ -43,16 +43,16 @@ The user SHALL be able to apply a disposition (approve / request-change / commen
 
 ### Requirement: Zoom in and out at any point, keyboard-first
 
-The surface SHALL support zooming roll-up → cohort → element → diff and back, keyboard-first.
+The workspace SHALL support keyboard-first zoom through roll-up, cohort, element, and diff levels in both directions.
 
 #### Scenario: zoom traverses both directions
 
 - **WHEN** the user zooms in from roll-up to the diff and back out
 - **THEN** each level (roll-up, cohort, element, diff) is reachable in both directions
 
-### Requirement: L3 rendering is the agent's hand, only acceptance creates L2
+### Requirement: L3 proposals are distinct and only acceptance creates L2
 
-Orchestrator annotations SHALL render visually distinct as chrome (glass doctrine), never looking like L1 analysis or L2 human judgment. Proposals SHALL render next to their target with accept / edit / dismiss; edit-then-accept is first-class; only acceptance SHALL create L2.
+Orchestrator annotations SHALL render as interface chrome that is visually distinct from L1 analysis and L2 human judgment. Proposals SHALL render beside their target with accept, edit, and dismiss actions. Only acceptance SHALL create L2.
 
 #### Scenario: dismiss creates no L2
 
@@ -73,14 +73,19 @@ The diff SHALL render through a windowed `CodeView` whose rendered DOM node coun
 - **WHEN** a 5000-line diff is rendered through the windowed CodeView
 - **THEN** the rendered node count stays within the envelope while a full render of the same fixture exceeds it
 
-### Requirement: Glass tokens, no hardcoded hex
+### Requirement: Shared theme tokens supply every product color
 
-The glass token system SHALL be the only place raw hex lives; both the dark default and the bright-room light scheme SHALL render. A hardcoded hex anywhere else in the UI package SHALL fail lint.
+The shared Affineur's Bench theme SHALL be the only source of raw color values for product interfaces. Dark and light schemes SHALL both render, and UI components SHALL use shared tokens rather than hardcoded colors. The UI SHALL NOT use glass, translucency, vibrancy, or the review-blue accent.
 
-#### Scenario: a hardcoded hex fails lint
+#### Scenario: A hardcoded color fails lint
 
-- **WHEN** a UI component carries a hardcoded hex literal
-- **THEN** lint fails; a component using `var(--token)` passes
+- **WHEN** a UI component contains a raw hex color
+- **THEN** lint fails while a component using a shared theme token passes
+
+#### Scenario: A forbidden glass style is introduced
+
+- **WHEN** a product interface adds translucent glass, vibrancy, or the review-blue accent
+- **THEN** the design checks fail
 
 ### Requirement: Fixed-point lens rotation
 
@@ -93,7 +98,7 @@ Rotating the lens SHALL keep the hunk under the cursor fixed.
 
 ### Requirement: R35 subscription lifecycle, no RxJS
 
-Live updates SHALL arrive as change-feed notifications bound through `useSyncExternalStore`; every subscription SHALL have a stated owner and disposal point (unmount / review close). Ephemeral view state SHALL be `zustand`. No RxJS.
+Live updates SHALL arrive as change-feed notifications bound through `useSyncExternalStore`. Every subscription SHALL name its owner and disposal point, either component unmount or review close. `zustand` SHALL hold ephemeral view state. The UI SHALL NOT use RxJS.
 
 #### Scenario: a subscription is disposed on teardown
 
@@ -102,7 +107,7 @@ Live updates SHALL arrive as change-feed notifications bound through `useSyncExt
 
 ### Requirement: The Flagged empty state discloses blocked ingestion
 
-The Flagged lens SHALL receive the review's incomplete-ingestion blocking states (R18: truncated, binary, submodule) alongside the flagged result, and SHALL render a disclosure of them whenever the set is non-empty — each entry naming its reason and its human-facing detail. When blocking states are non-empty, the unqualified all-clear copy ("ran clean") SHALL be unreachable: a review that flagged nothing over partially-ingested content SHALL state that nothing was flagged in what could be read AND that some content was not ingested. The disclosure is honest copy only — it SHALL NOT add any confirmation, acknowledgement, or gate to the lens.
+The Flagged lens SHALL receive the review's incomplete-ingestion states alongside the flagged result. The states cover truncated files, binaries, and submodules. When the set is non-empty, the lens SHALL render each entry's reason and human-readable detail. It SHALL NOT show the unqualified "ran clean" copy. If review found nothing in readable content, the copy SHALL also state that some content was not ingested. This disclosure SHALL add no confirmation, acknowledgement, or gate.
 
 #### Scenario: An empty result over blocked ingestion is qualified, never "ran clean"
 
@@ -112,7 +117,7 @@ The Flagged lens SHALL receive the review's incomplete-ingestion blocking states
 #### Scenario: A fully-ingested empty result keeps the honest all-clear
 
 - **WHEN** the Flagged lens renders a review that flagged nothing and whose blocking states are empty
-- **THEN** the existing honest all-clear renders unchanged ("ran clean, not skipped"), with no disclosure block
+- **THEN** the honest all-clear reads "ran clean, not skipped" and no disclosure block renders
 
 #### Scenario: Blocked ingestion is disclosed even beside findings
 
@@ -122,9 +127,9 @@ The Flagged lens SHALL receive the review's incomplete-ingestion blocking states
 #### Scenario: Blocked ingestion is disclosed when automated review fails
 
 - **WHEN** the Flagged lens renders a failed automated review with non-empty deterministic blocking states
-- **THEN** the existing "Couldn't check" state remains visible and the blocked-ingestion disclosure renders beside it
+- **THEN** the "Couldn't check" state remains visible and the blocked-ingestion disclosure renders beside it
 - **AND WHEN** the failed review has no blocking states
-- **THEN** the failed state renders exactly as it did before the disclosure change
+- **THEN** the failed state renders without a blocked-ingestion disclosure
 
 ### Requirement: Raw markdown one keystroke away in the Spec angle
 
@@ -142,7 +147,7 @@ The Spec angle's structured OpenSpec viewer SHALL offer the change's raw markdow
 
 ### Requirement: ConversationMargin aligns against a supplied rendered diff
 
-When `ConversationMargin` receives a diff ref and a conversation thread's anchor row is rendered beneath that ref, the component SHALL vertically position each thread panel using `rowTop - panelNaturalTop`, keyed through the panel's existing `data-anchor-key`. When the diff ref or anchor row is absent, the component SHALL fall back to stacked document order — never a fabricated position and never hidden. The component SHALL only transform panels in its rail and SHALL NOT write to or reflow the supplied diff. The review heart SHALL thread a live diff ref from the rendered diff surface through the conversation column into `ConversationMargin`, so the aligned rail is the live app behavior rather than a dormant contract.
+When `ConversationMargin` receives a diff ref and renders a conversation thread's anchor row under it, the component SHALL position each thread panel with `rowTop - panelNaturalTop`. It SHALL key the panel through its `data-anchor-key`. If the diff ref or anchor row is absent, the component SHALL stack panels in document order without fabricating a position or hiding the thread. The component SHALL transform only panels in its rail and SHALL NOT reflow the supplied diff. The review workspace SHALL pass a live diff ref through the conversation column into `ConversationMargin`.
 
 #### Scenario: supplied non-zero multi-panel geometry aligns each panel
 
@@ -166,7 +171,7 @@ When `ConversationMargin` receives a diff ref and a conversation thread's anchor
 
 ### Requirement: Rendered diff rows carry queryable anchor identity
 
-The rendered diff surface SHALL stamp each content row with the anchor-key identity of the line it renders, and the chunk container SHALL carry its chunk anchor key, so an anchored conversation thread's row can be located by anchor key within the supplied diff ref. An anchor whose key matches no rendered row (including a range anchor that spans rather than matches a single row, and any row scrolled out of the render window) SHALL resolve to no element, and the thread SHALL render in the stacked fallback — never at a fabricated position.
+The rendered diff SHALL stamp each content row with the line's anchor key, and the chunk container SHALL carry its chunk anchor key. `ConversationMargin` SHALL locate an anchored thread's row by that key within the supplied diff ref. A key that matches no rendered row SHALL resolve to no element. This includes range anchors and rows outside the render window. The thread SHALL then use the stacked fallback without a fabricated position.
 
 #### Scenario: a line-anchored thread's row is discoverable
 
@@ -180,15 +185,14 @@ The rendered diff surface SHALL stamp each content row with the anchor-key ident
 
 ### Requirement: The review heart's conversation column renders the aligned margin path
 
-The review heart SHALL render its conversation column through the aligned margin path — one panel per thread, each carrying its anchor key, aligned when its anchor row is rendered and stacked otherwise — while preserving the existing conversational affordances (asking, promoting, sub-threads) and the sibling-column structure in which conversation layout never reflows the diff. Alignment SHALL re-measure across the windowed diff lifecycle (scroll, resize, diff-size change) without user action. Nothing in the aligned path SHALL gate, confirm, or block any review action (Rule Zero).
+The review workspace SHALL render one conversation panel per thread. Each panel SHALL carry its anchor key, align when its anchor row is rendered, and stack otherwise. Asking, promotion, and sub-thread actions SHALL remain available. The conversation column SHALL NOT reflow the diff. Alignment SHALL remeasure after scrolling, resizing, or a diff-size change. It SHALL NOT gate, confirm, or block a review action.
 
 #### Scenario: scrolling the windowed diff re-aligns without reflow
 
 - **WHEN** the user scrolls the diff so a thread's anchor row enters or leaves the render window
 - **THEN** the thread's panel gains or loses its alignment offset accordingly, and the diff column's row positions are unaffected
 
-#### Scenario: conversational affordances survive adoption
+#### Scenario: Conversation actions remain available
 
 - **WHEN** the review heart renders the aligned margin path
-- **THEN** a thread panel still offers its ask, promote, and sub-thread actions with unchanged behavior
-
+- **THEN** a thread panel offers ask, promote, and sub-thread actions

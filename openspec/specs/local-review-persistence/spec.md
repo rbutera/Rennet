@@ -1,7 +1,7 @@
-# local-review-persistence Specification
+# Local review persistence specification
 
 ## Purpose
-TBD - created by archiving change build-local-review-mvp. Update Purpose after archive.
+Define the local event store, idempotent review commands, patchset-scoped read state, and repository checks used when loading a review.
 ## Requirements
 ### Requirement: Review history is append-only
 The system SHALL store review changes as ordered versioned events and SHALL derive current review state by folding those events in sequence.
@@ -67,7 +67,7 @@ The system SHALL report, with each load and with latest-review bootstrap, whethe
 
 #### Scenario: The repository is still present
 - **WHEN** a persisted review is loaded and its repository root exists
-- **THEN** the load returns the review marked as having a present repository, and the existing freshness machinery may subsequently mark it stale — after the load, never blocking it
+- **THEN** the load returns the review marked as having a present repository, and freshness checks may mark it stale after loading without blocking the load
 
 ### Requirement: Repository work is bound to the addressed review
 The system SHALL resolve a review id before repository-dependent work, require the caller path to equal that review's stored repository root, and require that root to be admitted. Own-branch submission SHALL use the same stored-root admission rule as the review handoff write path.
@@ -79,4 +79,3 @@ The system SHALL resolve a review id before repository-dependent work, require t
 #### Scenario: Submission names an unadmitted review root
 - **WHEN** own-branch submission names a persisted review whose stored root is not admitted
 - **THEN** submission refuses plainly without pushing or opening a pull request
-

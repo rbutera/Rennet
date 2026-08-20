@@ -1,7 +1,7 @@
-# nested-repo-maps Specification
+# Nested repository maps specification
 
 ## Purpose
-TBD - created by archiving change nested-repo-maps. Update Purpose after archive.
+Define deterministic repository-map composition for monorepo scopes, workspaces, and submodules while preserving each Git repository's identity and pinned revision.
 ## Requirements
 ### Requirement: The unit of a Repo Map is one git repository
 
@@ -47,11 +47,11 @@ For every git tree entry with mode `160000`, Rennet SHALL represent the submodul
 #### Scenario: A non-default gitlink reuses base plus overlay
 
 - **WHEN** a gitlink OID differs from the child's default-map OID and the required objects are available
-- **THEN** the child reference names the composite `projectSnapshotId` produced by the existing base+overlay model at that gitlink
+- **THEN** the child reference names the composite `projectSnapshotId` produced by the base-plus-overlay model at that gitlink
 
 ### Requirement: A gitlink advance is a first-class deterministic novelty event
 
-The Stage-1 novelty ledger SHALL classify a mode-`160000` entry whose OID changes at the same path as `gitlink-advance`. The item SHALL carry the submodule path, child `RepoRecord` identity, old gitlink OID, new gitlink OID, and the ledger's existing baseline `projectSnapshotId` pin. The classification SHALL be model-free.
+The novelty ledger SHALL classify a mode-`160000` entry whose OID changes at the same path as `gitlink-advance`. The item SHALL carry the submodule path, child `RepoRecord` identity, old gitlink OID, new gitlink OID, and the ledger's baseline `projectSnapshotId` pin. The classification SHALL be model-free.
 
 #### Scenario: Parent advances one submodule pin
 
@@ -61,7 +61,7 @@ The Stage-1 novelty ledger SHALL classify a mode-`160000` entry whose OID change
 
 ### Requirement: An absent submodule map is disclosed and the parent remains usable
 
-When a discovered submodule cannot resolve a map at its gitlink OID, Rennet SHALL add an absent member disclosure to the `ContextManifest` naming its path, `RepoRecord` identity, and pinned OID. The composed freshness SHALL name that member as non-current, while the parent's valid `ProjectSnapshot`, its `context.map` answer, the review, and agent acting capabilities SHALL remain usable without an approval or retry step.
+When a discovered submodule cannot resolve a map at its gitlink OID, Rennet SHALL add an absent member disclosure to the `ContextManifest` naming its path, `RepoRecord` identity, and pinned OID. Composed freshness SHALL name that member as non-current. The parent's valid `ProjectSnapshot`, its `context.map` answer, the review, and agent acting capabilities SHALL remain usable without an extra retry step.
 
 #### Scenario: Parent context survives a missing child map
 
@@ -110,4 +110,3 @@ The composer SHALL use the same repository-node, scope-tree, cross-map-reference
 - **THEN** its scopes remain projections inside the member's one `ProjectSnapshot`
 - **AND** its submodule is a separate by-reference child pinned at the gitlink OID
 - **AND** the enclosing workspace uses the same member-reference and freshness rules without inlining either map
-

@@ -1,11 +1,11 @@
-# mobile-shell Specification
+# Mobile shell specification
 
 ## Purpose
-The native mobile app's first shippable cut: pair with daemons, triage and read reviews completely at phone width, and land from pushes on the right surface — a full peer within its locus, consuming the R19 projection and device tokens exclusively.
+Define the native mobile app that pairs with Rennet daemons, reads and acts on complete reviews at phone width, and opens notification links at the relevant review state. The app consumes the client projection and authenticates with device tokens.
 ## Requirements
 ### Requirement: Pairing bootstraps by QR, link, or code
 
-The app SHALL pair with a daemon by scanning the desk-minted QR, pasting a pairing link, or typing the one-time code, exchanging it for a device token stored in the platform keychain. Pairing is connection bootstrap, not a consent ceremony: after one successful pairing the daemon just works on every later open.
+The app SHALL pair with a daemon by scanning its QR code, pasting a pairing link, or typing a one-time code. It SHALL exchange the bootstrap value for a device token and store that token in the platform keychain. Later opens SHALL reconnect without another pairing step.
 
 #### Scenario: scan to paired
 
@@ -47,7 +47,7 @@ The home list SHALL aggregate reviews across all paired daemons, pin running and
 
 ### Requirement: The whole review is readable on the phone
 
-Review detail SHALL lead with the delta digest (new / resolved / carried counts and rows), open findings one at a time (claim, hunk, one-tap agree/disagree/discuss, proposal adjudication), and SHALL render the full sequence canvas — every cohort, finding, and hunk in reading order — virtualized so it stays responsive to the last line. The digest is the entry point, never a boundary; no screen refers the user to a desktop to finish reading.
+Review detail SHALL lead with the delta digest and its new, resolved, and carried rows. It SHALL open findings one at a time with the claim, hunk, disposition actions, and proposal adjudication. It SHALL render every sequence cohort, finding, and hunk in reading order, using virtualization to keep the list responsive through the last line. The phone SHALL NOT refer the user to the desktop to finish reading.
 
 #### Scenario: read to the last hunk
 
@@ -70,7 +70,7 @@ The app SHALL register for push notifications with each paired daemon, and a rec
 
 ### Requirement: The app consumes only the projection
 
-Every read and write SHALL go through the R19 projected contract with the device token; the app SHALL never receive or display a host-absolute path, and SHALL NOT use any side channel beyond the protocol connection.
+Every read and write SHALL use the projected client contract with the device token. The app SHALL never receive or display a host-absolute path and SHALL NOT use a side channel outside the protocol connection.
 
 #### Scenario: paths render as references
 
@@ -93,7 +93,7 @@ The app SHALL render a running turn's ask stream as a typed timeline that follow
 
 ### Requirement: Asks are answered with decision plus direction
 
-An ask SHALL render its question with its answer chips and an optional free-text field; a chip alone, text alone, or both together SHALL compose into one reply. Send semantics while a turn runs SHALL be explicit (send interrupts; hold to queue). Drafts SHALL persist per review across navigation.
+An ask SHALL render its question, answer chips, and an optional free-text field. A chip, text, or both SHALL compose into one reply. While a turn runs, the primary send action SHALL interrupt it and a secondary send action SHALL submit without interrupting. Drafts SHALL persist per review across navigation.
 
 #### Scenario: chip plus redirection in one reply
 
@@ -102,7 +102,7 @@ An ask SHALL render its question with its answer chips and an optional free-text
 
 ### Requirement: Posting is one un-ceremonied tap
 
-The publish flow SHALL show the preview — the collated outbound review, its verdict, and its destination — and one tap SHALL post it; the posted screen SHALL state the real URL, and a retry or double tap SHALL yield exactly one posted review (or one PR on the own-branch path, drafted body included). "Ask for changes" SHALL route to a refine turn; the phone SHALL NOT offer text-editing of the outbound review. There SHALL be no sign step, no biometric ritual, and no confirmation dialog.
+The publish flow SHALL preview the collated outbound review, its verdict, and its destination. One tap SHALL post it. The posted screen SHALL show the returned URL, and a retry or double tap SHALL produce exactly one review or own-branch pull request. An own-branch pull request SHALL include the drafted body. "Ask for changes" SHALL start a refinement turn. The phone SHALL NOT offer direct editing of the outbound review or insert an extra confirmation step.
 
 #### Scenario: exactly one post
 
@@ -116,10 +116,9 @@ The publish flow SHALL show the preview — the collated outbound review, its ve
 
 ### Requirement: Reviews kick off from the phone
 
-The app SHALL start a team-PR review from a pasted PR link and from the OS share sheet (a GitHub PR URL shared to Rennet), and an own-branch pre-submit review from the daemon's branch list; kickoff progress SHALL stream live and the new review SHALL appear in the list.
+The app SHALL start a team-PR review from a pasted PR link and an own-branch pre-submit review from the daemon's branch list. Kickoff progress SHALL stream live, and the new review SHALL appear in the list. Android SHALL also accept a GitHub PR URL from the operating system share sheet. The iOS share extension remains planned under [issue #383](https://github.com/rbutera/Rennet/issues/383).
 
 #### Scenario: share-sheet to running review
 
-- **WHEN** the user shares a GitHub PR URL to Rennet from another app
+- **WHEN** an Android user shares a GitHub PR URL to Rennet from another app
 - **THEN** the app opens on the kickoff surface with the link applied and the review starts on the daemon
-

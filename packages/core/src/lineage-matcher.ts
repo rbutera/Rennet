@@ -688,7 +688,7 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
 
 /** Render the measurement as the markdown tables the verdict doc commits. */
 export function renderMeasurementTables(report: MeasurementReport): string {
-  const pct = (v: number | null): string => (v === null ? "—" : `${(v * 100).toFixed(1)}%`);
+  const pct = (v: number | null): string => (v === null ? "-" : `${(v * 100).toFixed(1)}%`);
   const rows = ALL_LINEAGES.flatMap((l) => {
     const m = report.perClass.get(l);
     if (!m) return [];
@@ -703,8 +703,8 @@ export function renderMeasurementTables(report: MeasurementReport): string {
     "|---|---|---|---|---|---|---|---|",
     ...rows,
     "",
-    `**Auto-carry (exact only):** fixture pass rate ${pct(a.passRate)} over ${a.support} observations from ${a.fixturePairs} independent fixture pairs (95% Wilson lower bound ${pct(wilson)}). **Wrong carries under the live policy: ${report.wrongCarries}** (must be 0).`,
+    `**Exact-only carry.** The fixture pass rate is ${pct(a.passRate)} over ${a.support} observations from ${a.fixturePairs} independent fixture pairs. The 95% Wilson lower bound is ${pct(wilson)}. **Wrong carries under the live policy: ${report.wrongCarries}.** This must remain 0.`,
     "",
-    `**Why not \`move\`:** enabling \`move\` auto-carry would produce **${report.moveCounterfactualWrongCarries} wrong carries** on this corpus (delete-plus-copy read as relocation; a decoy that kept the old context stealing the lineage) against ${report.moveCorrect} correct moves — so it is excluded. \`exact\` carry safety does NOT rest on the pass rate above (a synthetic-corpus statistic): it rests on the STRUCTURAL argument that a byte-identical body at a UNIQUE (body, path) can only be mismatched by a SHA-256 collision, and a duplicated (body, path) fails closed to \`ambiguous\`.`,
+    `**Move stays excluded.** Enabling \`move\` auto-carry would produce **${report.moveCounterfactualWrongCarries} wrong carries** on this corpus against ${report.moveCorrect} correct moves. One delete-plus-copy case reads as relocation, and one decoy keeps the old context and steals the lineage. \`exact\` carry safety rests on structure, not this synthetic-corpus pass rate. A byte-identical body at a unique body and path can only be mismatched by a SHA-256 collision. A duplicated body and path fails closed to \`ambiguous\`.`,
   ].join("\n");
 }

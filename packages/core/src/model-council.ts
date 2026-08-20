@@ -7,7 +7,7 @@
  * and `resolveAssignment` — a pure, deterministic function returning
  * `{ harness, model, effort, trace }` for a model-facing job (and `deterministic`
  * for a floor job). Doc authority:
- * `docs/src/content/docs/developing/concepts/model-council.md`.
+ * `docs/developing/concepts/model-council.md`.
  *
  * Two doctrines are load-bearing here:
  *   - The tables are the council's DEFAULTS, shipped versioned like a schema.
