@@ -1,13 +1,16 @@
-# repo-map-storage Specification
+# repo-map-storage specification
 
 ## Purpose
-TBD - created by archiving change build-repo-map-lifecycle. Update Purpose after archive.
+
+Rennet stores derived Repo Maps outside the repository by default, supports explicit promotion, validates every discovered map, and preserves map data when a checkout moves.
+
 ## Requirements
+
 ### Requirement: The derived Repo Map is stored local-first, keyed by escaped absolute path
 
 The derived Repo Map SHALL be stored locally by default under `~/.rennet/projects/<escaped-absolute-path>/`, with the default-branch base map at `map/`, per-non-default-base overlays at `overlays/<base-oid>/`, and project config at `config.json`. The per-project key `<escaped-absolute-path>` SHALL be derived from the repository's top-level directory (`git rev-parse --show-toplevel`). Derived data SHALL NOT be committed by default.
 
-#### Scenario: a project resolves to its escaped-path directory
+#### Scenario: A project resolves to its escaped-path directory
 
 - **WHEN** a repository at a given absolute path is opened
 - **THEN** its derived map is read and written under `~/.rennet/projects/<escapePath(top-level)>/map/`
@@ -31,21 +34,21 @@ The derived Repo Map SHALL be stored locally by default under `~/.rennet/project
 
 Promotion SHALL be a per-project opt-in that is off by default. When on, a deliberate user act SHALL write the `map/` tree into the repository at `<repo>/.rennet/map/` on the default branch, so collaborators pick it up through normal git; `config.json` SHALL record the promotion. When off, no derived data is ever written into the repository.
 
-#### Scenario: default settings never promote
+#### Scenario: Default settings never promote
 
 - **WHEN** snapshots are built or advanced under default settings
 - **THEN** the repository gains no derived `map/` files
 
-#### Scenario: promotion writes a discoverable committed map
+#### Scenario: Promotion writes a discoverable committed map
 
 - **WHEN** a user promotes the map
 - **THEN** a valid map is written under `<repo>/.rennet/map/` on the default branch and recorded in `config.json`
 
 ### Requirement: A committed map is validated on discovery, never trusted blind
 
-When a repository contains a committed map at `<repo>/.rennet/map/`, Rennet SHALL validate it before use: shard bytes SHALL be re-verified to hash to their digest and the fingerprint SHALL be re-checked. A map that fails validation SHALL be ignored in favour of a local build. A committed map pertains to the repository it physically lives in, by construction — no forge-identity or alias matching is performed.
+When a repository contains a committed map at `<repo>/.rennet/map/`, Rennet SHALL validate it before use. It SHALL verify each shard digest and the map fingerprint. A map that fails validation SHALL be ignored in favour of a local build. A committed map belongs to the repository that contains it. Resolution SHALL NOT use forge identity or alias matching.
 
-#### Scenario: a corrupt committed map is ignored
+#### Scenario: A corrupt committed map is ignored
 
 - **WHEN** a committed map fails integrity or fingerprint validation
 - **THEN** it is ignored and a local build is used, and no invalid map is served to a review
@@ -54,7 +57,7 @@ When a repository contains a committed map at `<repo>/.rennet/map/`, Rennet SHAL
 
 Map resolution SHALL be: local `~/.rennet/projects/<escaped-path>/map/` first, then committed `<repo>/.rennet/map/`, then a local build if neither exists. The local map SHALL win even when the repository is on a non-default branch.
 
-#### Scenario: local wins on a branch
+#### Scenario: Local wins on a branch
 
 - **WHEN** both a local map and a committed map exist and the checkout is on a non-default branch
 - **THEN** the local map is used and the committed map is the fallback only
@@ -63,18 +66,17 @@ Map resolution SHALL be: local `~/.rennet/projects/<escaped-path>/map/` first, t
 
 Moving a repository on disk SHALL NOT force a rebuild: a `relocate` operation SHALL update a project's escaped-path directory and record the move in `config.json`, and aliases SHALL resolve alternative escaped paths to the same project.
 
-#### Scenario: relocate preserves the map
+#### Scenario: Relocate preserves the map
 
 - **WHEN** a repository is moved and `relocate` is run with the new path
-- **THEN** the existing map is reused under the new escaped-path directory without reindexing
+- **THEN** the map is reused under the new escaped-path directory without reindexing
 
 ### Requirement: The visibility switch never stages or commits
 
 `projectContext.visibility` SHALL be `local` by default or `git-visible`. Switching it SHALL preview the filesystem diff and change only Rennet-owned exclusion state; it SHALL never run `git add`, `git rm --cached`, or `git commit`. Files already tracked by git SHALL remain tracked and be disclosed honestly, never silently restaged.
 
-#### Scenario: switching visibility leaves the index untouched
+#### Scenario: Switching visibility leaves the index untouched
 
 - **WHEN** a user switches `projectContext.visibility`
 - **THEN** the change previews the filesystem diff
-- **AND** the git index is unchanged and any pre-tracked files are reported rather than restaged
-
+- **AND** the git index is unchanged and any already-tracked files are reported rather than restaged

@@ -3,13 +3,13 @@
   "assets": [
     {
       "path": "PROVENANCE.md",
-      "bytes": 1394,
-      "sha256": "40e5ad6f719bddfb68d7317af5d53b25dde32a957ac32d68a657c8323031c1ba"
+      "bytes": 842,
+      "sha256": "fae9b56f2fa14e9164a1c1d98ef635d22a268d5753bff38e93274f5d29e1c099"
     },
     {
       "path": "README.md",
-      "bytes": 3716,
-      "sha256": "60021b95d43ef44ba97bb73b4b2d3dbe5f1a2aeb915f6bdcb093128d61364da3"
+      "bytes": 2825,
+      "sha256": "7dc1f2aa631da22cba6514f46526b160075aa0a1bdc72e9d788b5947bb18ab97"
     },
     {
       "path": "brand.json",

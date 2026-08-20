@@ -1,13 +1,13 @@
 # command-registry Specification
 
 ## Purpose
-Every keyboard-reachable action is one named command in one registry, and everything that shows or fires an action — the palette, key dispatch, the settings remap surface, the application menu — reads that registry, so a remap or a collision is visible and effective everywhere at once.
+Defines one registry for keyboard-reachable actions, including palette display, key dispatch, user remapping, and conflict disclosure.
 ## Requirements
-### Requirement: One registry feeds palette, dispatch, settings, and menu
-The stable command definitions (id, title, group, default keybinding) SHALL live in a single catalogue that `buildCommands` assembles from, and the palette, the keyboard dispatch, the settings Keyboard section, and the application menu SHALL all derive from that catalogue — there SHALL be no second command list, no duplicated chord table, and no menu item whose label or chord is authored separately from the registry. Context-dependent entries (recent surfaces, lens jumps) MAY keep being generated per context; the palette-toggle chord itself SHALL be a registry command.
+### Requirement: One registry feeds palette, dispatch, and settings
+The stable command definitions, including id, title, group, and default keybinding, SHALL live in a single catalogue that `buildCommands` assembles. The palette, keyboard dispatch, and the Settings keyboard section SHALL derive from that catalogue. There SHALL be no second command list or duplicated chord table. Context-dependent entries such as recent views and lens jumps MAY be generated per context. The palette-toggle chord SHALL be a registry command.
 
-#### Scenario: Palette and menu render from one source
-- **WHEN** the palette and the application menu both display a registry command
+#### Scenario: Palette and settings render from one source
+- **WHEN** the palette and the Settings keyboard section both display a registry command
 - **THEN** both show the same title and the same effective chord, both derived from the one catalogue entry
 
 #### Scenario: The palette toggle is itself a command
@@ -15,13 +15,13 @@ The stable command definitions (id, title, group, default keybinding) SHALL live
 - **THEN** it contains the palette-toggle command with its default `mod+k` chord, remappable like any other
 
 ### Requirement: User keybinding overrides persist and take effect at dispatch
-A user SHALL be able to set a different chord for any catalogued command, unbind a command's chord entirely, and reset a command back to its default. Overrides SHALL persist in the global config file as an additive-optional field, so an untouched install stores nothing, an old config parses unchanged, and an override survives restart. The effective binding (default overlaid by override) SHALL be what key dispatch matches, what the palette and menu display, and what conflict detection inspects: after a remap, the new chord runs the command, the replaced chord does not, and an unbound command fires from no chord. A malformed global config SHALL refuse the write rather than overwrite unparseable bytes, exactly as the shipped appearance write does.
+A user SHALL be able to set a different chord for any catalogued command, unbind a command's chord, and reset a command to its default. Overrides SHALL persist in the global config file as an optional field. An untouched installation SHALL store nothing, a config without overrides SHALL parse, and an override SHALL survive restart. Key dispatch, palette display, and conflict detection SHALL use the effective binding after applying overrides. After a remap, the new chord SHALL run the command, the replaced chord SHALL not, and an unbound command SHALL fire from no chord. A malformed global config SHALL refuse the write rather than overwrite unparseable bytes.
 
 #### Scenario: A remap survives restart
 - **WHEN** the user remaps a command's chord and the app restarts
-- **THEN** the persisted override is read back, the palette and menu show the new chord, and pressing it runs the command
+- **THEN** the persisted override is read back, the palette shows the new chord, and pressing it runs the command
 
-#### Scenario: The old chord stops dispatching
+#### Scenario: The replaced chord stops dispatching
 - **WHEN** a command has been remapped away from its default chord
 - **THEN** pressing the default chord does not run that command
 
@@ -31,15 +31,15 @@ A user SHALL be able to set a different chord for any catalogued command, unbind
 
 #### Scenario: A settings write updates the running app
 - **WHEN** Set, Unbind, or Reset succeeds in Settings
-- **THEN** dispatch, palette conflict disclosure, and the application menu re-derive from the returned map without a restart
+- **THEN** dispatch and palette conflict disclosure re-derive from the returned map without a restart
 
 #### Scenario: A command without a default receives its first binding
 - **WHEN** the user assigns a chord to any catalogue command whose default is absent
 - **THEN** the Keyboard row accepts it and the app-wide dispatcher runs that command from the new chord
 
 #### Scenario: An invalid stored chord falls back honestly
-- **WHEN** a stored override does not match the v1 chord grammar, such as `mod+`
-- **THEN** the command uses its default, the invalid token is not projected to dispatch or the menu, and Settings displays the raw stored token as invalid
+- **WHEN** a stored override does not match the supported chord grammar, such as `mod+`
+- **THEN** the command uses its default, the invalid token is not projected to dispatch, and Settings displays the raw stored token as invalid
 
 #### Scenario: Unsupported modifiers are not captured lossily
 - **WHEN** the recorder receives Shift or Alt with another key
@@ -50,7 +50,7 @@ A user SHALL be able to set a different chord for any catalogued command, unbind
 - **THEN** Meta is required on macOS and Control is required on Windows/Linux, while the other modifier does not match
 
 ### Requirement: Chord conflicts are detected and disclosed, never blocked
-When two commands' effective bindings claim the same chord, the collision SHALL be detected and disclosed wherever the chord is shown — both palette rows and both settings rows name it — and the disclosure SHALL be the whole intervention: writing a conflicting override SHALL be accepted and persisted, both commands SHALL remain visible and individually editable, and there SHALL be no confirmation step, blocking wizard, or refused write on account of a conflict.
+When two commands' effective bindings claim the same chord, the palette and Settings SHALL identify the collision on both commands. Writing a conflicting override SHALL remain allowed. Both commands SHALL remain visible and editable, with no confirmation, wizard, or rejected write.
 
 #### Scenario: A conflict is detected and reported
 - **WHEN** two commands available in the same context have the same effective chord
@@ -60,28 +60,20 @@ When two commands' effective bindings claim the same chord, the collision SHALL 
 - **WHEN** the user assigns a chord already held by another command
 - **THEN** the override is persisted, both commands display the collision, and the user resolves it (or not) by further plain edits
 
-### Requirement: The application menu is built from the registry
-The desktop app SHALL set a real application menu whose command items are projected from the registry: label from the command title, accelerator from the same effective `mod+`-token binding (rendered per-platform), and enabled state from whether the command is currently offered by the live context — a command absent from the current context appears disabled, not missing. Activating a menu item SHALL run the same command handler the palette runs, exactly once per activation, and the menu SHALL update when the live context or an override changes. Standard platform items (the macOS app menu, Edit-role text editing, window controls) MAY be Electron roles rather than registry commands.
+### Requirement: The application menu is static platform plumbing
+The desktop app SHALL NOT project registry commands into an application menu. On macOS, MAIN SHALL install a static roles-only menu once at startup. It SHALL contain the app menu, Edit-role text editing, and Window controls. It SHALL have no renderer involvement, IPC menu channel, or accelerator that dispatches a registry command. The renderer SHALL remain the only chord dispatcher. On Windows and Linux, MAIN SHALL set the application menu to null.
 
-#### Scenario: A menu click runs the registry handler
-- **WHEN** the user activates a registry-derived menu item
-- **THEN** the same `run` handler the palette would invoke executes exactly once
+#### Scenario: macOS gets a roles-only menu
+- **WHEN** the app starts on macOS
+- **THEN** the application menu contains app, Edit, and Window role menus, contains no registry commands, and receives no renderer updates
 
-#### Scenario: Context disables rather than hides
-- **WHEN** a registry command is not offered by the current screen
-- **THEN** its menu item renders disabled instead of disappearing
+#### Scenario: Windows and Linux get no menu
+- **WHEN** the app starts on Windows or Linux
+- **THEN** the application menu is null and the window shows no menu strip
 
-#### Scenario: A remap reaches the menu
-- **WHEN** the user overrides a command's chord
-- **THEN** the menu item's displayed accelerator updates to the new chord without an app restart
-
-#### Scenario: macOS has no native command accelerators
-- **WHEN** MAIN builds the menu on macOS
-- **THEN** registry command items carry inert shortcut text and no accelerator field, leaving the renderer as the sole chord dispatcher
-
-#### Scenario: A malformed menu update preserves the standing menu
-- **WHEN** MAIN receives a menu update that fails the protocol-owned runtime schema
-- **THEN** it rejects the payload without building or replacing the current application menu
+#### Scenario: Native text editing works on macOS
+- **WHEN** the user presses the platform copy, cut, or paste chord in an editable control on macOS
+- **THEN** the Edit-role menu items perform the edit natively
 
 ### Requirement: Registry chords have one dispatcher and aliases yield
 The app-wide dispatcher SHALL match all effective registry chords, including bare bindings, while bare chords SHALL remain inert in editable controls. When CanvasWorkspace handles a registry chord it SHALL stop propagation so the app dispatcher does not run it again. Hardcoded canvas aliases SHALL run only when no effective registry binding claims the pressed chord, and an explicit unbind of the aliased zoom command SHALL disable its aliases too.
@@ -93,4 +85,3 @@ The app-wide dispatcher SHALL match all effective registry chords, including bar
 #### Scenario: An alias yields to an effective binding or unbind
 - **WHEN** a bracket, arrow, or Escape alias contradicts an effective registry binding or explicit zoom unbind
 - **THEN** the alias does not rotate or zoom the canvas
-

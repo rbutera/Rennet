@@ -1,0 +1,47 @@
+{
+  "name": "rennet-docs",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/docs/src",
+  "projectType": "application",
+  "implicitDependencies": ["rennet-docs-content", "rennet-theme"],
+  "tags": ["scope:rennet", "layer:app", "platform:docs"],
+  "targets": {
+    "build": {
+      "cache": false,
+      "outputs": [
+        "{projectRoot}/dist",
+        "{projectRoot}/.astro",
+        "{projectRoot}/src/content/docs/using",
+        "{projectRoot}/src/content/docs/developing",
+        "{projectRoot}/src/content/docs/adr"
+      ],
+      "command": "pnpm --dir apps/docs exec astro build"
+    },
+    "test": {
+      "cache": false,
+      "dependsOn": ["build"],
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/scripts/check-docs.mjs",
+        "{workspaceRoot}/scripts/check-docs.test.mjs",
+        "{workspaceRoot}/apps/**/project.json",
+        "{workspaceRoot}/apps/**/package.json",
+        "{workspaceRoot}/packages/**/project.json",
+        "{workspaceRoot}/packages/**/package.json"
+      ],
+      "command": "pnpm exec vitest run apps/docs/src/plugins/docs-projection.test.ts apps/docs/src/plugins/remark-canonical-links.test.ts && node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs ."
+    },
+    "typecheck": {
+      "command": "pnpm exec tsc --noEmit -p apps/docs/tsconfig.json"
+    },
+    "dev": {
+      "cache": false,
+      "command": "pnpm --dir apps/docs exec astro dev"
+    },
+    "preview": {
+      "cache": false,
+      "command": "pnpm --dir apps/docs exec astro preview"
+    }
+  }
+}

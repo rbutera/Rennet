@@ -1,11 +1,11 @@
 # client-runtime Specification
 
 ## Purpose
-The shared client connection runtime every Rennet UI shell (desktop renderer, browser tab, native mobile) uses to reach a daemon: connection supervision with truthful reachability state, reconnection that restores every live subscription, device-token persistence behind an injected store, and last-known-state painting so an opening client is never blank.
+Defines the shared client connection runtime for desktop, browser, and mobile clients. It reports reachability, restores subscriptions after reconnection, persists device tokens through an injected store, and exposes last-known state while offline.
 ## Requirements
 ### Requirement: Reachability is a truthful, subscribable state machine
 
-The runtime SHALL expose per-daemon connection state as one of `idle`, `connecting`, `online`, `offline`, or `error`, and SHALL notify subscribers on every transition. `online` SHALL mean the transport is open and the protocol handshake has completed; a lost connection SHALL surface as `offline` while retry continues; a fatal condition (such as rejected authentication) SHALL surface as `error` with the cause, and SHALL NOT be silently retried into.
+The runtime SHALL expose each daemon's connection state as `idle`, `connecting`, `online`, `offline`, or `error`, and notify subscribers on every transition. `online` SHALL mean that the transport is open and the protocol handshake has completed. A lost connection SHALL set `offline` while retry continues. A fatal condition such as rejected authentication SHALL set `error` with the cause and stop retrying.
 
 #### Scenario: state reflects a dropped socket
 
@@ -19,7 +19,7 @@ The runtime SHALL expose per-daemon connection state as one of `idle`, `connecti
 
 ### Requirement: Reconnection restores every live subscription
 
-The runtime SHALL track every active push subscription (ask streams keyed by review, progress streams keyed by command) and, after a reconnect, SHALL re-establish each one on the new socket without caller involvement, so a stream consumer created before a network interruption continues receiving events after it. This closes the liveness gap where a mid-turn reconnect left the live ask stream unbound (issue #389).
+The runtime SHALL track every active push subscription, including ask streams keyed by review and progress streams keyed by command. After a reconnect, it SHALL re-establish each subscription on the new socket without caller involvement. A stream consumer created before a network interruption SHALL continue receiving events after it.
 
 #### Scenario: mid-turn ask stream survives a reconnect
 
@@ -42,7 +42,7 @@ An `invoke` issued while the connection is not `online` SHALL either be queued f
 
 ### Requirement: Device tokens live behind an injected store
 
-The runtime SHALL persist and present device tokens through an injected storage interface, so each shell supplies its platform's store (config file on desktop and browser shells; platform keychain on mobile). The runtime SHALL NOT read or write token material through any other path, and token values SHALL never appear in logs or error messages.
+The runtime SHALL persist and present device tokens through an injected storage interface. Desktop and browser clients SHALL use their saved connection storage, while mobile SHALL use the platform keychain. The runtime SHALL NOT read or write token material through another path, and token values SHALL never appear in logs or error messages.
 
 #### Scenario: shells swap stores without behavior change
 
@@ -51,7 +51,7 @@ The runtime SHALL persist and present device tokens through an injected storage 
 
 ### Requirement: Last-known state paints before the socket opens
 
-For a daemon the client has connected to before, the runtime SHALL provide the last-known replica of projected state immediately on startup — before any socket opens — and SHALL reconcile it against the daemon by cursor once `online`, so an opening client renders a readable (and honestly stale-marked) record rather than a blank screen.
+For a daemon the client has connected to before, the runtime SHALL provide the last-known replica of projected state before any socket opens. Once `online`, it SHALL reconcile that replica against the daemon by cursor. The client SHALL mark the replica as stale until reconciliation completes.
 
 #### Scenario: offline open shows the replica
 
@@ -60,24 +60,23 @@ For a daemon the client has connected to before, the runtime SHALL provide the l
 
 ### Requirement: Presence is reported through a runtime seam
 
-The runtime SHALL accept focus/visibility/device-class presence signals from its shell and SHALL transmit them to a connected daemon that advertises attention/presence support in its handshake capabilities. Against a daemon that does not advertise the capability, the seam SHALL remain a well-defined no-op that alters no protocol traffic — M0-era daemons are unaffected.
+The runtime SHALL accept focus, visibility, and device-class presence signals from its shell. It SHALL transmit them to a connected daemon that advertises attention and presence support in its handshake capabilities. If the daemon does not advertise the capability, the runtime SHALL record the state locally and send no presence traffic.
 
 #### Scenario: presence transmits when advertised
 
 - **WHEN** the shell reports presence and the connected daemon advertised the attention capability
 - **THEN** the runtime sends the presence frame and re-sends current presence after every reconnect
 
-#### Scenario: presence updates are accepted and inert today
+#### Scenario: Presence stays local without daemon support
 
 - **WHEN** the connected daemon did not advertise the capability
-- **THEN** the runtime records the presence state locally and sends nothing — the seam stays inert exactly as it was against every pre-attention daemon
+- **THEN** the runtime records the presence state locally and sends nothing
 
-### Requirement: Shell adoption is behavior-neutral
+### Requirement: All client shells use the runtime without changing commands or streams
 
-Adopting the runtime in the existing desktop and browser shells SHALL NOT change any externally observable behavior: the same commands succeed, the same streams deliver, and the existing end-to-end suites pass unchanged (except where a suite is extended to cover the newly fixed reconnect-resubscribe behavior).
+Desktop and browser clients SHALL construct their daemon connections through the runtime. The same commands SHALL succeed and the same streams SHALL deliver through both clients.
 
-#### Scenario: existing e2e is the proof
+#### Scenario: Client end-to-end tests use the shared runtime
 
-- **WHEN** the desktop and browser shells are switched to construct their connection through the runtime
-- **THEN** the pre-existing e2e suites pass without behavioral amendment
-
+- **WHEN** desktop and browser end-to-end suites exercise daemon commands and streams
+- **THEN** both clients pass through the shared runtime and preserve their command and stream behavior

@@ -1,43 +1,55 @@
-# repo-map-symbolic-surface Specification
+# repo-map-symbolic-surface specification
 
 ## Purpose
-TBD - created by archiving change build-repo-map-lifecycle. Update Purpose after archive.
+
+Model-free context operations return file overviews, exported definition sites, and textual references from the same pinned Repo Map used by the review. Each reply reports freshness and the limits of its lookup method.
+
 ## Requirements
-### Requirement: A file symbol overview is served from the deterministic snapshot
 
-`context.overview` SHALL return a file's top-level symbols and signatures (no bodies) at the pinned base ref, served from the snapshot's existing per-file symbol shards. It SHALL be model-free and SHALL NOT require the LSP substrate, so it ships on the wave-1 foundation alone. It SHALL ride the `canvasOps@2` envelope (`{data, evidence, freshness, truncated}`) and carry staleness per reply.
+### Requirement: A file symbol overview comes from the deterministic snapshot
 
-#### Scenario: overview without reading the file
+`context.overview` SHALL return each structurally extracted, top-level exported symbol's name, kind, and line at the pinned base ref. It SHALL read the snapshot's per-file symbol shards, invoke no model, and require no LSP. Its `canvasOps@2` response SHALL contain `{data, evidence, freshness, truncated}` and report the total and pagination cursor when more symbols remain.
+
+#### Scenario: Overview without reading the file
 
 - **WHEN** an agent calls `context.overview` for a file at the pinned base OID
-- **THEN** it receives the file's top-level symbols and signatures from the snapshot shards
+- **THEN** it receives the file's top-level exported symbol names, kinds, and lines from the snapshot shards
 - **AND** the reply carries a freshness check, and no whole-file content is returned
 
-### Requirement: Go-to-definition is served tier-labelled over the LSP substrate
+### Requirement: Go-to-definition reports structural matches without claiming LSP resolution
 
-`context.symbol` SHALL return a symbol's definition (signature, doc, definition location, first lines, origin path) with an honest **tier label**: `exact` for an LSP answer, `guess` for a tree-sitter answer, listing candidates when degraded. It SHALL consume #23's materialization port, position mapper, and degraded-result detector rather than re-implement them, and SHALL be model-free. A degraded result SHALL NOT be rendered as an exact target.
+`context.symbol` SHALL resolve an exported symbol name to every structurally extracted definition site at the pinned base ref. Each site SHALL include its path, line, declaration kind, and workspace scope. One matching site MAY be labelled `exact` with method `structural`. Several matching sites SHALL be labelled `guess` with method `structural` and the candidate count. The operation SHALL NOT claim LSP resolution or chase a re-export to its origin, and it SHALL invoke no model.
 
-#### Scenario: exact vs guess are labelled honestly
+#### Scenario: One structural definition is exact and several are a guess
 
-- **WHEN** `context.symbol` resolves a definition via the LSP (exact) or via tree-sitter (guess)
-- **THEN** the result carries the corresponding tier label
-- **AND** a degraded resolution lists its candidates instead of asserting a single wrong target
+- **WHEN** `context.symbol` finds one exported definition for a name and later finds several definitions for another name
+- **THEN** the first result is labelled `exact` with method `structural`
+- **AND** the second result is labelled `guess` with method `structural` and reports the candidate count
+
+### Requirement: Find-references reports textual name occurrences
+
+`context.references` SHALL return every indexed occurrence of an identifier name at the pinned base ref, with each site's path, line, and workspace scope. It SHALL label a non-empty result `guess` with method `textual`. The operation SHALL state that it is name-based, may include declarations, comments, and string literals, and cannot distinguish different symbols that share a name. It SHALL invoke no model.
+
+#### Scenario: Textual references never claim exactness
+
+- **WHEN** `context.references` finds one or more occurrences of a name
+- **THEN** the result is labelled `guess` with method `textual`
+- **AND** pagination reports the total and a cursor when more occurrences remain
 
 ### Requirement: Symbolic reads do not raise a coverage obligation
 
-A `context.symbol` or `context.references` resolution SHALL emit no read event and SHALL NOT move review coverage — the agent inspecting a definition is not the agent reading the diff (the #23 noninterference property applies to the agent surface too).
+A `context.symbol` or `context.references` resolution SHALL emit no read event and SHALL NOT move review coverage. Looking up a definition or reference is not evidence that the agent read the diff.
 
-#### Scenario: an agent definition lookup is not a read
+#### Scenario: An agent definition lookup is not a read
 
-- **WHEN** an agent resolves a definition or references via the symbolic surface
+- **WHEN** an agent resolves a definition or references through the context operations
 - **THEN** no read event is emitted and no coverage obligation is raised
 
 ### Requirement: The symbolic ops pin to the same baseline as the structural map
 
 `context.overview` / `context.symbol` / `context.references` SHALL pin to the same base OID (or merged base+overlay snapshot) as `context.map`, and a stale pin SHALL refuse rather than serve against a mismatched ref.
 
-#### Scenario: a stale symbolic pin refuses
+#### Scenario: A stale symbolic pin refuses
 
 - **WHEN** a symbolic op is requested against a base OID that no fresh snapshot covers
 - **THEN** it refuses with a typed staleness failure rather than returning a result from another ref
-

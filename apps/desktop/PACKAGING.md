@@ -1,207 +1,117 @@
-# Packaging the Rennet desktop app
+# Package the Rennet desktop app
 
-Rennet's primary build is a macOS `.dmg`; on Windows CI it also builds a **Squirrel
-installer** (which drives auto-update) alongside a portable unsigned **win32 ZIP**
-(see the Windows and Auto-update sections at the end). The macOS part below covers the
-two builds: the **default unsigned build** (works with no Apple account) and the
-**signed + notarized build** (one step, Rai runs it when releasing). The signing,
-notarization, and DMG steps are macOS-only.
+Electron Forge builds Rennet for macOS and Windows. macOS builds produce a DMG and ZIP. Windows builds produce a Squirrel installer, update feed, and portable ZIP.
+
+The automatic release workflow publishes unsigned artifacts. The Forge configuration can also sign and notarize a macOS application when the required Apple credentials are present.
 
 ## Prerequisites
 
-- macOS on Apple Silicon (the makers target `darwin/arm64`).
-- Xcode Command Line Tools (`xcode-select --install`) — needed to compile the two
-  native node-gyp addons the DMG maker uses (`macos-alias`, `fs-xattr`). `pnpm
-  install` builds them automatically because they are listed under
-  `onlyBuiltDependencies` in `pnpm-workspace.yaml`.
+The macOS build requires:
 
-## Build a DMG
+- Apple Silicon macOS
+- Xcode Command Line Tools
+- The repository dependencies installed with `pnpm install --frozen-lockfile`
 
-```bash
-pnpm install                       # once; compiles the DMG maker's native addons
-pnpm exec nx run rennet-desktop:make
+The DMG maker uses `macos-alias` and `fs-xattr`. The workspace lists both native packages under `onlyBuiltDependencies`, so pnpm builds them during installation.
+
+## Build on macOS
+
+```sh
+pnpm install --frozen-lockfile
+pnpm nx run rennet-desktop:make
 ```
 
-Artifacts land in `apps/desktop/out/make/`:
+Forge writes artifacts under `apps/desktop/out/make/`:
 
-- `Rennet-<version>-arm64.dmg` — the installer (drag Rennet.app to Applications).
-- `zip/darwin/arm64/Rennet-darwin-arm64-<version>.zip` — the same app, zipped.
+- `Rennet-<version>-arm64.dmg`
+- `zip/darwin/arm64/Rennet-darwin-arm64-<version>.zip`
 
-To sanity-check the packaged app boots (signature + fuse policy + a launch smoke):
+Run the packaged-application smoke test with:
 
-```bash
-pnpm exec nx run rennet-desktop:package-smoke
+```sh
+pnpm nx run rennet-desktop:package-smoke
 ```
 
-### Default (unsigned) build
+### Unsigned builds
 
-With no Apple credentials in the environment, `make` produces an **ad-hoc signed**
-DMG. It builds and launches, but macOS Gatekeeper shows the usual
-"unidentified developer" / "cannot be opened" warning; the user right-clicks →
-Open (or clears it in System Settings → Privacy & Security). This is expected and
-fine for local/dev distribution — no Apple account required.
+Without Apple credentials, Forge applies an ad hoc signature. The application runs, but Gatekeeper identifies it as coming from an unknown developer. Open it once through the Finder context menu or approve it in System Settings under Privacy & Security.
 
-## Signed + notarized build (release)
+### Developer ID builds
 
-The SAME `make` command produces a release build whose **`Rennet.app` is signed
-with your Developer ID, notarized, and stapled** the moment the Apple credentials
-are present in the environment. Nothing else changes.
+Set these variables before running the same `make` target:
 
-**What actually gets processed:** electron-forge signs, notarizes, and staples the
-**app** during packaging, *before* MakerDMG wraps it. The `.dmg` file itself is
-only a container — it is **not** separately signed, notarized, or stapled. So
-verify against the app (mounted from the DMG, or installed), never against the
-`.dmg`. Because the app carries its own stapled notarization ticket, it launches
-with no Gatekeeper warning once copied to /Applications. (Notarizing the `.dmg`
-*itself* — so the download passes Gatekeeper before it is even opened — is a
-separate `xcrun notarytool submit` + `xcrun stapler staple` on the `.dmg`. That
-is not wired here and is not needed for the installed app to run clean.)
+```sh
+export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
+export APPLE_ID="<apple-id-email>"
+export APPLE_APP_SPECIFIC_PASSWORD="<app-specific-password>"
+export APPLE_TEAM_ID="<TEAMID>"
 
-### The one thing Rai does
+pnpm nx run rennet-desktop:make
+```
 
-1. Install the **Developer ID Application** certificate in the login keychain
-   (from developer.apple.com, or Xcode → Settings → Accounts → Manage
-   Certificates → +). Confirm it is present:
+`APPLE_SIGNING_IDENTITY` selects Developer ID signing, hardened runtime, and `apps/desktop/entitlements.plist`. When all four variables are present, Forge also notarizes and staples `Rennet.app`. If only the identity is present, Forge signs the application but does not notarize it.
 
-   ```bash
-   security find-identity -v -p codesigning
-   # look for:  "Developer ID Application: <Name> (<TEAMID>)"
-   ```
+Forge processes the application before MakerDMG wraps it. The DMG itself is not separately signed, notarized, or stapled.
 
-2. Create an **app-specific password** for the Apple ID at
-   <https://appleid.apple.com> → Sign-In and Security → App-Specific Passwords.
+Create the application-specific password at [appleid.apple.com](https://appleid.apple.com). Confirm the Developer ID Application certificate is in the login keychain with:
 
-3. Set four environment variables, then run `make`:
+```sh
+security find-identity -v -p codesigning
+```
 
-   ```bash
-   export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
-   export APPLE_ID="<apple-id-email>"
-   export APPLE_APP_SPECIFIC_PASSWORD="<app-specific-password>"
-   export APPLE_TEAM_ID="<TEAMID>"
+### Verify a Developer ID build
 
-   pnpm exec nx run rennet-desktop:make
-   ```
+Mount the DMG and run the checks against `Rennet.app`:
 
-That is the whole step. The `Rennet.app` inside the resulting DMG is signed,
-notarized, and stapled, so it opens with no Gatekeeper warning on any Mac once
-copied out of the DMG.
-
-### What each variable controls
-
-| Variable | Purpose | Used for |
-|---|---|---|
-| `APPLE_SIGNING_IDENTITY` | The Developer ID Application identity string. **Its presence alone flips the build from ad-hoc to signed** (hardened runtime + `entitlements.plist`). | Code signing |
-| `APPLE_ID` | Apple ID email. | Notarization |
-| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password (NOT the Apple ID password). | Notarization |
-| `APPLE_TEAM_ID` | 10-character Team ID. | Notarization |
-
-Notarization runs only when **all four** are set. If only
-`APPLE_SIGNING_IDENTITY` is set, the app is signed with the real identity but not
-notarized (useful for testing signing without a notarization round-trip).
-
-### Verifying a signed build
-
-Mount the DMG and verify the **app inside it** (not the `.dmg`):
-
-```bash
+```sh
 DMG=$(ls apps/desktop/out/make/*.dmg | head -1)
 MP=$(hdiutil attach "$DMG" -nobrowse -readonly | grep /Volumes | awk -F'\t' '{print $NF}')
 APP="$MP"/Rennet.app
-codesign --verify --deep --strict --verbose=2 "$APP"   # -> valid on disk
-xcrun stapler validate "$APP"                          # -> The validate action worked!
-spctl -a -vvv -t exec "$APP"                           # -> accepted (source=Notarized Developer ID)
+codesign --verify --deep --strict --verbose=2 "$APP"
+xcrun stapler validate "$APP"
+spctl -a -vvv -t exec "$APP"
 hdiutil detach "$MP"
 ```
 
-`-t exec` is the Gatekeeper assessment type for an application (`-t install` is
-for installer packages, not this app). On the default unsigned build, `codesign`
-still reports the ad-hoc signature as valid, but `stapler validate` fails (no
-notarization ticket) and `spctl -a -t exec` reports `rejected` — that is the
-Gatekeeper warning described above, and it is the only difference.
+For a valid notarized build, `codesign` reports `valid on disk`, `stapler` reports a valid ticket, and `spctl` reports `accepted` with `Notarized Developer ID` as the source. An ad hoc build passes the `codesign` check but fails the notarization and Gatekeeper checks.
 
-## How the config is wired
+## Build on Windows
 
-`apps/desktop/forge.config.cjs` reads the four env vars and builds `osxSign` /
-`osxNotarize` conditionally, so no certificate or secret is ever hardcoded. See
-the comments at the top of that file. The hardened-runtime entitlements live in
-`apps/desktop/entitlements.plist` and are applied only on the signed path.
-
-## Windows (win32) — unsigned ZIP
-
-Rennet also runs on Windows, natively and driving a WSL distro (see the Windows +
-WSL install guide under `docs/` → Using Rennet → Getting started). Windows CI now
-builds **both** a Squirrel installer (`Setup.exe`, the `.nupkg`, and the `RELEASES`
-manifest — the feed auto-update reads) and the portable unsigned ZIP. **Windows code
-signing is still a separate slice** (the counterpart of the macOS Developer ID work);
-the Squirrel build is currently unsigned, which is enough for install and auto-update
-but shows the SmartScreen "unknown publisher" prompt on first run.
-
-Every step above from the "signed + notarized" build onward is **macOS-only**: the
-Apple env vars, `osxSign`/`osxNotarize`, `codesign`/`stapler`/`spctl`, the DMG
-maker's native addons (`macos-alias`, `fs-xattr`), and the `hdiutil` shell snippets
-(zsh/bash) do not apply on Windows and are not required there.
-
-### Dev run
+Windows development uses the normal Nx target:
 
 ```powershell
-pnpm install
-pnpm exec nx run rennet-desktop:start
+pnpm install --frozen-lockfile
+pnpm nx run rennet-desktop:dev
 ```
 
-The `start` target builds with Vite and launches Electron — the same
-cross-platform targets used on macOS. The dev run has no exe-embedded icon, so the
-window loads the brand `.ico` from `brand/exports/app-icons/windows/` directly and
-sets a stable taskbar identity (`com.rennet.desktop`); if the brand file is missing
-it falls back to Electron's default icon rather than failing. There is **no POSIX
-login shell on Windows**:
-harness discovery uses the process environment plus curated Windows install
-locations (`%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop/bun/volta), so no
-`zsh`/`bash` is needed. For a WSL-locus project, `git`/`gh`/`claude`/`codex` run
-inside the distro via `wsl.exe ... -e`; only WSL itself is required on the host.
-
-### Build the ZIP
+Build the installer and portable ZIP with:
 
 ```powershell
-pnpm exec nx run rennet-desktop:package
-pnpm exec nx run rennet-desktop:make
+pnpm nx run rennet-desktop:make
 ```
 
-`forge.config.cjs` adds `new MakerZIP({}, ["win32"])` **and** `new MakerSquirrel({…},
-["win32"])`, and selects the Windows `.ico`
-(`brand/exports/app-icons/windows/rennet-white-on-black.ico`) when packaging runs on
-Windows. `MakerSquirrel` only runs its build on Windows, so a local macOS `make` skips
-it and still produces the darwin ZIP/DMG. The Electron fuses hook already flips
-`electron.exe`, and the harness-SDK vendored-executable exclusion strips a bundled
-`claude.exe` the same way it strips the macOS `cli`.
+The build writes `Setup.exe`, a `.nupkg`, a `RELEASES` update manifest, and a win32 ZIP under `apps/desktop/out/make/`. MakerSquirrel runs only on Windows. MakerDMG runs only on macOS.
 
-## Auto-update
+The Windows installer is unsigned and displays a SmartScreen warning on first launch. Windows code signing is planned in [issue #330](https://github.com/rbutera/rennet/issues/330).
 
-Rennet updates itself with the Electron-maintained
-[`update-electron-app`](https://github.com/electron/update-electron-app) client,
-pointed at the free public **update.electronjs.org** service. That service resolves
-this repo's public **GitHub Releases** and serves the newest build; there is **no
-Rennet backend** in the loop. The update client is wired in
-`apps/desktop/src/main/auto-update.ts` and started from `whenReady` **only when
-`app.isPackaged`** (a dev or test run has no release to pull).
+The application uses `brand/exports/app-icons/windows/rennet-white-on-black.ico` for the executable and installer. Development loads that file at runtime because the development executable has no embedded Rennet icon.
 
-**Egress disclosure (honest copy, not a consent screen):** on a packaged build the
-app periodically pings `update.electronjs.org` with its **name, version, and
-platform** to ask whether a newer release exists. That is the only traffic the
-updater generates, and it fires on packaged builds automatically — there is no toggle
-and no dialog to clear. When a newer build is found it downloads in the background and
-`update-electron-app` shows its default "restart to apply" prompt; that prompt is the
-product telling you an update is ready, not a gate.
+Rennet does not require a POSIX login shell on Windows. Agent discovery checks the process environment and common Windows install locations. A project in WSL runs `git`, `gh`, `claude`, and `codex` inside its selected distribution through `wsl.exe`.
 
-**Per platform:**
+## Packaging configuration
 
-- **Windows** — works as soon as Squirrel artifacts (`Setup.exe`, `.nupkg`,
-  `RELEASES`) ship in a GitHub Release, which the `MakerSquirrel` maker now produces
-  on Windows CI. Squirrel handles install/update shortcut events; the app quits early
-  for those via `electron-squirrel-startup` and aligns its taskbar/toast AUMID to the
-  `com.squirrel.Rennet.Rennet` id Squirrel stamps on the shortcut.
-- **macOS** — Squirrel.Mac **requires a real code-signed app**. Until releases are
-  Developer-ID-signed (issue #42) the updater has nothing valid to apply, so it
-  **degrades to a silent no-op**: `auto-update.ts` wraps the call in try/catch and
-  attaches a quiet `autoUpdater` "error" listener, so an unsigned/ad-hoc build never
-  crashes or nags. Once signed macOS releases ship, updates activate with no code
-  change.
+[`forge.config.cjs`](forge.config.cjs) owns makers, icons, signing, notarization, Electron fuses, unpacked server assets, and package exclusions.
+
+The packaged application keeps the daemon and browser bundles outside the asar because the detached daemon loads them from disk. It also copies tray assets into the application resources.
+
+The Claude adapter uses the user's installed `claude` executable. Packaging excludes executables supplied inside `@anthropic-ai/claude-agent-sdk` so Rennet does not ship a second Claude binary.
+
+## Automatic updates
+
+Packaged builds check every five minutes through [`update-electron-app`](https://github.com/electron/update-electron-app). Development and test runs do not start the updater. This path uses GitHub or Electron update infrastructure and has no Rennet backend.
+
+Rennet downloads an available update in the background. When the update is on disk, the logo menu and tray show the update-ready state. **Restart Rennet to update** applies it. `notifyUser: false` disables the library's restart dialog.
+
+Windows reads Squirrel artifacts from the latest GitHub Release. It also checks for a newer staged `app-<version>` directory at startup and every five minutes, so a missed Electron event does not lose the ready state.
+
+macOS uses `update.electronjs.org`, which derives its feed from GitHub Releases. Squirrel.Mac requires a Developer ID signed application. Ad hoc builds record updater errors and continue without showing an update-ready state. Public Developer ID signed macOS releases are planned in [issue #298](https://github.com/rbutera/rennet/issues/298).

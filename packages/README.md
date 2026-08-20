@@ -1,11 +1,17 @@
 # Packages
 
-The planned dependency order is:
+Rennet's shared packages follow these enforced dependency boundaries. Each arrow points to a package that the package on the left may import.
 
 ```text
-types <- protocol <- core <- adapters <- desktop
-  ^         ^
-  +---------+------------------------- ui
+protocol     -> types
+instructions -> types
+core         -> types, protocol, instructions
+adapters     -> types, protocol, instructions, core
+server       -> types, protocol, instructions, core, adapters
+client       -> types, protocol
+ui           -> types, protocol, theme
 ```
 
-The package and licensing contracts are recorded in [contracts and rulings](../docs/src/content/docs/developing/reference/contracts-and-rulings.md) and [architecture contracts](../docs/src/content/docs/developing/concepts/architecture-contracts.md). Package selection and dependency overlap are governed by the [dependency standard](../docs/src/content/docs/developing/reference/dependency-standard.md).
+`types` and `theme` import no Rennet package. The [monorepo map](../docs/developing/reference/monorepo-map.md) lists every package. `scripts/check-boundaries.mjs` checks the package manifests and uses forbidden imports to prove the boundary rules can fail.
+
+The [architecture contracts](../docs/developing/concepts/architecture-contracts.md) define runtime ownership. The [dependency standard](../docs/developing/reference/dependency-standard.md) governs package selection, versions, licences, and overlapping tools.

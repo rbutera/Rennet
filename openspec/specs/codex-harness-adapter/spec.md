@@ -1,11 +1,11 @@
 # codex-harness-adapter Specification
 
 ## Purpose
-TBD - created by archiving change add-codex-app-server. Update Purpose after archive.
+Defines how Rennet runs capable Codex turns through `codex app-server`, normalizes native events, and composes host or WSL execution.
 ## Requirements
 ### Requirement: The Codex adapter drives an injected app-server session transport
 
-The Codex adapter SHALL be written against an injected turn transport (the peer of the Claude adapter's injected `ClaudeQueryFn`), so the adapter package is fully testable without spawning a process. The composition root SHALL implement the transport by spawning the discovered codex binary as `codex app-server` and speaking newline-delimited JSON-RPC 2.0 over its stdio: `initialize` (client info), `thread/start`, then `turn/start` carrying the prompt input, `cwd`, model/effort, the full-capability sandbox policy, and — when the session spec carries an `outputSchema` — the protocol's first-class `outputSchema` turn parameter. One `HarnessSession` SHALL run exactly one turn; the child process is turn-scoped (spawned for the turn, terminated with it), preserving the shipped process-lifecycle semantics.
+The Codex adapter SHALL use an injected turn transport, the peer of the Claude adapter's injected `ClaudeQueryFn`, so tests do not spawn a process. The composition root SHALL implement the transport by spawning the discovered Codex binary as `codex app-server` and speaking newline-delimited JSON-RPC 2.0 over its stdio. It SHALL send `initialize` with client information, `thread/start`, then `turn/start` with the prompt input, `cwd`, model, effort, and full-capability sandbox policy. When the session spec carries an `outputSchema`, `turn/start` SHALL include the protocol's `outputSchema` parameter. One `HarnessSession` SHALL run exactly one turn, with a child process spawned and terminated for that turn.
 
 #### Scenario: A turn round-trips to a completed outcome through the transport
 
@@ -24,7 +24,7 @@ The Codex adapter SHALL be written against an injected turn transport (the peer 
 
 ### Requirement: Sessions are capable by default and carry no approval plumbing
 
-A codex session SHALL run with full capability on the acting path: the composed `thread/start`/`turn/start` parameters SHALL select the full-access sandbox policy and the never-ask approval policy, and the adapter SHALL contain no approval-request handling, no consent surface, and no read-only posture. Server-initiated approval requests SHALL never block a turn (the composed policies make them unreachable; an unexpected one is answered in the affirmative and surfaced as evidence, never queued for a human). A session that only reads is a prompt outcome, not a capability the adapter withholds.
+A Codex session SHALL run with full capability on the acting path. The composed `thread/start` and `turn/start` parameters SHALL select the full-access sandbox policy and the never-ask approval policy. The adapter SHALL contain no approval-request handling, consent UI, or read-only posture. An unexpected server-initiated approval request SHALL receive an affirmative answer and appear in the evidence stream rather than wait for a human. Reading without writing is a prompt outcome, not a withheld capability.
 
 #### Scenario: The composed turn parameters are full-capability
 
@@ -71,7 +71,7 @@ A transport failure (JSON-RPC error response, `turn/failed`, unparseable frame, 
 
 ### Requirement: Desktop composition selects the Codex adapter for Codex-selected orchestrator turns
 
-The desktop composition root SHALL resolve the existing `orchestrator-chat` consumer through the selected harness. When that seat selects Codex, it SHALL construct the agentic `CodexAdapter` over the injected `CodexTurnTransport`, attach the same live canvasOps backend through its loopback MCP URL, and run the orchestrator turn through that port. This change SHALL NOT introduce additional Codex consumers beyond the paths named by this change.
+The desktop composition root SHALL resolve the `orchestrator-chat` consumer through the selected harness. When that seat selects Codex, it SHALL construct the agentic `CodexAdapter` over the injected `CodexTurnTransport`, attach the live canvasOps backend through its loopback MCP URL, and run the orchestrator turn through that port. No other consumer SHALL select the agentic Codex adapter.
 
 #### Scenario: A Codex-selected orchestrator reaches the injected transport
 
@@ -98,7 +98,7 @@ The `CodexAdapter` descriptor's capability flags SHALL be built only from `build
 
 ### Requirement: The composition root composes locus-aware Codex invocations
 
-For a WSL-locus project, the composition root SHALL compose the `codex app-server` invocation to execute inside the distro: the spawn routes through the locus command wrapper (verbatim argv, no shell interpretation) and the `cwd` handed to `turn/start` is the distro-native repo path. JSON-RPC over stdio crosses the locus boundary unchanged (stdio is locus-transparent), so no scratch-file translation is required on the turn path. For a host-locus project, composition behavior is identical to host behavior before this change apart from the transport swap itself. The adapter package SHALL remain transport-injected and process-free.
+For a WSL project, the composition root SHALL run `codex app-server` inside the distro. The spawn SHALL use the locus command wrapper with verbatim arguments and no shell interpretation. The `cwd` sent to `turn/start` SHALL be the distro-native repository path. JSON-RPC SHALL cross the locus boundary over stdio without scratch-file translation. Host projects SHALL run Codex on the host. The adapter package SHALL remain transport-injected and process-free.
 
 #### Scenario: A WSL-locus turn executes in the distro
 
@@ -112,7 +112,7 @@ For a WSL-locus project, the composition root SHALL compose the `codex app-serve
 
 ### Requirement: The canvasOps loopback surface is reachable from the executing locus
 
-The canvasOps URL handed to a codex session SHALL be an address the executing codex can actually reach: the shipped loopback for host execution, and for a WSL-locus session an address routable from the distro (shared localhost under mirrored networking, or the WSL-facing host address otherwise), with the listener bound no wider than that route requires. When no distro-reachable route can be established, the turn SHALL fail with a plain reason naming the gap — never silently execute on the host instead, and never claim canvas capability the session does not have.
+The canvasOps URL handed to a Codex session SHALL be reachable from the process that executes Codex. Host execution SHALL use loopback. A WSL session SHALL use shared localhost under mirrored networking or the WSL-facing host address otherwise, with the listener bound no wider than that route requires. If no distro-reachable route exists, the turn SHALL fail with a plain reason. It SHALL NOT run Codex on the host as a substitute or claim canvas access it lacks.
 
 #### Scenario: Distro codex reaches canvasOps
 

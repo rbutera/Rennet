@@ -1,4 +1,6 @@
-# Rennet site (pre-launch status page)
+# Frozen pre-launch site
+
+> **Frozen and non-authoritative.** This directory is not part of the current Rennet product, documentation, design system, or deployment path. Use `apps/marketing`, root `PRODUCT.md`, root `DESIGN.md`, and `docs/` instead.
 
 The retired pre-launch status-page prototype. The live marketing application now
 lives in `apps/marketing`; this directory remains as design history.

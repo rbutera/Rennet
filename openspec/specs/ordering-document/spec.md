@@ -1,7 +1,7 @@
-# ordering-document Specification
+# Ordering document specification
 
 ## Purpose
-TBD - created by archiving change build-comprehension-ordering-pass. Update Purpose after archive.
+Define the atomic RSP ordering document and the validation rules that require one complete, non-duplicated reading order over admitted decomposition chunks.
 ## Requirements
 ### Requirement: The `ordering` document type exists and is validated atomically
 The RSP protocol SHALL define an `ordering` document type whose body is `{ readingOrder: string[]; rationale: string }`. It SHALL be registered as atomic (any body error rejects the whole document) with supported schema version 1, and `bodyJsonSchema("ordering")` SHALL project an object JSON schema for the structured-output constraint.
@@ -38,4 +38,3 @@ An `ordering` document SHALL carry a non-empty `rationale`. An empty or whitespa
 #### Scenario: An empty rationale rejects
 - **WHEN** an otherwise valid ordering document has a whitespace-only rationale
 - **THEN** validation rejects with V113
-

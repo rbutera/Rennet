@@ -1,0 +1,181 @@
+---
+title: Protocol compatibility
+description: Rules for evolving the Rennet client-daemon wire protocol across independently updated peers.
+---
+
+The desktop, mobile client, CLI, and daemon can run builds from different
+commits. `packages/protocol/src/session.ts` defines their shared wire vocabulary
+and compatibility rules.
+
+## Evolve schemas append-only
+
+An existing frame or command payload may gain an optional field. It may not lose
+a field, make an optional field required, narrow an accepted value, or change a
+field's meaning within the same protocol version.
+
+`commandDefinitions` remains the single validation authority for request inputs
+and response outputs. Session envelopes refer to those schemas rather than
+copying command payload shapes. All wire payloads must be JSON-representable.
+
+Use a new protocol version for a change that cannot follow the append-only rule.
+
+## Negotiate a version window
+
+`PROTOCOL_VERSION` is the version this build speaks.
+`MIN_COMPATIBLE_PROTOCOL_VERSION` is the oldest version it accepts. Both are
+currently `1`.
+
+Two peers are compatible when each version is at least the other peer's minimum:
+
+```ts
+import {
+  checkProtocolCompatibility,
+  MIN_COMPATIBLE_PROTOCOL_VERSION,
+  PROTOCOL_VERSION,
+} from "@rennet/protocol";
+
+const result = checkProtocolCompatibility(
+  {
+    version: PROTOCOL_VERSION,
+    minCompatible: MIN_COMPATIBLE_PROTOCOL_VERSION,
+  },
+  {
+    version: serverInfo.protocolVersion,
+    minCompatible: serverInfo.minCompatibleProtocolVersion,
+  },
+);
+```
+
+The helper returns either `{ compatible: true }` or
+`{ compatible: false, reason }`. The reason identifies which side falls outside
+the version window.
+
+The server checks `hello.protocolVersion` against its minimum. The client runs
+the symmetric check after `serverInfo` supplies the server's current and minimum
+versions.
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant S as Server
+  C->>S: hello
+  S->>S: Check client version against server minimum
+  S-->>C: serverInfo
+  C->>C: Check both version windows
+  C->>S: request
+  S-->>C: response or rpcError
+```
+
+## Advertise optional capabilities
+
+`serverInfo.features` is an open `Record<string, boolean>`. A client reads it
+after the handshake and enables only the advertised protocol path. Adding a key
+does not require changing the `serverInfo` schema.
+
+| Key | Current meaning |
+|---|---|
+| `serverRequests` | The daemon can send `serverRequest` and `serverRequestResolved`, and accepts `serverResponse`. Current daemons always advertise it. |
+| `attention` | The daemon accepts `presence`, publishes `attentionEvent`, and supports push registration and attention acknowledgement. It is advertised only when the attention system is composed. |
+| `act` | The daemon implements `review.interrupt` and `publish.compose`. It is advertised only when those acting seams are composed. |
+
+The client does not send feature-specific frames or commands when the daemon did
+not advertise the matching key. A client without `act` disables Stop and publish
+composition with update-required copy. A client without `attention` stays silent
+on presence and push registration.
+
+## Parse inbound frames tolerantly
+
+Every session frame is a default, non-strict Zod object. Unknown keys are
+stripped, so a peer can receive a frame with new optional fields. Tests clone
+each frame schema as strict and prove that only the strict clone rejects the
+additional field.
+
+The checked-in public projection schema has a different contract. It uses
+`additionalProperties: false`, so adding an optional projection field requires
+regenerating the fixture in the same change:
+
+```sh
+UPDATE_PUBLIC_SCHEMA=1 pnpm nx test rennet-protocol
+```
+
+A consumer adopts the regenerated fixture when it adopts the new projection
+shape.
+
+## Track compatibility shims
+
+A temporary translation or default for a protocol version uses a greppable
+comment with a removal condition:
+
+```ts
+// COMPAT(example): explain the accepted shape and translation.
+// Remove when MIN_COMPATIBLE_PROTOCOL_VERSION is at least N.
+```
+
+Remove the shim when the minimum compatible version makes it unreachable.
+
+## Frame vocabulary
+
+`sessionFrameSchema` is a discriminated union on `type`.
+
+| Frame | Direction | Payload |
+|---|---|---|
+| `hello` | client to server | client ID, client type, protocol version, optional device token |
+| `serverInfo` | server to client | app version, protocol window, feature flags |
+| `request` | client to server | request ID, registered command, input |
+| `response` | server to client | request ID, output |
+| `rpcError` | server to client | request ID, code, message, optional details |
+| `progressEvent` | server to client | command ID and project-processing or project-detail event |
+| `askStreamEvent` | server to client | review ID and ask-stream event |
+| `serverRequest` | server to client | server request ID, kind, payload |
+| `serverResponse` | client to server | server request ID, payload |
+| `serverRequestResolved` | server to client | server request ID |
+| `presence` | client to server | focus, visibility, device class, optional focused review |
+| `attentionEvent` | server to client | raised item or cleared IDs |
+
+`progressEvent.event` accepts the `ProjectProgressEvent` union. General project
+processing uses `onProgress(commandId)`; per-repository pull-request loading for
+project detail uses `onProjectDetailProgress(commandId)`. Both share the wire
+frame and remain distinct bridge subscriptions.
+
+`hello.deviceToken` carries a paired device's bearer token. Loopback clients omit
+it. The daemon hashes stored device tokens and uses the presented value to
+classify a projected connection. See [remote access](../../using/guides/remote-access.md).
+
+Server requests use `serverRequestId` for correlation. The client answers with
+`serverResponse`; `serverRequestResolved` removes a prompt that no longer needs an
+answer. The wire and bridge are live even when no product flow raises a request.
+
+`rpcError.code` accepts the known values `invalid_input`, `command_failed`,
+`incompatible_protocol`, and `unknown_command`, plus other strings. New error
+codes therefore remain append-only.
+
+## Attention contract
+
+The `attention` feature adds `presence` and `attentionEvent` frames. Presence
+lets the daemon choose in-app delivery or push for each client. Attention raises
+and clears are broadcast to authorized clients, so acknowledging an item clears
+the corresponding state across connected surfaces.
+
+The closed attention family set is:
+
+| Family | Delivery class |
+|---|---|
+| `ask-pending` | high priority |
+| `review-finished` | high priority |
+| `turn-failed` | high priority |
+| `handoff-completed` | normal |
+| `publish-ready` | normal |
+| `processing-finished` | in-app only |
+
+An `ask-pending` item may carry up to four unique answer actions. Other families
+may not carry actions. `device.registerPush.disabledFamilies` can mute normal
+families for one device; high-priority families remain delivered.
+
+Projected reviews may include `attention: { needsYou, running }`. The daemon
+derives `needsYou` from active high-priority attention and `running` from its
+in-flight review-turn registry. The field is optional because its availability
+follows the advertised attention capability.
+
+All WebSocket traffic uses this frame union. New transport behavior starts with
+an append-only schema, a documented feature key when negotiation is required,
+and compatibility tests for both sides of the version window.

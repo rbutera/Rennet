@@ -1,7 +1,7 @@
-# model-council-live Specification
+# Live model council specification
 
 ## Purpose
-TBD - created by archiving change wire-model-council-live. Update Purpose after archive.
+Define how live review seats execute on their resolved Claude or Codex harness while sharing one invocation budget and recording accurate provenance.
 ## Requirements
 ### Requirement: The Codex port is executable as an injected turn
 
@@ -24,25 +24,25 @@ TBD - created by archiving change wire-model-council-live. Update Purpose after 
 
 ### Requirement: The council resolves each seat and executes it on the resolved harness
 
-`buildReviewCanvases` SHALL, when given a council context, resolve each model-facing seat (`decomposition-proposal`, `comprehension-ordering`) via `resolveAssignment` and execute it on the resolved harness: a `claude-code` seat SHALL run the injected Claude turn and a `codex` seat SHALL run the injected `CodexUtilityPort`. The model phase SHALL run whenever the decomposition seat has an executor for its resolved harness.
+When given a council context, `buildReviewCanvases` SHALL resolve each model-facing seat through `resolveAssignment` and execute it on the resolved harness. This includes `decomposition-proposal` and `comprehension-ordering`. A `claude-code` seat SHALL run the injected Claude turn. A `codex` seat SHALL run the injected `CodexUtilityPort`. The model phase SHALL run when the decomposition seat has an executor for its resolved harness.
 
-#### Scenario: both harnesses — light seat on Codex, review seat on Claude
+#### Scenario: both harnesses split the light and review seats
 
 - **WHEN** the council availability is `both`, a Claude turn and a fake Codex port are injected, and the pipeline runs
 - **THEN** the decomposition proposal executes via the Claude turn and the ordering seat (resolved to a Codex model under `both`) executes via the Codex port
 - **AND** the injected Claude ordering turn is NOT called for the ordering seat
 
-#### Scenario: Claude-only — every seat on Claude
+#### Scenario: Claude is the only available harness
 
 - **WHEN** the council availability is `claude-only`
 - **THEN** both seats resolve to Claude models and execute via the injected Claude turns, and the Codex port is never called
 
-#### Scenario: Codex-only — every seat on Codex
+#### Scenario: Codex is the only available harness
 
 - **WHEN** the council availability is `codex-only` and a fake Codex port is injected
 - **THEN** both the heavy proposal seat and the ordering seat resolve to Codex models and execute via the Codex port, and no Claude turn is called
 
-### Requirement: Provenance is honest — model, effort, and harness agree per seat
+### Requirement: Provenance agrees on model, effort, and harness for each seat
 
 `buildReviewCanvases` SHALL stamp each seat's provenance with the resolved `model`, `effort`, `harness`, and `resolutionTrace` such that the `harness` follows the resolved model. A seat resolved to a Codex model SHALL never be stamped with a Claude harness (and vice versa).
 
@@ -57,14 +57,14 @@ TBD - created by archiving change wire-model-council-live. Update Purpose after 
 - **WHEN** a seat is resolved by the council
 - **THEN** its provenance carries the resolution trace whose summary names the resolved model
 
-#### Scenario: no council context preserves prior behaviour
+#### Scenario: no council context uses the injected decomposition turn
 
 - **WHEN** no council context is supplied
 - **THEN** the caller-supplied provenance model stands and no resolution trace is stamped
 
 ### Requirement: One shared invocation budget gates every seat on the live path
 
-`buildReviewCanvases` SHALL enforce the shared invocation budget across whatever mix of seats runs, including a Claude seat and a Codex seat in the same review. A turn over the ceiling SHALL be refused at runtime — on either harness, first attempt or retry — and a refusal SHALL fall to the deterministic floor.
+`buildReviewCanvases` SHALL enforce one shared invocation budget across every seat, including reviews that use both Claude and Codex. The budget SHALL cover initial attempts and retries on either harness. A turn beyond the ceiling SHALL return a refusal and use the deterministic floor.
 
 #### Scenario: the sixth turn is refused across a Claude seat and a Codex seat
 
@@ -85,4 +85,3 @@ TBD - created by archiving change wire-model-council-live. Update Purpose after 
 
 - **WHEN** the injected run exits non-zero or throws (no `codex` on PATH)
 - **THEN** the probe reports `available: false`
-

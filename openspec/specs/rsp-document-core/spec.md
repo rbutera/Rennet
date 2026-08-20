@@ -1,8 +1,11 @@
-# rsp-document-core Specification
+# rsp-document-core specification
 
 ## Purpose
-TBD - created by archiving change build-rsp-document-core. Update Purpose after archive.
+
+RSP documents use one deterministic envelope, carry complete model provenance, address immutable patchset occurrences, and resolve anchors to a closed set of lineage outcomes.
+
 ## Requirements
+
 ### Requirement: Every document carries a universal envelope with a preserved extension bag
 Every RSP document SHALL carry the envelope fields `rsp`, `docType`, `schemaVersion`, `patchsetId`, `provenance`, `body`, and `x`, MAY carry an adapter-minted `docId`, `reviewId`, `projectSnapshotId`, and `supersedes`, and SHALL preserve unknown keys in `x` verbatim through canonical serialisation. The `docId` SHALL be minted by the adapter, never by the agent.
 
@@ -26,7 +29,7 @@ An anchor SHALL match `rennet:` kind `/` id with an optional span or JSON-Pointe
 
 #### Scenario: A side-qualified span parses
 - **WHEN** `rennet:hunk/h_2MMD02#L14-L31@additions` is parsed
-- **THEN** it yields kind `hunk`, id `h_2MMD02`, span lines 14–31, and side `additions`
+- **THEN** it yields kind `hunk`, id `h_2MMD02`, span lines 14 to 31, and side `additions`
 
 #### Scenario: An unknown kind is rejected at parse time
 - **WHEN** `rennet:banana/x` is parsed
@@ -42,4 +45,3 @@ Resolving an anchor against a patchset's offered manifest SHALL return exactly o
 #### Scenario: Ambiguous lineage fails closed
 - **WHEN** an id maps forward through an ambiguous lineage
 - **THEN** resolution is `orphaned` and does not carry state
-

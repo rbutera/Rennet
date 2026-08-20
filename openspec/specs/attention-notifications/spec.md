@@ -1,11 +1,11 @@
 # attention-notifications Specification
 
 ## Purpose
-The daemon's attention system: which events raise attention, which become pushes for which client, how pushes reach a phone, and how attention clears — the closed taxonomy from the mobile ideation doc, delivered presence-aware.
+Defines which daemon events demand attention, how each client receives them, and when handled events clear across clients.
 ## Requirements
 ### Requirement: The taxonomy is closed
 
-Exactly six event families SHALL raise attention: turn needs you (ask pending), review finished, turn failed or interrupted, handoff run completed, publish-ready, and processing finished. Each SHALL carry its substance (the ask's question, the review's finding counts, the failure's truthful cause) and its deep-link target. Nothing else pushes.
+Exactly six event families SHALL raise attention: `ask-pending`, `review-finished`, `turn-failed`, `handoff-completed`, `publish-ready`, and `processing-finished`. Each SHALL carry its relevant detail and deep-link target. For example, an ask carries its question, a completed review carries finding counts, and a failed turn carries its cause. No other event SHALL send a push.
 
 #### Scenario: no push outside the taxonomy
 
@@ -14,7 +14,7 @@ Exactly six event families SHALL raise attention: turn needs you (ask pending), 
 
 ### Requirement: Delivery is presence-aware per client
 
-For each attention event and each registered client, the daemon SHALL decide between a live in-app event and a push using the client's reported presence: a client connected and focused on the affected review receives the live event only; every other registered client receives the push. High-priority families (ask pending, review finished, failure) SHALL always reach every client one way or the other.
+For each attention event and registered client, the daemon SHALL choose a live in-app event or a push from the client's reported presence. A client connected and focused on the affected review SHALL receive only the live event. Every other registered client SHALL receive the push. `ask-pending`, `review-finished`, and `turn-failed` SHALL reach every client through one of those routes.
 
 #### Scenario: focused client is not pushed
 
@@ -41,16 +41,16 @@ Attention flags SHALL clear when a client views the linked surface (or acts on t
 
 ### Requirement: Presence consumption is capability-gated
 
-The daemon SHALL advertise attention/presence support in its handshake capabilities; presence frames from clients SHALL be accepted only then, and the delivery planner SHALL treat a client that never reports presence as away (push-eligible). Daemons and clients from before this capability SHALL interoperate unchanged.
+The daemon SHALL advertise attention and presence support in its handshake capabilities. It SHALL accept presence frames only when that capability is active. The delivery planner SHALL treat a client that never reports presence as away and eligible for pushes.
 
-#### Scenario: old client, new daemon
+#### Scenario: A client sends no presence
 
-- **WHEN** an M0-era client that sends no presence connects
-- **THEN** commands and streams behave as before and the client is simply treated as away for delivery decisions
+- **WHEN** a client sends no presence after connecting
+- **THEN** commands and streams remain available and the delivery planner treats the client as away
 
 ### Requirement: An ask push is answerable from the shade
 
-The ask-pending push SHALL carry the ask's answer chips as notification actions; choosing one SHALL deliver that answer to the daemon as the same reply the app would send, without the app opening. The action's outcome SHALL be truthful: on success the attention clears everywhere; on failure (daemon unreachable, turn superseded) the notification updates to say the answer did not land and deep-links into the ask.
+The `ask-pending` push SHALL carry the ask's answer chips as notification actions. Choosing one SHALL send the same daemon reply as the app without opening it. On success, attention SHALL clear everywhere. If the daemon is unreachable or the turn has been answered, the notification SHALL state that the answer did not land and deep-link to the ask.
 
 #### Scenario: answered without opening the app
 
@@ -64,10 +64,9 @@ The ask-pending push SHALL carry the ask's answer chips as notification actions;
 
 ### Requirement: The handoff and publish families are live
 
-Handoff-run-completed SHALL raise from the real handoff run outcome (with the delta summary as substance) and publish-ready SHALL raise when a composed draft awaits the user's post (destination and title as substance); each clears on its taxonomy terms (viewing the landing, or the post happening). With these, every family of the closed taxonomy is raised from a real lifecycle.
+`handoff-completed` SHALL rise from a handoff run outcome and carry the delta summary. `publish-ready` SHALL rise when a composed draft awaits the user's post and carry the destination and title. Each SHALL clear when the user views its destination or completes the post. Every family in the closed taxonomy SHALL come from a real lifecycle event.
 
 #### Scenario: publish-ready push lands on the preview
 
 - **WHEN** a draft is composed and waiting while the user is away
 - **THEN** a publish-ready push arrives, deep-links to the publish preview, and posting (from any client) clears it everywhere
-

@@ -1,14 +1,14 @@
 # canvasops-mcp-surface Specification
 
 ## Purpose
-TBD - created by archiving change build-canvasops-mcp-surface. Update Purpose after archive.
+Defines the versioned canvas operations available to orchestrator sessions through in-process and loopback MCP transports.
 ## Requirements
-### Requirement: canvasOps@2 is one versioned surface of interaction + retrieval tools
-The system SHALL expose `canvasOps@2` as a single versioned tool surface containing the six interaction ops (`canvas.describe`, `canvas.view`, `canvas.focus`, `canvas.annotate`, `canvas.propose`, `canvas.recompute`) and the seven read-only retrieval ops (`canvas.read`, `canvas.thread`, `diff.read`, `diff.search`, `diff.structure`, `run.ledger`, `run.provenance`). The tool descriptors SHALL be a harness-agnostic contract with no `if (harness === X)` branching. The Claude slot reaches them as an in-process MCP server built with the Agent SDK's `createSdkMcpServer`; every other slot SHALL reach the SAME descriptors through an external streamable-HTTP MCP transport served from the desktop process on a loopback address, compiled from the same neutral `CANVAS_OPS_TOOLS` catalogue and backed by the same live backend — one contract, two transports, no per-harness tool surface.
+### Requirement: canvasOps@2 provides one versioned set of interaction and retrieval tools
+The system SHALL expose `canvasOps@2` with six interaction ops: `canvas.describe`, `canvas.view`, `canvas.focus`, `canvas.annotate`, `canvas.propose`, and `canvas.recompute`. It SHALL also expose seven read-only retrieval ops: `canvas.read`, `canvas.thread`, `diff.read`, `diff.search`, `diff.structure`, `run.ledger`, and `run.provenance`. The tool descriptors SHALL contain no harness-specific branches. Claude SHALL receive them through an in-process MCP server built with the Agent SDK's `createSdkMcpServer`. Other harnesses SHALL receive the same descriptors through a streamable HTTP MCP transport on a loopback address. Both transports SHALL compile from `CANVAS_OPS_TOOLS` and use the same live backend.
 
-#### Scenario: An orchestrator session round-trips describe(counts)→describe(cohorts)→read
-- **WHEN** the surface is invoked with `canvas.describe` at `counts`, then `canvas.describe` at `cohorts`, then `canvas.read` of one element
-- **THEN** each call returns the uniform envelope with the requested altitude of data, and the element read returns that element's full content
+#### Scenario: An orchestrator session describes counts and cohorts before reading an element
+- **WHEN** the session invokes `canvas.describe` at `counts`, then `canvas.describe` at `cohorts`, then `canvas.read` for one element
+- **THEN** each call returns the uniform envelope at the requested detail level, and the element read returns that element's full content
 
 #### Scenario: The hot trio is always-loaded
 - **WHEN** the SDK server is built
@@ -16,11 +16,11 @@ The system SHALL expose `canvasOps@2` as a single versioned tool surface contain
 
 #### Scenario: The external transport serves the identical tool list
 - **WHEN** an MCP client connects to the loopback streamable-HTTP server and lists tools
-- **THEN** the tool names and schemas equal the in-process server's — compiled from the same `CANVAS_OPS_TOOLS` catalogue — and a describe→read round-trip through it returns the same envelopes as the in-process path
+- **THEN** the tool names and schemas equal the in-process server's because both compile from `CANVAS_OPS_TOOLS`, and a describe-to-read round trip returns the same envelopes
 
-#### Scenario: A codex-slot session round-trips describe→read
+#### Scenario: A Codex session describes and reads through the external transport
 - **WHEN** the orchestrator slot runs with codex picked, its session configured with the loopback canvasOps URL
-- **THEN** the session's `canvas.describe` → `canvas.read` calls round-trip through the external transport against the live backend (proven hermetically with an MCP client in the gate, and live in the gated real test)
+- **THEN** the session's `canvas.describe` and `canvas.read` calls reach the live backend through the external transport in both hermetic and opt-in live tests
 
 #### Scenario: The external lifecycle closes once
 
@@ -32,8 +32,8 @@ The system SHALL expose `canvasOps@2` as a single versioned tool surface contain
 - **WHEN** the HTTP listener emits an error before its listening event
 - **THEN** creation rejects and cleans up the listener and MCP transport rather than leaving the promise unsettled
 
-### Requirement: Every reply carries a freshness verdict and pagination is honest with totality
-Every tool reply SHALL carry a `freshness` verdict on the answer itself (R30 at the reply, not only at boot); a non-current verdict SHALL ride on the reply so stale ground is never consumed silently. Any list-returning tool SHALL paginate with totality: the response SHALL carry the true `total` and a cursor that walks to completion, and a silent cap is forbidden (correction 4 applied to the machine reader).
+### Requirement: Every reply carries freshness and complete pagination
+Every tool reply SHALL carry a `freshness` verdict. A non-current verdict SHALL appear on the reply so consumers can identify stale data. Any tool that returns a list SHALL include the true `total` and a cursor that reaches the end. It SHALL NOT silently cap results.
 
 #### Scenario: Stale freshness rides the next reply after a patchset advance
 - **WHEN** the backend reports the canvas is stale after a seeded patchset advance
@@ -47,11 +47,11 @@ Every tool reply SHALL carry a `freshness` verdict on the answer itself (R30 at 
 - **WHEN** a retrieval tool matches nothing
 - **THEN** it returns a success envelope with `total: 0` and the searched scope named, distinguishable from a structured error
 
-### Requirement: The surface is structurally read/L3-only — the human still disposes
-The surface SHALL contain no user-only op (disposition, adjudicate, expand/collapse, select, pin/clear) and no engine-only op (project, invalidate, carry, order). No handler SHALL produce an L2 disposition write: write ops route through issue #10's orchestrator dispatch, whose effect union excludes L2. `canvas.propose` MAY carry many anchors in one proposal (bulk), rendered on L3; the proposal becomes L2 only when the user adjudicates it. `canvas.recompute` SHALL be gated by the RoutePlan budget and refuse before any model runs when over budget.
+### Requirement: The tools write L3 but never L2
+The tools SHALL contain no user-only op for dispositions, adjudication, expansion, selection, pinning, or clearing. They SHALL contain no engine-only op for projection, invalidation, carry, or ordering. No handler SHALL produce an L2 disposition write. Orchestrator dispatch SHALL exclude L2 from its effect union. `canvas.propose` MAY carry many anchors in one L3 proposal, which becomes L2 only when the user adjudicates it. `canvas.recompute` SHALL refuse before a model runs when its RoutePlan exceeds the invocation budget.
 
 #### Scenario: The tool list contains no user-only or engine-only op
-- **WHEN** the surface's tool names are enumerated
+- **WHEN** the tool names are enumerated
 - **THEN** none of the user command vocabulary or the engine command vocabulary appears
 
 #### Scenario: A bulk proposal is L3 and only user adjudication creates L2
@@ -61,4 +61,3 @@ The surface SHALL contain no user-only op (disposition, adjudicate, expand/colla
 #### Scenario: Recompute over budget refuses before any model runs
 - **WHEN** `canvas.recompute` is called with a scope whose plan exceeds the RoutePlan budget
 - **THEN** it returns a visible refusal in the envelope and raises no recompute effect
-

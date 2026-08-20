@@ -1,6 +1,10 @@
-# Rennet mark
+# Frozen pre-launch mark
 
-The historical pre-launch wordmark glyph and lockup, rendered at four sizes.
+> **Frozen and non-authoritative.** This directory does not define the current product or brand. Use [`brand/`](../../brand/) instead.
+
+This directory is a frozen pre-launch artifact. It does not describe the current product, interface, or brand. Use [`brand/`](../../brand/) for current assets and guidance.
+
+The files below remain only as design evidence for the retired mark.
 
 ## The mark
 
@@ -25,7 +29,3 @@ Banned, and absent: cheese, milk, drops, curd texture, wheels, wedges, dairy of 
 ## 16px legibility: confirmed, not asserted
 
 Open `renders/qa-sheet.png`. At 16px the mark reads as a divided disc: the solid bone half and the open half separated by the cut. The "something has been divided" read survives shrinkage because it is carried by the material contrast (solid vs open), not by the gap width, which goes sub-pixel at 16px. The backlight-blue arc goes faint at 16px (the inner glow softens a thin stroke at that size); the division still reads from the solid-versus-empty contrast, which is the design intent.
-
-## Scope note
-
-These are brand assets in an isolated directory. The live app currently renders a placeholder `RennetMark` (a mono `R`) in `packages/ui/src/components/icons.tsx`. Promoting this corrected mark into that shared component is a separate change: `icons.tsx` is an active collision zone (other branches are editing `packages/ui/src/components` right now) and it carries a legend-coverage test. That promotion was deliberately left out of this branch and is called out in the branding-site report.
