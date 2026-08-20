@@ -19,6 +19,7 @@ import {
 } from "../canvas/publish";
 import { BlockedIngestionDisclosure } from "./flagged";
 import { ArrowLeftIcon } from "./icons";
+import { Prose } from "./prose";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The PAPER (issue #22 core; NARROWED by R40, issue #101). The ONLY solid object
@@ -766,10 +767,14 @@ function renderPrSubmission(submission: PrSubmission) {
         </code>
       </p>
       <div
-        className="publish-sheet-pr-body m-0 max-h-[180px] overflow-auto p-2.5 rounded-control border border-dashed border-sheet-line text-sm font-serif leading-relaxed text-sheet-ink whitespace-pre-wrap break-words"
+        className="publish-sheet-pr-body m-0 max-h-[180px] overflow-auto p-2.5 rounded-control border border-dashed border-sheet-line text-sm leading-relaxed text-sheet-ink break-words"
         data-testid="pr-body"
       >
-        {submission.body.trim() === "" ? "(no description)" : submission.body}
+        {submission.body.trim() === "" ? (
+          <span className="font-serif">(no description)</span>
+        ) : (
+          <Prose>{submission.body}</Prose>
+        )}
       </div>
       <p className="publish-sheet-pr-note m-0 text-xs text-sheet-soft" role="note">
         Signing previews the submission. Creating the pull request is a separate act — nothing is
