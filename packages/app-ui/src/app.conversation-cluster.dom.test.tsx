@@ -170,7 +170,8 @@ describe("RennetApp — the aligned conversation margin ships (issue #356, no re
     const options = cluster.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
     if (!options) throw new Error("both-model routing is not reachable from the thread composer");
     fireEvent.click(options);
-    expect(cluster.querySelector('.conversation-route-item[data-mode="both"]')).not.toBeNull();
+    // The kit Popover portals the route menu to the document body.
+    expect(document.querySelector('.conversation-route-item[data-mode="both"]')).not.toBeNull();
   });
 
   it("opening a thread in the margin leaves the diff column's allocation untouched", async () => {

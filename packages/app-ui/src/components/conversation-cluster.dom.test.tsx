@@ -124,16 +124,17 @@ describe("ConversationCluster — the private thread panel", () => {
     );
     const caret = container.querySelector<HTMLButtonElement>(".conversation-composer-caret");
     if (!caret) throw new Error("no routing caret");
-    // No menu until the caret opens it.
-    expect(container.querySelector(".conversation-route-menu")).toBeNull();
+    // No menu until the caret opens it. The kit Popover portals the menu to the
+    // document body, so the panel is queried on `document`, not the composer subtree.
+    expect(document.querySelector(".conversation-route-menu")).toBeNull();
     fireEvent.click(caret);
-    const bothOption = container.querySelector<HTMLButtonElement>(
+    const bothOption = document.querySelector<HTMLButtonElement>(
       '.conversation-route-item[data-mode="both"]',
     );
     if (!bothOption) throw new Error("no 'both' menu item");
     fireEvent.click(bothOption);
     // Picking an option closes the menu.
-    expect(container.querySelector(".conversation-route-menu")).toBeNull();
+    expect(document.querySelector(".conversation-route-menu")).toBeNull();
 
     const input = container.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
     const send = container.querySelector<HTMLButtonElement>(".conversation-composer-send");

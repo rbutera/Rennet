@@ -268,7 +268,8 @@ describe("ConversationPanel (margin path)", () => {
       "orchestrator",
     );
     fireEvent.click(options);
-    const both = cluster.querySelector<HTMLButtonElement>(
+    // The kit Popover portals the route menu to the document body.
+    const both = document.querySelector<HTMLButtonElement>(
       '.conversation-route-item[data-mode="both"]',
     );
     if (!both) throw new Error("both-model routing is missing from the composer");
@@ -481,7 +482,8 @@ describe("ConversationPanel (margin path)", () => {
     const options = general.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
     if (!options) throw new Error("the general composer's ask routing is missing");
     fireEvent.click(options);
-    const both = general.querySelector<HTMLButtonElement>(
+    // The kit Popover portals the route menu to the document body.
+    const both = document.querySelector<HTMLButtonElement>(
       '.conversation-route-item[data-mode="both"]',
     );
     if (!both) throw new Error("both-model routing is missing from the general composer");

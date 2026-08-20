@@ -154,7 +154,8 @@ describe("ConversationHost — the live in-diff conversation", () => {
     const caret = container.querySelector<HTMLButtonElement>(".conversation-composer-caret");
     if (!caret) throw new Error("no routing caret");
     fireEvent.click(caret);
-    const bothOption = container.querySelector<HTMLButtonElement>(
+    // The kit Popover portals the route menu to the document body.
+    const bothOption = document.querySelector<HTMLButtonElement>(
       '.conversation-route-item[data-mode="both"]',
     );
     if (!bothOption) throw new Error("no 'both' menu item");

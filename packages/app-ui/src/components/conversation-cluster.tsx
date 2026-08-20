@@ -1,3 +1,4 @@
+import { Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
 import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { ASK_OPTIONS, type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import type {
@@ -266,42 +267,52 @@ export function AskComposer({
       {/* The per-turn routing caret (#139): "Ask the orchestrator" is the default,
           "Ask both models" the opt-in. Picking a routing changes only THIS turn's
           mode; there is no synthesis — "both" yields two labelled answers. */}
-      <div className="conversation-composer-route relative inline-flex items-stretch">
-        <button
-          type="button"
-          className="conversation-composer-caret inline-flex items-center justify-center min-w-8 rounded-control border border-line bg-raised px-2 font-sans text-base text-ink cursor-pointer disabled:opacity-50 disabled:cursor-default"
-          aria-label="ask options"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          disabled={pending}
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          <span aria-hidden="true">⌄</span>
-        </button>
-        {menuOpen ? (
-          <div
-            className="conversation-route-menu absolute bottom-[calc(100%+6px)] right-0 z-20 flex flex-col min-w-[240px] rounded-control border border-line bg-overlay p-1.5 gap-0.5 shadow-overlay"
-            role="menu"
-          >
-            {ASK_OPTIONS.map((option) => (
+      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+        <div className="conversation-composer-route relative inline-flex items-stretch">
+          <PopoverTrigger
+            render={
               <button
                 type="button"
-                role="menuitemradio"
-                aria-checked={option.mode === mode}
-                className="conversation-route-item flex items-baseline justify-between gap-3 rounded-chip border-0 bg-transparent px-3 py-2 text-left font-sans text-base text-ink cursor-pointer hover:bg-raised aria-checked:bg-raised"
-                data-mode={option.mode}
-                key={option.mode}
-                onClick={() => pickMode(option.mode)}
-              >
-                <span className="conversation-route-label font-medium">{option.label}</span>
-                <span className="conversation-route-hint font-sans text-xs text-ink-faint">
-                  {option.hint}
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+                className="conversation-composer-caret inline-flex items-center justify-center min-w-8 rounded-control border border-line bg-raised px-2 font-sans text-base text-ink cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                aria-label="ask options"
+                disabled={pending}
+              />
+            }
+          >
+            <span aria-hidden="true">⌄</span>
+          </PopoverTrigger>
+          {/* The kit Popover owns the anchored positioning, portal, and outside-click /
+              Escape dismissal; the route-menu markup itself is unchanged. */}
+          <PopoverContent
+            side="top"
+            align="end"
+            sideOffset={6}
+            className="conversation-route-pop w-auto border-0 bg-transparent p-0 shadow-none ring-0"
+          >
+            <div
+              className="conversation-route-menu flex flex-col min-w-[240px] rounded-control border border-line bg-overlay p-1.5 gap-0.5 shadow-overlay"
+              role="menu"
+            >
+              {ASK_OPTIONS.map((option) => (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={option.mode === mode}
+                  className="conversation-route-item flex items-baseline justify-between gap-3 rounded-chip border-0 bg-transparent px-3 py-2 text-left font-sans text-base text-ink cursor-pointer hover:bg-raised aria-checked:bg-raised"
+                  data-mode={option.mode}
+                  key={option.mode}
+                  onClick={() => pickMode(option.mode)}
+                >
+                  <span className="conversation-route-label font-medium">{option.label}</span>
+                  <span className="conversation-route-hint font-sans text-xs text-ink-faint">
+                    {option.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </div>
+      </Popover>
       <button
         type="button"
         className="conversation-composer-send shrink-0 inline-flex items-center justify-center min-w-10 rounded-control bg-accent-fill text-accent-ink cursor-pointer disabled:opacity-50 disabled:cursor-default"
