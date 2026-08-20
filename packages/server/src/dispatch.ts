@@ -311,7 +311,11 @@ export interface DispatchDeps {
    * viewer the unified smart list folds into rows. Read-only. A fixture stands behind
    * this until the live git/GitHub loop lands.
    */
-  projectDetail(projectId: string, prStates?: readonly PullRequestState[]): Promise<ProjectDetail>;
+  projectDetail(
+    projectId: string,
+    prStates?: readonly PullRequestState[],
+    localOnly?: boolean,
+  ): Promise<ProjectDetail>;
   /**
    * Clean up a merged PR's local worktree/branch (the read-only row's action). A
    * destructive local act; the host handler is a documented stub this wave.
@@ -1407,7 +1411,7 @@ export function createDispatch(
           const input = parseCommandInput(name, rawInput);
           return parseCommandOutput(
             name,
-            await deps.projectDetail(input.projectId, input.prStates),
+            await deps.projectDetail(input.projectId, input.prStates, input.localOnly),
           );
         }
         case "project.cleanupWorktree": {
