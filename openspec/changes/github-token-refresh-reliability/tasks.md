@@ -1,24 +1,24 @@
 ## 1. Log record type and logger seam
 
-- [ ] 1.1 Add a secret-free `RefreshLogRecord` type in `packages/adapters/src/github-auth.ts` (fields: `phase: "attempt" | "persisted" | "declined" | "network"`, optional `githubError`, optional `tokenKind`) — no token/refresh/secret field exists on the type.
-- [ ] 1.2 Add an optional `log?: (record: RefreshLogRecord) => void` to `ResolveAuthDeps`, defaulting to a no-op.
-- [ ] 1.3 Add a `tokenKind(token)` helper that returns the non-secret prefix (e.g. `ghu_`/`gho_`) for records, never the token body.
+- [x] 1.1 Add a secret-free `RefreshLogRecord` type in `packages/adapters/src/github-auth.ts` (fields: `phase: "attempt" | "persisted" | "declined" | "network"`, optional `githubError`, optional `tokenKind`) — no token/refresh/secret field exists on the type.
+- [x] 1.2 Add an optional `log?: (record: RefreshLogRecord) => void` to `ResolveAuthDeps`, defaulting to a no-op.
+- [x] 1.3 Add a `tokenKind(token)` helper that returns the non-secret prefix (e.g. `ghu_`/`gho_`) for records, never the token body.
 
 ## 2. Declined-refresh cause is knowable
 
-- [ ] 2.1 In `refreshGitHubCredential` (`github-device-flow.ts`), ensure a 200-with-`error` throws `GitHubOAuthDeclined` carrying the verbatim `error` code (already partly true — confirm the code is on the error and reachable by the caller).
-- [ ] 2.2 In `refreshAndPersist`, on `GitHubOAuthDeclined` emit a `declined` record with `githubError` = the code, then return null (unchanged control flow), so the surface still resolves `token-invalid`.
+- [x] 2.1 In `refreshGitHubCredential` (`github-device-flow.ts`), ensure a 200-with-`error` throws `GitHubOAuthDeclined` carrying the verbatim `error` code (already partly true — confirm the code is on the error and reachable by the caller).
+- [x] 2.2 In `refreshAndPersist`, on `GitHubOAuthDeclined` emit a `declined` record with `githubError` = the code, then return null (unchanged control flow), so the surface still resolves `token-invalid`.
 
 ## 3. Observe network failures; retry stays in the shared transport
 
-- [ ] 3.1 In `refreshAndPersist`, on a `refresh(...)` failure that `isGitHubNetworkError` classifies as a network error, emit a `network` record and propagate — do NOT add a retry. Retry ownership lives in the shared `withConnectResilience` transport (connect-phase, replay-safe); a second retry here would duplicate connect attempts and risk burning a rotated refresh token on a post-send error.
-- [ ] 3.2 A `GitHubOAuthDeclined` emits a `declined` record with its verbatim code and resolves `token-invalid`; a propagated network error leaves `resolveGitHubAuth` to classify `network` with the credential untouched.
-- [ ] 3.3 On a successful refresh, emit a `persisted` record (with the new token's `tokenKind`, never the token) after `setGitHubCredential`.
+- [x] 3.1 In `refreshAndPersist`, on a `refresh(...)` failure that `isGitHubNetworkError` classifies as a network error, emit a `network` record and propagate — do NOT add a retry. Retry ownership lives in the shared `withConnectResilience` transport (connect-phase, replay-safe); a second retry here would duplicate connect attempts and risk burning a rotated refresh token on a post-send error.
+- [x] 3.2 A `GitHubOAuthDeclined` emits a `declined` record with its verbatim code and resolves `token-invalid`; a propagated network error leaves `resolveGitHubAuth` to classify `network` with the credential untouched.
+- [x] 3.3 On a successful refresh, emit a `persisted` record (with the new token's `tokenKind`, never the token) after `setGitHubCredential`.
 
 ## 4. Wire the logger in the daemon
 
-- [ ] 4.1 In `create-server.ts` `resolveAuth`, pass a `log` that writes each `RefreshLogRecord` as a single `[github-auth]` line to the daemon's stdout (→ `daemon.log`).
-- [ ] 4.2 Emit an `attempt` record at the start of a refresh (proactive and reactive branches) so an attempt is always visible even if the process dies mid-exchange.
+- [x] 4.1 In `create-server.ts` `resolveAuth`, pass a `log` that writes each `RefreshLogRecord` as a single `[github-auth]` line to the daemon's stdout (→ `daemon.log`).
+- [x] 4.2 Emit an `attempt` record at the start of a refresh (proactive and reactive branches) so an attempt is always visible even if the process dies mid-exchange.
 
 ## 5. Tests
 
