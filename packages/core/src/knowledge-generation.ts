@@ -35,6 +35,7 @@ import type {
   KnowledgeConfidence,
   KnowledgeSet,
   KnowledgeStatement,
+  KnowledgeStatus,
 } from "@rennet/types";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/types";
 import type { HarnessTurnResult } from "./harness-run-turn";
@@ -462,6 +463,21 @@ export async function runKnowledgeDeltaPass(
     else carried.push(statement);
   }
 
+  // A human disposition (confirmed/rejected) is durable by statement id: if the
+  // re-adjudication turn re-mints the SAME claim (same id — e.g. a mode-only change,
+  // or the model re-emits an identical claim), it keeps the human's status rather
+  // than resurfacing as a fresh hypothesis. A genuinely changed claim gets a new id
+  // (its evidence blobOid moved) and is correctly a new hypothesis.
+  const priorDisposition = new Map<string, KnowledgeStatus>();
+  for (const statement of priorSet.statements)
+    if (statement.status !== "hypothesis") priorDisposition.set(statement.id, statement.status);
+  const applyDisposition = (statement: KnowledgeStatement): KnowledgeStatement => {
+    const disposed = priorDisposition.get(statement.id);
+    return disposed && disposed !== statement.status
+      ? { ...statement, status: disposed }
+      : statement;
+  };
+
   if (changed.size === 0) {
     return {
       status: "skipped",
@@ -510,7 +526,7 @@ export async function runKnowledgeDeltaPass(
       baseOid: snapshot.baseOid,
       snapshotFingerprint: snapshot.snapshotFingerprint,
       generator,
-      statements: dedupById([...carried, ...minted]),
+      statements: dedupById([...carried, ...minted]).map(applyDisposition),
     };
     return {
       status: "ok",

@@ -498,6 +498,16 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "review.handoff.run.input.bundle.tasks.asks.path",
     "review.handoff.compose.input.dispositions.path",
     "review.handoff.compose.output.bundle.tasks.asks.path",
+    // The Context Map surface (add-context-map-view): every path in the Repo Map, the
+    // knowledge set, and a context-ask answer is a git-blob path relative to the repo
+    // root — never a host-absolute path, so no remote projection translates them.
+    "project.contextMap.output.map.files.path",
+    "project.contextMap.output.map.scopes.root",
+    "project.contextMap.output.map.tests.path",
+    "project.contextMap.output.map.conventions.path",
+    "project.contextMap.output.knowledge.statements.evidence.path",
+    "project.contextAsk.output.answer.evidence.path",
+    "project.knowledgeDisposition.output.statement.evidence.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",

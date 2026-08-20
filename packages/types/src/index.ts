@@ -3118,12 +3118,15 @@ export type Stage2NoveltyJudgment =
 export type KnowledgeConfidence = "high" | "medium" | "low";
 
 /**
- * Whether a statement is a model-derived HYPOTHESIS or a CONFIRMED fact. A
- * model-derived statement is a hypothesis until confirmed — the same honesty
- * contract as the symbolic surface's `exact`/`guess` tier label (a `guess` is
- * never rendered as exact; a hypothesis is never rendered as an asserted fact).
+ * Whether a statement is a model-derived HYPOTHESIS, a CONFIRMED fact, or a
+ * human-REJECTED claim. A model-derived statement is a hypothesis until a human
+ * (or evidence) confirms it — the same honesty contract as the symbolic
+ * surface's `exact`/`guess` tier label (a `guess` is never rendered as exact; a
+ * hypothesis is never rendered as an asserted fact). A rejection is a RECORDED
+ * state, not a deletion: it survives delta passes so re-enrichment cannot
+ * resurrect the same claim as a fresh hypothesis (add-context-map-view).
  */
-export type KnowledgeStatus = "hypothesis" | "confirmed";
+export type KnowledgeStatus = "hypothesis" | "confirmed" | "rejected";
 
 /** Which aspect of understanding a statement reconstructs. */
 export type KnowledgeAspect = "purpose" | "convention" | "why";

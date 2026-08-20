@@ -47,6 +47,7 @@ export function ProjectDetail({
   initialDetail,
   scheme,
   onOpenRow,
+  onOpenContextMap,
   onBack,
 }: {
   bridge: RennetBridge;
@@ -55,6 +56,7 @@ export function ProjectDetail({
   /** The resolved appearance scheme (system already folded to dark/light upstream). */
   scheme?: "dark" | "light";
   onOpenRow(row: SmartRow): void;
+  onOpenContextMap(): void;
   onBack(): void;
 }) {
   const [detail, setDetail] = useState<ProjectDetailData | null>(initialDetail ?? null);
@@ -151,6 +153,13 @@ export function ProjectDetail({
             {project.path}
           </span>
         </span>
+        <button
+          type="button"
+          className="project-detail-context-map ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
+          onClick={onOpenContextMap}
+        >
+          Context Map
+        </button>
       </header>
 
       {error ? <p className="project-detail-error mt-4 text-danger">{error}</p> : null}

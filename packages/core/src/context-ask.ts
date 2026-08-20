@@ -334,6 +334,10 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
   const effort = resolution.kind === "model" ? resolution.effort : null;
 
   // Compose the consulted context from the existing pure reads.
+  // ponytail: `query.scope` is read two ways — an exact knowledge subject and a map path
+  // prefix — because a scope name and a path are distinct namespaces. No caller sends a
+  // scope yet (the UI asks project-wide), so this stays unresolved; when one does, resolve
+  // a scope name to its root path before the map read so both narrow the same region.
   const knowledgeView = queryKnowledge(
     knowledgeSet,
     snapshot,
@@ -343,7 +347,10 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
     snapshot,
     query.scope !== undefined ? { path: query.scope } : undefined,
   );
-  const offeredEvidence = offeredEvidenceFor(knowledgeView.statements.slice(0, maxStatements));
+  // A `rejected` statement is one the human explicitly disowned; never offer it
+  // to the orchestrator as evidence (change add-context-map-view, task 4.5).
+  const offerable = knowledgeView.statements.filter((s) => s.status !== "rejected");
+  const offeredEvidence = offeredEvidenceFor(offerable.slice(0, maxStatements));
   const offeredById = new Map(offeredEvidence.map((evidence) => [evidence.id, evidence]));
   const paths = map.files.map((f) => f.path).slice(0, maxFiles);
   const consulted = [

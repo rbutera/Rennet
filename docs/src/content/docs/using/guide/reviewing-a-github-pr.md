@@ -207,6 +207,8 @@ shape when the network outcome was uncertain.
 
 ## Next
 
+- [The Context Map](/using/guide/context-map/) to see and refine what Rennet
+  understands about the project a review reads from.
 - [User journey](/using/guide/user-journey/) for the whole flow, including your
   own branch.
 - [Product and vision](/using/concepts/product-and-vision/) for why Rennet uses

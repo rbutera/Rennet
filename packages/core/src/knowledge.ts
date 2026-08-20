@@ -40,7 +40,7 @@ import type { LoadedSnapshot, SnapshotGateFailure } from "./project-context";
 import { isSafeRepoRelativePath } from "./project-context";
 
 const CONFIDENCES: readonly KnowledgeConfidence[] = ["high", "medium", "low"];
-const STATUSES: readonly KnowledgeStatus[] = ["hypothesis", "confirmed"];
+const STATUSES: readonly KnowledgeStatus[] = ["hypothesis", "confirmed", "rejected"];
 const ASPECTS: readonly KnowledgeAspect[] = ["purpose", "convention", "why"];
 
 // ── Validation (fail-safe: a malformed stored statement is dropped, never trusted) ──

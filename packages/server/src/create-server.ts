@@ -26,6 +26,7 @@ import {
   claudeHandoffRunPort,
   cleanupWorktree,
   completeUiEvidenceRun,
+  contextAskBackend,
   createClaudeAdjudicationTurn,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
@@ -136,6 +137,8 @@ import {
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
   patchsetIntentToReviewIntent,
+  queryKnowledge,
+  queryProjectMap,
   ReviewService,
   recordSeatSend,
   resolveAssignment,
@@ -156,6 +159,9 @@ import type {
   DetectedHarness,
   GitHubAuthStatus,
   GitHubConnectPoll,
+  KnowledgeDispositionResult,
+  ProjectContextAskResult,
+  ProjectContextMapResult,
   ProjectProcessEvent,
 } from "@rennet/protocol";
 import type {
@@ -329,6 +335,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   const gitForRepo = gitForRepoFactory(locusForRepo);
+
+  /** The ProjectSnapshot store key for a repo root: `escapePath(realpath(top-level))` (design §1.1). */
+  function repoKeyForRoot(repoRoot: string): string {
+    try {
+      return escapePath(realpathSync(repoRoot));
+    } catch {
+      return escapePath(repoRoot);
+    }
+  }
 
   const capture = new GitCaptureAdapter(
     undefined,
@@ -2266,6 +2281,103 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         },
         { projectId, worktreeId },
       );
+    },
+    // ── The Context Map surface (change add-context-map-view) ─────────────────
+    // Pure read of the persisted Repo Map: resolve the project's repoKey exactly as
+    // the store writes it, gate the stored tip fresh, then serve queryProjectMap +
+    // the local knowledge set verbatim. No rebuild, no model spend.
+    projectContextMap: async (projectId) => {
+      const project = projectStore.list().find((entry) => entry.id === projectId);
+      const projectRoot = project ? project.openPath || project.path : null;
+      if (!projectRoot) return { status: "absent", reason: "unknown project" };
+      const repoKey = repoKeyForRoot(projectRoot);
+      const manifest = liveSnapshotStore.loadManifest(repoKey);
+      if (!manifest) {
+        return {
+          status: "absent",
+          reason:
+            "no repo map is persisted for this project yet — process the project or run `rennet map`",
+        };
+      }
+      const gated = new ProjectContextReader(liveSnapshotStore).loadFresh(
+        repoKey,
+        manifest.baseOid,
+      );
+      if (!gated.ok) return { status: "absent", reason: gated.failure.reason };
+      // Project the stored knowledge through the gated snapshot: a statement whose
+      // cited bytes the current map changed is invalidated, and must NOT be served as
+      // an active/current claim (that would render stale knowledge as fresh). We serve
+      // only the resolving statements; the UI badge discloses when the set lags the map.
+      // ponytail: invalidatedPending is dropped from the view, not yet surfaced as a
+      // distinct "pending re-check" tier — add that when the protocol carries it.
+      const storedSet = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey);
+      const knowledge = storedSet
+        ? { ...storedSet, statements: [...queryKnowledge(storedSet, gated.snapshot).statements] }
+        : null;
+      return {
+        status: "ok",
+        map: queryProjectMap(gated.snapshot),
+        knowledge,
+      } as ProjectContextMapResult;
+    },
+    // Project-scoped context ask: the SAME engine context.ask runs for a review,
+    // keyed at the persisted tip. The backend owns every honest failure state
+    // (absent harness, snapshot refusal) — this wiring only supplies the project's
+    // resolve closure and the user's own harness port.
+    projectContextAsk: async ({ projectId, question, scope }) => {
+      const project = projectStore.list().find((entry) => entry.id === projectId);
+      const projectRoot = project ? project.openPath || project.path : null;
+      if (!projectRoot) {
+        return {
+          status: "failed",
+          failureReason: "unknown project",
+          cost: {
+            turns: 0,
+            model: null,
+            effort: null,
+            budgetGranted: true,
+            overage: false,
+            resolution: null,
+          },
+        };
+      }
+      const repoKey = repoKeyForRoot(projectRoot);
+      const backend = contextAskBackend({
+        reader: new ProjectContextReader(liveSnapshotStore),
+        knowledgeStore: new KnowledgeStore(liveSnapshotStore),
+        resolve: () => ({
+          repoKey,
+          baseOid: liveSnapshotStore.loadManifest(repoKey)?.baseOid ?? "",
+        }),
+        resolvePort: async () => {
+          const { locus, distroCwd } = locusContextForRepo(projectRoot);
+          return (await getClaudeHarness(locus, distroCwd)).adapter;
+        },
+        repoRoot: projectRoot,
+      });
+      return backend.ask({
+        question,
+        ...(scope === undefined ? {} : { scope }),
+      }) as Promise<ProjectContextAskResult>;
+    },
+    // The human-confirm surface (R54): flip one statement's status by id and persist
+    // the whole set atomically. Map preserves the deterministic id order; the claim
+    // is never edited, so the content-hash id stays stable.
+    knowledgeDisposition: async ({ projectId, statementId, disposition }) => {
+      const project = projectStore.list().find((entry) => entry.id === projectId);
+      const projectRoot = project ? project.openPath || project.path : null;
+      if (!projectRoot) return { status: "not-found", statementId };
+      const repoKey = repoKeyForRoot(projectRoot);
+      const knowledgeStore = new KnowledgeStore(liveSnapshotStore);
+      const set = knowledgeStore.loadLocal(repoKey);
+      const statement = set?.statements.find((entry) => entry.id === statementId);
+      if (!set || !statement) return { status: "not-found", statementId };
+      const updated = { ...statement, status: disposition };
+      knowledgeStore.save(repoKey, {
+        ...set,
+        statements: set.statements.map((entry) => (entry.id === statementId ? updated : entry)),
+      });
+      return { status: "ok", statement: updated } as KnowledgeDispositionResult;
     },
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's
