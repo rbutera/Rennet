@@ -5,8 +5,9 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
+import { ArrowRight, Check, Sparkles, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRightIcon, CheckIcon, SparkleIcon, TriangleIcon } from "./icons";
+import { Icon } from "./icon";
 import { ProgressFeed } from "./progress-feed";
 import { deriveProgressView } from "./progress-feed-fold";
 
@@ -95,7 +96,7 @@ export function ProjectProcessing({
           className="processing-failed flex items-center gap-2 mt-5 px-3.5 py-3 rounded-chip border border-danger bg-danger-soft text-ink text-base"
           role="alert"
         >
-          <TriangleIcon size={15} />
+          <Icon icon={TriangleAlert} className="size-4" />
           Could not start processing. {startError}
         </p>
         <div className="processing-actions flex items-center gap-3 mt-1">
@@ -125,11 +126,11 @@ export function ProjectProcessing({
           aria-hidden="true"
         >
           {allFailed ? (
-            <TriangleIcon size={20} />
+            <Icon icon={TriangleAlert} className="size-5" />
           ) : succeeded ? (
-            <CheckIcon size={22} />
+            <Icon icon={Check} className="size-5.5" />
           ) : (
-            <SparkleIcon size={20} />
+            <Icon icon={Sparkles} className="size-5" />
           )}
         </span>
         <p className="processing-headline mt-1.5 font-display text-2xl text-ink" aria-live="polite">
@@ -159,7 +160,7 @@ export function ProjectProcessing({
           {succeeded ? (
             <Button size="lg" className="primary ml-auto" onClick={onOpen}>
               Open {project.name}
-              <ArrowRightIcon size={13} />
+              <Icon icon={ArrowRight} className="size-3.5" />
             </Button>
           ) : null}
         </div>

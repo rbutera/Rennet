@@ -1,6 +1,6 @@
 import type { DispositionType } from "@rennet/types";
-import type { ComponentType } from "react";
-import { CheckIcon, CommentIcon, QuestionIcon, TriangleIcon } from "./icons";
+import { Check, CircleHelp, type LucideIcon, MessageSquare, TriangleAlert } from "lucide-react";
+import { Icon } from "./icon";
 
 // The disposition affordance: approve / request-change / comment / question at
 // whatever granularity the caller passes (roll-up, cohort, selection, anchor).
@@ -11,12 +11,12 @@ const DISPOSITIONS: {
   type: DispositionType;
   label: string;
   className: string;
-  Icon: ComponentType<{ size?: number }>;
+  glyph: LucideIcon;
 }[] = [
-  { type: "approve", label: "Approve", className: "d-approve", Icon: CheckIcon },
-  { type: "request-change", label: "Request change", className: "d-request", Icon: TriangleIcon },
-  { type: "comment", label: "Comment", className: "d-comment", Icon: CommentIcon },
-  { type: "question", label: "Question", className: "d-question", Icon: QuestionIcon },
+  { type: "approve", label: "Approve", className: "d-approve", glyph: Check },
+  { type: "request-change", label: "Request change", className: "d-request", glyph: TriangleAlert },
+  { type: "comment", label: "Comment", className: "d-comment", glyph: MessageSquare },
+  { type: "question", label: "Question", className: "d-question", glyph: CircleHelp },
 ];
 
 // The verb's hover register: approve reads as evidence (green); the other three all
@@ -46,7 +46,7 @@ export function DispositionBar({
       role="toolbar"
       aria-label={`Dispose ${scopeLabel}`}
     >
-      {DISPOSITIONS.map(({ type, label, className, Icon }) => (
+      {DISPOSITIONS.map(({ type, label, className, glyph }) => (
         <button
           type="button"
           key={type}
@@ -54,7 +54,7 @@ export function DispositionBar({
           title={`${label} — ${scopeLabel}`}
           onClick={() => onDisposition(type)}
         >
-          <Icon size={13} />
+          <Icon icon={glyph} className="size-3.5" />
           <span className="disposition-label">{label}</span>
         </button>
       ))}

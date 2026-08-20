@@ -4,6 +4,7 @@ import type {
   OpenSpecChangeRaw,
   OpenSpecScenario,
 } from "@rennet/types";
+import { Square, SquareCheckBig } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AskMode, AskReviewResult } from "../canvas/ask";
 import {
@@ -16,7 +17,7 @@ import {
 } from "../canvas/openspec";
 import { AskAnswers, AskControl } from "./ask";
 import { DispositionCluster } from "./disposition-cluster";
-import { CheckboxCheckedIcon, CheckboxIcon } from "./icons";
+import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Spec angle: a STRUCTURED viewer for an OpenSpec change (Rai, wireframes #9).
@@ -746,9 +747,9 @@ export function OpenSpecView({
                     >
                       <span className="ospec-task-check inline-flex flex-none items-center text-ink">
                         {item.status === "done" ? (
-                          <CheckboxCheckedIcon size={14} />
+                          <Icon icon={SquareCheckBig} className="size-3.5" />
                         ) : (
-                          <CheckboxIcon size={14} />
+                          <Icon icon={Square} className="size-3.5" />
                         )}
                       </span>
                       <span

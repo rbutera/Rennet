@@ -1,4 +1,5 @@
 import { Button } from "@rennet/ui";
+import { ArrowRight, Target } from "lucide-react";
 import { type CollationDraft, collationItems } from "../canvas/collation";
 import {
   type DestinationMode,
@@ -7,7 +8,7 @@ import {
 } from "../canvas/destination";
 import { handoffDispositions } from "../canvas/publish";
 import { laneCounts } from "../canvas/staging";
-import { ArrowRightIcon, TargetIcon } from "./icons";
+import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The DESTINATION FRAME (issue #64; re-pointed by R40, issue #101) — the
@@ -80,7 +81,7 @@ export function DestinationFrame({
     >
       <header className="destination-head">
         <p className="destination-eyebrow m-0 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-          <TargetIcon size={11} />
+          <Icon icon={Target} className="size-3" />
           STAGING TOWARD
         </p>
         <h2 className="destination-title mt-1 font-display text-lg font-semibold text-ink">
@@ -171,7 +172,7 @@ export function DestinationFrame({
           onClick={() => onOpenDraft?.()}
         >
           Open the draft
-          <ArrowRightIcon size={14} />
+          <Icon icon={ArrowRight} className="size-3.5" />
         </Button>
         {canHandoff ? (
           <Button
@@ -181,7 +182,7 @@ export function DestinationFrame({
             onClick={() => onHandoff?.()}
           >
             Hand off to agent
-            <ArrowRightIcon size={14} />
+            <Icon icon={ArrowRight} className="size-3.5" />
           </Button>
         ) : null}
       </footer>

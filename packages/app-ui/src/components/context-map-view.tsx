@@ -7,6 +7,7 @@ import type {
   ProjectMapPayload,
   RennetBridge,
 } from "@rennet/protocol";
+import { ArrowLeft, Check, X } from "lucide-react";
 import {
   type FormEvent,
   forwardRef,
@@ -23,7 +24,7 @@ import {
   type Selection,
 } from "../context-map/model";
 import { messageFrom } from "../lib/message-from";
-import { ArrowLeftIcon, CheckIcon, CloseIcon } from "./icons";
+import { Icon } from "./icon";
 
 const short = (name: string) => name.replace("@rennet/", "");
 
@@ -99,7 +100,7 @@ export function ContextMapView({
           onClick={onBack}
           className="context-map-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
         >
-          <ArrowLeftIcon className="h-3.5 w-3.5" />
+          <Icon icon={ArrowLeft} className="h-3.5 w-3.5" />
           Back
         </button>
         <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
@@ -196,7 +197,7 @@ function ContextMap({
           onClick={onBack}
           className="context-map-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
         >
-          <ArrowLeftIcon className="h-3.5 w-3.5" />
+          <Icon icon={ArrowLeft} className="h-3.5 w-3.5" />
           Back
         </button>
         <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
@@ -673,14 +674,14 @@ function KnowledgePanel({
                 onClick={() => onConfirm(statement.id)}
                 className="context-map-confirm inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-green-line text-green text-sm hover:bg-green-soft"
               >
-                <CheckIcon className="h-3 w-3" /> confirm
+                <Icon icon={Check} className="h-3 w-3" /> confirm
               </button>
               <button
                 type="button"
                 onClick={() => onReject(statement.id)}
                 className="context-map-reject inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm hover:bg-raised hover:text-danger"
               >
-                <CloseIcon className="h-3 w-3" /> reject
+                <Icon icon={X} className="h-3 w-3" /> reject
               </button>
               <button
                 type="button"

@@ -1,4 +1,5 @@
 import type { DispositionType } from "@rennet/types";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import {
   type CollationDraft,
   type CollationItem,
@@ -19,7 +20,7 @@ import {
   publishReviewType,
   stageItem,
 } from "../canvas/staging";
-import { ArrowLeftIcon, ArrowRightIcon } from "./icons";
+import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The COLLATION DRAFT CANVAS (issue #101; ruling R40) — the forming destination.
@@ -211,7 +212,7 @@ export function CollationDraftCanvas({
               onClick={() => onBack?.()}
               aria-label="Back to the lenses"
             >
-              <ArrowLeftIcon size={12} /> Lenses
+              <Icon icon={ArrowLeft} className="size-3" /> Lenses
             </button>
           </div>
         </header>
@@ -638,7 +639,7 @@ export function CollationDraftCanvas({
             disabled={empty || prDraftState?.status === "drafting"}
             onClick={() => onSign?.()}
           >
-            Sign the draft <ArrowRightIcon size={14} />
+            Sign the draft <Icon icon={ArrowRight} className="size-3.5" />
           </button>
         </footer>
       </section>

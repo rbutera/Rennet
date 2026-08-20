@@ -13,6 +13,17 @@ import {
   SelectValue,
   Skeleton,
 } from "@rennet/ui";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Ellipsis,
+  GitBranch,
+  Lock,
+  Sparkles,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import {
@@ -25,17 +36,7 @@ import {
   sortSmartRows,
 } from "../project/smart-list";
 import { DeviceFlowPrompt, useGitHubAccount } from "./github-connect";
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  CheckIcon,
-  CloseIcon,
-  EllipsisIcon,
-  GitBranchIcon,
-  LockIcon,
-  SparkleIcon,
-  TriangleIcon,
-} from "./icons";
+import { Icon } from "./icon";
 
 /**
  * Project detail: the unified smart list (issue #37).
@@ -189,7 +190,7 @@ export function ProjectDetail({
     >
       <header className="project-detail-bar flex items-center gap-4 px-1 pt-5 pb-4 border-b border-line">
         <Button variant="outline" className="project-detail-back text-ink-soft" onClick={onBack}>
-          <ArrowLeftIcon size={13} />
+          <Icon icon={ArrowLeft} className="size-3.5" />
           Projects
         </Button>
         <span className="project-detail-heading flex flex-col gap-0.5 min-w-0">
@@ -230,7 +231,7 @@ export function ProjectDetail({
               className="project-detail-truncated flex items-center gap-2 mt-3.5 px-3.5 py-2.5 rounded-chip border border-accent-line bg-accent-surface text-ink text-base"
               role="note"
             >
-              <TriangleIcon size={13} />
+              <Icon icon={TriangleAlert} className="size-3.5" />
               Showing a partial list — more than 1000 items upstream. This surface is not complete.
             </p>
           ) : null}
@@ -560,7 +561,7 @@ function SmartListRow({
               #{row.pr?.number}
             </span>
           ) : (
-            <GitBranchIcon size={14} />
+            <Icon icon={GitBranch} className="size-3.5" />
           )}
         </span>
         <span className="smart-row-main min-w-0 flex flex-col gap-1.5">
@@ -569,7 +570,7 @@ function SmartListRow({
           </span>
           <span className="smart-row-sub flex items-center flex-wrap gap-2.5 text-sm text-ink-faint">
             <span className="smart-row-branch inline-flex items-center gap-1 font-mono text-ink-soft">
-              <GitBranchIcon size={11} />
+              <Icon icon={GitBranch} className="size-3" />
               {row.branch}
             </span>
             <span className="smart-row-author text-ink-faint">{row.mine ? "you" : row.author}</span>
@@ -584,7 +585,7 @@ function SmartListRow({
                 className="smart-row-checkout inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-accent-line bg-accent-soft text-ink text-2xs"
                 title="A local worktree is checked out for this branch"
               >
-                <SparkleIcon size={11} />
+                <Icon icon={Sparkles} className="size-3" />
                 checked out locally
                 {row.checkedOutLocally.dirty ? " · uncommitted" : ""}
               </span>
@@ -603,7 +604,7 @@ function SmartListRow({
           ) : null}
           {row.readOnly ? (
             <span className="smart-row-badge is-read-only inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-green-line bg-green-soft text-ink text-2xs font-semibold">
-              <LockIcon size={11} />
+              <Icon icon={Lock} className="size-3" />
               read-only
             </span>
           ) : null}
@@ -623,7 +624,7 @@ function SmartListRow({
         ) : null}
         <Button variant="accent" className="smart-row-action text-base" onClick={() => onOpen(row)}>
           {rowActionLabel(row)}
-          <ArrowRightIcon size={12} />
+          <Icon icon={ArrowRight} className="size-3" />
         </Button>
       </div>
     </div>
@@ -651,7 +652,7 @@ function LocalTrajectory({ row }: { row: SmartRow }) {
             key={step.id}
             className={`trajectory-step inline-flex items-center gap-1 ${done ? "is-done text-accent" : "text-ink-faint"}`}
           >
-            {done ? <CheckIcon size={9} /> : null}
+            {done ? <Icon icon={Check} className="size-2.5" /> : null}
             {step.label}
           </span>
         );
@@ -667,12 +668,12 @@ function LocalTrajectory({ row }: { row: SmartRow }) {
 
 function CiGlyph({ ci }: { ci: NonNullable<SmartRow["pr"]>["ci"] }) {
   if (ci === "none") return null;
-  const Glyph = ci === "passing" ? CheckIcon : ci === "failing" ? CloseIcon : EllipsisIcon;
+  const glyph = ci === "passing" ? Check : ci === "failing" ? X : Ellipsis;
   return (
     <span
       className={`smart-row-ci is-${ci} inline-flex items-center gap-1 font-mono text-2xs font-bold ${ci === "pending" ? "text-ink-faint" : "text-ink"}`}
     >
-      CI <Glyph size={11} />
+      CI <Icon icon={glyph} className="size-3" />
     </span>
   );
 }

@@ -21,6 +21,7 @@ import type {
 } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { Button, Input } from "@rennet/ui";
+import { ArrowLeft, ArrowRight, FileDiff, Folder, Layers, TriangleAlert } from "lucide-react";
 import {
   type ReactNode,
   useCallback,
@@ -93,14 +94,7 @@ import { DeltaAccountPanel } from "../components/delta-account-panel";
 import { DestinationFrame } from "../components/destination-frame";
 import { FrontDoor } from "../components/front-door";
 import { HandoffPaper, type HandoffRunState } from "../components/handoff-paper";
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  FileDiffIcon,
-  FolderIcon,
-  LayersIcon,
-  TriangleIcon,
-} from "../components/icons";
+import { Icon } from "../components/icon";
 import { ANGLE_LABELS } from "../components/lens";
 import { PrWorktreeStatus } from "../components/pr-worktree-status";
 import { ProjectDetail } from "../components/project-detail";
@@ -2288,7 +2282,7 @@ export function RennetApp({
               disabled={navigation.stack.length <= 1}
               onClick={goBack}
             >
-              <ArrowLeftIcon size={16} />
+              <Icon icon={ArrowLeft} className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -2299,7 +2293,7 @@ export function RennetApp({
               disabled={navigation.future.length === 0}
               onClick={goForward}
             >
-              <ArrowRightIcon size={16} />
+              <Icon icon={ArrowRight} className="size-4" />
             </Button>
           </div>
           <Breadcrumb
@@ -2333,7 +2327,7 @@ export function RennetApp({
                 </span>
               ) : null}
               Preview
-              <ArrowRightIcon size={12} />
+              <Icon icon={ArrowRight} className="size-3" />
             </Button>
           ) : null}
           {connectionSlot}
@@ -2435,7 +2429,7 @@ export function RennetApp({
             className="entry-back text-ink-soft"
             onClick={() => setDirectEntryOpen(false)}
           >
-            <ArrowLeftIcon size={13} />
+            <Icon icon={ArrowLeft} className="size-3.5" />
             Back
           </Button>
         </header>
@@ -2461,7 +2455,7 @@ export function RennetApp({
             disabled={busy}
             onClick={chooseRepository}
           >
-            <FolderIcon size={15} />
+            <Icon icon={Folder} className="size-4" />
             {busy ? "Working…" : "Choose a repository"}
           </Button>
 
@@ -2699,7 +2693,7 @@ export function RennetApp({
           className={`text-xs ${view === "review" ? "is-active text-accent" : "text-ink-soft"}`}
           onClick={() => setView("review")}
         >
-          <FileDiffIcon size={13} />
+          <Icon icon={FileDiff} className="size-3.5" />
           Files
         </Button>
         <Button
@@ -2710,7 +2704,7 @@ export function RennetApp({
           className={`text-xs ${view === "canvases" ? "is-active text-accent" : "text-ink-soft"}`}
           onClick={() => setView("canvases")}
         >
-          <LayersIcon size={13} />
+          <Icon icon={Layers} className="size-3.5" />
           Canvases
         </Button>
       </div>
@@ -2724,7 +2718,10 @@ export function RennetApp({
                 className="engine-fallback flex items-center gap-4 border-b border-accent-line bg-accent-surface py-3 pl-5 pr-[300px]"
                 role="alert"
               >
-                <TriangleIcon size={18} className="engine-fallback-icon flex-none text-accent" />
+                <Icon
+                  icon={TriangleAlert}
+                  className="engine-fallback-icon flex-none text-accent size-4.5"
+                />
                 <div className="engine-fallback-copy flex min-w-0 flex-1 flex-col gap-0.5">
                   <strong className="text-base font-semibold text-ink">
                     {mechanicalFallbackTitle(engine)}

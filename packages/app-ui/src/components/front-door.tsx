@@ -7,19 +7,20 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { Button, Input, Switch } from "@rennet/ui";
+import {
+  ArrowRight,
+  ChevronDown,
+  Folder,
+  GitBranch,
+  Monitor,
+  Plus,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import { GitHubConnectCard } from "./github-connect";
-import {
-  ArrowRightIcon,
-  ChevronIcon,
-  FolderIcon,
-  GitBranchIcon,
-  MonitorIcon,
-  PlusIcon,
-  SlidersIcon,
-  SparkleIcon,
-} from "./icons";
+import { Icon } from "./icon";
 import { ProjectProcessing } from "./project-processing";
 import { ChromeMark } from "./update-ready";
 
@@ -87,7 +88,11 @@ export function FrontDoor({
             className="front-door-mark flex-none w-8 h-8 grid place-items-center rounded-control border border-accent-line bg-accent-soft text-accent"
             aria-hidden="true"
           >
-            {flow.step === "processing" ? <SparkleIcon size={18} /> : <PlusIcon size={16} />}
+            {flow.step === "processing" ? (
+              <Icon icon={Sparkles} className="size-4.5" />
+            ) : (
+              <Icon icon={Plus} className="size-4" />
+            )}
           </span>
         ) : (
           <ChromeMark
@@ -115,7 +120,7 @@ export function FrontDoor({
             title="Settings"
             aria-label="Settings"
           >
-            <SlidersIcon size={16} />
+            <Icon icon={SlidersHorizontal} className="size-4" />
           </Button>
         ) : null}
       </header>
@@ -184,7 +189,7 @@ function ProjectsList({
             className="add-card-plus w-11 h-11 grid place-items-center mb-2 rounded-surface border border-line-strong text-ink-soft"
             aria-hidden="true"
           >
-            <PlusIcon size={20} />
+            <Icon icon={Plus} className="size-5" />
           </span>
           <span className="add-card-title font-display text-2xl text-ink">Add a project</span>
           <span className="add-card-sub font-serif text-base text-ink-soft">
@@ -205,9 +210,9 @@ function ProjectsList({
                 aria-hidden="true"
               >
                 {project.kind === "workspace" ? (
-                  <MonitorIcon size={16} />
+                  <Icon icon={Monitor} className="size-4" />
                 ) : (
-                  <GitBranchIcon size={16} />
+                  <Icon icon={GitBranch} className="size-4" />
                 )}
               </span>
               <span className="project-row-main flex flex-col gap-0.5 min-w-0">
@@ -222,7 +227,7 @@ function ProjectsList({
                   : `${project.branchCount} ${plural(project.branchCount, "branch", "branches")}`}
               </span>
               <span className="project-row-branch flex-none inline-flex items-center gap-1.5 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm">
-                <GitBranchIcon size={12} />
+                <Icon icon={GitBranch} className="size-3" />
                 {project.primaryBranch}
               </span>
             </button>
@@ -232,7 +237,7 @@ function ProjectsList({
             className="add-row inline-flex items-center gap-2 self-start mt-1 px-3.5 py-2.5 rounded-chip border border-dashed border-line-strong text-ink-soft text-base font-semibold hover:text-ink hover:border-accent-line"
             onClick={onAdd}
           >
-            <PlusIcon size={14} />
+            <Icon icon={Plus} className="size-3.5" />
             Add a project
           </button>
         </div>
@@ -249,7 +254,7 @@ function HarnessLine({ detected }: { detected: DetectedHarness[] | null }) {
   if (!detected || detected.length === 0) return null;
   return (
     <p className="harness-line inline-flex items-center gap-2 self-center mt-7 px-3.5 py-2.5 rounded-chip border border-accent-line bg-accent-soft text-ink text-base font-semibold shadow-[inset_0_0_18px_var(--rn-accent-soft)]">
-      <SparkleIcon size={13} />
+      <Icon icon={Sparkles} className="size-3.5" />
       <span>
         {detected.map((harness) => harnessLabel(harness.id)).join(" · ")}
         <span className="harness-line-tail text-ink-faint font-normal"> detected</span>
@@ -374,14 +379,14 @@ function TypeAndPath({
       <div className="type-choice grid grid-cols-2 gap-3">
         <TypeCard
           selected={flow.kind === "workspace"}
-          icon={<MonitorIcon size={18} />}
+          icon={<Icon icon={Monitor} className="size-4.5" />}
           title="Workspace"
           sub="a folder holding several repos"
           onSelect={() => onFlow({ ...flow, kind: "workspace" })}
         />
         <TypeCard
           selected={flow.kind === "repo"}
-          icon={<GitBranchIcon size={18} />}
+          icon={<Icon icon={GitBranch} className="size-4.5" />}
           title="Project repo"
           sub="one repo"
           onSelect={() => onFlow({ ...flow, kind: "repo" })}
@@ -396,7 +401,7 @@ function TypeAndPath({
           className={`path-field flex-1 min-w-0 inline-flex items-center gap-2 px-3.5 py-2.5 rounded-control border border-line-strong bg-surface text-base truncate [&>svg]:flex-none [&>svg]:text-ink-faint ${flow.path ? "text-ink" : "text-ink-faint"}`}
           data-empty={flow.path ? "false" : "true"}
         >
-          <FolderIcon size={14} />
+          <Icon icon={Folder} className="size-3.5" />
           {flow.path ?? "Choose a folder…"}
         </span>
         <Button
@@ -423,9 +428,9 @@ function TypeAndPath({
             >
               <span className="recent-icon flex-none inline-flex text-ink-faint" aria-hidden="true">
                 {recent.kind === "workspace" ? (
-                  <MonitorIcon size={14} />
+                  <Icon icon={Monitor} className="size-3.5" />
                 ) : (
-                  <GitBranchIcon size={14} />
+                  <Icon icon={GitBranch} className="size-3.5" />
                 )}
               </span>
               <span className="recent-path min-w-0 truncate">{recent.path}</span>
@@ -454,7 +459,7 @@ function TypeAndPath({
           disabled={!flow.path || flow.busy}
         >
           {flow.busy ? "Reading…" : "Continue"}
-          <ArrowRightIcon size={13} />
+          <Icon icon={ArrowRight} className="size-3.5" />
         </Button>
       </div>
     </div>
@@ -541,7 +546,11 @@ function WorktreeConfig({
     <div className="add-flow w-full max-w-[760px] flex flex-col">
       <p className="found-in flex items-center gap-2 mt-2 mb-3.5 text-base font-semibold text-ink">
         <span className="found-in-icon inline-flex text-ink-soft" aria-hidden="true">
-          {flow.kind === "workspace" ? <MonitorIcon size={15} /> : <GitBranchIcon size={15} />}
+          {flow.kind === "workspace" ? (
+            <Icon icon={Monitor} className="size-4" />
+          ) : (
+            <Icon icon={GitBranch} className="size-4" />
+          )}
         </span>
         Found in <span className="found-in-path text-ink-soft font-normal">{flow.path}</span>
       </p>
@@ -563,7 +572,7 @@ function WorktreeConfig({
                 className="worktree-icon flex-none w-8 h-8 grid place-items-center rounded-control border border-line text-ink-soft"
                 aria-hidden="true"
               >
-                <GitBranchIcon size={15} />
+                <Icon icon={GitBranch} className="size-4" />
               </span>
               <span className="worktree-main flex flex-col gap-0.5 min-w-0">
                 <span className="worktree-name text-base font-semibold text-ink">{repo.name}</span>
@@ -597,7 +606,7 @@ function WorktreeConfig({
               />
             ) : (
               <span className="primary-branch-value inline-flex items-center gap-1.5 text-ink font-semibold text-base">
-                <GitBranchIcon size={12} />
+                <Icon icon={GitBranch} className="size-3" />
                 {flow.primaryBranch}
               </span>
             )}
@@ -618,7 +627,7 @@ function WorktreeConfig({
           className="reconciliation flex items-start gap-2 mt-3 px-3.5 py-2.5 rounded-chip border border-accent-line bg-accent-surface text-ink text-base"
           role="note"
         >
-          <ChevronIcon size={12} className="reconciliation-mark flex-none mt-0.5" />
+          <Icon icon={ChevronDown} className="reconciliation-mark flex-none mt-0.5 size-3" />
           {discovery.reconciliation}
         </p>
       ) : null}

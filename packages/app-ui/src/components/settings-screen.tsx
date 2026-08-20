@@ -10,6 +10,7 @@ import type {
   SettingsView,
 } from "@rennet/protocol";
 import { Button, Input } from "@rennet/ui";
+import { ArrowLeft, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   COMMAND_CATALOGUE,
@@ -24,7 +25,7 @@ import {
 import { messageFrom } from "../lib/message-from";
 import { RennetBrandMark } from "./brand-mark";
 import { GitHubAccountRows } from "./github-connect";
-import { ArrowLeftIcon, SlidersIcon } from "./icons";
+import { Icon } from "./icon";
 
 // Shared Tailwind recipes for this Operate surface: sans throughout (the screen
 // title is the one display voice). The segmented controls now ride kit `<Button>`:
@@ -227,14 +228,14 @@ export function SettingsScreen({
     >
       <header className="settings-bar flex h-[68px] w-full max-w-[760px] items-center gap-3">
         <Button variant="outline" className="settings-back" onClick={onBack}>
-          <ArrowLeftIcon size={13} />
+          <Icon icon={ArrowLeft} className="size-3.5" />
           Back
         </Button>
         <span
           className="settings-mark grid h-8 w-8 flex-none place-items-center rounded-control border border-accent-line bg-accent-soft text-accent"
           aria-hidden="true"
         >
-          <SlidersIcon size={16} />
+          <Icon icon={SlidersHorizontal} className="size-4" />
         </span>
         <h1 className="font-display text-2xl text-ink">Settings</h1>
         <span className="settings-sub ml-auto text-sm text-ink-faint">global &rsaquo; repo</span>

@@ -1,4 +1,5 @@
 import { Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
+import { Lock, MessageSquare, Sparkles } from "lucide-react";
 import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { ASK_OPTIONS, type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import type {
@@ -7,7 +8,7 @@ import type {
   PromotionKind,
   ThreadMessage,
 } from "../canvas/conversation";
-import { CommentIcon, LockIcon, SparkleIcon } from "./icons";
+import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The INLINE CONVERSATION CLUSTER UI (issue #36 — the review heart). The private
@@ -64,7 +65,7 @@ export function DiscussControl({
       aria-label={`Discuss ${anchor.kind} ${anchor.label}`}
       onClick={() => onDiscuss(anchor)}
     >
-      <CommentIcon size={13} />
+      <Icon icon={MessageSquare} className="size-3.5" />
       {labelled ? <span className="discuss-control-label">Discuss</span> : null}
     </button>
   );
@@ -89,7 +90,7 @@ export function ThreadChip({
       aria-label={`Open ${count} thread${count === 1 ? "" : "s"} on ${anchor.kind} ${anchor.label}`}
       onClick={() => onOpen(anchor)}
     >
-      <CommentIcon size={12} />
+      <Icon icon={MessageSquare} className="size-3" />
       <span className="thread-chip-count">thread · {count}</span>
     </button>
   );
@@ -125,7 +126,7 @@ export function MessageCard({
       <header className="thread-message-head flex items-center gap-2">
         {isHarness ? (
           <span className="thread-message-model inline-flex items-center gap-1.5 font-sans text-xs font-semibold text-ink-soft">
-            <SparkleIcon size={12} />
+            <Icon icon={Sparkles} className="size-3" />
             <span>{message.model ?? "Harness"}</span>
           </span>
         ) : (
@@ -322,7 +323,7 @@ export function AskComposer({
         disabled={!canSend}
         onClick={() => void send()}
       >
-        <CommentIcon size={13} />
+        <Icon icon={MessageSquare} className="size-3.5" />
       </button>
     </div>
   );
@@ -404,7 +405,7 @@ export function ConversationCluster({
           className="conversation-head-lock inline-flex self-center text-accent"
           aria-hidden="true"
         >
-          <LockIcon size={12} />
+          <Icon icon={Lock} className="size-3" />
         </span>
         <span className="conversation-head-title font-sans text-2xs font-semibold uppercase tracking-wide text-ink-soft">
           Thread

@@ -6,6 +6,7 @@ import type {
   DecisionsRunStatus,
   DispositionType,
 } from "@rennet/types";
+import { ChevronDown } from "lucide-react";
 import {
   type ApprovalScope,
   blastReasonsByChunk,
@@ -13,7 +14,7 @@ import {
   paintedChunkIds,
 } from "../canvas/logic";
 import { DispositionBar } from "./disposition";
-import { ChevronIcon } from "./icons";
+import { Icon } from "./icon";
 
 // The decisions canvas: cohorts collapsed by default with HONEST counts, uncapped
 // and untruncated. Expand/collapse is navigation only. Approve works at any
@@ -136,7 +137,7 @@ function Cohort({
             className={`cohort-chevron inline-flex text-ink-faint transition-transform ${expanded ? "is-open rotate-0" : "-rotate-90"}`}
             aria-hidden="true"
           >
-            <ChevronIcon size={13} />
+            <Icon icon={ChevronDown} className="size-3.5" />
           </span>
           <span className="cohort-title text-base">{cohort.title}</span>
           {/* Honest count: the true number of decisions, collapsed or not. */}

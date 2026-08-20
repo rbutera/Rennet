@@ -1,5 +1,6 @@
+import { House } from "lucide-react";
 import type { CrumbSegment } from "../nav/history";
-import { HomeIcon } from "./icons";
+import { Icon } from "./icon";
 
 export function Breadcrumb({
   crumb,
@@ -34,7 +35,7 @@ export function Breadcrumb({
             >
               {position === 0 ? (
                 <span className="nav-breadcrumb-home flex items-center text-accent">
-                  <HomeIcon size={13} />
+                  <Icon icon={House} className="size-3.5" />
                 </span>
               ) : null}
               <span className="truncate">{segment.label}</span>

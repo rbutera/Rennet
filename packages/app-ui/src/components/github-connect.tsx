@@ -2,7 +2,7 @@ import type { GitHubAuthStatus, RennetBridge } from "@rennet/protocol";
 import { Button, Input, toast } from "@rennet/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
-import { GitHubIcon } from "./icons";
+import { GitHubIcon } from "./brand-mark";
 
 /** Transient "you're connected" confirmation — the persistent status row/card is the durable truth. */
 function announceConnected(status: GitHubAuthStatus): void {
@@ -192,7 +192,7 @@ export function GitHubConnectCard({ bridge }: { bridge: RennetBridge }) {
   return (
     <aside className="github-card flex items-center gap-3 self-center w-[min(560px,100%)] mt-3.5 px-4 py-3 rounded-surface border border-line bg-surface text-base">
       <span className="github-card-icon inline-flex text-ink" aria-hidden="true">
-        <GitHubIcon size={18} />
+        <GitHubIcon className="size-4.5" />
       </span>
       {account.flow ? (
         <DeviceFlowPrompt flow={account.flow} onCancel={() => void account.cancel()} />
@@ -256,7 +256,7 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
           ) : status?.state === "connected" ? (
             <>
               <span className="github-connected inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-ink whitespace-nowrap">
-                <GitHubIcon size={14} />
+                <GitHubIcon className="size-3.5" />
                 connected{status.login ? ` · @${status.login}` : ""}
               </span>
               <Button

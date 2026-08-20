@@ -1,8 +1,9 @@
 import type { CanvasAngle, Review } from "@rennet/types";
 import { Button } from "@rennet/ui";
+import { ArrowRight } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { buildRowRegistry, type RegistryRow } from "../canvas/registrar";
-import { ArrowRightIcon } from "../components/icons";
+import { Icon } from "../components/icon";
 import { ChromeMark } from "../components/update-ready";
 import { type AngleRailRow, activePatchset, type DiffFocus } from "./shared";
 
@@ -99,7 +100,7 @@ export function ReviewWorkspace({
           <code className="rounded-micro bg-raised px-2 py-1 font-mono text-ink">
             {patchset.repository.baseOid.slice(0, 8)}
           </code>
-          <ArrowRightIcon size={12} className="provenance-arrow text-ink-faint opacity-70" />
+          <Icon icon={ArrowRight} className="provenance-arrow text-ink-faint opacity-70 size-3" />
           <code className="rounded-micro bg-raised px-2 py-1 font-mono text-ink">
             {patchset.repository.headOid.slice(0, 8)}
           </code>

@@ -1,4 +1,5 @@
 import type { DecompositionBlockingState } from "@rennet/types";
+import { ArrowLeft } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   bucketLedgerEntries,
@@ -18,7 +19,7 @@ import {
   targetItemCount,
 } from "../canvas/publish";
 import { BlockedIngestionDisclosure } from "./flagged";
-import { ArrowLeftIcon } from "./icons";
+import { Icon } from "./icon";
 import { Prose } from "./prose";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -637,7 +638,7 @@ export function PublishSheet({
               className="publish-sheet-back inline-flex items-center gap-2 h-8 px-4 rounded-control border border-sheet-line text-sm font-semibold text-sheet-soft hover:bg-sheet-line"
               onClick={() => onBack?.()}
             >
-              <ArrowLeftIcon size={13} /> Back to the draft
+              <Icon icon={ArrowLeft} className="size-3.5" /> Back to the draft
             </button>
             <button
               type="button"
@@ -761,7 +762,7 @@ function renderPrSubmission(submission: PrSubmission) {
         data-testid="pr-branches"
       >
         <code className="publish-sheet-pr-base font-mono text-sheet-ink">{submission.base}</code>
-        <ArrowLeftIcon size={11} />
+        <Icon icon={ArrowLeft} className="size-3" />
         <code className="publish-sheet-pr-head-ref font-mono text-sheet-ink">
           {submission.head}
         </code>

@@ -1,8 +1,8 @@
 import type { DispositionType } from "@rennet/types";
-import type { ComponentType } from "react";
+import { Check, CircleHelp, type LucideIcon, MessageSquare, TriangleAlert } from "lucide-react";
 import { defaultLane, type StagingLane } from "../canvas/staging";
 import { VERB_HOVER } from "./disposition";
-import { CheckIcon, CommentIcon, QuestionIcon, TriangleIcon } from "./icons";
+import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The DISPOSITION CLUSTER (issue #109 — the review heart). The four verbs as real
@@ -13,8 +13,8 @@ import { CheckIcon, CommentIcon, QuestionIcon, TriangleIcon } from "./icons";
 //
 // The icons ARE the vocabulary contract (frame `00-legend`): approve = a tick,
 // request-change = a warning triangle, comment = a bubble, question = a help
-// circle. Each glyph has an `ICON_LEGEND` entry (icons.legend.test enforces it),
-// so the cluster reads instantly against the legend.
+// circle. The glyphs are lucide-react (Check / TriangleAlert / MessageSquare /
+// CircleHelp), rendered through the shared `Icon` wrapper at the product stroke.
 //
 // The material law is visible on the control itself (issue #109, "ink vs blue"):
 // each verb carries its DEFAULT lane as `data-lane` — request-change renders in ink
@@ -51,17 +51,17 @@ interface VerbSpec {
   readonly label: string;
   /** The verb-specific className, so each keeps its hover tint. */
   readonly className: string;
-  readonly Icon: ComponentType<{ size?: number }>;
+  readonly glyph: LucideIcon;
 }
 
 // Ordered approve → request-change → comment → question, matching the legend's
 // conversation-cluster order. Each verb's lane is DERIVED (`defaultLane`), never
 // hard-coded, so the cluster and the staging law cannot drift.
 const VERBS: readonly VerbSpec[] = [
-  { type: "approve", label: "Approve", className: "d-approve", Icon: CheckIcon },
-  { type: "request-change", label: "Request change", className: "d-request", Icon: TriangleIcon },
-  { type: "comment", label: "Comment", className: "d-comment", Icon: CommentIcon },
-  { type: "question", label: "Question", className: "d-question", Icon: QuestionIcon },
+  { type: "approve", label: "Approve", className: "d-approve", glyph: Check },
+  { type: "request-change", label: "Request change", className: "d-request", glyph: TriangleAlert },
+  { type: "comment", label: "Comment", className: "d-comment", glyph: MessageSquare },
+  { type: "question", label: "Question", className: "d-question", glyph: CircleHelp },
 ];
 
 /** A terse human name for an anchor kind, for the control's accessible name. */
@@ -98,7 +98,7 @@ export function DispositionCluster({
       role="toolbar"
       aria-label={`Dispose on ${noun} ${anchor.label}`}
     >
-      {VERBS.map(({ type, label, className, Icon }) => {
+      {VERBS.map(({ type, label, className, glyph }) => {
         const lane: StagingLane = defaultLane(type);
         return (
           <button
@@ -111,7 +111,7 @@ export function DispositionCluster({
             aria-label={`${label} on ${noun} ${anchor.label}`}
             onClick={() => onDispose(type)}
           >
-            <Icon size={13} />
+            <Icon icon={glyph} className="size-3.5" />
             {labelled ? <span className="disposition-cluster-label">{label}</span> : null}
           </button>
         );

@@ -1,5 +1,6 @@
 import type { ProgressArtifactRef } from "@rennet/protocol";
-import { CheckIcon, GitBranchIcon, TriangleIcon } from "./icons";
+import { Check, GitBranch, TriangleAlert } from "lucide-react";
+import { Icon } from "./icon";
 import type { RepoBlockView } from "./progress-feed-fold";
 import { summaryLine } from "./progress-feed-fold";
 
@@ -66,7 +67,11 @@ function RepoBlock({
           className="processing-repo-icon inline-flex text-ink-soft group-data-[state=error]:text-danger"
           aria-hidden="true"
         >
-          {block.state === "error" ? <TriangleIcon size={13} /> : <GitBranchIcon size={13} />}
+          {block.state === "error" ? (
+            <Icon icon={TriangleAlert} className="size-3.5" />
+          ) : (
+            <Icon icon={GitBranch} className="size-3.5" />
+          )}
         </span>
         {name}
         {block.state === "done" && block.summary ? (
@@ -97,7 +102,7 @@ function RepoBlock({
                   {active ? (
                     <span className="processing-dot h-[7px] w-[7px] animate-pulse rounded-full bg-accent" />
                   ) : (
-                    <CheckIcon size={12} />
+                    <Icon icon={Check} className="size-3" />
                   )}
                 </span>
                 <span className="processing-step-note flex-initial">{entry.note}</span>

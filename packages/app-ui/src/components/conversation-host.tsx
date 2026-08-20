@@ -1,4 +1,5 @@
 import type { CommandInput, PersistedThreadWire, RennetBridge } from "@rennet/protocol";
+import { Lock } from "lucide-react";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import {
@@ -27,7 +28,7 @@ import {
   DiscussControl,
   MessageCard,
 } from "./conversation-cluster";
-import { LockIcon } from "./icons";
+import { Icon } from "./icon";
 
 /**
  * Reconstruct a live {@link ConversationThread} from a persisted one on re-attach (#251).
@@ -651,7 +652,7 @@ function GeneralAskPanel({
           className="conversation-head-lock inline-flex self-center text-accent"
           aria-hidden="true"
         >
-          <LockIcon size={12} />
+          <Icon icon={Lock} className="size-3" />
         </span>
         <span className="conversation-head-title font-sans text-2xs font-semibold uppercase tracking-wide text-ink-soft">
           Ask the orchestrator
