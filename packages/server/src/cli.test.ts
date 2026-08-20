@@ -351,7 +351,7 @@ describe("rennet map (daemonless repo-map build)", () => {
     const code = await runSourceCli(["map", "one", "two"], captured.io, {}, noDeps);
     expect(code).toBe(2);
     expect(captured.err.at(-1)).toBe(
-      "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]",
+      "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich] [--model <id>]",
     );
   });
 
