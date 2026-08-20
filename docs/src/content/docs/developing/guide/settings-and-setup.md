@@ -223,7 +223,16 @@ Because the store keys on the repository's real path, a map built this way is th
 map the daemon reads later. Re-running is incremental: unchanged files reuse their
 content-addressed shards. `--json <file>` additionally exports the queryable ProjectMap
 (files, scopes, dependency edges, entry points, tests, ownership, conventions) plus
-per-file declared symbols for external consumers.
+per-file declared symbols and the knowledge set (when one exists) for external
+consumers.
+
+`--enrich` runs the model-backed knowledge pass after the build — the same pass the
+daemon runs in the background after a snapshot advance. It discovers your installed
+`claude` binary (your subscription, one bounded turn) and mints the knowledge layer:
+initial enrichment when no set exists, the delta pass when the prior set is pinned to
+an older OID, and an honest no-op when the set is already current. Without a usable
+harness the command reports why and exits non-zero; the deterministic map has already
+landed by then.
 
 **Data-dir isolation** is how dev checkouts, agent worktrees, and e2e runs stay off the
 production daemon: point `RENNET_USER_DATA` (or `--data-dir`) at a per-checkout directory
