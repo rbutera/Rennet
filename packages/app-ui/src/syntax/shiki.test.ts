@@ -130,6 +130,32 @@ describe("tokenizeLine — JSON / Python / shell keys and comments", () => {
   });
 });
 
+describe("tokenizeLine — number literals fail closed when malformed (#92)", () => {
+  // shiki 4.4.3 scopes some malformed numeric literals as `number`; the old bespoke
+  // scanner failed them CLOSED to plain. A canonical numeric-literal validator in
+  // shiki.ts reclassifies a malformed `number` token back to plain. Each case is a
+  // single token, so it must be exactly one plain token when malformed.
+  it.each([
+    "0b10_", // trailing separator
+    "1_", // trailing separator
+    "1__0", // doubled separator
+    "1e10_", // exponent with trailing separator
+    "0b102", // binary digit out of range
+    "0o18", // octal digit out of range
+    "0x_", // hex prefix, no digit before separator
+    "0b_", // binary prefix, bare separator
+  ])("a malformed literal is one plain token, never a number: %s", (candidate) => {
+    expect(tokenizeLine(candidate, "typescript")).toEqual([{ text: candidate, type: "plain" }]);
+  });
+
+  it.each(["0b101", "0o17", "0xFF", "0xFF_FF", "1_000", "1e10", "1.5", "1e10_000"])(
+    "a valid literal still colours as a number: %s",
+    (candidate) => {
+      expect(hasToken(tokenizeLine(candidate, "typescript"), "number", candidate)).toBe(true);
+    },
+  );
+});
+
 describe("tokenizeLine — fail-closed and graceful degradation", () => {
   it("an unknown language yields exactly one plain token", () => {
     const tokens = tokenizeLine("const x = 1;", null);

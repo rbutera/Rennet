@@ -190,6 +190,34 @@ function colorToType(color: string | undefined): TokenType {
     : "plain";
 }
 
+// Fail-closed number check (issue #92). shiki 4.4.3 scopes some MALFORMED numeric
+// literals as `constant.numeric` — a trailing/leading/doubled `_` separator
+// (`0b10_`, `1_`, `1__0`, `1e10_`) or a radix prefix with out-of-range digits
+// (`0b102`, `0o18`) — where the old bespoke scanner failed them CLOSED to plain.
+// Rather than re-implement the deleted scanner, we validate a `number` token's text
+// against the canonical JS numeric-literal grammar and reclassify anything that does
+// not match to `plain`. Each digit group is `<digit>(_?<digit>)*`, which structurally
+// forbids a leading, trailing, or doubled separator; the radix groups forbid an
+// out-of-range digit. Valid literals (`0b101`, `0xFF`, `1_000`, `1e10`, `1.5`, `.5`,
+// `5.`) still pass and stay `number`.
+const HEX_DIGITS = "[0-9a-fA-F](?:_?[0-9a-fA-F])*";
+const BIN_DIGITS = "[01](?:_?[01])*";
+const OCT_DIGITS = "[0-7](?:_?[0-7])*";
+const DEC_DIGITS = "[0-9](?:_?[0-9])*";
+const NUMERIC_LITERAL = new RegExp(
+  "^(?:" +
+    `0[xX]${HEX_DIGITS}n?` +
+    `|0[bB]${BIN_DIGITS}n?` +
+    `|0[oO]${OCT_DIGITS}n?` +
+    // Decimal: int / float / leading-dot / trailing-dot, optional exponent, optional bigint.
+    `|(?:${DEC_DIGITS}\\.${DEC_DIGITS}?|\\.${DEC_DIGITS}|${DEC_DIGITS})(?:[eE][+-]?${DEC_DIGITS})?n?` +
+    ")$",
+);
+
+function isValidNumericLiteral(text: string): boolean {
+  return NUMERIC_LITERAL.test(text);
+}
+
 // Tokenize a single line with Shiki, reading each run's sentinel colour as its
 // TokenType and merging adjacent same-type runs so the line does not explode into
 // per-char spans (keeps the CodeView inside the R16 node budget).
@@ -202,7 +230,11 @@ function highlightLine(code: string, languageId: LanguageId): Token[] {
   for (const line of tokens) {
     for (const token of line) {
       if (token.content.length === 0) continue;
-      const type = colorToType(token.color);
+      const classified = colorToType(token.color);
+      // Fail a malformed numeric literal CLOSED to plain (#92) before the merge, so
+      // it coalesces with any adjacent plain run.
+      const type =
+        classified === "number" && !isValidNumericLiteral(token.content) ? "plain" : classified;
       const last = out[out.length - 1];
       if (last !== undefined && last.type === type) {
         out[out.length - 1] = { text: last.text + token.content, type };
