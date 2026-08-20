@@ -73,6 +73,7 @@ const HELP = [
   "(default: the current directory) and stores it under ~/.rennet/projects/.",
   "`--enrich` additionally runs the model-backed knowledge pass (initial or delta)",
   "through your installed Claude harness — one bounded turn, on your subscription.",
+  "`--model <id>` picks the harness model for that turn (e.g. claude-sonnet-5).",
 ].join("\n");
 
 /** Route argv to a subcommand. Returns a process exit code (serve never returns). */
@@ -137,7 +138,13 @@ export async function runCli(
     }
     case "map": {
       let parsed: {
-        values: { base?: string; json?: string; "projects-dir"?: string; enrich?: boolean };
+        values: {
+          base?: string;
+          json?: string;
+          "projects-dir"?: string;
+          enrich?: boolean;
+          model?: string;
+        };
         positionals: string[];
       };
       try {
@@ -150,13 +157,14 @@ export async function runCli(
             json: { type: "string" },
             "projects-dir": { type: "string" },
             enrich: { type: "boolean" },
+            model: { type: "string" },
           },
         });
         if (parsed.positionals.length > 1) throw new Error("expected at most one repository path");
       } catch (error) {
         io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
         io.err(
-          "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]",
+          "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich] [--model <id>]",
         );
         return 2;
       }
@@ -167,6 +175,7 @@ export async function runCli(
           json: parsed.values.json,
           projectsDir: parsed.values["projects-dir"],
           enrich: parsed.values.enrich === true,
+          model: parsed.values.model,
         },
         io,
         env,
@@ -440,7 +449,13 @@ async function devices(
  */
 async function buildMap(
   repoPath: string,
-  opts: { base?: string; json?: string; projectsDir?: string; enrich?: boolean },
+  opts: {
+    base?: string;
+    json?: string;
+    projectsDir?: string;
+    enrich?: boolean;
+    model?: string;
+  },
   io: CliIo,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
@@ -468,7 +483,15 @@ async function buildMap(
   io.out(`  stored: ${store.paths(manifest.repoKey).mapDir}`);
   const knowledgeStore = new KnowledgeStore(store);
   if (opts.enrich) {
-    const enrichExit = await enrichMap({ store, knowledgeStore, manifest, root, io, env });
+    const enrichExit = await enrichMap({
+      store,
+      knowledgeStore,
+      manifest,
+      root,
+      io,
+      env,
+      model: opts.model,
+    });
     if (enrichExit !== 0) return enrichExit;
   }
   if (opts.json) {
@@ -521,8 +544,9 @@ async function enrichMap(input: {
   root: string;
   io: CliIo;
   env: NodeJS.ProcessEnv;
+  model?: string;
 }): Promise<number> {
-  const { store, knowledgeStore, manifest, root, io, env } = input;
+  const { store, knowledgeStore, manifest, root, io, env, model } = input;
   const prior = knowledgeStore.loadLocal(manifest.repoKey);
   if (prior && prior.baseOid === manifest.baseOid) {
     io.out(`  knowledge: already current at this base OID (${prior.statements.length} statements)`);
@@ -548,6 +572,7 @@ async function enrichMap(input: {
     repoKey: manifest.repoKey,
     repoRoot: root,
     baseOid: manifest.baseOid,
+    ...(model === undefined ? {} : { model }),
   };
   const outcome = prior
     ? await (async () => {
