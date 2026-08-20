@@ -53,7 +53,11 @@ describe("CodeView — windowed diff holds the Pierre node-count envelope", () =
     // test can go red if windowing regresses.
     expect(nodeCount(full)).toBeGreaterThan(MAX_RENDERED_NODES);
     expect(windowed).toContain('data-total-rows="5000"');
-  });
+    // Generous timeout: this asserts NODE COUNTS, not render speed. The negative
+    // control renders the full 5000-line diff (deliberately heavy — that is the
+    // point), which can exceed vitest's default 5s on a loaded CI runner; the
+    // windowed product path stays cheap. Node counts are deterministic regardless.
+  }, 20_000);
 
   it("windows follow the scroll position: a mid-file seed renders a mid-file window, not row 0", () => {
     const diff = demoDiff(5000);
