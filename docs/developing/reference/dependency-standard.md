@@ -158,14 +158,28 @@ not bundle a harness executable or read a harness credential.
 
 ## Browser and mobile UI
 
-React owns rendering. `@rennet/ui` imports only `types`, `protocol`, `theme`, and
-browser-safe dependencies. It does not import `core`, adapters, Node, or Electron.
-Do not add overlapping component, dialog, menu, toast, diff, editor, or terminal
-families.
+React owns rendering, and the desktop UI splits in two (2026-08-20 shadcn/Base UI
+port). `@rennet/ui` is a **vendored shadcn/ui component kit built on Base UI**
+(`@base-ui/react`, MIT) — Button, Input, Dialog, Sheet, Popover, DropdownMenu,
+Select, Switch, Checkbox, Tabs, Tooltip, ScrollArea, Badge, Skeleton, Separator,
+Toast, and the `cmdk` Command palette — importing only `types` and `theme`.
+`@rennet/app-ui` composes the kit into Rennet's screens and imports only `types`,
+`protocol`, `theme`, `ui`, and browser-safe dependencies. Neither imports `core`,
+adapters, Node, or Electron.
+
+Base UI is the primary primitive family; **Radix is not banned** — a Radix
+dependency is fine where a shadcn component brings it (`cmdk` pulls Radix Dialog).
+The soft rule is to not run two *different* families for the *same* primitive
+without reason. Vendored components are re-themed onto the `--rn-*` palette (no
+hardcoded hex; `hex-lint`/`design-ramp` enforce the type/radius ramp). Other
+registries are admitted per component and license-verified at pull time; the
+license blocklist (mixed-licence Origin UI, proprietary Aceternity, Commons-Clause
+animate-ui) is checked then. Syntax highlighting uses `shiki`; icons use
+`lucide-react`; prose uses `react-markdown`.
 
 The mobile app uses Expo SDK 55, expo-router, and React Native 0.83.6. It imports
 `@rennet/client`, `@rennet/protocol`, and `@rennet/types`, not the DOM-bound UI
-package. Expo modules own camera, secure storage, notifications, linking, and
+packages (`@rennet/ui`, `@rennet/app-ui`). Expo modules own camera, secure storage, notifications, linking, and
 background tasks. AsyncStorage owns the replica cache, daemon list, and
 notification preferences.
 
