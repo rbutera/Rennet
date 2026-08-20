@@ -21,6 +21,7 @@ import type {
   CommandInput,
   CommandName,
   CommandOutput,
+  ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RennetBridge,
   ReviewAskStreamEvent,
@@ -36,6 +37,10 @@ export { ConnectionError } from "./connection-error";
 export interface SupervisedBridge {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
+  onProjectDetailProgress(
+    commandId: string,
+    listener: (event: ProjectDetailProgressEvent) => void,
+  ): () => void;
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
   /** Subscribe to daemon attention events (#383 batch). Daemon-wide; returns an unsubscribe. */
   onAttention(listener: (event: AttentionEventFrame) => void): () => void;
@@ -114,6 +119,7 @@ export interface ConnectionSupervisorOptions {
 
 type AskListener = (event: ReviewAskStreamEvent) => void;
 type ProgressListener = (event: ProjectProcessEvent) => void;
+type DetailProgressListener = (event: ProjectDetailProgressEvent) => void;
 type AttentionListener = (event: AttentionEventFrame) => void;
 /** Attention is daemon-wide, not keyed by review; one registry bucket under this constant key. */
 const ATTENTION_KEY = "*";
@@ -152,6 +158,8 @@ export class ConnectionSupervisor implements RennetBridge {
   // from review A never loses (or wrongly detaches) its live binding on review B.
   #askBridgeUnsub = new Map<string, Map<AskListener, () => void>>();
   #progressBridgeUnsub = new Map<string, Map<ProgressListener, () => void>>();
+  readonly #detailProgressRegistry = new Map<string, Set<DetailProgressListener>>();
+  #detailProgressBridgeUnsub = new Map<string, Map<DetailProgressListener, () => void>>();
   readonly #attentionRegistry = new Map<string, Set<AttentionListener>>();
   #attentionBridgeUnsub = new Map<string, Map<AttentionListener, () => void>>();
   #queued: QueuedInvoke[] = [];
@@ -273,6 +281,16 @@ export class ConnectionSupervisor implements RennetBridge {
     );
   }
 
+  onProjectDetailProgress(commandId: string, listener: DetailProgressListener): () => void {
+    return this.#register(
+      this.#detailProgressRegistry,
+      this.#detailProgressBridgeUnsub,
+      commandId,
+      listener,
+      (bridge) => bridge.onProjectDetailProgress(commandId, listener),
+    );
+  }
+
   /**
    * Subscribe to daemon attention events (#383 batch). Registry-backed like `onAskStream`, so a
    * reconnect re-attaches the listener to the fresh bridge and the connect-time attention replay
@@ -319,7 +337,18 @@ export class ConnectionSupervisor implements RennetBridge {
   #wireRegistry(bridge: SupervisedBridge): void {
     this.#askBridgeUnsub = new Map();
     this.#progressBridgeUnsub = new Map();
+    this.#detailProgressBridgeUnsub = new Map();
     this.#attentionBridgeUnsub = new Map();
+    for (const [commandId, listeners] of this.#detailProgressRegistry) {
+      for (const listener of listeners) {
+        mapSet(
+          this.#detailProgressBridgeUnsub,
+          commandId,
+          listener,
+          bridge.onProjectDetailProgress(commandId, listener),
+        );
+      }
+    }
     for (const [key, listeners] of this.#attentionRegistry) {
       for (const listener of listeners) {
         mapSet(this.#attentionBridgeUnsub, key, listener, bridge.onAttention(listener));

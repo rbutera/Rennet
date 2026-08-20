@@ -1,4 +1,4 @@
-import type { Project, PullRequest } from "@rennet/protocol";
+import type { Project, ProjectDetailProgressEvent, PullRequest } from "@rennet/protocol";
 import { projectDetailSchema } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { GitExec } from "./git-range-diff";
@@ -357,6 +357,36 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     expect(detail.prs).toHaveLength(1);
     expect(detail.prs[0]?.repository).toBe("acme/widget");
     expect(() => projectDetailSchema.parse(detail)).not.toThrow();
+  });
+
+  it("streams prs-start then one repo-prs per forge repo as PRs land", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1000 },
+        worktrees: [{ path: "/repo", branch: "main" }],
+        aheadBehind: {},
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listPullRequests: async (repository) => ({
+        prs: [pr({ repository }), pr({ repository })],
+        truncated: false,
+      }),
+    };
+    const events: ProjectDetailProgressEvent[] = [];
+    await loadProjectDetail(
+      depsWithPr(git, ["/repo"], prSource),
+      repoProject("/repo"),
+      undefined,
+      (e) => events.push(e),
+    );
+    expect(events).toEqual([
+      { kind: "prs-start", total: 1 },
+      { kind: "repo-prs", repo: "acme/widget", index: 1, total: 1, count: 2 },
+    ]);
   });
 
   it("emits matching repository identities so a local worktree folds into its PR row", async () => {

@@ -54,6 +54,7 @@ function composeBridge(
   return {
     invoke,
     onProgress: supervisor.onProgress.bind(supervisor),
+    onProjectDetailProgress: supervisor.onProjectDetailProgress.bind(supervisor),
     onAskStream: supervisor.onAskStream.bind(supervisor),
     platform: preload.platform,
     version: preload.version,

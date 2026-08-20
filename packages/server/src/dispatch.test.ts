@@ -27,6 +27,7 @@ import {
   type Project,
   type ProjectKind,
   type ProjectProcessEvent,
+  type ProjectProgressEvent,
   type ReviewAskStreamEvent,
   reviewAskStreamEventSchema,
 } from "@rennet/protocol";
@@ -2812,7 +2813,7 @@ describe("createDispatch — front door (issue #29)", () => {
       processedRepos: [summary],
     });
 
-    const streamed: ProjectProcessEvent[] = [];
+    const streamed: ProjectProgressEvent[] = [];
     const out = (await dispatch(
       "project.process",
       { commandId: randomUUID(), projectId: "p1" },
@@ -2873,8 +2874,8 @@ describe("createDispatch — front door (issue #29)", () => {
       },
     });
     const commandId = randomUUID();
-    const beforeRemount: ProjectProcessEvent[] = [];
-    const afterRemount: ProjectProcessEvent[] = [];
+    const beforeRemount: ProjectProgressEvent[] = [];
+    const afterRemount: ProjectProgressEvent[] = [];
 
     const first = dispatch(
       "project.process",

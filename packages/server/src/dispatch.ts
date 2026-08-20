@@ -39,8 +39,10 @@ import {
   type ProjectContextAskResult,
   type ProjectContextMapResult,
   type ProjectDetail,
+  type ProjectDetailProgressEvent,
   type ProjectKind,
   type ProjectProcessEvent,
+  type ProjectProgressEvent,
   type PrWorktreeSetup,
   type PullRequestState,
   parseCommandInput,
@@ -315,6 +317,8 @@ export interface DispatchDeps {
     projectId: string,
     prStates?: readonly PullRequestState[],
     localOnly?: boolean,
+    /** Per-repo PR-fetch narration, streamed under the input's `commandId`. */
+    emit?: (event: ProjectDetailProgressEvent) => void,
   ): Promise<ProjectDetail>;
   /**
    * Clean up a merged PR's local worktree/branch (the read-only row's action). A
@@ -583,7 +587,7 @@ function toForgeReviewTarget(target: {
  * request/response command, and for callers (tests) with no push channel.
  */
 export interface DispatchContext {
-  emitProgress?(event: ProjectProcessEvent): void;
+  emitProgress?(event: ProjectProgressEvent): void;
   /**
    * Stable identity for the renderer receiving progress. A remount replaces that
    * renderer's sink instead of adding a second sender for the same live run.
@@ -1409,9 +1413,18 @@ export function createDispatch(
           // viewer, which the renderer folds into one list. A missing GitHub token
           // degrades to the local-only half, never a failed fetch shown as zero PRs.
           const input = parseCommandInput(name, rawInput);
+          // When the input carried a commandId the transport built `emitProgress`
+          // (keyed to that id); pass it as the detail's PR-fetch narration sink. A
+          // plain request/response otherwise — no live-run registry: the fetch is
+          // short and the renderer subscribes before invoking, so no replay needed.
           return parseCommandOutput(
             name,
-            await deps.projectDetail(input.projectId, input.prStates, input.localOnly),
+            await deps.projectDetail(
+              input.projectId,
+              input.prStates,
+              input.localOnly,
+              ctx?.emitProgress,
+            ),
           );
         }
         case "project.cleanupWorktree": {
