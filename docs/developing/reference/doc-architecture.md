@@ -57,7 +57,7 @@ Read authority by question, not by rank:
 If any register disagrees with the product's intent, that is a documentation bug
 to reconcile rather than a reason to pick whichever sentence is convenient.
 
-[Promoted OpenSpec specifications](../../../openspec/specs/) define accepted behavior. Code and tests show what the current implementation does. When they disagree, document the implementation as current and the accepted contract as planned, with an active tracking link.
+[Promoted OpenSpec specifications](https://github.com/rbutera/rennet/tree/main/openspec/specs) define accepted behavior. Code and tests show what the current implementation does. When they disagree, document the implementation as current and the accepted contract as planned, with an active tracking link.
 
 ## What each page is for
 
@@ -72,7 +72,7 @@ to reconcile rather than a reason to pick whichever sentence is convenient.
 | How model jobs are assigned | [Model council](../concepts/model-council.md) |
 | How context reaches models | [Context assembly](../concepts/context-assembly.md) |
 | How a review becomes an outbound artifact | [Collation and publishing](../concepts/collation-and-publishing.md) |
-| Accepted behavior for one capability | [Promoted OpenSpec specifications](../../../openspec/specs/) |
+| Accepted behavior for one capability | [Promoted OpenSpec specifications](https://github.com/rbutera/rennet/tree/main/openspec/specs) |
 | What the product does now | Current code and tests |
 
 ## Separate current and planned claims

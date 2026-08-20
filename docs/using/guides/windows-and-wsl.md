@@ -131,4 +131,4 @@ and detected distros disagree, status reports both and the command stops.
 
 - [Getting started](./getting-started.md) covers the main review loop.
 - [Remote access](./remote-access.md) covers paired devices and daemon binding.
-- [Desktop packaging](../../../apps/desktop/PACKAGING.md) documents developer packaging work.
+- [Desktop packaging](https://github.com/rbutera/rennet/blob/main/apps/desktop/PACKAGING.md) documents developer packaging work.

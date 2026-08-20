@@ -2,6 +2,7 @@ import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import starlightSidebarTopics from "starlight-sidebar-topics";
 import docsProjection from "./src/plugins/docs-projection-integration";
+import remarkCanonicalLinks from "./src/plugins/remark-canonical-links.mjs";
 import remarkMermaid from "./src/plugins/remark-mermaid.mjs";
 
 // Cloudflare Pages serves the static output. Starlight Sidebar Topics separates
@@ -14,7 +15,7 @@ export default defineConfig({
     // runs; excludeLangs is belt-and-suspenders so a stray fence is never sent
     // to the syntax highlighter.
     syntaxHighlight: { type: "shiki", excludeLangs: ["mermaid"] },
-    remarkPlugins: [remarkMermaid],
+    remarkPlugins: [remarkCanonicalLinks, remarkMermaid],
   },
   integrations: [
     docsProjection(),
@@ -22,9 +23,8 @@ export default defineConfig({
       title: "Rennet",
       description: "How to use and build the local-first Rennet review harness.",
       editLink: {
-        baseUrl: "https://github.com/rbutera/rennet/edit/main/",
+        baseUrl: "https://github.com/rbutera/rennet/edit/main/apps/docs/",
       },
-      lastUpdated: true,
       routeMiddleware: "./src/plugins/canonical-route-data.ts",
       // This traced lockup is the product identity, not text in a matching font.
       logo: {

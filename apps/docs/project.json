@@ -7,7 +7,13 @@
   "tags": ["scope:rennet", "layer:app", "platform:docs"],
   "targets": {
     "build": {
-      "outputs": ["{projectRoot}/dist", "{projectRoot}/.astro"],
+      "outputs": [
+        "{projectRoot}/dist",
+        "{projectRoot}/.astro",
+        "{projectRoot}/src/content/docs/using",
+        "{projectRoot}/src/content/docs/developing",
+        "{projectRoot}/src/content/docs/adr"
+      ],
       "command": "pnpm --dir apps/docs exec astro build"
     },
     "test": {
@@ -22,7 +28,12 @@
         "{workspaceRoot}/packages/**/project.json",
         "{workspaceRoot}/packages/**/package.json"
       ],
-      "command": "pnpm --dir apps/docs exec astro sync && pnpm exec vitest run apps/docs/src/plugins/docs-projection.test.ts && node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs ."
+      "outputs": [
+        "{projectRoot}/src/content/docs/using",
+        "{projectRoot}/src/content/docs/developing",
+        "{projectRoot}/src/content/docs/adr"
+      ],
+      "command": "pnpm --dir apps/docs exec astro sync && pnpm exec vitest run apps/docs/src/plugins/docs-projection.test.ts apps/docs/src/plugins/remark-canonical-links.test.ts && node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs ."
     },
     "typecheck": {
       "command": "pnpm exec tsc --noEmit -p apps/docs/tsconfig.json"

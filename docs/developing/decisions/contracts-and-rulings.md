@@ -128,8 +128,9 @@ user's identity.
 
 The UI currently asks the user to press and hold its Post control, and the daemon
 uses a short-lived consent token for `publish.review`. That implementation does
-not satisfy Rule Zero. The accepted publication contract is one explicit Post
-action over the current canonical preview, with no second confirmation or token.
+not satisfy Rule Zero. [The planned correction](https://github.com/rbutera/rennet/issues/435)
+is one explicit Post action over the current canonical preview, with no second
+confirmation or token.
 
 ## Routing and interaction
 

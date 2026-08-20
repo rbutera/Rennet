@@ -12,6 +12,7 @@ import {
   validateMonorepoMap,
   validatePlannedPages,
   validateProjectionParity,
+  validateRenderedSiteLinks,
 } from "./check-docs.mjs";
 
 const temporaryRoots = [];
@@ -99,7 +100,7 @@ describe("source-relative documentation links", () => {
         "",
         "[Second duplicate](concept.md#same-heading-1)",
         "",
-        "[Source](../../packages/core/src/index.ts)",
+        "[Source](https://github.com/rbutera/rennet/blob/main/packages/core/src/index.ts)",
       ].join("\n"),
     );
     await put(docsRoot, "using/concept.md", "# Concept\n\n## Same heading\n\n## Same heading\n");
@@ -113,9 +114,9 @@ describe("source-relative documentation links", () => {
         "",
         "[Second duplicate](concept.md#same-heading-1)",
         "",
-        "[Source](../../packages/core/src/index.ts)",
+        "[Source](https://github.com/rbutera/rennet/blob/main/packages/core/src/index.ts)",
         "",
-        "[Specs](../../openspec/specs/)",
+        "[Specs](https://github.com/rbutera/rennet/tree/main/openspec/specs)",
       ].join("\n"),
     );
 
@@ -144,6 +145,61 @@ describe("source-relative documentation links", () => {
       "link.missing-target",
       "link.missing-heading",
     ]);
+  });
+
+  it("rejects repository-relative targets from reader pages", async () => {
+    const { workspaceRoot, docsRoot } = await fixture();
+    await put(docsRoot, "README.md", "# Documentation\n\n[Guide](using/guide.md)\n");
+    await put(
+      docsRoot,
+      "using/guide.md",
+      "# Guide\n\n[Source](../../packages/core/src/index.ts)\n",
+    );
+    await put(workspaceRoot, "packages/core/src/index.ts", "export {};\n");
+
+    const issues = await validateLinks({ workspaceRoot, docsRoot });
+
+    assert.deepEqual(codes(issues), ["link.not-site-safe"]);
+  });
+});
+
+describe("rendered documentation links", () => {
+  it("rejects Markdown hrefs and missing same-site routes", async () => {
+    const { workspaceRoot } = await fixture();
+    const distRoot = path.join(workspaceRoot, "apps/docs/dist");
+    await put(
+      distRoot,
+      "using/index.html",
+      '<a href="./guide.md">Source</a><a href="/missing/">Missing</a>',
+    );
+
+    const issues = await validateRenderedSiteLinks({ workspaceRoot, distRoot });
+
+    assert.deepEqual(codes(issues), ["rendered.markdown-source-link", "rendered.missing-target"]);
+  });
+
+  it("accepts built routes, fragments, and external repository links", async () => {
+    const { workspaceRoot } = await fixture();
+    const distRoot = path.join(workspaceRoot, "apps/docs/dist");
+    await put(distRoot, "using/index.html", '<a href="./guide/#start">Guide</a>');
+    await put(
+      distRoot,
+      "using/guide/index.html",
+      '<h2 id="start">Start</h2><a href="https://github.com/rbutera/rennet/blob/main/README.md">Repository</a>',
+    );
+
+    assert.deepEqual(await validateRenderedSiteLinks({ workspaceRoot, distRoot }), []);
+  });
+
+  it("rejects missing rendered headings", async () => {
+    const { workspaceRoot } = await fixture();
+    const distRoot = path.join(workspaceRoot, "apps/docs/dist");
+    await put(distRoot, "using/index.html", '<a href="./guide/#missing">Guide</a>');
+    await put(distRoot, "using/guide/index.html", '<h2 id="present">Present</h2>');
+
+    const issues = await validateRenderedSiteLinks({ workspaceRoot, distRoot });
+
+    assert.deepEqual(codes(issues), ["rendered.missing-heading"]);
   });
 });
 
@@ -262,12 +318,14 @@ describe("monorepo map", () => {
         packageName: "@rennet/desktop",
         root: "apps/desktop",
         type: "application",
+        dependencies: [],
       },
       {
         name: "rennet-core",
         packageName: "@rennet/core",
         root: "packages/group/core",
         type: "library",
+        dependencies: [],
       },
     ]);
   });
@@ -307,7 +365,7 @@ describe("monorepo map", () => {
         "## Applications",
         "",
         ...header,
-        "| `rennet-desktop` | `@rennet/desktop` | `apps/desktop` | Desktop app | Any package |",
+        "| `rennet-desktop` | `@rennet/desktop` | `apps/desktop` | Desktop app | None |",
         "",
         "## Packages",
         "",
@@ -349,7 +407,7 @@ describe("monorepo map", () => {
         "",
         "| Nx project | Package | Root | Responsibility | Allowed in-repository dependencies |",
         "| --- | --- | --- | --- | --- |",
-        "| `rennet-desktop` | `@rennet/wrong` | `apps/desktop` | Desktop app | Any package |",
+        "| `rennet-desktop` | `@rennet/wrong` | `apps/desktop` | Desktop app | None |",
       ].join("\n"),
     );
 
@@ -357,5 +415,53 @@ describe("monorepo map", () => {
 
     assert.deepEqual(codes(issues), ["monorepo.package-mismatch", "monorepo.missing-project"]);
     assert.match(issues[1].message, /rennet-core/);
+  });
+
+  it("rejects dependency cells that omit manifests or implicit dependencies", async () => {
+    const { workspaceRoot, docsRoot } = await fixture();
+    await put(
+      workspaceRoot,
+      "apps/docs/project.json",
+      JSON.stringify({
+        name: "rennet-docs",
+        projectType: "application",
+        implicitDependencies: ["rennet-docs-content"],
+      }),
+    );
+    await put(
+      workspaceRoot,
+      "apps/docs/package.json",
+      JSON.stringify({ name: "@rennet/docs", dependencies: { "@rennet/theme": "workspace:*" } }),
+    );
+    await put(
+      workspaceRoot,
+      "packages/theme/project.json",
+      JSON.stringify({ name: "rennet-theme", projectType: "library" }),
+    );
+    await put(
+      workspaceRoot,
+      "packages/theme/package.json",
+      JSON.stringify({ name: "@rennet/theme" }),
+    );
+    const header = [
+      "| Nx project | Package | Root | Responsibility | Allowed in-repository dependencies |",
+      "| --- | --- | --- | --- | --- |",
+    ];
+    await put(
+      docsRoot,
+      "developing/reference/monorepo-map.md",
+      [
+        "# Monorepo map",
+        "",
+        ...header,
+        "| `rennet-docs` | `@rennet/docs` | `apps/docs` | Renderer | theme |",
+        "| `rennet-theme` | `@rennet/theme` | `packages/theme` | Tokens | None |",
+      ].join("\n"),
+    );
+
+    const issues = await validateMonorepoMap({ workspaceRoot, docsRoot });
+
+    assert.deepEqual(codes(issues), ["monorepo.missing-declared-dependency"]);
+    assert.match(issues[0].message, /docs-content/);
   });
 });

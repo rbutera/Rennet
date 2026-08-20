@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type DocsProjectionPaths = {
@@ -21,6 +21,7 @@ export type DocsProjectionWatcher = {
 
 const canonicalSections = ["using", "developing", "adr"];
 const canonicalSectionNames = new Set(canonicalSections);
+const appOwnedEntries = new Set(["index.mdx"]);
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -55,10 +56,14 @@ export async function syncDocsProjection({
   projectionRoot,
 }: DocsProjectionPaths): Promise<void> {
   await mkdir(projectionRoot, { recursive: true });
+  for (const entry of await readdir(projectionRoot)) {
+    if (!appOwnedEntries.has(entry)) {
+      await rm(join(projectionRoot, entry), { force: true, recursive: true });
+    }
+  }
   for (const section of canonicalSections) {
     const canonicalSection = join(canonicalRoot, section);
     const projectedSection = join(projectionRoot, section);
-    await rm(projectedSection, { force: true, recursive: true });
     if (await pathExists(canonicalSection)) {
       await cp(canonicalSection, projectedSection, { force: true, recursive: true });
     }

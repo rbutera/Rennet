@@ -1,7 +1,7 @@
 ## Context
 
-Starlight 0.41.7 expects its collection at `<srcDir>/content/docs`. Navigation,
-Markdown processing, and Git dates all use that path. Root `docs/` must expose
+Starlight 0.41.7 expects its collection at `<srcDir>/content/docs`. Navigation
+and Markdown processing use that path. Root `docs/` must expose
 the canonical pages directly to GitHub readers, while Nx and the Cloudflare
 workflow must react to changes in either the renderer or the content.
 
@@ -15,7 +15,7 @@ explicitly planned material belongs in the documentation library.
 Goals:
 
 - Keep one committed copy of every reader-facing page.
-- Preserve normal Starlight routing, navigation, Mermaid rendering, Git dates, and development reloads.
+- Preserve normal Starlight routing, navigation, Mermaid rendering, and development reloads.
 - Make omissions and broken links detectable without generating the prose itself.
 - Give every current or planned file a fact audit and a full prose edit.
 - Keep authorities scoped and explicit.
@@ -36,7 +36,10 @@ Canonical pages live at `docs/using`, `docs/developing`, and `docs/adr`.
 homepage under `apps/docs` because the MDX uses Starlight components and has a
 different job from the repository map.
 
-Page links use source-relative Markdown paths. Starlight resolves them during build, while GitHub opens the same files directly. Current routes do not need compatibility redirects.
+Page links use source-relative Markdown paths. A remark transform converts links
+between canonical pages to Starlight routes during the build, while GitHub opens
+the source paths directly. Repository references outside the documentation
+library use full GitHub URLs. Current routes do not need compatibility redirects.
 
 ### The app consumes an ignored projection
 
@@ -45,7 +48,10 @@ before Astro sync, build, preview, or development. An Astro integration watches
 root docs through Vite and applies add, change, and unlink events. Each initial
 sync deletes stale projected files before copying the canonical tree.
 
-Route middleware maps projected paths back to `docs/...` for source links and Git-derived update dates. The projection never appears in links and never enters Git.
+Route middleware maps projected paths back to `docs/...` for source links. The
+site does not derive page metadata from Git history, so builds remain
+deterministic in shallow and full clones. The projection never appears in links
+and never enters Git.
 
 A custom Astro content loader cannot satisfy the Starlight code that reads the
 fixed path outside the loader. A symlink is unreliable across Git checkouts on

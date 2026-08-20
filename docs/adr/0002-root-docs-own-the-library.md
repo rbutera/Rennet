@@ -13,7 +13,7 @@ Rennet keeps its only committed reader-facing Markdown under root `docs/`, while
 
 Canonical pages live under `docs/using`, `docs/developing`, and `docs/adr`. `docs/README.md` lists every page for GitHub readers. The Starlight homepage remains under `apps/docs` because it uses site components.
 
-Before Astro sync, build, preview, or development, the docs app mirrors the canonical sections into its ignored `src/content/docs` directory. Development watches the canonical files and applies additions, changes, and deletions to the projection. Route middleware maps edit links and Git dates back to the canonical source.
+Before Astro sync, build, preview, or development, the docs app mirrors the canonical sections into its ignored `src/content/docs` directory. Development watches the canonical files and applies additions, changes, and deletions to the projection. Route middleware maps edit links back to the canonical source. Builds do not read Git history for page metadata.
 
 Nx models root documentation as `rennet-docs-content`. The `rennet-docs` application depends on that project and `rennet-theme`, so content and theme changes invalidate the site build.
 

@@ -12,7 +12,7 @@ check rejects missing or misnamed rows here.
 | Nx project | Package | Root | Responsibility | Allowed in-repository dependencies |
 | --- | --- | --- | --- | --- |
 | `rennet-desktop` | `@rennet/desktop` | `apps/desktop` | Electron shell, browser bundle, packaging, and end-to-end tests | adapters, client, core, protocol, server, types, ui |
-| `rennet-docs` | `@rennet/docs` | `apps/docs` | Astro and Starlight documentation renderer | theme |
+| `rennet-docs` | `@rennet/docs` | `apps/docs` | Astro and Starlight documentation renderer | docs-content, theme |
 | `rennet-marketing` | `@rennet/marketing` | `apps/marketing` | Public marketing site | theme |
 | `rennet-mobile` | `@rennet/mobile` | `apps/mobile` | Expo mobile client | client, protocol, types |
 

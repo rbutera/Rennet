@@ -83,6 +83,24 @@ inspection of bytes that were not available to a runner.
 CI signals appear alongside findings as informational evidence. They do not
 become model-authored findings and do not hide code that remains unread.
 
+### UI verification
+
+A UI-touching deep review can schedule one separate verification turn when a
+Claude adapter is available. The turn uses the reviewed project's installed
+tests, Storybook, development server, or browser tools to mount the changed
+surface. It captures bounded screenshots in the review evidence store, checks
+accessibility with the project's tools, and compares the result with the pull
+request title, body, and captured specifications.
+
+The pass runs after the initial Flagged result, so it does not delay the first
+review surface. Its observations return as ordinary anchored findings and use
+the same dispositions and publishing path as other findings. Screenshots load
+from the evidence store when the reviewer opens them.
+
+The status distinguishes a completed run, a non-UI change, a pending pass, and
+an unavailable verifier. A mount failure or missing evidence remains
+inconclusive; it is never presented as an all-clear.
+
 ## Noise
 
 Noise is the visible remainder, not a discard bin. The noise runner proposes

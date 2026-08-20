@@ -131,6 +131,21 @@ function markdownLinks(markdown) {
   return links;
 }
 
+function renderedAnchorLinks(html) {
+  const links = [];
+  const pattern = /<a\b[^>]*\bhref=(['"])(.*?)\1/gi;
+  for (const match of html.matchAll(pattern)) {
+    links.push(
+      match[2].replaceAll("&amp;", "&").replaceAll("&quot;", '"').replaceAll("&#39;", "'"),
+    );
+  }
+  return links;
+}
+
+function renderedIds(html) {
+  return new Set([...html.matchAll(/\bid=(['"])(.*?)\1/gi)].map((match) => match[2]));
+}
+
 function splitDestination(destination) {
   const hashIndex = destination.indexOf("#");
   const beforeHash = hashIndex === -1 ? destination : destination.slice(0, hashIndex);
@@ -311,6 +326,21 @@ export async function validateLinks({ workspaceRoot, docsRoot }) {
         continue;
       }
 
+      if (
+        path.resolve(sourcePath) !== path.resolve(sources[0]) &&
+        !isInside(docsRoot, targetPath)
+      ) {
+        issues.push(
+          issue(
+            "link.not-site-safe",
+            sourceDisplay,
+            `reader-page repository links must use a full GitHub URL: ${link.destination}`,
+            link.line,
+          ),
+        );
+        continue;
+      }
+
       if (heading && MARKDOWN_EXTENSION.test(targetPath)) {
         let headings = headingCache.get(targetPath);
         if (!headings) {
@@ -333,6 +363,93 @@ export async function validateLinks({ workspaceRoot, docsRoot }) {
 
   return issues.sort(
     (left, right) => left.file.localeCompare(right.file) || left.line - right.line,
+  );
+}
+
+export async function validateRenderedSiteLinks({ workspaceRoot, distRoot }) {
+  if (!(await exists(distRoot))) return [];
+  const issues = [];
+  const htmlFiles = await walkFiles(distRoot, (filePath) => filePath.endsWith(".html"));
+  const idCache = new Map();
+
+  for (const htmlPath of htmlFiles) {
+    const relativeHtmlPath = displayPath(distRoot, htmlPath);
+    const routePath = relativeHtmlPath.replace(/(?:^|\/)index\.html$/, "/");
+    const baseUrl = new URL(routePath, "https://docs.rennet.dev/");
+    const html = await readFile(htmlPath, "utf8");
+
+    for (const destination of renderedAnchorLinks(html)) {
+      let targetUrl;
+      try {
+        targetUrl = new URL(destination, baseUrl);
+      } catch {
+        issues.push(
+          issue(
+            "rendered.invalid-link",
+            displayPath(workspaceRoot, htmlPath),
+            `rendered link is not a valid URL: ${destination}`,
+          ),
+        );
+        continue;
+      }
+      if (targetUrl.origin !== baseUrl.origin) continue;
+
+      let pathname;
+      try {
+        pathname = decodeURIComponent(targetUrl.pathname);
+      } catch {
+        pathname = targetUrl.pathname;
+      }
+      if (MARKDOWN_EXTENSION.test(pathname)) {
+        issues.push(
+          issue(
+            "rendered.markdown-source-link",
+            displayPath(workspaceRoot, htmlPath),
+            `rendered site links to a Markdown source path: ${destination}`,
+          ),
+        );
+        continue;
+      }
+
+      const relativeTarget = pathname.replace(/^\/+/, "");
+      const targetPath = pathname.endsWith("/")
+        ? path.join(distRoot, relativeTarget, "index.html")
+        : path.extname(pathname)
+          ? path.join(distRoot, relativeTarget)
+          : path.join(distRoot, relativeTarget, "index.html");
+      if (!(await existsAsFile(targetPath))) {
+        issues.push(
+          issue(
+            "rendered.missing-target",
+            displayPath(workspaceRoot, htmlPath),
+            `rendered site target does not exist: ${destination}`,
+          ),
+        );
+        continue;
+      }
+      if (targetUrl.hash) {
+        const targetId = decodeURIComponent(targetUrl.hash.slice(1));
+        let ids = idCache.get(targetPath);
+        if (!ids) {
+          ids = renderedIds(await readFile(targetPath, "utf8"));
+          idCache.set(targetPath, ids);
+        }
+        if (!ids.has(targetId)) {
+          issues.push(
+            issue(
+              "rendered.missing-heading",
+              displayPath(workspaceRoot, htmlPath),
+              `rendered site heading does not exist: ${destination}`,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  return issues.sort(
+    (left, right) =>
+      left.file.localeCompare(right.file) || left.message.localeCompare(right.message),
   );
 }
 
@@ -511,6 +628,8 @@ export async function discoverWorkspaceProjects({ workspaceRoot }) {
       packageName: typeof manifest?.name === "string" ? manifest.name : null,
       root: displayPath(workspaceRoot, projectRoot),
       type: config.projectType,
+      config,
+      manifest,
     });
   }
 
@@ -520,7 +639,36 @@ export async function discoverWorkspaceProjects({ workspaceRoot }) {
       throw new Error(`duplicate resolved Nx project name: ${project.name}`);
     names.add(project.name);
   }
-  return projects.sort((left, right) => left.root.localeCompare(right.root));
+  const projectByPackage = new Map(
+    projects
+      .filter((project) => project.packageName)
+      .map((project) => [project.packageName, project.name]),
+  );
+  return projects
+    .map(({ config, manifest, ...project }) => {
+      const dependencyNames = new Set(
+        Array.isArray(config.implicitDependencies) ? config.implicitDependencies : [],
+      );
+      for (const field of [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+      ]) {
+        for (const packageName of Object.keys(manifest?.[field] ?? {})) {
+          const projectName = projectByPackage.get(packageName);
+          if (projectName) dependencyNames.add(projectName);
+        }
+      }
+      return {
+        ...project,
+        dependencies: [...dependencyNames]
+          .filter((name) => name !== project.name && name.startsWith("rennet-"))
+          .map((name) => name.slice("rennet-".length))
+          .sort(),
+      };
+    })
+    .sort((left, right) => left.root.localeCompare(right.root));
 }
 
 function tableCells(line) {
@@ -654,6 +802,28 @@ export async function validateMonorepoMap({ workspaceRoot, docsRoot }) {
           row.line,
         ),
       );
+    } else {
+      const documentedDependencies =
+        dependencies === "None"
+          ? []
+          : dependencies
+              .split(",")
+              .map((dependency) => dependency.trim())
+              .filter(Boolean)
+              .sort();
+      const undocumentedDependencies = project.dependencies.filter(
+        (dependency) => !documentedDependencies.includes(dependency),
+      );
+      if (undocumentedDependencies.length > 0) {
+        issues.push(
+          issue(
+            "monorepo.missing-declared-dependency",
+            displayPath(workspaceRoot, mapPath),
+            `${name} omits declared dependencies: ${undocumentedDependencies.join(", ")}`,
+            row.line,
+          ),
+        );
+      }
     }
   }
 
@@ -674,9 +844,10 @@ export async function validateMonorepoMap({ workspaceRoot, docsRoot }) {
     ["monorepo.root-mismatch", 1],
     ["monorepo.missing-responsibility", 2],
     ["monorepo.missing-dependencies", 3],
-    ["monorepo.duplicate-project", 4],
-    ["monorepo.unexpected-project", 5],
-    ["monorepo.missing-project", 6],
+    ["monorepo.missing-declared-dependency", 4],
+    ["monorepo.duplicate-project", 5],
+    ["monorepo.unexpected-project", 6],
+    ["monorepo.missing-project", 7],
   ]);
   return issues.sort(
     (left, right) =>
@@ -689,6 +860,7 @@ export async function validateDocumentation({
   workspaceRoot,
   docsRoot = path.join(workspaceRoot, "docs"),
   projectionRoot = path.join(workspaceRoot, "apps/docs/src/content/docs"),
+  distRoot = path.join(workspaceRoot, "apps/docs/dist"),
 }) {
   const checks = await Promise.all([
     validateCanonicalInventory({ docsRoot }),
@@ -696,6 +868,7 @@ export async function validateDocumentation({
     validatePlannedPages({ docsRoot }),
     validateProjectionParity({ docsRoot, projectionRoot }),
     validateMonorepoMap({ workspaceRoot, docsRoot }),
+    validateRenderedSiteLinks({ workspaceRoot, distRoot }),
   ]);
   return checks.flat();
 }

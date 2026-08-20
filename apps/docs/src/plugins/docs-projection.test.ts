@@ -83,6 +83,7 @@ describe("canonical docs projection", () => {
     const paths = await temporaryProjection();
     await mkdir(join(paths.projectionRoot, "developing"), { recursive: true });
     await writeFile(join(paths.projectionRoot, "developing", "stale.md"), "stale\n");
+    await writeFile(join(paths.projectionRoot, "retired.md"), "retired\n");
     await writeFile(join(paths.projectionRoot, "index.mdx"), "homepage\n");
 
     await syncDocsProjection(paths);
@@ -90,6 +91,7 @@ describe("canonical docs projection", () => {
     await expect(
       readFile(join(paths.projectionRoot, "developing", "stale.md"), "utf8"),
     ).rejects.toThrow();
+    await expect(readFile(join(paths.projectionRoot, "retired.md"), "utf8")).rejects.toThrow();
     await expect(readFile(join(paths.projectionRoot, "index.mdx"), "utf8")).resolves.toBe(
       "homepage\n",
     );
