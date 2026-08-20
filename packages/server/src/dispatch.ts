@@ -273,6 +273,7 @@ export interface DispatchDeps {
    */
   readonly projects: {
     list(): Project[];
+    remove(input: { projectId: string }): { projects: Project[] };
     add(input: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }): {
       project: Project;
       projects: Project[];
@@ -1368,6 +1369,13 @@ export function createDispatch(
           });
           allowedRoots.add(project.openPath);
           return parseCommandOutput(name, { project, projects });
+        }
+        case "projects.remove": {
+          // Forget a project. The working tree is untouched; only the stored record
+          // is dropped. Returns the surviving list so the front door updates at once.
+          const input = parseCommandInput(name, rawInput);
+          const { projects } = deps.projects.remove({ projectId: input.projectId });
+          return parseCommandOutput(name, { projects });
         }
         case "project.process": {
           // The initial context dump: build each included repo's ProjectSnapshot,
