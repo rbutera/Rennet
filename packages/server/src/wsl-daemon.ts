@@ -24,9 +24,14 @@ const PROBE_TIMEOUT_MS = 500;
 export type FetchLike = (
   url: string,
   init: { signal: AbortSignal },
-) => Promise<{ readonly ok: boolean; json(): Promise<unknown> }>;
+) => Promise<{ readonly status: number; json(): Promise<unknown> }>;
 
-/** Executes a `LocusCommand` in the distro, resolving its stdout + exit code. */
+/**
+ * Executes a `LocusCommand` in the distro, resolving its stdout + exit code. The
+ * injected runner MUST be bounded (its own per-call timeout) — `waitForWslDaemon`
+ * enforces a deadline between polls, but a single `run` that hangs forever would
+ * still stall it. Wave 3's desktop runner wraps `execa` with a timeout to honor this.
+ */
 export type WslRunner = (command: LocusCommand) => Promise<WslRunResult>;
 
 /** Where a WSL daemon lives: which distro and its distro-native data dir. */
@@ -36,13 +41,19 @@ export interface WslDaemonLocation {
   readonly distroDataDir: string;
 }
 
+/** The child handle `spawnWslDaemon` needs: own its async `error`, then `unref`. */
+export interface WslChild {
+  on(event: "error", listener: (error: Error) => void): void;
+  unref(): void;
+}
+
 export interface WslSpawnDeps {
   /** The spawner; defaults to `child_process.spawn`. Tests inject a recorder. */
   readonly spawn?: (
     file: string,
     args: readonly string[],
     options: { readonly detached: true; readonly stdio: "ignore" },
-  ) => { unref(): void };
+  ) => WslChild;
 }
 
 /**
@@ -53,6 +64,12 @@ export interface WslSpawnDeps {
 export function spawnWslDaemon(launch: LocusCommand, deps: WslSpawnDeps = {}): void {
   const spawner = deps.spawn ?? ((file, args, options) => spawn(file, args as string[], options));
   const child = spawner(launch.file, launch.args, { detached: true, stdio: "ignore" });
+  // A detached child's async spawn failure (ENOENT: no wsl.exe, EACCES) would be an
+  // UNHANDLED 'error' event — which terminates the host process. Own it here (the
+  // wsl.exe pid is not useful for stopping the in-distro daemon, so we log, not throw).
+  child.on("error", (error) => {
+    console.error(`[wsl-daemon] failed to spawn ${launch.file}: ${error.message}`);
+  });
   child.unref();
 }
 
@@ -99,9 +116,12 @@ export async function probeWslDaemonHealth(
     const res = await doFetch(`http://localhost:${port}/healthz`, {
       signal: AbortSignal.timeout(deps.timeoutMs ?? PROBE_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (res.status !== 200) return null; // an identity-matching 200, not any 2xx.
     const parsed = daemonIdentitySchema.safeParse(await res.json());
-    return parsed.success ? parsed.data : null;
+    // The identity must claim the very port we probed — a mismatched wsPort means
+    // this is not the daemon we think it is (stale forward, wrong process).
+    if (!parsed.success || parsed.data.wsPort !== port) return null;
+    return parsed.data;
   } catch {
     return null;
   }
@@ -131,8 +151,12 @@ export async function waitForWslDaemon(
   const timeoutMs = deps.timeoutMs ?? 10_000;
   const intervalMs = deps.intervalMs ?? 100;
   const deadline = now() + timeoutMs;
+  // Learn the port with ONE claim read (retried only until it first appears — the
+  // daemon may still be booting); once known it is cached and never re-read, so all
+  // subsequent polling hits `/healthz` on the port, never `daemon.json` over 9P.
+  let port: number | null = null;
   for (;;) {
-    const port = await readWslDaemonPort(location, deps.run);
+    if (port === null) port = await readWslDaemonPort(location, deps.run);
     if (port !== null) {
       const identity = await probeWslDaemonHealth(port, {
         fetch: deps.fetch,
@@ -159,5 +183,12 @@ export async function stopWslDaemon(
   target: { readonly distro: string; readonly pid: number },
   run: WslRunner,
 ): Promise<void> {
-  await run(locusCommand({ kind: "wsl", distro: target.distro }, "kill", [String(target.pid)]));
+  const { code } = await run(
+    locusCommand({ kind: "wsl", distro: target.distro }, "kill", [String(target.pid)]),
+  );
+  if (code !== 0) {
+    throw new Error(
+      `could not stop WSL daemon pid ${target.pid} in "${target.distro}" (kill exited ${code})`,
+    );
+  }
 }
