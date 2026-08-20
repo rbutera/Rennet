@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -471,6 +472,69 @@ export async function validateRenderedSiteLinks({ workspaceRoot, distRoot }) {
   );
 }
 
+function newestGitDate(workspaceRoot, filePath) {
+  try {
+    const relativePath = displayPath(workspaceRoot, filePath);
+    const timestamp = execFileSync(
+      "git",
+      ["log", "--follow", "--format=%ct", "--max-count=1", "--", relativePath],
+      { cwd: workspaceRoot, encoding: "utf8" },
+    ).trim();
+    return /^\d+$/.test(timestamp) ? new Date(Number(timestamp) * 1000) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function validateRenderedSiteMetadata({
+  workspaceRoot,
+  docsRoot,
+  distRoot,
+  commitDateForPath = (filePath) => newestGitDate(workspaceRoot, filePath),
+}) {
+  const issues = [];
+  for (const canonicalPath of await canonicalPages(docsRoot)) {
+    const relativePath = displayPath(docsRoot, canonicalPath);
+    const route = relativePath.replace(MARKDOWN_EXTENSION, "");
+    const renderedPath = route.endsWith("/index")
+      ? path.join(distRoot, route.slice(0, -"index".length), "index.html")
+      : path.join(distRoot, route, "index.html");
+    if (!(await existsAsFile(renderedPath))) continue;
+
+    const html = await readFile(renderedPath, "utf8");
+    const expectedEditUrl = `https://github.com/rbutera/rennet/edit/main/docs/${relativePath}`;
+    if (!html.includes(`href="${expectedEditUrl}"`)) {
+      issues.push(
+        issue(
+          "rendered.edit-link-mismatch",
+          displayPath(workspaceRoot, renderedPath),
+          `rendered edit link does not target docs/${relativePath}`,
+        ),
+      );
+    }
+
+    const commitDate = commitDateForPath(canonicalPath);
+    if (!commitDate) {
+      issues.push(
+        issue(
+          "rendered.missing-source-date",
+          displayPath(workspaceRoot, canonicalPath),
+          "canonical page has no Git date",
+        ),
+      );
+    } else if (!html.includes(`<time datetime="${commitDate.toISOString()}">`)) {
+      issues.push(
+        issue(
+          "rendered.date-mismatch",
+          displayPath(workspaceRoot, renderedPath),
+          `rendered update date does not match docs/${relativePath}`,
+        ),
+      );
+    }
+  }
+  return issues;
+}
+
 export async function validatePlannedPages({ docsRoot }) {
   const issues = [];
 
@@ -844,6 +908,7 @@ export async function validateDocumentation({
     validateProjectionParity({ docsRoot, projectionRoot }),
     validateMonorepoMap({ workspaceRoot, docsRoot }),
     validateRenderedSiteLinks({ workspaceRoot, distRoot }),
+    validateRenderedSiteMetadata({ workspaceRoot, docsRoot, distRoot }),
   ]);
   return checks.flat();
 }

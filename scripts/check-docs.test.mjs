@@ -13,6 +13,7 @@ import {
   validatePlannedPages,
   validateProjectionParity,
   validateRenderedSiteLinks,
+  validateRenderedSiteMetadata,
 } from "./check-docs.mjs";
 
 const temporaryRoots = [];
@@ -239,6 +240,43 @@ describe("rendered documentation links", () => {
     const issues = await validateRenderedSiteLinks({ workspaceRoot, distRoot });
 
     assert.deepEqual(codes(issues), ["rendered.missing-heading"]);
+  });
+});
+
+describe("rendered documentation metadata", () => {
+  it("requires canonical edit links and Git dates", async () => {
+    const { workspaceRoot, docsRoot } = await fixture();
+    const distRoot = path.join(workspaceRoot, "apps/docs/dist");
+    const commitDate = new Date("2026-08-20T12:00:00.000Z");
+    await put(docsRoot, "using/index.md", "# Using\n");
+    await put(
+      distRoot,
+      "using/index.html",
+      `<a href="https://github.com/rbutera/rennet/edit/main/docs/using/index.md">Edit</a><time datetime="${commitDate.toISOString()}">Date</time>`,
+    );
+
+    assert.deepEqual(
+      await validateRenderedSiteMetadata({
+        workspaceRoot,
+        docsRoot,
+        distRoot,
+        commitDateForPath: () => commitDate,
+      }),
+      [],
+    );
+
+    await put(distRoot, "using/index.html", '<a href="https://example.com">Edit</a>');
+    assert.deepEqual(
+      codes(
+        await validateRenderedSiteMetadata({
+          workspaceRoot,
+          docsRoot,
+          distRoot,
+          commitDateForPath: () => commitDate,
+        }),
+      ),
+      ["rendered.edit-link-mismatch", "rendered.date-mismatch"],
+    );
   });
 });
 

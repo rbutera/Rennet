@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { defineRouteMiddleware } from "@astrojs/starlight/route-data";
 import { canonicalPathForProjected } from "./docs-projection";
 
-const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+const repositoryRoot = resolve(process.cwd(), "../..");
 const editBaseUrl = "https://github.com/rbutera/rennet/edit/main/";
 
 function newestCommitDate(path: string): Date | undefined {
