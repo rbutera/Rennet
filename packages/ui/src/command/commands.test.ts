@@ -255,7 +255,7 @@ describe("command catalogue (single source)", () => {
       ["nav.project", "Go to project…", "Navigate", null],
       ["nav.draft", "Go to Draft", "Navigate", null],
       ["nav.paper", "Go to Paper", "Navigate", null],
-      ["nav.settings", "Open Settings", "Navigate", null],
+      ["nav.settings", "Open Settings", "Navigate", "mod+,"],
       ["nav.openReview", "Open review…", "Navigate", null],
       ["nav.reviewDirectly", "Review directly", "Navigate", null],
       ["nav.files", "Show Files view", "Navigate", null],

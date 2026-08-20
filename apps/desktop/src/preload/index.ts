@@ -9,6 +9,7 @@ const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const WS_PORT_ARG = "--rennet-ws-port=";
+const VERSION_ARG = "--rennet-version=";
 
 /** A downloaded-and-ready update, as pushed (or replayed) by MAIN. */
 export interface UpdateReadyInfo {
@@ -27,6 +28,8 @@ function parseUpdateReady(payload: unknown): UpdateReadyInfo | null {
 export interface RennetPreload {
   /** The host platform (`process.platform`), so the renderer can gate macOS-only chrome. */
   readonly platform: string;
+  /** The host app version (`app.getVersion()`), read from the injected argv flag. */
+  readonly version: string;
   /** The loopback WS port the server bound (#378), read from the injected argv flag. */
   readonly wsPort: number;
   /**
@@ -49,9 +52,12 @@ export interface RennetPreload {
 // it lands in the sandboxed preload's `process.argv`.
 const wsPortArg = process.argv.find((arg) => arg.startsWith(WS_PORT_ARG));
 const wsPort = wsPortArg ? Number.parseInt(wsPortArg.slice(WS_PORT_ARG.length), 10) : 0;
+const versionArg = process.argv.find((arg) => arg.startsWith(VERSION_ARG));
+const version = versionArg ? versionArg.slice(VERSION_ARG.length) : "";
 
 const preload: RennetPreload = {
   platform: process.platform,
+  version,
   wsPort,
   chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
   onUpdateReady: (listener) => {

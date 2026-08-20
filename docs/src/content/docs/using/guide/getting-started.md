@@ -92,12 +92,21 @@ Keyboard settings show the new shortcut. Overrides are stored on this machine on
   shows the raw value as invalid and Rennet uses that command's default until you
   replace, unbind, or reset it.
 
+### The Rennet logo is the app menu
+
+The Rennet mark in the top-left of the window is a button: click it for a small
+panel of app destinations — **Settings**, **Back to projects**, and
+**Documentation** (which opens the docsite in your browser) — with the current
+version at its foot. When an update is staged it also grows a highlighted
+**Restart to update** row and a badge on the mark. Settings also has a default
+shortcut, `⌘,` on macOS (`Ctrl+,` elsewhere).
+
 ### The palette is the command surface
 
 Every command lives in the palette — press `⌘K` (or `Ctrl+K`) to open it and run
 one. **Settings → Keyboard** lists the stable commands and lets you remap their
 chords; dynamic entries like recent surfaces and lens jumps are palette-only.
-There is no command menu on the window itself.
+The one always-present menu on the window is the logo panel above.
 
 On macOS, Rennet installs the standard platform menu — the app menu, **Edit**, and
 **Window** — because the system expects one there. It handles native niceties like

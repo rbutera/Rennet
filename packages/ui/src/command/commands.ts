@@ -139,7 +139,7 @@ export const COMMAND_CATALOGUE: readonly CommandDef[] = [
   { id: "nav.project", title: "Go to project…", group: "Navigate" },
   { id: "nav.draft", title: "Go to Draft", group: "Navigate" },
   { id: "nav.paper", title: "Go to Paper", group: "Navigate" },
-  { id: "nav.settings", title: "Open Settings", group: "Navigate" },
+  { id: "nav.settings", title: "Open Settings", group: "Navigate", keybinding: "mod+," },
   { id: "nav.openReview", title: "Open review…", group: "Navigate" },
   { id: "nav.reviewDirectly", title: "Review directly", group: "Navigate" },
   { id: "nav.files", title: "Show Files view", group: "Navigate" },

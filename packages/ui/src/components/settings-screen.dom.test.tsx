@@ -577,18 +577,18 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
     const settingsRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Open Settings"),
+      row.textContent?.includes("Back to projects"),
     );
     expect(settingsRow?.textContent).toContain("unbound");
     fireEvent.click(settingsRow?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(getByLabelText("Press the new chord for Open Settings"), { key: "s" });
+    fireEvent.keyDown(getByLabelText("Press the new chord for Back to projects"), { key: "s" });
 
     await waitFor(() =>
       expect(
         calls.some(
           (call) =>
             call.name === "settings.setKeybinding" &&
-            (call.input as { id?: string; keybinding?: string }).id === "nav.settings" &&
+            (call.input as { id?: string; keybinding?: string }).id === "nav.projects" &&
             (call.input as { keybinding?: string }).keybinding === "s",
         ),
       ).toBe(true),
