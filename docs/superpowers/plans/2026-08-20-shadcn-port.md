@@ -279,9 +279,13 @@ Wave gate: `pnpm check`, plus manual run (`pnpm nx run rennet-desktop:serve` or 
 
 ## Wave 3 — Command palette, resizable panes, markdown
 
-One PR.
+One PR. **Delivered 2026-08-20: only Task 3.3 (markdown) was applicable.** 3.1 is blocked on a false premise and 3.2 had no migration target — both recorded below; neither was forced.
 
-### Task 3.1: Command palette on kit Command
+> **3.1 BLOCKED — there is no cmdk-free "Base UI Command."** `npx shadcn add command` pulls a Command that hard-depends on `cmdk` (which drags `@radix-ui/*`) in **every** registry checked (`base-nova` core and the MIT `basecn` gap-filler both list `cmdk` in their `command.json`). Decision §1's premise ("shadcn's Base UI Command") does not exist as a shippable artifact, and the no-Radix / no-cmdk rule is firm. The existing hand-rolled `command-palette.tsx` is kept (it works and pulls no Radix). **Open decision for Rai:** either keep it bespoke, or hand-vendor a kit `Command` on Base UI's native `Autocomplete`/`Combobox` (they own filtering + keyboard-nav natively) — that would honor the boundary and the delete-the-glue intent, but it is a real build, not a pull. Not done unilaterally.
+>
+> **3.2 DROPPED — no resizable panes exist to migrate.** Repo-wide search found no hand-managed split panes in `workspace.tsx`/`project-detail.tsx` (no pointer/drag handlers, no `onLayout`, no persisted sizes). The one two-column region is a fixed `flex` 1fr/1fr split with nothing to persist. Converting it to a draggable `ResizablePanelGroup` is net-new feature work (Rule Zero / YAGNI), not a migration — so `react-resizable-panels` was NOT added. Revisit only if a genuinely resizable surface is specced. (For the record, its latest is <7 days old; the correct pin would be `react-resizable-panels@4.12.2`, 2026-07-12, MIT.)
+
+### Task 3.1: Command palette on kit Command — SUPERSEDED (see box above)
 
 **Files:**
 - Pull: `npx shadcn add command` (Base UI variant — verify no `cmdk` or `@radix-ui/*` lands in `pnpm-lock.yaml`; if the pulled file imports raw cmdk, stop and use the Base UI Command from shadcn's `/components/base/` docs path)
