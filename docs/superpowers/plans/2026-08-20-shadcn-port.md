@@ -406,11 +406,20 @@ One PR. Same UX, new substrate. Redesign is explicitly out of scope (separate fu
 
 ### Task 6.1: Pull AI-chat components + map the surfaces
 
-**Files:**
+**Assessment (2026-08-20) — premise FALSIFIED; NO applicable migration target; no deps pulled (like Wave 3 command-palette / 3.2 resizable / 5.2 diff / 5.4 lists-trees).** The four AI-chat components were each fetched with `npx shadcn@latest view` and read before touching anything. They EXIST and install on Base UI, but they are full-screen **two-party chat** primitives — they do not fit Rennet's **anchored margin-rail private-review threads**, and forcing them would be a chat-bubble redesign (explicitly out of scope) that breaks the #85/#356 margin-rail identity. The conversation surfaces are already re-platformed onto the kit where a kit primitive applies.
+
+- **Bubble / Message — no fit.** `@shadcn/message` + `@shadcn/bubble` are chat-bubble primitives: `data-align="start|end"`, `data-[align=end]:flex-row-reverse`, a `MessageAvatar`, `max-w-[80%]` self-ending bubbles, all on Tailwind semantic tokens (`bg-primary`, `text-primary-foreground`, `bg-muted`, `text-muted-foreground`). Rennet's `MessageCard` is a **full-width stacked review-annotation `<article>`** — author header, serif body, and `finding`/`draft comment`/`sub-thread` promote verbs — on Rennet's own `--rn-*` token vocabulary (`text-ink`, `bg-accent-soft`, `bg-raised`, `font-serif`), carrying the load-bearing `data-author` / `data-message-id` / `data-status` / `is-streaming` / `is-interrupted` hooks the tests select on. No left/right alignment, no avatars, no bubbles. Re-expressing it as chat bubbles is a redesign, not a re-platform. **NOT pulled.**
+- **Message Scroller — no target.** `@shadcn/message-scroller` is a full-screen chat autoscroll pin-to-bottom container, and it pulls a NEW proprietary `@shadcn/react` runtime package (not `@base-ui/react`). Rennet's conversation has **no autoscroll**: the margin rail aligns each panel to its diff row via `useRailAlignments` (design #85/#356 — the identity), and streaming just appends `ThreadMessage`s that grow the panel in place. A pin-to-bottom scroller would CHANGE behavior and fight the rail geometry. **NOT pulled.**
+- **Attachment — no target.** No attachment / context-chip concept exists anywhere in the conversation surfaces (grep-confirmed across `conversation-*.tsx` + `canvas/conversation.ts`). Nothing to migrate onto it. **NOT pulled.**
+- **Already on the kit (nothing left to move):** the per-turn routing caret menu rides kit `Popover` (Wave 2), every glyph is lucide via the `Icon` wrapper (Wave 5.3), all colors are `--rn-*` tokens (hex-lint clean), and utility styling matches the kit's `cn` convention. The only overlay in these surfaces (the route menu) is already a kit primitive; there is **no remaining hand-rolled overlay / portal / focus-trap / scroll container** to re-platform. The fallback order below (9ui/basecn → Kibo) was not reached — no need for a chat substrate was found.
+
+Docs-only outcome: no code change, no dependency-standard entry (no dep decision was made), conversation behavior and every semantic test-hook className unchanged.
+
+**Files (original plan — not executed, see assessment above):**
 - Pull: shadcn native Base UI AI-chat set — Bubble, Message, Message Scroller, Attachment (names per current shadcn docs; verify exact registry ids with `npx shadcn view` first)
 - Modify: `packages/app-ui/src/components/conversation-host.tsx` (33K), `conversation-cluster.tsx` (29K), `conversation-panel.tsx`
 
-**Steps:**
+**Steps (original plan — not executed):**
 - [ ] Map: message rows → `Message`/`Bubble`, autoscroll behavior → `Message Scroller`, attachments/context chips → `Attachment`. All conversation domain logic (protocol wiring, streaming, marks) stays; only presentation swaps.
 - [ ] The margin-rail conversation layout (design pass #85) is identity — keep the rail geometry, restyle kit components into it via kit-side variant edits, not per-site overrides.
 - [ ] Behavior parity tests: streaming append renders, autoscroll pins to bottom until user scrolls up, attachment chips render, existing conversation tests green.
