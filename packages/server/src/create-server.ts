@@ -4,7 +4,13 @@
 // handle the shell drives in-process today and a transport serialises in phase 2.
 // Electron-owned effects (data dir, dialog, progress broadcast, shell.openPath,
 // net.fetch, process env) arrive as options; nothing here imports electron.
-import { constants as fsConstants, realpathSync } from "node:fs";
+import {
+  existsSync,
+  constants as fsConstants,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -53,7 +59,9 @@ import {
   discoverProject,
   discoverWorktreeIdentities,
   enrichKnowledgeForRepo,
+  ensureManagedClone,
   ensureProjectSnapshotPin,
+  ensurePrWorktree,
   execaGitFor,
   executeExternalCommand,
   FileConfigStore,
@@ -72,6 +80,7 @@ import {
   KnowledgeStore,
   loadConventionCatalogue,
   loadProjectDetail,
+  matchWorktree,
   NoveltyLifecycleRegistry,
   OmpAdapter,
   ProjectContextReader,
@@ -79,8 +88,11 @@ import {
   ProjectSnapshotGenerator,
   parseGitHubPrRef,
   projectHypothesisRepoContext,
+  prWorktreePath,
   RepoWatcher,
   readOpenSpecChange,
+  readSetupLogTail,
+  readSetupStatus,
   readUiEvidence,
   refreshGitHubCredential,
   repoHasSubmodules,
@@ -90,6 +102,7 @@ import {
   resolveGitHubAuth,
   runGitHubDeviceFlow,
   runKnowledgeDeltaForRepo,
+  runPrWorktreeSetup,
   SqliteReviewStore,
   snapshotStoreFor,
   validateGitHubToken,
@@ -851,13 +864,55 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   /**
+   * Resolve the local clone a PR review works from (clone-on-demand, #225). A
+   * supplied path that IS a clone of the PR's repo wins (the project row's own path,
+   * or an explicit directory pick); anything else — no path, a non-repo path, a
+   * clone of some other repo — resolves the managed blobless clone under the app
+   * data dir, creating it on first use. Identity matching (owner/name vs the repo's
+   * remotes) decides, never a path-name guess.
+   */
+  async function resolvePrRepoRoot(
+    prRef: NonNullable<ReturnType<typeof parseGitHubPrRef>>,
+    repoPath: string | undefined,
+  ): Promise<string> {
+    if (repoPath) {
+      try {
+        const worktree = await discoverWorktreeIdentities(gitForRepo(repoPath), repoPath);
+        if (matchWorktree(prRef.repo, [worktree])) return repoPath;
+      } catch {
+        // Not a git repo at all — fall through to the managed clone.
+      }
+    }
+    return ensureManagedClone(dataDir, prRef.repo);
+  }
+
+  /** The review → PR-worktree index (a plain JSON file under the data dir). */
+  const prWorktreeIndexPath = join(dataDir, "pr-worktrees.json");
+  function readPrWorktreeIndex(): Record<string, { path: string }> {
+    try {
+      return JSON.parse(readFileSync(prWorktreeIndexPath, "utf8")) as Record<
+        string,
+        { path: string }
+      >;
+    } catch {
+      return {};
+    }
+  }
+  function recordPrWorktree(reviewId: string, path: string): void {
+    const index = readPrWorktreeIndex();
+    index[reviewId] = { path };
+    writeFileSync(prWorktreeIndexPath, JSON.stringify(index));
+  }
+
+  /**
    * The GitHub PR front door (issue #37/#20 flow, User Journey stage 2). Parse the
-   * ref, deep-fetch the PR (GitHub owns identity), pin its OIDs in the local clone
-   * at `repoPath`, diff the range locally (git owns content), and persist a review.
-   * The token is resolved lazily from the auth ladder (`gh auth token`) — the
-   * zero-config North Star, the user's own `gh`. A PR whose clone is not at the
-   * chosen folder yields a null pin (only the degraded REST diff is available); this
-   * slice does not open the REST path yet, so it asks for the right local clone.
+   * ref, resolve a clone (the supplied path when it matches, the managed blobless
+   * clone otherwise — clone-on-demand, #225), deep-fetch the PR (GitHub owns
+   * identity), pin its OIDs, diff the range locally (git owns content), and persist
+   * a review. After the review lands, a detached worktree at the reviewed head OID
+   * is ensured (an executable checkout — retrospective included) and the repo's
+   * `.rennet/setup` commands run in it, fire-and-forget: setup never blocks or
+   * fails the review.
    *
    * `retrospective` opens the review read-only over an already-merged (or any) PR:
    * the diff is still the git range base..head from history (a merged PR needs no
@@ -868,31 +923,33 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   async function openPullRequest(
     commandId: string,
     ref: string,
-    repoPath: string,
+    repoPath: string | undefined,
     retrospective: boolean,
   ): Promise<Review> {
     const prRef = parseGitHubPrRef(ref);
     if (!prRef) {
       throw new Error(`"${ref}" is not a pull request. Use owner/repo#123 or a GitHub PR URL.`);
     }
+    const root = await resolvePrRepoRoot(prRef, repoPath);
     const forge = new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() });
-    const gitInLocus = gitForRepo(repoPath);
+    const gitInLocus = gitForRepo(root);
     const source = new GitHubChangesetSource({
       forge,
       git: gitInLocus,
       pin: createRefPinner(gitInLocus),
-      // The candidate set is the single local clone the user picked. Identity
-      // matching (owner/name vs the repo's remotes) decides whether it is the
-      // right clone; it never falls back to a path-name guess.
-      worktrees: { list: async () => [await discoverWorktreeIdentities(gitInLocus, repoPath)] },
-      resolveProjectSnapshotId: (root, baseOid) =>
-        ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, gitInLocus),
+      // The candidate set is the single resolved clone. Identity matching
+      // (owner/name vs the repo's remotes) decides whether it is the right clone;
+      // it never falls back to a path-name guess.
+      worktrees: { list: async () => [await discoverWorktreeIdentities(gitInLocus, root)] },
+      resolveProjectSnapshotId: (repoRoot, baseOid) =>
+        ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid, gitInLocus),
     });
     const result = await source.open(prRef);
     if (!result.pin) {
+      // Defensive: the root was resolved by identity above, so a null pin should be
+      // unreachable — but never continue into a lying degraded state silently.
       throw new Error(
-        `The folder you chose is not a local clone of ${prRef.repo.owner}/${prRef.repo.name}. ` +
-          "Open this PR from a local clone of that repository (REST-only review is not available yet).",
+        `Could not open ${prRef.repo.owner}/${prRef.repo.name}#${prRef.number} from a local clone.`,
       );
     }
     // Stamp the REAL post-target onto the review (issue #21) so the renderer can post
@@ -909,10 +966,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           forgeRef: pr.forgeRef,
           headOid: pr.headOid,
         };
-    return service.createReviewFromPatchset(commandId, result.patchset, {
+    const review = await service.createReviewFromPatchset(commandId, result.patchset, {
       retrospective,
       ...(postTarget ? { postTarget } : {}),
     });
+    // A worktree per reviewed PR at the pinned head (an executable past for the
+    // agent to run tests in). A superseded head replaces the old checkout. Failure
+    // here never blocks the review — the diff and conversation need no checkout.
+    try {
+      const worktree = prWorktreePath(dataDir, prRef.repo, prRef.number);
+      const { created } = await ensurePrWorktree(gitInLocus, root, worktree, pr.headOid);
+      recordPrWorktree(review.id, worktree);
+      if (created) {
+        // Fire-and-forget; the runner itself records a failed verdict, and an
+        // unexpected crash must not become an unhandled rejection.
+        void runPrWorktreeSetup(worktree).catch(() => undefined);
+      }
+    } catch {
+      // No worktree: `review.prWorktree` honestly returns null.
+    }
+    return review;
   }
 
   /**
@@ -2153,7 +2226,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
     // when auth is unavailable → the local-only list). An unknown projectId degrades
     // to an empty detail (fail-safe, mirroring the project store) rather than throwing.
-    projectDetail: async (projectId) => {
+    projectDetail: async (projectId, prStates) => {
       const project = projectStore.list().find((entry) => entry.id === projectId);
       if (!project) {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
@@ -2163,8 +2236,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const detail = await loadProjectDetail(
         defaultProjectDetailSourceDeps(gitForRepo(projectRoot), source ?? undefined),
         project,
+        prStates,
       );
       return authUnavailable ? { ...detail, authUnavailable } : detail;
+    },
+    // The reviewed PR's worktree + setup status (historical-PR review). Honest
+    // reads over MAIN's own index and the worktree's status files; a review with
+    // no worktree — or one whose checkout has since been deleted — returns null.
+    prWorktree: async (reviewId) => {
+      const entry = readPrWorktreeIndex()[reviewId];
+      if (!entry || !existsSync(entry.path)) return null;
+      return {
+        path: entry.path,
+        setup: readSetupStatus(entry.path),
+        logTail: readSetupLogTail(entry.path),
+      };
     },
     // The merged-PR row's clean-up (B2), for real: `git worktree remove <path>` run
     // from the project's root. Non-forcing — a dirty worktree is refused and reported

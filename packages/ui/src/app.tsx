@@ -100,6 +100,7 @@ import {
   TriangleIcon,
 } from "./components/icons";
 import { ANGLE_LABELS } from "./components/lens";
+import { PrWorktreeStatus } from "./components/pr-worktree-status";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { SettingsScreen } from "./components/settings-screen";
@@ -1581,35 +1582,50 @@ export function RennetApp({
   }
 
   // Open a pull request into a review (the front door's second source). The user
-  // types the ref, then picks the local clone of that repo (reusing the same
-  // directory dialog as the working-tree door); the PR's diff is taken locally
-  // against its pinned OIDs and lands in the identical review surface.
+  // types the ref and MAIN resolves the clone itself — a matching local clone when
+  // one is known, the managed blobless clone otherwise (clone-on-demand, #225).
+  // Only when the automatic clone fails (e.g. a private repo with no ambient git
+  // credentials) does the directory dialog appear as the fallback.
   async function openPullRequest(): Promise<void> {
     const ref = prRef.trim();
     if (!ref) return;
     setBusy(true);
     setError(undefined);
     try {
-      const { path } = await bridge.invoke("repository.choose", {});
-      if (!path) return;
-      const result = await bridge.invoke("review.openPr", {
-        commandId: crypto.randomUUID(),
-        ref,
-        repoPath: path,
-        // Read-only when the reviewer asked to review the PR retrospectively: the
-        // created review is flagged and nothing can be posted from it.
-        retrospective: prRetrospective,
-      });
-      setReview(result.review);
-      setRepositoryPresent(true); // a fresh capture/openPr always has its repo present
-      setDirectEntryOpen(false);
-      navigate(ascendNavigationTo(0));
-      navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
+      let repoPath: string | undefined;
+      try {
+        await openPrRef(ref, repoPath);
+        return;
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : String(reason);
+        if (!message.includes("Pick a local clone")) throw reason;
+        // Clone-on-demand could not clone the repo; fall back to the picker.
+        const { path } = await bridge.invoke("repository.choose", {});
+        if (!path) return;
+        repoPath = path;
+      }
+      await openPrRef(ref, repoPath);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function openPrRef(ref: string, repoPath: string | undefined): Promise<void> {
+    const result = await bridge.invoke("review.openPr", {
+      commandId: crypto.randomUUID(),
+      ref,
+      ...(repoPath === undefined ? {} : { repoPath }),
+      // Read-only when the reviewer asked to review the PR retrospectively: the
+      // created review is flagged and nothing can be posted from it.
+      retrospective: prRetrospective,
+    });
+    setReview(result.review);
+    setRepositoryPresent(true); // a fresh capture/openPr always has its repo present
+    setDirectEntryOpen(false);
+    navigate(ascendNavigationTo(0));
+    navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
   }
 
   async function setFileRead(path: string, read: boolean): Promise<void> {
@@ -2757,7 +2773,9 @@ export function RennetApp({
               <span>Retrospective review — read an already-merged PR. Nothing is posted back.</span>
             </label>
           </form>
-          <p className="pr-hint mt-2.5 text-xs text-ink-faint">Pick the local clone next.</p>
+          <p className="pr-hint mt-2.5 text-xs text-ink-faint">
+            No clone needed — Rennet fetches the repository itself.
+          </p>
 
           {error ? <p className="error text-danger">{error}</p> : null}
         </main>
@@ -3210,6 +3228,9 @@ export function RennetApp({
           selection={spanSelection}
           diffRef={diffScrollRef}
         />
+      ) : null}
+      {review ? (
+        <PrWorktreeStatus bridge={bridge} reviewId={review.id} scheme={effectiveScheme} />
       ) : null}
       {destinationChrome}
       {palette}

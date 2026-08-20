@@ -72,23 +72,52 @@ branch: GitHub ingest, review, refinement, the preview, and the final post.
 
 ## Where the diff comes from
 
-GitHub tells Rennet *which* base and head commits make up the pull request. When
-the repository is available locally, Git supplies the actual diff and nearby
-code. That gives Rennet the same repository context your local tools have,
-without trying to rebuild a diff from GitHub's file list.
+GitHub tells Rennet *which* base and head commits make up the pull request. Git
+supplies the actual diff and nearby code. That gives Rennet the same repository
+context your local tools have, without trying to rebuild a diff from GitHub's
+file list.
+
+You do not need a clone of the repository. When a matching local clone is
+known — the project's own path, or a folder you pick — Rennet uses it. When
+none is, Rennet clones the repository itself into its own data directory
+(a blobless partial clone: full history, file contents fetched as needed) and
+reviews from that. If the automatic clone fails — a private repository with no
+git credentials configured — Rennet says so and falls back to asking for a
+local clone.
 
 ```mermaid
 flowchart LR
-  github["GitHub: base SHA + head SHA"] --> match{"Local checkout available?"}
+  github["GitHub: base SHA + head SHA"] --> match{"Matching local clone known?"}
   match -->|yes| local["Read content from local Git"]
-  match -->|no| blocked["Ask for a matching local checkout"]
+  match -->|no| managed["Clone on demand into Rennet's data dir"]
+  managed --> local
   local --> patchset["Pinned, immutable patchset"]
   patchset --> review["Review surfaces"]
 ```
 
-The live deep-review path requires a matching local checkout. If none is
-available, Rennet reports that REST-only review is unavailable instead of
-pretending it captured the repository from GitHub.
+### The PR's own worktree
+
+Every PR review opened from a clone also gets a detached worktree checked out at
+the exact reviewed commit — an executable copy of the change, so the review
+conversation can run the code's own tests, retrospective reviews included. If
+the repository carries a `.rennet/setup` file (one shell command per line,
+`#` comments allowed), those commands run automatically after checkout; the
+review shows where the worktree is and how setup went, and a failed setup never
+blocks reading the review. When a PR is pushed again, the worktree is replaced
+at the new commit.
+
+## Reviewing merged and closed pull requests
+
+The project list shows open PRs by default; the **PRs** scope control switches
+it to merged, closed, or all states — history is paged from GitHub on demand,
+most recent first, never synced locally. Opening a merged or closed PR starts a
+**retrospective review**: the same review over the same frozen diff, but
+read-only — the sign/publish surface is replaced by a plain notice and nothing
+can be posted back. Because a merged PR's commits never move, the review is
+stable by construction, and the repository context Rennet reads is
+reconstructed at the PR's own historical base — the repo as it was, not as it
+is today. You can also open any PR retrospectively from the direct-entry door
+with the retrospective checkbox.
 
 ### CI checks
 

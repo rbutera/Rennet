@@ -357,6 +357,7 @@ function harness(
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
+    prWorktree: () => Promise.resolve(null),
     // Recording spy so a test can assert what `deepReview` the dispatch passed the
     // runner — the whole point of the default-dual mandate is that guarantee at the
     // real command boundary. The stub answers with an honestly-empty ran-clean set.
@@ -2647,6 +2648,7 @@ function frontDoorHarness(seed: {
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
+    prWorktree: () => Promise.resolve(null),
     flaggedReview: () =>
       Promise.resolve({ review: { status: "ok", findings: [] }, adjudication: null }),
     readUiEvidence: () => Promise.resolve(null),

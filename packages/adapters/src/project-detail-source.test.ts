@@ -341,7 +341,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listOpenPullRequests: async (repository) => ({
+      listPullRequests: async (repository) => ({
         prs: [pr({ repository, reviewRequestedFromViewer: true })],
         truncated: false,
       }),
@@ -374,7 +374,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listOpenPullRequests: async (repository) => ({
+      listPullRequests: async (repository) => ({
         prs: [pr({ repository, branch: "feat/x" })],
         truncated: false,
       }),
@@ -400,7 +400,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listOpenPullRequests: async () => ({ prs: [], truncated: true }),
+      listPullRequests: async () => ({ prs: [], truncated: true }),
     };
     const detail = await loadProjectDetail(
       depsWithPr(git, ["/repo"], prSource),
@@ -419,7 +419,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => null,
-      listOpenPullRequests: async () => ({ prs: [], truncated: false }),
+      listPullRequests: async () => ({ prs: [], truncated: false }),
     };
     const detail = await loadProjectDetail(
       depsWithPr(git, ["/repo"], prSource),
@@ -432,13 +432,13 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     const git = makeGit({
       "/some/repo": { commonDir: "/some/repo/.git", userName: "rai", branches: { main: 1 } },
     });
-    const listOpenPullRequests = vi.fn(async () => ({ prs: [], truncated: false }));
+    const listPullRequests = vi.fn(async () => ({ prs: [], truncated: false }));
     const resolveViewer = vi.fn(async () => "octocat");
     const detail = await loadProjectDetail(
-      depsWithPr(git, ["/some/repo"], { resolveViewer, listOpenPullRequests }),
+      depsWithPr(git, ["/some/repo"], { resolveViewer, listPullRequests }),
       repoProject("/some/repo"),
     );
-    expect(listOpenPullRequests).not.toHaveBeenCalled();
+    expect(listPullRequests).not.toHaveBeenCalled();
     expect(resolveViewer).not.toHaveBeenCalled(); // no forge repo → no GitHub round-trip at all
     expect(detail.prs).toEqual([]);
   });
@@ -500,7 +500,7 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listOpenPullRequests: () => Promise.reject(netError()),
+      listPullRequests: () => Promise.reject(netError()),
     };
     const detail = await loadProjectDetail(depsFor(git, ["/repo"], prSource), repoProject("/repo"));
     expect(detail.authUnavailable).toBe("network");
@@ -520,7 +520,7 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listOpenPullRequests: () => Promise.reject(new Error("GraphQL schema drift")),
+      listPullRequests: () => Promise.reject(new Error("GraphQL schema drift")),
     };
     await expect(
       loadProjectDetail(depsFor(git, ["/repo"], prSource), repoProject("/repo")),
@@ -540,7 +540,7 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
     let maxInFlight = 0;
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listOpenPullRequests: async () => {
+      listPullRequests: async () => {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -623,7 +623,7 @@ describe("the fan-out cap is SHARED per source instance (overlapping loads)", ()
     let launches = 0;
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listOpenPullRequests: async (repository) => {
+      listPullRequests: async (repository) => {
         launches += 1;
         if (repository === "acme/r0") throw new Error("GraphQL schema drift");
         await new Promise((resolve) => setTimeout(resolve, 10));

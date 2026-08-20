@@ -188,4 +188,38 @@ describe("SnapshotOverlayGenerator — base + overlay over a real git repo", () 
     if (!second.ok) return;
     expect(second.derived).toBe(false); // reused, no rebuild
   }, 60000);
+
+  it("an ANCESTOR of the default base works as an overlay target (historical-PR review)", async () => {
+    // A merged PR's base OID is an older commit on the default branch itself. The
+    // versioned-repo-map property is that the overlay reconstructs the snapshot at
+    // that historical OID byte-identically — the review reads the repo as it was,
+    // not as it is today.
+    const { root, storeDir, mainOid } = repo();
+    // Advance main past the historical point so `mainOid` becomes an ancestor.
+    write(root, "packages/a/src/newer.ts", "export const newer = true;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "main moves on");
+    const headOid = git(root, "rev-parse", "HEAD");
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const repoKey = await buildBase(store, root, headOid);
+    const overlayStore = new SnapshotOverlayStore(store);
+    const gen = new SnapshotOverlayGenerator({ store, overlayStore });
+
+    const ensured = await gen.ensureOverlay(root, repoKey, mainOid);
+    expect(ensured.ok).toBe(true);
+    if (!ensured.ok) return;
+
+    const merged = new SnapshotOverlayReader({ store, overlayStore }).resolveMerged(
+      repoKey,
+      mainOid,
+    );
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) return;
+    expect(merged.snapshot.manifest.baseOid).toBe(mainOid);
+    // The file added after the historical point is absent from the merged view.
+    const full = await fullAt(root, mainOid);
+    expect(serializeManifest(merged.snapshot.manifest)).toBe(serializeManifest(full.manifest));
+    expect(merged.snapshot.manifest.fingerprint).toBe(full.manifest.fingerprint);
+  }, 90000);
 });

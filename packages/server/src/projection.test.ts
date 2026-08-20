@@ -462,6 +462,9 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "settings.pinRepoValue.output.project.repoPath",
     "progressEvent.summary.path",
     "progressEvent.repos.path",
+    // The reviewed PR's worktree lives under MAIN's data dir — a host path the
+    // renderer shows and a remote projection must translate like any other root.
+    "review.prWorktree.output.worktree.path",
   ]),
   ...classified("repo-relative", [
     "review.setDisposition.input.path",

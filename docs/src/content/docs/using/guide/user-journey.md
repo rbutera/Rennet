@@ -58,7 +58,10 @@ The project screen mixes local work and pull requests in one list. Rows remain
 visually distinct: local branch, your pull request, teammate pull request, or a
 read-only closed/merged pull request. Use **Needs you**, **Mine**, **Local**, or
 **PRs** to narrow it; the default Hot sort combines recent activity with work
-that needs attention.
+that needs attention. The list shows open PRs by default; the **PRs** scope
+control flips it to merged, closed, or all states — history is paged from
+GitHub on demand, and opening a merged or closed row starts a read-only
+retrospective review.
 
 Your review request and a failing check on your own open pull request can float a
 row into **Needs you**. A read-only row can offer **Clean up** when its worktree is

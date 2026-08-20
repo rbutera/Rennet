@@ -118,11 +118,11 @@ describe("createGitHubProjectPrSource — resolveViewer", () => {
   });
 });
 
-describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
+describe("createGitHubProjectPrSource — listPullRequests", () => {
   it("maps a node to the protocol PullRequest with byte-exact repository identity", async () => {
     const { fetch } = makeFetch({ viewer: "octocat", pages: [{ nodes: [node()] }] });
     const source = sourceFor(fetch);
-    const { prs, truncated } = await source.listOpenPullRequests("acme/widget");
+    const { prs, truncated } = await source.listPullRequests("acme/widget");
     expect(truncated).toBe(false);
     expect(prs).toHaveLength(1);
     expect(prs[0]).toEqual({
@@ -162,7 +162,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
           },
         ],
       });
-      const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
+      const { prs } = await sourceFor(fetch).listPullRequests("acme/widget");
       expect(prs[0]?.ci).toBe(expected);
     }
     // No checks configured → a null rollup → "none" (honestly unknown, not passing).
@@ -170,7 +170,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
       viewer: "octocat",
       pages: [{ nodes: [node({ commits: { nodes: [{ commit: { statusCheckRollup: null } }] } })] }],
     });
-    const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
+    const { prs } = await sourceFor(fetch).listPullRequests("acme/widget");
     expect(prs[0]?.ci).toBe("none");
   });
 
@@ -188,7 +188,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
       viewer: "octocat",
       pages: [{ nodes: [withViewer, withoutViewer] }],
     });
-    const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
+    const { prs } = await sourceFor(fetch).listPullRequests("acme/widget");
     expect(prs.find((p) => p.id === "PR_1")?.reviewRequestedFromViewer).toBe(true);
     expect(prs.find((p) => p.id === "PR_2")?.reviewRequestedFromViewer).toBe(false);
   });
@@ -198,14 +198,14 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
       viewer: "octocat",
       pages: [{ nodes: [node({ author: null, title: "" })] }],
     });
-    const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
+    const { prs } = await sourceFor(fetch).listPullRequests("acme/widget");
     expect(prs[0]?.author).toBe("ghost");
     expect(prs[0]?.title).toBe("#12");
   });
 
   it("returns an empty, complete result for a non-forge identity — no network call", async () => {
     const { fetch, calls } = makeFetch({ viewer: "octocat" });
-    const result = await sourceFor(fetch).listOpenPullRequests("/Users/x/repo/.git");
+    const result = await sourceFor(fetch).listPullRequests("/Users/x/repo/.git");
     expect(result).toEqual({ prs: [], truncated: false });
     expect(calls()).toBe(0); // never even resolves the viewer for a local-only repo
   });
@@ -218,7 +218,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
         { nodes: [node({ id: "PR_B" })], hasNextPage: true, endCursor: "c2" }, // still more, but cap = 2
       ],
     });
-    const { prs, truncated } = await sourceFor(fetch, 2).listOpenPullRequests("acme/widget");
+    const { prs, truncated } = await sourceFor(fetch, 2).listPullRequests("acme/widget");
     expect(prs.map((p) => p.id)).toEqual(["PR_A", "PR_B"]);
     expect(truncated).toBe(true); // hasNextPage was still true at the cap
   });
@@ -231,7 +231,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
         { nodes: [node({ id: "PR_B" })], hasNextPage: false, endCursor: null },
       ],
     });
-    const { prs, truncated } = await sourceFor(fetch, 5).listOpenPullRequests("acme/widget");
+    const { prs, truncated } = await sourceFor(fetch, 5).listPullRequests("acme/widget");
     expect(prs.map((p) => p.id)).toEqual(["PR_A", "PR_B"]);
     expect(truncated).toBe(false);
   });
@@ -258,13 +258,44 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
         { sso: "partial-results; organizations=acme; url=https://github.com/orgs/acme/sso" },
       );
     };
-    const { truncated } = await sourceFor(partialFetch).listOpenPullRequests("acme/widget");
+    const { truncated } = await sourceFor(partialFetch).listPullRequests("acme/widget");
     expect(truncated).toBe(true);
+  });
+
+  it("requests OPEN by default and the uppercased GraphQL states when history is asked for", async () => {
+    const seenStates: unknown[] = [];
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        query: string;
+        variables?: { states?: unknown };
+      };
+      if (!body.query.includes("pullRequests")) {
+        return response({ data: { viewer: { login: "octocat" } } });
+      }
+      seenStates.push(body.variables?.states);
+      return response({
+        data: {
+          repository: {
+            pullRequests: {
+              totalCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [node({ state: "MERGED" })],
+            },
+          },
+        },
+      });
+    };
+    const source = sourceFor(fetch);
+    await source.listPullRequests("acme/widget");
+    const { prs } = await source.listPullRequests("acme/widget", ["merged", "closed"]);
+    expect(seenStates).toEqual([["OPEN"], ["MERGED", "CLOSED"]]);
+    // The mapped state round-trips so the renderer's read-only (retrospective) fold fires.
+    expect(prs[0]?.state).toBe("merged");
   });
 
   it("returns empty (not a false-complete crash) when the repo is not found / no access", async () => {
     const { fetch } = makeFetch({ viewer: "octocat", repositoryNull: true });
-    const { prs, truncated } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
+    const { prs, truncated } = await sourceFor(fetch).listPullRequests("acme/widget");
     expect(prs).toEqual([]);
     expect(truncated).toBe(false);
   });
@@ -272,7 +303,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
   it("THROWS on a non-2xx response (never renders a failed fetch as zero PRs)", async () => {
     const { fetch } = makeFetch({ viewer: "octocat", status: 500 });
     const error = await sourceFor(fetch)
-      .listOpenPullRequests("acme/widget")
+      .listPullRequests("acme/widget")
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
     expect((error as { status?: number }).status).toBe(500);
