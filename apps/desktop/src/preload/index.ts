@@ -6,6 +6,7 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 // that bridge: the host platform, the WS port to dial, the directory picker, and the
 // host-app updater channels.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
+const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const WS_PORT_ARG = "--rennet-ws-port=";
@@ -39,6 +40,13 @@ export interface RennetPreload {
    */
   chooseDirectory(): Promise<string | null>;
   /**
+   * Ensure the daemon that should serve a project at `path` (host daemon for a host path,
+   * the in-distro daemon for a `\\wsl.localhost\<distro>\…` path) and resolve its ws port.
+   * Rejects with a plain message when a WSL distro has no usable Node or is unreachable — the
+   * renderer turns that into an install/start prompt. Returns null for an untrusted caller.
+   */
+  resolveDaemonForPath(path: string): Promise<number | null>;
+  /**
    * Subscribe to update-readiness (badge on the Rennet logo). The cached MAIN-side
    * state is replayed immediately so a renderer that loads after the download still
    * badges; returns an unsubscribe.
@@ -60,6 +68,8 @@ const preload: RennetPreload = {
   version,
   wsPort,
   chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
+  resolveDaemonForPath: (path) =>
+    ipcRenderer.invoke(RESOLVE_DAEMON_FOR_PATH_CHANNEL, path) as Promise<number | null>,
   onUpdateReady: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: unknown): void => {
       const parsed = parseUpdateReady(payload);

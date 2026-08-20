@@ -17,7 +17,12 @@ import {
 import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
-import { ensureDaemon, isOwnedDaemonRunning, stopOwnedDaemon } from "./daemon-supervisor";
+import {
+  ensureDaemon,
+  ensureDaemonForProject,
+  isOwnedDaemonRunning,
+  stopOwnedDaemon,
+} from "./daemon-supervisor";
 import { buildStaticMenu } from "./menu";
 import {
   acquireSingleInstance,
@@ -42,6 +47,11 @@ if (squirrelStartup) {
 // renderer asks MAIN for the path and forwards it to `repository.choose`. Electron-native
 // residue.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
+// The renderer asks MAIN to ensure the daemon for a project PATH and hand back its ws port —
+// a host path resolves the host daemon, a `\\wsl.localhost\<distro>\…` path spawns (or
+// reuses) that distro's in-distro daemon and returns ITS loopback port. The renderer then
+// dials that port as a connection target. A distro with no Node rejects, surfacing a prompt.
+const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 const APP_ORIGIN = "app://rennet";
 // The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
 // process argv via `webPreferences.additionalArguments` (the boot-time-constant pattern
@@ -90,6 +100,21 @@ function registerDialogHandler(): void {
       properties: ["openDirectory"],
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+}
+
+/**
+ * Resolve the ws port of the daemon that should serve a project at `path`, SELECTED BY its
+ * execution locus (`ensureDaemonForProject`): a host path → the host daemon; a WSL path →
+ * that distro's in-distro daemon (spawned once, reused). Resolved lazily each call so a
+ * restarted daemon's fresh ephemeral port is always current. A failure (no Node in the
+ * distro, WSL unavailable) rejects with a plain message the renderer turns into a prompt.
+ */
+function registerDaemonForPathResolver(hostDataDir: string): void {
+  ipcMain.handle(RESOLVE_DAEMON_FOR_PATH_CHANNEL, async (event, path: unknown) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
+    if (typeof path !== "string" || path.length === 0) return null;
+    return ensureDaemonForProject(path, hostDataDir);
   });
 }
 
@@ -263,6 +288,7 @@ app.whenReady().then(async () => {
   });
   registerAppProtocol();
   registerDialogHandler();
+  registerDaemonForPathResolver(dataDir);
   await createWindow(wsPort);
   activeWsPort = wsPort;
 
