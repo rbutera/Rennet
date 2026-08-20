@@ -16,9 +16,20 @@ import { existsSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { type GenerateResult, ProjectSnapshotGenerator, snapshotStoreFor } from "@rennet/adapters";
+import {
+  createClaudeHarness,
+  enrichKnowledgeForRepo,
+  type GenerateResult,
+  KnowledgeStore,
+  ProjectContextReader,
+  ProjectSnapshotGenerator,
+  type ProjectSnapshotStore,
+  runKnowledgeDeltaForRepo,
+  snapshotStoreFor,
+} from "@rennet/adapters";
 import { materializeSnapshot, queryFileOverview, queryProjectMap } from "@rennet/core";
 import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
+import type { ProjectSnapshotManifest } from "@rennet/types";
 import { WebSocket } from "ws";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
@@ -55,11 +66,13 @@ const HELP = [
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
-  "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]   build & store the repo map",
+  "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]   build & store the repo map",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
   "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
   "(default: the current directory) and stores it under ~/.rennet/projects/.",
+  "`--enrich` additionally runs the model-backed knowledge pass (initial or delta)",
+  "through your installed Claude harness — one bounded turn, on your subscription.",
 ].join("\n");
 
 /** Route argv to a subcommand. Returns a process exit code (serve never returns). */
@@ -124,7 +137,7 @@ export async function runCli(
     }
     case "map": {
       let parsed: {
-        values: { base?: string; json?: string; "projects-dir"?: string };
+        values: { base?: string; json?: string; "projects-dir"?: string; enrich?: boolean };
         positionals: string[];
       };
       try {
@@ -136,12 +149,15 @@ export async function runCli(
             base: { type: "string" },
             json: { type: "string" },
             "projects-dir": { type: "string" },
+            enrich: { type: "boolean" },
           },
         });
         if (parsed.positionals.length > 1) throw new Error("expected at most one repository path");
       } catch (error) {
         io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
-        io.err("Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]");
+        io.err(
+          "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]",
+        );
         return 2;
       }
       return buildMap(
@@ -150,8 +166,10 @@ export async function runCli(
           base: parsed.values.base,
           json: parsed.values.json,
           projectsDir: parsed.values["projects-dir"],
+          enrich: parsed.values.enrich === true,
         },
         io,
+        env,
       );
     }
     case "-h":
@@ -422,8 +440,9 @@ async function devices(
  */
 async function buildMap(
   repoPath: string,
-  opts: { base?: string; json?: string; projectsDir?: string },
+  opts: { base?: string; json?: string; projectsDir?: string; enrich?: boolean },
   io: CliIo,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
   const root = resolve(repoPath);
   const store = opts.projectsDir ? snapshotStoreFor(opts.projectsDir) : snapshotStoreFor();
@@ -447,6 +466,11 @@ async function buildMap(
     `  shards: ${result.extractedSymbolShards} extracted, ${result.reusedSymbolShards} reused`,
   );
   io.out(`  stored: ${store.paths(manifest.repoKey).mapDir}`);
+  const knowledgeStore = new KnowledgeStore(store);
+  if (opts.enrich) {
+    const enrichExit = await enrichMap({ store, knowledgeStore, manifest, root, io, env });
+    if (enrichExit !== 0) return enrichExit;
+  }
   if (opts.json) {
     const materialized = materializeSnapshot(manifest, (digest) => result.built.shards.get(digest));
     if (!materialized.ok) {
@@ -472,6 +496,7 @@ async function buildMap(
           fingerprint: manifest.fingerprint,
           map: projectMap,
           symbols,
+          knowledge: knowledgeStore.loadLocal(manifest.repoKey),
         },
         null,
         2,
@@ -479,5 +504,82 @@ async function buildMap(
     );
     io.out(`  exported: ${jsonPath}`);
   }
+  return 0;
+}
+
+/**
+ * The `--enrich` leg: run the model-backed knowledge pass against the just-built
+ * snapshot through the user's own Claude harness (their subscription, one bounded
+ * turn — the same pass the daemon runs after a snapshot advance). Initial when no
+ * prior set exists, delta when the prior set is pinned to an older OID, honest
+ * no-op when the set is already current.
+ */
+async function enrichMap(input: {
+  store: ProjectSnapshotStore;
+  knowledgeStore: KnowledgeStore;
+  manifest: ProjectSnapshotManifest;
+  root: string;
+  io: CliIo;
+  env: NodeJS.ProcessEnv;
+}): Promise<number> {
+  const { store, knowledgeStore, manifest, root, io, env } = input;
+  const prior = knowledgeStore.loadLocal(manifest.repoKey);
+  if (prior && prior.baseOid === manifest.baseOid) {
+    io.out(`  knowledge: already current at this base OID (${prior.statements.length} statements)`);
+    return 0;
+  }
+  io.out("Discovering the Claude harness");
+  const { adapter, discovery } = await createClaudeHarness({ env });
+  if (!adapter) {
+    const health = discovery.health;
+    const why =
+      health.state === "unavailable"
+        ? health.detail || health.reason
+        : health.state === "degraded"
+          ? health.reason
+          : "unknown";
+    io.err(`rennet map: no Claude harness available (${why})`);
+    return 1;
+  }
+  const common = {
+    reader: new ProjectContextReader(store),
+    knowledgeStore,
+    port: adapter,
+    repoKey: manifest.repoKey,
+    repoRoot: root,
+    baseOid: manifest.baseOid,
+  };
+  const outcome = prior
+    ? await (async () => {
+        io.out(
+          `Running the knowledge delta pass (${prior.baseOid.slice(0, 12)} → ${manifest.baseOid.slice(0, 12)})`,
+        );
+        return runKnowledgeDeltaForRepo({ ...common, fromOid: prior.baseOid });
+      })()
+    : await (async () => {
+        io.out("Running the initial knowledge enrichment (one model turn)");
+        return enrichKnowledgeForRepo(common);
+      })();
+  if (outcome.status === "snapshot-unavailable") {
+    io.err(`rennet map: snapshot unavailable for enrichment (${outcome.reason})`);
+    return 1;
+  }
+  if (outcome.status === "no-prior-set") {
+    // Unreachable: the delta leg only runs when a prior set was loaded.
+    io.err("rennet map: knowledge delta found no prior set");
+    return 1;
+  }
+  if (outcome.status === "skipped") {
+    io.out("  knowledge: no changed paths touch the set; unchanged");
+    return 0;
+  }
+  if (outcome.status !== "ok") {
+    io.err(
+      `rennet map: knowledge enrichment failed: ${outcome.result.failureReason ?? "the model turn did not complete"}`,
+    );
+    return 1;
+  }
+  const set = knowledgeStore.loadLocal(manifest.repoKey);
+  io.out(`  knowledge: ${set?.statements.length ?? 0} statements minted`);
   return 0;
 }
