@@ -16,7 +16,9 @@ on:
   push:
     branches: [main]
     paths:
+      - "apps/docs/**"
       - "docs/**"
+      - "packages/theme/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -63,7 +65,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
           command: >-
-            pages deploy docs/dist
+            pages deploy apps/docs/dist
             --project-name=rennet-docs
             --branch=${{ github.head_ref || github.ref_name }}
 

@@ -1,60 +1,58 @@
-# Rennet brand pack
+# Rennet brand assets
 
-Rennet’s identity is a compact, shallow cheese wheel whose right edge breaks into smaller, readable pieces. The mark carries the product idea directly: a large body of code becomes something a person can digest.
+Rennet's mark is a shallow cheese wheel whose right edge breaks into smaller pieces. The shape represents a large body of code becoming readable parts.
 
-This root-level directory is the canonical brand home for the monorepo. Agents should start here and treat `sources/` plus `exports/` as authoritative.
+This directory is the canonical brand package. Production sources live in `sources/`, generated assets live in `exports/`, and `manifest.json` records each file's byte size and SHA-256 checksum.
 
-The primary identity is monochrome. The colour gradient is application-icon artwork, not a product-interface colour system.
+The main identity is monochrome. The gradient appears only in the color application icon.
 
-## Use the right asset
+## Choose an asset
 
-- `exports/logo/svg/lockup-horizontal-*.svg` — default product, site, README, and document lockup.
-- `exports/logo/svg/lockup-stacked-*.svg` — square or portrait placements.
-- `exports/logo/svg/mark-*.svg` — large standalone mark.
-- `exports/logo/svg/mark-small-*.svg` — simplified mark below 48 px.
-- `exports/app-icons/masters/` — 1024 px master app icons and SVG sources.
-- `exports/app-icons/macos/` — `.icns` files and source iconsets for all three variants.
-- `exports/app-icons/windows/` — multi-resolution `.ico` files for all three variants.
-- `exports/app-icons/linux/` — PNGs from 16 px through 1024 px.
-- `exports/web/` — SVG/PNG/ICO favicons, Apple touch icon, PWA icons, and manifest.
-- `exports/tray/` — menu-bar / system-tray icons for the desktop shell (see below).
-- `exports/social/` — square colour and monochrome avatars.
-- `preview/brand-pack-overview.png` — quick visual index.
-- `preview/trace-fidelity.png` — selected raster artwork beside the production traces.
-- `manifest.json` — dimensions, byte sizes, and SHA-256 checksums for every file.
+- `exports/logo/svg/lockup-horizontal-*.svg` for product pages, sites, READMEs, and documents
+- `exports/logo/svg/lockup-stacked-*.svg` for square or portrait placements
+- `exports/logo/svg/mark-*.svg` for a large mark when the surrounding context already names Rennet
+- `exports/logo/svg/mark-small-*.svg` below 48px
+- `exports/app-icons/masters/` for the 1024px application-icon masters and SVG sources
+- `exports/app-icons/macos/` for `.icns` files and source iconsets
+- `exports/app-icons/windows/` for multi-resolution `.ico` files
+- `exports/app-icons/linux/` for PNGs from 16px through 1024px
+- `exports/web/` for favicons, the Apple touch icon, PWA icons, and the web manifest
+- `exports/tray/` for desktop tray and menu-bar icons
+- `exports/social/` for square color and monochrome avatars
+- `preview/brand-pack-overview.png` for a visual index
+- `preview/trace-fidelity.png` for the raster references beside their production traces
 
-## Usage rules
+## Usage
 
-Use the horizontal lockup whenever the name must be readable. Use the standalone mark only when the surrounding context already says Rennet.
+Use a horizontal lockup when the name needs to be readable. Use the mark alone only when nearby copy already identifies Rennet.
 
-Keep clear space around a lockup equal to at least the height of the lowercase `n`. Do not compress, rotate, redraw, add a container, or alter the fragment pattern.
+Keep clear space around a lockup equal to the height of the lowercase `n`. Do not compress, rotate, redraw, frame, or change the fragment pattern.
 
-Use `mark-small` at 16–47 px. Use the full mark from 48 px upward. Do not use the horizontal lockup below 140 px wide.
+Use `mark-small` from 16px through 47px and the full mark at 48px or larger. Do not use the horizontal lockup below 140px wide.
 
-Use black artwork on light backgrounds and white artwork on dark backgrounds. The white-on-black monochrome app icon is the default packaged application icon (asserted by `apps/desktop/src/main/forge-config.test.ts`); the colour icon (white mark on the gradient) and the black-on-white icon are first-class alternates.
+Use black artwork on light backgrounds and white artwork on dark backgrounds. The packaged application uses the white-on-black icon. The color and black-on-white icons are available alternatives.
 
-## Regeneration
+## Rebuild exports
 
-The committed mark and wordmark are exact monochrome traces of the selected concept artwork. They require no font at runtime.
-
-To rebuild every export from the committed vector sources:
+Run:
 
 ```sh
 python3 scripts/build-brand-assets.py
 ```
 
-The builder requires Python with Pillow, ImageMagick, and macOS `iconutil`.
+The builder requires Python, Pillow, ImageMagick, and macOS `iconutil`. It rebuilds the export directories, previews, and `manifest.json` from the committed vector sources.
 
-### Tray / menu-bar icons
+## Tray and menu-bar icons
 
-`exports/tray/` holds the desktop shell's ambient-presence icons (issue: tray-presence). Regenerate with:
+Regenerate tray assets with:
 
 ```sh
-node scripts/gen-tray-icons.mjs
+node brand/scripts/gen-tray-icons.mjs
 ```
 
-The script rasterizes the committed SVG sources with `sharp` (already in the workspace — no browser, no `.ico`: Electron's `Tray` takes a PNG `NativeImage` on every platform):
+The script uses the workspace `sharp` dependency and the committed SVG exports.
 
-- **macOS** — `rennetTemplate.png` / `@2x` are *template* images (alpha-only, black artwork that macOS recolours to the menu-bar theme), traced from `logo/svg/mark-small-black.svg` at 16 pt / 32 pt height (the wide mark; verified legible at 16 px).
-- **Windows / Linux** — `rennet.png` / `@2x` are the white-on-black *square* app badge (`app-icons/masters/app-icon-white-on-black-small.svg`) so the mark stays visible on any taskbar colour.
-- **Update-ready** — `rennetUpdate*` bake a dot into the corner. The dot's *presence* is the whole signal; on the monochrome macOS template it is not a distinct colour, by design.
+- macOS template images use the wide small mark at 16px and 32px. macOS applies the menu-bar color.
+- Windows `.ico` files contain the square white-on-black mark at several resolutions.
+- Linux PNGs use the same square white-on-black mark at 32px and 64px.
+- Update-ready variants add a dot to the normal asset. On macOS the dot remains monochrome.

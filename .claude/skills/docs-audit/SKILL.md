@@ -1,62 +1,62 @@
 ---
 name: docs-audit
-description: Use when the Rennet docsite may have drifted from shipped behavior — after a feature wave merges, when the delivery-order stamp is older than the latest feat commits, on a periodic sweep, or when someone reports a doc page that reads wrong or contradicts another page.
+description: Use when Rennet documentation may disagree with current code, accepted OpenSpec behavior, the Nx graph, or live plans.
 ---
 
 # Docs audit
 
-Fan-out verification of `docs/src/content/docs/**` against what actually shipped. Output is a findings list with evidence, not edits — `docs-refresh` consumes it.
+Check the complete current documentation corpus and return evidence-backed
+findings. `docs-refresh` consumes the result.
 
-## Ground truth, in priority order
+## Ground truth
 
-1. `openspec/specs/<area>/spec.md` — shipped behavior.
-2. Source: `packages/{types,protocol,core,adapters,ui,instructions}`, `apps/desktop`.
-3. Root config: `package.json`, `nx.json`, `pnpm-workspace.yaml`, `AGENTS.md`.
-4. `git log` (last ~40 commits) and GitHub issue state (`gh issue view N --repo rbutera/rennet --json state`).
+Rule Zero in `AGENTS.md` outranks every other source. After that, classify each
+claim before resolving it:
 
-**Code comments are NOT ground truth.** A stale "out of scope" comment once contradicted a merged feature; the commit + closed issue decided it. When any two sources disagree, whoever is collating (the orchestrator in fan-out mode, the sole agent in solo mode) verifies directly against git log + issue state before recording the finding.
+1. Current behavior comes from code, tests, resolved Nx configuration, and
+   package manifests.
+2. Accepted behavior comes from `openspec/specs/*/spec.md`.
+3. Planned behavior needs a live GitHub issue or active OpenSpec change.
+4. Product intent comes from `docs/using/concepts/product-and-vision.md`.
+5. Scoped engineering decisions come from the authority map in
+   `docs/developing/reference/doc-architecture.md`.
+
+Code comments are leads, not proof. When current code and an accepted spec
+disagree, report the implementation as current and the spec as planned. Verify
+the tracking source before calling the gap planned.
 
 ## Method
 
-1. Inventory: `find docs/src/content/docs -name '*.md' -o -name '*.mdx'` (~32 pages).
-2. Slice into ~5-page groups by section: using/, concepts (arch+UI), concepts (harness+council), concepts (pipeline), reference/, guides+contributing+indexes.
-3. One read-only subagent per slice (opus), in parallel. Each agent: read every assigned page fully, verify every concrete claim (commands, paths, package names, versions, feature liveness, UI descriptions).
-4. **Readability is its own pass, not a side note.** Staleness findings crowd out readability every time — run it as a separate fan-out (or a separate prompt section with its own findings quota). Rubric, per page, with line numbers:
-   - Jargon on first use: Rennet terms (patchset, lens, canvas, locus, seat, RSP, disposition...) used before the page defines or links them. using/ pages must not assume developing/ vocabulary.
-   - Orientation: what-and-why before mechanism; the page's payoff clear within three sentences.
-   - Density: paragraphs stacking 3+ claims, sentences with 3+ nested clauses, prose that should be a list or table.
-   - Scannability: headings + first sentences alone should tell the story.
-   - Show vs tell: dense flow prose that a small mermaid diagram or table would beat.
-   - Ledger pages (delivery-order, contracts-and-rulings) are records: propose structure around entries (TL;DR lines, status tables), never rewrites of them.
-   - Some doc blocks are GENERATED and test-pinned verbatim (e.g. the delta-rereview measurement tables, pinned by `lineage-matcher.measurement.test.ts` as one contiguous string). Grep `packages/*/src/**/*.test.ts` for the page's filename before restructuring; add prose around such a block, never inside or between its parts.
-   Readability fixes must be meaning-preserving and within the docs-style-guide voice.
-5. One slice also sweeps cross-cutting: every internal link resolves, every page has `title:` + `description:` frontmatter, every `docs/astro.config.mjs` sidebar entry maps to a file, no orphans.
-6. Orchestrator collects reports, resolves inter-agent conflicts itself (rule above), dedupes, ranks.
+1. Read `docs/README.md`. Its links are the canonical reader-page inventory.
+2. Include the root authorities, current repository READMEs, ADRs, and every
+   promoted OpenSpec file named by the documentation audit inventory.
+3. Split the files into disjoint groups and inspect them in parallel.
+4. Read every assigned file in full. Check commands, paths, package names,
+   versions, interface labels, feature state, and internal links against the
+   sources above.
+5. Run a separate readability pass over each file. Check first-use jargon,
+   orientation, sentence density, headings, and whether a table or Mermaid
+   diagram would make a complex relationship clearer.
+6. Run `node scripts/check-docs.mjs .` for inventory, links, planned metadata,
+   projection parity, and monorepo-map drift.
+7. Collate the reports. Verify conflicting findings directly, remove
+   duplicates, and rank the remainder.
 
-## Findings format (require it from every agent)
+Before restructuring a generated or test-pinned block, search tests for the
+page path. Edit around a pinned block unless the owning test changes with it.
 
-```
+## Findings format
+
+```text
 ## <path>
-Verdict: ACCURATE | STALE | INCOMPLETE | UNCLEAR (combinable)
+Verdict: ACCURATE | STALE | INCOMPLETE | UNCLEAR
 Findings:
-- [high|med|low] <issue> — evidence: <spec/source file:line or commit> — fix: <one line>
+- [high|medium|low] <claim> | evidence: <source:line> | fix: <one line>
 ```
 
-A finding without cited evidence is discarded. Verified-clean claims get one
-line too ("verified: paths, links, frontmatter, X, Y") — a page with a bare
-ACCURATE verdict and nothing else reads like the agent gave up, not like it
-checked. A code block that abstracts a real contract (a teaching type not named
-in source) is not a finding if its shape matches the source; suggest an
-"(illustrative)" tag instead.
+Verdicts may be combined. Record verified facts for an accurate page so the
+result proves that the reviewer checked it. Discard any finding without cited
+evidence.
 
-## Known drift patterns (check these first)
-
-- **"Next seam" / "not yet wired" claims** outdate fastest. Verify each against the spec area and the closing commit before trusting.
-- **Status cells in authority pages** (`architecture-contracts.md` table, `contracts-and-rulings.md` rulings) lag one delivery cycle. Flag status only — never propose changing a recorded decision.
-- **`delivery-order.md`** — check its "Last checked" stamp and finished/next claims against `openspec/changes/archive` + git log.
-- **Harness coverage** — pages that name harnesses must reflect all live seats (Claude, Codex, omp) and WSL execution where relevant.
-- **The same fact stated on multiple pages** drifts unevenly; when one page is verified current, reconcile the others against it.
-
-## Rule Zero
-
-No finding may propose a gate, confirmation, warning, or restrictive language. Findings that do get dropped, not softened.
+No finding may propose a consent gate, confirmation ceremony, capability
+restriction, or robustness work detached from Rennet's job.

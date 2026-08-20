@@ -1,12 +1,12 @@
 # claude-harness-adapter Specification
 
 ## Purpose
-TBD - created by archiving change build-harness-adapter-protocol. Update Purpose after archive.
+Defines how Rennet runs structured Claude turns through the user's installed Claude binary and normalizes subscription and licence evidence.
 ## Requirements
-### Requirement: The Claude adapter drives an injected SDK query surface
+### Requirement: The Claude adapter drives an injected SDK query function
 The Claude adapter SHALL be written against the `@anthropic-ai/claude-agent-sdk` `query()` contract and SHALL receive that transport by injection. The composition root SHALL supply the default injection by lazily importing the real SDK `query()`, and SHALL adopt `@anthropic-ai/claude-agent-sdk` as a production dependency of `@rennet/adapters`. The composition root SHALL translate the adapter's `outputSchema` into the SDK's `outputFormat: { type: 'json_schema', schema }`, and SHALL pass the user's own installed binary via `pathToClaudeCodeExecutable` so authentication stays on the user's subscription.
 
-#### Scenario: A turn round-trips to a completed outcome through the real query surface
+#### Scenario: A turn completes through the real query function
 - **WHEN** the composition-root factory drives the SDK `query()` and it yields an init frame, assistant text, and a successful result with `structured_output`
 - **THEN** the adapter emits `session.started`, `text.message`, and a `session.ended` completed outcome carrying the structured output, with strictly increasing `seq`
 
@@ -38,4 +38,3 @@ The licence gate SHALL admit `@anthropic-ai/claude-agent-sdk` and its per-platfo
 #### Scenario: The positive control proves the gate can fail
 - **WHEN** the gate runs
 - **THEN** it first asserts that a fabricated `Unknown`-bucket package is reported blocked, and refuses to certify if it is not
-

@@ -1,10 +1,10 @@
 # destination-frame Specification
 
 ## Purpose
-TBD - created by archiving change build-destination-frame. Update Purpose after archive.
+Defines the persistent destination that stages dispositions and previews the exact handoff or GitHub review payload.
 ## Requirements
 ### Requirement: The destination is persistent and present from review-open, even with nothing staged
-The UI SHALL render a persistent destination target from the moment a review is open, before any disposition is made. With an empty staged set the destination SHALL be present and legible (an empty forming paper), never hidden or absent. It SHALL be always-present chrome, shown regardless of which workspace view (Files or Canvases) is active.
+The UI SHALL render a persistent destination from the moment a review opens. With an empty staged set, the destination SHALL remain visible and name what the user is building. It SHALL appear in both Files and Canvases views.
 
 #### Scenario: The destination renders at review-open with an empty staged set
 - **WHEN** a review is open and no disposition has been made
@@ -22,20 +22,19 @@ Making a disposition SHALL stage it into the destination's payload in the same a
 - **THEN** the sentinel appears nowhere in the resulting staged payload
 
 ### Requirement: The destination has two variants selected by mode over the same staged data
-The destination SHALL frame the same staged set two ways by mode: `own-branch` presents the handoff / PR-submission bundle being built; `other-pr` presents the review that will be posted. The staged data SHALL be identical across variants; only the framing (title, summary, sign label) changes with mode.
+The destination SHALL present the same staged set in two modes. `own-branch` SHALL present the handoff or PR-submission bundle. `other-pr` SHALL present the GitHub review that will be posted. The staged data SHALL remain identical while the title, summary, and action label change with the mode.
 
 #### Scenario: Mode switches the variant over the same staged data
 - **WHEN** the same staged set is rendered as `own-branch` and then as `other-pr`
 - **THEN** the two renders show distinct framing (handoff bundle vs review to post) while the staged item set is identical
 
-### Requirement: The publish sheet previews exactly what will leave the machine and gates on hold-to-confirm
-The publish sheet SHALL list the staged items as exactly the outbound artifact, with the previewed bytes equal to the staged payload bytes. Signing SHALL be gated by a hold-to-confirm affordance (`holdToSignMs`, accessibility floor 0) and SHALL never default to APPROVE. For v1 the signing act SHALL be all-or-nothing over the whole staged set; publishing a subset requires withdrawing first, then signing. This slice SHALL perform no Git or GitHub mutation.
+### Requirement: The preview posts exactly what it shows
+The preview SHALL list the staged items as the exact outbound artifact. Posting SHALL be one action over the whole staged set, with no timed hold or separate confirmation. To post a subset, the user SHALL withdraw the other items before opening the preview.
 
-#### Scenario: Preview bytes equal the staged payload bytes
-- **WHEN** the publish sheet previews a staged set and the staged payload is serialised
+#### Scenario: Preview bytes equal outbound bytes
+- **WHEN** the preview renders a staged set and the outbound payload is serialized
 - **THEN** the two byte sequences are equal
 
-#### Scenario: Hold-to-confirm gates the publish act
-- **WHEN** the elapsed hold is below `holdToSignMs`
-- **THEN** signing is not permitted; and **WHEN** the elapsed hold meets `holdToSignMs` (floor 0 permitting an immediate sign) the publish act is allowed
-
+#### Scenario: One action posts the staged set
+- **WHEN** the user activates post on a GitHub-backed preview
+- **THEN** Rennet sends the whole previewed set without another confirmation or acknowledgement

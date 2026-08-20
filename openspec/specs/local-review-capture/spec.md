@@ -1,7 +1,7 @@
-# local-review-capture Specification
+# Local review capture specification
 
 ## Purpose
-TBD - created by archiving change build-local-review-mvp. Update Purpose after archive.
+Define read-only repository validation and complete, immutable capture of a local Git changeset into a review patchset.
 ## Requirements
 ### Requirement: Repository validation is read-only
 The system SHALL accept only a directory that Git identifies as a worktree, SHALL resolve its canonical repository root and git-common-dir, and SHALL perform no command that mutates the source working tree, index, refs, config, hooks, or worktree metadata.
@@ -43,3 +43,21 @@ The system SHALL bound captured bytes, identify truncation or unsupported binary
 - **WHEN** the raw patch exceeds the configured byte limit
 - **THEN** the patchset records truncation and the review surface shows that completion-grade coverage is unavailable
 
+### Requirement: Hunk-body content is never interpreted as file metadata
+
+On the REST fallback path, the system SHALL interpret file metadata only in the preamble before the first `@@` hunk header. Metadata includes `--- ` and `+++ ` path headers, mode changes, and renames. After the first hunk header, the parser SHALL classify each line only by its prefix. A line beginning `+` is an addition, and a line beginning `-` is a deletion. Hunk content SHALL NOT change a file's key, paths, or status.
+
+#### Scenario: An added body line rendering as a +++ header does not re-key the file
+
+- **WHEN** a REST-fallback diff block for `actual.txt` contains, inside a hunk, an added source line whose content is `++ b/pnpm-lock.yaml` (rendered in the diff as `+++ b/pnpm-lock.yaml`)
+- **THEN** the parsed file is keyed `actual.txt`, no `pnpm-lock.yaml` file appears in the result, and the adversarial line is counted in `additions`
+
+#### Scenario: A deleted body line rendering as a --- header is counted as a deletion
+
+- **WHEN** a hunk contains a deleted source line whose content is `-- b/some/path` (rendered `--- b/some/path`)
+- **THEN** the line is counted in `deletions` and has no effect on the file's previous path
+
+#### Scenario: The same-family core parser keeps body lines as body
+
+- **WHEN** a per-file patch handed to decomposition contains, inside a hunk, an added line rendered `+++ b/other.txt`
+- **THEN** the hunk's body carries that line as an addition with content `++ b/other.txt`, and no metadata interpretation occurs

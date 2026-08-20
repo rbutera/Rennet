@@ -1,0 +1,201 @@
+---
+title: Architecture overview
+description: How Rennet's clients, server, review engine, integrations, and local data fit together.
+---
+
+Rennet runs a local review service and connects several clients to it. The
+service captures an immutable patchset, builds review artifacts, runs installed
+coding harnesses, and performs Git and GitHub operations. Clients display and
+control that work through the typed Rennet session protocol.
+
+## Process topology
+
+The `@rennet/server` package is the composition root. It constructs stores,
+adapters, harnesses, the command dispatcher, and a WebSocket listener. The
+desktop app supervises that server as a detached local daemon instead of running
+it inside Electron.
+
+```mermaid
+flowchart LR
+  reviewer[Reviewer]
+  desktop["Desktop renderer<br/>@rennet/ui + @rennet/client"]
+  browser["Served browser client<br/>@rennet/ui + @rennet/client"]
+  mobile["Mobile client<br/>Expo + @rennet/client"]
+  shell["Electron main<br/>native shell"]
+  server["@rennet/server<br/>composition + dispatch + WebSocket"]
+  core["@rennet/core<br/>review behavior"]
+  adapters["@rennet/adapters<br/>host integrations"]
+  machine["Local machine<br/>Git + files + SQLite"]
+  harnesses["Installed harnesses<br/>Claude + Codex"]
+  github[GitHub]
+
+  reviewer <--> desktop
+  reviewer <--> browser
+  reviewer <--> mobile
+  desktop <-->|"session protocol"| server
+  browser <-->|"session protocol"| server
+  mobile <-->|"projected session protocol"| server
+  desktop <--> shell
+  shell --> server
+  server <--> core
+  server <--> adapters
+  adapters <--> machine
+  adapters <--> harnesses
+  adapters <--> github
+```
+
+The Electron main process owns windows, the static application menu, the
+`app://` protocol, auto-update, the native repository picker, tray behavior, and
+daemon supervision. Its preload exposes only the small set of native facts and
+effects the renderer needs: platform, version, WebSocket port, directory
+selection, update readiness, and update application.
+
+The daemon serves the browser client as well as the WebSocket protocol. It binds
+to loopback by default. A non-loopback bind is an explicit remote-access setup;
+there is no Rennet relay or hosted Rennet backend. See [Remote
+access](../../using/guides/remote-access.md) for the user-facing setup and egress
+boundary.
+
+## The daemon lifecycle
+
+The desktop reads the daemon claim, verifies it through `/healthz`, and reuses a
+healthy daemon. Otherwise it starts the server as a detached child and records
+the new claim. The daemon removes its claim during graceful shutdown.
+
+Closing every desktop window leaves the tray process and daemon available. The
+desktop's complete-quit action stops a daemon that the desktop owns.
+
+## Clients and reconnection
+
+The desktop renderer and served browser client both mount the same `@rennet/ui`
+application. Each provides a connection factory to `ConnectionHost`; the UI
+package does not import a transport or Node APIs.
+
+`@rennet/client` supplies `WsRennetBridge` and `ConnectionSupervisor`. The
+supervisor owns the `idle`, `connecting`, `online`, `offline`, and `error`
+states, reconnects with bounded backoff, and restores registered progress and
+ask-stream subscriptions after a reconnect.
+
+The Expo mobile app uses `@rennet/client` and the portable protocol directly. It
+has its own native UI rather than mounting `@rennet/ui`. Remote clients receive
+the projected protocol: server-side projection translates or redacts host-only
+state and commands before they cross the connection. Shell-specific operations,
+such as the desktop directory picker and updater, remain native-shell features.
+
+## Package boundaries
+
+Repository architecture checks enforce these import directions:
+
+```mermaid
+flowchart LR
+  types[@rennet/types]
+  theme[@rennet/theme]
+  protocol[@rennet/protocol]
+  instructions[@rennet/instructions]
+  core[@rennet/core]
+  adapters[@rennet/adapters]
+  server[@rennet/server]
+  ui[@rennet/ui]
+  client[@rennet/client]
+
+  protocol --> types
+  instructions --> types
+  core --> types
+  core --> protocol
+  core --> instructions
+  adapters --> types
+  adapters --> protocol
+  adapters --> instructions
+  adapters --> core
+  server --> types
+  server --> protocol
+  server --> instructions
+  server --> core
+  server --> adapters
+  ui --> types
+  ui --> protocol
+  ui --> theme
+  client --> types
+  client --> protocol
+```
+
+`@rennet/types` and `@rennet/theme` have no in-repository dependencies. Only the
+desktop app imports Electron. The architecture check includes positive controls
+that prove forbidden UI-to-core and server-to-Electron imports fail the check.
+
+## Review flow
+
+One review moves through the system as follows:
+
+1. A client asks the server to create or open a review.
+2. For a local review, the Git adapter captures the merge-base-to-HEAD diff plus
+   staged, unstaged, and untracked changes. The capture records complete byte
+   counts even when the visible payload must be truncated.
+3. The server records an immutable patchset and derives review artifacts against
+   that identity.
+4. Deterministic analysis and model jobs populate the Sequence, Spec, Decisions,
+   Flagged, and Noise canvases.
+5. The reviewer reads, asks questions, records dispositions, and previews any
+   outbound GitHub result.
+6. The outbound action for a review submits the previewed review. The outbound
+   action for an own-branch change pushes the named branch and opens or reuses
+   its pull request.
+
+Recapture creates a successor patchset. It does not mutate the patchset already
+under review. Exact occurrence lineage carries dispositions where identity is
+preserved; changed content reopens for review.
+
+## Server composition and dispatch
+
+`packages/server/src/create-server.ts` assembles the runtime. It supplies the
+command implementations to `packages/server/src/dispatch.ts`, which validates
+and routes protocol commands. This package also owns live orchestration, symbol
+lookup, projected connections, ask streams, review reattachment, and daemon
+lifecycle.
+
+`@rennet/core` contains portable review logic, document validation, canvas
+projection, scheduling, lineage, and state folds. `@rennet/adapters` implements
+Git capture, GitHub calls, filesystem stores, SQLite persistence, Repo Map
+generation, and coding-harness execution. Keeping composition in the server
+lets the desktop, browser, mobile, and CLI paths use the same behavior.
+
+## Persistence
+
+Rennet stores different kinds of state at their natural scopes:
+
+| Location | Contents |
+|---|---|
+| Platform daemon data directory | `rennet.sqlite`, project registry, daemon claim, and daemon-owned files |
+| `~/.rennet/config.json` | Global user settings |
+| `~/.rennet/projects/<escaped-path>/` | Project snapshot, Repo Map shards and manifests, overlays, knowledge, and context manifests |
+| `~/.rennet/threads/<reviewId>.json` | Durable review conversation |
+| Project `.rennet/map/` and `.rennet/knowledge/` | Optional promoted context mirrors |
+
+Promotion writes the optional project mirrors but does not stage or commit them.
+The project's `.rennet/` directory remains local and ignored by default.
+
+The SQLite review store persists commands and events transactionally. Reading a
+review folds its event history into the current projection. Conversation files
+are separate so completed messages and interrupted turns survive client or
+desktop restarts.
+
+## Live turns and reattachment
+
+The server registers active model turns in `LiveTurnRegistry`. A reconnecting
+client calls `review.reattach` and receives the durable thread plus any live
+turn, including the body accumulated so far. A streaming placeholder recovered
+from disk is marked interrupted unless the registry confirms that the turn is
+still active. Completing a turn replaces its placeholder with the completed
+message.
+
+Daemon shutdown aborts all registered live turns. Closing a client or desktop
+window does not stop a daemon that remains resident.
+
+## Where to go next
+
+- [Architecture contracts](./architecture-contracts.md) defines the correctness
+  rules behind immutable capture, provenance, lineage, persistence, and posting.
+- [The canvas model](./canvas-model.md) describes the shared review surfaces.
+- [Context assembly](./context-assembly.md) explains the bounded primer and
+  retrieval tools.
+- [The Model Council](./model-council.md) explains model assignment.

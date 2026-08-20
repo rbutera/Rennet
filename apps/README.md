@@ -1,3 +1,3 @@
 # Applications
 
-Production application entry points belong here. `desktop` is the Electron composition root and `marketing` is the public site. Use the Electron, Vite, Forge, UI, and release choices in the [dependency standard](../docs/src/content/docs/developing/reference/dependency-standard.md).
+Production applications live here. `desktop` packages the Electron client and local daemon. `mobile` is the native client. `docs` renders the canonical root documentation. `marketing` builds the public site. The [dependency standard](../docs/developing/reference/dependency-standard.md) defines framework, packaging, UI, and release choices.

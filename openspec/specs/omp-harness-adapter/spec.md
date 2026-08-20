@@ -1,11 +1,11 @@
-# omp-harness-adapter Specification
+# Omp harness adapter specification
 
 ## Purpose
-The omp adapter is the third harness slot (R23): it drives the user's own installed `omp` (`@oh-my-pi/pi-coding-agent`) through the normalized `HarnessPort` protocol, capable by default, with every capability flag earned through the shared conformance suite and honest Bun-aware health when the runtime is missing.
+Define the omp adapter's discovery, Bun runtime, NDJSON turn transport, normalized events, evidence-backed capabilities, canvasOps connection, and orchestrator routing.
 ## Requirements
 ### Requirement: The omp adapter drives an injected NDJSON turn transport
 
-The omp adapter SHALL be written against an injected turn transport (the peer of the Claude adapter's injected query function and the Codex adapter's injected exec transport), so the adapter package is fully testable without spawning a process. The composition root SHALL implement the transport by spawning the discovered `omp` binary in its line-delimited JSON RPC mode in the session's `cwd` as a fresh ephemeral session per turn (no session persistence), and one `HarnessSession` SHALL run exactly one turn (the single-turn contract every live `HarnessPort` consumer holds). The wire mapping SHALL restrict itself to the RPC subset shared with `pi` (R23's compatible subset), so omp-only protocol extras never leak into the normalization.
+The omp adapter SHALL use an injected turn transport, matching the injection seams used by the Claude and Codex adapters. Adapter tests SHALL run without spawning a process. The production transport SHALL spawn the discovered `omp` binary in its line-delimited JSON RPC mode with the session's `cwd`. It SHALL create a fresh session for each turn, and each `HarnessSession` SHALL run exactly one turn. The wire mapping SHALL use the RPC subset shared with `pi` and SHALL NOT expose omp-specific protocol fields through the normalized harness protocol.
 
 #### Scenario: A turn round-trips to a completed outcome through the transport
 
@@ -17,18 +17,18 @@ The omp adapter SHALL be written against an injected turn transport (the peer of
 - **WHEN** an omp adapter is constructed and its descriptor read, but no session sends a turn
 - **THEN** the transport has not been invoked and no process has been spawned
 
-### Requirement: Sessions are capable by default and carry no approval plumbing
+### Requirement: Sessions run with full acting capability
 
-An omp session SHALL run with full capability on the acting path: the composed invocation SHALL select omp's non-interactive full-capability mode (no approval prompts, no write gating), and the adapter SHALL contain no approval-request handling, no consent surface, and no read-only posture. The ACP entry point, whose distinguishing feature is a permission-request protocol, SHALL NOT be the transport.
+An omp session SHALL run in non-interactive full-capability mode. The adapter SHALL NOT add permission requests, restrict writes, or use ACP as its transport.
 
 #### Scenario: The composed invocation is full-capability
 
 - **WHEN** the composition root builds the invocation for a session turn
-- **THEN** it selects the non-interactive full-capability mode and contains no approval, gating, or read-only flag
+- **THEN** it selects non-interactive full-capability mode without a read-only flag or permission-request protocol
 
 ### Requirement: Every native frame is normalized or passed through, never dropped
 
-The adapter SHALL normalize the transport's streamed frames into the existing `HarnessEvent` protocol with tolerant structural decoders: known frames map to their event kinds (session start, text, tool calls with `ToolKind` classification, terminal outcome), and any unmodelled frame SHALL surface as a `passthrough` event whose `native` field holds the original frame verbatim. Events SHALL carry the adapter-assigned monotonic `seq`, never a harness clock. Any RPC response with `success: false`, nonzero exit, spawn/construction/iteration failure, malformed frame, oversized frame, or unparseable terminal state SHALL surface as a normalized `HarnessError` with a closed `class` and an `origin`, ending the session with exactly one `failed` outcome; `interrupt()`, `close()`, or an aborted `signal` SHALL terminate the spawned process tree and resolve only after transport completion. Stdout frame and stderr accumulation SHALL be byte-bounded. The `events` iterable SHALL be single-use even when one captured handle is iterated twice.
+The adapter SHALL normalize known transport frames into session-start, text, classified tool-call, and terminal `HarnessEvent` values. An unknown frame SHALL produce a `passthrough` event whose `native` field contains the original frame. Events SHALL use an adapter-assigned monotonic `seq`, not a harness clock. A response with `success: false`, a nonzero exit, a spawn or iteration failure, a malformed or oversized frame, or an unparseable terminal state SHALL produce a normalized `HarnessError` and exactly one `failed` outcome. `interrupt()`, `close()`, and an aborted `signal` SHALL terminate the process tree and resolve after transport completion. The transport SHALL bound stdout frames and accumulated stderr. The `events` iterable SHALL allow one subscription.
 
 #### Scenario: An unmodelled frame arrives mid-stream
 
@@ -52,19 +52,19 @@ The adapter SHALL normalize the transport's streamed frames into the existing `H
 
 ### Requirement: The descriptor is evidence-derived and claims nothing unproven
 
-The omp descriptor's capability flags SHALL be built only from `buildCapabilities` evidence produced by passing conformance-suite checks, and its `testedRange` SHALL be read from the committed conformance artifact, which SHALL have no omp entry until the first genuine real run fully matches the expected capability matrix. Because no turn has ever been executed against omp (the protocol research deliberately declined to invent the mapping table), hermetic fakes SHALL model only documented wire shapes, and no evidence layer beyond `implementedByAdapter` SHALL exist without a gated real run against the installed binary.
+The omp descriptor SHALL build capability flags only from `buildCapabilities` evidence produced by passing conformance checks. It SHALL read `testedRange` from the committed conformance artifact. Without a complete matching real run, the artifact SHALL have no omp entry. Hermetic fakes SHALL model only documented wire shapes and SHALL produce at most `implementedByAdapter` evidence.
 
 #### Scenario: A fresh adapter with no evidence
 
 - **WHEN** a descriptor is built with no conformance evidence supplied
 - **THEN** every layer of every capability is `false` and `testedRange` is absent-honest rather than invented
 
-#### Scenario: The default gate spends nothing on omp
+#### Scenario: the default gate spends nothing on omp
 
 - **WHEN** the repository's default gate runs the conformance suite for the omp slot
 - **THEN** it runs only against the in-process fake transport, spawns no process, and produces at most `implementedByAdapter` evidence
 
-#### Scenario: A gated real run earns the outer layers
+#### Scenario: an opt-in real run earns the outer layers
 
 - **WHEN** the opt-in real conformance run executes against the installed `omp` binary and every capability matches the expected matrix
 - **THEN** passing checks produce `advertisedByHarness`/`availableInSession` evidence and the run records the binary version into the committed tested-range artifact
@@ -76,7 +76,7 @@ The omp descriptor's capability flags SHALL be built only from `buildCapabilitie
 
 ### Requirement: Discovery health degrades honestly when the Bun runtime is absent
 
-omp requires the Bun runtime to execute. Discovery SHALL resolve Bun before probing omp, enforce Bun `>=1.3.14`, and carry the exact proven runtime into process composition so the omp script is both probed and launched through it. When `omp` is present but Bun is missing or below floor, health SHALL be unavailable with a reason that names Bun and the resolved omp path — never a generic no-version branch or a first-spawn crash. Omp ranking SHALL demote an asdf shim behind a real install, and Windows filename matching SHALL consume the candidate locus's `PATHEXT`.
+Omp requires Bun. Discovery SHALL resolve Bun before probing omp, require Bun `>=1.3.14`, and carry the proven Bun path into process composition. The probe and turn SHALL use that path. If omp resolves but Bun is missing or below the minimum, health SHALL be unavailable with a reason that names Bun and the resolved omp path. Omp ranking SHALL place an asdf shim behind a direct install. Windows filename matching SHALL use the candidate environment's `PATHEXT`.
 
 #### Scenario: omp present, Bun absent
 
@@ -99,7 +99,7 @@ When a turn carries loopback MCP servers, composition SHALL write `mcp.json` at 
 
 ### Requirement: The orchestrator seat works with omp selected
 
-The desktop composition SHALL be able to resolve the existing `orchestrator-chat` seat to the omp slot: an omp-selected turn SHALL run through the omp adapter's port and SHALL attach the same live canvasOps backend through the external loopback MCP transport the Codex path uses — the identical tool descriptors, with no harness-conditional branching in the canvasOps layer. The default resolution policy SHALL serve the seat with omp when it is the only installed harness (where today no orchestrator is available at all); the Model Council's Claude/Codex assignment tables SHALL remain unchanged.
+The desktop composition SHALL resolve the `orchestrator-chat` seat to the omp slot when selected. The turn SHALL run through the omp adapter and attach the live canvasOps backend through the external loopback MCP transport. Omp and Codex SHALL receive identical canvasOps tool descriptors without harness-specific branches. The default policy SHALL choose omp when it is the only installed harness. The Model Council's Claude and Codex assignment tables SHALL remain unchanged.
 
 #### Scenario: An omp-selected orchestrator reaches the injected transport
 
@@ -119,4 +119,3 @@ The adapter and its composition root SHALL never read a harness credential file,
 
 - **WHEN** a session is created and a turn runs through the real composition root
 - **THEN** no credential file path is read, and the safety check that would catch such a read is proven able to fire
-

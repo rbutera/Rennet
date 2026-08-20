@@ -1,11 +1,11 @@
 # cross-harness-adjudication Specification
 
 ## Purpose
-When the two harness seats disagree about a finding, an explicit adjudication turn asks the code who is right and stamps an informational verdict on the flare; a committed synthetic ground-truth corpus measures, via gated real runs, whether that explicit adjudication actually beats raw overlap.
+Defines independent cross-harness finding adjudication and the synthetic calibration corpus used to measure it.
 ## Requirements
 ### Requirement: Divergence, and only divergence, triggers an adjudication turn
 
-The adjudication pass SHALL run one model turn per contested row — a reconciled finding whose agreement is `disagree` (a solo, or a severity conflict) — on the seat the Model Council resolves for the `adjudication` job. Rows whose agreement is `concur` SHALL NOT consume an adjudication turn. Each turn's prompt SHALL state the contested claim with explicit polarity (which seat flagged what at the anchor, and the other seat's answer — including "no concern raised here" for a solo), and SHALL include real file content around the finding's anchor, not only the offered hunk. The pass SHALL draw from the review's one shared invocation budget and SHALL be bounded by a per-review adjudication cap.
+The adjudication pass SHALL run one model turn for each reconciled finding whose agreement is `disagree`, including solo findings and severity conflicts. The Model Council SHALL resolve the seat for the `adjudication` job. Rows whose agreement is `concur` SHALL consume no adjudication turn. Each prompt SHALL identify which seat flagged the claim at which anchor and what the other seat reported. For a solo finding, the other answer SHALL read "no concern raised here." The prompt SHALL include file content around the anchor, not only the offered hunk. Adjudication SHALL draw from the review's shared invocation budget and obey the per-review cap.
 
 #### Scenario: A disagree row is adjudicated on the council's adjudication seat
 
@@ -19,12 +19,12 @@ The adjudication pass SHALL run one model turn per contested row — a reconcile
 
 ### Requirement: The verdict is a three-way judgement that informs and never gates
 
-Each adjudicated row SHALL carry a verdict of exactly `supported` (the code evidences the flagged claim), `contradicted` (the code refutes it), or `insufficient` (neither could be established), plus a one-line evidence string and the adjudicating seat's identity. The verdict SHALL be additive-optional on the disagree agreement: a row without it validates and renders exactly as before. A contested row SHALL render regardless of its verdict — adjudication never drops, hides, or blocks a flare, and no rendering path waits on adjudication or calibration. A turn failure, the per-review cap, or an exhausted budget SHALL surface as `insufficient` with its honest reason, never as a silent omission and never as a fabricated verdict.
+Each adjudicated row SHALL carry one verdict: `supported` when the code supports the claim, `contradicted` when the code refutes it, or `insufficient` when neither can be established. It SHALL also carry one evidence line and the adjudicating seat's identity. The verdict SHALL remain optional on a disagree row, and a row without one SHALL still validate and render. Adjudication SHALL never drop, hide, or block a finding, and initial rendering SHALL not wait for adjudication or calibration. A turn failure, reached cap, or exhausted budget SHALL produce `insufficient` with the reason.
 
 #### Scenario: A contradicted flare still renders, now informed
 
 - **WHEN** the adjudicator returns `contradicted` for a solo finding
-- **THEN** the row still surfaces as a disagreement with both seats' verbatim answers, additionally carrying the `contradicted` verdict, its evidence line, and the adjudicating seat
+- **THEN** the row remains a disagreement with both seats' verbatim answers and carries the `contradicted` verdict, its evidence line, and the adjudicating seat
 
 #### Scenario: An exhausted budget is an honest insufficient
 
@@ -38,7 +38,7 @@ Each adjudicated row SHALL carry a verdict of exactly `supported` (the code evid
 
 ### Requirement: The seeded ground-truth corpus is synthetic and Rennet-owned
 
-The calibration corpus SHALL consist entirely of Rennet-authored synthetic diffs — planted bugs and clean-control items — each committed with a known per-claim verdict and a claim class. No item SHALL derive from client repositories, client code, client pull requests, or any client data. Each corpus item SHALL be expressible as an offered manifest so the same finding and adjudication machinery that serves live reviews runs over it unmodified.
+The calibration corpus SHALL contain only Rennet-authored synthetic diffs with planted bugs and clean controls. Each committed item SHALL declare its claim class and known verdict. No item SHALL derive from client repositories, code, pull requests, or data. Each item SHALL use the offered-manifest format consumed by live finding and adjudication code.
 
 #### Scenario: A corpus item carries its ground truth
 
@@ -47,7 +47,7 @@ The calibration corpus SHALL consist entirely of Rennet-authored synthetic diffs
 
 ### Requirement: Calibration is measured by gated real runs and committed as a table, never hand-edited
 
-Scoring SHALL be a pure function comparing, per corpus item, raw overlap's answer (the reconciled agreement arithmetic) and explicit adjudication's answer against the known verdict, aggregated per claim class. The default gate SHALL exercise the pass and scorer only against fake in-process seats — zero process spawns, zero token spend. A gated opt-in real run SHALL drive both installed harnesses' finding seats over the corpus, adjudicate the disagreements, and record the per-class calibration table into a committed artifact. The committed table SHALL originate only from real runs — no hand-written calibration values — and SHALL be an informational quality signal: no code path SHALL consume it to gate rendering, publishing, or seat selection.
+Scoring SHALL be a pure function. For each corpus item, it SHALL compare reconciled agreement and explicit adjudication against the known verdict, then aggregate results by claim class. The default gate SHALL use fake in-process seats, spawn no harness process, and spend no tokens. An opt-in real run SHALL drive both installed harnesses over the corpus, adjudicate disagreements, and write the per-class calibration table. Only a completed real run SHALL write that table. No product code SHALL use calibration data to block rendering, posting, or seat selection.
 
 #### Scenario: The default gate spends nothing
 
@@ -72,4 +72,3 @@ The two seats whose disagreement feeds adjudication SHALL have generated their f
 
 - **WHEN** the dual review runs both seats and the adjudication pass follows
 - **THEN** each seat's turns and the adjudicator's turn are separate sessions with no shared conversational state, and a test fails if any seat is fed the other's findings before reconciliation
-
