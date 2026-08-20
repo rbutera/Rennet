@@ -134,7 +134,7 @@ export function useGitHubAccount(bridge: RennetBridge) {
 }
 
 /** The in-flight device flow: the one-time code and where to enter it. */
-function DeviceFlowPrompt({ flow, onCancel }: { flow: DeviceFlow; onCancel(): void }) {
+export function DeviceFlowPrompt({ flow, onCancel }: { flow: DeviceFlow; onCancel(): void }) {
   return (
     <div className="github-flow flex items-center gap-3 min-w-0 flex-1">
       <span className="github-code font-mono text-lg font-bold tracking-[0.12em] px-2.5 py-1.5 rounded-control border border-line-strong bg-raised text-ink whitespace-nowrap">

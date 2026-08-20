@@ -2642,6 +2642,16 @@ export const commandDefinitions = {
        * one. Local work is unaffected by this filter.
        */
       prStates: z.array(pullRequestStateSchema).nonempty().optional(),
+      /**
+       * The instant first paint (local-first render): when `true`, MAIN returns
+       * the LOCAL half from git alone and skips every GitHub auth + PR fetch — so
+       * the surface never blocks on a slow (or, on a dead token, failing) network
+       * round-trip before showing the work that is already on disk. `prs` comes
+       * back empty and `authUnavailable` is absent (not an assertion that GitHub is
+       * fine — just "we did not look"). The renderer fires this first, paints it,
+       * then fires the full detail to fold PRs in. Omitted/false ⇒ the full detail.
+       */
+      localOnly: z.boolean().optional(),
     }),
     output: projectDetailSchema,
   },

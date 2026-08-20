@@ -4,7 +4,7 @@ import type {
   PullRequestState,
   RennetBridge,
 } from "@rennet/protocol";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import {
   buildSmartRows,
@@ -15,6 +15,7 @@ import {
   smartListCounts,
   sortSmartRows,
 } from "../project/smart-list";
+import { DeviceFlowPrompt, useGitHubAccount } from "./github-connect";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -59,7 +60,13 @@ export function ProjectDetail({
   onOpenContextMap(): void;
   onBack(): void;
 }) {
-  const [detail, setDetail] = useState<ProjectDetailData | null>(initialDetail ?? null);
+  // Two-phase, local-first paint. `local` is the instant git-only half (no auth, no
+  // network); `full` is the authoritative detail with live PRs. The list shows `full`
+  // once it lands, `local` in the meantime — so the work already on disk appears at
+  // once instead of blocking behind a slow (or dead-token, failing) GitHub round-trip.
+  const [full, setFull] = useState<ProjectDetailData | null>(initialDetail ?? null);
+  const [local, setLocal] = useState<ProjectDetailData | null>(null);
+  const [fetchingFull, setFetchingFull] = useState(false);
   const [error, setError] = useState<string>();
   const [sort, setSort] = useState<SmartSort>("hot");
   const [filter, setFilter] = useState<SmartFilter>("all");
@@ -67,23 +74,56 @@ export function ProjectDetail({
   // default; flipping to merged/closed/all refetches the substrate with that
   // filter — history is paged on demand, never synced locally.
   const [prScope, setPrScope] = useState<PrScope>("open");
+  // Bumped by an inline reconnect success, forcing a fresh full fetch (and bypassing
+  // the initialDetail fast path — the stale detail predates the just-fixed auth).
+  const [reloadNonce, setReloadNonce] = useState(0);
   // Branches whose local worktree has been cleaned up (optimistic; the row's
   // annotation disappears immediately, the command acknowledges behind it).
   const [cleaned, setCleaned] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     setError(undefined);
-    if (initialDetail && prScope === "open") {
-      setDetail(initialDetail);
+    // Fast path: the projects list already handed us the full open-state detail.
+    if (initialDetail && prScope === "open" && reloadNonce === 0) {
+      setFull(initialDetail);
+      setLocal(null);
+      setFetchingFull(false);
       return;
     }
-    setDetail(null);
+    let alive = true;
+    setFull(null);
+    setLocal(null);
+    setFetchingFull(true);
+    // Instant local paint: git only, no auth, no network — first content on screen.
+    // A failure here is non-fatal; the full fetch below reports the real error.
+    bridge
+      .invoke("project.detail", { projectId: project.id, localOnly: true })
+      .then((detail) => {
+        if (alive) setLocal(detail);
+      })
+      .catch(() => undefined);
+    // Authoritative full detail: local work + live PRs for the chosen scope.
     bridge
       .invoke("project.detail", { projectId: project.id, prStates: PR_SCOPE_STATES[prScope] })
-      .then(setDetail)
-      .catch((reason: unknown) => setError(messageFrom(reason)));
-  }, [bridge, initialDetail, project.id, prScope]);
+      .then((detail) => {
+        if (!alive) return;
+        setFull(detail);
+        setFetchingFull(false);
+      })
+      .catch((reason: unknown) => {
+        if (!alive) return;
+        setError(messageFrom(reason));
+        setFetchingFull(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [bridge, initialDetail, project.id, prScope, reloadNonce]);
 
+  // The list shows the authoritative full detail once it lands, the instant local
+  // half until then. PRs are still in flight while `full` is null but `local` is up.
+  const detail = full ?? local;
+  const prsPending = fetchingFull && detail !== null;
   const rows = useMemo(() => (detail ? buildSmartRows(detail) : []), [detail]);
   // Apply the optimistic clean-ups: drop the annotation from any swept worktree (keyed
   // by the stable worktree id, so a reused branch name never sweeps the wrong row).
@@ -164,11 +204,7 @@ export function ProjectDetail({
 
       {error ? <p className="project-detail-error mt-4 text-danger">{error}</p> : null}
 
-      {detail === null && !error ? (
-        <p className="project-detail-loading my-6 mx-1 text-ink-faint">
-          Reading local work and pull requests…
-        </p>
-      ) : null}
+      {detail === null && !error ? <SmartListSkeleton /> : null}
 
       {detail ? (
         <>
@@ -182,6 +218,8 @@ export function ProjectDetail({
             onPrScope={setPrScope}
           />
 
+          {prsPending ? <PrPendingBanner detail={detail} prScope={prScope} /> : null}
+
           {detail.truncated ? (
             <p
               className="project-detail-truncated flex items-center gap-2 mt-3.5 px-3.5 py-2.5 rounded-chip border border-accent-line bg-accent-surface text-ink text-base"
@@ -193,18 +231,11 @@ export function ProjectDetail({
           ) : null}
 
           {detail.authUnavailable ? (
-            <p
-              className="project-detail-auth-hint mt-2.5 px-3.5 py-2 rounded-chip border border-line text-ink-soft text-sm"
-              role="note"
-            >
-              {detail.authUnavailable === "not-connected"
-                ? "Pull requests unavailable — GitHub is not connected. Connect in Settings."
-                : detail.authUnavailable === "token-invalid"
-                  ? "Pull requests unavailable — the GitHub token was revoked or expired. Reconnect in Settings."
-                  : detail.authUnavailable === "network"
-                    ? "GitHub is unreachable right now — showing local work only."
-                    : "Pull requests unavailable — the GitHub token is missing the repo scope."}
-            </p>
+            <AuthHint
+              reason={detail.authUnavailable}
+              bridge={bridge}
+              onReconnected={() => setReloadNonce((nonce) => nonce + 1)}
+            />
           ) : null}
 
           <div className="smart-list flex flex-col gap-2 mt-1">
@@ -220,6 +251,127 @@ export function ProjectDetail({
           </div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+/* ── The loading + pending + auth surfaces ─────────────────────────────────── */
+
+/** The count of distinct repositories represented in a detail's local work. */
+function repoCount(detail: ProjectDetailData): number {
+  return new Set(detail.locals.map((work) => work.repository)).size;
+}
+
+/**
+ * The instant-loading skeleton: a few pulsing placeholder rows echoing the smart
+ * list's shape. Shown only before the first (local) half paints — a moment, since
+ * local work is pure git. Honest: it is visibly a placeholder, never faked content.
+ */
+function SmartListSkeleton() {
+  return (
+    <div className="smart-list-skeleton flex flex-col gap-2 mt-4" aria-hidden="true">
+      <p className="project-detail-loading mb-1 mx-1 text-ink-faint">Reading local work…</p>
+      {[0, 1, 2].map((index) => (
+        <div
+          key={index}
+          className="smart-row-skeleton flex items-center gap-3.5 rounded-surface border border-line bg-raised px-3.5 py-3.5 animate-pulse"
+          style={{ animationDelay: `${index * 120}ms` }}
+        >
+          <span className="h-3.5 w-[42px] rounded bg-line" />
+          <span className="flex flex-col gap-2 flex-1">
+            <span className="h-3.5 w-1/2 rounded bg-line" />
+            <span className="h-3 w-1/3 rounded bg-line opacity-70" />
+          </span>
+          <span className="h-3.5 w-16 rounded bg-line" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The truthful "still fetching PRs" banner: shown once local work is on screen but
+ * the live pull-request half is still in flight. A pulsing dot, not a fake progress
+ * bar — the renderer does not know a percentage, so it does not pretend to.
+ */
+function PrPendingBanner({ detail, prScope }: { detail: ProjectDetailData; prScope: PrScope }) {
+  const repos = repoCount(detail);
+  const across = repos > 1 ? ` across ${repos} repos` : "";
+  const scope = prScope === "open" ? "" : `${prScope} `;
+  return (
+    <p
+      className="project-detail-prs-pending flex items-center gap-2.5 mt-3 px-3.5 py-2 rounded-chip border border-accent-line bg-accent-surface text-ink-soft text-sm"
+      role="status"
+    >
+      <span className="relative inline-flex h-2 w-2 flex-none" aria-hidden="true">
+        <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+      </span>
+      Fetching {scope}pull requests{across}…
+    </p>
+  );
+}
+
+/** The auth-unavailable reason the detail substrate reports. */
+type AuthUnavailable = NonNullable<ProjectDetailData["authUnavailable"]>;
+
+const AUTH_HINT_COPY: Record<AuthUnavailable, string> = {
+  "not-connected": "Pull requests need a GitHub connection.",
+  "token-invalid": "The GitHub token was revoked or expired.",
+  "insufficient-scope": "This token is missing the `repo` scope needed to read pull requests.",
+  network: "GitHub is unreachable right now — showing local work only.",
+};
+
+/**
+ * The auth-unavailable hint — actionable at the point of failure. A revoked or
+ * missing token gets an inline device-flow reconnect right here (not a dead-end
+ * "go to Settings"), and a success refetches the PR half in place. A network
+ * outage is transient, so it states the fact with no button.
+ */
+function AuthHint({
+  reason,
+  bridge,
+  onReconnected,
+}: {
+  reason: AuthUnavailable;
+  bridge: RennetBridge;
+  onReconnected(): void;
+}) {
+  const account = useGitHubAccount(bridge);
+  // A device flow was in flight → when the account flips to connected, the reconnect
+  // succeeded: refetch. The ref keeps a stale `status` from firing it on mount.
+  const wasConnecting = useRef(false);
+  useEffect(() => {
+    if (account.flow) wasConnecting.current = true;
+    if (wasConnecting.current && account.status?.state === "connected") {
+      wasConnecting.current = false;
+      onReconnected();
+    }
+  }, [account.flow, account.status, onReconnected]);
+
+  const canReconnect = reason !== "network";
+  const label = reason === "not-connected" ? "Connect" : "Reconnect";
+  return (
+    <div
+      className="project-detail-auth-hint flex items-center gap-3 mt-2.5 px-3.5 py-2.5 rounded-chip border border-line bg-surface text-ink-soft text-sm"
+      role="note"
+    >
+      {account.flow ? (
+        <DeviceFlowPrompt flow={account.flow} onCancel={() => void account.cancel()} />
+      ) : (
+        <>
+          <span className="flex-1 min-w-0">{account.error ?? AUTH_HINT_COPY[reason]}</span>
+          {canReconnect ? (
+            <button
+              type="button"
+              className="project-detail-reconnect flex-none px-3 py-1.5 rounded-control border border-accent-line bg-accent-soft text-ink text-sm font-semibold hover:border-accent"
+              onClick={() => void account.connect()}
+            >
+              {label}
+            </button>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

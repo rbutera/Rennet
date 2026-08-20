@@ -2241,13 +2241,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
     // when auth is unavailable → the local-only list). An unknown projectId degrades
     // to an empty detail (fail-safe, mirroring the project store) rather than throwing.
-    projectDetail: async (projectId, prStates) => {
+    projectDetail: async (projectId, prStates, localOnly) => {
       const project = projectStore.list().find((entry) => entry.id === projectId);
       if (!project) {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
       }
-      const { source, authUnavailable } = await resolveProjectPrSource();
       const projectRoot = project.openPath || project.path;
+      // Local-first instant paint: no auth, no PR fetch, no network — just git.
+      // The renderer fires this first so the work already on disk shows immediately,
+      // never blocked behind a slow (or dead-token, failing) GitHub round-trip.
+      if (localOnly) {
+        return loadProjectDetail(
+          defaultProjectDetailSourceDeps(gitForRepo(projectRoot)),
+          project,
+          prStates,
+        );
+      }
+      const { source, authUnavailable } = await resolveProjectPrSource();
       const detail = await loadProjectDetail(
         defaultProjectDetailSourceDeps(gitForRepo(projectRoot), source ?? undefined),
         project,
