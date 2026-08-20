@@ -151,12 +151,14 @@ export async function waitForWslDaemon(
   const timeoutMs = deps.timeoutMs ?? 10_000;
   const intervalMs = deps.intervalMs ?? 100;
   const deadline = now() + timeoutMs;
-  // Learn the port with ONE claim read (retried only until it first appears — the
-  // daemon may still be booting); once known it is cached and never re-read, so all
-  // subsequent polling hits `/healthz` on the port, never `daemon.json` over 9P.
-  let port: number | null = null;
+  // ACQUISITION loop: RE-READ the port every iteration until a probe answers healthy. The
+  // "learn the port once" discipline is for STEADY-STATE health (the caller already holds a
+  // port and hits `/healthz` directly, never re-reading the claim over 9P). Acquisition is
+  // different: a version-skew restart brings the daemon back on a NEW ephemeral port, so a
+  // port cached from the dying daemon would be polled fruitlessly until the deadline. Reading
+  // `daemon.json` each pass costs one 9P read per interval — cheap, and only while starting up.
   for (;;) {
-    if (port === null) port = await readWslDaemonPort(location, deps.run);
+    const port = await readWslDaemonPort(location, deps.run);
     if (port !== null) {
       const identity = await probeWslDaemonHealth(port, {
         fetch: deps.fetch,

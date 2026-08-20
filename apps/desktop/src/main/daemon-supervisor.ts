@@ -268,8 +268,13 @@ function defaultWslDeps(): EnsureWslDaemonDeps {
   };
 }
 
-/** distro → the WS port of that distro's daemon, spawned lazily once and then reused. */
-const wslDaemonPorts = new Map<string, number>();
+/**
+ * distro → the IN-FLIGHT ensure promise for that distro, so two concurrent project-opens on
+ * the same distro fold into ONE `ensureWslDaemon` call. The entry is removed once settled, so a
+ * later open re-ensures — no stale port cache (`ensureWslDaemon` self-short-circuits when a
+ * healthy same-version daemon already runs, so re-ensuring is cheap and self-healing).
+ */
+const wslInFlight = new Map<string, Promise<number>>();
 
 export interface DaemonForProjectDeps {
   /** The host-locus path — TODAY's `ensureDaemon(dataDir)`, unchanged (byte-identical). */
@@ -281,19 +286,21 @@ export interface DaemonForProjectDeps {
   ) => Promise<{ port: number }>;
   /** Build the WSL deps for a distro (version + host bundle + bounded runner). */
   readonly wslDeps: (distro: string) => EnsureWslDaemonDeps;
-  /** The distro → port map (injectable so tests get a fresh one). */
-  readonly ports: Map<string, number>;
+  /** The distro → in-flight ensure promise map (injectable so tests get a fresh one). */
+  readonly inFlight: Map<string, Promise<number>>;
 }
 
 /**
  * Resolve the WS port that serves a project, SELECTED BY its execution locus (design D3/D4).
  *
  * - Host-locus: exactly today's `ensureDaemon(dataDir)` — byte-identical, no WSL code runs.
- * - WSL-locus: routes to the project's distro daemon, spawned lazily ONCE per distro (via
- *   `ensureWslDaemon`) and reused through the `distro → port` map, so opening a second project
- *   on the same distro dials the already-running daemon. The renderer's bridge dials the port
- *   this returns; repo paths crossing into the distro are translated where they are spawned
- *   (adapters' `locusCommand` / `toDistroPath`), not here — this seam only resolves the port.
+ * - WSL-locus: routes to the project's distro daemon via `ensureWslDaemon`, which itself
+ *   self-short-circuits when a healthy same-version daemon already runs (so there is NO stale
+ *   port cache to go wrong). Concurrent opens on the SAME distro fold into one in-flight ensure;
+ *   the entry clears once settled so a later open re-ensures (self-healing). The renderer's
+ *   bridge dials the port this returns; repo paths crossing into the distro are translated where
+ *   they are spawned (adapters' `locusCommand` / `toDistroPath`), not here — this seam only
+ *   resolves the port.
  *
  * The desktop main is deliberately thin here: the composed logic lives in the injectable-effect
  * `ensureWslDaemon` orchestrator (unit-tested in packages/server); the live end-to-end wiring is
@@ -308,14 +315,21 @@ export async function ensureDaemonForProject(
     ensureHostDaemon: (dataDir) => ensureDaemon(dataDir),
     ensureWslDaemon,
     wslDeps: defaultWslDeps,
-    ports: wslDaemonPorts,
+    inFlight: wslInFlight,
     ...overrides,
   };
   const locus = detectLocus(projectPath);
   if (locus.kind === "host") return deps.ensureHostDaemon(hostDataDir);
-  const cached = deps.ports.get(locus.distro);
-  if (cached !== undefined) return cached;
-  const { port } = await deps.ensureWslDaemon(locus.distro, deps.wslDeps(locus.distro));
-  deps.ports.set(locus.distro, port);
-  return port;
+  const { distro } = locus;
+  // Single-flight per distro: a concurrent open joins the running ensure; once it settles the
+  // entry is dropped so the next open re-ensures against `ensureWslDaemon`'s own short-circuit.
+  const pending = deps.inFlight.get(distro);
+  if (pending) return pending;
+  const promise = deps.ensureWslDaemon(distro, deps.wslDeps(distro)).then(({ port }) => port);
+  deps.inFlight.set(distro, promise);
+  try {
+    return await promise;
+  } finally {
+    deps.inFlight.delete(distro);
+  }
 }

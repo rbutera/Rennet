@@ -85,8 +85,14 @@ export async function ensureWslDaemon(
   deps: EnsureWslDaemonDeps,
 ): Promise<WslDaemonHandle> {
   const { run, serverVersion } = deps;
-  // Derive the stdout-only shape `core`'s probes want from the one bounded runner.
-  const runString = async (command: LocusCommand): Promise<string> => (await run(command)).stdout;
+  // Derive the stdout-only shape `core`'s probes want from the one bounded runner. Trust
+  // stdout ONLY on a clean exit: a nonzero/timeout run may have flushed PARTIAL stdout that
+  // must never be parsed as a valid $HOME or Node path (empty → parse → null → clear error,
+  // never a half-read path fed to a spawn).
+  const runString = async (command: LocusCommand): Promise<string> => {
+    const { stdout, code } = await run(command);
+    return code === 0 ? stdout : "";
+  };
 
   const distroHome = parseWslHome(await runString(buildWslHomeProbe(distro)));
   if (!distroHome) {
@@ -113,16 +119,50 @@ export async function ensureWslDaemon(
   if (existing) {
     // Healthy but version-skewed: stop the old daemon by the pid its identity carries, then
     // spawn the current bundle. In-flight turns fold to `interrupted`; reviews persist in sqlite
-    // — the same no-ceremony restart the host supervisor performs (D3/D10, Rule Zero).
+    // — the same no-ceremony restart the host supervisor performs (D3/D10, Rule Zero). WAIT
+    // (bounded) for the old identity to actually disappear BEFORE spawning — mirroring the host
+    // supervisor's `waitForClaimGone`, so the fresh daemon's claim never races the dying one's.
     await stopWslDaemon({ distro, pid: existing.identity.pid }, run);
+    await waitForWslIdentityGone(location, existing.identity.pid, deps);
   }
 
   spawnWslDaemon(launch, deps.spawn ? { spawn: deps.spawn } : {});
-  return waitForWslDaemon(location, {
+  const handle = await waitForWslDaemon(location, {
     run,
     fetch: deps.fetch,
     now: deps.now,
     sleep: deps.sleep,
     timeoutMs: deps.waitTimeoutMs,
   });
+  // A skew restart that somehow handed the OLD daemon back (stale claim, lost race) would
+  // silently re-serve the wrong version — the exact lancelot field bug for the host path.
+  // Confirm the identity we resolved is the version this shell ships.
+  if (handle.identity.version !== serverVersion) {
+    throw new Error(
+      `WSL daemon in "${distro}" reports version ${handle.identity.version} after restart, expected ${serverVersion}.`,
+    );
+  }
+  return handle;
+}
+
+/**
+ * Wait (bounded) for the daemon at `location` to stop reporting `oldPid` — i.e. the old
+ * daemon is gone (absent) or already replaced by a different pid. Mirrors the host
+ * supervisor's `waitForClaimGone`; clock/sleep are injected so the deadline is testable
+ * without real time. On timeout it falls through (the spawn overwrites the claim regardless).
+ */
+async function waitForWslIdentityGone(
+  location: WslDaemonLocation,
+  oldPid: number,
+  deps: EnsureWslDaemonDeps,
+): Promise<void> {
+  const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const deadline = now() + (deps.waitTimeoutMs ?? 10_000);
+  for (;;) {
+    const current = await currentHealth(location, deps);
+    if (!current || current.identity.pid !== oldPid) return;
+    if (now() >= deadline) return;
+    await sleep(50);
+  }
 }

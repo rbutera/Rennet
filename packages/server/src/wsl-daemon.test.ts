@@ -180,22 +180,31 @@ describe("waitForWslDaemon", () => {
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
-  it("learns the port ONCE, then re-probes /healthz without re-reading daemon.json", async () => {
-    // Only ONE claim read is scripted; the recorder throws on a second — so if the
-    // loop re-read daemon.json after learning the port, this test fails.
-    const { calls, run } = recorder([{ stdout: JSON.stringify(CLAIM), code: 0 }]);
+  it("RE-READS the port each pass until healthy, tolerating a port that changed across a restart", async () => {
+    // ACQUISITION must not cache the first port: a version-skew restart brings the daemon
+    // back on a NEW ephemeral port, so a cached port from the dying daemon would poll
+    // fruitlessly to the deadline. First read → portA (unhealthy), second read → portB
+    // (healthy) → returns portB.
+    const CLAIM_B: DaemonInfo = { ...CLAIM, wsPort: 52000 };
+    const IDENTITY_B: DaemonIdentity = { ...IDENTITY, wsPort: 52000 };
+    const { calls, run } = recorder([
+      { stdout: JSON.stringify(CLAIM), code: 0 }, // portA (51987) — the dying daemon
+      { stdout: JSON.stringify(CLAIM_B), code: 0 }, // portB (52000) — the restarted daemon
+    ]);
     const sleep = vi.fn(() => Promise.resolve());
-    // First health probe not-yet-ready (null), second healthy.
-    const doFetch = vi
-      .fn()
-      .mockResolvedValueOnce({ status: 503, json: async () => ({}) })
-      .mockResolvedValueOnce({ status: 200, json: async () => IDENTITY });
+    const doFetch = vi.fn(async (url: string) => {
+      if (url === "http://localhost:51987/healthz") return { status: 503, json: async () => ({}) };
+      if (url === "http://localhost:52000/healthz")
+        return { status: 200, json: async () => IDENTITY_B };
+      throw new Error(`unexpected fetch: ${url}`);
+    });
 
     const result = await waitForWslDaemon(LOCATION, { run, fetch: doFetch, sleep });
 
-    expect(result).toEqual({ port: 51987, identity: IDENTITY });
-    expect(calls).toHaveLength(1); // the port was read exactly once, then cached.
-    expect(doFetch).toHaveBeenCalledTimes(2); // health was re-probed on the port.
+    expect(result).toEqual({ port: 52000, identity: IDENTITY_B });
+    expect(calls).toHaveLength(2); // the claim was re-read, not cached after the first port.
+    expect(doFetch).toHaveBeenCalledTimes(2); // probed portA (unhealthy), then portB (healthy).
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 
   it("gives up at the EXACT deadline and throws, having issued no health probe", async () => {
