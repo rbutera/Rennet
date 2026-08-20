@@ -1,4 +1,4 @@
-import type { RennetBridge } from "@rennet/protocol";
+import type { ProjectKind, RennetBridge } from "@rennet/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RennetApp } from "../app";
 
@@ -77,8 +77,29 @@ export interface DaemonResolution {
   readonly error?: string;
 }
 
-/** The app-facing capability the shell threads down: pick a path → connect its daemon. */
-export type ConnectDaemonForPath = (path: string) => Promise<{ switched: boolean; error?: string }>;
+/** The app-facing capability the shell threads down: pick a path → connect its daemon.
+ *  `add` marks the FRONT-DOOR add flow (vs. a review capture): a WSL switch then queues a
+ *  pending-ADD (discover + projects.add) on the distro daemon rather than a pending-capture. */
+export type ConnectDaemonForPath = (
+  path: string,
+  add?: { readonly kind: ProjectKind },
+) => Promise<{ switched: boolean; error?: string }>;
+
+/** Append one debug line to the desktop's `wsl-connect.log` (shell-owned; structurally the
+ *  preload's `logWslConnect`). Absent in the browser shell — the front-door add trace is then
+ *  simply not written. Threaded to the app so the pending-add completion is logged distro-side. */
+export type LogWslConnect = (entry: {
+  readonly event: string;
+  readonly path?: string;
+  readonly detail?: Record<string, unknown>;
+}) => void;
+
+/** A distro-native path + its project kind, queued for the remounted FrontDoor to add ON the
+ *  distro daemon (the front-door sibling of {@link ConnectionHostProps} pending-repo capture). */
+export interface PendingAdd {
+  readonly path: string;
+  readonly kind: ProjectKind;
+}
 
 export interface ConnectionHostProps {
   /**
@@ -105,6 +126,12 @@ export interface ConnectionHostProps {
    * distro-native path so the freshly mounted app captures the repo THERE.
    */
   readonly resolveDaemonTarget?: (path: string) => Promise<DaemonResolution>;
+  /**
+   * The desktop shell's wsl-connect debug logger (the preload's `logWslConnect`). Absent in the
+   * browser shell. Threaded to the app so the FRONT-DOOR add flow can log its completion on the
+   * distro daemon — the `detect`/`switch` lines are already written by {@link resolveDaemonTarget}.
+   */
+  readonly logWslConnect?: LogWslConnect;
 }
 
 const DEFAULT_STORAGE_KEY = "rennet.daemons";
@@ -307,6 +334,7 @@ export function ConnectionHost({
   defaultTarget,
   storageKey,
   resolveDaemonTarget,
+  logWslConnect,
 }: ConnectionHostProps) {
   const key = storageKey ?? DEFAULT_STORAGE_KEY;
   // Normalise the two seams to one stable factory: prefer `createConnection`, else adapt the
@@ -328,6 +356,10 @@ export function ConnectionHost({
   // us onto a distro daemon, so the freshly remounted app adds the repo THERE (the switching
   // app is already tearing down). The app clears it via `onPendingRepoConsumed`.
   const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
+  // The front-door sibling of `pendingRepoPath`: a distro-native path (+kind) the NEXT-mounted
+  // FrontDoor should ADD on itself (discover + projects.add), set when a WSL pick in the add flow
+  // switches us onto a distro daemon. The remounted FrontDoor clears it via `onPendingAddConsumed`.
+  const [pendingAddPath, setPendingAddPath] = useState<PendingAdd | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addLabel, setAddLabel] = useState("");
@@ -507,12 +539,16 @@ export function ConnectionHost({
   // repo path for the remounted app to capture. Returns the app-facing {switched, error?} shape;
   // a host path (or no resolver) is {switched:false} and the app proceeds on the current daemon.
   const connectDaemonForPath = useCallback<ConnectDaemonForPath>(
-    async (path) => {
+    async (path, add) => {
       if (!resolveDaemonTarget) return { switched: false };
       const resolution = await resolveDaemonTarget(path);
       if (resolution.error) return { switched: false, error: resolution.error };
       if (resolution.switched && resolution.target) {
-        setPendingRepoPath(resolution.repoPath ?? path);
+        const repoPath = resolution.repoPath ?? path;
+        // The add flow queues a pending-ADD (discover + projects.add on the distro daemon); a
+        // review capture queues the pending-repo capture. Both survive the remount below.
+        if (add) setPendingAddPath({ path: repoPath, kind: add.kind });
+        else setPendingRepoPath(repoPath);
         activateLocalTarget(resolution.target);
         return { switched: true };
       }
@@ -700,6 +736,9 @@ export function ConnectionHost({
         connectDaemonForPath={resolveDaemonTarget ? connectDaemonForPath : undefined}
         pendingRepoPath={pendingRepoPath ?? undefined}
         onPendingRepoConsumed={() => setPendingRepoPath(null)}
+        pendingAddPath={pendingAddPath ?? undefined}
+        onPendingAddConsumed={() => setPendingAddPath(null)}
+        logWslConnect={logWslConnect}
       />
       {daemonBanner}
     </>

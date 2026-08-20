@@ -4,6 +4,7 @@ import {
   openSpecRequirementCoverageKey,
   type Project,
   type ProjectDetail as ProjectDetailData,
+  type ProjectKind,
   type RennetBridge,
 } from "@rennet/protocol";
 import type {
@@ -606,6 +607,9 @@ export function RennetApp({
   connectDaemonForPath,
   pendingRepoPath,
   onPendingRepoConsumed,
+  pendingAddPath,
+  onPendingAddConsumed,
+  logWslConnect,
 }: {
   bridge: RennetBridge;
   connectionSlot?: ReactNode;
@@ -617,11 +621,30 @@ export function RennetApp({
    * host path is `switched:false` and the pick proceeds here unchanged; an `error` is honest
    * failure copy (e.g. no Node in the distro), shown inline — never a gate.
    */
-  connectDaemonForPath?: (path: string) => Promise<{ switched: boolean; error?: string }>;
+  connectDaemonForPath?: (
+    path: string,
+    add?: { readonly kind: ProjectKind },
+  ) => Promise<{ switched: boolean; error?: string }>;
   /** A distro-native repo path this freshly mounted app should capture on itself, once. */
   pendingRepoPath?: string;
   /** Called after {@link pendingRepoPath} is consumed, so the host clears it. */
   onPendingRepoConsumed?: () => void;
+  /**
+   * The front-door sibling of {@link pendingRepoPath}: a distro-native path (+kind) this freshly
+   * mounted app should ADD (discover + projects.add) on itself, once — set when a WSL pick in the
+   * add flow switched onto the distro daemon. Consumed by the front door, cleared via
+   * {@link onPendingAddConsumed}.
+   */
+  pendingAddPath?: { readonly path: string; readonly kind: ProjectKind };
+  /** Called after {@link pendingAddPath} is consumed, so the host clears it. */
+  onPendingAddConsumed?: () => void;
+  /** Append one line to the desktop's wsl-connect.log (shell-owned); traces the add flow's
+   *  completion on the distro daemon. Absent in the browser shell. */
+  logWslConnect?: (entry: {
+    readonly event: string;
+    readonly path?: string;
+    readonly detail?: Record<string, unknown>;
+  }) => void;
 }) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   // Whether the open review's original repository root still exists on disk (#324).
@@ -2973,6 +2996,10 @@ export function RennetApp({
         ) : null}
         <FrontDoor
           bridge={bridge}
+          connectDaemonForPath={connectDaemonForPath}
+          pendingAddPath={pendingAddPath}
+          onPendingAddConsumed={onPendingAddConsumed}
+          logWslConnect={logWslConnect}
           onOpenProject={(project) => {
             setProjectDetail(project);
             setProjectDetailData(null);

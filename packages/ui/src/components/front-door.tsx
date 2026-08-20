@@ -6,8 +6,9 @@ import type {
   ProjectKind,
   RennetBridge,
 } from "@rennet/protocol";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
+import type { ConnectDaemonForPath, LogWslConnect } from "./connection-host";
 import { GitHubConnectCard } from "./github-connect";
 import {
   ArrowRightIcon,
@@ -36,11 +37,29 @@ import { ChromeMark } from "./update-ready";
  */
 export function FrontDoor({
   bridge,
+  connectDaemonForPath,
+  pendingAddPath,
+  onPendingAddConsumed,
+  logWslConnect,
   onOpenProject,
   onOpenSettings,
   scheme,
 }: {
   bridge: RennetBridge;
+  /**
+   * Connect the daemon that should serve a just-picked path in the ADD flow (WSL connect). When a
+   * pick resolves to a WSL distro this switches the whole app onto that distro's daemon (a remount)
+   * and returns `switched:true` — the add then completes on the distro daemon via
+   * {@link pendingAddPath}. A host path is `switched:false` and the add proceeds here unchanged; an
+   * `error` is honest failure copy shown inline. Absent in the browser shell (no WSL, no preload).
+   */
+  connectDaemonForPath?: ConnectDaemonForPath;
+  /** A distro-native path (+kind) this freshly mounted front door should ADD on itself, once. */
+  pendingAddPath?: { readonly path: string; readonly kind: ProjectKind };
+  /** Called after {@link pendingAddPath} is consumed, so the host clears it. */
+  onPendingAddConsumed?(): void;
+  /** Append one line to the desktop's wsl-connect.log — traces the add's completion distro-side. */
+  logWslConnect?: LogWslConnect;
   onOpenProject(project: Project): void;
   /** Open the settings screen (wireframe #15). Omitted ⇒ no settings affordance. */
   onOpenSettings?(): void;
@@ -61,6 +80,47 @@ export function FrontDoor({
         setError(messageFrom(reason));
       });
   }, [bridge]);
+
+  // WSL connect flow, receiving end: this front door was just remounted onto a distro daemon and
+  // carries the distro-native path a WSL add queued. Complete the add THERE once — discover +
+  // projects.add with the discovery defaults — then land in the same processing step a local add
+  // does, and tell the host to clear the pending path. The `detect`/`switch` lines were already
+  // written by the desktop resolver; this logs the completion (or fault) so the trace is whole.
+  // ponytail: a plain ref guards the single run; StrictMode's dev-only double-mount could rerun it
+  // (harmless in prod), same trade-off as the pending-capture guard in app.tsx.
+  const pendingAddConsumed = useRef(false);
+  useEffect(() => {
+    if (!pendingAddPath || pendingAddConsumed.current) return;
+    pendingAddConsumed.current = true;
+    const { path, kind } = pendingAddPath;
+    void (async () => {
+      try {
+        const { discovery } = await bridge.invoke("project.discover", {
+          commandId: crypto.randomUUID(),
+          path,
+          kind,
+        });
+        const { project, projects: next } = await bridge.invoke("projects.add", {
+          commandId: crypto.randomUUID(),
+          discovery,
+          includedRepos: discovery.repos.map((repo) => repo.name),
+          primaryBranch: discovery.primaryBranch,
+        });
+        logWslConnect?.({
+          event: "add",
+          path,
+          detail: { project: project.id, repos: discovery.repos.length },
+        });
+        setFlow({ step: "processing", project, projects: next });
+      } catch (reason) {
+        const message = messageFrom(reason);
+        logWslConnect?.({ event: "error", path, detail: { error: message } });
+        setError(message);
+      } finally {
+        onPendingAddConsumed?.();
+      }
+    })();
+  }, [pendingAddPath, bridge, onPendingAddConsumed, logWslConnect]);
 
   // The ambient detection line loads independently and never blocks the list.
   useEffect(() => {
@@ -127,6 +187,7 @@ export function FrontDoor({
       {flow ? (
         <AddProject
           bridge={bridge}
+          connectDaemonForPath={connectDaemonForPath}
           flow={flow}
           projects={projects ?? []}
           onFlow={setFlow}
@@ -325,6 +386,7 @@ type AddFlow =
 
 function AddProject({
   bridge,
+  connectDaemonForPath,
   flow,
   projects,
   onFlow,
@@ -333,6 +395,7 @@ function AddProject({
   onError,
 }: {
   bridge: RennetBridge;
+  connectDaemonForPath?: ConnectDaemonForPath;
   flow: AddFlow;
   projects: Project[];
   onFlow(flow: AddFlow | null): void;
@@ -344,6 +407,7 @@ function AddProject({
     return (
       <TypeAndPath
         bridge={bridge}
+        connectDaemonForPath={connectDaemonForPath}
         flow={flow}
         projects={projects}
         onFlow={onFlow}
@@ -366,12 +430,14 @@ function AddProject({
 
 function TypeAndPath({
   bridge,
+  connectDaemonForPath,
   flow,
   projects,
   onFlow,
   onError,
 }: {
   bridge: RennetBridge;
+  connectDaemonForPath?: ConnectDaemonForPath;
   flow: Extract<AddFlow, { step: "type-path" }>;
   projects: Project[];
   onFlow(flow: AddFlow | null): void;
@@ -391,6 +457,26 @@ function TypeAndPath({
     if (!flow.path) return;
     onError(undefined);
     onFlow({ ...flow, busy: true });
+    // WSL connect: a distro path switches the whole app onto that distro's daemon (a remount);
+    // the add then completes THERE via `pendingAddPath`, so this instance stops. The desktop
+    // resolver owns the WSL detection — a host path (or a shell without the capability) returns
+    // `switched:false` and falls through to discover here, byte-identical to before.
+    if (connectDaemonForPath) {
+      let outcome: { switched: boolean; error?: string };
+      try {
+        outcome = await connectDaemonForPath(flow.path, { kind: flow.kind });
+      } catch (reason) {
+        onFlow({ ...flow, busy: false });
+        onError(messageFrom(reason));
+        return;
+      }
+      if (outcome.error) {
+        onFlow({ ...flow, busy: false });
+        onError(outcome.error);
+        return;
+      }
+      if (outcome.switched) return; // remounting onto the distro daemon; this instance tears down
+    }
     try {
       const { discovery } = await bridge.invoke("project.discover", {
         commandId: crypto.randomUUID(),

@@ -187,3 +187,101 @@ describe("FrontDoor — the add-a-project flow", () => {
     expect((addCall.input as CommandInput<"projects.add">).includedRepos).toEqual(["atlas"]);
   });
 });
+
+describe("FrontDoor — WSL connect in the add flow", () => {
+  const WSL_PATH = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\orbital";
+
+  it("switches onto the distro daemon on a WSL path and HALTS the local discover", async () => {
+    const { bridge, calls } = fakeBridge({ chosenPath: WSL_PATH });
+    const connectDaemonForPath = vi.fn(async () => ({ switched: true }));
+    const { container, getByRole } = mount(
+      <FrontDoor
+        bridge={bridge}
+        connectDaemonForPath={connectDaemonForPath}
+        onOpenProject={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Add a project/ }));
+    await waitFor(() => expect(container.querySelector(".type-choice")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+    await waitFor(() =>
+      expect(container.querySelector(".path-field")?.textContent).toContain(WSL_PATH),
+    );
+    fireEvent.click(getByRole("button", { name: /Continue/ }));
+
+    // The daemon switch is requested for the WSL path, tagged as an add (kind carried).
+    await waitFor(() => expect(connectDaemonForPath).toHaveBeenCalledTimes(1));
+    expect(connectDaemonForPath).toHaveBeenCalledWith(WSL_PATH, { kind: "workspace" });
+    // switched:true tears this instance down — the local discover must NOT run here.
+    expect(calls.some((call) => call.name === "project.discover")).toBe(false);
+  });
+
+  it("proceeds with the local discover/add unchanged on a host path (switched:false)", async () => {
+    const { bridge, calls } = fakeBridge({
+      chosenPath: "/orbital",
+      processedRepos: [{ repo: "orbital", path: "/orbital", ok: true, files: 3, symbols: 2 }],
+    });
+    const connectDaemonForPath = vi.fn(async () => ({ switched: false }));
+    const { container, getByRole } = mount(
+      <FrontDoor
+        bridge={bridge}
+        connectDaemonForPath={connectDaemonForPath}
+        onOpenProject={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Add a project/ }));
+    await waitFor(() => expect(container.querySelector(".type-choice")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Project repo/ }));
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+    await waitFor(() =>
+      expect(container.querySelector(".path-field")?.textContent).toContain("/orbital"),
+    );
+    fireEvent.click(getByRole("button", { name: /Continue/ }));
+
+    // The resolver was consulted, said host, and the flow discovered here as before.
+    await waitFor(() => expect(container.querySelector(".worktree-rows")).not.toBeNull());
+    expect(connectDaemonForPath).toHaveBeenCalledWith("/orbital", { kind: "repo" });
+    expect(calls.find((call) => call.name === "project.discover")?.input).toMatchObject({
+      path: "/orbital",
+      kind: "repo",
+    });
+    fireEvent.click(getByRole("button", { name: /Confirm/ }));
+    await waitFor(() => expect(calls.some((call) => call.name === "projects.add")).toBe(true));
+  });
+
+  it("completes a pending add on the distro daemon exactly once, then clears it", async () => {
+    const { bridge, calls } = fakeBridge({
+      processedRepos: [
+        { repo: "orbital", path: "/home/rai/orbital", ok: true, files: 5, symbols: 4 },
+      ],
+    });
+    const onPendingAddConsumed = vi.fn();
+    const logWslConnect = vi.fn();
+    const { container } = mount(
+      <FrontDoor
+        bridge={bridge}
+        pendingAddPath={{ path: "/home/rai/orbital", kind: "workspace" }}
+        onPendingAddConsumed={onPendingAddConsumed}
+        logWslConnect={logWslConnect}
+        onOpenProject={vi.fn()}
+      />,
+    );
+
+    // The distro-native path is discovered + added without any user interaction.
+    await waitFor(() => expect(calls.some((call) => call.name === "projects.add")).toBe(true));
+    const discoverCall = calls.find((call) => call.name === "project.discover");
+    expect(discoverCall?.input).toMatchObject({ path: "/home/rai/orbital", kind: "workspace" });
+    expect(calls.filter((call) => call.name === "project.discover")).toHaveLength(1);
+    // The completion is traced and the host is told to clear the pending path.
+    await waitFor(() => expect(onPendingAddConsumed).toHaveBeenCalledTimes(1));
+    expect(logWslConnect).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "add", path: "/home/rai/orbital" }),
+    );
+    // It lands in the same processing step a local add reaches.
+    await waitFor(() => expect(container.querySelector(".processing")).not.toBeNull());
+  });
+});
