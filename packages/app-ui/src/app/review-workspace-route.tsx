@@ -1,9 +1,10 @@
 import type { CanvasAngle, Review } from "@rennet/types";
+import { Button } from "@rennet/ui";
 import { useEffect, useMemo, useRef } from "react";
 import { buildRowRegistry, type RegistryRow } from "../canvas/registrar";
 import { ArrowRightIcon } from "../components/icons";
 import { ChromeMark } from "../components/update-ready";
-import { type AngleRailRow, activePatchset, type DiffFocus, SECONDARY_BUTTON } from "./shared";
+import { type AngleRailRow, activePatchset, type DiffFocus } from "./shared";
 
 const ANGLE_STATE_TEXT: Record<Exclude<AngleRailRow["state"], "ran">, string> = {
   pending: "Pending",
@@ -114,13 +115,9 @@ export function ReviewWorkspace({
             <strong>Your code changed.</strong>
             <span>Pinned to the previous patchset until you regenerate.</span>
           </div>
-          <button
-            type="button"
-            className="inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-3.5 py-2 font-semibold text-accent-ink"
-            onClick={onRegenerate}
-          >
+          <Button className="regenerate-affected" onClick={onRegenerate}>
             Regenerate affected review
-          </button>
+          </Button>
         </section>
       ) : null}
 
@@ -188,13 +185,14 @@ export function ReviewWorkspace({
               ) : null}
             </div>
             {selected ? (
-              <button
-                type="button"
-                className={SECONDARY_BUTTON}
+              <Button
+                variant="outline"
+                size="sm"
+                className="secondary"
                 onClick={() => onSetRead(selected.path, !readPaths.has(selected.path))}
               >
                 {readPaths.has(selected.path) ? "Mark unread" : "Mark read"}
-              </button>
+              </Button>
             ) : null}
           </div>
           <pre

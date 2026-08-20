@@ -276,20 +276,24 @@ function SmartListSkeleton() {
   return (
     <div className="smart-list-skeleton flex flex-col gap-2 mt-4" aria-hidden="true">
       <p className="project-detail-loading mb-1 mx-1 text-ink-faint">Reading local work…</p>
-      {[0, 1, 2].map((index) => (
-        <div
-          key={index}
-          className="smart-row-skeleton flex items-center gap-3.5 rounded-surface border border-line bg-raised px-3.5 py-3.5"
-          style={{ animationDelay: `${index * 120}ms` }}
-        >
-          <Skeleton className="h-3.5 w-[42px]" />
-          <span className="flex flex-col gap-2 flex-1">
-            <Skeleton className="h-3.5 w-1/2" />
-            <Skeleton className="h-3 w-1/3 opacity-70" />
-          </span>
-          <Skeleton className="h-3.5 w-16" />
-        </div>
-      ))}
+      {[0, 1, 2].map((index) => {
+        // Stagger the row's shimmer. The pulse lives in the Skeleton children, so the
+        // delay must ride the ANIMATED elements — on the static row wrapper it is dead.
+        const delay = `${index * 120}ms`;
+        return (
+          <div
+            key={index}
+            className="smart-row-skeleton flex items-center gap-3.5 rounded-surface border border-line bg-raised px-3.5 py-3.5"
+          >
+            <Skeleton className="h-3.5 w-[42px]" style={{ animationDelay: delay }} />
+            <span className="flex flex-col gap-2 flex-1">
+              <Skeleton className="h-3.5 w-1/2" style={{ animationDelay: delay }} />
+              <Skeleton className="h-3 w-1/3 opacity-70" style={{ animationDelay: delay }} />
+            </span>
+            <Skeleton className="h-3.5 w-16" style={{ animationDelay: delay }} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -456,11 +460,22 @@ function FilterBar({
         })}
       </div>
       <span className="smart-pr-scope inline-flex items-center gap-2">
-        <span className="smart-pr-scope-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        {/* Real label→control association: htmlFor + the trigger's id. The label is a
+            SIBLING (not a wrapper), so a trigger click never bubbles up to re-fire it —
+            the double-fire that a wrapping <label> caused, without losing click-to-open. */}
+        <label
+          htmlFor="smart-pr-scope-select"
+          className="smart-pr-scope-label text-2xs font-semibold uppercase tracking-wide text-ink-faint"
+        >
           PRs
-        </span>
+        </label>
         <Select value={prScope} onValueChange={(value) => onPrScope(value as PrScope)}>
-          <SelectTrigger size="sm" className="smart-pr-scope-select" aria-label="PR scope">
+          <SelectTrigger
+            id="smart-pr-scope-select"
+            size="sm"
+            className="smart-pr-scope-select"
+            aria-label="PR scope"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -473,11 +488,19 @@ function FilterBar({
         </Select>
       </span>
       <span className="smart-sort inline-flex items-center gap-2">
-        <span className="smart-sort-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        <label
+          htmlFor="smart-sort-select"
+          className="smart-sort-label text-2xs font-semibold uppercase tracking-wide text-ink-faint"
+        >
           Sort
-        </span>
+        </label>
         <Select value={sort} onValueChange={(value) => onSort(value as SmartSort)}>
-          <SelectTrigger size="sm" className="smart-sort-select" aria-label="Sort">
+          <SelectTrigger
+            id="smart-sort-select"
+            size="sm"
+            className="smart-sort-select"
+            aria-label="Sort"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

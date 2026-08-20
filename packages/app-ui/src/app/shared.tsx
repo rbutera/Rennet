@@ -29,8 +29,3 @@ export function activePatchset(review: Review): Patchset {
   if (!patchset) throw new Error("The active patchset is missing");
   return patchset;
 }
-
-// Shared secondary-button idiom (brief: `border border-line text-ink hover:bg-raised`).
-// One source for the three `.secondary` sites so the re-skin stays consistent.
-export const SECONDARY_BUTTON =
-  "secondary inline-flex cursor-pointer items-center gap-2 rounded-control border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft hover:bg-raised hover:text-ink";

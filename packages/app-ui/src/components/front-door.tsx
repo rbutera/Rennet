@@ -655,6 +655,7 @@ function WorktreeConfig({
 function Toggle({ on, label, onToggle }: { on: boolean; label: string; onToggle(): void }) {
   return (
     <Switch
+      variant="backlight"
       className={`toggle flex-none ml-auto${on ? " is-on" : ""}`}
       checked={on}
       aria-label={label}
