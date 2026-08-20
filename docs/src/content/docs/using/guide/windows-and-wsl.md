@@ -107,7 +107,8 @@ Rennet routes these operations through the configured WSL distro:
 
 Open-in-editor uses the editor's WSL remote so `path:line` lands on the distro
 file. Rennet watches the repo by polling on WSL because inotify events do not
-cross the WSL filesystem boundary reliably. Windows-side untracked/spec reads,
+cross the WSL filesystem boundary reliably; the poll prunes `node_modules`
+(and `.git`/`.rennet`) so it stays light over the 9P bridge. Windows-side untracked/spec reads,
 snapshot identity, watching, and editor launch use the matching UNC path.
 
 ### Codex and the canvas surface
