@@ -603,9 +603,25 @@ function persistNav(
 export function RennetApp({
   bridge,
   connectionSlot,
+  connectDaemonForPath,
+  pendingRepoPath,
+  onPendingRepoConsumed,
 }: {
   bridge: RennetBridge;
   connectionSlot?: ReactNode;
+  /**
+   * Connect the daemon that should serve a just-picked repo path (WSL connect flow). Present
+   * only in the desktop shell; when a pick resolves to a WSL distro this switches the whole app
+   * onto that distro's daemon (a remount) and returns `switched:true` — this app instance is
+   * then tearing down, and the remounted one captures the repo via {@link pendingRepoPath}. A
+   * host path is `switched:false` and the pick proceeds here unchanged; an `error` is honest
+   * failure copy (e.g. no Node in the distro), shown inline — never a gate.
+   */
+  connectDaemonForPath?: (path: string) => Promise<{ switched: boolean; error?: string }>;
+  /** A distro-native repo path this freshly mounted app should capture on itself, once. */
+  pendingRepoPath?: string;
+  /** Called after {@link pendingRepoPath} is consumed, so the host clears it. */
+  onPendingRepoConsumed?: () => void;
 }) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   // Whether the open review's original repository root still exists on disk (#324).
@@ -1507,12 +1523,12 @@ export function RennetApp({
     setReloadNonce((nonce) => nonce + 1);
   }
 
-  async function chooseRepository(): Promise<void> {
-    setBusy(true);
-    setError(undefined);
-    try {
-      const { path } = await bridge.invoke("repository.choose", {});
-      if (!path) return;
+  // Capture a review of `path` on the CURRENT daemon and navigate into it. Shared by the
+  // native pick (host path) and the WSL pending-capture below (the remounted app, already on
+  // the distro daemon, capturing the distro-native path). Stable per bridge so the pending
+  // effect can depend on it without re-firing every render.
+  const captureRepository = useCallback(
+    async (path: string): Promise<void> => {
       const result = await bridge.invoke("review.capture", {
         commandId: crypto.randomUUID(),
         repoPath: path,
@@ -1522,6 +1538,47 @@ export function RennetApp({
       setDirectEntryOpen(false);
       navigate(ascendNavigationTo(0));
       navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
+    },
+    [bridge],
+  );
+
+  // WSL connect flow, receiving end: this app was just remounted onto a distro daemon and
+  // carries the distro-native repo path the switch queued. Capture it once, then tell the host
+  // to clear it (so a later manual switch back to this daemon does not re-capture).
+  // ponytail: a plain ref guards the single capture; StrictMode's dev-only double-mount resets
+  // it and could double-capture — harmless in prod (no double-invoke). Upgrade to a daemon-side
+  // commandId dedupe if it ever bites.
+  const pendingCaptured = useRef(false);
+  useEffect(() => {
+    if (!pendingRepoPath || pendingCaptured.current) return;
+    pendingCaptured.current = true;
+    setBusy(true);
+    setError(undefined);
+    captureRepository(pendingRepoPath)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setBusy(false));
+    onPendingRepoConsumed?.();
+  }, [pendingRepoPath, captureRepository, onPendingRepoConsumed]);
+
+  async function chooseRepository(): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const { path } = await bridge.invoke("repository.choose", {});
+      if (!path) return;
+      // WSL connect flow: a directory inside a distro switches the whole app onto that
+      // distro's daemon (a remount) and the remounted app captures the repo there — so this
+      // instance stops here. A host path (or a shell without the capability) falls through to
+      // capture on the current daemon, byte-identical to before.
+      if (connectDaemonForPath) {
+        const outcome = await connectDaemonForPath(path);
+        if (outcome.error) {
+          setError(outcome.error);
+          return;
+        }
+        if (outcome.switched) return;
+      }
+      await captureRepository(path);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {

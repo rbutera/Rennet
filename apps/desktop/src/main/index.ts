@@ -1,6 +1,7 @@
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { detectLocus } from "@rennet/core";
 import {
   app,
   BrowserWindow,
@@ -17,7 +18,12 @@ import {
 import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
-import { ensureDaemon, isOwnedDaemonRunning, stopOwnedDaemon } from "./daemon-supervisor";
+import {
+  ensureDaemon,
+  ensureDaemonForProject,
+  isOwnedDaemonRunning,
+  stopOwnedDaemon,
+} from "./daemon-supervisor";
 import { buildStaticMenu } from "./menu";
 import {
   acquireSingleInstance,
@@ -42,6 +48,17 @@ if (squirrelStartup) {
 // renderer asks MAIN for the path and forwards it to `repository.choose`. Electron-native
 // residue.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
+// The renderer asks MAIN to ensure the daemon for a project PATH and hand back its ws port —
+// a host path resolves the host daemon, a `\\wsl.localhost\<distro>\…` path spawns (or
+// reuses) that distro's in-distro daemon and returns ITS loopback port. The renderer then
+// dials that port as a connection target. A distro with no Node rejects, surfacing a prompt.
+const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
+// The renderer's connect-flow decisions land here and get appended to WSL_CONNECT_LOG_FILE,
+// alongside MAIN's own resolve trace. This is the SHELL-side view of a WSL directory pick →
+// distro-daemon connect (the in-distro daemon logs its own boot); loud on purpose so a live
+// run on a headless Windows/WSL box is readable over SSH. Never carries a token.
+const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
+const WSL_CONNECT_LOG_FILE = "wsl-connect.log";
 const APP_ORIGIN = "app://rennet";
 // The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
 // process argv via `webPreferences.additionalArguments` (the boot-time-constant pattern
@@ -90,6 +107,54 @@ function registerDialogHandler(): void {
       properties: ["openDirectory"],
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+}
+
+/**
+ * Append one line to `<userData>/wsl-connect.log` — the shell-side trace of a WSL connect
+ * (both MAIN's own resolve and the renderer's forwarded decisions). Best-effort: a failed
+ * write must never break a connect, so it swallows. One JSON object per line, ISO-stamped.
+ */
+function appendWslConnectLog(hostDataDir: string, entry: Record<string, unknown>): void {
+  try {
+    const line = `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`;
+    appendFileSync(join(hostDataDir, WSL_CONNECT_LOG_FILE), line, "utf8");
+  } catch {
+    // debug log only — a full disk or a bad path must not sink the connect flow
+  }
+}
+
+/**
+ * Resolve the ws port of the daemon that should serve a project at `path`, SELECTED BY its
+ * execution locus (`ensureDaemonForProject`): a host path → the host daemon; a WSL path →
+ * that distro's in-distro daemon (spawned once, reused). Resolved lazily each call so a
+ * restarted daemon's fresh ephemeral port is always current. A failure (no Node in the
+ * distro, WSL unavailable) rejects with a plain message the renderer turns into a prompt.
+ *
+ * Every call writes its detected locus + resolved port (or the failure) to the WSL-connect
+ * debug log, and a companion channel appends the renderer's own connect decisions there too.
+ */
+function registerDaemonForPathResolver(hostDataDir: string): void {
+  ipcMain.handle(RESOLVE_DAEMON_FOR_PATH_CHANNEL, async (event, path: unknown) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
+    if (typeof path !== "string" || path.length === 0) return null;
+    const locus = detectLocus(path);
+    appendWslConnectLog(hostDataDir, { side: "main", event: "resolve", path, locus });
+    try {
+      const port = await ensureDaemonForProject(path, hostDataDir);
+      appendWslConnectLog(hostDataDir, { side: "main", event: "resolved", path, locus, port });
+      return port;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      appendWslConnectLog(hostDataDir, { side: "main", event: "failed", path, locus, message });
+      throw error;
+    }
+  });
+  // The renderer forwards its connect-flow decisions (detect → switch → error) here.
+  ipcMain.on(WSL_CONNECT_LOG_CHANNEL, (event, entry: unknown) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return;
+    if (typeof entry !== "object" || entry === null) return;
+    appendWslConnectLog(hostDataDir, { side: "renderer", ...(entry as Record<string, unknown>) });
   });
 }
 
@@ -263,6 +328,7 @@ app.whenReady().then(async () => {
   });
   registerAppProtocol();
   registerDialogHandler();
+  registerDaemonForPathResolver(dataDir);
   await createWindow(wsPort);
   activeWsPort = wsPort;
 

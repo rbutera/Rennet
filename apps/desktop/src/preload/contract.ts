@@ -13,8 +13,10 @@
 export const RENNET_PRELOAD_KEYS = [
   "applyUpdate",
   "chooseDirectory",
+  "logWslConnect",
   "onUpdateReady",
   "platform",
+  "resolveDaemonForPath",
   "version",
   "wsPort",
 ] as const;

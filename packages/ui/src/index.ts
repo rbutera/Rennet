@@ -203,12 +203,14 @@ export { CollationDraftCanvas } from "./components/collation-draft-canvas";
 // injects the bridge factory, so `ui` never imports a client package.
 export type {
   BridgeFactory,
+  ConnectDaemonForPath,
   Connection,
   ConnectionFactory,
   ConnectionHostProps,
   ConnectionState,
   ConnectionStatus,
   ConnectionTarget,
+  DaemonResolution,
 } from "./components/connection-host";
 export { ConnectionHost } from "./components/connection-host";
 // The context-composition inspector: Rennet's deterministic, gate-free assembly manifest.
