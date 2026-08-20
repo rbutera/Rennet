@@ -1,5 +1,13 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -268,5 +276,82 @@ describe("rennet CLI argument and daemon-identity handling", () => {
     );
     expect(code).toBe(0);
     expect(kill).toHaveBeenCalledWith(running.pid, "SIGTERM");
+  });
+});
+
+describe("rennet map (daemonless repo-map build)", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeDir(prefix: string): string {
+    const dir = mkdtempSync(resolve(tmpdir(), prefix));
+    dirs.push(dir);
+    return dir;
+  }
+
+  function captureIo(): { io: CliIo; out: string[]; err: string[] } {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
+  }
+
+  function git(cwd: string, ...args: string[]): Promise<void> {
+    return new Promise((resolvePromise, reject) => {
+      execFile("git", args, { cwd }, (error) => (error ? reject(error) : resolvePromise()));
+    });
+  }
+
+  const noDeps = { probe: vi.fn(), kill: vi.fn() };
+
+  it("builds, stores, and exports the repo map for a real repository", async () => {
+    const repo = makeDir("rennet-map-repo-");
+    await git(repo, "init", "-b", "main");
+    await git(repo, "config", "user.email", "cli-test@rennet.local");
+    await git(repo, "config", "user.name", "CLI Test");
+    mkdirSync(resolve(repo, "src"), { recursive: true });
+    writeFileSync(
+      resolve(repo, "src/thing.ts"),
+      'export function makeThing(): string {\n  return "thing";\n}\n',
+    );
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-m", "init");
+
+    const projectsDir = makeDir("rennet-map-store-");
+    const jsonPath = resolve(projectsDir, "map-export.json");
+    const captured = captureIo();
+    const code = await runSourceCli(
+      ["map", repo, "--base", "main", "--projects-dir", projectsDir, "--json", jsonPath],
+      captured.io,
+      {},
+      noDeps,
+    );
+    expect(code).toBe(0);
+    expect(captured.err).toEqual([]);
+
+    // The store advanced: exactly one escaped-path project dir with a current manifest.
+    const projectDirs = readdirSync(projectsDir).filter((name) => name !== "map-export.json");
+    expect(projectDirs).toHaveLength(1);
+    const manifestPath = resolve(projectsDir, projectDirs[0] ?? "", "map/manifest.json");
+    expect(existsSync(manifestPath)).toBe(true);
+
+    // The export carries the queryable map plus per-file declared symbols.
+    const exported = JSON.parse(readFileSync(jsonPath, "utf8"));
+    expect(exported.baseRef).toBe("main");
+    expect(exported.map.files.map((f: { path: string }) => f.path)).toContain("src/thing.ts");
+    expect(
+      exported.symbols["src/thing.ts"].map((symbol: { name: string }) => symbol.name),
+    ).toContain("makeThing");
+    expect(captured.out.at(-1)).toBe(`  exported: ${jsonPath}`);
+  }, 30_000);
+
+  it("rejects more than one repository path with exit 2 and usage", async () => {
+    const captured = captureIo();
+    const code = await runSourceCli(["map", "one", "two"], captured.io, {}, noDeps);
+    expect(code).toBe(2);
+    expect(captured.err.at(-1)).toBe(
+      "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]",
+    );
   });
 });
