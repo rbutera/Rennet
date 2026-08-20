@@ -334,6 +334,10 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
   const effort = resolution.kind === "model" ? resolution.effort : null;
 
   // Compose the consulted context from the existing pure reads.
+  // ponytail: `query.scope` is read two ways — an exact knowledge subject and a map path
+  // prefix — because a scope name and a path are distinct namespaces. No caller sends a
+  // scope yet (the UI asks project-wide), so this stays unresolved; when one does, resolve
+  // a scope name to its root path before the map read so both narrow the same region.
   const knowledgeView = queryKnowledge(
     knowledgeSet,
     snapshot,

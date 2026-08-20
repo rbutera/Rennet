@@ -2,6 +2,7 @@ import type { KnowledgeSet } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
+import { knowledgeStatementId } from "./knowledge";
 import {
   type KnowledgeSnapshotContext,
   runKnowledgeDeltaPass,
@@ -236,6 +237,55 @@ describe("runKnowledgeDeltaPass", () => {
     const byId = new Map(set.statements.map((s) => [s.id, s.status]));
     expect(byId.get("confirmed-survivor")).toBe("confirmed");
     expect(byId.get("rejected-survivor")).toBe("rejected");
+  });
+
+  it("does not resurrect a rejected claim when a changed-path re-adjudication re-mints its exact id", () => {
+    // A mode-only (or otherwise same-content) change puts the cited file in
+    // changedPaths without moving its blobOid, so the model can re-emit the very
+    // same claim. Its content id is identical — the human's rejection must hold,
+    // never flip back to hypothesis.
+    const claim = "a is deliberately excluded";
+    const evidence = [{ path: "packages/a/src/index.ts", blobOid: "blob-a" }];
+    const id = knowledgeStatementId({ subject: "@t/a", aspect: "purpose", claim, evidence });
+    const rejectedPrior: KnowledgeSet = {
+      ...priorSet,
+      statements: [
+        {
+          id,
+          subject: "@t/a",
+          aspect: "purpose",
+          claim,
+          evidence,
+          confidence: "high",
+          status: "rejected",
+          provenance: { generator: "knowledge-gen@1", model: null, apiKeySource: null },
+          learnedAgainst: { baseOid: "oid-0", snapshotFingerprint: "fp-0" },
+        },
+      ],
+    };
+    return runKnowledgeDeltaPass({
+      snapshot: SNAPSHOT,
+      priorSet: rejectedPrior,
+      changedPaths: ["packages/a/src/index.ts"],
+      provenance: SEED,
+      budget: createInvocationBudget(2),
+      runTurn: emit({
+        statements: [
+          {
+            subject: "@t/a",
+            aspect: "purpose",
+            claim,
+            confidence: "high",
+            evidence: [{ path: "packages/a/src/index.ts" }],
+          },
+        ],
+      }),
+    }).then((result) => {
+      expect(result.status).toBe("ok");
+      const set = result.set as KnowledgeSet;
+      const restated = set.statements.find((s) => s.id === id);
+      expect(restated?.status).toBe("rejected");
+    });
   });
 
   it("statementIntersectsChange detects a cited changed path", () => {

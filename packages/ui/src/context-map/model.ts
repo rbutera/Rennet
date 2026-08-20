@@ -78,8 +78,14 @@ export function buildScopes(map: ProjectMapPayload): ScopeNode[] {
     testCount: 0,
   };
   const byDepth = [...scopes].sort((a, b) => b.root.length - a.root.length);
+  // A scope rooted at the repo root ("") owns every path — it sorts last by depth, so a
+  // deeper scope still claims its files first, and only the leftovers fall to it. Without
+  // this a real root-"" scope would match nothing and its files would wrongly land under
+  // the synthetic "(repo root)" node instead of the scope that actually owns them.
   const owner = (path: string): ScopeNode =>
-    byDepth.find((scope) => path === scope.root || path.startsWith(`${scope.root}/`)) ?? rootScope;
+    byDepth.find(
+      (scope) => scope.root === "" || path === scope.root || path.startsWith(`${scope.root}/`),
+    ) ?? rootScope;
   for (const file of map.files) {
     const scope = owner(file.path);
     const rel = scope.root ? file.path.slice(scope.root.length + 1) : file.path;
@@ -92,7 +98,12 @@ export function buildScopes(map: ProjectMapPayload): ScopeNode[] {
   return all;
 }
 
-/** The knowledge statements that describe the current selection. */
+/**
+ * The knowledge statements that describe the current selection.
+ * ponytail: a scope selection also claims file-path subjects under its root. With flat
+ * sibling scopes (the pnpm-workspace norm) that is exact; if scopes ever nest, a parent
+ * would over-include a nested child's file subjects — narrow by deepest owner then.
+ */
 export function knowledgeForSelection(
   statements: readonly KnowledgeStatementPayload[],
   selection: Selection,

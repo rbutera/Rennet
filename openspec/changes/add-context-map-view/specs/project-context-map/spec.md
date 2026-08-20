@@ -14,7 +14,7 @@ The system SHALL expose a `project.contextMap` command that returns the project'
 - **THEN** the command returns a typed absent result naming the reason, and never fabricates or partially serves a map
 
 ### Requirement: Context Map surface
-The UI SHALL provide a per-project Context Map surface reachable from the project detail view, presenting the structure as a roll-up tree (scopes → directories → files → symbols with counts) beside a neighborhood graph that shows only the selected node and its direct dependency edges, with a freshness badge for the underlying snapshot.
+The UI SHALL provide a per-project Context Map surface reachable from the project detail view, presenting the structure as a roll-up tree (scopes → directories → files, with rolled-up file counts) beside a neighborhood graph that shows only the selected node and its direct dependency edges, with a freshness badge for the underlying snapshot.
 
 #### Scenario: Opening the surface
 - **WHEN** the user opens the Context Map from a project's detail view

@@ -1,4 +1,5 @@
 import type {
+  KnowledgeDispositionResult,
   KnowledgeSetPayload,
   KnowledgeStatementPayload,
   ProjectContextAskResult,
@@ -139,16 +140,41 @@ function ContextMap({
       selection.kind === "file" ? scope.name === selection.scope : scope.name === selection.scope,
     ) ?? scopes[0];
 
+  const [dispositionError, setDispositionError] = useState<string | null>(null);
   const disposition = async (statementId: string, next: "confirmed" | "rejected") => {
-    // Optimistic flip — the command persists behind it; a not-found (a statement the
-    // enrichment pass has since dropped) leaves the optimistic state, which the next
-    // load reconciles.
+    const prior = statements.find((entry) => entry.id === statementId)?.status;
+    // Optimistic flip for responsiveness; the server's answer is authoritative and
+    // reconciles below — a failed or not-found disposition rolls back, never leaves a
+    // guessed status standing (a lie in the UI is a bug).
     setStatements((current) =>
       current.map((entry) => (entry.id === statementId ? { ...entry, status: next } : entry)),
     );
-    await bridge
-      .invoke("project.knowledgeDisposition", { projectId, statementId, disposition: next })
-      .catch(() => undefined);
+    setDispositionError(null);
+    const rollback = () =>
+      setStatements((current) =>
+        current.map((entry) =>
+          entry.id === statementId && prior ? { ...entry, status: prior } : entry,
+        ),
+      );
+    try {
+      const result = (await bridge.invoke("project.knowledgeDisposition", {
+        projectId,
+        statementId,
+        disposition: next,
+      })) as KnowledgeDispositionResult;
+      if (result.status === "ok") {
+        // Apply the persisted statement verbatim — the store, not the optimism, wins.
+        setStatements((current) =>
+          current.map((entry) => (entry.id === statementId ? result.statement : entry)),
+        );
+      } else {
+        rollback();
+        setDispositionError("That statement is no longer in the map — the view may be stale.");
+      }
+    } catch (reason) {
+      rollback();
+      setDispositionError(messageFrom(reason));
+    }
   };
 
   const askRef = useRef<{ prefill(text: string): void }>(null);
@@ -159,6 +185,9 @@ function ContextMap({
   };
 
   const fileCount = map.files.length;
+  // The knowledge layer is loaded independently of the (gate-fresh) structural map
+  // and enrichment trails structure, so a lagging set must not read as "current".
+  const knowledgeBehind = knowledge !== null && knowledge.baseOid !== map.baseOid;
   return (
     <div className="context-map min-h-screen flex flex-col bg-canvas">
       <header className="context-map-bar flex items-center gap-4 px-6 pt-5 pb-4 border-b border-line">
@@ -174,9 +203,15 @@ function ContextMap({
         <span className="context-map-base font-mono text-sm text-ink-faint truncate">
           {knowledge?.repoKey ?? map.baseRef} · {map.baseRef} @ {map.baseOid.slice(0, 12)}
         </span>
-        <span className="context-map-fresh inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-2xs font-semibold">
-          ● current
-        </span>
+        {knowledgeBehind ? (
+          <span className="context-map-fresh inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-2xs font-semibold">
+            ◐ knowledge behind map
+          </span>
+        ) : (
+          <span className="context-map-fresh inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-2xs font-semibold">
+            ● current
+          </span>
+        )}
       </header>
       <div className="context-map-main flex flex-1 min-h-0">
         <section className="context-map-col flex flex-col min-w-0 w-[26rem] border-r border-line">
@@ -194,6 +229,11 @@ function ContextMap({
               onSelect={(name) => setSelection({ kind: "scope", scope: name })}
             />
           </div>
+          {dispositionError ? (
+            <div className="context-map-disposition-error px-4 py-2 text-2xs text-danger border-b border-danger-soft bg-danger-soft">
+              {dispositionError}
+            </div>
+          ) : null}
           <DetailTabs
             selection={selection}
             scope={selectedScope}

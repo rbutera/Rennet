@@ -137,6 +137,7 @@ import {
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
   patchsetIntentToReviewIntent,
+  queryKnowledge,
   queryProjectMap,
   ReviewService,
   recordSeatSend,
@@ -2303,10 +2304,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         manifest.baseOid,
       );
       if (!gated.ok) return { status: "absent", reason: gated.failure.reason };
+      // Project the stored knowledge through the gated snapshot: a statement whose
+      // cited bytes the current map changed is invalidated, and must NOT be served as
+      // an active/current claim (that would render stale knowledge as fresh). We serve
+      // only the resolving statements; the UI badge discloses when the set lags the map.
+      // ponytail: invalidatedPending is dropped from the view, not yet surfaced as a
+      // distinct "pending re-check" tier — add that when the protocol carries it.
+      const storedSet = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey);
+      const knowledge = storedSet
+        ? { ...storedSet, statements: [...queryKnowledge(storedSet, gated.snapshot).statements] }
+        : null;
       return {
         status: "ok",
         map: queryProjectMap(gated.snapshot),
-        knowledge: new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey),
+        knowledge,
       } as ProjectContextMapResult;
     },
     // Project-scoped context ask: the SAME engine context.ask runs for a review,

@@ -70,7 +70,10 @@ const knowledge: KnowledgeSetPayload = {
   ],
 };
 
-function fakeBridge(mapResult: ProjectContextMapResult = { status: "ok", map, knowledge }): {
+function fakeBridge(
+  mapResult: ProjectContextMapResult = { status: "ok", map, knowledge },
+  dispositionOutcome: "ok" | "not-found" | "throw" = "ok",
+): {
   bridge: RennetBridge;
   calls: { name: string; input: unknown }[];
 } {
@@ -80,8 +83,18 @@ function fakeBridge(mapResult: ProjectContextMapResult = { status: "ok", map, kn
     switch (name) {
       case "project.contextMap":
         return mapResult;
-      case "project.knowledgeDisposition":
-        return { status: "ok", statement: knowledge.statements[0] };
+      case "project.knowledgeDisposition": {
+        // The store is authoritative: echo the persisted statement with the flipped
+        // status (not the pre-disposition hypothesis) — the reconciliation the UI relies on.
+        const { statementId, disposition } = input as {
+          statementId: string;
+          disposition: "confirmed" | "rejected";
+        };
+        if (dispositionOutcome === "throw") throw new Error("the store is offline");
+        if (dispositionOutcome === "not-found") return { status: "not-found", statementId };
+        const found = knowledge.statements.find((s) => s.id === statementId);
+        return { status: "ok", statement: { ...found, status: disposition } };
+      }
       case "project.contextAsk":
         return {
           status: "answered",
@@ -200,6 +213,38 @@ describe("ContextMapView — the Context Map surface", () => {
     });
     // Once rejected, the verbs retire — a disposed claim is not re-disposed.
     await waitFor(() => expect(container.querySelector(".context-map-confirm")).toBeNull());
+  });
+
+  it("rolls back the optimistic flip and surfaces the error when disposition fails", async () => {
+    const { bridge } = fakeBridge(undefined, "throw");
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-confirm")).not.toBeNull());
+    fireEvent.click(container.querySelector(".context-map-confirm") as Element);
+    // The failure surfaces AND the verbs come back — no guessed "confirmed" left standing.
+    await waitFor(() =>
+      expect(container.querySelector(".context-map-disposition-error")?.textContent).toContain(
+        "the store is offline",
+      ),
+    );
+    expect(container.querySelector(".context-map-confirm")).not.toBeNull();
+  });
+
+  it("rolls back on a typed not-found and tells the user the view is stale", async () => {
+    const { bridge } = fakeBridge(undefined, "not-found");
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-reject")).not.toBeNull());
+    fireEvent.click(container.querySelector(".context-map-reject") as Element);
+    await waitFor(() =>
+      expect(container.querySelector(".context-map-disposition-error")?.textContent).toContain(
+        "no longer in the map",
+      ),
+    );
+    // Not left as a phantom "rejected" — the verbs remain actionable.
+    expect(container.querySelector(".context-map-reject")).not.toBeNull();
   });
 
   it("asks the orchestrator through project.contextAsk and renders the answer", async () => {
