@@ -617,6 +617,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       secretStore: gitHubSecretStore,
       refresh: (refreshToken) => refreshGitHubCredential({ fetch: publishHttp, refreshToken }),
       withLock: withAccountLock,
+      // One single-line, secret-free `[github-auth]` record per refresh observation
+      // to the daemon's stdout (captured to daemon.log) — so a field refresh
+      // failure is read off the log, not inferred. RefreshLogRecord carries no
+      // token/secret field, so nothing here can leak a credential.
+      log: (record) => {
+        const parts = [`phase=${record.phase}`];
+        if (record.githubError !== undefined) parts.push(`githubError=${record.githubError}`);
+        if (record.httpStatus !== undefined) parts.push(`httpStatus=${record.httpStatus}`);
+        if (record.tokenKind !== undefined) parts.push(`tokenKind=${record.tokenKind}`);
+        if (record.attempt !== undefined) parts.push(`attempt=${record.attempt}`);
+        console.log(`[github-auth] ${parts.join(" ")}`);
+      },
     });
 
   /** Resolve the GitHub bearer for a real egress; throws (never posts) when unavailable. */

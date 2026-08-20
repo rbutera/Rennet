@@ -50,12 +50,44 @@ export type GitHubAuthState =
   | { ok: false; reason: "insufficient-scope"; copy: string; scopes: string[] }
   | { ok: false; reason: "network"; copy: string };
 
+/**
+ * A single refresh-exchange observation, secret-free BY CONSTRUCTION: there is no
+ * field that can hold a token, refresh token, or client secret, so a credential
+ * cannot be logged even by mistake. `create-server` serializes it to one
+ * `[github-auth]` line in `daemon.log`, so a field failure is observed, not inferred.
+ */
+export interface RefreshLogRecord {
+  phase: "attempt" | "persisted" | "declined" | "network";
+  /** The verbatim GitHub `error` code on a decline (e.g. `bad_refresh_token`). */
+  githubError?: string;
+  httpStatus?: number;
+  /** A non-secret token-kind prefix (`ghu_`/`gho_`/…), never the token body. */
+  tokenKind?: string;
+  attempt?: number;
+}
+
+/**
+ * The non-secret token-kind prefix (`ghu_`, `gho_`, `ghp_`, …) — the substring up
+ * to and including the first underscore, or a fixed label when there is none.
+ * NEVER returns the token body: safe to put in a log record.
+ */
+export function tokenKind(token: string): string {
+  const underscore = token.indexOf("_");
+  return underscore >= 0 ? token.slice(0, underscore + 1) : "token";
+}
+
 export interface ResolveAuthDeps {
   /** An UNAUTHENTICATED client; the candidate token rides as an explicit header. */
   octokit: Octokit;
   secretStore: SecretStore;
   /** The scope the selected operation needs. Defaults to classic `repo`. */
   requiredScope?: string;
+  /**
+   * Sink for secret-free refresh observations. Absent ⇒ no-op: callers that do
+   * not care about the log need not pass it. `create-server` binds one that
+   * writes each record to the daemon's stdout (→ `daemon.log`).
+   */
+  log?: (record: RefreshLogRecord) => void;
   /**
    * The refresh exchange (`refreshGitHubCredential` bound to the daemon's
    * fetch). Absent ⇒ expiring credentials simply die at expiry (token-invalid).
@@ -187,20 +219,47 @@ async function refreshAndPersist(
 ): Promise<GitHubCredential | null> {
   const refresh = deps.refresh;
   if (!refresh) return null;
+  const log: (record: RefreshLogRecord) => void = deps.log ?? (() => undefined);
   const exclusively = deps.withLock ?? (<T>(section: () => Promise<T>) => section());
   return exclusively(async () => {
     const current = await deps.secretStore.getGitHubCredential();
     if (!current) return null; // disconnected while we waited for the lock
     if (current.token !== expected.token) return current; // another caller rotated
     if (!current.refreshToken) return null;
+    const refreshToken = current.refreshToken;
+    // Emitted at the START of the exchange (both proactive and reactive branches
+    // route through here) so an attempt is visible in daemon.log even if the
+    // process dies mid-exchange.
+    log({ phase: "attempt" });
     let minted: GitHubCredential;
     try {
-      minted = await refresh(current.refreshToken);
+      minted = await refresh(refreshToken);
     } catch (error) {
-      if (error instanceof GitHubOAuthDeclined) return null;
-      throw error;
+      // A decline is deterministic — name its cause and surface token-invalid,
+      // never retried.
+      if (error instanceof GitHubOAuthDeclined) {
+        log({ phase: "declined", githubError: error.code });
+        return null;
+      }
+      // A transient transport blip gets exactly ONE retry inside the lock, so a
+      // boot-time connectivity storm never drops a live session over a momentary
+      // failure.
+      if (!isGitHubNetworkError(error)) throw error;
+      log({ phase: "network", attempt: 1 });
+      try {
+        minted = await refresh(refreshToken);
+      } catch (retryError) {
+        if (retryError instanceof GitHubOAuthDeclined) {
+          log({ phase: "declined", githubError: retryError.code });
+          return null;
+        }
+        // A second transient failure propagates so resolveGitHubAuth classifies
+        // it `network` and leaves the credential untouched.
+        throw retryError;
+      }
     }
     await deps.secretStore.setGitHubCredential(minted);
+    log({ phase: "persisted", tokenKind: tokenKind(minted.token) });
     return minted;
   });
 }
