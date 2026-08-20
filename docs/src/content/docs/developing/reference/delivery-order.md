@@ -146,18 +146,33 @@ The one carried-over sub-item from the wave list is wave 7's live win32
 verification matrix on lancelot (hermetic tests pass; the on-hardware run is
 pending). Release engineering still waits on the human-only checklist below.
 
-**Open desktop UI work — the shadcn/Base UI port (started 2026-08-20).** This
-supersedes any earlier "no open desktop UI work" reading. Rennet's hand-rolled UI
-layer is being replaced with vendored shadcn/ui components on Base UI, themed to
-the Affineur's Bench identity, across every surface including `app.tsx`. The kit
-lives in a new `@rennet/ui` package; the former `packages/ui` is renamed
-`@rennet/app-ui` and holds Rennet's composites, refactored wave by wave onto the
-kit. Base UI is now the one primitive family (see the
-[dependency standard](/developing/reference/dependency-standard/)). The work runs
-as Waves 0–7 (rename + scaffold, theme mapping + core primitives, overlays,
-command palette + resizable + markdown, full control sweep + app.tsx split,
-syntax/diff/icons/lists, conversation surfaces, cleanup + release), one PR per
-wave with a dual review gate. The wave plan is
+**The shadcn/Base UI port — delivered (Waves 0–7, 2026-08-20).** Rennet's
+hand-rolled UI layer was replaced with vendored shadcn/ui components on Base UI,
+themed to the Affineur's Bench identity. The kit lives in `@rennet/ui` (Button,
+Input, Textarea, Label, Dialog, Sheet, Popover, DropdownMenu, Select, Switch,
+Checkbox, Tabs, Tooltip, ScrollArea, Badge, Skeleton, Separator, Toast, Command);
+the former `packages/ui` was renamed `@rennet/app-ui` and holds Rennet's
+composites, which compose the kit. Base UI is the one primitive family, with Radix
+allowed only where a shadcn component brings it (e.g. `cmdk`); see the
+[dependency standard](/developing/reference/dependency-standard/). The shadcn
+semantic token aliases (`--color-background`/`-primary`/`-accent-foreground`/…)
+and radius aliases (`--radius-sm`…`-2xl`) resolve to the `--rn-*` palette in
+`packages/theme` — the kit speaks the vendored vocabulary, the palette stays the
+single source of truth.
+
+What each wave delivered: 0 rename + kit scaffold + rulings; 1 theme mapping +
+core primitives; 2 overlays onto kit Dialog/Sheet/Popover + Toast; 3 the ⌘K
+command palette on `cmdk` (resizable/markdown assessed no-op); 4 the full composite
+sweep + `app.tsx` split; 5 `shiki` syntax + `lucide-react` icons at the 1.6px
+identity stroke (diff `react-diff-view` and lists/trees assessed no-op — the
+narrative card lists and bespoke file tree had no real Data-Table/Combobox/tree
+target); 6 conversation surfaces assessed no-op (the shadcn AI-chat set is
+two-party chat bubbles, not Rennet's anchored margin-rail review threads); 7
+cleanup + docs. Three modal surfaces deliberately keep their bespoke backdrop —
+`publish-sheet.tsx`, `collation-draft-canvas.tsx`, and the handoff modal in
+`shell.tsx` — because moving them onto kit Dialog/Sheet would change dismissal and
+focus behaviour rather than re-platform them; everything else runs on the kit. The
+wave plan (evidence, superseded by this note) is
 `docs/superpowers/plans/2026-08-20-shadcn-port.md`.
 
 ### The app server wave (approved 2026-08-17; phases 0–5 shipped 2026-08-18, v0.2.0)

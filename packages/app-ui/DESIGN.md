@@ -90,3 +90,25 @@ design-ramp test forbids them in `packages/app-ui` sources.
 | 16 | window | the window shell and the handoff paper's deeper corner |
 | `999px` | pill | chip and count geometry only |
 | `50%` | circle | circular marks and dots |
+
+## Kit vocabulary and shadcn aliases
+
+The screens in this package compose the vendored shadcn/Base UI kit
+(`@rennet/ui` — Button, Input, Dialog, Sheet, Popover, DropdownMenu, Select,
+Checkbox, Switch, Tabs, Tooltip, ScrollArea, Badge, Skeleton, Separator, Toast,
+Command, …). The kit is written in shadcn's semantic Tailwind vocabulary, which
+[`packages/theme/src/theme.css`](../theme/src/theme.css) aliases 1:1 onto the
+`--rn-*` palette — the alias layer renames, it never introduces a new value:
+
+- **Semantic colour:** `background`→canvas, `foreground`→ink, `card`→surface,
+  `popover`→overlay, `primary`→accent-fill, `secondary`/`muted`→raised,
+  `destructive`→danger, `border`→line, `input`→line-strong, `ring`→accent-line,
+  `accent`→gold (`accent-foreground`→surface), `scrim`→modal backdrop.
+- **Radius:** `rounded-sm`→micro (4px), `rounded-md`→chip (6px),
+  `rounded-lg`→control (8px), `rounded-xl`→surface (12px),
+  `rounded-2xl`→window (16px).
+
+So a kit utility such as `bg-primary` or `rounded-xl` resolves through the alias
+to the same Rennet token an app-ui composite would name directly; both stay on the
+ramp the design-ramp test enforces. The full colour, semantics, and component
+doctrine is the root [`DESIGN.md`](../../DESIGN.md).
