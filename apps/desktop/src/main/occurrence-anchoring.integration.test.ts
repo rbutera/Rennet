@@ -10,6 +10,7 @@
 // lives in; here `renderDiff`'s own file-sorting and split-dedupe produce the shapes,
 // and the mark is placed over exactly what the UI would place it over in production.
 
+import { buildRowRegistry, type Mark, placeMarks } from "@rennet/app-ui";
 import { type AdmittedDocument, buildElementDiffs, decompose } from "@rennet/core";
 import {
   type AnalysisElement,
@@ -19,7 +20,6 @@ import {
   type PatchFile,
   type Patchset,
 } from "@rennet/types";
-import { buildRowRegistry, type Mark, placeMarks } from "@rennet/ui";
 import { describe, expect, it } from "vitest";
 
 const repository = {

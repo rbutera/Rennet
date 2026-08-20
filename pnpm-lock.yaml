@@ -132,6 +132,9 @@ importers:
       '@rennet/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
+      '@rennet/app-ui':
+        specifier: workspace:*
+        version: link:../../packages/app-ui
       '@rennet/client':
         specifier: workspace:*
         version: link:../../packages/client
@@ -147,9 +150,6 @@ importers:
       '@rennet/types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@rennet/ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
       '@tailwindcss/vite':
         specifier: 4.3.3
         version: 4.3.3(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
@@ -338,6 +338,46 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/app-ui:
+    dependencies:
+      '@rennet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@rennet/theme':
+        specifier: workspace:*
+        version: link:../theme
+      '@rennet/types':
+        specifier: workspace:*
+        version: link:../types
+      '@rennet/ui':
+        specifier: workspace:*
+        version: link:../ui
+      react:
+        specifier: 19.2.8
+        version: 19.2.8
+      react-dom:
+        specifier: 19.2.8
+        version: 19.2.8(react@19.2.8)
+      react-error-boundary:
+        specifier: 6.1.2
+        version: 6.1.2(react@19.2.8)
+      zustand:
+        specifier: 5.0.14
+        version: 5.0.14(@types/react@19.2.14)(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
+    devDependencies:
+      '@testing-library/dom':
+        specifier: 10.4.1
+        version: 10.4.1
+      '@testing-library/react':
+        specifier: 16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@testing-library/user-event':
+        specifier: 14.6.1
+        version: 14.6.1(@testing-library/dom@10.4.1)
+      happy-dom:
+        specifier: 20.11.1
+        version: 20.11.1
+
   packages/client:
     dependencies:
       '@rennet/protocol':
@@ -431,9 +471,6 @@ importers:
 
   packages/ui:
     dependencies:
-      '@rennet/protocol':
-        specifier: workspace:*
-        version: link:../protocol
       '@rennet/theme':
         specifier: workspace:*
         version: link:../theme
@@ -446,25 +483,6 @@ importers:
       react-dom:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
-      react-error-boundary:
-        specifier: 6.1.2
-        version: 6.1.2(react@19.2.8)
-      zustand:
-        specifier: 5.0.14
-        version: 5.0.14(@types/react@19.2.14)(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
-    devDependencies:
-      '@testing-library/dom':
-        specifier: 10.4.1
-        version: 10.4.1
-      '@testing-library/react':
-        specifier: 16.3.2
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@testing-library/user-event':
-        specifier: 14.6.1
-        version: 14.6.1(@testing-library/dom@10.4.1)
-      happy-dom:
-        specifier: 20.11.1
-        version: 20.11.1
 
 packages:
 

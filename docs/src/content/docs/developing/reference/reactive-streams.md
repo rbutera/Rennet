@@ -59,7 +59,7 @@ the stream and the command's resolved value always agree, and the renderer folds
 stream into UI state that a re-read of durable truth can always reconstruct.
 
 The processing slot renders through the shared narration organ (`ProgressFeed`
-plus the processing-specific `deriveProgressView` fold in `packages/ui`). The
+plus the processing-specific `deriveProgressView` fold in `packages/app-ui`). The
 renderer keeps one command UUID per project for the session, and the server
 deduplicates a live `project.process` run by that UUID while retaining a bounded
 replay suffix (keyed by the connecting socket's identity), so remounting the

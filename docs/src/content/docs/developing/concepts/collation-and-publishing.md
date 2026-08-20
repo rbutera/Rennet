@@ -142,12 +142,12 @@ orchestrator editing of the whole collation draft is not yet the main live path.
 
 | Concern | Source |
 |---|---|
-| Ordered draft model and transforms | `packages/ui/src/canvas/collation.ts` |
-| Destination staging lanes | `packages/ui/src/canvas/staging.ts` |
-| Destination-specific payloads | `packages/ui/src/canvas/publish.ts` |
-| Draft canvas | `packages/ui/src/components/collation-draft-canvas.tsx` |
-| Preview | `packages/ui/src/components/publish-sheet.tsx` |
-| Live publish wiring | `packages/ui/src/app.tsx` and `apps/desktop/src/main/dispatch.ts` |
+| Ordered draft model and transforms | `packages/app-ui/src/canvas/collation.ts` |
+| Destination staging lanes | `packages/app-ui/src/canvas/staging.ts` |
+| Destination-specific payloads | `packages/app-ui/src/canvas/publish.ts` |
+| Draft canvas | `packages/app-ui/src/components/collation-draft-canvas.tsx` |
+| Preview | `packages/app-ui/src/components/publish-sheet.tsx` |
+| Live publish wiring | `packages/app-ui/src/app.tsx` and `apps/desktop/src/main/dispatch.ts` |
 
 See [comment refinement](/developing/concepts/comment-refinement/) for how rough
 notes become effective bodies and [the canvas model](/developing/concepts/canvas-model/)

@@ -41,7 +41,7 @@ inputs, outputs, and inferred tasks before you try to run them. This is quicker
 and more reliable than guessing a target name from a package directory.
 
 The main product projects are `rennet-types`, `rennet-protocol`,
-`rennet-instructions`, `rennet-core`, `rennet-adapters`, `rennet-ui`, and
+`rennet-instructions`, `rennet-core`, `rennet-adapters`, `rennet-app-ui`, and
 `rennet-desktop`. The docs and marketing sites are separate Nx projects in the
 same workspace.
 
@@ -54,7 +54,7 @@ flowchart TD
   instructions["@rennet/instructions"]
   core["@rennet/core"]
   adapters["@rennet/adapters"]
-  ui["@rennet/ui"]
+  ui["@rennet/app-ui"]
   desktop["apps/desktop"]
 
   protocol --> types

@@ -1,8 +1,8 @@
 /* Rennet shared palette — "The Affineur's Bench" (root DESIGN.md, 2026-08-19).
  *
  * THE one file where palette values exist. Every surface consumes it:
- *   - packages/ui (Tailwind v4): via theme.css, which imports this file and
- *     maps the vars into Tailwind namespaces.
+ *   - packages/ui + packages/app-ui (Tailwind v4): via theme.css, which imports
+ *     this file and maps the vars into Tailwind namespaces.
  *   - apps/marketing + docs/ (plain CSS): import this file directly and
  *     reference var(--rn-*). They define NO --rn-* of their own and restate
  *     no palette hex — palette-sync.test.ts enforces both.

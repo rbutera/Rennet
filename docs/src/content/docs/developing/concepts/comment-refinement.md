@@ -122,6 +122,6 @@ get its own tracking issue before these docs describe it as scheduled work.
 |---|---|
 | Core prompt and result mapping | `packages/core/src/refine-comment.ts` |
 | Live Claude/Codex seat | `apps/desktop/src/main/refine-comment-live.ts` |
-| Raw/refined draft model | `packages/ui/src/canvas/collation.ts` |
-| Request lifecycle and stale-result check | `packages/ui/src/app.tsx` |
-| Refinement controls | `packages/ui/src/components/collation-draft-canvas.tsx` |
+| Raw/refined draft model | `packages/app-ui/src/canvas/collation.ts` |
+| Request lifecycle and stale-result check | `packages/app-ui/src/app.tsx` |
+| Refinement controls | `packages/app-ui/src/components/collation-draft-canvas.tsx` |

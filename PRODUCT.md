@@ -89,7 +89,7 @@ Confirmed public claims are:
 - Product and architecture rulings: [`contracts-and-rulings.md`](docs/src/content/docs/developing/reference/contracts-and-rulings.md)
 - Desktop packaging and installation: [`apps/desktop/PACKAGING.md`](apps/desktop/PACKAGING.md)
 - Production brand assets: [`brand/README.md`](brand/README.md)
-- Existing product UI: [`apps/desktop/`](apps/desktop/) and [`packages/ui/`](packages/ui/)
+- Existing product UI: [`apps/desktop/`](apps/desktop/) and [`packages/app-ui/`](packages/app-ui/)
 
 There are no confirmed testimonials, customer logos, usage totals, time-saved metrics, review-quality benchmarks, press quotes, or pricing comparisons. Future marketing work must not fabricate them.
 

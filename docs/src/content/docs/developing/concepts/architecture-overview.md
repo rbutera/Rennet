@@ -23,7 +23,7 @@ coding harnesses.
 ```mermaid
 flowchart LR
   user[Reviewer]
-  ui["Renderer<br/>@rennet/ui + @rennet/client"]
+  ui["Renderer<br/>@rennet/app-ui + @rennet/client"]
   preload["Preload<br/>platform · WS port"]
   main["Electron main<br/>shell"]
   server["@rennet/server<br/>composition root + WS listener"]
@@ -62,23 +62,23 @@ adapters never leak host-specific behaviour back into the portable protocol.
 ## Two shells, one UI
 
 The desktop app is no longer the only way to run Rennet. The daemon serves the
-**same** `@rennet/ui` as a browser client over its HTTP port, so a browser tab is a
+**same** `@rennet/app-ui` as a browser client over its HTTP port, so a browser tab is a
 full peer of the Electron window — same surfaces, same capabilities, no read-only
 mode and no feature that exists in only one shell. Both shells mount one shared
-`ConnectionHost` (in `@rennet/ui`) that owns *which daemon this window is attached
+`ConnectionHost` (in `@rennet/app-ui`) that owns *which daemon this window is attached
 to*: the local daemon by default, plus any saved remote daemons (added with a
 phase-4 pairing code). Switching daemons remounts the app against the chosen one.
 
 The browser shell is a composition file (`apps/desktop/src/browser/`), not a second
 UI — it injects a connection factory into `ConnectionHost` exactly as the renderer does
 (each factory builds a `ConnectionSupervisor` per target; the legacy `createBridge`
-seam stays as an adapter), so `@rennet/ui` never imports a transport. A loopback tab is `private` (the full
+seam stays as an adapter), so `@rennet/app-ui` never imports a transport. A loopback tab is `private` (the full
 contract); a remote tab is `projected` (the R19 public projection, per the
 [remote access guide](/using/guide/remote-access/)). Reaching a remote daemon is a
 Tailscale hop — there is no relay and no hosted backend.
 
 The **native mobile app** (`apps/mobile`, Expo + expo-router, phase 6 M1) is the
-third client. Unlike the two desktop shells it does not mount `@rennet/ui` (DOM-bound,
+third client. Unlike the two desktop shells it does not mount `@rennet/app-ui` (DOM-bound,
 not consumable in React Native) — its screens are RN-native, styled to a theme transpose
 of the kit tokens, and it consumes `@rennet/client`/`protocol`/`types` only. It reaches a
 paired daemon over Tailscale as a `projected` connection with a device token in the
@@ -124,7 +124,7 @@ flowchart BT
   core["@rennet/core<br/>portable review engine"]
   adapters["@rennet/adapters<br/>Node and service integrations"]
   server["@rennet/server<br/>composition root + command router"]
-  ui["@rennet/ui<br/>React review surfaces"]
+  ui["@rennet/app-ui<br/>React review surfaces"]
   client["@rennet/client<br/>browser-safe transport clients"]
   desktop["apps/desktop<br/>Electron shell"]
 
@@ -160,7 +160,7 @@ flowchart BT
 | `@rennet/core` | Capture-independent review logic, event folds, canvases, routing, lineage, publication decisions | Electron, GitHub clients, filesystem calls, or renderer state |
 | `@rennet/adapters` | Git, GitHub, SQLite, local files, harness SDKs, and other host integrations | UI or product policy |
 | `@rennet/server` | The `createRennetServer` composition root: stores, adapter wiring, harness memoisers, and the 49-command dispatch router | Electron imports (its effects are injected as options) or renderer state |
-| `@rennet/ui` | React surfaces, ephemeral view state, and the shared `ConnectionHost` daemon-attachment shell | Core imports, Node APIs, a transport client, or durable review truth |
+| `@rennet/app-ui` | React surfaces, ephemeral view state, and the shared `ConnectionHost` daemon-attachment shell | Core imports, Node APIs, a transport client, or durable review truth |
 | `@rennet/client` | Browser-safe transport clients — the `WsRennetBridge` the renderer, the served browser tab, and the `rennet` CLI use to speak the session protocol (mobile clients will use it too) | Electron, Node APIs, filesystem, or review logic |
 | `apps/desktop` | Electron shell (windows, menu, `app://` protocol, auto-update, the WS port) **and** the served browser shell (`src/browser/` → `dist/browser`, which the daemon serves); both compose a `WsRennetBridge` into `ConnectionHost` | Reusable domain logic that belongs in a package, or a second copy of the UI |
 

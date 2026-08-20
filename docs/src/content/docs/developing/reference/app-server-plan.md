@@ -38,7 +38,7 @@ flowchart LR
   phone -- "ws + device token" --> proj
 ```
 
-The same `packages/ui` bundle runs inside Electron and served from the daemon
+The same `packages/app-ui` bundle runs inside Electron and served from the daemon
 as a browser app. Both are full-featured peers; both carry a server picker
 that attaches to the local daemon or a remote one (`rennet serve` on any box).
 The desktop app spawns and supervises the local daemon so single-machine UX is
@@ -160,7 +160,7 @@ both ride this plumbing to reach a daemon on another machine. R19 note:
 
 ### Phase 5 — Browser Rennet: one UI, two shells (3-5 days)
 
-The daemon serves the existing `packages/ui` bundle over HTTP alongside the
+The daemon serves the existing `packages/app-ui` bundle over HTTP alongside the
 WS endpoint (`rennet serve` gains the UI by default). A loopback browser tab
 is a trusted client on the full private contract — full-fat Rennet with no
 Electron installed. The UI is already browser-only and bridge-shaped, so this

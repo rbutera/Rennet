@@ -21,7 +21,7 @@
     "@rennet/protocol": "workspace:*",
     "@rennet/server": "workspace:*",
     "@rennet/types": "workspace:*",
-    "@rennet/ui": "workspace:*",
+    "@rennet/app-ui": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
     "electron": "43.2.0",
     "electron-squirrel-startup": "1.0.1",

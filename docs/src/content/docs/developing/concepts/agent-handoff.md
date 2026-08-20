@@ -267,12 +267,12 @@ regenerate carries no trace and computes identically.
 |---|---|
 | Bundle filtering, anchored context, deterministic prompt | `packages/core/src/handoff-loop.ts` |
 | Agent-friendly ordering, narration, and the compose→run integrity check | `packages/core/src/handoff-compose.ts` |
-| Stage-6 composed-bundle preview view-model | `packages/ui/src/canvas/publish.ts` (`handoffPreview`, `handoffDispositions`) |
+| Stage-6 composed-bundle preview view-model | `packages/app-ui/src/canvas/publish.ts` (`handoffPreview`, `handoffDispositions`) |
 | Write-enabled harness turn behind the main-process command | `packages/adapters/src/handoff-run-live.ts` |
 | Checkpoint and turn diff | `packages/adapters/src/checkpoint-store.ts` |
 | Command routing and successor capture | `apps/desktop/src/main/dispatch.ts` |
 | Delta facts | `packages/core/src/delta-account.ts` |
-| Draft, handoff preview, run action, and publish interaction | `packages/ui/src/app.tsx`, `packages/ui/src/components/handoff-paper.tsx` |
+| Draft, handoff preview, run action, and publish interaction | `packages/app-ui/src/app.tsx`, `packages/app-ui/src/components/handoff-paper.tsx` |
 
 The renderer never gets direct process authority. The own-branch destination
 composes the bundle on handoff-surface entry (`review.handoff.compose`), previews

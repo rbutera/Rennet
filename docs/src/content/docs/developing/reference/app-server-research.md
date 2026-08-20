@@ -176,7 +176,7 @@ speaks it from the Codex adapter (see the
 
 The refactor is smaller than it sounds because the seam already exists:
 
-- **The UI is transport-agnostic today.** `packages/ui` never imports
+- **The UI is transport-agnostic today.** `packages/app-ui` never imports
   Electron; `RennetApp` takes a `RennetBridge` and only calls
   `bridge.invoke(name, input)` / `onProgress` / `onAskStream`. `RennetBridge`
   is defined in `packages/protocol` (`src/index.ts:2675`), not in the desktop

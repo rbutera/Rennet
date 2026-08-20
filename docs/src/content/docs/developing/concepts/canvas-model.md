@@ -160,4 +160,4 @@ coverage, test links, and unclaimed-change detection.
 | Shared canvas and analysis shapes | `packages/types/src/index.ts` |
 | Orchestrator tools | `packages/core/src/canvas-ops.ts` |
 | Orchestrator session and future pushed view context | `packages/core/src/orchestrator-session.ts` |
-| Canvas renderer logic | `packages/ui/src/canvas/` |
+| Canvas renderer logic | `packages/app-ui/src/canvas/` |

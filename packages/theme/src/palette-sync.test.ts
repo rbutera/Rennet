@@ -22,7 +22,7 @@ describe("no palette copies outside palette.css", () => {
   const consumers = [
     "apps/marketing/src/styles/global.css",
     "docs/src/styles/theme.css",
-    "packages/ui/src/index.css",
+    "packages/app-ui/src/index.css",
     "apps/mobile/src/theme/tokens.ts",
   ] as const;
 

@@ -124,14 +124,14 @@ export default [
     // packages/theme/src/theme.css is the ONLY place raw hex lives (issue #11,
     // re-homed in the 2026-08-19 overhaul). Test files and fixtures are exempt —
     // the hex-lint test lints code strings through the ESLint API (hex-lint.test.ts).
-    files: ["packages/ui/src/**/*.ts", "packages/ui/src/**/*.tsx"],
+    files: ["packages/app-ui/src/**/*.ts", "packages/app-ui/src/**/*.tsx"],
     ignores: [
-      "packages/ui/src/**/*.test.ts",
-      "packages/ui/src/**/*.test.tsx",
-      "packages/ui/src/canvas/fixtures.ts",
+      "packages/app-ui/src/**/*.test.ts",
+      "packages/app-ui/src/**/*.test.tsx",
+      "packages/app-ui/src/canvas/fixtures.ts",
       // A REAL parsed OpenSpec change (data, not styling): its spec text carries
       // issue refs like #178 that the hex selector would false-match.
-      "packages/ui/src/canvas/openspec.fixture.ts",
+      "packages/app-ui/src/canvas/openspec.fixture.ts",
     ],
     rules: {
       "no-restricted-syntax": [
@@ -139,7 +139,7 @@ export default [
         {
           selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
           message:
-            "No hardcoded hex colours in packages/ui — use a theme utility or var(--rn-…) token from @rennet/theme.",
+            "No hardcoded hex colours in packages/app-ui — use a theme utility or var(--rn-…) token from @rennet/theme.",
         },
       ],
     },

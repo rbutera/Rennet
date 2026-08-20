@@ -4,7 +4,6 @@ import { join } from "node:path";
 // The REAL persistence layer (issue #251): a `FileThreadStore` that writes a private
 // conversation to `~/.rennet/threads/<reviewId>.json` and reads it back on re-attach.
 import { FileThreadStore } from "@rennet/adapters";
-import type { ConversationAnchorWire, PersistedThreadMessageWire } from "@rennet/protocol";
 // The REAL outbound-payload construction (the same functions `app.tsx` builds the
 // signed `publish.review` bytes from). apps/desktop (`layer:app`) is the ONE layer
 // that may import both the adapter store and the ui payload functions, so this is the
@@ -18,7 +17,8 @@ import {
   type ReviewComment,
   reviewComments,
   reviewCommentsPayload,
-} from "@rennet/ui";
+} from "@rennet/app-ui";
+import type { ConversationAnchorWire, PersistedThreadMessageWire } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
 // ─────────────────────────────────────────────────────────────────────────────

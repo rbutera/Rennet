@@ -1,6 +1,6 @@
+import { type Connection, ConnectionHost, type ConnectionTarget } from "@rennet/app-ui";
 import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
 import type { RennetBridge } from "@rennet/protocol";
-import { type Connection, ConnectionHost, type ConnectionTarget } from "@rennet/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 

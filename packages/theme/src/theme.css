@@ -4,7 +4,8 @@
  * consumer map). This file is the TAILWIND face of it: it loads the
  * self-hosted variable fonts and maps the --rn-* vars into Tailwind
  * namespaces, so `bg-canvas`, `text-ink-soft`, `rounded-control`,
- * `font-display`, `text-2xs` … are the component vocabulary in packages/ui.
+ * `font-display`, `text-2xs` … are the component vocabulary in the UI packages
+ * (`packages/ui` kit and `packages/app-ui`).
  * Plain-CSS surfaces (marketing, docs) import palette.css directly instead.
  */
 
@@ -57,7 +58,7 @@
   --font-display: var(--rn-font-display);
   --font-mono: var(--rn-font-mono);
 
-  /* the desktop ramp (packages/ui/DESIGN.md): 11/12/14/16/18/20/24 + display clamp.
+  /* the desktop ramp (packages/app-ui/DESIGN.md): 11/12/14/16/18/20/24 + display clamp.
    * Tailwind defaults cover xs(12)–2xl(24); 2xs and display are ours. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1.3;

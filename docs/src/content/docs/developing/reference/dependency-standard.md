@@ -279,20 +279,39 @@ never reads a harness credential.
 
 ## Renderer stack
 
-React owns rendering. The UI package imports only `@rennet/types`,
-`@rennet/protocol`, and browser-safe dependencies. Durable review truth stays in
-the main process; Zustand stores only selection, panel, and transient interaction
-state.
+React owns rendering. Two packages split the UI: `@rennet/ui` is the vendored
+shadcn/ui component kit (imports only `@rennet/types` and `@rennet/theme`);
+`@rennet/app-ui` composes it into Rennet's screens (imports only `@rennet/types`,
+`@rennet/protocol`, `@rennet/theme`, `@rennet/ui`, and browser-safe dependencies).
+Durable review truth stays in the main process; Zustand stores only selection,
+panel, and transient interaction state.
 
-The old research ledger selected React Aria Components, TanStack Router, TanStack
-Query, Tinykeys, TanStack Virtual for non-diff lists, Pierre for the diff surface,
-and a sanitised React Markdown pipeline. **None of these are installed on current
-`main`.** Treat them as the first candidates when their capability lands, recheck
-current versions and peer ranges, and update this page and manifests together.
+**Base UI is Rennet's one primitive family** (Rai's decision, 2026-08-20,
+superseding the old React Aria selection). shadcn/ui core has shipped Base UI
+(`@base-ui-components/react`, MIT) variants of every component since Dec-2025 and
+defaults to them since Jul-2026, so shadcn core *is* the Base UI registry. There
+is **zero `@radix-ui/*` anywhere**, and the raw `cmdk` package is **banned** — it
+depends on Radix; use shadcn's Base UI Command instead. Keep one dialog/menu/toast
+primitive family: Base UI.
 
-Avoid parallel dialog/menu/toast primitive families. Avoid wrapping the diff
-surface in generic virtualization: the measured direction is Pierre `CodeView`;
-list virtualization belongs to rails and queues, not the diff itself.
+**Registry policy.** shadcn core is the primary registry; other registries are
+allowed case-by-case, MIT-verified at pull time. License-verified blocklist
+(2026-08-20): **Origin UI** (AGPL-3.0), **Aceternity** (unlicensed free tier),
+**animate-ui** (MIT + Commons Clause) — all forbidden. **Kibo UI / diceui** are
+MIT but Radix-based — avoid unless a Base UI native component genuinely falls
+short, and record the exception here. Vetted MIT gap-fillers on Base UI: 9ui,
+basecn, baseui-cn.
+
+The old research ledger also named TanStack Router/Query, Tinykeys, TanStack
+Virtual for non-diff lists, Pierre for the diff surface, and a sanitised React
+Markdown pipeline. Those remain first candidates when their capability lands;
+recheck versions and peer ranges and update this page and manifests together.
+Avoid wrapping the diff surface in generic virtualization: the measured direction
+is Pierre `CodeView`; list virtualization belongs to rails and queues, not the
+diff itself.
+
+The shadcn port is tracked as delivery work; see the delivery-order page and
+`docs/superpowers/plans/2026-08-20-shadcn-port.md` for the wave plan.
 
 ## Mobile stack (Expo / React Native)
 
@@ -327,8 +346,8 @@ chosen over the newer default.
   paths and the extension is the recorded follow-up (design decision 5) — not a lying
   manifest that claims an iOS share sheet Rennet has not wired.
 - **AVOID** — a component library in M1 (the kit look is plain RN styles over a token
-  transpose); a second navigation stack beside expo-router; `packages/ui` in RN (it is
-  DOM-bound). The app imports `@rennet/client`/`protocol`/`types` only.
+  transpose); a second navigation stack beside expo-router; the DOM-bound UI packages
+  (`@rennet/ui`, `@rennet/app-ui`) in RN. The app imports `@rennet/client`/`protocol`/`types` only.
 - **Nx targets** — the app is admitted with **explicit** `lint`/`typecheck`/`test`
   targets (plain commands, the workspace's own eslint + biome + tsc + vitest), *not* the
   generator's inferred Expo targets, so the app rides the same gate as every package. There

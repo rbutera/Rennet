@@ -108,8 +108,8 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R17** | Commands produce durable receipts and events; projections rebuild from them. Publication has explicit `outcome-unknown` and query-before-retry recovery. Private events cannot change outbound bytes. |
 | **R18** | Diff ingestion stays byte-safe. Binaries, submodules, mode-only changes, oversize splits, and incomplete ingestion are first-class. Truncated, binary, or submodule capture leaves an explicit decomposition blocking state, so a done or publish gate cannot report completeness. |
 | **R19** | Public protocol is transport-neutral and JSON-Schema-first; private commands and events are Zod-first. Remote clients receive recipient-specific projections, never raw host paths or event envelopes. (Implemented by add-remote-surface: projected connections get the path projection in both directions, the public projection is a checked-in, drift-tested JSON-Schema fixture, and pairing gates non-loopback access. Model-authored prose is the one stated exception — structural fields and known-root substitution are the contract, prose sanitization is not promised. See [remote access](/using/guide/remote-access/).) |
-| **R20** | `@rennet/ui` imports only `types`, `protocol`, and browser-safe dependencies; it never imports `core`. |
-| **R21** | The live package spine is `types`, `protocol`, `instructions`, `core`, `adapters`, and `ui`, composed by `apps/desktop`; boundary arrows are checked in CI. |
+| **R20** | The UI splits in two: `@rennet/ui` (the vendored shadcn/Base UI kit) imports only `types` and `theme`; `@rennet/app-ui` (Rennet's composites and screens) imports only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies. Neither imports `core`. |
+| **R21** | The live package spine is `types`, `theme`, `protocol`, `instructions`, `core`, `adapters`, `ui`, and `app-ui`, composed by `apps/desktop` (which mounts `app-ui`); boundary arrows are checked in CI. |
 | **R24** | Forge behaviour sits behind capability-based `ForgePort`, not GitHub checks scattered through core. |
 | **R27** | Amended by R55: `.rennet/` is no longer the mandatory home of every derived Repo Map. It holds human config and an optional promoted mirror. |
 | **R28** | Every review edition is an immutable patchset. Local or remote movement creates a successor; it never edits the active patchset. |
@@ -124,7 +124,7 @@ the old conflict no longer controls current work; the row records the replacemen
 
 | ID | Current ruling |
 |---|---|
-| **R16** | Pierre `CodeView` owns the diff surface. Generic virtualization stays on rails and queues, not around the diff. (Pierre is the intended, measured candidate; `@pierre/diffs` is installed nowhere on current `main`. Today the diff surface is Rennet's own hand-rolled `packages/ui/src/components/code-view.tsx`, which Pierre replaces when adopted — consistent with the dependency standard's hedged framing.) |
+| **R16** | Pierre `CodeView` owns the diff surface. Generic virtualization stays on rails and queues, not around the diff. (Pierre is the intended, measured candidate; `@pierre/diffs` is installed nowhere on current `main`. Today the diff surface is Rennet's own hand-rolled `packages/app-ui/src/components/code-view.tsx`, which Pierre replaces when adopted — consistent with the dependency standard's hedged framing.) |
 | **R22** | Before outside code contributions are accepted, the repository carries the chosen contributor policy and explicit grant; there are never AI co-author or attribution trailers. |
 | **R25** | The diff-rendering direction is measured, not hypothetical. A replacement version must rerun DOM, frame, annotation-recycling, and accessibility checks. |
 | **R34** | pnpm owns packages, Nx owns the project graph and local cache, Vite owns renderer builds, and Electron Forge owns package/make/release. Exact pins follow the dependency standard. |

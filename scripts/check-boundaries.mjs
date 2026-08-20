@@ -25,7 +25,8 @@ const allowed = new Map([
       "@rennet/adapters",
     ]),
   ],
-  ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol", "@rennet/theme"])],
+  ["@rennet/ui", new Set(["@rennet/types", "@rennet/theme"])],
+  ["@rennet/app-ui", new Set(["@rennet/types", "@rennet/protocol", "@rennet/theme", "@rennet/ui"])],
   ["@rennet/client", new Set(["@rennet/types", "@rennet/protocol"])],
 ]);
 
@@ -45,7 +46,7 @@ for (const [packageName, permitted] of allowed) {
   }
 }
 
-const positiveControl = resolve(workspaceRoot, "packages/ui/src/.boundary-positive-control.ts");
+const positiveControl = resolve(workspaceRoot, "packages/app-ui/src/.boundary-positive-control.ts");
 try {
   writeFileSync(positiveControl, 'import "@rennet/core";\n');
   const { command, args } = pnpmCommand(["exec", "eslint", positiveControl]);
