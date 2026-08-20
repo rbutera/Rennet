@@ -22,11 +22,11 @@
 
 ## 5. Tests
 
-- [ ] 5.1 `github-auth.test.ts`: a declined refresh (200+`error`) emits a `declined` record with the error code and resolves `token-invalid`.
-- [ ] 5.2 `github-auth.test.ts`: a network-failing refresh emits `attempt` then `network`, resolves `network`, leaves the stored credential byte-unchanged, and calls `refresh()` EXACTLY ONCE (asserts no adapter-level retry — the transport owns retry).
-- [ ] 5.3 `github-auth.test.ts`: a successful refresh emits a `persisted` record whose `tokenKind` is an allowlisted label; and a `tokenKind()` unit test — `ghu_…`/`gho_…` map to their prefix, an unknown value like `customerSecret_body` maps to the fixed `"token"` (never a slice).
-- [ ] 5.4 A secret-safety test: across all emitted records for a full refresh, the access/refresh token strings never appear in any record.
-- [ ] 5.5 Full `pnpm check` green (format, architecture, licenses, lint, typecheck, test, build).
+- [x] 5.1 `github-auth.test.ts`: a declined refresh (200+`error`) emits a `declined` record with the error code and resolves `token-invalid`.
+- [x] 5.2 `github-auth.test.ts`: a network-failing refresh emits `attempt` then `network`, resolves `network`, leaves the stored credential byte-unchanged, and calls `refresh()` EXACTLY ONCE (asserts no adapter-level retry — the transport owns retry).
+- [x] 5.3 `github-auth.test.ts`: a successful refresh emits a `persisted` record whose `tokenKind` is an allowlisted label; and a `tokenKind()` unit test — `ghu_…`/`gho_…` map to their prefix, an unknown value like `customerSecret_body` maps to the fixed `"token"` (never a slice).
+- [x] 5.4 A secret-safety test: across all emitted records for a full refresh, the access/refresh token strings never appear in any record.
+- [x] 5.5 Full `pnpm check` green (format, architecture, licenses, lint, typecheck, test, build).
 
 ## 6. Field proof (lancelot)
 

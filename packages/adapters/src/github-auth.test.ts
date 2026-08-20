@@ -474,8 +474,15 @@ describe("resolveGitHubAuth — refresh log records (RefreshLogRecord)", () => {
     refreshTokenExpiresAt: new Date(NOW + 180 * 24 * 60 * 60 * 1000).toISOString(),
   };
 
-  it("a DECLINED refresh emits a `declined` record carrying the verbatim githubError", async () => {
-    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_dead" });
+  it("a DECLINED refresh records [attempt, declined] with the verbatim githubError, no secret, no write", async () => {
+    // Distinctive sentinels so the secret-freedom assertion is meaningful.
+    const DECLINED_ACCESS = "gho_DECLINED_ACCESS_sentinel_1a2b3c";
+    const DECLINED_REFRESH = "ghr_DECLINED_REFRESH_sentinel_4d5e6f";
+    const store = memoryStore({
+      token: DECLINED_ACCESS,
+      expiresAt: SOON,
+      refreshToken: DECLINED_REFRESH,
+    });
     const records: RefreshLogRecord[] = [];
     const refresh = vi.fn(() => Promise.reject(new GitHubOAuthDeclined("bad_refresh_token")));
     const state = await resolveGitHubAuth({
@@ -488,9 +495,21 @@ describe("resolveGitHubAuth — refresh log records (RefreshLogRecord)", () => {
     expect(state.ok).toBe(false);
     if (state.ok) throw new Error("unreachable");
     expect(state.reason).toBe("token-invalid");
-    const declined = records.find((r) => r.phase === "declined");
-    expect(declined).toBeDefined();
-    expect(declined?.githubError).toBe("bad_refresh_token");
+    // Exact ordered records: an `attempt` precedes the outcome (every exchange
+    // records its attempt first), then the decline names its verbatim cause — no
+    // extra, missing, or reordered records, and no retry phase.
+    expect(records).toEqual([
+      { phase: "attempt" },
+      { phase: "declined", githubError: "bad_refresh_token" },
+    ]);
+    // A decline never overwrites the stored credential.
+    expect(store.writes).toEqual([]);
+    // Secret-free on the declined path too (not only success/network).
+    for (const record of records) {
+      const serialized = JSON.stringify(record);
+      expect(serialized).not.toContain(DECLINED_ACCESS);
+      expect(serialized).not.toContain(DECLINED_REFRESH);
+    }
   });
 
   it("a NETWORK-failing refresh emits exactly [attempt, network], resolves network, leaves the credential untouched, and calls refresh() exactly once", async () => {
