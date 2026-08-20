@@ -6,8 +6,9 @@ import { GitHubIcon } from "./icons";
 
 /** Transient "you're connected" confirmation — the persistent status row/card is the durable truth. */
 function announceConnected(status: GitHubAuthStatus): void {
+  const login = status.state === "connected" ? status.login : null;
   toast.add({
-    title: status.login ? `Connected to GitHub as @${status.login}` : "Connected to GitHub",
+    title: login ? `Connected to GitHub as @${login}` : "Connected to GitHub",
     type: "success",
   });
 }
