@@ -7,7 +7,7 @@ Rennet supports projects on Windows drives and projects stored inside WSL. It
 records where each project's Git and coding-harness commands should run.
 
 Public signed Windows installers and auto-update are tracked in
-[GitHub issue #330](https://github.com/rbutera/Rennet/issues/330).
+[GitHub issue #330](https://github.com/rbutera/rennet/issues/330).
 
 ## Choose where commands run
 

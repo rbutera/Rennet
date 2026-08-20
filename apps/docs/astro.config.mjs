@@ -25,6 +25,7 @@ export default defineConfig({
       editLink: {
         baseUrl: "https://github.com/rbutera/rennet/edit/main/apps/docs/",
       },
+      lastUpdated: true,
       routeMiddleware: "./src/plugins/canonical-route-data.ts",
       // This traced lockup is the product identity, not text in a matching font.
       logo: {

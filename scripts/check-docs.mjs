@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { createProjectGraphAsync } from "@nx/devkit";
 
 const MARKDOWN_EXTENSION = /\.mdx?$/i;
 const CANONICAL_SECTIONS = new Set(["adr", "developing", "using"]);
@@ -367,9 +368,26 @@ export async function validateLinks({ workspaceRoot, docsRoot }) {
 }
 
 export async function validateRenderedSiteLinks({ workspaceRoot, distRoot }) {
-  if (!(await exists(distRoot))) return [];
+  if (!(await exists(distRoot))) {
+    return [
+      issue(
+        "rendered.missing-build",
+        displayPath(workspaceRoot, distRoot),
+        "rendered link validation requires a completed documentation build",
+      ),
+    ];
+  }
   const issues = [];
   const htmlFiles = await walkFiles(distRoot, (filePath) => filePath.endsWith(".html"));
+  if (htmlFiles.length === 0) {
+    return [
+      issue(
+        "rendered.missing-build",
+        displayPath(workspaceRoot, distRoot),
+        "rendered link validation requires at least one built HTML page",
+      ),
+    ];
+  }
   const idCache = new Map();
 
   for (const htmlPath of htmlFiles) {
@@ -594,42 +612,28 @@ async function readJson(filePath) {
   }
 }
 
-export async function discoverWorkspaceProjects({ workspaceRoot }) {
-  const projectFiles = (
-    await Promise.all(
-      ["apps", "packages"].map((directory) =>
-        walkFiles(
-          path.join(workspaceRoot, directory),
-          (filePath) => path.basename(filePath) === "project.json",
-        ),
-      ),
-    )
-  ).flat();
+export async function discoverWorkspaceProjects({ workspaceRoot, projectGraph }) {
+  const graph = projectGraph ?? (await createProjectGraphAsync({ exitOnError: false }));
   const projects = [];
 
-  for (const projectFile of projectFiles) {
-    const config = await readJson(projectFile);
-    if (config.projectType !== "application" && config.projectType !== "library") continue;
-    if (typeof config.name !== "string" || config.name.length === 0) {
-      throw new Error(`${displayPath(workspaceRoot, projectFile)} has no resolved Nx project name`);
-    }
-
-    const configuredRoot =
-      typeof config.root === "string" ? config.root : path.dirname(projectFile);
-    const projectRoot = path.isAbsolute(configuredRoot)
-      ? configuredRoot
-      : typeof config.root === "string"
-        ? path.resolve(workspaceRoot, configuredRoot)
-        : configuredRoot;
+  for (const node of Object.values(graph.nodes)) {
+    const projectType = node.data.projectType;
+    if (projectType !== "application" && projectType !== "library") continue;
+    const projectRoot = path.resolve(workspaceRoot, node.data.root);
+    const relativeRoot = displayPath(workspaceRoot, projectRoot);
+    if (!relativeRoot.startsWith("apps/") && !relativeRoot.startsWith("packages/")) continue;
     const manifestPath = path.join(projectRoot, "package.json");
     const manifest = (await existsAsFile(manifestPath)) ? await readJson(manifestPath) : null;
     projects.push({
-      name: config.name,
+      name: node.name,
       packageName: typeof manifest?.name === "string" ? manifest.name : null,
-      root: displayPath(workspaceRoot, projectRoot),
-      type: config.projectType,
-      config,
-      manifest,
+      root: relativeRoot,
+      type: projectType,
+      dependencies: (graph.dependencies[node.name] ?? [])
+        .map((dependency) => dependency.target)
+        .filter((name) => name !== node.name && name.startsWith("rennet-"))
+        .map((name) => name.slice("rennet-".length))
+        .sort(),
     });
   }
 
@@ -639,36 +643,7 @@ export async function discoverWorkspaceProjects({ workspaceRoot }) {
       throw new Error(`duplicate resolved Nx project name: ${project.name}`);
     names.add(project.name);
   }
-  const projectByPackage = new Map(
-    projects
-      .filter((project) => project.packageName)
-      .map((project) => [project.packageName, project.name]),
-  );
-  return projects
-    .map(({ config, manifest, ...project }) => {
-      const dependencyNames = new Set(
-        Array.isArray(config.implicitDependencies) ? config.implicitDependencies : [],
-      );
-      for (const field of [
-        "dependencies",
-        "devDependencies",
-        "optionalDependencies",
-        "peerDependencies",
-      ]) {
-        for (const packageName of Object.keys(manifest?.[field] ?? {})) {
-          const projectName = projectByPackage.get(packageName);
-          if (projectName) dependencyNames.add(projectName);
-        }
-      }
-      return {
-        ...project,
-        dependencies: [...dependencyNames]
-          .filter((name) => name !== project.name && name.startsWith("rennet-"))
-          .map((name) => name.slice("rennet-".length))
-          .sort(),
-      };
-    })
-    .sort((left, right) => left.root.localeCompare(right.root));
+  return projects.sort((left, right) => left.root.localeCompare(right.root));
 }
 
 function tableCells(line) {
@@ -708,7 +683,7 @@ function parseMonorepoRows(markdown) {
   return foundTable ? rows : null;
 }
 
-export async function validateMonorepoMap({ workspaceRoot, docsRoot }) {
+export async function validateMonorepoMap({ workspaceRoot, docsRoot, projectGraph }) {
   const mapPath = path.join(docsRoot, "developing/reference/monorepo-map.md");
   if (!(await existsAsFile(mapPath))) {
     return [
@@ -732,7 +707,7 @@ export async function validateMonorepoMap({ workspaceRoot, docsRoot }) {
   }
 
   const issues = [];
-  const projects = await discoverWorkspaceProjects({ workspaceRoot });
+  const projects = await discoverWorkspaceProjects({ workspaceRoot, projectGraph });
   const projectByName = new Map(projects.map((project) => [project.name, project]));
   const rowsByName = new Map();
 

@@ -36,6 +36,31 @@ function codes(issues) {
   return issues.map((issue) => issue.code);
 }
 
+function workspaceGraph(projects, dependencies = {}) {
+  return {
+    nodes: Object.fromEntries(
+      projects.map((project) => [
+        project.name,
+        {
+          name: project.name,
+          type: project.type === "application" ? "app" : "lib",
+          data: { root: project.root, projectType: project.type },
+        },
+      ]),
+    ),
+    dependencies: Object.fromEntries(
+      projects.map((project) => [
+        project.name,
+        (dependencies[project.name] ?? []).map((target) => ({
+          source: project.name,
+          target,
+          type: "static",
+        })),
+      ]),
+    ),
+  };
+}
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true })));
 });
@@ -164,6 +189,20 @@ describe("source-relative documentation links", () => {
 });
 
 describe("rendered documentation links", () => {
+  it("requires nonempty built output", async () => {
+    const { workspaceRoot } = await fixture();
+    const distRoot = path.join(workspaceRoot, "apps/docs/dist");
+
+    assert.deepEqual(codes(await validateRenderedSiteLinks({ workspaceRoot, distRoot })), [
+      "rendered.missing-build",
+    ]);
+
+    await mkdir(distRoot, { recursive: true });
+    assert.deepEqual(codes(await validateRenderedSiteLinks({ workspaceRoot, distRoot })), [
+      "rendered.missing-build",
+    ]);
+  });
+
   it("rejects Markdown hrefs and missing same-site routes", async () => {
     const { workspaceRoot } = await fixture();
     const distRoot = path.join(workspaceRoot, "apps/docs/dist");
@@ -310,7 +349,11 @@ describe("monorepo map", () => {
       JSON.stringify({ name: "evidence-spike", projectType: "library" }),
     );
 
-    const projects = await discoverWorkspaceProjects({ workspaceRoot });
+    const projectGraph = workspaceGraph([
+      { name: "rennet-desktop", root: "apps/desktop", type: "application" },
+      { name: "rennet-core", root: "packages/group/core", type: "library" },
+    ]);
+    const projects = await discoverWorkspaceProjects({ workspaceRoot, projectGraph });
 
     assert.deepEqual(projects, [
       {
@@ -374,7 +417,11 @@ describe("monorepo map", () => {
       ].join("\n"),
     );
 
-    assert.deepEqual(await validateMonorepoMap({ workspaceRoot, docsRoot }), []);
+    const projectGraph = workspaceGraph([
+      { name: "rennet-desktop", root: "apps/desktop", type: "application" },
+      { name: "rennet-core", root: "packages/core", type: "library" },
+    ]);
+    assert.deepEqual(await validateMonorepoMap({ workspaceRoot, docsRoot, projectGraph }), []);
   });
 
   it("fails when the monorepo map omits or misidentifies a project", async () => {
@@ -411,7 +458,11 @@ describe("monorepo map", () => {
       ].join("\n"),
     );
 
-    const issues = await validateMonorepoMap({ workspaceRoot, docsRoot });
+    const projectGraph = workspaceGraph([
+      { name: "rennet-desktop", root: "apps/desktop", type: "application" },
+      { name: "rennet-core", root: "packages/core", type: "library" },
+    ]);
+    const issues = await validateMonorepoMap({ workspaceRoot, docsRoot, projectGraph });
 
     assert.deepEqual(codes(issues), ["monorepo.package-mismatch", "monorepo.missing-project"]);
     assert.match(issues[1].message, /rennet-core/);
@@ -459,7 +510,14 @@ describe("monorepo map", () => {
       ].join("\n"),
     );
 
-    const issues = await validateMonorepoMap({ workspaceRoot, docsRoot });
+    const projectGraph = workspaceGraph(
+      [
+        { name: "rennet-docs", root: "apps/docs", type: "application" },
+        { name: "rennet-theme", root: "packages/theme", type: "library" },
+      ],
+      { "rennet-docs": ["rennet-docs-content", "rennet-theme"] },
+    );
+    const issues = await validateMonorepoMap({ workspaceRoot, docsRoot, projectGraph });
 
     assert.deepEqual(codes(issues), ["monorepo.missing-declared-dependency"]);
     assert.match(issues[0].message, /docs-content/);

@@ -116,7 +116,7 @@ The publish flow SHALL preview the collated outbound review, its verdict, and it
 
 ### Requirement: Reviews kick off from the phone
 
-The app SHALL start a team-PR review from a pasted PR link and an own-branch pre-submit review from the daemon's branch list. Kickoff progress SHALL stream live, and the new review SHALL appear in the list. Android SHALL also accept a GitHub PR URL from the operating system share sheet. The iOS share extension remains planned under [issue #383](https://github.com/rbutera/Rennet/issues/383).
+The app SHALL start a team-PR review from a pasted PR link and an own-branch pre-submit review from the daemon's branch list. Kickoff progress SHALL stream live, and the new review SHALL appear in the list. Android SHALL also accept a GitHub PR URL from the operating system share sheet. The iOS share extension remains planned under [issue #383](https://github.com/rbutera/rennet/issues/383).
 
 #### Scenario: share-sheet to running review
 

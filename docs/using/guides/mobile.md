@@ -2,13 +2,13 @@
 title: Rennet on your phone
 description: The planned native client for reading reviews, answering asks, and posting from a paired phone.
 status: planned
-tracking: https://github.com/rbutera/Rennet/issues/383
+tracking: https://github.com/rbutera/rennet/issues/383
 ---
 
 Rennet's native phone client is under development. The source-built app can read
 and act on daemon state, but public distribution and the complete desktop pairing
 path are not finished. Progress is tracked in
-[GitHub issue #383](https://github.com/rbutera/Rennet/issues/383).
+[GitHub issue #383](https://github.com/rbutera/rennet/issues/383).
 
 The phone is a client for a daemon running on a machine that holds the
 repositories. It can aggregate reviews from paired daemons, retain local replicas

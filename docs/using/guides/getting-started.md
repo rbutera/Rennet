@@ -145,7 +145,7 @@ badge. Use **Restart Rennet to update** from either menu to apply it. Rennet doe
 not restart automatically.
 
 Public signed macOS releases and macOS auto-update are tracked in
-[GitHub issue #298](https://github.com/rbutera/Rennet/issues/298).
+[GitHub issue #298](https://github.com/rbutera/rennet/issues/298).
 
 ## Close or quit the desktop app
 

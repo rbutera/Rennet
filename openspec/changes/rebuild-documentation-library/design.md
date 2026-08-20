@@ -1,7 +1,7 @@
 ## Context
 
-Starlight 0.41.7 expects its collection at `<srcDir>/content/docs`. Navigation
-and Markdown processing use that path. Root `docs/` must expose
+Starlight 0.41.7 expects its collection at `<srcDir>/content/docs`. Navigation,
+Markdown processing, and Git dates use that path. Root `docs/` must expose
 the canonical pages directly to GitHub readers, while Nx and the Cloudflare
 workflow must react to changes in either the renderer or the content.
 
@@ -15,7 +15,7 @@ explicitly planned material belongs in the documentation library.
 Goals:
 
 - Keep one committed copy of every reader-facing page.
-- Preserve normal Starlight routing, navigation, Mermaid rendering, and development reloads.
+- Preserve normal Starlight routing, navigation, Mermaid rendering, Git dates, and development reloads.
 - Make omissions and broken links detectable without generating the prose itself.
 - Give every current or planned file a fact audit and a full prose edit.
 - Keep authorities scoped and explicit.
@@ -48,10 +48,9 @@ before Astro sync, build, preview, or development. An Astro integration watches
 root docs through Vite and applies add, change, and unlink events. Each initial
 sync deletes stale projected files before copying the canonical tree.
 
-Route middleware maps projected paths back to `docs/...` for source links. The
-site does not derive page metadata from Git history, so builds remain
-deterministic in shallow and full clones. The projection never appears in links
-and never enters Git.
+Route middleware maps projected paths back to `docs/...` for source links and
+Git-derived update dates. CI checks out full history so those dates match a full
+local clone. The projection never appears in links and never enters Git.
 
 A custom Astro content loader cannot satisfy the Starlight code that reads the
 fixed path outside the loader. A symlink is unreliable across Git checkouts on
@@ -61,8 +60,10 @@ supported Windows setups.
 
 Root docs get a content-only Nx project. `rennet-docs` declares an implicit
 dependency on it, and its production inputs include that project plus
-`rennet-theme`. Build outputs remain under `apps/docs`. Affected calculation and
-cache invalidation then follow the real build inputs.
+`rennet-theme`. Build outputs remain under `apps/docs`. The build is not cached
+because rendered update dates read Git history; affected calculation still
+follows the renderer, content, and theme dependencies. The documentation test is
+also uncached because it inspects the built output and the resolved Nx graph.
 
 The deployment workflow watches `apps/docs/**`, `docs/**`, and `packages/theme/**`, then deploys `apps/docs/dist`.
 

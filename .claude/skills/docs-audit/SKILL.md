@@ -37,8 +37,8 @@ the tracking source before calling the gap planned.
 5. Run a separate readability pass over each file. Check first-use jargon,
    orientation, sentence density, headings, and whether a table or Mermaid
    diagram would make a complex relationship clearer.
-6. Run `node scripts/check-docs.mjs .` for inventory, links, planned metadata,
-   projection parity, and monorepo-map drift.
+6. Run `pnpm nx run rennet-docs:test` for the built site, inventory, source and
+   rendered links, planned metadata, projection parity, and monorepo-map drift.
 7. Collate the reports. Verify conflicting findings directly, remove
    duplicates, and rank the remainder.
 
