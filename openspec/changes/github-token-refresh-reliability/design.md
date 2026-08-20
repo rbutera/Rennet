@@ -8,7 +8,7 @@ The path is correct on paper but **silent**: nothing is logged, so a field failu
 
 **Goals:**
 - Make every refresh attempt observable in `daemon.log`, secret-safe.
-- Survive a transient network blip at refresh time (retry once).
+- Not drop a session over a connect-phase blip (already handled by the transport's replay-safe retry), and observe network failures instead of adding a second retry.
 - Name a genuine decline's GitHub `error` code so the real cause is knowable.
 - Prove a refresh actually succeeds once, live on lancelot.
 
@@ -22,15 +22,15 @@ The path is correct on paper but **silent**: nothing is logged, so a field failu
 
 **1. Inject a logger, don't `console.log` in the adapter.** `resolveGitHubAuth`/`refreshAndPersist` take an optional `log?: (record: RefreshLogRecord) => void`. `create-server` binds one that writes a single-line record to the daemon's existing stdout→`daemon.log` sink. Rationale: `adapters` stays testable and side-effect-free; tests assert on captured records; production formatting lives at the composition boundary. Alternative (a bare `console.error` in the adapter) rejected — it couples the adapter to a sink and makes the secret-safety guarantee untestable.
 
-**2. `RefreshLogRecord` is a typed, secret-free shape.** Fields: `phase` (`attempt` | `persisted` | `declined` | `network`), optional `githubError` (the verbatim `error` code on a decline), optional `httpStatus`, optional `tokenKind` (a prefix like `ghu_`/`gho_`) and `attempt` number. No token/refresh/secret field exists on the type, so a secret cannot be logged by construction. Rationale: make the safety a type-level property, not a review promise.
+**2. `RefreshLogRecord` is a typed, secret-free shape.** Fields: `phase` (`attempt` | `persisted` | `declined` | `network`), optional `githubError` (the verbatim `error` code on a decline), and optional `tokenKind` (an allowlisted prefix like `ghu_`/`gho_`, never a slice of the token). No token/refresh/secret field exists on the type, so a secret cannot be logged by construction. Rationale: make the safety a type-level property, not a review promise.
 
 **3. Retry ownership stays in the shared transport; `refreshAndPersist` only observes.** The GitHub transport (`withConnectResilience`, composed in `create-server`) already retries a CONNECT-PHASE failure exactly once and deliberately never replays a post-send failure — precisely because replaying a sent request could double a rotation. The refresh POST rides that transport, so the boot-storm `UND_ERR_CONNECT_TIMEOUT` case is already covered, replay-safely. `refreshAndPersist` therefore adds NO retry of its own; on a network error it emits a `network` record and propagates, and `resolveGitHubAuth` classifies it `network` with the credential untouched. Rationale (review finding): a retry here would be a redundant second layer (up to four connect attempts) AND less safe than the transport, because `isGitHubNetworkError` also matches post-send errors that may have already rotated the pair. Alternative (retry inside `refreshAndPersist`) rejected for exactly that double-attempt / rotation-burn risk.
 
-**4. Persistence and classification are unchanged.** A success still writes the rotated pair via the atomic store; a decline still returns `token-invalid`; a network failure still leaves the credential untouched and returns `network`. This change only *observes* and *retries* — it does not move the state machine. Rationale: minimal blast radius; the existing tests keep their meaning.
+**4. Persistence and classification are unchanged.** A success still writes the rotated pair via the atomic store; a decline still returns `token-invalid`; a network failure still leaves the credential untouched and returns `network`. This change only *observes* — it does not move the state machine or the retry topology. Rationale: minimal blast radius; the existing tests keep their meaning.
 
 ## Risks / Trade-offs
 
-- **A retry doubles the worst-case latency of a refresh** → bounded to exactly one extra attempt, and only on a transient transport error (not on a decline); each request already carries the 15s egress deadline.
+- **Relying on the transport's retry means the refresh layer cannot itself recover a blip** → acceptable and correct: the transport's retry is connect-phase and replay-safe, which is the only kind of retry that is safe here; an adapter-level retry would be the unsafe kind (it can replay a post-send failure onto a rotated token). The `network` record makes a surviving blip visible in the log.
 - **Logging could leak a secret if a field is added carelessly** → the `RefreshLogRecord` type has no secret-carrying field; a test asserts the credential value never appears in any emitted record.
 - **The lancelot proof consumes (rotates) the live refresh token** → that is the point (rotation is normal); the rotated pair persists, so the session continues. If the stored token is a stale pre-migration `gho_`, the proof will instead capture the *decline code*, which is itself the diagnostic we lack today.
 

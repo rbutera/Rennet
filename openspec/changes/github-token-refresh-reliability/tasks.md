@@ -1,6 +1,6 @@
 ## 1. Log record type and logger seam
 
-- [ ] 1.1 Add a secret-free `RefreshLogRecord` type in `packages/adapters/src/github-auth.ts` (fields: `phase: "attempt" | "persisted" | "declined" | "network"`, optional `githubError`, `httpStatus`, `tokenKind`, `attempt`) — no token/refresh/secret field exists on the type.
+- [ ] 1.1 Add a secret-free `RefreshLogRecord` type in `packages/adapters/src/github-auth.ts` (fields: `phase: "attempt" | "persisted" | "declined" | "network"`, optional `githubError`, optional `tokenKind`) — no token/refresh/secret field exists on the type.
 - [ ] 1.2 Add an optional `log?: (record: RefreshLogRecord) => void` to `ResolveAuthDeps`, defaulting to a no-op.
 - [ ] 1.3 Add a `tokenKind(token)` helper that returns the non-secret prefix (e.g. `ghu_`/`gho_`) for records, never the token body.
 
@@ -23,8 +23,8 @@
 ## 5. Tests
 
 - [ ] 5.1 `github-auth.test.ts`: a declined refresh (200+`error`) emits a `declined` record with the error code and resolves `token-invalid`.
-- [ ] 5.2 `github-auth.test.ts`: first attempt throws `UND_ERR_CONNECT_TIMEOUT`, retry succeeds → `persisted` record, resolves `ok`, credential rotated.
-- [ ] 5.3 `github-auth.test.ts`: both attempts transient-fail → resolves `network`, stored credential byte-unchanged, no `token-invalid`.
+- [ ] 5.2 `github-auth.test.ts`: a network-failing refresh emits `attempt` then `network`, resolves `network`, leaves the stored credential byte-unchanged, and calls `refresh()` EXACTLY ONCE (asserts no adapter-level retry — the transport owns retry).
+- [ ] 5.3 `github-auth.test.ts`: a successful refresh emits a `persisted` record whose `tokenKind` is an allowlisted label; and a `tokenKind()` unit test — `ghu_…`/`gho_…` map to their prefix, an unknown value like `customerSecret_body` maps to the fixed `"token"` (never a slice).
 - [ ] 5.4 A secret-safety test: across all emitted records for a full refresh, the access/refresh token strings never appear in any record.
 - [ ] 5.5 Full `pnpm check` green (format, architecture, licenses, lint, typecheck, test, build).
 
