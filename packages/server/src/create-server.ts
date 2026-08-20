@@ -2227,6 +2227,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const project = projectStore.add(draft);
         return { project, projects: projectStore.list() };
       },
+      remove: (input) => {
+        projectStore.remove(input.projectId);
+        return { projects: projectStore.list() };
+      },
     },
     // The initial context dump (issue #29, wireframe #2): build every included
     // repo's ProjectSnapshot at the CONFIRMED primary branch, streaming the real

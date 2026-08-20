@@ -2654,6 +2654,13 @@ export const commandDefinitions = {
     }),
     output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
   },
+  "projects.remove": {
+    // Forget a project from the front-door list. Does NOT delete the repo on disk —
+    // the working tree is untouched; only Rennet's record of it is dropped, so
+    // re-adding the same path restores it. Returns the surviving list.
+    input: z.object({ commandId: commandIdSchema, projectId: z.string().min(1) }),
+    output: z.object({ projects: z.array(projectSchema) }),
+  },
   "project.process": {
     // The initial context dump: build the ProjectSnapshot / repo-map for every
     // included repo of a freshly-added project. LIVE narration is pushed over the

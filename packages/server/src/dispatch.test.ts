@@ -344,6 +344,7 @@ function harness(
     // handlers directly; the shared harness only needs them to satisfy the shape.
     projects: {
       list: () => [],
+      remove: () => ({ projects: [] }),
       add: (input) => {
         const project = {
           id: "project-1",
@@ -2643,6 +2644,7 @@ function frontDoorHarness(seed: {
     publishConsent: createPublishConsentAuthority(),
     projects: {
       list: () => stored,
+      remove: () => ({ projects: stored }),
       add: (input) => {
         addCalls.push({ ...input, includedRepos: [...input.includedRepos] });
         const project: Project = {
