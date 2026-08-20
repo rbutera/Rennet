@@ -9,6 +9,17 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDaemonConfig, runDaemon } from "./daemon";
 
+// Thread-pool headroom (field bug, lancelot 2026-08-20): the daemon's libuv pool
+// (default 4) is shared by every fs stat the repo-watcher poll makes AND by
+// undici's getaddrinfo for GitHub connects. On a WSL-UNC (9P) repo that fs load
+// could starve DNS resolution, stalling connects into UND_ERR_CONNECT_TIMEOUT
+// while curl on the same box answered in ~90ms. A wider pool keeps resolution
+// responsive under load. Must be set before the pool's first use; an explicit
+// operator value always wins. (Belt to the desktop spawn env in
+// daemon-supervisor.ts; this covers `rennet serve` and any other spawn.)
+export const DAEMON_THREADPOOL_SIZE = 16;
+process.env.UV_THREADPOOL_SIZE ??= String(DAEMON_THREADPOOL_SIZE);
+
 // Dual-stack hardening (field bug, lancelot 2026-08-19): on a machine whose IPv6
 // route is dead while IPv4 works, the daemon's GitHub connects burned the whole
 // undici connect budget on the broken family and surfaced "Connect Timeout Error

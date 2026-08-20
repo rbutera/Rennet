@@ -21,6 +21,11 @@ No implementation detail lives here; decisions go to `docs/` and ADRs.
 - **Not-connected / token-invalid / insufficient-scope** — the three distinct
   renderer-safe failure states of GitHub auth, each with its own copy. Never
   collapsed into one "GitHub unavailable".
+- **GitHub egress** — the daemon's single bounded path for every github.com
+  request (device sign-in, PR reads, release checks). Each request carries one
+  aggregate deadline and absorbs a momentary connect blip; a bounded failure is
+  named a network problem, never a credential one, so a fine token is never
+  blamed for an unreachable host.
 
 ## Reviewing pull requests
 
