@@ -4,6 +4,7 @@ import {
   MAX_HIGHLIGHT_LINE_LENGTH,
   MAX_HIGHLIGHT_LINE_TOKENS,
   type Token,
+  tokenizeDiffLine,
   tokenizeLine,
 } from "./shiki";
 
@@ -48,14 +49,20 @@ describe("detectLanguage — extension → language, fail-closed", () => {
 });
 
 describe("tokenizeLine — the lossless invariant (never drops or duplicates a char)", () => {
+  // A representative line for ALL 9 supported languages + the null (plain) path, so
+  // the reassembly contract is proven per-grammar, not just for the few earlier ones.
   const samples: Array<[string, ReturnType<typeof detectLanguage>]> = [
     ["const value5 = compute(5) + 1;", "typescript"],
     ["+  const b = 3; // added", "typescript"],
     ["-  const legacy = compute(2);", "typescript"],
+    ["function add(a, b) { return a + b; } // sum", "javascript"],
     ['{ "name": "rennet", "count": 42, "ok": true }', "json"],
     [".code-view { color: red; padding: 12px; } /* c */", "css"],
     ["def handle(self, x): return x  # note", "python"],
     ["for f in *.ts; do echo $HOME; done  # loop", "shell"],
+    ["# Heading with **bold** and `code` text", "markdown"],
+    ["key: value  # a yaml comment", "yaml"],
+    ['<div class="a" id="b">hi</div><!-- c -->', "html"],
     ["plain text with unicode ☕ and no language", null],
   ];
   it.each(samples)("reassembles %j exactly", (line, lang) => {
@@ -86,16 +93,15 @@ describe("tokenizeLine — TypeScript", () => {
   });
 
   it("keeps the leading diff marker as a non-semantic token (it inherits the row tint)", () => {
-    // The CodeView tokenizes the whole row text INCLUDING the +/- marker; the marker
-    // must never become a keyword/string/etc — it stays operator/plain so it inherits
-    // the diff-tinted base colour. (tokenizeDiffLine owns the marker split; here the
-    // whole line is tokenized so the first token is the leading whitespace/plain run.)
-    const added = tokenizeLine("+  const b = 3;", "typescript");
-    const first = added[0];
-    expect(first).toBeDefined();
-    expect(first?.type === "operator" || first?.type === "plain").toBe(true);
+    // The production path is tokenizeDiffLine: it splits the one-character +/- marker
+    // OUT of the grammar so the marker never becomes a keyword/string/number and stays
+    // plain, inheriting the diff-tinted base colour. The remaining source still colours.
+    const added = tokenizeDiffLine("+  const b = 3;", "typescript");
+    expect(added[0]).toEqual({ text: "+", type: "plain" });
     expect(hasToken(added, "keyword", "const")).toBe(true);
     expect(hasToken(added, "number", "3")).toBe(true);
+    // Lossless through the marker split.
+    expect(reassemble(added)).toBe("+  const b = 3;");
   });
 });
 
@@ -127,6 +133,44 @@ describe("tokenizeLine — JSON / Python / shell keys and comments", () => {
     const glued = tokenizeLine("echo foo#bar", "shell");
     expect(typesOf(glued).has("comment")).toBe(false);
     expect(reassemble(glued)).toBe("echo foo#bar");
+  });
+});
+
+describe("tokenizeLine — positive classification per language", () => {
+  it("JavaScript: keyword / function / comment", () => {
+    const tokens = tokenizeLine("function add(a, b) { return a + b; } // sum", "javascript");
+    expect(hasToken(tokens, "keyword", "function")).toBe(true);
+    expect(hasToken(tokens, "function", "add")).toBe(true);
+    expect(hasToken(tokens, "comment", "// sum")).toBe(true);
+  });
+
+  it("CSS: a declaration in block context colours its property", () => {
+    // A single line with the full `{ … }` block so shiki has selector→body context.
+    const tokens = tokenizeLine(".x { color: red; padding: 12px; }", "css");
+    expect(hasToken(tokens, "property", "color")).toBe(true);
+    expect(hasToken(tokens, "property", "padding")).toBe(true);
+  });
+
+  it("Markdown: the `#` heading marker and `**` emphasis are structural, not plain", () => {
+    // Under NO grammar this whole line would be one plain token; the markdown grammar
+    // classifies its structure — proof the grammar is actually wired.
+    const tokens = tokenizeLine("# Heading with **bold** text", "markdown");
+    expect(hasToken(tokens, "punctuation", "#")).toBe(true);
+    expect(hasToken(tokens, "punctuation", "**")).toBe(true);
+  });
+
+  it("YAML: a mapping key, its string value, and a comment", () => {
+    const tokens = tokenizeLine("key: value  # note", "yaml");
+    expect(hasToken(tokens, "type", "key")).toBe(true);
+    expect(hasToken(tokens, "string", "value")).toBe(true);
+    expect(hasToken(tokens, "comment", "# note")).toBe(true);
+  });
+
+  it("HTML: the tag name, an attribute name, and the quoted attribute value", () => {
+    const tokens = tokenizeLine('<div class="a">hi</div>', "html");
+    expect(hasToken(tokens, "type", "div")).toBe(true);
+    expect(hasToken(tokens, "property", "class")).toBe(true);
+    expect(hasToken(tokens, "string", '"a"')).toBe(true);
   });
 });
 
