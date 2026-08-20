@@ -321,6 +321,82 @@ describe("ProjectDetail — the unified smart list", () => {
     );
   });
 
+  it("re-associates the Sort label with its Select — a label click opens the listbox", async () => {
+    const { bridge } = fakeBridge(detail());
+    const { container, user } = mount(
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(container.querySelector(".smart-sort-select")).not.toBeNull());
+    // Nothing open yet.
+    expect(document.querySelector('[role="option"]')).toBeNull();
+    // Click the visible "Sort" text label (not the trigger) — the htmlFor→id wiring
+    // must forward the activation to the Select, the behaviour the inert <span> lost.
+    await user.click(container.querySelector(".smart-sort-label") as HTMLElement);
+    await waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull());
+  });
+
+  it("PR-scope select refetches the substrate for the chosen state (callback fires)", async () => {
+    const { bridge, calls } = fakeBridge(detail());
+    const { container, findByRole, user } = mount(
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(container.querySelector(".smart-pr-scope-select")).not.toBeNull());
+    // Open the PR-scope select and choose "Merged".
+    await user.click(container.querySelector(".smart-pr-scope-select") as HTMLElement);
+    await user.click(await findByRole("option", { name: "Merged" }));
+    // The change flows to prScope → the effect refetches project.detail with the
+    // merged state filter (history is paged on demand, never synced locally).
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.name === "project.detail" &&
+            Array.isArray((call.input as { prStates?: unknown }).prStates) &&
+            (call.input as { prStates: string[] }).prStates.includes("merged"),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("Sort select reorders the list via the callback (keyboard selection)", async () => {
+    const { bridge } = fakeBridge(detail());
+    const { container, findByRole, user } = mount(
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(container.querySelector(".smart-row-title")).not.toBeNull());
+    // HOT default floats the needs-you PR to the top.
+    expect(container.querySelector(".smart-row-title")?.textContent).toBe(
+      "Span disposition re-anchor",
+    );
+    // Open with the keyboard (focus the trigger, press Enter) and pick "Recent" — the
+    // most recently active row then leads, proving the onSort callback reordered.
+    const trigger = container.querySelector<HTMLElement>(".smart-sort-select");
+    trigger?.focus();
+    await user.keyboard("{Enter}");
+    await user.click(await findByRole("option", { name: "Recent" }));
+    await waitFor(() =>
+      expect(container.querySelector(".smart-row-title")?.textContent).toBe("The front-door shell"),
+    );
+  });
+
   it("opens a row into review via onOpenRow", async () => {
     const onOpenRow = vi.fn();
     const { bridge } = fakeBridge(detail());
