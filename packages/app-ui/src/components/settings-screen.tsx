@@ -9,6 +9,7 @@ import type {
   SettingsRepoValueKey,
   SettingsView,
 } from "@rennet/protocol";
+import { Button, Input } from "@rennet/ui";
 import { useEffect, useState } from "react";
 import {
   COMMAND_CATALOGUE,
@@ -26,11 +27,10 @@ import { GitHubAccountRows } from "./github-connect";
 import { ArrowLeftIcon, SlidersIcon } from "./icons";
 
 // Shared Tailwind recipes for this Operate surface: sans throughout (the screen
-// title is the one display voice). Every control is a real bordered button; the
-// selected state rides the kept `.on` token via the [&.on] variant, so the
-// existing `${on ? " on" : ""}` conditionals keep working unchanged.
-const SEG_BTN =
-  "inline-flex h-8 items-center justify-center rounded-control border border-line bg-surface px-3 text-sm text-ink-soft cursor-pointer [&:not(.on):hover]:bg-raised [&:not(.on):hover]:text-ink [&.on]:border-accent-line [&.on]:bg-accent-fill [&.on]:text-accent-ink disabled:cursor-default disabled:opacity-55";
+// title is the one display voice). The segmented controls now ride kit `<Button>`:
+// the selected segment is `variant="default"` (the gold fill = accent-fill/accent-ink),
+// an inactive/plain segment is `variant="outline"`. The kept `.on` marker still
+// tracks the active segment for the test hooks and the `${on ? " on" : ""}` conditionals.
 const ROW = "flex flex-wrap items-center gap-4 border-b border-line py-3 [&:last-of-type]:border-0";
 const ROW_LABEL = "flex flex-col gap-1";
 const ROW_VALUE = "ml-auto flex flex-wrap items-center gap-2";
@@ -138,27 +138,27 @@ function ResetPin({
   disabled: boolean;
 }) {
   return layer === "repo" ? (
-    <button
-      type="button"
-      className={`settings-reset settings-seg-btn ${SEG_BTN}`}
+    <Button
+      variant="outline"
+      className="settings-reset settings-seg-btn"
       aria-label={resetLabel}
       title="Clear the repo-layer value and inherit down the ladder"
       onClick={onReset}
       disabled={disabled}
     >
       {resetLabel}
-    </button>
+    </Button>
   ) : (
-    <button
-      type="button"
-      className={`settings-pin settings-seg-btn ${SEG_BTN}`}
+    <Button
+      variant="outline"
+      className="settings-pin settings-seg-btn"
       aria-label={pinTitle}
       title={pinTitle}
       onClick={onPin}
       disabled={disabled}
     >
       Pin here
-    </button>
+    </Button>
   );
 }
 
@@ -226,14 +226,10 @@ export function SettingsScreen({
       data-scheme={scheme ?? "dark"}
     >
       <header className="settings-bar flex h-[68px] w-full max-w-[760px] items-center gap-3">
-        <button
-          type="button"
-          className="settings-back inline-flex h-8 items-center gap-1.5 rounded-control border border-line bg-surface px-3 text-sm text-ink-soft hover:bg-raised hover:text-ink"
-          onClick={onBack}
-        >
+        <Button variant="outline" className="settings-back" onClick={onBack}>
           <ArrowLeftIcon size={13} />
           Back
-        </button>
+        </Button>
         <span
           className="settings-mark grid h-8 w-8 flex-none place-items-center rounded-control border border-accent-line bg-accent-soft text-accent"
           aria-hidden="true"
@@ -250,42 +246,42 @@ export function SettingsScreen({
 
       <div className="settings-body flex w-full max-w-[760px] flex-col">
         <div className="settings-tabs mb-4 flex gap-2" role="tablist">
-          <button
-            type="button"
+          <Button
+            variant={tab === "global" ? "default" : "outline"}
             role="tab"
             aria-selected={tab === "global"}
-            className={`settings-tab ${SEG_BTN}${tab === "global" ? " on" : ""}`}
+            className={`settings-tab${tab === "global" ? " on" : ""}`}
             onClick={() => setTab("global")}
           >
             Global
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={tab === "repo" ? "default" : "outline"}
             role="tab"
             aria-selected={tab === "repo"}
-            className={`settings-tab ${SEG_BTN}${tab === "repo" ? " on" : ""}`}
+            className={`settings-tab${tab === "repo" ? " on" : ""}`}
             onClick={() => setTab("repo")}
           >
             Repo
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={tab === "keyboard" ? "default" : "outline"}
             role="tab"
             aria-selected={tab === "keyboard"}
-            className={`settings-tab ${SEG_BTN}${tab === "keyboard" ? " on" : ""}`}
+            className={`settings-tab${tab === "keyboard" ? " on" : ""}`}
             onClick={() => setTab("keyboard")}
           >
             Keyboard
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={tab === "pairing" ? "default" : "outline"}
             role="tab"
             aria-selected={tab === "pairing"}
-            className={`settings-tab ${SEG_BTN}${tab === "pairing" ? " on" : ""}`}
+            className={`settings-tab${tab === "pairing" ? " on" : ""}`}
             onClick={() => setTab("pairing")}
           >
             Pairing
-          </button>
+          </Button>
         </div>
 
         {view === null && !error ? (
@@ -305,31 +301,31 @@ export function SettingsScreen({
                   aria-label="Appearance scheme"
                 >
                   {SCHEMES.map((option) => (
-                    <button
+                    <Button
                       key={option.id}
-                      type="button"
+                      variant={view.scheme === option.id ? "default" : "outline"}
                       title={option.hint}
                       aria-pressed={view.scheme === option.id}
-                      className={`settings-seg-btn ${SEG_BTN}${view.scheme === option.id ? " on" : ""}`}
+                      className={`settings-seg-btn${view.scheme === option.id ? " on" : ""}`}
                       onClick={() => void chooseScheme(option.id)}
                       disabled={busy || view.appearanceMalformed}
                     >
                       {option.label}
-                    </button>
+                    </Button>
                   ))}
                 </fieldset>
                 <Provenance provenance={view.schemeProvenance} />
                 {view.schemeProvenance.layer === "global" ? (
-                  <button
-                    type="button"
-                    className={`settings-reset settings-seg-btn ${SEG_BTN}`}
+                  <Button
+                    variant="outline"
+                    className="settings-reset settings-seg-btn"
                     aria-label="Reset appearance to the system default"
                     title="Clear the stored appearance and follow the OS again"
                     onClick={() => void chooseScheme(null)}
                     disabled={busy || view.appearanceMalformed}
                   >
                     Reset to default
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -487,14 +483,14 @@ function PairingPanel({ bridge }: { bridge: RennetBridge }) {
           </span>
         </div>
         <div className={`settings-row-value ${ROW_VALUE}`}>
-          <button
-            type="button"
-            className={`settings-seg-btn ${SEG_BTN}`}
+          <Button
+            variant="outline"
+            className="settings-seg-btn"
             onClick={() => void mint()}
             disabled={busy}
           >
             Create pairing code
-          </button>
+          </Button>
           {code ? (
             <div className="settings-pair-code mt-2 flex flex-col gap-1" aria-live="polite">
               <code className="settings-pair-code-value self-start rounded-chip border border-line bg-code px-3 py-1.5 font-mono text-lg tracking-[0.15em]">
@@ -523,15 +519,15 @@ function PairingPanel({ bridge }: { bridge: RennetBridge }) {
                 <li key={device.deviceId} className="settings-pair-item flex items-center gap-3">
                   <span className={`settings-k ${KEY}`}>{device.name}</span>
                   <span className={`settings-d ${DESC}`}>last seen {device.lastSeenAt}</span>
-                  <button
-                    type="button"
-                    className={`settings-seg-btn ${SEG_BTN}`}
+                  <Button
+                    variant="outline"
+                    className="settings-seg-btn"
                     aria-label={`Revoke ${device.name}`}
                     onClick={() => void revoke(device.deviceId)}
                     disabled={busy}
                   >
                     Revoke
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -670,12 +666,12 @@ function KeyboardPanel({
               </div>
               <div className="settings-row-value settings-key-value flex flex-wrap items-center justify-end gap-2">
                 {recording === def.id ? (
-                  <input
+                  <Input
                     type="text"
                     readOnly
                     // Focus on mount so the very next keystroke is captured as the chord.
                     ref={(node) => node?.focus()}
-                    className="settings-key-recorder h-8 w-32 rounded-control border border-accent-line bg-surface px-2 text-sm text-ink"
+                    className="settings-key-recorder w-32 border-accent-line"
                     aria-label={`Press the new chord for ${catalogueLabel(def)}`}
                     placeholder="Press a chord…"
                     onKeyDown={(event) => onRecordKey(def.id, event)}
@@ -722,9 +718,9 @@ function KeyboardPanel({
                   </span>
                 ) : null}
                 <span className="settings-key-controls inline-flex gap-1">
-                  <button
-                    type="button"
-                    className={`settings-seg-btn ${SEG_BTN}`}
+                  <Button
+                    variant="outline"
+                    className="settings-seg-btn"
                     onClick={() => {
                       setRecordingNote(undefined);
                       setRecording(def.id);
@@ -732,24 +728,24 @@ function KeyboardPanel({
                     disabled={busy || malformed}
                   >
                     Set
-                  </button>
-                  <button
-                    type="button"
-                    className={`settings-seg-btn ${SEG_BTN}`}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="settings-seg-btn"
                     onClick={() => void write(def.id, null)}
                     disabled={busy || malformed}
                   >
                     Unbind
-                  </button>
+                  </Button>
                   {overridden ? (
-                    <button
-                      type="button"
-                      className={`settings-seg-btn ${SEG_BTN}`}
+                    <Button
+                      variant="outline"
+                      className="settings-seg-btn"
                       onClick={() => void write(def.id, undefined)}
                       disabled={busy || malformed}
                     >
                       Reset
-                    </button>
+                    </Button>
                   ) : null}
                 </span>
               </div>
@@ -770,14 +766,14 @@ function KeyboardPanel({
                 {raw === null ? "unbound" : raw}
               </code>
               <span className="settings-key-controls inline-flex gap-1">
-                <button
-                  type="button"
-                  className={`settings-seg-btn ${SEG_BTN}`}
+                <Button
+                  variant="outline"
+                  className="settings-seg-btn"
                   onClick={() => void write(id, undefined)}
                   disabled={busy || malformed}
                 >
                   Reset
-                </button>
+                </Button>
               </span>
             </div>
           </li>
@@ -936,16 +932,16 @@ function RepoPanel({
         aria-label="Repository"
       >
         {projects.map((project) => (
-          <button
+          <Button
             key={project.repoPath}
-            type="button"
+            variant={project.repoPath === selectedRepoPath ? "default" : "outline"}
             role="tab"
             aria-selected={project.repoPath === selectedRepoPath}
-            className={`settings-pick ${SEG_BTN}${project.repoPath === selectedRepoPath ? " on" : ""}`}
+            className={`settings-pick${project.repoPath === selectedRepoPath ? " on" : ""}`}
             onClick={() => onSelect(project.repoPath)}
           >
             {project.name}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -964,17 +960,17 @@ function RepoPanel({
                 aria-label="Map visibility"
               >
                 {VISIBILITIES.map((option) => (
-                  <button
+                  <Button
                     key={option.id}
-                    type="button"
+                    variant={selected.visibility === option.id ? "default" : "outline"}
                     title={option.hint}
                     aria-pressed={selected.visibility === option.id}
-                    className={`settings-seg-btn ${SEG_BTN}${selected.visibility === option.id ? " on" : ""}`}
+                    className={`settings-seg-btn${selected.visibility === option.id ? " on" : ""}`}
                     onClick={() => void chooseVisibility(option.id)}
                     disabled={busy || selected.configMalformed}
                   >
                     {option.label}
-                  </button>
+                  </Button>
                 ))}
               </fieldset>
               <Provenance provenance={selected.visibilityProvenance} />
@@ -1018,16 +1014,16 @@ function RepoPanel({
                 className="settings-seg m-0 inline-flex min-w-0 items-center gap-1 p-0"
                 aria-label="Execution locus"
               >
-                <button
-                  type="button"
+                <Button
+                  variant={selected.locus.kind === "host" ? "default" : "outline"}
                   title="Run git and the harness on the host OS"
                   aria-pressed={selected.locus.kind === "host"}
-                  className={`settings-seg-btn ${SEG_BTN}${selected.locus.kind === "host" ? " on" : ""}`}
+                  className={`settings-seg-btn${selected.locus.kind === "host" ? " on" : ""}`}
                   onClick={() => void chooseLocus({ kind: "host" })}
                   disabled={busy || selected.configMalformed}
                 >
                   Host
-                </button>
+                </Button>
               </fieldset>
               <Provenance provenance={selected.locusProvenance} />
               <ResetPin
@@ -1039,23 +1035,23 @@ function RepoPanel({
                 disabled={busy || selected.configMalformed}
               />
               <div className="settings-locus-distro flex items-center gap-2">
-                <input
+                <Input
                   type="text"
                   aria-label="WSL distro name"
                   placeholder="WSL distro (e.g. Ubuntu)"
                   value={distroInput}
                   onChange={(event) => setDistroInput(event.target.value)}
                   disabled={busy || selected.configMalformed}
-                  className="h-8 rounded-control border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink-faint disabled:opacity-55"
+                  className="w-auto"
                 />
-                <button
-                  type="button"
-                  className={`settings-seg-btn ${SEG_BTN}`}
+                <Button
+                  variant="outline"
+                  className="settings-seg-btn"
                   onClick={() => void chooseLocus({ kind: "wsl", distro: distroInput.trim() })}
                   disabled={busy || selected.configMalformed || distroInput.trim().length === 0}
                 >
                   Use WSL distro
-                </button>
+                </Button>
               </div>
             </div>
           </div>

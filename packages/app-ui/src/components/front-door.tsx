@@ -6,6 +6,7 @@ import type {
   ProjectKind,
   RennetBridge,
 } from "@rennet/protocol";
+import { Button, Input } from "@rennet/ui";
 import { type ReactNode, useEffect, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import { GitHubConnectCard } from "./github-connect";
@@ -106,15 +107,16 @@ export function FrontDoor({
           <span className="front-door-step ml-auto text-sm text-ink-faint">processing</span>
         ) : null}
         {onOpenSettings && !flow ? (
-          <button
-            type="button"
-            className="front-door-settings ml-auto flex-none w-8 h-8 grid place-items-center rounded-control border border-line text-ink-soft hover:bg-raised hover:text-ink"
+          <Button
+            variant="outline"
+            size="icon"
+            className="front-door-settings ml-auto text-ink-soft"
             onClick={onOpenSettings}
             title="Settings"
             aria-label="Settings"
           >
             <SlidersIcon size={16} />
-          </button>
+          </Button>
         ) : null}
       </header>
 
@@ -397,13 +399,14 @@ function TypeAndPath({
           <FolderIcon size={14} />
           {flow.path ?? "Choose a folder…"}
         </span>
-        <button
-          type="button"
-          className="path-browse flex-none px-4 rounded-control border border-line-strong bg-raised text-ink font-semibold hover:border-accent-line"
+        <Button
+          variant="outline"
+          size="lg"
+          className="path-browse flex-none"
           onClick={() => void browse()}
         >
           Browse
-        </button>
+        </Button>
       </div>
 
       {projects.length > 0 ? (
@@ -435,23 +438,24 @@ function TypeAndPath({
       ) : null}
 
       <div className="add-flow-actions flex items-center gap-3 mt-6">
-        <button
-          type="button"
-          className="ghost px-4 py-2.5 rounded-control border border-line text-ink-soft font-semibold hover:bg-raised hover:text-ink"
+        <Button
+          variant="outline"
+          size="lg"
+          className="ghost text-ink-soft"
           onClick={() => onFlow(null)}
           disabled={flow.busy}
         >
           Cancel
-        </button>
-        <button
-          type="button"
-          className="primary ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed"
+        </Button>
+        <Button
+          size="lg"
+          className="primary ml-auto"
           onClick={() => void proceed()}
           disabled={!flow.path || flow.busy}
         >
           {flow.busy ? "Reading…" : "Continue"}
           <ArrowRightIcon size={13} />
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -580,14 +584,13 @@ function WorktreeConfig({
           <div className="primary-branch flex items-center gap-2.5 px-4 py-3 rounded-surface border border-line bg-surface">
             <span className="primary-branch-label text-ink-soft text-base">Primary branch</span>
             {flow.editingBranch ? (
-              <input
+              <Input
                 type="text"
-                className="primary-branch-input px-2.5 py-1.5 rounded-chip border border-accent bg-raised text-ink text-base"
+                className="primary-branch-input w-auto"
                 value={flow.primaryBranch}
                 spellCheck={false}
                 autoCapitalize="off"
                 autoCorrect="off"
-                // biome-ignore lint/a11y/noAutofocus: focus the field the user just revealed.
                 autoFocus
                 onChange={(event) => onFlow({ ...flow, primaryBranch: event.target.value })}
                 onBlur={() => onFlow({ ...flow, editingBranch: false })}
@@ -598,13 +601,14 @@ function WorktreeConfig({
                 {flow.primaryBranch}
               </span>
             )}
-            <button
-              type="button"
-              className="primary-branch-edit ml-auto text-accent text-base hover:underline"
+            <Button
+              variant="link"
+              size="sm"
+              className="primary-branch-edit ml-auto"
               onClick={() => onFlow({ ...flow, editingBranch: !flow.editingBranch })}
             >
               {flow.editingBranch ? "done" : "edit"}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -620,27 +624,28 @@ function WorktreeConfig({
       ) : null}
 
       <div className="add-flow-actions flex items-center gap-3 mt-6">
-        <button
-          type="button"
-          className="ghost px-4 py-2.5 rounded-control border border-line text-ink-soft font-semibold hover:bg-raised hover:text-ink"
+        <Button
+          variant="outline"
+          size="lg"
+          className="ghost text-ink-soft"
           onClick={() =>
             onFlow({ step: "type-path", kind: flow.kind, path: flow.path, busy: false })
           }
           disabled={flow.busy}
         >
           Back
-        </button>
+        </Button>
         <span className="included-count ml-auto text-ink-faint text-base">
           {includedSet.size} of {discovery.repos.length} included
         </span>
-        <button
-          type="button"
-          className="primary inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed"
+        <Button
+          size="lg"
+          className="primary"
           onClick={() => void confirm()}
           disabled={flow.busy || includedSet.size === 0}
         >
           {flow.busy ? "Adding…" : "Confirm"}
-        </button>
+        </Button>
       </div>
     </div>
   );

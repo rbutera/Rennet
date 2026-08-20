@@ -1,5 +1,5 @@
 import type { GitHubAuthStatus, RennetBridge } from "@rennet/protocol";
-import { toast } from "@rennet/ui";
+import { Button, Input, toast } from "@rennet/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import { GitHubIcon } from "./icons";
@@ -162,13 +162,9 @@ export function DeviceFlowPrompt({ flow, onCancel }: { flow: DeviceFlow; onCance
         </a>
         {" · waiting for GitHub…"}
       </span>
-      <button
-        type="button"
-        className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
-        onClick={onCancel}
-      >
+      <Button variant="outline" className="github-btn" onClick={onCancel}>
         Cancel
-      </button>
+      </Button>
     </div>
   );
 }
@@ -208,23 +204,19 @@ export function GitHubConnectCard({ bridge }: { bridge: RennetBridge }) {
               One-time device sign-in. Only needed when a review touches GitHub.
             </span>
           </span>
-          <button
-            type="button"
-            className="github-skip ml-auto px-1.5 py-1 text-sm text-ink-faint hover:text-ink"
+          <Button
+            variant="ghost"
+            className="github-skip ml-auto text-ink-faint"
             onClick={() => {
               writeDismissed();
               setDismissed(true);
             }}
           >
             Skip for now
-          </button>
-          <button
-            type="button"
-            className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
-            onClick={() => void account.connect()}
-          >
+          </Button>
+          <Button variant="outline" className="github-btn" onClick={() => void account.connect()}>
             Connect
-          </button>
+          </Button>
         </>
       )}
       {account.error ? (
@@ -267,13 +259,13 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
                 <GitHubIcon size={14} />
                 connected{status.login ? ` · @${status.login}` : ""}
               </span>
-              <button
-                type="button"
-                className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
+              <Button
+                variant="outline"
+                className="github-btn"
                 onClick={() => void account.disconnect()}
               >
                 Disconnect
-              </button>
+              </Button>
             </>
           ) : (
             <>
@@ -284,13 +276,13 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
                   not connected
                 </span>
               )}
-              <button
-                type="button"
-                className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
+              <Button
+                variant="outline"
+                className="github-btn"
                 onClick={() => void account.connect()}
               >
                 Connect
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -303,8 +295,8 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
           </span>
         </div>
         <div className="settings-row-value github-row-value ml-auto flex items-center gap-2.5">
-          <input
-            className="github-token-input w-[220px] px-2.5 py-1.5 rounded-control border border-line-strong bg-raised text-ink font-mono text-sm placeholder:text-ink-faint"
+          <Input
+            className="github-token-input w-[220px] font-mono"
             type="password"
             placeholder="Paste token…"
             value={token}
@@ -314,14 +306,14 @@ export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
               if (event.key === "Enter") void paste();
             }}
           />
-          <button
-            type="button"
-            className="github-btn px-3 py-1.5 rounded-control border border-line text-ink text-sm font-semibold hover:border-line-strong disabled:opacity-50 disabled:cursor-default"
+          <Button
+            variant="outline"
+            className="github-btn"
             disabled={token.trim().length === 0 || saving}
             onClick={() => void paste()}
           >
             Save
-          </button>
+          </Button>
         </div>
       </div>
       {account.error ? <p className="github-error text-sm text-ink mt-2">{account.error}</p> : null}
