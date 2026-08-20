@@ -22,6 +22,22 @@ No implementation detail lives here; decisions go to `docs/` and ADRs.
   renderer-safe failure states of GitHub auth, each with its own copy. Never
   collapsed into one "GitHub unavailable".
 
+## Reviewing pull requests
+
+- **Retrospective review** — a read-only review of an already-merged (or any)
+  pull request: same engine, same frozen diff, but nothing can ever be posted
+  back. The mode for reading history rather than reviewing live work.
+- **Managed clone** — a repository clone Rennet made for itself (blobless, full
+  history) because no matching local clone was known when a PR was opened.
+  Lives in Rennet's own data directory; the user's own clone always wins when
+  one matches.
+- **PR worktree** — the detached checkout at the exact reviewed commit that
+  every PR review opened from a clone gets: an executable copy of the change,
+  retrospective included. Replaced when the PR's head moves.
+- **Setup file** — `.rennet/setup`: one shell command per line, run
+  automatically in a fresh PR worktree to make it runnable (install deps,
+  bootstrap). Failure is honest status on the review, never a block.
+
 ## Desktop presence
 
 - **Owned daemon** — the local review daemon this app is responsible for: the

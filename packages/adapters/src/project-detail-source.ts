@@ -1,4 +1,10 @@
-import type { LocalWork, Project, ProjectDetail, PullRequest } from "@rennet/protocol";
+import type {
+  LocalWork,
+  Project,
+  ProjectDetail,
+  PullRequest,
+  PullRequestState,
+} from "@rennet/protocol";
 import type { GitExec } from "./git-range-diff";
 import { isGitHubNetworkError } from "./github-fetch";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
@@ -312,6 +318,7 @@ async function mapLimit<T, R>(
 export async function loadProjectDetail(
   deps: ProjectDetailSourceDeps,
   project: Project,
+  prStates?: readonly PullRequestState[],
 ): Promise<ProjectDetail> {
   const roots = await deps.resolveRepoRoots(project);
   const gitViewer = await resolveViewerLogin(deps.git, roots);
@@ -337,7 +344,7 @@ export async function loadProjectDetail(
       // unbounded Promise.all over a many-repo workspace would stack one worst
       // case per repo. Four in flight keeps the worst case near one deadline.
       const results = await mapLimit(forgeRepos, MAX_CONCURRENT_PR_FETCHES, (identity) =>
-        prSource.listOpenPullRequests(identity),
+        prSource.listPullRequests(identity, prStates),
       );
       prs = results.flatMap((result) => result.prs);
       truncated = results.some((result) => result.truncated);

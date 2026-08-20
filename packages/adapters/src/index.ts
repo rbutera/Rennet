@@ -311,6 +311,7 @@ export {
   resolveContextFor,
   resolveNoveltyFor,
 } from "./live-review-backend";
+export { ensureManagedClone, managedCloneRoot } from "./managed-clone";
 export {
   committedMapDir,
   type DiscoverResult,
@@ -388,6 +389,14 @@ export {
   runOmpOrchestratorTurn,
   runOrchestratorTurn,
 } from "./orchestrator-turn";
+export {
+  ensurePrWorktree,
+  prWorktreePath,
+  readSetupLogTail,
+  readSetupStatus,
+  runPrWorktreeSetup,
+  type SetupStatus,
+} from "./pr-worktree";
 export {
   type ProjectContextBackendPart,
   projectContextBackend,

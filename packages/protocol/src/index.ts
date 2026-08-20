@@ -910,6 +910,22 @@ export const localWorkSchema = z.object({
 });
 export type LocalWork = z.infer<typeof localWorkSchema>;
 
+/** A PR's lifecycle state — also the `project.detail` history filter vocabulary. */
+export const pullRequestStateSchema = z.enum(["open", "merged", "closed"]);
+export type PullRequestState = z.infer<typeof pullRequestStateSchema>;
+
+/**
+ * How the reviewed PR worktree's `.rennet/setup` run went. `none` = no setup file;
+ * `failed` names the command and exit code (setup never blocks the review).
+ */
+export const prWorktreeSetupSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("none") }),
+  z.object({ status: z.literal("running") }),
+  z.object({ status: z.literal("ok") }),
+  z.object({ status: z.literal("failed"), command: z.string().min(1), exitCode: z.number().int() }),
+]);
+export type PrWorktreeSetup = z.infer<typeof prWorktreeSetupSchema>;
+
 /** A pull request on the project — public/what-exists-in-the-world (ink). */
 export const pullRequestSchema = z.object({
   id: z.string().min(1),
@@ -924,7 +940,7 @@ export const pullRequestSchema = z.object({
   /** The PR's head branch (half of the composite dedupe key against a local worktree). */
   branch: z.string().min(1),
   author: z.string().min(1),
-  state: z.enum(["open", "merged", "closed"]),
+  state: pullRequestStateSchema,
   /** The viewer has been asked to review this PR — the relevance boost's core signal. */
   reviewRequestedFromViewer: z.boolean(),
   ci: smartListCiSchema,
@@ -1983,8 +1999,14 @@ export const commandDefinitions = {
       commandId: commandIdSchema,
       /** The PR reference: `owner/repo#123` or a `https://github.com/.../pull/N` URL. */
       ref: z.string().min(1),
-      /** The local clone of the PR's repository (picked via the directory dialog). */
-      repoPath: z.string().min(1),
+      /**
+       * The local clone of the PR's repository. OPTIONAL since clone-on-demand
+       * (#225): omitted — or pointing at a directory that is not a clone of the
+       * PR's repo — MAIN resolves a managed blobless clone under its own data dir,
+       * creating it on first use. Supplying a matching clone still wins (the
+       * project row's own path, or an explicit directory pick).
+       */
+      repoPath: z.string().min(1).optional(),
       /**
        * Open the PR RETROSPECTIVELY (read-only): the review is for READING an
        * already-merged (or any) PR, never for posting back. When true, the created
@@ -2012,6 +2034,26 @@ export const commandDefinitions = {
       reviewId: z.string().min(1),
     }),
     output: z.object({ review: reviewSchema, repositoryPresent: z.boolean() }),
+  },
+  // ── The reviewed PR's worktree (historical-PR review) ──────────────────────
+  // Every PR review opened from a clone gets a detached worktree at the reviewed
+  // head OID (retrospective included — an executable past), with the repo's
+  // `.rennet/setup` commands run automatically after checkout. This read returns
+  // where it is and how setup went; `null` for a review with no worktree (a
+  // working-tree capture, or the checkout failed). Read-only, no gate; lifecycle
+  // management beyond successor replacement is #423.
+  "review.prWorktree": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({
+      worktree: z
+        .object({
+          path: z.string().min(1),
+          setup: prWorktreeSetupSchema,
+          /** The tail of `.rennet/setup.log` — honest visibility into what setup did. */
+          logTail: z.string(),
+        })
+        .nullable(),
+    }),
   },
   "review.setDisposition": {
     input: z.object({
@@ -2434,7 +2476,17 @@ export const commandDefinitions = {
   // viewer, which the renderer folds into one deduped, sorted, filterable list.
   // Read-only; a fixture stands behind it until the live git/GitHub loop lands.
   "project.detail": {
-    input: z.object({ projectId: z.string().min(1) }),
+    input: z.object({
+      projectId: z.string().min(1),
+      /**
+       * Which PR states to fetch (historical-PR review). Omitted ⇒ `["open"]`, the
+       * original live surface. `["merged"]` / `["closed"]` page recent-first through
+       * history under the same bounded-pages ceiling — `truncated` stays honest, so
+       * a deep history renders as an explicit partial list, never a complete-looking
+       * one. Local work is unaffected by this filter.
+       */
+      prStates: z.array(pullRequestStateSchema).nonempty().optional(),
+    }),
     output: projectDetailSchema,
   },
   // Merged PR → auto read-only, with a "clean up" that deletes the local worktree

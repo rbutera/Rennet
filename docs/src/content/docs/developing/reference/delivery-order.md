@@ -249,8 +249,23 @@ updated in the same change, issues closed in the same motion.
 signing, GitHub release publishing, and updates. It is blocked on Rai's
 human-only checklist (Apple enrolment, certificates, repository visibility,
 CI secrets), not on another in-product ceremony. It unblocks the moment the
-checklist comment lands, independent of every wave above. [#225](https://github.com/rbutera/rennet/issues/225)
-stays parked behind remote-PR sourcing.
+checklist comment lands, independent of every wave above.
+
+### Historical-PR review — **delivered**
+
+~~[#225](https://github.com/rbutera/rennet/issues/225) remote-PR sourcing~~ —
+**delivered** as part of the historical-PR review change: the project list's PR
+scope control pages merged/closed history on demand (open by default); a merged
+or closed row auto-opens retrospectively; `review.openPr` no longer requires a
+local clone (a managed blobless clone is created on demand under the app data
+dir, the user's matching clone winning when known); and every PR review opened
+from a clone gets a detached worktree at the reviewed head with the repo's
+`.rennet/setup` commands run automatically — an executable past, retrospective
+included. The snapshot base+overlay machinery already reconstructs the repo map
+at a historical base OID (verified by test). Follow-ups:
+[#423](https://github.com/rbutera/rennet/issues/423) worktree/clone management
+UI; retrospective metadata enrichment (original review comments, CI outcome)
+stays the named deferral it was.
 
 ## How to read an issue
 

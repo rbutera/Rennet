@@ -1,5 +1,5 @@
 import type { Octokit } from "@octokit/core";
-import type { PullRequest, SmartListCi } from "@rennet/protocol";
+import type { PullRequest, PullRequestState, SmartListCi } from "@rennet/protocol";
 import { headerGet } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
@@ -22,14 +22,13 @@ import { parseGitHubSso } from "./github-sso";
  *  • The viewer login pins ownership: `project-detail-source` sets local-work author
  *    to this login when auth resolves, so a checked-out branch still reads as "mine".
  *
- * ── SCOPE (B2), stated honestly ──────────────────────────────────────────────
- *  • OPEN pull requests only, fully paginated up to a bounded ceiling. `truncated`
- *    is set ONLY when the open set genuinely exceeds that ceiling or SSO returns
- *    partial-results — it keeps the ">1000 upstream" banner's meaning, never firing
- *    for an ordinary repo. The renderer's merged→read-only+clean-up path is real but
- *    only triggers once a merged PR is surfaced; live merged-PR surfacing (a
- *    per-branch merged lookup, so old closed history is never dragged in) is a
- *    deferred follow-up. Everything below the typed boundary is unchanged.
+ * ── SCOPE, stated honestly ───────────────────────────────────────────────────
+ *  • State-filtered (historical-PR review): OPEN by default, MERGED/CLOSED on
+ *    request, recent-first, paginated up to a bounded ceiling. `truncated` is set
+ *    ONLY when the requested set genuinely exceeds that ceiling or SSO returns
+ *    partial-results — deep merged history routinely trips it and honestly renders
+ *    as a partial list. The renderer's merged→read-only (retrospective) path folds
+ *    the surfaced rows; no local sync of history is ever kept.
  *  • A hard failure (non-200, GraphQL errors) THROWS rather than returning an empty
  *    list, so a broken fetch never renders as "complete, zero PRs" (a lying empty).
  *    Auth is resolved BEFORE this source is constructed: no GitHub token ⇒ no source
@@ -41,10 +40,15 @@ export interface ProjectPrSource {
   /** The signed-in GitHub login, or `null` when the viewer query returns none. */
   resolveViewer(): Promise<string | null>;
   /**
-   * Open pull requests for a forge repo `owner/name`. A non-forge identity (the
-   * common-dir fallback) yields an empty, complete result — it has no PRs to fetch.
+   * Pull requests for a forge repo `owner/name` in the given states (recent-first,
+   * bounded pages — history is paged, never fully synced). A non-forge identity
+   * (the common-dir fallback) yields an empty, complete result — it has no PRs to
+   * fetch. Omitted states default to `["open"]`, the original live surface.
    */
-  listOpenPullRequests(repository: string): Promise<{ prs: PullRequest[]; truncated: boolean }>;
+  listPullRequests(
+    repository: string,
+    states?: readonly PullRequestState[],
+  ): Promise<{ prs: PullRequest[]; truncated: boolean }>;
 }
 
 export interface GitHubProjectPrSourceConfig {
@@ -59,9 +63,9 @@ const DEFAULT_MAX_PAGES = 5;
 
 const VIEWER_QUERY = `query{ viewer{ login } }`;
 
-const OPEN_PRS_QUERY = `query($owner:String!,$name:String!,$cursor:String){
+const PRS_QUERY = `query($owner:String!,$name:String!,$states:[PullRequestState!]!,$cursor:String){
   repository(owner:$owner,name:$name){
-    pullRequests(states:OPEN, first:${PAGE_SIZE}, after:$cursor, orderBy:{field:UPDATED_AT, direction:DESC}){
+    pullRequests(states:$states, first:${PAGE_SIZE}, after:$cursor, orderBy:{field:UPDATED_AT, direction:DESC}){
       totalCount
       pageInfo{ hasNextPage endCursor }
       nodes{
@@ -136,7 +140,7 @@ function mapCi(rollup: { state: string } | null | undefined): SmartListCi {
   }
 }
 
-/** OPEN | CLOSED | MERGED → the protocol's lowercase state (defensive: OPEN-only query). */
+/** OPEN | CLOSED | MERGED → the protocol's lowercase state. */
 function mapState(state: GraphqlPrNode["state"]): PullRequest["state"] {
   switch (state) {
     case "MERGED":
@@ -230,22 +234,28 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     return viewerLogin;
   }
 
-  // One page of open PRs. Kept out of the pagination loop with an explicit return type
-  // so the generic `graphql` call is not deferred through the loop's control-flow.
-  async function fetchOpenPrsPage(
+  // One page of PRs in the requested states. Kept out of the pagination loop with an
+  // explicit return type so the generic `graphql` call is not deferred through the
+  // loop's control-flow.
+  async function fetchPrsPage(
     owner: string,
     name: string,
+    states: readonly PullRequestState[],
     cursor: string | null,
   ): Promise<{ page: OpenPrsPage | null; partial: boolean }> {
-    const result = await graphql<{ repository: { pullRequests: OpenPrsPage } | null }>(
-      OPEN_PRS_QUERY,
-      { owner, name, cursor },
-    );
+    const result = await graphql<{ repository: { pullRequests: OpenPrsPage } | null }>(PRS_QUERY, {
+      owner,
+      name,
+      // The protocol's lowercase states map 1:1 onto GitHub's GraphQL enum.
+      states: states.map((state) => state.toUpperCase()),
+      cursor,
+    });
     return { page: result.data.repository?.pullRequests ?? null, partial: result.partial };
   }
 
-  async function listOpenPullRequests(
+  async function listPullRequests(
     repository: string,
+    states: readonly PullRequestState[] = ["open"],
   ): Promise<{ prs: PullRequest[]; truncated: boolean }> {
     const identity = parseForgeRepository(repository);
     if (!identity) return { prs: [], truncated: false };
@@ -257,7 +267,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     let hasNext = false;
     let sawPartial = false;
     do {
-      const { page, partial } = await fetchOpenPrsPage(identity.owner, identity.name, cursor);
+      const { page, partial } = await fetchPrsPage(identity.owner, identity.name, states, cursor);
       if (partial) sawPartial = true;
       if (!page) break; // repo not found / no access → no rows, and no false completeness claim below
       for (const prNode of page.nodes) prs.push(mapNode(prNode, repository, viewer));
@@ -267,12 +277,14 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     } while (hasNext && cursor && pages < maxPages);
 
     // Truncated ONLY when there is genuinely more than we paged through, or SSO
-    // truncated a page. A repo whose whole open set fits in <= maxPages is complete.
+    // truncated a page. A repo whose whole set fits in <= maxPages is complete;
+    // deep merged/closed history routinely exceeds it and honestly reads partial.
     return { prs, truncated: hasNext || sawPartial };
   }
 
   return {
     resolveViewer,
-    listOpenPullRequests: (repository) => withListSlot(() => listOpenPullRequests(repository)),
+    listPullRequests: (repository, states) =>
+      withListSlot(() => listPullRequests(repository, states)),
   };
 }

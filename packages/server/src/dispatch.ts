@@ -38,6 +38,8 @@ import {
   type ProjectDetail,
   type ProjectKind,
   type ProjectProcessEvent,
+  type PrWorktreeSetup,
+  type PullRequestState,
   parseCommandInput,
   parseCommandOutput,
   type ReattachResult,
@@ -156,9 +158,18 @@ export interface DispatchDeps {
   openPullRequest(
     commandId: string,
     ref: string,
-    repoPath: string,
+    repoPath: string | undefined,
     retrospective: boolean,
   ): Promise<Review>;
+  /**
+   * The reviewed PR's worktree + setup status (historical-PR review), `null` when
+   * the review has none (a working-tree capture, or checkout failed). Read-only.
+   */
+  prWorktree(reviewId: string): Promise<{
+    path: string;
+    setup: PrWorktreeSetup;
+    logTail: string;
+  } | null>;
   /** Begin watching a captured repository root for on-disk changes. */
   startWatching(root: string): void;
   /**
@@ -297,7 +308,7 @@ export interface DispatchDeps {
    * viewer the unified smart list folds into rows. Read-only. A fixture stands behind
    * this until the live git/GitHub loop lands.
    */
-  projectDetail(projectId: string): Promise<ProjectDetail>;
+  projectDetail(projectId: string, prStates?: readonly PullRequestState[]): Promise<ProjectDetail>;
   /**
    * Clean up a merged PR's local worktree/branch (the read-only row's action). A
    * destructive local act; the host handler is a documented stub this wave.
@@ -842,13 +853,15 @@ export function createDispatch(
           return parseCommandOutput(name, { review });
         }
         case "review.openPr": {
-          // The GitHub PR front door. `repoPath` is the local clone the renderer just
-          // picked (so it is already in allowedRoots); the diff is taken locally
-          // against the PR's pinned OIDs. A PR review is a snapshot, so it is NOT
-          // wired into the working-tree freshness watcher (the renderer gates that off
-          // by patchset source) — nothing to watch, nothing to invalidate here.
+          // The GitHub PR front door. `repoPath`, when present, is the local clone the
+          // renderer just picked (so it is already in allowedRoots); omitted — or not
+          // actually a clone of the PR's repo — MAIN resolves a managed blobless clone
+          // (clone-on-demand, #225) and the resolved root joins allowedRoots below.
+          // The diff is taken locally against the PR's pinned OIDs. A PR review is a
+          // snapshot, so it is NOT wired into the working-tree freshness watcher (the
+          // renderer gates that off by patchset source) — nothing to watch here.
           const input = parseCommandInput(name, rawInput);
-          assertAllowedRepository(input.repoPath);
+          if (input.repoPath !== undefined) assertAllowedRepository(input.repoPath);
           const review = await deps.openPullRequest(
             input.commandId,
             input.ref,
@@ -876,6 +889,13 @@ export function createDispatch(
             deps.startWatching(review.repositoryRoot);
           }
           return parseCommandOutput(name, { review, repositoryPresent });
+        }
+        case "review.prWorktree": {
+          // The reviewed PR's worktree + setup status (historical-PR review). A pure
+          // read over MAIN's own worktree index and status files; `null` for a review
+          // with no worktree.
+          const input = parseCommandInput(name, rawInput);
+          return parseCommandOutput(name, { worktree: await deps.prWorktree(input.reviewId) });
         }
         case "review.setDisposition": {
           const input = parseCommandInput(name, rawInput);
@@ -1357,7 +1377,10 @@ export function createDispatch(
           // viewer, which the renderer folds into one list. A missing GitHub token
           // degrades to the local-only half, never a failed fetch shown as zero PRs.
           const input = parseCommandInput(name, rawInput);
-          return parseCommandOutput(name, await deps.projectDetail(input.projectId));
+          return parseCommandOutput(
+            name,
+            await deps.projectDetail(input.projectId, input.prStates),
+          );
         }
         case "project.cleanupWorktree": {
           // The merged-PR read-only row's clean-up. A destructive local act, so it is a

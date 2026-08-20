@@ -1,4 +1,9 @@
-import type { Project, ProjectDetail as ProjectDetailData, RennetBridge } from "@rennet/protocol";
+import type {
+  Project,
+  ProjectDetail as ProjectDetailData,
+  PullRequestState,
+  RennetBridge,
+} from "@rennet/protocol";
 import { useEffect, useMemo, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import {
@@ -56,22 +61,26 @@ export function ProjectDetail({
   const [error, setError] = useState<string>();
   const [sort, setSort] = useState<SmartSort>("hot");
   const [filter, setFilter] = useState<SmartFilter>("all");
+  // Which PR states the list shows (historical-PR review). "open" is the live
+  // default; flipping to merged/closed/all refetches the substrate with that
+  // filter — history is paged on demand, never synced locally.
+  const [prScope, setPrScope] = useState<PrScope>("open");
   // Branches whose local worktree has been cleaned up (optimistic; the row's
   // annotation disappears immediately, the command acknowledges behind it).
   const [cleaned, setCleaned] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     setError(undefined);
-    if (initialDetail) {
+    if (initialDetail && prScope === "open") {
       setDetail(initialDetail);
       return;
     }
     setDetail(null);
     bridge
-      .invoke("project.detail", { projectId: project.id })
+      .invoke("project.detail", { projectId: project.id, prStates: PR_SCOPE_STATES[prScope] })
       .then(setDetail)
       .catch((reason: unknown) => setError(messageFrom(reason)));
-  }, [bridge, initialDetail, project.id]);
+  }, [bridge, initialDetail, project.id, prScope]);
 
   const rows = useMemo(() => (detail ? buildSmartRows(detail) : []), [detail]);
   // Apply the optimistic clean-ups: drop the annotation from any swept worktree (keyed
@@ -158,8 +167,10 @@ export function ProjectDetail({
             counts={counts}
             filter={filter}
             sort={sort}
+            prScope={prScope}
             onFilter={setFilter}
             onSort={setSort}
+            onPrScope={setPrScope}
           />
 
           {detail.truncated ? (
@@ -206,6 +217,23 @@ export function ProjectDetail({
 
 /* ── The filter + sort bar ─────────────────────────────────────────────────── */
 
+/** The PR-state scope the list fetches: live open PRs, or history. */
+type PrScope = "open" | "merged" | "closed" | "all";
+
+const PR_SCOPE_STATES: Record<PrScope, [PullRequestState, ...PullRequestState[]]> = {
+  open: ["open"],
+  merged: ["merged"],
+  closed: ["closed"],
+  all: ["open", "merged", "closed"],
+};
+
+const PR_SCOPES: { id: PrScope; label: string }[] = [
+  { id: "open", label: "Open" },
+  { id: "merged", label: "Merged" },
+  { id: "closed", label: "Closed" },
+  { id: "all", label: "All states" },
+];
+
 const FILTERS: { id: SmartFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "needs-you", label: "Needs you" },
@@ -225,14 +253,18 @@ function FilterBar({
   counts,
   filter,
   sort,
+  prScope,
   onFilter,
   onSort,
+  onPrScope,
 }: {
   counts: Record<SmartFilter, number>;
   filter: SmartFilter;
   sort: SmartSort;
+  prScope: PrScope;
   onFilter(filter: SmartFilter): void;
   onSort(sort: SmartSort): void;
+  onPrScope(scope: PrScope): void;
 }) {
   return (
     <div className="smart-filter-bar flex items-center justify-between gap-4 py-4 flex-wrap">
@@ -257,6 +289,22 @@ function FilterBar({
           );
         })}
       </div>
+      <label className="smart-pr-scope inline-flex items-center gap-2">
+        <span className="smart-pr-scope-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+          PRs
+        </span>
+        <select
+          className="smart-pr-scope-select px-2.5 py-1.5 rounded-chip border border-line-strong bg-surface text-ink"
+          value={prScope}
+          onChange={(event) => onPrScope(event.target.value as PrScope)}
+        >
+          {PR_SCOPES.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className="smart-sort inline-flex items-center gap-2">
         <span className="smart-sort-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
           Sort

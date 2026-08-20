@@ -40,7 +40,7 @@ describe("desktop repo-facing git composition", () => {
       fileURLToPath(new URL("./create-server.ts", import.meta.url)),
       "utf8",
     );
-    expect(source).toContain("const gitInLocus = gitForRepo(repoPath);");
+    expect(source).toContain("const gitInLocus = gitForRepo(root);");
     expect(source).toContain("new ProjectSnapshotGenerator({ store: snapshotStore, gitForRepo })");
     expect(source).toContain("defaultProjectDiscoveryDeps(gitForRepo(path))");
     expect(source).toContain("defaultProjectDetailSourceDeps(gitForRepo(projectRoot)");
