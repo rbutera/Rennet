@@ -95,9 +95,12 @@
   --color-input: var(--rn-line-strong);
   --color-ring: var(--rn-accent-line);
   /* accent surface + its ink: the pulled menus/selects paint focus/hover with
-   * bg-accent + text-accent-foreground. --color-accent already maps to the gold
-   * (kept per the port plan); its ink is the near-black accent ink. */
-  --color-accent-foreground: var(--rn-accent-ink);
+   * bg-accent + text-accent-foreground. --color-accent is the gold (kept per the
+   * port plan). Its foreground must be the SURFACE colour, not accent-ink:
+   * surface flips with the scheme opposite the accent (white on light ochre,
+   * near-black on dark gold), clearing AA both ways (5.75:1 / 9.45:1) — whereas
+   * near-black accent-ink on the light ochre is only 3.21:1 (theme.test enforces). */
+  --color-accent-foreground: var(--rn-surface);
   /* modal backdrop scrim (dialog/sheet), opacity applied at the call site */
   --color-scrim: var(--rn-scrim);
   /* radius aliases: shadcn classes ↔ Rennet ramp, 1:1 by value */

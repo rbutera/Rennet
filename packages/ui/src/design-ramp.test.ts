@@ -19,6 +19,13 @@ function sources(dir: string): string[] {
   });
 }
 
+// Every Tailwind utility prefix that can take a color payload. Shared across all
+// three color bans so a prefix (shadow-, placeholder-, accent-) can't be a
+// bypass on one ban while banned on another (Tailwind emits shadow-red-500,
+// shadow-black, accent-black, placeholder-[#…]).
+const COLOR_PREFIX =
+  "bg|text|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|placeholder|shadow";
+
 const BANS: ReadonlyArray<readonly [RegExp, string]> = [
   // Arbitrary text utilities: sizes AND colors ride the same escape hatch.
   [/\btext-\[/, "arbitrary text-[…] (use the ramp: text-2xs…text-2xl, text-display)"],
@@ -38,21 +45,25 @@ const BANS: ReadonlyArray<readonly [RegExp, string]> = [
   // only literal color payloads are escapes — including a color-function
   // (color-mix/oklab/lab/lch) wrapped inside the bracket, which the bare
   // #|rgb|hsl|oklch anchor misses (a base-nova hover default did exactly this).
+  // Every color-capable utility prefix must be listed on ALL three color bans;
+  // an omission (e.g. shadow-, placeholder-) is a live Tailwind bypass.
   [
-    /\b(?:bg|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|shadow)-\[(?:#|rgb|hsl|oklch|oklab|lab|lch|color-mix|color:)/,
+    new RegExp(`\\b(?:${COLOR_PREFIX})-\\[(?:#|rgb|hsl|oklch|oklab|lab|lch|color-mix|color:)`),
     "arbitrary color (every color comes from @rennet/theme)",
   ],
   // Named Tailwind palette colors with a numeric shade (bg-red-500, text-zinc-400).
   // Rennet's own `green`/`danger`/`accent` are shadeless semantic tokens, so the
   // `-\d` shade is what marks a raw Tailwind palette color, not a theme token.
   [
-    /\b(?:bg|text|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|placeholder)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d/,
+    new RegExp(
+      `\\b(?:${COLOR_PREFIX})-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\\d`,
+    ),
     "raw Tailwind palette color (every color comes from @rennet/theme)",
   ],
   // Tailwind's bare black/white — off-theme (Rennet uses surface/canvas/ink/scrim).
   // `transparent`/`current`/`inherit` are keywords, not colors, and stay legal.
   [
-    /\b(?:bg|text|border|ring|fill|stroke|from|via|to|caret|outline|decoration|divide|placeholder)-(?:black|white)(?![\w-])/,
+    new RegExp(`\\b(?:${COLOR_PREFIX})-(?:black|white)(?![\\w-])`),
     "raw black/white (use a --rn-* backed token: surface/canvas/ink/scrim)",
   ],
   // Inline style font sizing bypasses the ramp entirely.
@@ -70,7 +81,11 @@ const MUST_REJECT: readonly string[] = [
   "bg-[#abcdef]", // bracket color (hex)
   "hover:bg-[color-mix(in_oklch,var(--a),var(--b)_5%)]", // bracket color (function)
   "bg-red-500", // raw Tailwind palette color
+  "shadow-red-500", // raw palette on the shadow prefix (a Tailwind bypass)
   "bg-black/10", // raw black/white
+  "shadow-black", // bare black on the shadow prefix
+  "accent-white", // bare white on the accent prefix
+  "placeholder-[#abcdef]", // bracket color on the placeholder prefix
   "style={{ fontSize: 12 }}", // inline fontSize
 ];
 
