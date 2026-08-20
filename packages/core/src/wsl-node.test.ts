@@ -72,7 +72,7 @@ describe("probe argv (byte-verbatim -e form)", () => {
 });
 
 describe("buildWslDaemonLaunch", () => {
-  it("builds the wsl.exe -e <node> <bundle> serve --data-dir descriptor", () => {
+  it("builds the wsl.exe -e <node> <bundle> --data-dir descriptor (no serve subcommand)", () => {
     const cmd = buildWslDaemonLaunch({
       distro: "Ubuntu",
       nodePath: "/home/u/.asdf/installs/nodejs/24.16.0/bin/node",
@@ -87,7 +87,6 @@ describe("buildWslDaemonLaunch", () => {
       "-e",
       "/home/u/.asdf/installs/nodejs/24.16.0/bin/node",
       "/home/u/.rennet/server/1.2.3/rennet.cjs",
-      "serve",
       "--data-dir",
       "/home/u/.local/share/rennet",
       "--server-version",
@@ -103,6 +102,7 @@ describe("buildWslDaemonLaunch", () => {
       dataDir: "/data",
     });
     expect(cmd.args).not.toContain("--server-version");
+    expect(cmd.args).not.toContain("serve");
     expect(cmd.args).not.toContain("--ui-dist");
   });
 });

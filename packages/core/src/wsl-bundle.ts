@@ -19,8 +19,23 @@ function trimTrailingSlash(dir: string): string {
 }
 
 /** Absolute distro-native path the versioned daemon bundle is delivered to. */
+export function wslServerDir(distroHome: string, version: string): string {
+  return `${trimTrailingSlash(distroHome)}/.rennet/server/${version}`;
+}
+
+/** The distro-native path of the daemon ENTRY (`index.cjs`) inside the delivered dir. */
 export function wslServerBundlePath(distroHome: string, version: string): string {
-  return `${trimTrailingSlash(distroHome)}/.rennet/server/${version}/rennet.cjs`;
+  return `${wslServerDir(distroHome, version)}/index.cjs`;
+}
+
+/** The final path segment of a host bundle path (Windows `\\` or POSIX `/`), e.g. `index.cjs`. */
+function hostBundleBasename(hostBundlePath: string): string {
+  return (
+    hostBundlePath
+      .split(/[/\\]/)
+      .filter((seg) => seg.length > 0)
+      .pop() ?? "index.cjs"
+  );
 }
 
 /** Absolute distro-native data dir the WSL daemon owns (daemon.json, log, sqlite). */
@@ -83,18 +98,18 @@ export async function ensureWslBundleDelivered(
     );
   }
   const locus = { kind: "wsl", distro } as const;
-  const target = wslServerBundlePath(distroHome, version);
+  const targetDir = wslServerDir(distroHome, version);
+  const entry = `${targetDir}/${hostBundleBasename(hostBundlePath)}`;
 
-  // `test -f`: exit 0 ⇒ present, 1 ⇒ absent, anything else ⇒ the probe itself failed.
-  const present = await run(locusCommand(locus, "test", ["-f", target]));
-  if (present.code === 0) return target; // already delivered this version — skip the copy.
+  // `test -f` the ENTRY: exit 0 ⇒ present, 1 ⇒ absent, anything else ⇒ the probe failed.
+  const present = await run(locusCommand(locus, "test", ["-f", entry]));
+  if (present.code === 0) return entry; // already delivered this version — skip the copy.
   if (present.code !== 1) {
     throw new WslBundleDeliveryError(
       `could not probe the bundle path in "${distro}" (test exited ${present.code})`,
     );
   }
 
-  const targetDir = target.slice(0, target.lastIndexOf("/"));
   const made = await run(locusCommand(locus, "mkdir", ["-p", targetDir]));
   if (made.code !== 0) {
     throw new WslBundleDeliveryError(
@@ -108,11 +123,21 @@ export async function ensureWslBundleDelivered(
       `could not translate host bundle path "${hostBundlePath}" for "${distro}" (exit ${translated.code})`,
     );
   }
-  const copied = await run(locusCommand(locus, "cp", [source, target]));
+  // Deliver the WHOLE server directory, not just the entry file. The bundle is
+  // code-split (`index.cjs` plus its `rolldown-runtime-*.cjs` and lazy `sdk-*.cjs`
+  // chunks), so a single-file copy makes the daemon crash at startup with a
+  // missing-module error. `<dir>/.` copies the directory's contents (no shell glob).
+  const sourceDir = source.slice(0, source.lastIndexOf("/"));
+  const copied = await run(locusCommand(locus, "cp", ["-r", `${sourceDir}/.`, targetDir]));
   if (copied.code !== 0) {
     throw new WslBundleDeliveryError(
       `bundle copy failed in "${distro}" (cp exited ${copied.code})`,
     );
   }
-  return target;
+  // A failed/partial copy must not read as delivered — confirm the entry landed.
+  const verify = await run(locusCommand(locus, "test", ["-f", entry]));
+  if (verify.code !== 0) {
+    throw new WslBundleDeliveryError(`bundle entry ${entry} is missing after copy in "${distro}"`);
+  }
+  return entry;
 }
