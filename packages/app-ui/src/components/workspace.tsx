@@ -12,6 +12,7 @@ import type {
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
+import { Button } from "@rennet/ui";
 import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import {
   type AuthoringAct,
@@ -1064,21 +1065,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         role="toolbar"
         aria-label="Zoom"
       >
-        <button
-          type="button"
-          className="inline-flex h-8 items-center rounded-control border border-line px-3 text-sm text-ink-soft hover:bg-raised"
+        <Button
+          variant="outline"
+          className="text-ink-soft"
           onClick={() => store.getState().setZoom(zoomReducer(zoom, { type: "zoomOut" }))}
         >
           Zoom out
-        </button>
+        </Button>
         <span className="zoom-level font-semibold text-ink">{ZOOM_LABELS[zoom.level]}</span>
-        <button
-          type="button"
-          className="inline-flex h-8 items-center rounded-control border border-line px-3 text-sm text-ink-soft hover:bg-raised"
+        <Button
+          variant="outline"
+          className="text-ink-soft"
           onClick={() => store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }))}
         >
           Zoom in
-        </button>
+        </Button>
         {overlayOn ? (
           <span className="overlay-legend ml-auto text-sm text-ink">Blast radius painted gold</span>
         ) : null}
@@ -1107,9 +1108,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
             className="hypothesis-panel mb-4 overflow-hidden rounded-surface border border-line bg-surface"
             aria-label="Review hypothesis"
           >
-            <button
-              type="button"
-              className="hypothesis-panel-toggle flex w-full items-center justify-between gap-3 border-0 bg-transparent px-4 py-2.5 text-left text-ink"
+            <Button
+              variant="ghost"
+              className="hypothesis-panel-toggle flex h-auto w-full items-center justify-between gap-3 px-4 py-2.5 text-left font-normal text-ink"
               aria-expanded={hypothesisOpen}
               onClick={toggleHypothesisOpen}
             >
@@ -1124,7 +1125,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                   {hypothesisFrame.counts.confirmed} related
                 </span>
               </span>
-            </button>
+            </Button>
             {hypothesisOpen ? (
               <HypothesisReadingFrame frame={hypothesisFrame} onJumpToFinding={jumpToFinding} />
             ) : null}

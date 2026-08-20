@@ -4,6 +4,7 @@ import type {
   PullRequestState,
   RennetBridge,
 } from "@rennet/protocol";
+import { Button, Skeleton } from "@rennet/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import {
@@ -179,27 +180,23 @@ export function ProjectDetail({
       data-scheme={scheme ?? "dark"}
     >
       <header className="project-detail-bar flex items-center gap-4 px-1 pt-5 pb-4 border-b border-line">
-        <button
-          type="button"
-          className="project-detail-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
-          onClick={onBack}
-        >
+        <Button variant="outline" className="project-detail-back text-ink-soft" onClick={onBack}>
           <ArrowLeftIcon size={13} />
           Projects
-        </button>
+        </Button>
         <span className="project-detail-heading flex flex-col gap-0.5 min-w-0">
           <span className="project-detail-name font-display text-xl text-ink">{project.name}</span>
           <span className="project-detail-path font-mono text-sm text-ink-faint truncate">
             {project.path}
           </span>
         </span>
-        <button
-          type="button"
-          className="project-detail-context-map ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
+        <Button
+          variant="outline"
+          className="project-detail-context-map ml-auto text-ink-soft"
           onClick={onOpenContextMap}
         >
           Context Map
-        </button>
+        </Button>
       </header>
 
       {error ? <p className="project-detail-error mt-4 text-danger">{error}</p> : null}
@@ -274,15 +271,15 @@ function SmartListSkeleton() {
       {[0, 1, 2].map((index) => (
         <div
           key={index}
-          className="smart-row-skeleton flex items-center gap-3.5 rounded-surface border border-line bg-raised px-3.5 py-3.5 animate-pulse"
+          className="smart-row-skeleton flex items-center gap-3.5 rounded-surface border border-line bg-raised px-3.5 py-3.5"
           style={{ animationDelay: `${index * 120}ms` }}
         >
-          <span className="h-3.5 w-[42px] rounded bg-line" />
+          <Skeleton className="h-3.5 w-[42px]" />
           <span className="flex flex-col gap-2 flex-1">
-            <span className="h-3.5 w-1/2 rounded bg-line" />
-            <span className="h-3 w-1/3 rounded bg-line opacity-70" />
+            <Skeleton className="h-3.5 w-1/2" />
+            <Skeleton className="h-3 w-1/3 opacity-70" />
           </span>
-          <span className="h-3.5 w-16 rounded bg-line" />
+          <Skeleton className="h-3.5 w-16" />
         </div>
       ))}
     </div>
@@ -362,13 +359,13 @@ function AuthHint({
         <>
           <span className="flex-1 min-w-0">{account.error ?? AUTH_HINT_COPY[reason]}</span>
           {canReconnect ? (
-            <button
-              type="button"
-              className="project-detail-reconnect flex-none px-3 py-1.5 rounded-control border border-accent-line bg-accent-soft text-ink text-sm font-semibold hover:border-accent"
+            <Button
+              variant="accent"
+              className="project-detail-reconnect flex-none"
               onClick={() => void account.connect()}
             >
               {label}
-            </button>
+            </Button>
           ) : null}
         </>
       )}
@@ -433,10 +430,10 @@ function FilterBar({
         {FILTERS.map((entry) => {
           const active = filter === entry.id;
           return (
-            <button
-              type="button"
+            <Button
               key={entry.id}
-              className={`smart-filter inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-base transition ${active ? "is-active border-accent-line bg-accent-soft text-ink" : "border-line text-ink-soft hover:text-ink"}`}
+              variant={active ? "accent" : "outline"}
+              className={`smart-filter rounded-full text-base ${active ? "is-active" : "text-ink-soft"}`}
               aria-pressed={active}
               onClick={() => onFilter(entry.id)}
             >
@@ -446,7 +443,7 @@ function FilterBar({
               >
                 {counts[entry.id]}
               </span>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -583,22 +580,18 @@ function SmartListRow({
 
       <div className="smart-row-actions flex-none flex items-center gap-2 pr-3 py-2.5">
         {row.readOnly && row.checkedOutLocally ? (
-          <button
-            type="button"
-            className="smart-row-cleanup px-3 py-1.5 rounded-control border border-line text-ink-soft text-base hover:text-ink hover:border-green-line"
+          <Button
+            variant="outline"
+            className="smart-row-cleanup text-ink-soft text-base hover:border-green-line"
             onClick={() => onCleanUp(row)}
           >
             Clean up
-          </button>
+          </Button>
         ) : null}
-        <button
-          type="button"
-          className="smart-row-action inline-flex items-center gap-1 px-3 py-1.5 rounded-control border border-accent-line bg-accent-soft text-ink text-base hover:border-accent"
-          onClick={() => onOpen(row)}
-        >
+        <Button variant="accent" className="smart-row-action text-base" onClick={() => onOpen(row)}>
           {rowActionLabel(row)}
           <ArrowRightIcon size={12} />
-        </button>
+        </Button>
       </div>
     </div>
   );

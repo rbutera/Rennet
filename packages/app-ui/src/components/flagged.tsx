@@ -8,6 +8,7 @@ import type {
   UiScreenshot,
   UiVerification,
 } from "@rennet/types";
+import { Badge, Button } from "@rennet/ui";
 import { type ReactNode, useEffect, useState } from "react";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";
 
@@ -415,11 +416,12 @@ function FlagRow({
       data-finding-id={row.findingId}
     >
       <div className="flag-head flex items-baseline gap-3">
-        <span
-          className={`flag-severity flag-severity-${row.severity} flex-none rounded-full border bg-raised px-2.5 py-1 text-2xs font-semibold uppercase tracking-wide ${SEVERITY_TONE[row.severity]}`}
+        <Badge
+          variant="outline"
+          className={`flag-severity flag-severity-${row.severity} flex-none bg-raised px-2.5 py-1 text-2xs uppercase tracking-wide ${SEVERITY_TONE[row.severity]}`}
         >
           {SEVERITY_LABEL[row.severity]}
-        </span>
+        </Badge>
         {/* The lens is an index: the row jumps to the mark at its anchor. */}
         <button
           type="button"
@@ -559,15 +561,16 @@ export function FlaggedLens({
         ) : null}
         <DualBadge dual={index.dual} />
         {deepReview ? (
-          <button
-            type="button"
-            className="flag-deep-review ml-auto cursor-pointer rounded-full border border-line bg-raised px-3 py-1 text-xs font-semibold text-ink-soft hover:border-accent-line hover:text-ink"
+          <Button
+            variant="outline"
+            size="sm"
+            className="flag-deep-review ml-auto rounded-full bg-raised text-ink-soft hover:border-accent-line hover:text-ink"
             data-active={deepReview.active}
             aria-pressed={deepReview.active}
             onClick={deepReview.onToggle}
           >
             {deepReview.active ? "Dual review · switch to quick" : "Quick review · switch to dual"}
-          </button>
+          </Button>
         ) : null}
       </div>
       <CiSignalPanel signal={index.ciSignal} />
