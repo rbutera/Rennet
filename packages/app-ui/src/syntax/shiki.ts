@@ -168,6 +168,15 @@ const SCOPE_THEME = {
   ],
 };
 
+// EAGER, SYNCHRONOUS grammar load — a conscious deviation from plan Task 5.1's
+// "lazy per-language load". Shiki's lazy path is async (`loadLanguage`), but our
+// tokenizer MUST be synchronous: `renderToStaticMarkup` runs no effects, and the
+// symbol / code-view tests assert token classification on the FIRST render, so a
+// grammar cannot be fetched after mount. `createHighlighterCoreSync` therefore wires
+// all nine grammars at module load. The cost is ~82KB gzip of grammar JSON in the
+// bundle — accepted, because app-ui ships inside the Electron desktop renderer (a
+// local asset load, not a web bundle over the wire), so the eager-sync tradeoff is
+// the right call here and lazy async is off the table.
 const highlighter = createHighlighterCoreSync({
   engine: createJavaScriptRegexEngine({ forgiving: true }),
   themes: [SCOPE_THEME],

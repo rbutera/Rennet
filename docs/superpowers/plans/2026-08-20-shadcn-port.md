@@ -360,6 +360,8 @@ One PR.
 - [ ] Wire `codeToTokens` with lazy language loading for the languages `languages.ts` currently supports (enumerate them from that file before deleting).
 - [ ] Existing code-view tests green (token boundaries may shift; assert on text content + mark anchoring, not token counts). Delete dead files; `grep -rn 'syntax/highlight\|syntax/languages' packages` → zero. Commit: `refactor(app-ui): shiki tokenizer behind code-view`
 
+**Implementation exception — eager sync grammar load, not lazy async (recorded post-review):** The "lazy per-language load" step above did NOT ship, and deliberately so. Rennet's tokenizer (`syntax/shiki.ts`) must be **synchronous**: `renderToStaticMarkup` runs no effects, and the symbol/code-view tests assert token classification on the FIRST render — a grammar cannot be fetched after mount without a flash of unhighlighted code and failing tests. Shiki's lazy path (`loadLanguage`) is async, so it is off the table. The tokenizer uses `createHighlighterCoreSync` and registers all nine grammars at module load. The cost is **~82KB gzip** of grammar JSON in the bundle, which is **accepted**: app-ui ships inside the Electron desktop renderer (a local asset load, not a web bundle served over the wire), so the eager-sync tradeoff is correct here. Do not "fix" this back to lazy async — it breaks the sync-first-render contract.
+
 ### Task 5.2: Diff rendering decision point
 
 - [ ] After 5.1, evaluate: does code-view's own hunk rendering (now shiki-fed) meet the Pierre direction? If yes — done, add nothing. If unified/split hunk layout is still bespoke-painful, add `react-diff-view` (MIT, exact-pin) for hunk layout only, keeping shiki tokens + mark registry. Record verdict + reasoning in dependency-standard. Commit accordingly.
