@@ -74,4 +74,30 @@
 
   /* depth — true overlays only */
   --shadow-overlay: var(--rn-shadow-overlay);
+
+  /* shadcn/ui semantic aliases — vendored kit vocabulary, all resolving to
+   * --rn-* palette truth. No new colors exist here. */
+  --color-background: var(--rn-canvas);
+  --color-foreground: var(--rn-ink);
+  --color-card: var(--rn-surface);
+  --color-card-foreground: var(--rn-ink);
+  --color-popover: var(--rn-overlay);
+  --color-popover-foreground: var(--rn-ink);
+  --color-primary: var(--rn-accent-fill);
+  --color-primary-foreground: var(--rn-accent-ink);
+  --color-secondary: var(--rn-raised);
+  --color-secondary-foreground: var(--rn-ink);
+  --color-muted: var(--rn-raised);
+  --color-muted-foreground: var(--rn-ink-soft);
+  --color-destructive: var(--rn-danger);
+  --color-destructive-foreground: var(--rn-surface);
+  --color-border: var(--rn-line);
+  --color-input: var(--rn-line-strong);
+  --color-ring: var(--rn-accent-line);
+  /* radius aliases: shadcn classes ↔ Rennet ramp, 1:1 by value */
+  --radius-sm: var(--radius-micro);
+  --radius-md: var(--radius-chip);
+  --radius-lg: var(--radius-control);
+  --radius-xl: var(--radius-surface);
+  --radius-2xl: var(--radius-window);
 }
