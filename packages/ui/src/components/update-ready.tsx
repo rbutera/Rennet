@@ -119,8 +119,12 @@ export function ChromeMenu({
     action();
   }
 
-  const itemClass =
-    "chrome-menu-item flex w-full cursor-pointer items-center gap-2 rounded-chip border-0 bg-transparent px-2.5 py-2 text-left font-sans text-base font-medium text-ink no-underline hover:bg-raised";
+  // Layout separated from colour: the update row swaps in the accent colours, and a
+  // combined class string would let base `text-ink`/`bg-transparent` win by source
+  // order in the emitted CSS and silently drop the highlight.
+  const itemBase =
+    "chrome-menu-item flex w-full cursor-pointer items-center gap-2 rounded-chip border-0 px-2.5 py-2 text-left font-sans text-base font-medium no-underline";
+  const itemClass = `${itemBase} bg-transparent text-ink hover:bg-raised`;
 
   return (
     <div ref={rootRef} className="chrome-menu relative flex items-center">
@@ -167,7 +171,7 @@ export function ChromeMenu({
             <button
               type="button"
               role="menuitem"
-              className={`${itemClass} chrome-menu-update bg-accent-soft text-accent hover:bg-accent-soft`}
+              className={`${itemBase} chrome-menu-update bg-accent-soft text-accent hover:bg-accent-soft`}
               onClick={() => run(openPrompt)}
             >
               {updateActionLabel(ready)}

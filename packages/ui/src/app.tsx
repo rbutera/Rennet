@@ -2646,6 +2646,7 @@ export function RennetApp({
   if (review === undefined) {
     return (
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
+        {updatePrompt}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
           <ChromeMenu
             size={16}
@@ -2678,6 +2679,7 @@ export function RennetApp({
   if (settingsOpen) {
     return (
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
+        {updatePrompt}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
           <ChromeMenu
             size={16}
