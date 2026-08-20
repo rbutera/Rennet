@@ -50,3 +50,6 @@ tmp/
 # Un-ignore it here so openspec changes track normally (no more `git add -f`).
 !openspec/
 !openspec/**
+
+# superpowers working artifacts (plans, worktrees) are not canonical docs
+docs/superpowers/

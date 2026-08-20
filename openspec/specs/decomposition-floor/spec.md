@@ -1,21 +1,21 @@
 # decomposition-floor Specification
 
 ## Purpose
-TBD - created by archiving change build-decomposition-floor. Update Purpose after archive.
+Defines the deterministic, offline decomposition that classifies every changed hunk and produces dependency-ordered chunks without a model.
 ## Requirements
 ### Requirement: The floor is deterministic, offline, and zero-model
 The decomposition floor SHALL be a pure function of a captured patchset with no network, model, clock, or filesystem access, and its output SHALL be byte-identical across two runs on the same patchset.
 
 #### Scenario: A patchset renders with no harness and no network
 - **WHEN** a real multi-file patchset is decomposed with no harness installed and no network available
-- **THEN** it produces a complete decomposition — every hunk classified, every substantive chunk within budget, a dependency DAG, and a reading order
+- **THEN** it produces a complete decomposition with every hunk classified, every substantive chunk within budget, a dependency DAG, and a reading order
 
 #### Scenario: Byte-stability across two runs
 - **WHEN** the same patchset is decomposed twice
 - **THEN** the two decompositions serialise identically
 
 ### Requirement: Mechanical classification is the admission authority for verified noise
-The floor SHALL classify every hunk as substantive or mechanical, and SHALL assign a mechanical hunk exactly one class from the closed vocabulary lockfile / generated / pure-rename / formatting-only / vendored / mode-only.
+The floor SHALL classify every hunk as substantive or mechanical. It SHALL assign each mechanical hunk one class from this closed vocabulary: `lockfile`, `generated`, `pure-rename`, `formatting-only`, `vendored`, or `mode-only`.
 
 #### Scenario: A lockfile is mechanical
 - **WHEN** a changed file is a recognised lockfile
@@ -30,7 +30,7 @@ The floor SHALL classify every hunk as substantive or mechanical, and SHALL assi
 - **THEN** it is classified substantive and routed to a substantive chunk, never an appendix
 
 ### Requirement: Chunking honours the ≤400 changed-LOC budget including oversize hunks
-The floor SHALL group substantive change `file → enclosingSymbol`, greedy-merge to a configurable changed-LOC budget defaulting to 400, and SHALL split any single hunk exceeding the budget into contiguous fragments each within it so that every substantive chunk stays within budget.
+The floor SHALL group substantive changes by file and enclosing symbol, then greedily merge them to a changed-LOC budget that defaults to 400. It SHALL split a hunk that exceeds the budget into contiguous fragments within the limit. Every substantive chunk SHALL remain within budget.
 
 #### Scenario: A 1,000-line hunk splits
 - **WHEN** a substantive hunk changes 1,000 lines against a 400-LOC budget
@@ -40,7 +40,7 @@ The floor SHALL group substantive change `file → enclosingSymbol`, greedy-merg
 - **WHEN** no symbol extractor is supplied or a grammar is unavailable
 - **THEN** the enclosing symbol degrades to the empty string and grouping falls back to file level without blocking
 
-### Requirement: Totality — every changed hunk is accounted for
+### Requirement: Every changed hunk is accounted for
 The floor SHALL place every hunk in exactly one chunk with no hunk in two chunks, and its residue SHALL be empty because the floor places everything.
 
 #### Scenario: Every hunk is placed exactly once
@@ -57,4 +57,3 @@ The floor SHALL derive dependency edges from resolvable code imports, SHALL keep
 #### Scenario: An import cycle is broken into a DAG
 - **WHEN** two changed files import each other
 - **THEN** the stored edges contain no cycle and the reading order still covers every chunk exactly once
-

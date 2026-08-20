@@ -617,6 +617,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       secretStore: gitHubSecretStore,
       refresh: (refreshToken) => refreshGitHubCredential({ fetch: publishHttp, refreshToken }),
       withLock: withAccountLock,
+      // One single-line, secret-free `[github-auth]` record per refresh observation
+      // to the daemon's stdout (captured to daemon.log) — so a field refresh
+      // failure is read off the log, not inferred. RefreshLogRecord carries no
+      // token/secret field, so nothing here can leak a credential.
+      log: (record) => {
+        const parts = [`phase=${record.phase}`];
+        if (record.githubError !== undefined) parts.push(`githubError=${record.githubError}`);
+        if (record.tokenKind !== undefined) parts.push(`tokenKind=${record.tokenKind}`);
+        console.log(`[github-auth] ${parts.join(" ")}`);
+      },
     });
 
   /** Resolve the GitHub bearer for a real egress; throws (never posts) when unavailable. */
@@ -2241,7 +2251,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
     // when auth is unavailable → the local-only list). An unknown projectId degrades
     // to an empty detail (fail-safe, mirroring the project store) rather than throwing.
-    projectDetail: async (projectId, prStates, localOnly) => {
+    projectDetail: async (projectId, prStates, localOnly, emit) => {
       const project = projectStore.list().find((entry) => entry.id === projectId);
       if (!project) {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
@@ -2262,6 +2272,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         defaultProjectDetailSourceDeps(gitForRepo(projectRoot), source ?? undefined),
         project,
         prStates,
+        emit,
       );
       return authUnavailable ? { ...detail, authUnavailable } : detail;
     },

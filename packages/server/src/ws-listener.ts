@@ -29,6 +29,7 @@ import type {
   AttentionItem,
   CommandName,
   ProjectProcessEvent,
+  ProjectProgressEvent,
   ReviewAskStreamEvent,
   SessionFrame,
 } from "@rennet/protocol";
@@ -73,7 +74,7 @@ type Dispatch = (
   name: CommandName,
   input: unknown,
   ctx?: {
-    emitProgress?(event: ProjectProcessEvent): void;
+    emitProgress?(event: ProjectProgressEvent): void;
     progressRecipientId?: string | number;
     emitAskStream?(event: ReviewAskStreamEvent): void;
     /** The authenticated device id for a projected connection (#383 M1: `device.registerPush`). */
@@ -456,7 +457,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       const commandId = inputString(effectiveInput, "commandId");
       const reviewId = inputString(effectiveInput, "reviewId");
       const emitProgress = commandId
-        ? (event: ProjectProcessEvent): void =>
+        ? (event: ProjectProgressEvent): void =>
             send(socket, {
               type: "progressEvent",
               commandId,

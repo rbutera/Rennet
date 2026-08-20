@@ -21,7 +21,7 @@ describe("mobile palette transpose is generated, never hand-edited", () => {
 describe("no palette copies outside palette.css", () => {
   const consumers = [
     "apps/marketing/src/styles/global.css",
-    "docs/src/styles/theme.css",
+    "apps/docs/src/styles/theme.css",
     "packages/app-ui/src/index.css",
     "apps/mobile/src/theme/tokens.ts",
   ] as const;
@@ -58,7 +58,7 @@ describe("no palette copies outside palette.css", () => {
   });
 
   it("marketing and docs import the shared palette", () => {
-    for (const path of ["apps/marketing/src/styles/global.css", "docs/src/styles/theme.css"]) {
+    for (const path of ["apps/marketing/src/styles/global.css", "apps/docs/src/styles/theme.css"]) {
       const source = readFileSync(root(path), "utf8");
       expect(source, `${path} must import @rennet/theme/palette.css`).toContain(
         "@rennet/theme/palette.css",

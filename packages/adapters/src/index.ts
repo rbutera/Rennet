@@ -203,9 +203,11 @@ export {
 } from "./git-range-diff";
 export {
   type GitHubAuthState,
+  type RefreshLogRecord,
   type ResolveAuthDeps,
   resolveGitHubAuth,
   type SecretStore,
+  tokenKind,
   validateGitHubToken,
 } from "./github-auth";
 export {

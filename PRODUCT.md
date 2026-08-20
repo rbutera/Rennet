@@ -8,65 +8,63 @@ web
 
 ## Users
 
-Rennet is for agentic software engineers who already use coding harnesses such as Claude Code and Codex and now face a new bottleneck: understanding, judging, and taking responsibility for the large changes those agents produce.
+Rennet is for software engineers who use coding agents and need to understand the large changes those agents produce. The primary user reviews a local repository or a GitHub pull request. They can read the code, but they do not want to reconstruct a large change file by file before they can judge it.
 
-The primary user is an individual engineer working in a local repository or reviewing a GitHub pull request. They are technically capable, short on attention, and need the machine to do the structural reading work without taking the final judgment away from them. Rennet is not for avoiding the code; it is for engineers who can understand the code but need help fitting machine-scale changes inside a human context window.
+Rennet does the structural reading work without taking the judgment away from the reviewer. The reviewer remains responsible for anything posted in their name.
 
-## Product Purpose
+## Product purpose
 
-Rennet is a local-first, MIT-licensed Electron desktop app that makes large code changes digestible. It turns a changeset into logically ordered cohorts, surfaces the decisions inside it, lets the reviewer move between overview and detail, and carries their dispositions either into a GitHub review or back to a coding agent.
+Rennet is a local-first, MIT-licensed code review application. Its local daemon captures a changeset, groups related work into cohorts, orders those cohorts for comprehension, and keeps every claim connected to source evidence. Desktop, browser, and mobile clients read the same review.
 
-Rennet exists because AI has made producing code dramatically easier without making reviewing it easier. Success means an engineer can understand and answer for an agent-generated change without reading a large diff file by file from top to bottom.
+Rennet supports two user stories.
 
-The product serves two first-class user stories:
+1. **Review your own work.** Inspect committed and working-tree changes, question the implementation, send a work order to a coding agent, review the resulting delta, push the branch, and open a pull request.
+2. **Review someone else's work.** Open a GitHub pull request, read it in comprehension order, record dispositions, edit the review preview, and post one normal GitHub review.
 
-1. **Before you submit your own work.** Review local committed and working-tree changes, understand what the agent built, catch issues, refine the implementation through a coding harness, and re-read what moved before opening the pull request.
-2. **When someone else submits work.** Open an agent-driven pull request, follow it in comprehension order, inspect and question the actual code, accumulate dispositions, and publish one normal GitHub review in the reviewer's own voice.
-
-The product is available now, free, and open source. The marketing site's primary action is **Download Rennet for macOS**. Its secondary action is to view, follow, or star the project on GitHub.
+The macOS application is the public download. The release workflow also builds an unsigned Windows installer and portable ZIP. Native mobile distribution is planned; the mobile client already speaks the daemon protocol.
 
 ## Positioning
 
 **You stopped writing the code. You still have to answer for it.**
 
-**Not for vibe coders. For agentic engineers.** The secondary line is a stance, not an insult: Rennet assumes the user can and will read code. It exists because modern agentic software development increases the demands on human attention faster than it increases the human context window.
+**Not for vibe coders. For agentic engineers.**
 
-Rennet is a review harness, not another coding agent and not an autonomous approval bot. Coding harnesses point models at a codebase so they can write; Rennet points the coding harnesses already on the user's machine at a change so the human can read and judge it.
+Rennet is a review application, not a coding agent or an autonomous approval bot. Coding agents write changes. Rennet asks installed coding agents to help the reviewer understand and refine those changes.
 
-Its distinct mechanism is **roll-up + zoom + lenses**: related changes become logical cohorts, decisions remain fully reachable, the reviewer can act at any granularity, and the reading order is optimized for comprehension rather than file order, churn, or risk. Reading is conversational as well as navigational: the reviewer can ask what changed, why it changed, and what the surrounding repository implies while keeping the answer attached to the review and its code.
+Its main interaction is roll-up, zoom, and lenses. Rennet groups related edits, preserves every underlying decision, and lets the reviewer act on the whole review, a cohort, a group, or one item. The reviewer can also ask what changed, why it changed, and what the surrounding repository implies. Answers stay attached to the review and its code.
 
-## Operating Context
+## Operating context
 
-Rennet runs as a macOS desktop application alongside coding harnesses, local Git repositories, worktrees, and GitHub. The first-run experience is the empty Projects list rather than an onboarding wizard.
+The local daemon works alongside Git repositories, worktrees, GitHub, Claude Code, and Codex. The Electron application owns the usual local daemon lifecycle and also hosts the browser client. A paired mobile client can connect to a daemon on another machine.
 
-Users add a workspace or project repository, let Rennet process its local context, then enter either their own local branches or team pull requests. Reviews move through the Spec, Sequence, Decisions, Flagged, and Noise canvases, with blast radius available as an overlay. The user accumulates dispositions, edits the resulting paper, and signs it.
+The first desktop run opens an empty Projects list. After adding a repository, the reviewer can open local changes or a GitHub pull request. Reviews use the Spec, Sequence, Decisions, Flagged, and Noise canvases. Blast radius appears as an overlay.
 
-For another person's pull request, signing produces a normal batched GitHub review. For the user's own branch, the same dispositions become a work order for a coding harness; Rennet then re-reviews what changed.
+For another person's pull request, the review preview posts as a batched GitHub review. For the reviewer's own branch, the same dispositions become a work order for a coding agent. Rennet then captures and reviews the resulting delta before it can push the branch and open the pull request.
 
-## Capabilities and Constraints
+## Capabilities and constraints
 
-- Rennet is an Electron desktop app. macOS is the supported download at launch; Windows and Linux distribution are not launch claims.
-- The product is local-first and has no Rennet backend or telemetry. Selected harnesses may send assembled context to their own providers, and Rennet must describe that fact honestly rather than claiming that nothing leaves the machine.
-- Rennet uses the user's installed Claude Code and Codex harnesses and their existing authentication. It does not require the user to create a new Rennet API key or pay a Rennet inference markup.
-- Zero-config is the north star: installed harnesses should be detected and work without API-key setup inside Rennet.
-- Both local working changes and GitHub pull requests are first-class review sources.
-- Claude and Codex can run the same finding pass independently. Their agreement is preserved, their disagreement is surfaced for human judgment, and their outputs are never averaged into false consensus. This default dual review is distinct from the optional conversational action that asks both harnesses a question and returns two labeled answers.
-- Project intelligence has two cooperating layers: a deterministic structural map of files, workspaces, symbols, references, tests, ownership, and dependency edges; and evidence-backed model knowledge that explains what the structure means. When the reference branch advances, Rennet rebuilds affected deterministic shards and refreshes the learned knowledge delta.
-- Related changes and decisions are aggressively grouped by default. Grouping is opinionated product behavior, not project configuration.
-- Decisions are never hidden behind a count limit. Users can zoom and act at the whole-review, cohort, group, partial, or individual-item level.
-- The human makes the judgment and explicitly posts human-visible review content. Rennet may freely drive coding work, write changes, run tests, push branches, and prepare pull requests.
-- `.rennet/` holds local project context and is ignored by default. Rennet does not stage or commit a user's project context.
-- Rennet is MIT licensed throughout. The product name and brand assets are separate identity assets, not generic code examples.
+- The macOS Electron application is the public download. Windows release artifacts exist but are unsigned. Native mobile distribution is planned. The browser client runs from the local daemon.
+- Rennet has no backend and collects no telemetry. Installed coding agents may send assembled context to their providers. Rennet records what it assembled and sent.
+- Rennet uses the user's installed Claude Code and Codex binaries with their existing authentication. Rennet does not ask for a separate model API key or add an inference markup.
+- Installed coding agents should work without configuration inside Rennet.
+- Local changes and GitHub pull requests are both review sources.
+- Claude and Codex can run the same finding pass independently. Rennet preserves agreement and disagreement instead of averaging their output.
+- Project intelligence combines a deterministic map of files, workspaces, symbols, references, tests, ownership, and dependencies with cited model explanations. A reference-branch update rebuilds affected map shards and refreshes the learned delta.
+- Rennet groups related changes and decisions by default. Users do not configure the grouping algorithm.
+- Rennet never hides decisions behind a count limit. Reviewers can zoom and act at useful levels of detail.
+- The reviewer explicitly posts human-visible review content. Rennet can drive coding work, edit files, run tests, push branches, and prepare pull requests.
+- `.rennet/` contains local project context and is ignored by default. Rennet does not stage or commit it.
+- Every Rennet package uses the MIT licence. The product name and brand assets remain Rennet identity assets.
 
-## Brand Commitments
+## Brand commitments
 
-The product name is **Rennet**. The name connects directly to the promise of making code digestible.
+The product name is **Rennet**. The name describes the job: making code digestible.
 
-The canonical mark is a compact cheese wheel whose right edge breaks into smaller pieces: a large body becoming something a person can digest. The authoritative identity sources and exports live in [`brand/`](brand/).
+The mark is a shallow cheese wheel whose right edge breaks into smaller pieces. Authoritative sources and exports live in [`brand/`](brand/).
 
-Product and marketing language should be direct, intelligent, and honest. Lead with the user's responsibility and the review bottleneck, not generic claims about AI productivity or making enormous pull requests pleasant. Rennet should feel like a serious tool for engineers without lapsing into enterprise procurement language, fear-based security language, or autonomous-review hype.
+Product and marketing language must be direct and specific. Lead with the reviewer's responsibility and attention limit. Do not promise generic productivity, use fear-based security language, or describe Rennet as an autonomous reviewer.
 
-The marketing narrative should establish the human context-window problem before listing mechanisms. It should show the two user stories, demonstrate that the diff can be questioned as well as read, explain installed-harness reuse and dual review, and show the living repository map as part of review quality rather than as backend plumbing.
+The marketing site should explain the human context-window problem before it lists mechanisms. It should show both user stories, show that reviewers can question a change, explain installed-agent reuse and independent review, and connect the repository map to review quality.
 
 Confirmed public claims are:
 
@@ -76,33 +74,32 @@ Confirmed public claims are:
 - Downloadable for macOS
 - Local-first
 - No Rennet backend and no telemetry
-- Works with coding harnesses already on the user's machine
-- Supports installed Claude Code and Codex harnesses
-- Conversational review over a diff or pull request
-- Independent Claude and Codex review with visible agreement and disagreement
-- Deterministic repository discovery reinforced by evidence-backed model knowledge
+- Uses installed Claude Code and Codex agents
+- Supports conversational review over a diff or pull request
+- Shows independent Claude and Codex agreement and disagreement
+- Combines deterministic repository discovery with cited model knowledge
 
-## Evidence on Hand
+## Evidence
 
-- Canonical product intent: [`product-and-vision.md`](docs/src/content/docs/using/concepts/product-and-vision.md)
-- Current delivery truth and priorities: [`delivery-order.md`](docs/src/content/docs/developing/reference/delivery-order.md)
-- Product and architecture rulings: [`contracts-and-rulings.md`](docs/src/content/docs/developing/reference/contracts-and-rulings.md)
-- Desktop packaging and installation: [`apps/desktop/PACKAGING.md`](apps/desktop/PACKAGING.md)
-- Production brand assets: [`brand/README.md`](brand/README.md)
-- Existing product UI: [`apps/desktop/`](apps/desktop/) and [`packages/app-ui/`](packages/app-ui/)
+- Product intent: [`product-and-vision.md`](docs/using/concepts/product-and-vision.md)
+- Product and architecture decisions: [`contracts-and-rulings.md`](docs/developing/decisions/contracts-and-rulings.md)
+- Repository map: [`monorepo-map.md`](docs/developing/reference/monorepo-map.md)
+- Desktop packaging: [`apps/desktop/PACKAGING.md`](apps/desktop/PACKAGING.md)
+- Brand assets: [`brand/README.md`](brand/README.md)
+- Product UI: [`apps/desktop/`](apps/desktop/) and [`packages/app-ui/`](packages/app-ui/)
 
-There are no confirmed testimonials, customer logos, usage totals, time-saved metrics, review-quality benchmarks, press quotes, or pricing comparisons. Future marketing work must not fabricate them.
+Rennet has no confirmed testimonials, customer logos, usage totals, time-saved metrics, review-quality benchmarks, press quotes, or pricing comparisons. Do not invent them.
 
-## Product Principles
+## Product principles
 
-1. **Make code digestible.** Roll up related work, establish a comprehensible reading order, and keep every decision reachable.
-2. **Let the human choose the altitude.** Overview and evidence are one continuous surface; approval and feedback work at any useful granularity.
-3. **Spend machine effort to save human attention.** The user may be terse or messy. Rennet performs the grouping, investigation, refinement, and re-review work.
-4. **Keep the agent capable.** Coding agents can write, test, and push. Restrictions that make the product harder to use are not product quality.
-5. **Tell the truth about state and provenance.** Never imply something was read, placed, verified, local, or published when it was not.
+1. **Make code digestible.** Group related work, establish a useful reading order, and keep every decision reachable.
+2. **Let the human choose the altitude.** Keep overview and evidence connected. Let the reviewer act at any useful level.
+3. **Spend machine effort to save human attention.** Rennet handles grouping, investigation, refinement, and rereview.
+4. **Keep the agent capable.** Coding agents can write, test, and push. A restriction that stops them doing the job is a product defect.
+5. **Tell the truth about state and provenance.** Never imply that Rennet read, placed, verified, kept local, or posted something when it did not.
 
-## Accessibility & Inclusion
+## Accessibility and inclusion
 
-Rennet must support efficient keyboard-driven operation, clear focus states, readable code and prose, adequate contrast, reduced-motion preferences, and interfaces that remain understandable without relying on color alone.
+Rennet supports keyboard operation, visible focus states, readable code and prose, sufficient contrast, reduced-motion preferences, and states that do not rely on color alone.
 
-The information architecture should reduce cognitive load for people reviewing complex changes under attention pressure. Progressive disclosure must preserve access to the complete review rather than hiding information permanently.
+Progressive disclosure reduces the initial reading load without making any part of the review unreachable.

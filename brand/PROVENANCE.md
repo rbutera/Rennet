@@ -1,11 +1,9 @@
 # Brand asset provenance
 
-The selected concept references are preserved under `sources/selected-mark-direction.png` and `sources/selected-wordmark-direction.png`. They are concept evidence only; no production export embeds either raster image.
+The production mark comes from `sources/selected-mark-direction.png`. `sources/trace-reference-mark.png` is the thresholded raster used for the vector trace. The production geometry lives in `sources/mark-master.svg`; the small-size geometry lives in `sources/mark-small.svg`.
 
-The production mark is traced directly from the largest isolated mark in the selected dissolving cheese-wheel concept, then compressed horizontally to 80% to improve its balance beside the wordmark and inside an app-icon tile. `trace-reference-mark.png` preserves the exact thresholded input. The small-size mark is a trace of that same artwork reduced before applying the same 80% width, which naturally removes particles that cannot survive at favicon size.
+The production wordmark comes from option 3 in `sources/selected-wordmark-direction.png`. `sources/trace-reference-wordmark.png` is its thresholded raster, and `sources/wordmark-outline.svg` contains the production paths. No font file is required at runtime.
 
-The wordmark is traced directly from the largest option 3 lettering in the selected wordmark sheet. `trace-reference-wordmark.png` preserves the exact thresholded input. It is committed as paths in `sources/wordmark-outline.svg`; no substitute font was used and no font file is required at runtime.
+The color application icon uses `sources/gradient-reference.png` behind the white vector mark. Monochrome application icons contain no generated raster artwork.
 
-The colour application icon uses the generated optical-gradient reference at `sources/gradient-reference.png`, cropped and composited deterministically with the exact vector mark in solid white. The monochrome variants contain no generated raster content.
-
-Run `python3 scripts/build-brand-assets.py` to reproduce the export pack and `manifest.json` checksums from the committed sources.
+Run `python3 scripts/build-brand-assets.py` to regenerate exports and `manifest.json` from these committed sources.

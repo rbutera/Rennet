@@ -1,11 +1,11 @@
-# live-end-to-end-review Specification
+# Live end-to-end review specification
 
 ## Purpose
-TBD - created by archiving change wire-live-end-to-end-review. Update Purpose after archive.
+Define the production composition that connects captured review state, repository context, canvases, and the orchestrator without substituting fixture data.
 ## Requirements
 ### Requirement: A production `CanvasOpsBackend` composes the whole surface over live review state
 
-A production composition SHALL implement every `CanvasOpsBackend` accessor over a live review — the canvas / diff / run / decomposition / identity / view accessors from the in-memory `Review` and active `Patchset`, and `projectMap` / `fileContext` / `novelty` from the merged adapter reader slices — spread into ONE backend. The composition SHALL NOT introduce a `core → adapters` import: the store-backed reader slices are injected at the composition root. No accessor SHALL return fabricated data; an accessor whose live source is not yet present SHALL return a distinguished honest value (an empty result, or a `stale`/`failed` freshness verdict), never a fake.
+A production composition SHALL implement every `CanvasOpsBackend` accessor over a live review. Canvas, diff, run, decomposition, identity, and view accessors SHALL read the in-memory `Review` and active `Patchset`. `projectMap`, `fileContext`, and `novelty` SHALL read the injected adapter slices. The composition root SHALL inject store-backed readers without adding a `core` import of `adapters`. An accessor without a live source SHALL return an empty result or a `stale` or `failed` freshness verdict. It SHALL NOT fabricate data.
 
 #### Scenario: every accessor is backed by live state
 
@@ -90,4 +90,3 @@ A structural test SHALL assert that the WIRED `canvasOps@2` registry handed to t
 - **WHEN** the wired registry is compared against `ORCHESTRATOR_CANVAS_OPS`
 - **THEN** every wired tool is a member of `ORCHESTRATOR_CANVAS_OPS`
 - **AND** no wired tool is an L2 disposition-writer (adding one to the wired set makes the test fail)
-

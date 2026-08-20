@@ -1,10 +1,10 @@
 # comprehension-ordering-pass Specification
 
 ## Purpose
-TBD - created by archiving change build-comprehension-ordering-pass. Update Purpose after archive.
+Defines the model-assisted reading-order pass, its provenance, validation, retry behavior, and deterministic fallback.
 ## Requirements
 ### Requirement: The ordering pass drives an agent to a validator-admitted ordering, agent-owned
-`runOrderingPass` SHALL take the admitted decomposition (its chunk set plus its baseline reading order), build the chunk manifest an agent may cite, assemble the `ordering@1` contract prompt over the chunk ids and their baseline order, drive an injected session, stamp a trustworthy `ordering` envelope around the agent's body (minting the docId and the inputDigest, never the agent), and validate it. There SHALL be no user-approval step: the ordering is produced by the agent and admitted by the validator alone. The stamped provenance route, tier, and capability snapshot SHALL reflect the executor that actually ran the turn — `agentic`/`heavy` for a Claude harness turn, `utility`/`light` with the per-call structured-output capability for a Codex utility-port turn — never a caller-side re-stamp of a default.
+`runOrderingPass` SHALL take the admitted decomposition, including its chunk set and baseline reading order. It SHALL build the citable chunk manifest, assemble the `ordering@1` prompt, drive an injected session, stamp the `ordering` envelope, and validate it. The pass SHALL mint the docId and inputDigest rather than trusting those fields from the model. The validator SHALL admit the model's ordering without a user-approval step. Provenance SHALL identify the executor: `agentic` and `heavy` for Claude, or `utility` and `light` with the per-call structured-output capability for Codex. The caller SHALL NOT replace that provenance with defaults.
 
 #### Scenario: A valid agent order is admitted and stamped agentic
 - **WHEN** the injected session emits a reading order that covers the offered chunk set with a rationale
@@ -12,7 +12,7 @@ TBD - created by archiving change build-comprehension-ordering-pass. Update Purp
 
 #### Scenario: A Codex-executed order is stamped with the port's truth
 - **WHEN** the injected turn is executed by the Codex utility port and emits a valid reading order
-- **THEN** the admitted envelope's provenance records route `utility`, tier `light`, and the capability snapshot the port reported for that call, while model, harness, effort, and resolutionTrace record the resolved seat as before
+- **THEN** the admitted envelope's provenance records route `utility`, tier `light`, the capability snapshot reported for that call, and the resolved model, harness, effort, and resolutionTrace
 
 #### Scenario: No ordering-approval command exists
 - **WHEN** the command registry is inspected
@@ -43,4 +43,3 @@ On a rejection the pass SHALL feed the machine-readable report back and retry up
 #### Scenario: The baseline is the live order on fallback
 - **WHEN** the agent order is rejected and the pass falls back
 - **THEN** `resolveLiveOrder` returns the baseline order with route `deterministic`
-

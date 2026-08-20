@@ -1,11 +1,11 @@
-# live-review-pipeline Specification
+# Live review pipeline specification
 
 ## Purpose
-TBD - created by archiving change wire-live-review-pipeline. Update Purpose after archive.
+Define how a captured patchset becomes the five live review canvases, their source diffs, and the desktop commands that read and mutate review state.
 ## Requirements
 ### Requirement: A captured changeset produces populated canvases
 
-`buildReviewCanvases` SHALL transform a captured `Patchset` into the five-angle canvas set (`Record<CanvasAngle, Canvas>`) by composing `decompose` (#7), `runDecompositionAngle` (#8), the ordering pass (#9), and `buildCanvas` (#10). The canvas state SHALL derive from the captured diff — the substrate from the decomposition, the sequence from the admitted proposal or the deterministic floor — never from fixtures.
+`buildReviewCanvases` SHALL transform a captured `Patchset` into the five-angle canvas set, typed as `Record<CanvasAngle, Canvas>`. It SHALL compose `decompose`, `runDecompositionAngle`, the ordering pass, and `buildCanvas`. The decomposition supplies the chunks. The admitted ordering proposal or deterministic floor supplies the sequence. Fixture data SHALL NOT enter this path.
 
 #### Scenario: real diff, admitted agentic proposal
 
@@ -77,7 +77,7 @@ The `review.canvases` command SHALL deliver the live five-angle canvas set to th
 
 ### Requirement: The canvas response carries a real per-element diff map
 
-`buildReviewCanvases` SHALL produce, alongside the five-angle canvas set, an `elementDiffs` map keyed by `elementKey`. Each entry SHALL carry the changed file `path` and the `diff` text sliced **verbatim** from the captured `Patchset` — never reconstructed from separated add/delete/context arrays, and never a fixture. The `review.canvases` command output SHALL deliver this map to the renderer.
+`buildReviewCanvases` SHALL produce an `elementDiffs` map keyed by `elementKey` alongside the five-angle canvas set. Each entry SHALL carry the changed file `path` and `diff` text sliced verbatim from the captured `Patchset`. It SHALL NOT reconstruct the diff from separated add, delete, and context arrays or use a fixture. The `review.canvases` command SHALL return the map to the renderer.
 
 The map SHALL be a pure function of `(canvases, decomposition, patchset)`: identical inputs SHALL yield an identical map.
 
@@ -106,4 +106,3 @@ The canvas UI SHALL render the `elementDiffs` diff for the selected element when
 
 - **WHEN** no real canvas set has loaded (the fixtures demo is on screen)
 - **THEN** zooming still renders the demo diff, unchanged
-

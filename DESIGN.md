@@ -62,106 +62,74 @@ components:
     rounded: "{rounded.surface}"
 ---
 
-# Design System: Rennet
+# Rennet design system
 
-## Overview
+## Direction
 
-**Creative North Star: "The Affineur's Bench"**
+**Creative direction: "The Affineur's Bench"**
 
-Rennet turns dense technical change into a smaller number of legible, evidence-bearing
-objects without hiding the code underneath — the way an affineur turns milk's chaos into
-something aged, warm, and worth serving. The visual system is calm, warm, and seamless:
-one continuous near-black (or near-white) ground, quiet surface steps instead of loud
-chrome, a single golden accent, and a serif voice for the judgments that matter.
+Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses warm opaque grounds, small changes in surface lightness, one gold accent, and serif type for review prose.
 
-This world supersedes the earlier "Breaking Edge" glass world (ratified 2026-08-19).
-Frosted glass, translucent chrome, the review-blue accent, and the cool neutral ramp are
-retired. Any document still describing them is historical.
-
-The system has one shared theme across every surface — desktop app, browser app, mobile,
-marketing, and the docsite. They differ in scale and density, never in world.
+Desktop, browser, mobile, marketing, and documentation use the same palette and type families. Each application can choose its own density and layout.
 
 ## Material
 
-**The window is one continuous surface.** Canvas, titlebar, and toolbar share the same
-background color. There is no glass, no vibrancy, no translucent chrome. Panels separate
-through small lightness steps (canvas → surface → raised) and whisper-quiet hairline
-borders, never through hard contrast or decorative shadow. Shadows exist only on true
-overlays (menus, dialogs, popovers) and carry a real offset and broad blur.
+Canvas, title bar, and toolbar share one background. Panels use the `canvas`, `surface`, and `raised` steps with low-contrast hairlines. Menus, dialogs, and popovers are the only elements that use the overlay shadow.
 
-Grounds are warm, never pure gray: every neutral carries a faint bias toward the golden
-accent — a whisper, not a tint you can name.
+All neutral colors have a warm cast. Do not use glass, vibrancy, translucent chrome, or decorative shadows.
 
-## Colors
+## Color
 
-Light and dark are complete compositions. Both are first-class.
+Light and dark schemes are complete designs. Use `data-scheme="light|dark"` in Rennet applications and `data-theme="light|dark"` in Starlight. Follow the operating-system preference until the user stores an override.
 
-### Dark (default)
+### Dark scheme
 
-- **Canvas** (`#0e0d0c`): warm near-black; the entire window ground, chrome included.
-- **Surface** (`#151413`): opaque reading surfaces one step above the canvas.
-- **Raised** (`#1b1a18`): the lifted card, one step above surface.
-- **Text** (`#f2ede4`) and **muted text** (`#a9a196`).
-- **Line** (`#2a2723` / white-warm alpha hairlines) for quiet structure.
+- Canvas: `#0e0d0c`
+- Surface: `#151413`
+- Raised: `#1b1a18`
+- Text: `#f2ede4`
+- Muted text: `#a9a196`
 
-### Light
+### Light scheme
 
-- **Canvas** (`#fbfaf7`): near-white with a faint warm cast.
-- **Surface** (`#ffffff`): white cards and reading surfaces.
-- **Raised** (`#f3f1ec`): the warm recessed/raised step.
-- **Text** (`#1e1b16`) and **muted text** (`#57534a`).
-- **Line** (`#e2ddd2` / warm dark alpha hairlines).
-
-Use `data-scheme="light|dark"` as the shared control vocabulary. Honor the
-operating-system preference by default, allow an explicit stored override, and resolve it
-before paint.
+- Canvas: `#fbfaf7`
+- Surface: `#ffffff`
+- Raised: `#f3f1ec`
+- Text: `#1e1b16`
+- Muted text: `#57534a`
 
 ### Semantic roles
 
-Monochrome carries the identity. Functional color explains review state, and the brand
-accent and the decision register are **one hue**:
+- **Gold** uses `#8a5d0b` for light-scheme text, `#e8b13c` for dark-scheme text, and `#e0a52e` or `#e8b13c` for fills. It marks links, selection, focus, primary actions, decisions, disagreement, and blast radius.
+- **Evidence green** uses `#41745b` in light mode and `#88bc9b` in dark mode. It marks additions, current repository state, and verified evidence.
+- **Danger red** uses `#b23b2b` in light mode and `#db7a6a` in dark mode. It marks destructive actions and errors.
 
-- **Gold** (`#8a5d0b` light text / `#e8b13c` dark, fills `#e0a52e`/`#e8b13c` with
-  near-black ink `#191307`): links, selection, focus, primary actions, review structure,
-  reconstructed decisions, disagreement, and blast radius. Decisions are the product's
-  core object; they carry the brand color. In the light scheme, gold is a *fill* hue —
-  text set in gold uses the ochre `#8a5d0b` so it meets WCAG AA on white.
-- **Evidence green** (`#41745b` / `#88bc9b`): additions, current repository state, and
-  verified evidence.
-- **Danger red** (`#b23b2b` / `#db7a6a`): destructive actions and errors only.
+Do not add a decorative interface hue. Never use color as the only statement of state.
 
-The old review blue is retired entirely. The private/local-only register remains a
-derived tint of the accent (gold), carried by the backlight glow and a gold-tinted
-surface — never its own hue. Do not introduce a decorative fourth hue. Color never
-carries a state without text or structure.
+The canonical values live in [`packages/theme/src/palette.css`](packages/theme/src/palette.css). DOM applications consume the CSS variables. The mobile application consumes the generated React Native palette.
 
 ## Typography
 
-Three voices, each with a job:
+- **Fraunces** is for brand moments, display headings, screen titles, and empty states. Use the self-hosted variable font with Georgia as the fallback.
+- **Source Serif 4** is for annotations, conversations, review prose, and post previews. Use the self-hosted variable font with Georgia as the fallback.
+- **DM Sans** is for controls, labels, inputs, navigation, and metadata. Use the self-hosted variable font with the system sans-serif stack as the fallback.
+- **Monospace** is for source code, diffs, and exact technical values.
 
-- **Display — Fraunces** (self-hosted variable, Georgia fallback): brand moments,
-  headlines, screen titles, empty states. Weight 440–600, never compressed. Warm, slightly
-  soft; this is the product's voice at large sizes.
-- **Serif — Source Serif 4** (self-hosted variable, Georgia fallback): the review's
-  spoken register. The AI's annotation dialogue beside the diff, review prose, and the
-  paper that leaves the machine read in serif at 15–17px.
-- **Sans — DM Sans** (self-hosted variable, system-ui fallback): everything operated.
-  Buttons, labels, inputs, chips, navigation, metadata. 400–500 for text, 600–700 for
-  labels and controls.
-- **Code:** the platform monospace stack, only for source code, diffs, and exact
-  technical values. Monospace is never interface texture.
+The wordmark is vector artwork. Do not recreate it with a font.
 
-The wordmark remains an exact path trace of concept lettering — identity, not a font.
+Display headings can reach `6rem` with a line height near `1`. Keep letter spacing at `-0.04em` or looser. Keep long prose lines between 45 and 75 characters where the layout permits.
 
-Display headings may grow to `6rem`, use `~1.0` line height, and never track tighter
-than `-0.04em`. Body copy stays between 45 and 75 characters where practical.
+### Desktop type scale
 
-### Desktop scale
+Desktop components use `11 / 12 / 14 / 16 / 18 / 20 / 24` px, plus `text-display` at `clamp(2.125rem, 5vw, 3.5rem)`. Source code expresses the scale in `rem` through Tailwind utilities.
 
-The desktop product renders at a comfortable, enumerated type ramp — larger than the
-previous dense ramp; crowding was a defect, not a style. It is authored in **rem**
-(px shown at the 16px root) and snaps to Tailwind's type scale — components speak
-utilities (`text-sm`, `text-lg`), never raw sizes:
+- `text-2xs`, 11px: micro labels
+- `text-xs`, 12px: metadata and counts
+- `text-sm`, 14px: controls and chrome
+- `text-base`, 16px: reading text and inputs
+- `text-lg`, 18px: body text and annotations
+- `text-xl`, 20px: section headings
+- `text-2xl`, 24px: screen titles
 
 `11 / 12 / 14 / 16 / 18 / 20 / 24` px (`text-2xs` through `text-2xl`), plus the
 front-door display expression `text-display` = `clamp(2.125rem, 5vw, 3.5rem)`.
@@ -180,85 +148,63 @@ design-ramp test enforces the ramp over the component sources.
 
 ## Layout
 
-The desktop shell has **no left navigation rail**. A single top bar carries back/forward
-history, the current location, and primary actions; the content owns the rest of the
-window. Contextual panels (conversation, manifest) dock inside the content area.
+The desktop shell has no permanent application navigation rail. The top bar carries history, location, and primary actions. Files, review angles, conversation, and manifest panels belong to the current workspace and can sit beside its main content.
 
-The marketing page reading order, shell caps (1440px, 40px gutters), and section
-intervals (88–168px) are unchanged from the prior world. Desktop may place related
-passages side by side; mobile preserves the same DOM and story order in one column.
+The marketing shell is at most 1440px wide with 40px side gutters. Section spacing ranges from 88px to 168px. Responsive layouts preserve the document order when columns collapse.
 
-### Decomposition
+### Change decomposition
 
-The signature sequence is always complete:
+Always show the complete sequence:
 
-**raw change → related changes → human decisions → one PR review, ready to post**
+**raw change -> related changes -> human decisions -> review ready to post**
 
-Represent it as a semantic ordered sequence with visible stage names and honest counts.
-Use shared evidence color, labels, and provenance to show how material moves between
-stages. Do not use the cheese-wheel mark, a logo-shaped mask, or decorative fragments as
-the transformation.
+Use visible stage names, honest counts, evidence labels, and provenance. Do not use the logo or decorative fragments as the decomposition diagram.
 
-### The wink
+### Cheese references
 
-The cheese motif is subliminal — warm golds, cream paper, aged-patience language — plus
-at most a couple of authored delight moments (an empty-state wedge, a loading line).
-Never a costume: no cheese illustrations in working chrome, no pun density.
+Keep the motif quiet. Warm gold, cream review previews, one useful empty-state illustration, or one loading detail is enough. Do not put cheese illustrations or dense wordplay in working UI.
 
-## Elevation & Depth
+## Depth and motion
 
-Flat by default, always opaque. Separation comes from surface steps and hairlines.
-True overlays (dialogs, menus, command palette) may use one ambient shadow with a real
-downward offset and broad blur. Motion is limited to purposeful state transitions and
-one authored narrative moment; it starts from visible content, respects reduced motion,
-and uses exponential ease-out.
+Normal surfaces are flat and opaque. Menus, dialogs, and the command palette may use `--rn-shadow-overlay`.
 
-## Shapes
+Motion must explain a state change. Start animated content from a visible state, use an exponential ease-out when practical, and honor `prefers-reduced-motion`.
 
-Marketing controls use 10px corners; marketing proof surfaces 10–14px. Desktop uses the
-enumerated radius scale: `4 / 6 / 8 / 12 / 16` px, with geometry exemptions `999px`
-(pills — chips and counts only, never containers) and `50%` (circles). Borders are one
-pixel, low-contrast, and structural — a hairline you feel rather than see.
+## Shape
 
-- **4px** micro — inline code chips and the smallest tokens.
-- **6px** chip — small chips and segmented controls.
-- **8px** control — the standard control, button, and icon corner.
-- **12px** surface — review surfaces, cards, and body panels.
-- **16px** window — the window shell and the handoff paper's deeper corner.
+Marketing controls use 10px corners. Marketing proof surfaces use 10px to 14px corners. Desktop uses this scale:
+
+- 4px for inline code chips and small tokens
+- 6px for chips and segmented controls
+- 8px for controls, buttons, and icons
+- 12px for review surfaces, cards, and panels
+- 16px for window-level surfaces and post previews
+- 999px for chips and count pills only
+- 50% for circles
+
+Use one-pixel, low-contrast borders for structure.
 
 ## Components
 
 ### Buttons
 
-- Primary actions are gold fills with near-black ink; they are the only saturated object
-  in a resting screen. Secondary actions are quiet outlines or text links (ochre in
-  light, gold in dark).
-- Marketing primary buttons: 56px min height, 10px radius, 24px horizontal padding.
-- Desktop controls target ~32px height with the 8px control radius; touch targets stay
-  at least 44 by 44 pixels on touch surfaces.
-- Focus uses a three-pixel gold ring. Hover lift is two pixels with a real shadow only
-  where the element already floats.
+Primary actions use a gold fill with near-black text. Secondary actions use a quiet outline or a text link. Marketing primary buttons have a minimum height of 56px, a 10px radius, and 24px horizontal padding. Desktop controls target a 32px visual height. Touch controls provide a target of at least 44 by 44 pixels.
 
-### Review and proof surfaces
+All interactive elements use a three-pixel gold focus ring. Only an element that already floats may lift on hover.
 
-- Cohorts, findings, conversations, provider results, and product frames use the 12px
-  surface radius on `surface`/`raised` steps with hairline borders — border **or**
-  shadow, never both.
-- Code is always on an opaque surface.
-- The handoff paper keeps its warm materiality: espresso sheet in dark, cream in light,
-  serif ink; it may use the 16px window radius.
+### Review surfaces
 
-### Provider marks
+Cohorts, findings, conversations, provider results, and product frames use the 12px surface radius on opaque `surface` or `raised` colors. Use a border or a shadow, not both. Code always sits on an opaque surface.
 
-Claude Code and Codex are named with their recognizable provider marks and plain-word
-labels — installed tools the user already owns, not customer logos or endorsements.
-Dual review shows two independent outputs side by side and gives disagreement its own
-explicit state.
+Post previews use the `sheet` palette. They are cream in light mode, espresso in dark mode, and set review prose in serif.
+
+### Provider identity
+
+Name Claude Code and Codex with their provider marks and plain labels. They are installed tools, not customer logos or endorsements. When both review a change, show the outputs independently and mark disagreement explicitly.
 
 ### Theme control
 
-A single 44px icon button with a visible focus state and an accessible action label. The
-icon shows the scheme the action will select. The OS preference remains the default.
+Use one 44px icon button with a visible focus state and an accessible action label. The icon shows the scheme the action will select. The operating-system preference remains the default.
 
 ### Component kit
 
@@ -287,23 +233,13 @@ colour or radius exists in the alias layer, it is a rename:
 The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme.css);
 `packages/app-ui/DESIGN.md` records the same for the desktop package.
 
-## Do's and Don'ts
+## Required design behavior
 
-### Do
-
-- Keep the window seamless: one ground color from titlebar to canvas.
-- Reserve gold for what deserves attention; a resting screen is warm neutrals.
-- Set the AI's annotation voice and review prose in serif; set controls in sans.
-- Treat both themes as authored compositions and test both.
-- Keep every review stage, user story, and important product claim present at every
-  breakpoint.
-
-### Don't
-
-- Do not reintroduce glass, vibrancy, translucent chrome, or the review-blue accent.
-- Do not use gradients, neon, or monospace as generic developer-tool identity.
-- Do not turn any page into an equal-card feature grid.
-- Do not let serif carry controls or dense data, or sans carry the annotation voice.
-- Do not claim the own-work flow already pushes or opens a pull request until the live
-  path does.
-- Do not average independent model outputs into one synthetic consensus.
+- Keep one ground color from title bar to canvas.
+- Reserve gold for selection, decisions, focus, and primary actions.
+- Use serif for annotations and review prose. Use sans serif for controls and data.
+- Test light and dark schemes.
+- Preserve the full review and all important claims at every breakpoint.
+- Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state.
+- Do not turn a page into a grid of equal feature cards.
+- Do not average independent model outputs into one consensus.

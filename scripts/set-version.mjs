@@ -25,7 +25,7 @@ const FILES = [
   "packages/types/package.json",
   "packages/ui/package.json",
   "packages/app-ui/package.json",
-  "docs/package.json",
+  "apps/docs/package.json",
 ];
 
 const version = process.argv[2];

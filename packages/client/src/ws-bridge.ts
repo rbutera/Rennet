@@ -12,7 +12,9 @@ import type {
   CommandInput,
   CommandName,
   CommandOutput,
+  ProjectDetailProgressEvent,
   ProjectProcessEvent,
+  ProjectProgressEvent,
   RennetBridge,
   ReviewAskStreamEvent,
   SessionFrame,
@@ -114,7 +116,10 @@ export class WsRennetBridge implements RennetBridge {
   #handshakeFailure: { socket: WebSocket; error: Error } | null = null;
   readonly #readyWaiters = new Set<ReadyWaiter>();
   readonly #pending = new Map<string, Pending>();
-  readonly #progressListeners = new Map<string, Set<(event: ProjectProcessEvent) => void>>();
+  // One commandId-keyed map for both progress channels: `project.process` and
+  // `project.detail` never share a commandId, so a given id only carries one
+  // member's kinds. The public methods below cast their narrower listener in.
+  readonly #progressListeners = new Map<string, Set<(event: ProjectProgressEvent) => void>>();
   readonly #askListeners = new Map<string, Set<(event: ReviewAskStreamEvent) => void>>();
   /** Daemon-wide attention listeners (#383 batch) — not keyed by review; a raise/clear fans to all. */
   readonly #attentionListeners = new Set<(event: AttentionEventFrame) => void>();
@@ -145,7 +150,22 @@ export class WsRennetBridge implements RennetBridge {
   }
 
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void {
-    return subscribe(this.#progressListeners, commandId, listener);
+    return subscribe(
+      this.#progressListeners,
+      commandId,
+      listener as (event: ProjectProgressEvent) => void,
+    );
+  }
+
+  onProjectDetailProgress(
+    commandId: string,
+    listener: (event: ProjectDetailProgressEvent) => void,
+  ): () => void {
+    return subscribe(
+      this.#progressListeners,
+      commandId,
+      listener as (event: ProjectProgressEvent) => void,
+    );
   }
 
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void {

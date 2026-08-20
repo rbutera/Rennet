@@ -1,11 +1,11 @@
-# narration-prompt-grounding Specification
+# Narration prompt grounding specification
 
 ## Purpose
-TBD - created by archiving change isolated-fixes. Update Purpose after archive.
+Define the bounded code evidence supplied to roll-up narration so generated summaries remain tied to captured decomposition chunks.
 ## Requirements
 ### Requirement: Narration payloads carry bounded decomposition evidence
 
-The roll-up narration payload SHALL include the existing node structure and a chunk-evidence entry for every decomposition chunk. Each entry SHALL identify the chunk and its files and SHALL carry real added, deleted, or context line content from the hunks assigned to that chunk.
+The roll-up narration payload SHALL include the node structure and one evidence entry for every decomposition chunk. Each entry SHALL identify the chunk and its files and SHALL carry added, deleted, or context line content from the assigned hunks.
 
 The encoded sum of chunk excerpts SHALL NOT exceed `NARRATION_CHUNK_EXCERPT_MAX_BYTES`. Excerpt allocation and UTF-8 truncation SHALL be deterministic, SHALL expose whether each chunk was truncated, and SHALL reserve a share for every chunk rather than allowing earlier chunks to consume the entire allowance.
 
@@ -25,5 +25,5 @@ The encoded sum of chunk excerpts SHALL NOT exceed `NARRATION_CHUNK_EXCERPT_MAX_
 #### Scenario: grounding does not become an admission gate
 
 - **WHEN** the model emits a structurally valid account without a citation
-- **THEN** the existing narration validation and node-coverage rules determine admission unchanged
+- **THEN** narration validation and node-coverage rules determine admission
 - **AND** the account is not rejected merely because it has no citation

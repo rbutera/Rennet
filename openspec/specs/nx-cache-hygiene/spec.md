@@ -1,7 +1,7 @@
-# nx-cache-hygiene Specification
+# Nx cache hygiene specification
 
 ## Purpose
-TBD - created by archiving change harden-nx-cache-hygiene. Update Purpose after archive.
+Define the Nx inputs, outputs, and task ownership that make cached repository checks both correct and repeatable.
 ## Requirements
 ### Requirement: No cacheable gate target returns a stale pass
 Every cacheable gate target (`format`, `architecture`, `licenses`, `lint`, `typecheck`, `test`, `build`) SHALL declare Nx `inputs` that include every file whose content determines the target's verdict, so that a change to any such file invalidates the cache. A target MUST NOT cache-hit and report success on a tree in which a file it inspects now fails.
@@ -42,4 +42,3 @@ Every command routinely needed for development or the gate SHALL be exposed as a
 #### Scenario: CLAUDE.md is a tracked symlink to AGENTS.md
 - **WHEN** `git ls-files -s CLAUDE.md` is inspected
 - **THEN** it reports mode `120000` and its content resolves to `AGENTS.md`
-

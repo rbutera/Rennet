@@ -1,0 +1,39 @@
+---
+title: Make code digestible
+description: Documentation for using and developing the local-first Rennet review harness.
+template: splash
+hero:
+  tagline: A local-first code review harness. Read the diff, run the review through the coding tools you already have installed, and post it in your own name.
+  actions:
+    - text: Using Rennet
+      link: /using/
+      icon: right-arrow
+      variant: primary
+    - text: Developing Rennet
+      link: /developing/
+      icon: right-arrow
+      variant: secondary
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="Using Rennet" icon="open-book">
+    Run a review. Start with [getting started](/using/guides/getting-started/),
+    then follow the [GitHub pull request flow](/using/guides/reviewing-a-github-pr/).
+  </Card>
+  <Card title="Developing Rennet" icon="setting">
+    Build Rennet. Start with the [architecture
+    overview](/developing/concepts/architecture-overview/), then follow the
+    subsystem you are changing.
+  </Card>
+  <Card title="One loop, two destinations" icon="puzzle">
+    Team changes become normal GitHub reviews. Your own branch becomes a coding
+    agent handoff and a focused re-review of just what changed.
+  </Card>
+  <Card title="Repository map" icon="rocket">
+    Find every application and package in the [monorepo
+    map](/developing/reference/monorepo-map/), then follow its architecture and
+    dependency links.
+  </Card>
+</CardGrid>

@@ -1,62 +1,45 @@
-# Rennet — ubiquitous language
+# Rennet ubiquitous language
 
-A glossary only: the canonical meaning of terms the product and codebase share.
-No implementation detail lives here; decisions go to `docs/` and ADRs.
+This file defines the terms shared by the product, documentation, and code. It contains no implementation guidance or architecture decisions.
+
+## Documentation
+
+- **Documentation library**: the canonical current and planned Rennet documentation, readable on GitHub and rendered by the docs app.
+  _Avoid_: Docsite, docs source
+- **Docs app**: the application that renders the documentation library at `docs.rennet.dev`.
+  _Avoid_: Documentation, docs library
+- **Project authority**: a current document with final say over one named part of the product or engineering model.
+  _Avoid_: Source of truth
+- **Decision record**: a narrow architectural choice and the reason it applies.
+  _Avoid_: Ruling, spec
+- **Promoted spec**: an accepted behavioral contract for one Rennet capability.
+  _Avoid_: Plan, change
+- **Planned page**: documentation for accepted behavior that is not live on `main` and cites its active tracking source.
+  _Avoid_: Historical page, roadmap
 
 ## GitHub account
 
-- **Device sign-in** — the one-time GitHub OAuth device flow: Rennet shows a
-  short user code, the user enters it at github.com/login/device, GitHub mints
-  a token scoped to `repo` and `workflow`. Rennet's only first-party GitHub
-  auth; there is no gh-CLI dependency and no client secret.
-- **Side door** — pasting a personal access token in Settings instead of the
-  device sign-in. Feeds the same token store; validated before it is kept.
-- **Token store** — the daemon's owner-only file holding the ONE GitHub
-  credential (access token, plus the rotating refresh half when the app mints
-  expiring tokens), whichever door minted it. `null` is disconnect. The token
-  never reaches the renderer.
-- **Connect card** — the skippable first-run affordance offering the device
-  sign-in. A card, not a wall: working-tree review needs no GitHub, and any
-  GitHub-needing surface asks again lazily at its point of need.
-- **Not-connected / token-invalid / insufficient-scope** — the three distinct
-  renderer-safe failure states of GitHub auth, each with its own copy. Never
-  collapsed into one "GitHub unavailable".
+- **Device sign-in**: the GitHub OAuth flow in which Rennet shows a short code and the user enters it on GitHub.
+- **Side door**: the Settings action that accepts a personal access token instead of device sign-in.
+- **Token store**: Rennet's local record of the connected GitHub credential.
+- **Connect card**: the optional first-run control for starting device sign-in.
+- **Not connected**: no GitHub credential is available.
+- **Token invalid**: GitHub rejected the available credential.
+- **Insufficient scope**: the credential is valid but lacks a permission required by the requested GitHub action.
+- **GitHub egress**: the daemon's bounded path for GitHub requests, including sign-in, pull-request reads, and release checks. A network failure remains distinct from an authentication failure.
 
 ## Reviewing pull requests
 
-- **Retrospective review** — a read-only review of an already-merged (or any)
-  pull request: same engine, same frozen diff, but nothing can ever be posted
-  back. The mode for reading history rather than reviewing live work.
-- **Managed clone** — a repository clone Rennet made for itself (blobless, full
-  history) because no matching local clone was known when a PR was opened.
-  Lives in Rennet's own data directory; the user's own clone always wins when
-  one matches.
-- **PR worktree** — the detached checkout at the exact reviewed commit that
-  every PR review opened from a clone gets: an executable copy of the change,
-  retrospective included. Replaced when the PR's head moves.
-- **Setup file** — `.rennet/setup`: one shell command per line, run
-  automatically in a fresh PR worktree to make it runnable (install deps,
-  bootstrap). Failure is honest status on the review, never a block.
+- **Smart list**: a project's unified list of local working branches and GitHub pull requests. Local rows appear before GitHub loading finishes, and pull-request progress is reported per repository.
+- **Retrospective review**: a review of a closed or merged pull request. It can inspect the captured change but cannot post.
+- **Managed clone**: a repository clone that Rennet owns because it could not use a matching local clone.
+- **PR worktree**: a checkout of the exact pull-request commit under review.
+- **Setup file**: `.rennet/setup`, a list of shell commands Rennet runs when preparing a PR worktree.
 
 ## Desktop presence
 
-- **Logo menu** — the top-left Rennet mark as a button: it opens an anchored
-  panel of app-level destinations (Settings, Back to projects, Documentation)
-  plus, when an update is staged, a highlighted restart row and the version at
-  its foot. The window's one always-present menu, since the native menu bar
-  carries no Rennet commands of its own.
-
-- **Owned daemon** — the local review daemon this app is responsible for: the
-  one claimed by the discovery file in the app's own data directory, regardless
-  of who spawned it (the app or the CLI). The only daemon the app's complete
-  exit is allowed to stop.
-- **Attached daemon** — a daemon the app is merely a client of, running
-  somewhere the app does not own (e.g. another machine). The app never stops
-  it; that daemon belongs to its own host.
-- **Tray-resident** — the state of the desktop shell when it has no open window
-  but is still present and reachable from the tray (macOS menu bar, Windows
-  tray), daemon and streams untouched. Closing the last window enters it;
-  quitting completely is the only way out.
-- **Update-ready** — an update has been downloaded and staged, ready to apply
-  on restart. A single state surfaced in two places at once: the in-app badge
-  and the tray (its icon dot and restart line).
+- **Logo menu**: the menu opened from the top-left Rennet mark. It contains application destinations, version information, and the restart action when an update is ready.
+- **Owned daemon**: the local daemon whose lifecycle belongs to this desktop application.
+- **Attached daemon**: a daemon that the application uses but does not own.
+- **Tray-resident**: the desktop application has no open window but remains available from the system tray with its daemon and streams intact.
+- **Update-ready**: an update has downloaded and will apply when the user chooses the restart action.

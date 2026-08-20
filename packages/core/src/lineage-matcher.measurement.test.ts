@@ -6,7 +6,7 @@ import { LINEAGE_FIXTURES } from "./lineage-matcher-fixtures";
 
 // The spike measurement, run as a reddening guard. The zero-wrong-carries
 // invariant and the move-exclusion evidence are the load-bearing claims the
-// lineage doc (`docs/src/content/docs/developing/concepts/delta-rereview-and-lineage.md`)
+// lineage doc (`docs/developing/concepts/delta-rereview-and-lineage.md`)
 // rests on — if the matcher
 // regresses on the corpus, this fails rather than the doc going stale on a safety
 // number. The corpus INCLUDES the adversarial cases that disproved `move`.
@@ -75,10 +75,7 @@ describe("lineage matcher measurement", () => {
     // the measurement drifting from them) reddens — the anti-drift check that used
     // to compare generated output to another hard-coded string.
     const docPath = fileURLToPath(
-      new URL(
-        "../../../docs/src/content/docs/developing/concepts/delta-rereview-and-lineage.md",
-        import.meta.url,
-      ),
+      new URL("../../../docs/developing/concepts/delta-rereview-and-lineage.md", import.meta.url),
     );
     const doc = readFileSync(docPath, "utf8");
     expect(doc).toContain(renderMeasurementTables(report));

@@ -1,7 +1,7 @@
 # desktop-review-surface Specification
 
 ## Purpose
-TBD - created by archiving change build-local-review-mvp. Update Purpose after archive.
+Defines the desktop review workspace, persisted review recovery, honest capture state, invalidation, and durable navigation.
 ## Requirements
 ### Requirement: Renderer authority is restricted
 The system SHALL run the renderer with context isolation and sandboxing enabled, Node integration disabled, a strict content security policy, exact-origin sender validation, and a preload API containing only the typed command invocation surface.
@@ -15,7 +15,7 @@ The system SHALL run the renderer with context isolation and sandboxing enabled,
 - **THEN** the dispatcher rejects it before domain or adapter code runs
 
 ### Requirement: User can start and resume a local review
-The system SHALL let the user choose a repository, capture a review, and resume the latest persisted review after restart. It SHALL also reopen any persisted review by id without its original worktree or PR context: the persisted review (files, patches, read states, dispositions, delta account, conversation threads) renders as persisted, and when the original repository root no longer exists the surface SHALL show a plain status stating that, skip the working-tree freshness watcher for that review, and let repo-dependent live surfaces report their existing honest unavailable states. Reopening SHALL never require confirmation and SHALL never block on missing context.
+The system SHALL let the user choose a repository, capture a review, and resume the latest persisted review after restart. It SHALL also reopen a persisted review by id without its original worktree or PR context. Files, patches, read states, dispositions, the delta account, and conversation threads SHALL render from persisted data. If the repository root no longer exists, the workspace SHALL state that plainly and skip its freshness watcher. Actions that need the repository SHALL report that they are unavailable. Reopening SHALL require no confirmation and SHALL not block on missing context.
 
 #### Scenario: First launch has no review
 - **WHEN** no persisted review exists
@@ -53,10 +53,10 @@ The system SHALL retain the displayed patchset when repository recapture differs
 
 #### Scenario: User explicitly regenerates
 - **WHEN** the user activates regenerate after invalidation
-- **THEN** a new immutable patchset becomes active and the prior patchset remains persisted in history
+- **THEN** a new immutable patchset becomes active and the prior patchset remains available for comparison
 
 ### Requirement: Navigation history survives an app restart
-The system SHALL persist the navigation surface stack and forward stack as plain local UI state and restore them on the next launch, so the app reopens where the user left off. Restoring SHALL rehydrate each surface's content when the user lands on it (loading a review by id, or a project's detail); an entry whose content can no longer load SHALL be discarded from both the active and forward route with a plain status, flooring to the nearest ancestor that restores — the Projects root always restores. Persisted navigation SHALL be bounded to 100 entries per stack half and SHALL accept only a rooted legal route whose review-family descendants all carry the same review id. Unreadable, older, or semantically invalid state SHALL degrade to the pre-existing recents-only behavior without any migration step or prompt, and a restored surface SHALL never render another surface's content under its crumb.
+The system SHALL persist the back and forward navigation stacks as local UI state and restore them on launch. It SHALL load a review or project when the user lands on that entry. If an entry cannot load, the system SHALL discard it from the active and forward routes, show a plain status, and land on the nearest restorable ancestor. The Projects root SHALL always restore. Each stack half SHALL contain at most 100 entries. A valid route SHALL start at the root, and all review descendants SHALL use the same review id. Unreadable or invalid state SHALL fall back to recents without a migration prompt. A restored route SHALL never render another route's content under its breadcrumb.
 
 #### Scenario: Restart restores the stack tip
 - **WHEN** the app restarts after the user left off inside a review reached from a project
@@ -66,7 +66,6 @@ The system SHALL persist the navigation surface stack and forward stack as plain
 - **WHEN** the restored stack's tip references a review or project that can no longer be loaded
 - **THEN** that entry is dropped with a plain status naming what could not be reopened, and the app lands on the nearest restorable ancestor
 
-#### Scenario: Older or corrupt persisted navigation state
-- **WHEN** the persisted navigation blob is unreadable or predates stack persistence
-- **THEN** the app starts with its existing default navigation (recents preserved where readable) and no migration prompt or error ceremony
-
+#### Scenario: Invalid persisted navigation state
+- **WHEN** the persisted navigation blob is unreadable or contains no stack
+- **THEN** the app starts with default navigation, preserves readable recents, and shows no migration prompt or error ceremony

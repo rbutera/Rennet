@@ -42,24 +42,13 @@ stops at the first package boundary (`packages/app-ui/package.json`); the root
 desktop ramp lives where the lint can actually read it, and the root `DESIGN.md`
 documents the same ramp in prose for humans.
 
-The full design system — colour, semantics, material, components, do's and
-don'ts — is the root [`DESIGN.md`](../../DESIGN.md). This file records only the
-things the desktop material scales differently: the **type ramp** and the
-**radius scale**. The design detector checks `font-size` longhand and
-`border-radius`; the UI package's design-ramp test enforces the ramp over the
-component sources themselves — it scans every `.ts`/`.tsx` for arbitrary-value
-escapes (`text-[…]`, `rounded-[…]`, arbitrary colors, inline `fontSize`) and
-checks that the entry stylesheet (`src/index.css`) sizes type only through ramp
-variables, with the ramp tokens themselves defined in
-[`packages/theme/src/theme.css`](../theme/src/theme.css).
+The root [`DESIGN.md`](../../DESIGN.md) defines color, material, typography, layout, and component behavior for every Rennet application. This package file contains the desktop scales that the detector and tests read.
+
+The design-ramp test scans `.ts` and `.tsx` files for arbitrary text sizes, radii, colors, and inline `fontSize` values. It also checks that [`src/index.css`](src/index.css) uses scale variables from [`packages/theme/src/theme.css`](../theme/src/theme.css).
 
 ## Type ramp
 
-`11 / 12 / 14 / 16 / 18 / 20 / 24` px, plus the front-door display expression
-`clamp(34px, 5vw, 56px)`. This ramp replaced the dense `10–22` ramp in the
-2026-08-19 overhaul: crowding was a defect, not a style. It is **authored in rem**
-(the px values are the 16px-root equivalents) and deliberately snaps to Tailwind's
-type scale, so components speak utilities, never raw sizes:
+Use `11 / 12 / 14 / 16 / 18 / 20 / 24` px plus the display expression `clamp(34px, 5vw, 56px)`. Source code expresses the scale in `rem`; the pixel values below assume a 16px root. Components use Tailwind utilities instead of raw sizes.
 
 | px | rem | utility | role | used for |
 |----|-----|---------|------|----------|
@@ -70,16 +59,14 @@ type scale, so components speak utilities, never raw sizes:
 | 18 | 1.125 | `text-lg` | body | comfortable body and the annotation serif |
 | 20 | 1.25 | `text-xl` | section | screen and section headings |
 | 24 | 1.5 | `text-2xl` | title | the largest in-app screen title |
-| `clamp(34–56)` | — | `text-display` | display | the front-door display headline only |
+| `clamp(34px, 5vw, 56px)` | responsive | `text-display` | display | the main display headline only |
 
 Arbitrary font sizes (`text-[…]`, raw `font-size`) are off-ramp; the package's
 design-ramp test forbids them in `packages/app-ui` sources.
 
 ## Radius scale
 
-`4 / 6 / 8 / 12 / 16` px, plus two geometry exemptions that are shape, not scale:
-`999px` (the pill — chips and counts only; doctrine forbids pill *containers*) and
-`50%` (circles).
+Use `4 / 6 / 8 / 12 / 16` px. Pills and circles have separate geometry values: `999px` for chips and counts, and `50%` for circles.
 
 | px | role | used for |
 |----|------|----------|
@@ -87,7 +74,7 @@ design-ramp test forbids them in `packages/app-ui` sources.
 | 6 | chip | small chips and segmented controls |
 | 8 | control | the standard control / button / icon corner |
 | 12 | surface | review surfaces, cards, and body panels |
-| 16 | window | the window shell and the handoff paper's deeper corner |
+| 16 | window | window-level surfaces and post previews |
 | `999px` | pill | chip and count geometry only |
 | `50%` | circle | circular marks and dots |
 

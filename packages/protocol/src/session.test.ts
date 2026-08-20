@@ -93,6 +93,17 @@ describe("session frames", () => {
     expect(roundTripped).toEqual(frame);
   });
 
+  // The progress frame carries BOTH channels' event shapes: a project.detail
+  // repo-prs event must survive the parser, not be dropped as unparseable.
+  it("accepts a project.detail progress event in a progressEvent frame", () => {
+    const frame = {
+      type: "progressEvent",
+      commandId: "detail-cmd",
+      event: { kind: "repo-prs", repo: "acme/widget", index: 1, total: 3, count: 2 },
+    } as const;
+    expect(parseSessionFrame(JSON.parse(JSON.stringify(frame)))).toEqual(frame);
+  });
+
   // 2.2 — tolerance is a property of the NON-strict schema. Red-proof: a `.strict()`
   // clone of the same frame schema MUST reject the extra field (prediction named
   // before the assertion runs); the real tolerant schema accepts and strips it.

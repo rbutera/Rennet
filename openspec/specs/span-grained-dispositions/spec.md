@@ -1,10 +1,13 @@
-# span-grained-dispositions Specification
+# span-grained-dispositions specification
 
 ## Purpose
-TBD - created by archiving change build-span-grained-dispositions. Update Purpose after archive.
+
+Dispositions can target a side-qualified file span, survive unchanged recaptures, use a model judgment when code moves, and map to the corresponding GitHub review thread.
+
 ## Requirements
+
 ### Requirement: A disposition can be anchored at a side-qualified file-line span, additively
-`DispositionAnchor` SHALL support an OPTIONAL span anchor — a 1-based file-line range (`span`), a diff side (`side` ∈ additions/deletions/context), and a byte digest of the span's side-text at authoring time (`spanDigest`) — present together or all absent. An anchor with none present SHALL remain a valid path-grained disposition (backward compatible). The anchor SHALL be registrar-independent: it addresses file lines and a side directly, never a CodeView occurrence ordinal (issue #84 is not deepened).
+`DispositionAnchor` SHALL support an optional span anchor with a 1-based file-line range, a diff side from `additions`, `deletions`, or `context`, and a byte digest of the span's side text at authoring time. These fields SHALL appear together or all be absent. An anchor without them SHALL remain a valid path-grained disposition. The anchor SHALL address file lines and a side directly, never a CodeView occurrence ordinal.
 
 #### Scenario: A path-grained anchor and a full span anchor both validate; a partial span anchor is rejected
 - **WHEN** `{path, contentDigest}`, then `{path, contentDigest, span, side, spanDigest}`, then `{path, contentDigest, span}` (no side/digest) are validated
@@ -32,16 +35,15 @@ Above the byte-identical floor, dispositions the floor dropped SHALL be offered 
 - **THEN** the first is re-attached at its re-anchor and the second is dropped, leaving it orphaned
 
 ### Requirement: The relevance judge is a routed, budget-gated council job
-The disposition-relevance-judge SHALL be a model-facing job in the Model Council catalogue, resolvable through `resolveAssignment` under every availability scenario, and subject to the live budget gate that covers every routed council invocation. It SHALL be a bounded-inference light-tier job (handed the prior disposition and the successor patch, never fetching code it was not given), assigned a medium-effort model by default.
+The `disposition-relevance-judge` SHALL be a model-backed job in the Model Council catalogue. `resolveAssignment` SHALL resolve it for every supported provider availability, and the shared invocation budget SHALL cover its call. The job SHALL receive only the prior disposition and successor patch. It SHALL use the light tier with medium effort by default.
 
 #### Scenario: The council resolves the relevance judge in every scenario
 - **WHEN** the assignment tables are checked for the disposition-relevance-judge under both-providers, Claude-only, and Codex-only
 - **THEN** each scenario resolves it to a defined (model, effort) default
 
 ### Requirement: A disposition maps to the GitHub review-thread publish payload
-A pure mapping SHALL convert a disposition to a publish thread carrying the file path, disposition type, and body, plus — for a span disposition — the end file line, the start line for a multi-line span, and the side (deletions → LEFT / old file; additions and context → RIGHT / new file). A path-grained disposition SHALL map to a file-level payload with no line or side. This payload is the single line/side contract the publish sheet (#22) and GitHub publish (#21) consume.
+A pure mapping SHALL convert a disposition to a publish thread with the file path, disposition type, and body. A span disposition SHALL also carry the end line, the start line for a multi-line span, and the diff side. Deletions map to `LEFT`; additions and context map to `RIGHT`. A path-grained disposition SHALL map to a file-level payload with no line or side. The preview and GitHub post SHALL use this same mapping.
 
 #### Scenario: Span dispositions carry line and side; a path disposition carries neither
 - **WHEN** an additions span, a deletions span, a multi-line span, and a path-grained disposition are mapped to publish threads
 - **THEN** the additions thread is RIGHT with the end line, the deletions thread is LEFT, the multi-line thread carries both start and end lines, and the path thread carries no line or side
-

@@ -18,7 +18,7 @@
 import { realpathSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { escapePath } from "@rennet/core";
-import type { CommandName, ProjectProcessEvent, RepoReference } from "@rennet/protocol";
+import type { CommandName, ProjectProgressEvent, RepoReference } from "@rennet/protocol";
 
 /** A repository the server may name outbound / accept inbound, in both path forms + its key. */
 interface RootEntry {
@@ -326,9 +326,9 @@ export function projectCommandOutput(
 
 /** Project a progress event: the processed-repo summary's `path`, and scrub note/detail. */
 export function projectProgressEvent(
-  event: ProjectProcessEvent,
+  event: ProjectProgressEvent,
   ctx: ProjectionContext,
-): ProjectProcessEvent {
+): ProjectProgressEvent {
   return scrubProjectedValue(
     (() => {
       if (event.kind === "repo-done")
@@ -343,10 +343,12 @@ export function projectProgressEvent(
             projectSummary(s as unknown as Record<string, unknown>, ctx),
           ),
         };
+      // project.detail's prs-start / repo-prs carry a forge identity, not a host
+      // path — no projection needed; scrubbing below is a no-op on them.
       return event;
     })(),
     ctx,
-  ) as ProjectProcessEvent;
+  ) as ProjectProgressEvent;
 }
 
 // ── Inbound resolution (repo references → host paths) ─────────────────────────

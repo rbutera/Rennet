@@ -1,8 +1,14 @@
-import { type Connection, ConnectionHost, type ConnectionTarget } from "@rennet/app-ui";
+import {
+  type Connection,
+  ConnectionHost,
+  type ConnectionTarget,
+  type DaemonResolution,
+} from "@rennet/app-ui";
 import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
 import type { RennetBridge } from "@rennet/protocol";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { resolveDaemonTarget as resolveWslDaemonTarget } from "./wsl-connect";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Renderer root is missing");
@@ -54,6 +60,7 @@ function composeBridge(
   return {
     invoke,
     onProgress: supervisor.onProgress.bind(supervisor),
+    onProjectDetailProgress: supervisor.onProjectDetailProgress.bind(supervisor),
     onAskStream: supervisor.onAskStream.bind(supervisor),
     platform: preload.platform,
     version: preload.version,
@@ -71,6 +78,12 @@ const DEFAULT_TARGET: ConnectionTarget = {
   host: "127.0.0.1",
   port: preload.wsPort,
 };
+
+// WSL connect flow (shell side): pick a WSL directory → resolve+attach that distro's in-distro
+// daemon → the remounted app captures the repo there. The decision lives in the import-safe
+// `./wsl-connect` module (unit-tested); here we just bind it to the preload's methods.
+const resolveDaemonTarget = (path: string): Promise<DaemonResolution> =>
+  resolveWslDaemonTarget(path, preload);
 
 function createConnection(target: ConnectionTarget): Connection {
   const isLocal = target.id === DEFAULT_TARGET.id;
@@ -108,6 +121,10 @@ function createConnection(target: ConnectionTarget): Connection {
 
 createRoot(root).render(
   <StrictMode>
-    <ConnectionHost createConnection={createConnection} defaultTarget={DEFAULT_TARGET} />
+    <ConnectionHost
+      createConnection={createConnection}
+      defaultTarget={DEFAULT_TARGET}
+      resolveDaemonTarget={resolveDaemonTarget}
+    />
   </StrictMode>,
 );

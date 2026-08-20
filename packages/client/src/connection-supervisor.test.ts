@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 import type {
   AttentionEventFrame,
+  ProjectDetailProgressEvent,
   ProjectProcessEvent,
   ReviewAskStreamEvent,
 } from "@rennet/protocol";
@@ -54,6 +55,16 @@ class FakeBridge implements SupervisedBridge {
   }
   onProgress(commandId: string, listener: (e: ProjectProcessEvent) => void): () => void {
     return add(this.progressListeners, commandId, listener);
+  }
+  readonly detailProgressListeners = new Map<
+    string,
+    Set<(e: ProjectDetailProgressEvent) => void>
+  >();
+  onProjectDetailProgress(
+    commandId: string,
+    listener: (e: ProjectDetailProgressEvent) => void,
+  ): () => void {
+    return add(this.detailProgressListeners, commandId, listener);
   }
   onAttention(listener: (e: AttentionEventFrame) => void): () => void {
     this.attentionListeners.add(listener);

@@ -1,71 +1,49 @@
-# publish-safety-gate Specification
+# publish-safety-gate specification
 
 ## Purpose
-TBD - created by archiving change build-publish-safety-gate. Update Purpose after archive.
+
+The publish preview shows the exact outbound review or pull request and posts it through one accessible action. Incomplete-ingestion details remain visible, but they never block or delay the post.
+
 ## Requirements
-### Requirement: A completed sign emits exactly the previewed bytes
-When the publish sheet completes a sign, it SHALL invoke its sign callback with a payload that is BYTE-EQUAL to `stagedPayload(batch)` — the same bytes it previews — never a transform of them. This SHALL be verified by observing the callback argument in a mounted DOM, not by an SSR presence check.
 
-#### Scenario: A sufficient hold emits the previewed bytes verbatim
-- **WHEN** the sheet is mounted and a hold meeting `holdToSignMs` is completed
-- **THEN** the sign callback is called exactly once with a string byte-equal to `stagedPayload(batch)`
+### Requirement: Posting emits exactly the previewed bytes
 
-#### Scenario: The emit observation can fail
-- **WHEN** the emitted payload is altered to differ from the preview by any byte
-- **THEN** the emit-fidelity test fails
+The preview SHALL show the exact outbound payload. Activating its post control SHALL send that payload without another confirmation, timed hold, acknowledgement, or consent step.
 
-### Requirement: A hold below the budget never signs
-The publish sheet SHALL NOT invoke its sign callback for a pointer hold whose elapsed duration is below `holdToSignMs`. A hold meeting or exceeding `holdToSignMs` (floor 0 permitting an immediate sign) SHALL invoke it. This wiring SHALL be verified at the mounted component boundary, not only in the pure `resolveSign` predicate.
+#### Scenario: Post sends the previewed payload
 
-#### Scenario: Too-short hold does not sign
-- **WHEN** the sheet is mounted and a hold shorter than `holdToSignMs` is released
-- **THEN** the sign callback is not called
+- **WHEN** the user activates the post control from a GitHub-backed review preview
+- **THEN** the outbound payload is byte-equal to the payload shown in the preview
 
-#### Scenario: Sufficient hold signs
-- **WHEN** a hold meeting `holdToSignMs` is released
-- **THEN** the sign callback is called
+#### Scenario: Keyboard activation posts
 
-### Requirement: A keyboard user can complete the publish act deliberately
-The publish sheet SHALL let a keyboard/AT user complete the publish act via an explicit Enter or Space activation of the focused sign control, at the default non-zero hold budget, without weakening the no-passive-approval property (nothing signs without an intentional key activation of the focused control). The keyboard sign SHALL emit exactly the previewed bytes and SHALL be subject to the same degradation-ledger gate as the pointer path.
+- **WHEN** the focused post control is activated with Enter or Space
+- **THEN** the same post action runs with no pointer-only timing requirement
 
-#### Scenario: Enter on the focused control signs with the previewed bytes
-- **WHEN** the sign control is focused and Enter is pressed under the default non-zero hold
-- **THEN** the sign callback is called with a payload byte-equal to `stagedPayload(batch)`
+### Requirement: Posting clears the staged draft
 
-#### Scenario: Keyboard sign respects the ledger gate
-- **WHEN** the ledger carries an unacknowledged entry and Enter is pressed on the focused sign control
-- **THEN** the sign callback is not called
+A successful post SHALL clear the staged draft and close the preview. A failed post SHALL keep the draft and show the failure.
 
-### Requirement: Signing clears the staged paper at the app level
-When a sign completes in `RennetApp`, the staged set SHALL be cleared to empty and the publish sheet SHALL close, demonstrating the dispose==staged journey ending. This SHALL be verified by mounting `RennetApp` and observing the staged count return to zero, not by exercising a presentational subcomponent alone.
+#### Scenario: Post succeeds
 
-#### Scenario: Signing empties the destination
-- **WHEN** `RennetApp` is mounted, a disposition is staged, the sheet is opened, and a sign is completed
-- **THEN** the destination's staged count returns to zero and the sheet is closed
+- **WHEN** the outbound post succeeds
+- **THEN** the staged draft is empty and the preview closes
 
-### Requirement: A shell sign honestly discloses that nothing was published
-While the publish pipeline (#21) is unbuilt, the publish sheet SHALL carry a persistent, aria-legible notice that signing in the shell clears the staged paper and publishes nothing, so a shell sign can never read as a real publish under the paper/glass doctrine.
+#### Scenario: Post fails
 
-#### Scenario: The shell honesty notice is present
-- **WHEN** the publish sheet renders
-- **THEN** a notice stating that the shell publishes nothing (real publishing lands in #21) is present and legible to assistive technology
+- **WHEN** the outbound post fails
+- **THEN** the staged draft remains available and the preview reports the failure
 
-### Requirement: The publish sheet discloses blocked ingestion before signing
+### Requirement: The preview discloses incomplete ingestion without gating post
 
-The publish sheet SHALL display the review's incomplete-ingestion blocking states (R18: truncated, binary, submodule) before the sign control whenever the set is non-empty, each entry naming its reason and its human-facing detail — so a signer knows the review ran over partially-ingested content before attesting to it. The disclosure SHALL be non-gating honest copy: it SHALL NOT block, delay, or add any acknowledgement step to the sign path — the user finishes and publishes anyway if they choose (R18), and the existing sign mechanics (hold budget, keyboard sign, degradation-ledger gate) are unchanged by its presence or absence.
+The preview SHALL display every incomplete-ingestion state before the post control. Each entry SHALL name its reason and human-facing detail. The disclosure SHALL NOT block, delay, or add an acknowledgement step to posting.
 
-#### Scenario: Blocked ingestion is visible on the sheet before signing
+#### Scenario: Incomplete ingestion is visible
 
-- **WHEN** the publish sheet renders for a review whose blocking states carry a binary entry
-- **THEN** the sheet displays the blocked-ingestion disclosure with the entry's reason and detail before the sign control
+- **WHEN** a preview carries one or more incomplete-ingestion states
+- **THEN** it names each state before the enabled post control
 
-#### Scenario: The disclosure never gates the sign
+#### Scenario: Complete ingestion needs no disclosure
 
-- **WHEN** the sheet carries a non-empty blocked-ingestion disclosure and the user completes a sufficient hold on the sign control
-- **THEN** the sign completes exactly as it would without the disclosure — no additional acknowledgement, confirmation, or consent step is required
-
-#### Scenario: Full ingestion shows no disclosure
-
-- **WHEN** the publish sheet renders for a review whose blocking states are empty or absent
-- **THEN** no blocked-ingestion disclosure renders and the sheet is byte-identical to its pre-change form
-
+- **WHEN** the preview carries no incomplete-ingestion state
+- **THEN** no incomplete-ingestion disclosure renders

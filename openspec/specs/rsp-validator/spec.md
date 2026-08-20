@@ -1,14 +1,17 @@
-# rsp-validator Specification
+# rsp-validator specification
 
 ## Purpose
-TBD - created by archiving change build-decomposition-angle-generation. Update Purpose after archive.
+
+The standalone RSP validator checks document schemas, patchset identity, byte-exact evidence, decomposition graphs, provenance, and size limits before admitting model output.
+
 ## Requirements
+
 ### Requirement: Decomposition documents are validated against per-body schemas and rules
-The validator SHALL pass the whole offered manifest to the per-body validator so each document family derives the occurrence kind it constrains: the decomposition family over `hunk` occurrences (unchanged behaviour), and the ordering document over `chunk` occurrences. The generic anchor, quote, vocabulary, and identity guarantees, and every decomposition rule (V100/V101/V103/V104/V105/V106/V108), SHALL be behaviourally unchanged.
+The validator SHALL pass the whole offered manifest to each body validator. Decomposition documents SHALL constrain `hunk` occurrences, and ordering documents SHALL constrain `chunk` occurrences. Generic anchor, quote, vocabulary, and identity checks SHALL apply with decomposition rules V100, V101, V103, V104, V105, V106, and V108.
 
 #### Scenario: A well-formed decomposition proposal is still admitted
 - **WHEN** a `decomposition.proposal` whose chunks partition the offered hunks, whose edges are acyclic, and whose reading order covers every chunk is validated
-- **THEN** it is admitted with no errors, exactly as before
+- **THEN** it is admitted with no errors
 
 #### Scenario: The ordering document is validated against the offered chunk set
 - **WHEN** an `ordering` document is validated
@@ -41,7 +44,7 @@ For `decomposition.proposal`, `edges` SHALL form a directed acyclic graph and `r
 - **THEN** validation rejects with V103
 
 ### Requirement: Only chunk-assignable angles may be declared on a chunk (V104)
-A chunk SHALL declare angles only from the closed set `sequence`, `decisions`, `blast-radius`. A chunk that declares `noise`, `spec`, `claims`, or any value outside the set, SHALL reject with code V104 — verified noise is deterministic-only, spec is a queue over requirements rather than chunk membership, and the claims angle is retired (issue #221; the Decisions lens owns that ground).
+A chunk SHALL declare angles only from the closed set `sequence`, `decisions`, `blast-radius`. A chunk that declares `noise`, `spec`, `claims`, or any value outside the set SHALL reject with code V104. Noise is deterministic, spec coverage runs over requirements, and decisions cover claims about intent and trade-offs.
 
 #### Scenario: A chunk assigned to noise rejects
 - **WHEN** a chunk declares the angle `noise`
@@ -52,7 +55,7 @@ A chunk SHALL declare angles only from the closed set `sequence`, `decisions`, `
 - **THEN** validation rejects with V104
 
 #### Scenario: A chunk assigned to claims rejects
-- **WHEN** a chunk declares the retired angle `claims`
+- **WHEN** a chunk declares the angle `claims`
 - **THEN** validation rejects with V104
 
 ### Requirement: The chunk graph is referentially complete (V106)
@@ -113,7 +116,7 @@ The validator SHALL reject a document or quote that exceeds its byte limit rathe
 - **THEN** it is rejected with a V004 error and nothing is truncated
 
 ### Requirement: Admission granularity is atomic for graphs and item-wise for collections
-The validator SHALL reject a graph document wholesale on any error, and SHALL admit a collection document item-by-item — dropping invalid items while admitting valid ones — and SHALL always report a visible rejected-item count.
+The validator SHALL reject a graph document wholesale on any error. It SHALL admit a collection document item by item, drop invalid items, admit valid items, and report the rejected-item count.
 
 #### Scenario: An atomic document with one bad anchor
 - **WHEN** a graph document contains a single unresolvable anchor
@@ -122,4 +125,3 @@ The validator SHALL reject a graph document wholesale on any error, and SHALL ad
 #### Scenario: A collection document with one bad item
 - **WHEN** a collection document contains valid items and one item with a fabricated anchor
 - **THEN** the valid items are admitted, the bad item is dropped, and the rejected-item count is one
-

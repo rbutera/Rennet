@@ -1,7 +1,7 @@
-# harness-adapter-protocol Specification
+# Harness adapter protocol specification
 
 ## Purpose
-TBD - created by archiving change build-harness-adapter-protocol. Update Purpose after archive.
+Define the portable types that every model harness adapter uses for capabilities, streamed events, terminal outcomes, and normalized errors.
 ## Requirements
 ### Requirement: The harness protocol is node-free and portable
 The normalized harness protocol SHALL import nothing at module scope beyond in-repo types, SHALL contain no `node:*`, filesystem, or process access, and SHALL be importable by a browser or mobile client.
@@ -38,4 +38,3 @@ A normalized harness error SHALL carry both a closed `class` and an `origin` axi
 #### Scenario: A provider-side error is normalized
 - **WHEN** the harness reports a rate limit or budget error
 - **THEN** the normalized error names the class, sets `origin` to `provider`, and records the retryability source
-

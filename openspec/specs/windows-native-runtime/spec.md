@@ -1,10 +1,13 @@
-# windows-native-runtime Specification
+# windows-native-runtime specification
 
 ## Purpose
-Rennet's desktop app runs natively on Windows: binaries resolve under Windows PATH semantics, no POSIX shell is required, shortcut labels match the platform, and paths survive drive letters and backslashes.
+
+Rennet's desktop app runs natively on Windows. Binary discovery follows Windows PATH rules, startup requires no POSIX shell, shortcut labels match Windows, and path handling supports drive letters and UNC roots.
+
 ## Requirements
+
 ### Requirement: The desktop app runs on win32
-The desktop app SHALL start in development mode and package into an unsigned distributable on `win32`. Windows release engineering (code signing, installer UX, auto-update) is explicitly out of scope for this capability and SHALL be tracked as its own slice.
+The desktop app SHALL start in development mode and package into an unsigned distributable on `win32`. The package SHALL remain unsigned until Windows release signing is configured.
 
 #### Scenario: Dev run on Windows
 - **WHEN** a developer runs the desktop start target on a Windows machine
@@ -12,16 +15,16 @@ The desktop app SHALL start in development mode and package into an unsigned dis
 
 #### Scenario: Unsigned package on Windows
 - **WHEN** the desktop package target runs on `win32`
-- **THEN** a launchable unsigned artifact is produced with the harness SDK's vendored executables stripped, matching the existing packaging rule
+- **THEN** a launchable unsigned artifact is produced with the harness SDK's vendored executables stripped
 
 ### Requirement: Binary resolution understands Windows PATH semantics
 On Windows, resolving any external binary (`claude`, `codex`, `git`, `gh`, editor CLIs) SHALL split PATH on the platform delimiter (`;`), SHALL recognise directly launchable Windows executable shims (`.exe`, `.cmd`, `.bat`), and SHALL include curated Windows install locations (per-user npm/bun/scoop installs, `%LOCALAPPDATA%` program directories) alongside PATH entries. PowerShell scripts are not a resolved executable form in this slice.
 
-#### Scenario: claude installed as a .cmd shim
+#### Scenario: Claude installed as a .cmd shim
 - **WHEN** the user's `claude` is an npm-installed `claude.cmd` on a `;`-delimited PATH
 - **THEN** discovery resolves it to an absolute path and proves it by executing it for a version
 
-#### Scenario: gh installed but not on the GUI-inherited PATH
+#### Scenario: GitHub CLI installed but not on the GUI-inherited PATH
 - **WHEN** `gh.exe` exists in a curated Windows install location but the Electron-inherited PATH omits it
 - **THEN** the forge detection still finds and reports it
 
@@ -44,9 +47,8 @@ Displayed keybinding labels SHALL show `Ctrl`-based labels on Windows and `⌘`-
 - **THEN** Command+K opens it and Control+K does not match it
 
 ### Requirement: Path handling survives Windows absolute paths
-Repo-relative paths SHALL remain `/`-normalised everywhere they cross package boundaries (the existing convention). Absolute-path handling — project keys, worktree discovery, escape-to-filesystem mapping, within-root containment checks — SHALL be correct for drive-letter and UNC absolute paths, including case-insensitive drive letters.
+Repo-relative paths SHALL use `/` separators across package boundaries. Project keys, worktree discovery, filesystem escaping, and within-root checks SHALL support drive-letter and UNC absolute paths, including case-insensitive drive letters.
 
 #### Scenario: Project under a drive letter
 - **WHEN** a project lives at `C:\dev\repo`
 - **THEN** its `.rennet` project key, worktree matching, and open-in-editor containment checks behave identically to a POSIX absolute path, and all repo-relative paths shown or stored use `/`
-

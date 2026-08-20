@@ -13,7 +13,7 @@
 // `.strict()` habit used for intra-process shapes elsewhere in this package.
 
 import { z } from "zod";
-import { isCommandName, projectProcessEventSchema, reviewAskStreamEventSchema } from "./index";
+import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "./index";
 
 /** The protocol version this build speaks. One integer, bumped append-only. */
 export const PROTOCOL_VERSION = 1;
@@ -117,7 +117,7 @@ export const rpcErrorFrameSchema = z.object({
 export const progressEventFrameSchema = z.object({
   type: z.literal("progressEvent"),
   commandId: z.string().min(1),
-  event: z.lazy(() => projectProcessEventSchema),
+  event: z.lazy(() => projectProgressEventSchema),
 });
 
 /** Server → client: a conversation's token stream, keyed by `reviewId`. */

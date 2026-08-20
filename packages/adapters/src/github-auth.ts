@@ -50,12 +50,56 @@ export type GitHubAuthState =
   | { ok: false; reason: "insufficient-scope"; copy: string; scopes: string[] }
   | { ok: false; reason: "network"; copy: string };
 
+/**
+ * A single refresh-exchange observation, secret-free BY CONSTRUCTION: there is no
+ * field that can hold a token, refresh token, or client secret, so a credential
+ * cannot be logged even by mistake. `create-server` serializes it to one
+ * `[github-auth]` line in `daemon.log`, so a field failure is observed, not inferred.
+ */
+export interface RefreshLogRecord {
+  phase: "attempt" | "persisted" | "declined" | "network";
+  /** The verbatim GitHub `error` code on a decline (e.g. `bad_refresh_token`). */
+  githubError?: string;
+  /** A non-secret token-kind label (`ghu_`/`gho_`/…), never the token body. */
+  tokenKind?: string;
+}
+
+/**
+ * GitHub credential prefixes, a CLOSED allowlist. `tokenKind` returns ONLY one of
+ * these constants (or the fixed `"token"`), never a slice of the token — so an
+ * unexpected value like `customerSecret_x` can never put credential bytes in a log.
+ */
+const GITHUB_TOKEN_PREFIXES = [
+  "github_pat_",
+  "ghu_",
+  "gho_",
+  "ghp_",
+  "ghr_",
+  "ghs_",
+  "ghe_",
+] as const;
+
+/**
+ * The non-secret token-kind label of a GitHub credential — an allowlisted prefix
+ * (`ghu_`/`gho_`/…) or the fixed `"token"`. Returns only a constant, never any part
+ * of the token body: safe to put in a log record by construction.
+ */
+export function tokenKind(token: string): string {
+  return GITHUB_TOKEN_PREFIXES.find((prefix) => token.startsWith(prefix)) ?? "token";
+}
+
 export interface ResolveAuthDeps {
   /** An UNAUTHENTICATED client; the candidate token rides as an explicit header. */
   octokit: Octokit;
   secretStore: SecretStore;
   /** The scope the selected operation needs. Defaults to classic `repo`. */
   requiredScope?: string;
+  /**
+   * Sink for secret-free refresh observations. Absent ⇒ no-op: callers that do
+   * not care about the log need not pass it. `create-server` binds one that
+   * writes each record to the daemon's stdout (→ `daemon.log`).
+   */
+  log?: (record: RefreshLogRecord) => void;
   /**
    * The refresh exchange (`refreshGitHubCredential` bound to the daemon's
    * fetch). Absent ⇒ expiring credentials simply die at expiry (token-invalid).
@@ -187,20 +231,38 @@ async function refreshAndPersist(
 ): Promise<GitHubCredential | null> {
   const refresh = deps.refresh;
   if (!refresh) return null;
+  const log: (record: RefreshLogRecord) => void = deps.log ?? (() => undefined);
   const exclusively = deps.withLock ?? (<T>(section: () => Promise<T>) => section());
   return exclusively(async () => {
     const current = await deps.secretStore.getGitHubCredential();
     if (!current) return null; // disconnected while we waited for the lock
     if (current.token !== expected.token) return current; // another caller rotated
     if (!current.refreshToken) return null;
+    // Emitted at the START of the exchange (both proactive and reactive branches
+    // route through here) so an attempt is visible in daemon.log even if the
+    // process dies mid-exchange.
+    log({ phase: "attempt" });
     let minted: GitHubCredential;
     try {
       minted = await refresh(current.refreshToken);
     } catch (error) {
-      if (error instanceof GitHubOAuthDeclined) return null;
+      // A decline is deterministic — name its cause; the surface resolves token-invalid.
+      if (error instanceof GitHubOAuthDeclined) {
+        log({ phase: "declined", githubError: error.code });
+        return null;
+      }
+      // NO retry here. The shared GitHub transport (`withConnectResilience`) already
+      // retries a CONNECT-PHASE blip exactly once — provably replay-safe, since no
+      // request reached GitHub — and deliberately never replays a post-send failure,
+      // which could double a rotation. A second retry at this layer would duplicate
+      // connect attempts AND risk burning a rotated refresh token on an ambiguous
+      // post-send error. So observe the network failure and propagate it:
+      // resolveGitHubAuth classifies it `network` and leaves the credential untouched.
+      if (isGitHubNetworkError(error)) log({ phase: "network" });
       throw error;
     }
     await deps.secretStore.setGitHubCredential(minted);
+    log({ phase: "persisted", tokenKind: tokenKind(minted.token) });
     return minted;
   });
 }

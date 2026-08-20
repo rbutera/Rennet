@@ -1,0 +1,8 @@
+# Astro build output + generated types
+dist/
+.astro/
+
+# Generated from the canonical root documentation library.
+src/content/docs/using/
+src/content/docs/developing/
+src/content/docs/adr/

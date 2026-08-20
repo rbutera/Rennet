@@ -1,11 +1,11 @@
-# harness-conformance Specification
+# Harness conformance specification
 
 ## Purpose
-TBD - created by archiving change add-codex-app-server. Update Purpose after archive.
+Define the shared conformance catalogue that derives harness capability evidence from refutable checks and records tested binary versions from real runs.
 ## Requirements
 ### Requirement: One suite, derived flags, exactly the passing set
 
-The conformance suite SHALL be a single check catalogue over the `HarnessPort` interface (pure `@rennet/core`, no Node at module scope), run identically against every adapter. Each check SHALL map to exactly one `CapabilityName` and one evidence layer, and a run's output SHALL be `CapabilityEvidence` naming only the checks that passed, fed to `buildCapabilities` — so a descriptor's `true` flags are exactly the passing set and nothing can declare a flag.
+The conformance suite SHALL define one check catalogue over the `HarnessPort` interface in `@rennet/core`, with no Node imports at module scope. It SHALL run the same checks against every adapter. Each check SHALL map to one `CapabilityName` and one evidence layer. A run SHALL return `CapabilityEvidence` for only the checks that passed, and `buildCapabilities` SHALL derive the descriptor's `true` flags from that evidence.
 
 #### Scenario: Two adapters, two honest descriptors from one suite
 
@@ -15,7 +15,7 @@ The conformance suite SHALL be a single check catalogue over the `HarnessPort` i
 #### Scenario: A skipped check leaves its flag false
 
 - **WHEN** a check is not run for an adapter
-- **THEN** the corresponding capability layer is `false`, indistinguishable from a failed check — absence of evidence is absence of capability
+- **THEN** the corresponding capability layer is `false`, the same result as a failed check
 
 ### Requirement: Every check is proven able to fail
 
@@ -40,23 +40,23 @@ The interrupt check SHALL begin draining, wait until the session is in flight, c
 - **WHEN** a completed outcome carries token usage but no context-window capacity
 - **THEN** `reportsContextWindow` remains false
 
-### Requirement: Hermetic by default, real by gate
+### Requirement: Hermetic by default, real through opt-in tests
 
-The default gate SHALL run the suite only against fake in-process transports — zero process spawns, zero token spend. Runs against the real installed binaries SHALL exist as gated `.real` tests (opt-in via environment), and only real runs SHALL produce `advertisedByHarness` / `availableInSession` evidence; fake-transport runs SHALL cap out at `implementedByAdapter`.
+The default gate SHALL run the suite only against fake in-process transports, with no process spawn or token spend. Opt-in `.real` tests SHALL run against installed binaries. Only real runs SHALL produce `advertisedByHarness` or `availableInSession` evidence. Fake-transport runs SHALL produce at most `implementedByAdapter` evidence.
 
 #### Scenario: The default gate spends nothing
 
 - **WHEN** `pnpm check` runs the suite
 - **THEN** no harness binary is spawned and no evidence beyond `implementedByAdapter` is produced
 
-#### Scenario: A gated real run earns the outer layers
+#### Scenario: an opt-in real run earns the outer layers
 
 - **WHEN** the opt-in real run executes the suite against the installed binary
 - **THEN** passing checks produce `advertisedByHarness`/`availableInSession` evidence for exactly those capabilities
 
 ### Requirement: testedRange is recorded from real runs, never hand-edited
 
-A real conformance run SHALL record the binary version it ran against into a committed per-harness artifact only when every expected capability has the expected pass/fail result. Each adapter's `testedRange` SHALL be derived from that artifact (min and max recorded passing version). No hand-written tested-range constant SHALL remain: the Claude adapter's existing hand-edited range migrates onto the same mechanism, seeded from its current values as explicitly permitted. Codex SHALL have no committed seed until its first genuine real run fully matches the expected matrix.
+A real conformance run SHALL record its binary version in the committed per-harness artifact only when every expected capability has the expected result. Each adapter's `testedRange` SHALL equal the minimum and maximum passing versions in that artifact. An adapter SHALL NOT declare a hand-written range or claim a range before a matching real run records one.
 
 #### Scenario: A real run extends the recorded ceiling
 
@@ -72,4 +72,3 @@ A real conformance run SHALL record the binary version it ran against into a com
 
 - **WHEN** an adapter builds its descriptor
 - **THEN** its `testedRange` equals the committed artifact's recorded range, with no other source
-

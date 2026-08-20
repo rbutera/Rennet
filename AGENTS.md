@@ -29,44 +29,44 @@ Rennet is Rai Butera's personal product. This is the product monorepo and the pr
 
 ## Read before changing the product
 
-**Start here: `docs/src/content/docs/developing/reference/delivery-order.md`.** It says what to build next, what is already finished, and how to read the Rule Zero amendment blocks now sitting on many issues. It outranks the ordering implied by issue numbers, P-labels, and any plan document below.
+**Start here: `docs/README.md`.** It maps the current documentation and names the authority for each part of the product. GitHub issues own the live work queue; the documentation does not invent an order that the issue tracker does not carry.
 
 Then, for depth:
 
-1. `docs/src/content/docs/using/concepts/product-and-vision.md`
-2. `docs/src/content/docs/developing/reference/contracts-and-rulings.md`
-3. `docs/src/content/docs/developing/concepts/architecture-contracts.md`
-4. `docs/src/content/docs/developing/reference/dependency-standard.md`
-5. `docs/src/content/docs/developing/concepts/agent-handoff.md`
+1. `docs/using/concepts/product-and-vision.md`
+2. `docs/developing/decisions/contracts-and-rulings.md`
+3. `docs/developing/concepts/architecture-contracts.md`
+4. `docs/developing/reference/dependency-standard.md`
+5. `docs/developing/concepts/agent-handoff.md`
 
 Every one of these is subordinate to Rule Zero.
 
-The Contracts and Rulings document (formerly titled the Master Plan; ruling numbers unchanged) wins on general product and architecture conflicts, and the Product and Vision document is the canonical statement of intent. The Architecture Contracts win within project context, immutable patchsets, invalidation, persistence, privacy, and publication. The Dependency Standard wins on package selection, versions, toolchain ownership, package licensing, and dependency overlap. Historical Wingman documents are evidence and rationale only where a current authority supersedes them.
+Contracts and rulings wins on general product and architecture conflicts, and Product and vision is the canonical statement of intent. Architecture contracts wins within project context, immutable patchsets, invalidation, persistence, privacy, and publication. Dependency standard wins on package selection, versions, toolchain ownership, package licensing, and dependency overlap. Promoted OpenSpec files define accepted behavior. ADRs explain narrow architectural choices but do not overrule Rule Zero or a scoped project authority.
 
 ## Fixed boundaries
 
 - Never use client repositories, code, pull requests, screenshots, data, time, or infrastructure for development, fixtures, calibration, or model-backed dogfood without written authorization.
 - Never add AI attribution or co-author trailers. Rai is the sole author.
-- Rennet is **MIT** licensed throughout, one licence for every package (Rai's decision, 2026-08-06). There is no AGPL boundary and no Apache-2.0 carve-out for `protocol`/`types`; any document still describing that split is superseded.
-- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`** (Rai's decision, 2026-08-06, recorded in `docs/src/content/docs/developing/reference/contracts-and-rulings.md`). The SDK spawns the user's own installed `claude` binary via `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary of our own, and never read a credential.
-- Nothing another human can see gets published without Rai clicking post. This is a product feature — the review is his, in his voice, under his name — not a safety gate. (The old "paper"/"signing" metaphor is dropped entirely — Rai, 2026-08-18; the language is preview → post.) **Pushing a branch is not publishing**: Rennet's coding-agent loop writes and pushes freely, because submitting a PR requires a push.
+- Rennet is **MIT** licensed throughout, with one licence for every package.
+- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`**. The SDK spawns the user's installed `claude` binary through `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary or read a harness credential.
+- Nothing another human can see gets published without Rai clicking post. The review is his, in his voice, under his name. Use draft, preview, and post language. **Pushing a branch is not publishing**: Rennet's coding-agent loop writes and pushes freely, because submitting a pull request requires a push.
 - Say "no Rennet backend" and disclose harness/provider egress. Never claim universally that nothing leaves the machine. This is honest copy, not a consent screen — state the fact, do not make the user clear a dialog.
 - `.rennet/` is local and ignored by default. Rennet never stages or commits a user's project context.
 
-## Intended package boundaries
+## Package boundaries
 
-`packages/types` imports nothing in-repo. `packages/theme` (the shared design-token CSS) imports nothing in-repo. `protocol` may import `types`; `instructions` may import `types`; `core` may import `protocol` and `instructions`; `adapters` may import `core`, `instructions`, and Node; `ui` (the vendored shadcn/Base UI component kit) may import only `types` and `theme`; `app-ui` (Rennet's composites and screens) may import only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies; `apps/desktop` is the only Electron package. Spikes are deliberately excluded from the pnpm workspace.
+`packages/types` and `packages/theme` import no Rennet package. `protocol` may import `types`; `instructions` may import `types`; `core` may import `types`, `protocol`, and `instructions`; `adapters` may import those packages plus Node dependencies; `server` may import `types`, `protocol`, `instructions`, `core`, and `adapters`; `client` may import `types` and `protocol`; `ui` (the vendored shadcn/Base UI component kit) may import only `types` and `theme`; `app-ui` (Rennet's composites and screens) may import only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies. `apps/desktop` is the only Electron package. Spikes are excluded from the pnpm workspace.
 
-## Documentation (the docsite stays alive by construction)
+## Documentation
 
-Rennet's root `docs/` directory is an Astro Starlight site (static → Cloudflare Pages), split into two audiences: **Using Rennet** (people who run reviews) and **Developing Rennet** (people who build Rennet). Mermaid diagrams render to themed SVG at build time via `beautiful-mermaid` (no headless browser).
+Root `docs/` is the canonical documentation library. `apps/docs` renders it as a static Astro Starlight site on Cloudflare Pages. The site has two audiences: **Using Rennet** for people who run reviews and **Developing Rennet** for people who build Rennet. Mermaid fences render as themed SVG through `beautiful-mermaid`, without a headless browser.
 
 **Standing obligation, part of the definition of done — not a gate:** a change to the monorepo updates the affected documentation *in the same change*. The test is: *if someone reads the docs after this change and is now wrong, the change is not done.* This is enforced the way the rest of Rennet's discipline is — it is what "done" means, not a separate consent step or approval.
 
-- How to write a page: `docs/src/content/docs/developing/contributing/docs-style-guide.md`.
-- What every page must carry: `docs/src/content/docs/developing/contributing/good-docs-standard.md`.
+- How to write a page: `docs/developing/contributing/docs-style-guide.md`.
+- What every page must carry: `docs/developing/contributing/good-docs-standard.md`.
 - Reach for a mermaid diagram when a flow or architecture is clearer seen than read; write it as a ```mermaid fence and it renders to a themed SVG at build time.
-- Retired planning files remain available in Git history. Do not restore them as competing authorities; move any still-live fact into the page that owns it.
+- The documentation library describes current or explicitly planned Rennet. Git and archived OpenSpec changes retain old material; never narrate that history in reader-facing docs.
 
 ## Working agreement
 

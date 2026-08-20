@@ -19,7 +19,13 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { ensureDaemon, isOwnedDaemonRunning, stopOwnedDaemon } from "./daemon-supervisor";
+import {
+  createWslRunner,
+  ensureDaemon,
+  ensureDaemonForProject,
+  isOwnedDaemonRunning,
+  stopOwnedDaemon,
+} from "./daemon-supervisor";
 
 const claim: DaemonInfo = {
   pid: 4242,
@@ -254,6 +260,36 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(readDaemonFile(dataDir)).toEqual(spawned);
   });
 
+  it("gives the spawned daemon thread-pool headroom and drops the shell data-dir override", async () => {
+    const dataDir = makeDir();
+    const stale = info(112, 40_500);
+    const spawned = info(223, 41_500);
+    writeDaemonFile(dataDir, stale);
+    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
+
+    await ensureDaemon(dataDir, {
+      probe: async () => ({ kind: "stale", claim: stale }),
+      spawn,
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: { RENNET_USER_DATA: "/shell/override", PATH: "/usr/bin" },
+      warn: vi.fn(),
+    });
+
+    expect(spawn).toHaveBeenCalledOnce();
+    const calls = spawn.mock.calls as unknown as Array<[{ env: NodeJS.ProcessEnv }]>;
+    const options = calls[0]?.[0];
+    expect(options).toBeDefined();
+    const passedEnv: NodeJS.ProcessEnv = options?.env ?? {};
+    expect(passedEnv.UV_THREADPOOL_SIZE).toBe("16");
+    expect(passedEnv.RENNET_USER_DATA).toBeUndefined();
+    expect(passedEnv.PATH).toBe("/usr/bin");
+  });
+
   it("kills an incompatible daemon, spawns the bundled daemon, and preserves the new claim", async () => {
     const dataDir = makeDir();
     const old = info(333, 42_000, PROTOCOL_VERSION + 500);
@@ -336,5 +372,128 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(port).toBe(spawned.wsPort);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("restarting the bundled daemon"));
     expect(readDaemonFile(dataDir)).toEqual(spawned);
+  });
+});
+
+describe("ensureDaemonForProject (locus-selected routing)", () => {
+  it("routes a host-locus project through today's ensureDaemon path, untouched", async () => {
+    const ensureHostDaemon = vi.fn(async () => 40_100);
+    const ensureWslDaemonSpy = vi.fn(async () => ({ port: 0 }));
+
+    const port = await ensureDaemonForProject("/Users/rai/code/repo", "/host/data", {
+      ensureHostDaemon,
+      ensureWslDaemon: ensureWslDaemonSpy,
+      inFlight: new Map(),
+    });
+
+    expect(port).toBe(40_100);
+    expect(ensureHostDaemon).toHaveBeenCalledWith("/host/data");
+    expect(ensureWslDaemonSpy).not.toHaveBeenCalled(); // no WSL code runs for a host project.
+  });
+
+  it("treats a Windows drive path as host-locus (no distro daemon)", async () => {
+    const ensureHostDaemon = vi.fn(async () => 40_200);
+    const ensureWslDaemonSpy = vi.fn(async () => ({ port: 0 }));
+
+    const port = await ensureDaemonForProject("C:\\Users\\rai\\repo", "/host/data", {
+      ensureHostDaemon,
+      ensureWslDaemon: ensureWslDaemonSpy,
+      inFlight: new Map(),
+    });
+
+    expect(port).toBe(40_200);
+    expect(ensureWslDaemonSpy).not.toHaveBeenCalled();
+  });
+
+  const wslDeps = () => ({
+    serverVersion: "1.2.3",
+    hostBundlePath: "C:\\b",
+    run: () => Promise.resolve({ stdout: "", code: 0 }),
+  });
+
+  it("RE-ENSURES a WSL-locus distro daemon on each sequential open — no stale port cache", async () => {
+    const ensureHostDaemon = vi.fn(async () => 1);
+    const ensureWslDaemonSpy = vi.fn(async () => ({ port: 51_515 }));
+    const inFlight = new Map<string, Promise<number>>();
+
+    const first = await ensureDaemonForProject(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\repo-a",
+      "/host/data",
+      { ensureHostDaemon, ensureWslDaemon: ensureWslDaemonSpy, wslDeps, inFlight },
+    );
+    const second = await ensureDaemonForProject(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\repo-b",
+      "/host/data",
+      { ensureHostDaemon, ensureWslDaemon: ensureWslDaemonSpy, wslDeps, inFlight },
+    );
+
+    expect(first).toBe(51_515);
+    expect(second).toBe(51_515); // both get a healthy port
+    // No stale cache: each sequential open re-ensures. `ensureWslDaemon` self-short-circuits
+    // when a healthy same-version daemon already runs, so this is cheap and self-healing.
+    expect(ensureWslDaemonSpy).toHaveBeenCalledTimes(2);
+    expect(ensureWslDaemonSpy).toHaveBeenCalledWith("Ubuntu", expect.anything());
+    expect(ensureHostDaemon).not.toHaveBeenCalled();
+    expect(inFlight.has("Ubuntu")).toBe(false); // entry cleared once each open settled
+  });
+
+  it("folds two CONCURRENT opens on the same distro into ONE ensureWslDaemon (single-flight)", async () => {
+    let resolveEnsure: (value: { port: number }) => void = () => undefined;
+    const ensureWslDaemonSpy = vi.fn(
+      () =>
+        new Promise<{ port: number }>((r) => {
+          resolveEnsure = r;
+        }),
+    );
+    const inFlight = new Map<string, Promise<number>>();
+    const deps = {
+      ensureHostDaemon: vi.fn(async () => 1),
+      ensureWslDaemon: ensureWslDaemonSpy,
+      wslDeps,
+      inFlight,
+    };
+
+    // Both opens start before the first ensure settles; the second must join the in-flight one.
+    const p1 = ensureDaemonForProject(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\repo-a",
+      "/host/data",
+      deps,
+    );
+    const p2 = ensureDaemonForProject(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\repo-b",
+      "/host/data",
+      deps,
+    );
+    resolveEnsure({ port: 51_515 });
+    const [a, b] = await Promise.all([p1, p2]);
+
+    expect(a).toBe(51_515);
+    expect(b).toBe(51_515);
+    expect(ensureWslDaemonSpy).toHaveBeenCalledTimes(1); // the second concurrent open joined the first
+    expect(inFlight.has("Ubuntu")).toBe(false); // cleared once settled
+  });
+});
+
+describe("createWslRunner (real short-lived process → {stdout, code}, never throws)", () => {
+  const run = createWslRunner();
+
+  it("resolves stdout with code 0 for a successful command", async () => {
+    const { stdout, code } = await run({
+      file: process.execPath,
+      args: ["-e", "process.stdout.write('hi')"],
+    });
+    expect(code).toBe(0);
+    expect(stdout).toBe("hi");
+  });
+
+  it("maps a nonzero process exit to that exact code", async () => {
+    const { code } = await run({ file: process.execPath, args: ["-e", "process.exit(3)"] });
+    expect(code).toBe(3);
+  });
+
+  it("maps a spawn failure (nonexistent file) to a nonzero code without throwing", async () => {
+    const { stdout, code } = await run({ file: "/nonexistent/definitely-not-here", args: [] });
+    expect(code).not.toBe(0);
+    expect(stdout).toBe("");
   });
 });
