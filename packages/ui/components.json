@@ -1,6 +1,6 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "base",
+  "style": "base-nova",
   "tailwind": { "css": "src/index.css", "baseColor": "neutral", "cssVariables": true },
   "aliases": {
     "components": "@rennet/ui/components",
