@@ -20,6 +20,7 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
+import { Button, Input } from "@rennet/ui";
 import {
   type ReactNode,
   useCallback,
@@ -129,7 +130,7 @@ import {
 } from "../nav/history";
 import type { SmartRow } from "../project/smart-list";
 import { ReviewWorkspace } from "./review-workspace-route";
-import { type AngleRailRow, activePatchset, type DiffFocus, SECONDARY_BUTTON } from "./shared";
+import { type AngleRailRow, activePatchset, type DiffFocus } from "./shared";
 
 /**
  * Apply the fan-out writes from an approve act to the local canvases (the demo
@@ -1847,13 +1848,14 @@ export function RennetApp({
               role="status"
               data-compose-state={handoffComposeState}
             >
-              <button
-                type="button"
-                className="handoff-paper-back cursor-pointer justify-self-start rounded-control border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft hover:text-ink"
+              <Button
+                variant="outline"
+                size="sm"
+                className="handoff-paper-back justify-self-start text-ink-soft"
                 onClick={() => navigate(navigateBack())}
               >
                 Back
-              </button>
+              </Button>
               {handoffComposeState === "error" ? (
                 <p className="handoff-compose-error m-0 text-base text-danger" role="alert">
                   Composing the handoff failed. Go back and reopen, or change a disposition, to try
@@ -2277,26 +2279,28 @@ export function RennetApp({
           />
           {/* History is a paired control: the rail is gone, back/forward live here. */}
           <div className="navigation-history flex flex-none items-center gap-0.5">
-            <button
-              type="button"
-              className="navigation-history-button flex size-8 items-center justify-center rounded-control text-ink-soft hover:bg-raised hover:text-ink disabled:pointer-events-none disabled:opacity-35"
+            <Button
+              variant="ghost"
+              size="icon"
+              className="navigation-history-button text-ink-soft"
               aria-label="Back"
               title="Back"
               disabled={navigation.stack.length <= 1}
               onClick={goBack}
             >
               <ArrowLeftIcon size={16} />
-            </button>
-            <button
-              type="button"
-              className="navigation-history-button flex size-8 items-center justify-center rounded-control text-ink-soft hover:bg-raised hover:text-ink disabled:pointer-events-none disabled:opacity-35"
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="navigation-history-button text-ink-soft"
               aria-label="Forward"
               title="Forward"
               disabled={navigation.future.length === 0}
               onClick={goForward}
             >
               <ArrowRightIcon size={16} />
-            </button>
+            </Button>
           </div>
           <Breadcrumb
             crumb={deriveCrumb(navigation.stack, surfaceLabels)}
@@ -2319,9 +2323,8 @@ export function RennetApp({
             </div>
           ) : null}
           {inReview && review && !review.retrospective ? (
-            <button
-              type="button"
-              className="navigation-draft-cta inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-3.5 py-1.5 text-sm font-semibold text-accent-ink"
+            <Button
+              className="navigation-draft-cta"
               onClick={() => navigate(pushSurface({ kind: "draft", reviewId: review.id }))}
             >
               {draft.length > 0 ? (
@@ -2331,7 +2334,7 @@ export function RennetApp({
               ) : null}
               Preview
               <ArrowRightIcon size={12} />
-            </button>
+            </Button>
           ) : null}
           {connectionSlot}
         </header>
@@ -2426,14 +2429,15 @@ export function RennetApp({
               goToProjects();
             }}
           />
-          <button
-            type="button"
-            className="entry-back inline-flex cursor-pointer items-center gap-1.5 rounded-control border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink-soft hover:text-ink"
+          <Button
+            variant="outline"
+            size="sm"
+            className="entry-back text-ink-soft"
             onClick={() => setDirectEntryOpen(false)}
           >
             <ArrowLeftIcon size={13} />
             Back
-          </button>
+          </Button>
         </header>
         <main className="empty-state grid min-h-screen place-content-center justify-items-center bg-canvas p-8 pt-22 text-center">
           <div
@@ -2451,15 +2455,15 @@ export function RennetApp({
           <p className="max-w-[560px] leading-relaxed text-ink-soft">
             Capture local git changes into one patchset.
           </p>
-          <button
-            type="button"
-            className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-4 py-3 font-semibold text-accent-ink disabled:cursor-wait disabled:opacity-60"
+          <Button
+            size="lg"
+            className="mt-4 disabled:cursor-wait"
             disabled={busy}
             onClick={chooseRepository}
           >
             <FolderIcon size={15} />
             {busy ? "Working…" : "Choose a repository"}
-          </button>
+          </Button>
 
           <div
             className="entry-divider mb-1 mt-6 flex w-[min(440px,82vw)] items-center gap-3 text-xs uppercase tracking-wide text-ink-faint before:h-px before:flex-1 before:bg-line before:content-[''] after:h-px after:flex-1 after:bg-line after:content-['']"
@@ -2475,9 +2479,9 @@ export function RennetApp({
               void openPullRequest();
             }}
           >
-            <input
+            <Input
               type="text"
-              className="pr-input min-w-0 flex-1 rounded-control border border-line-strong bg-surface px-3 py-2.5 font-mono text-base text-ink placeholder:text-ink-faint"
+              className="pr-input min-w-0 flex-1 font-mono"
               value={prRef}
               onChange={(inputEvent) => setPrRef(inputEvent.target.value)}
               placeholder="owner/repo#42  or  a GitHub PR URL"
@@ -2487,13 +2491,14 @@ export function RennetApp({
               autoCorrect="off"
               disabled={busy}
             />
-            <button
+            <Button
               type="submit"
-              className={`${SECONDARY_BUTTON} whitespace-nowrap`}
+              variant="outline"
+              className="secondary whitespace-nowrap"
               disabled={busy || prRef.trim().length === 0}
             >
               {busy ? "Opening…" : "Open pull request"}
-            </button>
+            </Button>
             <label className="pr-retrospective flex basis-full cursor-pointer items-start gap-2 text-left text-xs leading-snug text-ink-faint">
               <input
                 type="checkbox"
@@ -2686,26 +2691,28 @@ export function RennetApp({
         role="tablist"
         aria-label="Workspace view"
       >
-        <button
-          type="button"
+        <Button
+          variant={view === "review" ? "accent" : "outline"}
+          size="sm"
           role="tab"
           aria-selected={view === "review"}
-          className={`inline-flex cursor-pointer items-center gap-1.5 rounded-control border px-3 py-1.5 text-xs font-semibold ${view === "review" ? "is-active border-accent-line bg-accent-soft text-accent" : "border-line bg-surface text-ink-soft hover:text-ink"}`}
+          className={`text-xs ${view === "review" ? "is-active text-accent" : "text-ink-soft"}`}
           onClick={() => setView("review")}
         >
           <FileDiffIcon size={13} />
           Files
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant={view === "canvases" ? "accent" : "outline"}
+          size="sm"
           role="tab"
           aria-selected={view === "canvases"}
-          className={`inline-flex cursor-pointer items-center gap-1.5 rounded-control border px-3 py-1.5 text-xs font-semibold ${view === "canvases" ? "is-active border-accent-line bg-accent-soft text-accent" : "border-line bg-surface text-ink-soft hover:text-ink"}`}
+          className={`text-xs ${view === "canvases" ? "is-active text-accent" : "text-ink-soft"}`}
           onClick={() => setView("canvases")}
         >
           <LayersIcon size={13} />
           Canvases
-        </button>
+        </Button>
       </div>
       {view === "canvases" ? (
         liveLoaded && canvases ? (
@@ -2726,13 +2733,9 @@ export function RennetApp({
                     {mechanicalFallbackDetail(engine)}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className={`${SECONDARY_BUTTON} flex-none`}
-                  onClick={retryLiveLoad}
-                >
+                <Button variant="outline" className="secondary flex-none" onClick={retryLiveLoad}>
                   Retry the AI review
-                </button>
+                </Button>
               </div>
             ) : null}
             {/* The review-heart split (issue #36): the diff column and the
@@ -2889,13 +2892,9 @@ export function RennetApp({
             <p className="m-0 text-base leading-normal text-ink-soft">
               The engine returned nothing.
             </p>
-            <button
-              type="button"
-              className="mt-1.5 inline-flex cursor-pointer items-center gap-2 rounded-control bg-accent-fill px-4 py-2.5 font-semibold text-accent-ink"
-              onClick={retryLiveLoad}
-            >
+            <Button size="lg" className="mt-1.5" onClick={retryLiveLoad}>
               Try again
-            </button>
+            </Button>
           </section>
         ) : (
           <>

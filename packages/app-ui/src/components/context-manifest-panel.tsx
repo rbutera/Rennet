@@ -1,4 +1,5 @@
 import type { ContextDocumentRecord, ContextManifest } from "@rennet/types";
+import { Button } from "@rennet/ui";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The context-composition inspector (issue #30). It shows the reviewer what Rennet
@@ -192,14 +193,15 @@ export function ContextManifestPanel({
           </pre>
         ) : null}
         {assembledContext === undefined && onOpenAssembledContext ? (
-          <button
-            type="button"
-            className="context-manifest-open cursor-pointer self-start rounded-chip border border-line bg-transparent px-2.5 py-1 text-2xs text-ink-soft hover:bg-raised"
+          <Button
+            variant="outline"
+            size="xs"
+            className="context-manifest-open self-start text-2xs text-ink-soft"
             data-testid="context-manifest-open"
             onClick={onOpenAssembledContext}
           >
             Open the assembled context
-          </button>
+          </Button>
         ) : null}
       </div>
     </section>

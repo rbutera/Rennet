@@ -1,3 +1,4 @@
+import { Button } from "@rennet/ui";
 import type { HypothesisFrame, HypothesisFrameRisk } from "../canvas/hypothesis";
 
 // The hypothesis reading frame (issue #178): the human's prior, shown BEFORE the
@@ -59,15 +60,16 @@ function RiskRow({
       {risk.findingIds.length > 0 ? (
         <div className="hypothesis-risk-findings mt-2 flex flex-wrap gap-1.5">
           {risk.findingIds.map((findingId) => (
-            <button
-              type="button"
-              className="hypothesis-finding-jump rounded-chip border border-line bg-raised px-2.5 py-1 text-xs font-semibold text-ink-soft hover:border-accent-line hover:text-accent"
+            <Button
+              variant="outline"
+              size="sm"
+              className="hypothesis-finding-jump text-ink-soft hover:border-accent-line hover:text-accent"
               data-jump-finding={findingId}
               key={findingId}
               onClick={() => onJumpToFinding(findingId)}
             >
               view finding
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}

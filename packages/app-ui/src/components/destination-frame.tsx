@@ -1,3 +1,4 @@
+import { Button } from "@rennet/ui";
 import { type CollationDraft, collationItems } from "../canvas/collation";
 import {
   type DestinationMode,
@@ -99,18 +100,18 @@ export function DestinationFrame({
           {MODES.map((candidate) => {
             const framing = destinationVariant(candidate);
             return (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 role="tab"
                 aria-selected={candidate === mode}
-                className={`flex-1 rounded-chip px-3 py-1.5 text-xs font-semibold ${
+                className={`flex-1 rounded-chip text-xs ${
                   candidate === mode ? "is-active bg-accent-soft text-accent" : "text-ink-soft"
                 }`}
                 key={candidate}
                 onClick={() => onSelectMode(candidate)}
               >
                 {framing.title}
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -163,24 +164,25 @@ export function DestinationFrame({
       </div>
 
       <footer className="destination-foot flex flex-col gap-2">
-        <button
-          type="button"
-          className="destination-open-draft inline-flex h-9 w-full items-center justify-center gap-2 rounded-control bg-accent-fill px-3 text-base font-semibold text-accent-ink disabled:bg-raised disabled:text-ink-faint"
+        <Button
+          size="lg"
+          className="destination-open-draft w-full text-base"
           disabled={empty}
           onClick={() => onOpenDraft?.()}
         >
           Open the draft
           <ArrowRightIcon size={14} />
-        </button>
+        </Button>
         {canHandoff ? (
-          <button
-            type="button"
-            className="destination-handoff inline-flex h-9 w-full items-center justify-center gap-2 rounded-control border border-line px-3 text-base font-semibold text-ink hover:bg-raised"
+          <Button
+            variant="outline"
+            size="lg"
+            className="destination-handoff w-full text-base"
             onClick={() => onHandoff?.()}
           >
             Hand off to agent
             <ArrowRightIcon size={14} />
-          </button>
+          </Button>
         ) : null}
       </footer>
     </aside>

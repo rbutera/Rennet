@@ -1,4 +1,5 @@
 import type { NoiseCategory } from "@rennet/types";
+import { Button } from "@rennet/ui";
 import { useState } from "react";
 import type { NoiseGroupRow, NoiseIndex, NoiseJudgedBy } from "../canvas/noise";
 
@@ -90,15 +91,16 @@ function NoiseGroupCard({
         </button>
         <JudgeChip judgedBy={group.judgedBy} />
         {/* Pull-back: reject the grouping, move this group into the main review. */}
-        <button
-          type="button"
-          className="noise-pullback flex-none cursor-pointer rounded-full border border-line-strong bg-raised px-3 py-1 text-xs font-semibold text-ink-soft hover:border-accent-line hover:text-accent"
+        <Button
+          variant="outline"
+          size="sm"
+          className="noise-pullback flex-none rounded-full text-ink-soft hover:border-accent-line hover:text-accent"
           data-pullback={group.groupId}
           onClick={onPullBack}
           title="Reject the grouping and pull this back into the review"
         >
           not noise?
-        </button>
+        </Button>
       </div>
       {/* Inspectable: the churn is collapsed, never hidden — expand to see every line. */}
       {expanded ? (
@@ -271,15 +273,16 @@ export function NoiseLens({
                 <span className="noise-pulled-summary flex-1 text-base text-ink-soft">
                   {group.summary}
                 </span>
-                <button
-                  type="button"
-                  className="noise-regroup flex-none cursor-pointer rounded-full border border-line-strong bg-raised px-3 py-1 text-xs font-semibold text-ink-soft hover:border-accent-line hover:text-accent"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="noise-regroup flex-none rounded-full text-ink-soft hover:border-accent-line hover:text-accent"
                   data-regroup={group.groupId}
                   onClick={() => regroup(group.groupId)}
                   title="Re-group this as noise"
                 >
                   re-group as noise
-                </button>
+                </Button>
               </li>
             ))}
           </ul>

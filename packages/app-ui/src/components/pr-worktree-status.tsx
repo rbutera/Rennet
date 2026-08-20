@@ -1,4 +1,5 @@
 import type { PrWorktreeSetup, RennetBridge } from "@rennet/protocol";
+import { Button } from "@rennet/ui";
 import { useEffect, useState } from "react";
 
 /**
@@ -77,13 +78,14 @@ export function PrWorktreeStatus({
           {setupLabel}
         </span>
         {setup.status === "failed" && worktree.logTail ? (
-          <button
-            type="button"
-            className="underline text-ink-soft hover:text-ink"
+          <Button
+            variant="link"
+            size="sm"
+            className="h-auto p-0 text-ink-soft hover:text-ink"
             onClick={() => setLogOpen((open) => !open)}
           >
             {logOpen ? "Hide log" : "Show log"}
-          </button>
+          </Button>
         ) : null}
         {logOpen ? (
           <pre className="basis-full m-0 max-h-48 overflow-auto rounded-chip border border-line bg-surface p-2.5 font-mono text-2xs text-ink-soft">

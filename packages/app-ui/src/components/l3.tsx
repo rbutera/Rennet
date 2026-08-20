@@ -1,4 +1,5 @@
 import type { Annotation, Proposal } from "@rennet/types";
+import { Button, Textarea } from "@rennet/ui";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // L3 — the orchestrator's hand. Glass doctrine: these marks are CHROME, visually
@@ -31,20 +32,22 @@ export function AnnotationMark({
       </span>
       <span className="l3-body min-w-0 flex-1 font-serif">{annotation.body}</span>
       <div className="l3-actions flex gap-1.5">
-        <button
-          type="button"
-          className="l3-btn cursor-pointer rounded-chip border border-line-strong bg-raised px-2.5 py-1 font-sans text-2xs text-ink-soft hover:bg-surface"
+        <Button
+          variant="outline"
+          size="xs"
+          className="l3-btn font-sans text-2xs text-ink-soft"
           onClick={() => onPin(annotation.annotationId)}
         >
           {annotation.pinned ? "Pinned" : "Pin"}
-        </button>
-        <button
-          type="button"
-          className="l3-btn cursor-pointer rounded-chip border border-line-strong bg-raised px-2.5 py-1 font-sans text-2xs text-ink-soft hover:bg-surface"
+        </Button>
+        <Button
+          variant="outline"
+          size="xs"
+          className="l3-btn font-sans text-2xs text-ink-soft"
           onClick={() => onClear(annotation.annotationId)}
         >
           Clear
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -91,8 +94,8 @@ export function ProposalMark({
           {proposal.target}
         </span>
         {editing ? (
-          <textarea
-            className="l3-proposal-edit mt-1.5 w-full rounded-chip border border-line-strong bg-surface px-2 py-1.5 font-sans text-base text-ink"
+          <Textarea
+            className="l3-proposal-edit mt-1.5 min-h-0 font-sans"
             aria-label="Edit the proposed disposition"
             value={draft}
             onChange={(event) => onChangeDraft(event.target.value)}
@@ -102,27 +105,30 @@ export function ProposalMark({
         )}
       </div>
       <div className="l3-actions flex gap-1.5">
-        <button
-          type="button"
-          className="l3-btn l3-accept cursor-pointer rounded-chip border border-line-strong bg-raised px-2.5 py-1 font-sans text-2xs text-ink-soft hover:border-green-line hover:bg-green-soft hover:text-ink"
+        <Button
+          variant="outline"
+          size="xs"
+          className="l3-btn l3-accept font-sans text-2xs text-ink-soft hover:border-green-line hover:bg-green-soft hover:text-ink"
           onClick={onAccept}
         >
           {editing ? "Accept edit" : "Accept"}
-        </button>
-        <button
-          type="button"
-          className="l3-btn cursor-pointer rounded-chip border border-line-strong bg-raised px-2.5 py-1 font-sans text-2xs text-ink-soft hover:bg-surface"
+        </Button>
+        <Button
+          variant="outline"
+          size="xs"
+          className="l3-btn font-sans text-2xs text-ink-soft"
           onClick={onEdit}
         >
           Edit
-        </button>
-        <button
-          type="button"
-          className="l3-btn cursor-pointer rounded-chip border border-line-strong bg-raised px-2.5 py-1 font-sans text-2xs text-ink-soft hover:bg-surface"
+        </Button>
+        <Button
+          variant="outline"
+          size="xs"
+          className="l3-btn font-sans text-2xs text-ink-soft"
           onClick={onDismiss}
         >
           Dismiss
-        </button>
+        </Button>
       </div>
     </div>
   );

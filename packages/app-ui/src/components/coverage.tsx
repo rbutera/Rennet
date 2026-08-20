@@ -1,3 +1,4 @@
+import { Button } from "@rennet/ui";
 import type { CoverageMosaic } from "../canvas/read-state";
 
 // The coverage mosaic: the totality/residue guarantee made visible. Every path in
@@ -29,14 +30,14 @@ export function CoverageMosaicView({
         <span className="coverage-skimmed text-ink-soft">{mosaic.skimmed} skimmed</span>
         <span className="coverage-unread text-ink-faint">{mosaic.unread} unread</span>
         <span className="coverage-total text-ink-faint">of {mosaic.total}</span>
-        <button
-          type="button"
-          className="coverage-next-unread ml-auto cursor-pointer rounded-control border border-line bg-transparent px-3 py-1.5 text-sm text-ink hover:bg-raised disabled:cursor-default disabled:opacity-50"
+        <Button
+          variant="outline"
+          className="coverage-next-unread ml-auto"
           disabled={mosaic.unread === 0}
           onClick={() => onGotoNextUnread?.(-1)}
         >
           Next unread
-        </button>
+        </Button>
       </header>
       <ol className="coverage-cells m-0 flex list-none flex-wrap gap-1 p-0">
         {mosaic.cells.map((cell, index) => (

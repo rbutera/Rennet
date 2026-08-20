@@ -4,6 +4,7 @@ import type {
   ProjectProcessEvent,
   RennetBridge,
 } from "@rennet/protocol";
+import { Button } from "@rennet/ui";
 import { useEffect, useRef, useState } from "react";
 import { ArrowRightIcon, CheckIcon, SparkleIcon, TriangleIcon } from "./icons";
 import { ProgressFeed } from "./progress-feed";
@@ -98,13 +99,9 @@ export function ProjectProcessing({
           Could not start processing. {startError}
         </p>
         <div className="processing-actions flex items-center gap-3 mt-1">
-          <button
-            type="button"
-            className="primary ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105"
-            onClick={onDone}
-          >
+          <Button size="lg" className="primary ml-auto" onClick={onDone}>
             Back to projects
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -156,22 +153,14 @@ export function ProjectProcessing({
 
       {done ? (
         <div className="processing-actions flex items-center gap-3 mt-1">
-          <button
-            type="button"
-            className="ghost px-4 py-2.5 rounded-control border border-line text-ink-soft font-semibold hover:bg-raised hover:text-ink"
-            onClick={onDone}
-          >
+          <Button variant="outline" size="lg" className="ghost text-ink-soft" onClick={onDone}>
             Back to projects
-          </button>
+          </Button>
           {succeeded ? (
-            <button
-              type="button"
-              className="primary ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-accent-fill text-accent-ink font-semibold hover:brightness-105"
-              onClick={onOpen}
-            >
+            <Button size="lg" className="primary ml-auto" onClick={onOpen}>
               Open {project.name}
               <ArrowRightIcon size={13} />
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}

@@ -1,3 +1,4 @@
+import { Button } from "@rennet/ui";
 import type { OrphanedDisposition } from "../canvas/authoring";
 
 // The orphan tray: when a patchset advances and the engine's conservative
@@ -41,13 +42,14 @@ export function OrphanTray({
             <span className="orphan-entry-reason text-2xs text-ink-faint">
               did not carry — the file changed
             </span>
-            <button
-              type="button"
-              className="orphan-entry-reauthor ml-auto cursor-pointer rounded-chip border border-accent-line px-2 py-1 text-xs text-accent hover:bg-accent-soft"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="orphan-entry-reauthor ml-auto border-accent-line text-accent hover:bg-accent-soft"
               onClick={() => onReauthor?.(orphan.anchor.path)}
             >
               Re-open
-            </button>
+            </Button>
           </li>
         ))}
       </ul>

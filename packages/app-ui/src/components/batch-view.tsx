@@ -1,4 +1,13 @@
 import type { DispositionType } from "@rennet/types";
+import {
+  Button,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from "@rennet/ui";
 import { batchViewModel, type DispositionBatch, type DispositionDraft } from "../canvas/authoring";
 import type { BatchDestination } from "../canvas/destination";
 
@@ -69,47 +78,44 @@ export function BatchView({
               <span className="batch-entry-path min-w-0 flex-1 truncate font-mono text-sm text-ink">
                 {entry.path}
               </span>
-              <select
-                className="batch-entry-type h-8 rounded-control border border-line bg-surface px-2 text-sm text-ink"
-                aria-label={`Type for ${entry.path}`}
+              <Select
                 value={entry.type}
-                onChange={(event) =>
-                  onEditType?.(entry.path, event.target.value as DispositionType)
-                }
+                onValueChange={(value) => onEditType?.(entry.path, value as DispositionType)}
               >
-                {TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
-              <textarea
-                className="batch-entry-body w-full resize-y rounded-control border border-line bg-surface px-2.5 py-2 text-base leading-relaxed text-ink"
+                <SelectTrigger className="batch-entry-type" aria-label={`Type for ${entry.path}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Textarea
+                className="batch-entry-body resize-y leading-relaxed"
                 aria-label={`Body for ${entry.path}`}
                 value={draftFor(entry.path)?.raw ?? entry.body}
                 placeholder="Raw note — lazy is fine"
                 onChange={(event) => onEditBody?.(entry.path, event.target.value)}
               />
-              <button
-                type="button"
-                className="batch-entry-withdraw h-8 rounded-control px-3 text-sm text-danger hover:bg-danger-soft"
+              <Button
+                variant="destructive"
+                className="batch-entry-withdraw"
                 onClick={() => onWithdraw?.(entry.path)}
               >
                 Withdraw
-              </button>
+              </Button>
             </li>
           ))}
         </ol>
       )}
       {entries.length > 0 ? (
         <footer className="batch-footer flex">
-          <button
-            type="button"
-            className="batch-publish h-9 rounded-control bg-accent-fill px-4 text-base font-semibold text-accent-ink"
-            onClick={() => onPublish?.()}
-          >
+          <Button size="lg" className="batch-publish text-base" onClick={() => onPublish?.()}>
             {destination === "publish" ? "Publish to PR" : "Hand off"}
-          </button>
+          </Button>
         </footer>
       ) : null}
     </section>
