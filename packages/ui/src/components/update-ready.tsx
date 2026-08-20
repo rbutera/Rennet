@@ -1,4 +1,5 @@
 import type { UpdateReadyInfo } from "@rennet/protocol";
+import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { RennetBrandMark } from "./brand-mark";
 
@@ -60,6 +61,140 @@ export function ChromeMark({ size, className }: { size: number; className: strin
         aria-hidden="true"
       />
     </button>
+  );
+}
+
+/** Where the "Documentation" row opens (the static docsite; opens in the OS browser). */
+const DOCS_URL = "https://docs.rennet.dev";
+
+/**
+ * The top-left chrome logo as an app menu (issue: settings discoverability after the
+ * menu-bar route was dropped). Clicking the Rennet mark opens an anchored panel of
+ * app-level destinations — Settings, Back to projects, Documentation — plus, when an
+ * update is staged, a highlighted "Restart to update" row and the same corner badge
+ * `ChromeMark` grows. The logo ALWAYS opens this panel: one consistent behavior, the
+ * update surfaced as a row inside it rather than a second click target. Dismisses on
+ * outside-click or Escape; picking a row runs its action and closes.
+ */
+export function ChromeMenu({
+  size,
+  className,
+  version,
+  canBackToProjects,
+  onOpenSettings,
+  onBackToProjects,
+}: {
+  size: number;
+  className: string;
+  /** Current app version for the footer line; absent on hosts that don't report one. */
+  version?: string;
+  /** Whether "Back to projects" applies (hidden on the projects root itself). */
+  canBackToProjects: boolean;
+  onOpenSettings(): void;
+  onBackToProjects(): void;
+}) {
+  const ready = useUpdateReady((state) => state.ready);
+  const openPrompt = useUpdateReady((state) => state.openPrompt);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(event: MouseEvent): void {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function run(action: () => void): void {
+    setOpen(false);
+    action();
+  }
+
+  // Layout separated from colour: the update row swaps in the accent colours, and a
+  // combined class string would let base `text-ink`/`bg-transparent` win by source
+  // order in the emitted CSS and silently drop the highlight.
+  const itemBase =
+    "chrome-menu-item flex w-full cursor-pointer items-center gap-2 rounded-chip border-0 px-2.5 py-2 text-left font-sans text-base font-medium no-underline";
+  const itemClass = `${itemBase} bg-transparent text-ink hover:bg-raised`;
+
+  return (
+    <div ref={rootRef} className="chrome-menu relative flex items-center">
+      <button
+        type="button"
+        className={`${className} chrome-menu-trigger relative m-0 cursor-pointer border-0 bg-transparent p-0 text-inherit`}
+        aria-label="Rennet menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <RennetBrandMark size={size} />
+        {ready ? (
+          <span
+            className="chrome-mark-badge absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-accent shadow-[0_0_0_1px_var(--rn-surface)]"
+            aria-hidden="true"
+          />
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          className="chrome-menu-panel absolute left-0 top-[calc(100%+6px)] z-30 flex min-w-[220px] flex-col gap-0.5 rounded-control border border-line bg-overlay p-1.5 shadow-overlay"
+          role="menu"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => run(onOpenSettings)}
+          >
+            Settings
+          </button>
+          {canBackToProjects ? (
+            <button
+              type="button"
+              role="menuitem"
+              className={itemClass}
+              onClick={() => run(onBackToProjects)}
+            >
+              Back to projects
+            </button>
+          ) : null}
+          {ready ? (
+            <button
+              type="button"
+              role="menuitem"
+              className={`${itemBase} chrome-menu-update bg-accent-soft text-accent hover:bg-accent-soft`}
+              onClick={() => run(openPrompt)}
+            >
+              {updateActionLabel(ready)}
+            </button>
+          ) : null}
+          <a
+            role="menuitem"
+            className={itemClass}
+            href={DOCS_URL}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => setOpen(false)}
+          >
+            Documentation
+          </a>
+          {version ? (
+            <p className="chrome-menu-version m-0 border-t border-line px-2.5 pb-1 pt-2 font-sans text-2xs text-ink-faint">
+              Rennet v{version}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

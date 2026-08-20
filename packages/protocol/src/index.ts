@@ -3046,6 +3046,12 @@ export interface RennetBridge {
    */
   platform?: string;
   /**
+   * The host app's own version (`app.getVersion()`), for the chrome menu's footer
+   * line. Optional and host-provided, mirroring {@link platform}: a non-Electron host
+   * (browser shell, tests) omits it and the version line is simply not shown.
+   */
+  version?: string;
+  /**
    * Subscribe to live progress events pushed by a long-running command, keyed by
    * the `commandId` the caller passes to `invoke`. Returns an unsubscribe. Today
    * this carries `project.process`'s snapshot-build narration. Optional: a bridge

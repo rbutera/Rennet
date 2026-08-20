@@ -104,7 +104,12 @@ import { PrWorktreeStatus } from "./components/pr-worktree-status";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { SettingsScreen } from "./components/settings-screen";
-import { ChromeMark, UpdateReadyPrompt, useUpdateReady } from "./components/update-ready";
+import {
+  ChromeMark,
+  ChromeMenu,
+  UpdateReadyPrompt,
+  useUpdateReady,
+} from "./components/update-ready";
 import { CanvasWorkspace } from "./components/workspace";
 import { runBatched } from "./concurrency";
 import {
@@ -2562,9 +2567,16 @@ export function RennetApp({
     return (
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
-          <ChromeMark
+          <ChromeMenu
             size={16}
             className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+            version={bridge.version}
+            canBackToProjects={currentSurface.kind !== "projects"}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onBackToProjects={() => {
+              setSettingsOpen(false);
+              goToProjects();
+            }}
           />
           {/* History is a paired control: the rail is gone, back/forward live here. */}
           <div className="navigation-history flex flex-none items-center gap-0.5">
@@ -2634,10 +2646,18 @@ export function RennetApp({
   if (review === undefined) {
     return (
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
+        {updatePrompt}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
-          <ChromeMark
+          <ChromeMenu
             size={16}
             className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+            version={bridge.version}
+            canBackToProjects={currentSurface.kind !== "projects"}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onBackToProjects={() => {
+              setSettingsOpen(false);
+              goToProjects();
+            }}
           />
           <Breadcrumb crumb={deriveCrumb([{ kind: "projects" }])} onAscend={() => undefined} />
           {connectionSlot}
@@ -2659,10 +2679,18 @@ export function RennetApp({
   if (settingsOpen) {
     return (
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
+        {updatePrompt}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
-          <ChromeMark
+          <ChromeMenu
             size={16}
             className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+            version={bridge.version}
+            canBackToProjects={currentSurface.kind !== "projects"}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onBackToProjects={() => {
+              setSettingsOpen(false);
+              goToProjects();
+            }}
           />
           <span className="text-sm text-ink-soft">Settings</span>
         </header>
@@ -2690,9 +2718,16 @@ export function RennetApp({
         {palette}
         {updatePrompt}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
-          <ChromeMark
+          <ChromeMenu
             size={16}
             className="navigation-titlebar-mark flex flex-none items-center opacity-80"
+            version={bridge.version}
+            canBackToProjects={currentSurface.kind !== "projects"}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onBackToProjects={() => {
+              setSettingsOpen(false);
+              goToProjects();
+            }}
           />
           <button
             type="button"

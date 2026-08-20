@@ -15,5 +15,6 @@ export const RENNET_PRELOAD_KEYS = [
   "chooseDirectory",
   "onUpdateReady",
   "platform",
+  "version",
   "wsPort",
 ] as const;

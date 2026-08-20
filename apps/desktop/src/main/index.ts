@@ -141,7 +141,7 @@ async function createWindow(wsPort: number): Promise<void> {
       webSecurity: true,
       // The loopback WS port the renderer's WsRennetBridge connects to (#378). Appended
       // to the renderer process argv; the sandboxed preload reads it and exposes it.
-      additionalArguments: [`${WS_PORT_ARG}${wsPort}`],
+      additionalArguments: [`${WS_PORT_ARG}${wsPort}`, `--rennet-version=${app.getVersion()}`],
     },
   });
   // Keep the versioned title: Electron replaces the window title with the page's

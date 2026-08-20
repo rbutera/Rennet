@@ -40,6 +40,12 @@ No implementation detail lives here; decisions go to `docs/` and ADRs.
 
 ## Desktop presence
 
+- **Logo menu** — the top-left Rennet mark as a button: it opens an anchored
+  panel of app-level destinations (Settings, Back to projects, Documentation)
+  plus, when an update is staged, a highlighted restart row and the version at
+  its foot. The window's one always-present menu, since the native menu bar
+  carries no Rennet commands of its own.
+
 - **Owned daemon** — the local review daemon this app is responsible for: the
   one claimed by the discovery file in the app's own data directory, regardless
   of who spawned it (the app or the CLI). The only daemon the app's complete
