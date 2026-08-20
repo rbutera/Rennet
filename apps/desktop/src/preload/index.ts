@@ -7,6 +7,10 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 // host-app updater channels.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
+// The renderer's connect-flow decisions (locus detect / daemon switch / failure) land here as
+// structured lines in MAIN's <userData>/wsl-connect.log — the SHELL-side trace of connecting a
+// WSL directory to its in-distro daemon. Debug plumbing, deliberately loud, no secrets.
+const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const WS_PORT_ARG = "--rennet-ws-port=";
@@ -15,6 +19,20 @@ const VERSION_ARG = "--rennet-version=";
 /** A downloaded-and-ready update, as pushed (or replayed) by MAIN. */
 export interface UpdateReadyInfo {
   version?: string;
+}
+
+/**
+ * A structured line the renderer appends to MAIN's WSL-connect debug log. Free-form
+ * `detail` so the connect-flow can log whatever it decided (detected distro, resolved
+ * port, error) without a per-event schema. Never carries a token or credential.
+ */
+export interface WslConnectLogEntry {
+  /** Which stage of the connect flow logged this (`detect`, `switch`, `error`, …). */
+  readonly event: string;
+  /** The project path being connected. */
+  readonly path?: string;
+  /** Everything else worth seeing over SSH — distro, port, translated path, message. */
+  readonly detail?: Record<string, unknown>;
 }
 
 /** Boundary parse for the readiness payload — the channel idiom's zod-lite. */
@@ -47,6 +65,11 @@ export interface RennetPreload {
    */
   resolveDaemonForPath(path: string): Promise<number | null>;
   /**
+   * Append one structured line to MAIN's `<userData>/wsl-connect.log` — the renderer-side
+   * trace of the WSL connect flow (fire-and-forget; the log is best-effort debug plumbing).
+   */
+  logWslConnect(entry: WslConnectLogEntry): void;
+  /**
    * Subscribe to update-readiness (badge on the Rennet logo). The cached MAIN-side
    * state is replayed immediately so a renderer that loads after the download still
    * badges; returns an unsubscribe.
@@ -70,6 +93,7 @@ const preload: RennetPreload = {
   chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
   resolveDaemonForPath: (path) =>
     ipcRenderer.invoke(RESOLVE_DAEMON_FOR_PATH_CHANNEL, path) as Promise<number | null>,
+  logWslConnect: (entry) => ipcRenderer.send(WSL_CONNECT_LOG_CHANNEL, entry),
   onUpdateReady: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: unknown): void => {
       const parsed = parseUpdateReady(payload);

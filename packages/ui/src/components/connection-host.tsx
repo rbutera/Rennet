@@ -60,6 +60,26 @@ export interface Connection {
 /** The shell-injected connection factory (issue #383 M0). Supersedes {@link BridgeFactory}. */
 export type ConnectionFactory = (target: ConnectionTarget) => Connection;
 
+/**
+ * The outcome of resolving which daemon should serve a project path (WSL connect flow). The
+ * shell (desktop) owns the locus detection + daemon spawn (it may import `@rennet/core` and
+ * the preload; `ui` may not), and hands back a plain result:
+ * - `switched: true` + `target` → this path lives in a WSL distro; attach ITS in-distro daemon
+ *   (a tokenless LOCAL target at the resolved loopback port). `repoPath` is the path
+ *   translated to its distro-native form, which the distro daemon understands.
+ * - `switched: false`, no error → a host path; nothing to switch (host behaviour is unchanged).
+ * - `error` → the distro has no usable Node / is unreachable; honest failure copy for the app.
+ */
+export interface DaemonResolution {
+  readonly switched: boolean;
+  readonly target?: ConnectionTarget;
+  readonly repoPath?: string;
+  readonly error?: string;
+}
+
+/** The app-facing capability the shell threads down: pick a path → connect its daemon. */
+export type ConnectDaemonForPath = (path: string) => Promise<{ switched: boolean; error?: string }>;
+
 export interface ConnectionHostProps {
   /**
    * Build a connection for a target (issue #383 M0). MUST be stable (module-level or
@@ -76,6 +96,15 @@ export interface ConnectionHostProps {
   readonly defaultTarget: ConnectionTarget;
   /** localStorage key for the saved remote-daemon list. */
   readonly storageKey?: string;
+  /**
+   * The desktop shell's "which daemon serves this path" resolver (WSL connect flow). Absent in
+   * the browser shell (no WSL, no preload) — then the app never sees `connectDaemonForPath`
+   * and every pick stays on the current daemon, exactly as before. When present, the host wraps
+   * it into the {@link ConnectDaemonForPath} capability it passes to the app: on a `switched`
+   * resolution it activates the returned distro target (a clean remount) and stashes the
+   * distro-native path so the freshly mounted app captures the repo THERE.
+   */
+  readonly resolveDaemonTarget?: (path: string) => Promise<DaemonResolution>;
 }
 
 const DEFAULT_STORAGE_KEY = "rennet.daemons";
@@ -277,6 +306,7 @@ export function ConnectionHost({
   createBridge,
   defaultTarget,
   storageKey,
+  resolveDaemonTarget,
 }: ConnectionHostProps) {
   const key = storageKey ?? DEFAULT_STORAGE_KEY;
   // Normalise the two seams to one stable factory: prefer `createConnection`, else adapt the
@@ -294,6 +324,10 @@ export function ConnectionHost({
   const [initial] = useState(() => readStoredDaemons(key));
   const [saved, setSaved] = useState<readonly ConnectionTarget[]>(initial.daemons);
   const [activeId, setActiveId] = useState(initial.activeId ?? defaultTarget.id);
+  // A repo path the NEXT-mounted app should capture on itself — set when a WSL pick switches
+  // us onto a distro daemon, so the freshly remounted app adds the repo THERE (the switching
+  // app is already tearing down). The app clears it via `onPendingRepoConsumed`.
+  const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addLabel, setAddLabel] = useState("");
@@ -449,6 +483,43 @@ export function ConnectionHost({
       setAddBusy(false);
     }
   }, [addHost, addCode, addLabel, makeConnection, key]);
+
+  // Add-or-replace a LOCAL (tokenless) target and make it active — a clean RennetApp remount,
+  // reusing the same target list + activeId the switcher drives. A WSL distro daemon is just a
+  // loopback target at the resolved port; it needs no device token (it is on THIS machine), so
+  // it is deliberately not a `isStoredTarget` (readStoredDaemons drops it on reload — the distro
+  // daemon is re-resolved from the path each session, never restored from a stale port).
+  const activateLocalTarget = useCallback(
+    (target: ConnectionTarget) => {
+      setSaved((current) => {
+        const next = [...current.filter((t) => t.id !== target.id), target];
+        persistDaemons(key, next, target.id);
+        return next;
+      });
+      setActiveId(target.id);
+      setSwitcherOpen(false);
+    },
+    [key],
+  );
+
+  // The capability the app calls after a repo pick: resolve the path's daemon (desktop-owned),
+  // and if it lives in a WSL distro, switch onto that distro's daemon + queue the distro-native
+  // repo path for the remounted app to capture. Returns the app-facing {switched, error?} shape;
+  // a host path (or no resolver) is {switched:false} and the app proceeds on the current daemon.
+  const connectDaemonForPath = useCallback<ConnectDaemonForPath>(
+    async (path) => {
+      if (!resolveDaemonTarget) return { switched: false };
+      const resolution = await resolveDaemonTarget(path);
+      if (resolution.error) return { switched: false, error: resolution.error };
+      if (resolution.switched && resolution.target) {
+        setPendingRepoPath(resolution.repoPath ?? path);
+        activateLocalTarget(resolution.target);
+        return { switched: true };
+      }
+      return { switched: false };
+    },
+    [resolveDaemonTarget, activateLocalTarget],
+  );
 
   const { announce, dotState } = describeConnection(activeTarget.label, status);
   // The dot is a redundant non-text cue (the indicator's aria-label carries the truth):
@@ -622,7 +693,14 @@ export function ConnectionHost({
 
   return bridge ? (
     <>
-      <RennetApp key={activeId} bridge={bridge} connectionSlot={connectionBar} />
+      <RennetApp
+        key={activeId}
+        bridge={bridge}
+        connectionSlot={connectionBar}
+        connectDaemonForPath={resolveDaemonTarget ? connectDaemonForPath : undefined}
+        pendingRepoPath={pendingRepoPath ?? undefined}
+        onPendingRepoConsumed={() => setPendingRepoPath(null)}
+      />
       {daemonBanner}
     </>
   ) : null;
