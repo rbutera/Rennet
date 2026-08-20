@@ -17,14 +17,7 @@
  */
 
 import { type LocusCommand, locusCommand } from "./locus";
-
-/**
- * ANSI CSI sequences + bare control chars. Interactive shells emit prompt/cursor
- * escapes (observed: `ESC [ 5 SP q`, a cursor-shape set) onto the captured stream;
- * strip them before parsing a path out of the probe output.
- */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping terminal control output is the point.
-const CONTROL_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|[\x00-\x1f\x7f]/g; // eslint-disable-line no-control-regex
+import { shellLines, stripShellControl } from "./wsl-shell";
 
 /** Probe for the user's login shell: `getent passwd <user>`'s 7th field. */
 export function buildWslLoginShellProbe(distro: string): LocusCommand {
@@ -36,13 +29,7 @@ export function buildWslLoginShellProbe(distro: string): LocusCommand {
 
 /** The absolute login-shell path from the probe, or `/bin/sh` when unreadable. */
 export function parseLoginShell(raw: string): string {
-  const line =
-    raw
-      .replace(CONTROL_RE, "")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-      .pop() ?? "";
+  const line = shellLines(raw).at(-1) ?? "";
   return /^\/\S*\/[^/]+$/.test(line) ? line : "/bin/sh";
 }
 
@@ -61,7 +48,7 @@ export function buildWslNodeProbe(distro: string, loginShell: string): LocusComm
 
 /** The absolute `…/node` binary from the probe output, or `null` if none is present. */
 export function parseWslNodePath(raw: string): string | null {
-  const cleaned = raw.replace(CONTROL_RE, "");
+  const cleaned = stripShellControl(raw);
   // The real binary is an absolute path ending in `/node`; interactive noise (job
   // messages, a stripped prompt) may surround it, so take the LAST such token.
   const matches = cleaned.match(/\/\S*\/node\b/g);
