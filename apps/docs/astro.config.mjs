@@ -95,6 +95,7 @@ export default defineConfig({
                     link: "/developing/concepts/surfacing-and-routing/",
                   },
                   { label: "Harness adapters", link: "/developing/concepts/harness-adapters/" },
+                  { label: "The WSL daemon", link: "/developing/concepts/wsl-daemon/" },
                   { label: "Agent handoff", link: "/developing/concepts/agent-handoff/" },
                   {
                     label: "Delta re-review and lineage",

@@ -30,6 +30,7 @@ renderer because it uses Starlight components.
   [Model Council](./developing/concepts/model-council.md),
   [surfacing and routing](./developing/concepts/surfacing-and-routing.md),
   [harness adapters](./developing/concepts/harness-adapters.md),
+  [the WSL daemon](./developing/concepts/wsl-daemon.md),
   [agent handoff](./developing/concepts/agent-handoff.md),
   [delta re-review and lineage](./developing/concepts/delta-rereview-and-lineage.md),
   [comment refinement](./developing/concepts/comment-refinement.md),
