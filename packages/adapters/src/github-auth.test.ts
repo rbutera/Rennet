@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveGitHubAuth, type SecretStore, validateGitHubToken } from "./github-auth";
+import {
+  type RefreshLogRecord,
+  resolveGitHubAuth,
+  type SecretStore,
+  tokenKind,
+  validateGitHubToken,
+} from "./github-auth";
 import type { GitHubCredential } from "./github-device-flow";
 import { GitHubOAuthDeclined } from "./github-device-flow";
 import { createGitHubOctokit } from "./github-octokit";
@@ -438,5 +444,172 @@ describe("resolveGitHubAuth — network failure (the lancelot field bug)", () =>
     if (state.ok) throw new Error("unreachable");
     expect(state.reason).toBe("network");
     expect(store.writes).toEqual([]);
+  });
+});
+
+describe("tokenKind — the closed prefix allowlist", () => {
+  it("maps known GitHub prefixes to their own prefix", () => {
+    expect(tokenKind("ghu_ABC")).toBe("ghu_");
+    expect(tokenKind("gho_ABC")).toBe("gho_");
+    expect(tokenKind("github_pat_ABC")).toBe("github_pat_");
+  });
+
+  it("maps an unrecognized value to the fixed 'token' label, never a slice of it", () => {
+    // Must NEVER return "customerSecret_" — that would leak a slice of an
+    // unexpected credential body into a log record.
+    expect(tokenKind("customerSecret_body")).toBe("token");
+    expect(tokenKind("customerSecret_body")).not.toBe("customerSecret_");
+  });
+
+  it("maps a value with no underscore to 'token'", () => {
+    expect(tokenKind("plainvalue")).toBe("token");
+  });
+});
+
+describe("resolveGitHubAuth — refresh log records (RefreshLogRecord)", () => {
+  const ROTATED_GHU: GitHubCredential = {
+    token: "ghu_rotated_kind",
+    expiresAt: new Date(NOW + 8 * 60 * 60 * 1000).toISOString(),
+    refreshToken: "ghr_next_kind",
+    refreshTokenExpiresAt: new Date(NOW + 180 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+
+  it("a DECLINED refresh emits a `declined` record carrying the verbatim githubError", async () => {
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_dead" });
+    const records: RefreshLogRecord[] = [];
+    const refresh = vi.fn(() => Promise.reject(new GitHubOAuthDeclined("bad_refresh_token")));
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({}),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+      log: (record) => records.push(record),
+    });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("token-invalid");
+    const declined = records.find((r) => r.phase === "declined");
+    expect(declined).toBeDefined();
+    expect(declined?.githubError).toBe("bad_refresh_token");
+  });
+
+  it("a NETWORK-failing refresh emits exactly [attempt, network], resolves network, leaves the credential untouched, and calls refresh() exactly once", async () => {
+    const original: GitHubCredential = {
+      token: "gho_dying",
+      expiresAt: SOON,
+      refreshToken: "ghr_1",
+    };
+    const store = memoryStore({ ...original });
+    const records: RefreshLogRecord[] = [];
+    const networkError = Object.assign(new Error("Connect Timeout Error"), {
+      code: "UND_ERR_CONNECT_TIMEOUT",
+    });
+    const refresh = vi.fn(() => Promise.reject(networkError));
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({}),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+      log: (record) => records.push(record),
+    });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("network");
+    // Exactly attempt then network — no retry phase, no extra records.
+    expect(records).toEqual([{ phase: "attempt" }, { phase: "network" }]);
+    // The stored credential is byte-unchanged: no write happened at all.
+    expect(store.writes).toEqual([]);
+    expect(store.current()).toEqual(original);
+    // The no-adapter-retry guarantee: the transport (not github-auth) owns retry.
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("a SUCCESSFUL refresh emits a `persisted` record with an allowlisted tokenKind, and persists the rotated pair", async () => {
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_1" });
+    const records: RefreshLogRecord[] = [];
+    const refresh = vi.fn(() => Promise.resolve(ROTATED_GHU));
+    const fetch: typeof globalThis.fetch = (input) =>
+      Promise.resolve(new URL(String(input)).pathname === "/rate_limit" ? rateLimitOk() : userOk());
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch }),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+      log: (record) => records.push(record),
+    });
+    expect(state.ok).toBe(true);
+    const persisted = records.find((r) => r.phase === "persisted");
+    expect(persisted).toBeDefined();
+    expect(persisted?.tokenKind).toBe("ghu_");
+    expect(store.current()).toEqual(ROTATED_GHU);
+  });
+});
+
+describe("resolveGitHubAuth — refresh log records never carry a secret", () => {
+  const SENTINEL_OLD_ACCESS = "gho_SENTINEL_OLD_ACCESS_1a2b3c4d";
+  const SENTINEL_OLD_REFRESH = "ghr_SENTINEL_OLD_REFRESH_5e6f7a8b";
+  const SENTINEL_NEW_ACCESS = "ghu_SENTINEL_NEW_ACCESS_9c0d1e2f";
+  const SENTINEL_NEW_REFRESH = "ghr_SENTINEL_NEW_REFRESH_3a4b5c6d";
+
+  it("a full successful refresh (attempt -> persisted) never leaks either token into a record", async () => {
+    const store = memoryStore({
+      token: SENTINEL_OLD_ACCESS,
+      expiresAt: SOON,
+      refreshToken: SENTINEL_OLD_REFRESH,
+    });
+    const records: RefreshLogRecord[] = [];
+    const rotated: GitHubCredential = {
+      token: SENTINEL_NEW_ACCESS,
+      expiresAt: new Date(NOW + 8 * 60 * 60 * 1000).toISOString(),
+      refreshToken: SENTINEL_NEW_REFRESH,
+      refreshTokenExpiresAt: new Date(NOW + 180 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    const refresh = vi.fn(() => Promise.resolve(rotated));
+    const fetch: typeof globalThis.fetch = (input) =>
+      Promise.resolve(new URL(String(input)).pathname === "/rate_limit" ? rateLimitOk() : userOk());
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch }),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+      log: (record) => records.push(record),
+    });
+    expect(state.ok).toBe(true);
+    expect(records.map((r) => r.phase)).toEqual(["attempt", "persisted"]);
+    for (const record of records) {
+      const serialized = JSON.stringify(record);
+      expect(serialized).not.toContain(SENTINEL_OLD_ACCESS);
+      expect(serialized).not.toContain(SENTINEL_OLD_REFRESH);
+      expect(serialized).not.toContain(SENTINEL_NEW_ACCESS);
+      expect(serialized).not.toContain(SENTINEL_NEW_REFRESH);
+    }
+  });
+
+  it("a network-failing refresh never leaks the stored tokens into a record", async () => {
+    const store = memoryStore({
+      token: SENTINEL_OLD_ACCESS,
+      expiresAt: SOON,
+      refreshToken: SENTINEL_OLD_REFRESH,
+    });
+    const records: RefreshLogRecord[] = [];
+    const networkError = Object.assign(new Error("Connect Timeout Error"), {
+      code: "UND_ERR_CONNECT_TIMEOUT",
+    });
+    const refresh = vi.fn(() => Promise.reject(networkError));
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({}),
+      secretStore: store,
+      refresh,
+      now: () => NOW,
+      log: (record) => records.push(record),
+    });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("network");
+    for (const record of records) {
+      const serialized = JSON.stringify(record);
+      expect(serialized).not.toContain(SENTINEL_OLD_ACCESS);
+      expect(serialized).not.toContain(SENTINEL_OLD_REFRESH);
+    }
   });
 });
