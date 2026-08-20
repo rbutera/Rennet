@@ -148,6 +148,14 @@ export function FrontDoor({
           bridge={bridge}
           onAdd={() => setFlow({ step: "type-path", kind: "workspace", busy: false })}
           onOpen={onOpenProject}
+          onRemove={(id) => {
+            // Forget a project (the repo on disk is untouched); refresh from the
+            // authoritative surviving list MAIN returns.
+            bridge
+              .invoke("projects.remove", { commandId: crypto.randomUUID(), projectId: id })
+              .then(({ projects: next }) => setProjects(next))
+              .catch((reason: unknown) => setError(messageFrom(reason)));
+          }}
         />
       )}
     </div>
@@ -162,13 +170,31 @@ function ProjectsList({
   bridge,
   onAdd,
   onOpen,
+  onRemove,
 }: {
   projects: Project[] | null;
   detected: DetectedHarness[] | null;
   bridge: RennetBridge;
   onAdd(): void;
   onOpen(project: Project): void;
+  onRemove(projectId: string): void;
 }) {
+  // Right-click a project row to forget it. A small menu anchored at the cursor;
+  // any click / key / scroll dismisses it. Removing does NOT touch the repo on disk.
+  const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (): void => setMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [menu]);
+
   if (projects === null)
     return <p className="front-door-loading mt-20 text-base text-ink-faint">Loading projects…</p>;
 
@@ -204,6 +230,10 @@ function ProjectsList({
               key={project.id}
               className="project-row flex items-center gap-3.5 px-4 py-3 rounded-surface border border-line bg-surface text-ink text-left transition-colors hover:bg-raised"
               onClick={() => onOpen(project)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ project, x: event.clientX, y: event.clientY });
+              }}
             >
               <span
                 className="project-row-icon flex-none w-8 h-8 grid place-items-center rounded-control border border-line text-accent"
@@ -240,6 +270,25 @@ function ProjectsList({
             <Icon icon={Plus} className="size-3.5" />
             Add a project
           </button>
+          {menu ? (
+            <div
+              className="project-context-menu fixed z-50 min-w-[180px] rounded-control border border-line bg-surface shadow-lg py-1"
+              style={{ top: menu.y, left: menu.x }}
+              role="menu"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="w-full px-3.5 py-2 text-left text-base text-ink hover:bg-raised"
+                onClick={() => {
+                  onRemove(menu.project.id);
+                  setMenu(null);
+                }}
+              >
+                Remove from Rennet
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
 

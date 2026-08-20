@@ -437,6 +437,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
   ...projectShape("projects.list.output.projects"),
   ...projectShape("projects.add.output.project"),
   ...projectShape("projects.add.output.projects"),
+  ...projectShape("projects.remove.output.projects"),
   ...classified("host-path-projected", [
     "repository.choose.input.path",
     "repository.choose.output.path",

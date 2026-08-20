@@ -95,6 +95,19 @@ export class FileProjectStore {
     );
     return project;
   }
+
+  /**
+   * Forget a project by id. Does NOT touch the repo on disk — only Rennet's record
+   * of it is dropped, so re-adding the same path restores it. Returns whether one
+   * was removed (false when the id was already absent).
+   */
+  remove(id: string): boolean {
+    const existing = this.list();
+    const kept = existing.filter((project) => project.id !== id);
+    if (kept.length === existing.length) return false;
+    writeFileSync(this.path, `${JSON.stringify(fileSchema.parse({ projects: kept }), null, 2)}\n`);
+    return true;
+  }
 }
 
 /**
