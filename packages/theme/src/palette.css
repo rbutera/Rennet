@@ -85,6 +85,10 @@
   --rn-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* depth — true overlays only */
   --rn-shadow-overlay: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
+  /* scrim — the modal backdrop dim. A warm near-black, CONSTANT across schemes
+   * (a scrim darkens content behind it in light AND dark), so it is defined once
+   * here and never overridden below. Apply opacity at the call site (bg-scrim/10). */
+  --rn-scrim: #0e0d0c;
 }
 
 [data-scheme="dark"],
@@ -129,6 +133,7 @@
   --rn-syn-var: #d9a77a;
   --rn-mark-ink: #f7f4ee;
   --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+  --rn-scrim: #0e0d0c;
 }
 
 /* Surfaces that never stamp a scheme follow the OS. A stamped data-scheme or
@@ -175,5 +180,6 @@
     --rn-syn-var: #d9a77a;
     --rn-mark-ink: #f7f4ee;
     --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+    --rn-scrim: #0e0d0c;
   }
 }

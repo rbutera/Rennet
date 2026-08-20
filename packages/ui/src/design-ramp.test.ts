@@ -42,8 +42,36 @@ const BANS: ReadonlyArray<readonly [RegExp, string]> = [
     /\b(?:bg|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|shadow)-\[(?:#|rgb|hsl|oklch|oklab|lab|lch|color-mix|color:)/,
     "arbitrary color (every color comes from @rennet/theme)",
   ],
+  // Named Tailwind palette colors with a numeric shade (bg-red-500, text-zinc-400).
+  // Rennet's own `green`/`danger`/`accent` are shadeless semantic tokens, so the
+  // `-\d` shade is what marks a raw Tailwind palette color, not a theme token.
+  [
+    /\b(?:bg|text|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|placeholder)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d/,
+    "raw Tailwind palette color (every color comes from @rennet/theme)",
+  ],
+  // Tailwind's bare black/white — off-theme (Rennet uses surface/canvas/ink/scrim).
+  // `transparent`/`current`/`inherit` are keywords, not colors, and stay legal.
+  [
+    /\b(?:bg|text|border|ring|fill|stroke|from|via|to|caret|outline|decoration|divide|placeholder)-(?:black|white)(?![\w-])/,
+    "raw black/white (use a --rn-* backed token: surface/canvas/ink/scrim)",
+  ],
   // Inline style font sizing bypasses the ramp entirely.
   [/fontSize\s*:/, "inline fontSize (use the ramp utilities)"],
+];
+
+// Positive control per ban: each known-bad form must be caught by SOME ban, so
+// deleting any single BANS entry leaves one of these uncaught and reddens the
+// suite (the delivery-order positive-control rule, applied to the guard itself).
+const MUST_REJECT: readonly string[] = [
+  "text-[13px]", // arbitrary text-[…]
+  "text-3xl", // named off-ramp text size
+  "rounded-[10px]", // arbitrary rounded-[…]
+  "rounded-4xl", // named off-ramp radius
+  "bg-[#abcdef]", // bracket color (hex)
+  "hover:bg-[color-mix(in_oklch,var(--a),var(--b)_5%)]", // bracket color (function)
+  "bg-red-500", // raw Tailwind palette color
+  "bg-black/10", // raw black/white
+  "style={{ fontSize: 12 }}", // inline fontSize
 ];
 
 describe("kit design ramp (utility contracts)", () => {
@@ -70,6 +98,13 @@ describe("kit design ramp (utility contracts)", () => {
       ([, value]) => !/^var\(--text-[\w-]+\)$/.test((value ?? "").trim()),
     );
     expect(offRamp.map((m) => m[0]).join("\n")).toBe("");
+  });
+
+  it("every ban is exercised — each known-bad form is caught (positive control)", () => {
+    for (const bad of MUST_REJECT) {
+      const caught = BANS.some(([pattern]) => pattern.test(bad));
+      expect(caught, `no ban caught: ${bad}`).toBe(true);
+    }
   });
 
   it("the ramp utilities and shadcn radius aliases exist in the shared theme", () => {
