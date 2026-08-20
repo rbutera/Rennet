@@ -53,7 +53,8 @@ describe("AskControl — the send control + routing caret", () => {
       />,
     );
     expect(container.querySelector('[data-ask-mode="orchestrator"]')).toBeTruthy();
-    expect(container.querySelector(".ask-menu")).toBeNull();
+    // The kit Popover portals the menu to the document body; it is closed until prompted.
+    expect(document.querySelector(".ask-menu")).toBeNull();
   });
 
   it("opens the caret menu with BOTH options and marks the current one checked", async () => {
@@ -71,7 +72,7 @@ describe("AskControl — the send control + routing caret", () => {
     await user.click(caret);
     expect(getByText("Ask the orchestrator")).toBeTruthy();
     expect(getByText("Ask both models")).toBeTruthy();
-    const orchestrator = container.querySelector('[data-mode="orchestrator"]');
+    const orchestrator = document.querySelector('[data-mode="orchestrator"]');
     expect(orchestrator?.getAttribute("aria-checked")).toBe("true");
   });
 
@@ -87,9 +88,9 @@ describe("AskControl — the send control + routing caret", () => {
       />,
     );
     await user.click(need<HTMLButtonElement>(container, ".ask-send-caret"));
-    await user.click(need<HTMLButtonElement>(container, '[data-mode="both"]'));
+    await user.click(need<HTMLButtonElement>(document, '[data-mode="both"]'));
     expect(onModeChange).toHaveBeenCalledWith("both");
-    expect(container.querySelector(".ask-menu")).toBeNull();
+    expect(document.querySelector(".ask-menu")).toBeNull();
   });
 
   it("sends the question under the current mode when Ask is pressed", async () => {
@@ -159,7 +160,7 @@ describe("AskControl — per-thread memory (not global)", () => {
     const { container, rerender, user } = mount(<ThreadHost threadId="thread-a" />);
     // Choose "ask both" in thread A.
     await user.click(need<HTMLButtonElement>(container, ".ask-send-caret"));
-    await user.click(need<HTMLButtonElement>(container, '[data-mode="both"]'));
+    await user.click(need<HTMLButtonElement>(document, '[data-mode="both"]'));
     expect(container.querySelector('[data-ask-mode="both"]')).toBeTruthy();
     // Switch to a NEW thread: it is back at the orchestrator-only default (not sticky).
     rerender(<ThreadHost threadId="thread-b" />);

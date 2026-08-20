@@ -1,3 +1,4 @@
+import { Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
 import { useState } from "react";
 import type { AskMode, AskReviewResult } from "../canvas/ask";
 import { ASK_OPTIONS, askCards, askedBoth } from "../canvas/ask";
@@ -58,50 +59,60 @@ export function AskButton({
 
   const primaryClasses =
     "ask-send-primary inline-flex cursor-pointer items-center gap-1.5 rounded-l-control border border-r-0 border-accent-line bg-accent-fill px-3.5 py-2 font-sans text-base font-semibold text-accent-ink disabled:cursor-default disabled:opacity-50";
+  // The routing menu rides the kit Popover: it owns the anchored positioning, the
+  // portal, and the outside-click / Escape dismissal the bare toggle lacked. The
+  // menu markup itself (role=menu + menuitemradio rows) is unchanged.
   return (
-    <div className="ask-send relative inline-flex items-stretch self-end">
-      <button
-        type="button"
-        className={primaryClassName ? `${primaryClasses} ${primaryClassName}` : primaryClasses}
-        data-ask-mode={mode}
-        disabled={disabled}
-        onClick={onAsk}
-      >
-        Ask
-      </button>
-      <button
-        type="button"
-        className="ask-send-caret inline-flex min-w-[30px] cursor-pointer items-center justify-center rounded-r-control border border-accent-line bg-accent-fill text-base text-accent-ink disabled:cursor-default disabled:opacity-50"
-        aria-label="ask options"
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        disabled={pending}
-        onClick={() => setMenuOpen((open) => !open)}
-      >
-        <span aria-hidden="true">⌄</span>
-      </button>
-      {menuOpen ? (
-        <div
-          className="ask-menu absolute right-0 top-[calc(100%+6px)] z-20 flex min-w-[260px] flex-col gap-0.5 rounded-control border border-line bg-overlay p-1.5 shadow-overlay"
-          role="menu"
+    <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+      <div className="ask-send relative inline-flex items-stretch self-end">
+        <button
+          type="button"
+          className={primaryClassName ? `${primaryClasses} ${primaryClassName}` : primaryClasses}
+          data-ask-mode={mode}
+          disabled={disabled}
+          onClick={onAsk}
         >
-          {ASK_OPTIONS.map((option) => (
+          Ask
+        </button>
+        <PopoverTrigger
+          render={
             <button
               type="button"
-              role="menuitemradio"
-              aria-checked={option.mode === mode}
-              className="ask-menu-item flex cursor-pointer items-baseline justify-between gap-3.5 rounded-chip border-0 bg-transparent px-2.5 py-2 text-left font-sans text-base font-medium text-ink hover:bg-raised aria-checked:bg-raised"
-              data-mode={option.mode}
-              key={option.mode}
-              onClick={() => pick(option.mode)}
-            >
-              <span className="ask-menu-label">{option.label}</span>
-              <span className="ask-menu-hint text-2xs text-ink-faint">{option.hint}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
+              className="ask-send-caret inline-flex min-w-[30px] cursor-pointer items-center justify-center rounded-r-control border border-accent-line bg-accent-fill text-base text-accent-ink disabled:cursor-default disabled:opacity-50"
+              aria-label="ask options"
+              disabled={pending}
+            />
+          }
+        >
+          <span aria-hidden="true">⌄</span>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          sideOffset={6}
+          className="ask-menu-pop w-auto border-0 bg-transparent p-0 shadow-none ring-0"
+        >
+          <div
+            className="ask-menu flex min-w-[260px] flex-col gap-0.5 rounded-control border border-line bg-overlay p-1.5 shadow-overlay"
+            role="menu"
+          >
+            {ASK_OPTIONS.map((option) => (
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={option.mode === mode}
+                className="ask-menu-item flex cursor-pointer items-baseline justify-between gap-3.5 rounded-chip border-0 bg-transparent px-2.5 py-2 text-left font-sans text-base font-medium text-ink hover:bg-raised aria-checked:bg-raised"
+                data-mode={option.mode}
+                key={option.mode}
+                onClick={() => pick(option.mode)}
+              >
+                <span className="ask-menu-label">{option.label}</span>
+                <span className="ask-menu-hint text-2xs text-ink-faint">{option.hint}</span>
+              </button>
+            ))}
+          </div>
+        </PopoverContent>
+      </div>
+    </Popover>
   );
 }
 
