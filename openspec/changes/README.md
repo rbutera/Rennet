@@ -4,9 +4,7 @@ Active changes describe accepted work that has not yet been promoted into `opens
 
 ## Active
 
-| Change | State |
-| --- | --- |
-| `rebuild-documentation-library` | In progress |
+There are no active changes.
 
 ## Lifecycle
 
