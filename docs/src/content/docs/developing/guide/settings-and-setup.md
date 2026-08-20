@@ -206,12 +206,24 @@ desktop uses:
 rennet serve    # run the daemon in the foreground (dev / power tool)
 rennet status   # print the daemon's pid, port, and versions (exit 0 if healthy)
 rennet stop     # stop the running daemon (SIGTERM, clean shutdown)
+rennet map      # build & store the Repo Map for a repository (no daemon needed)
 ```
 
-Each subcommand takes `--data-dir <dir>` and otherwise honors `RENNET_USER_DATA`, then
-falls back to the platform user-data path. There are no confirmation prompts: `rennet
-stop` just stops. The packaged app never depends on `rennet serve` — it spawns its own
-bundled daemon on the Electron binary run as Node, so no system Node is required.
+Each daemon subcommand takes `--data-dir <dir>` and otherwise honors `RENNET_USER_DATA`,
+then falls back to the platform user-data path. There are no confirmation prompts:
+`rennet stop` just stops. The packaged app never depends on `rennet serve` — it spawns
+its own bundled daemon on the Electron binary run as Node, so no system Node is required.
+
+`rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]` stands apart
+from the daemon commands: it runs the exact snapshot generator `project.process` uses —
+pure over git, no daemon, no model, no project registration — against the repository at
+`path` (default: the current directory) and persists the result to the local project
+store (`~/.rennet/projects/<escaped-path>/map/…`, overridable with `--projects-dir`).
+Because the store keys on the repository's real path, a map built this way is the same
+map the daemon reads later. Re-running is incremental: unchanged files reuse their
+content-addressed shards. `--json <file>` additionally exports the queryable ProjectMap
+(files, scopes, dependency edges, entry points, tests, ownership, conventions) plus
+per-file declared symbols for external consumers.
 
 **Data-dir isolation** is how dev checkouts, agent worktrees, and e2e runs stay off the
 production daemon: point `RENNET_USER_DATA` (or `--data-dir`) at a per-checkout directory

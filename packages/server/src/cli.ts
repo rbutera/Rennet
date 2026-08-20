@@ -1,17 +1,23 @@
 // The `rennet` CLI (issue #379, design D8) — the daemon's second client, proving the
-// protocol is real by driving it from a terminal with no window in sight. Three
-// subcommands, `node:util` parseArgs, no prompts, honest exit codes:
+// protocol is real by driving it from a terminal with no window in sight.
+// `node:util` parseArgs, no prompts, honest exit codes:
 //   serve   run the daemon in the FOREGROUND (dev / power tool; the packaged app spawns
 //           its own detached daemon and never depends on this).
 //   status  read the daemon.json claim and probe /healthz; print pid/port/versions.
 //   stop    SIGTERM the claimed pid and wait (bounded) for the claim to disappear.
+//   pair    mint a device pairing code on the running daemon.
+//   devices list or revoke paired devices on the running daemon.
+//   map     build & store the Repo Map for a repository — daemonless, the same
+//           generator `project.process` runs, persisting to ~/.rennet/projects/.
 // It reuses the exact supervision helpers the desktop shell uses — no reimplemented
 // protocol-compat or claim logic to drift.
 
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { type GenerateResult, ProjectSnapshotGenerator, snapshotStoreFor } from "@rennet/adapters";
+import { materializeSnapshot, queryFileOverview, queryProjectMap } from "@rennet/core";
 import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
 import { WebSocket } from "ws";
 import { defaultDataDir, runDaemon } from "./daemon";
@@ -49,8 +55,11 @@ const HELP = [
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
+  "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]   build & store the repo map",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
+  "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
+  "(default: the current directory) and stores it under ~/.rennet/projects/.",
 ].join("\n");
 
 /** Route argv to a subcommand. Returns a process exit code (serve never returns). */
@@ -112,6 +121,38 @@ export async function runCli(
       const dataDir =
         parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
       return devices(dataDir, parsed.revoke, io, deps);
+    }
+    case "map": {
+      let parsed: {
+        values: { base?: string; json?: string; "projects-dir"?: string };
+        positionals: string[];
+      };
+      try {
+        parsed = parseArgs({
+          args: [...rest],
+          allowPositionals: true,
+          strict: true,
+          options: {
+            base: { type: "string" },
+            json: { type: "string" },
+            "projects-dir": { type: "string" },
+          },
+        });
+        if (parsed.positionals.length > 1) throw new Error("expected at most one repository path");
+      } catch (error) {
+        io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
+        io.err("Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]");
+        return 2;
+      }
+      return buildMap(
+        parsed.positionals[0] ?? process.cwd(),
+        {
+          base: parsed.values.base,
+          json: parsed.values.json,
+          projectsDir: parsed.values["projects-dir"],
+        },
+        io,
+      );
     }
     case "-h":
     case "--help":
@@ -369,4 +410,74 @@ async function devices(
     io.err(`rennet devices: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
+}
+
+/**
+ * Build (or incrementally refresh) the Repo Map for a repository and persist it to the
+ * local project store (`~/.rennet/projects/<escaped-path>/map/...` by default). This is
+ * the exact generator the daemon's `project.process` runs — pure over git, no daemon, no
+ * model, no project registration — so the CLI can mint a first on-disk map for any repo.
+ * `--json` additionally exports the queryable ProjectMap (files, scopes, edges, entry
+ * points, tests, ownership, conventions) plus per-file declared symbols.
+ */
+async function buildMap(
+  repoPath: string,
+  opts: { base?: string; json?: string; projectsDir?: string },
+  io: CliIo,
+): Promise<number> {
+  const root = resolve(repoPath);
+  const store = opts.projectsDir ? snapshotStoreFor(opts.projectsDir) : snapshotStoreFor();
+  const generator = new ProjectSnapshotGenerator({ store });
+  let result: GenerateResult;
+  try {
+    result = await generator.generate(root, {
+      explicitBaseRef: opts.base,
+      onProgress: (progress) =>
+        io.out(`${progress.note}${progress.detail ? ` (${progress.detail})` : ""}`),
+    });
+  } catch (error) {
+    io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  const manifest = result.manifest;
+  io.out(
+    `map built: ${manifest.baseRef} @ ${manifest.baseOid.slice(0, 12)} — ${result.fileCount} files, ${result.symbolCount} symbols, ${result.referenceCount} references`,
+  );
+  io.out(
+    `  shards: ${result.extractedSymbolShards} extracted, ${result.reusedSymbolShards} reused`,
+  );
+  io.out(`  stored: ${store.paths(manifest.repoKey).mapDir}`);
+  if (opts.json) {
+    const materialized = materializeSnapshot(manifest, (digest) => result.built.shards.get(digest));
+    if (!materialized.ok) {
+      io.err(`rennet map: could not materialize snapshot (${materialized.slots.join(", ")})`);
+      return 1;
+    }
+    const projectMap = queryProjectMap(materialized.snapshot);
+    const symbols: Record<string, unknown> = {};
+    for (const file of projectMap.files) {
+      const overview = queryFileOverview(materialized.snapshot, file.path);
+      if (overview.ok && overview.overview.symbols.length > 0) {
+        symbols[file.path] = overview.overview.symbols;
+      }
+    }
+    const jsonPath = resolve(opts.json);
+    writeFileSync(
+      jsonPath,
+      `${JSON.stringify(
+        {
+          repoKey: manifest.repoKey,
+          baseRef: manifest.baseRef,
+          baseOid: manifest.baseOid,
+          fingerprint: manifest.fingerprint,
+          map: projectMap,
+          symbols,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    io.out(`  exported: ${jsonPath}`);
+  }
+  return 0;
 }
