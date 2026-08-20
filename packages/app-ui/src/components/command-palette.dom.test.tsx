@@ -40,10 +40,57 @@ describe("CommandPalette", () => {
     );
     expect(document.querySelectorAll(".command-palette-row").length).toBe(3);
 
-    await user.type(getByLabelText("Search commands"), "flag");
+    await user.type(getByLabelText("Search commands"), "flagged");
     const rows = [...document.querySelectorAll(".command-palette-row")];
     expect(rows.length).toBe(1);
     expect(rows[0]?.textContent).toMatch(/Flagged/);
+  });
+
+  it("keeps two same-titled commands independently reachable (unique cmdk value)", async () => {
+    // Two recent projects with the SAME display label but distinct ids. cmdk
+    // dedupes by `value`; if value were the title, these would collapse into one
+    // selection and the second would be unreachable. It is the id, so both stand.
+    const one = vi.fn();
+    const two = vi.fn();
+    const list: Command[] = [
+      { id: "recent.project:one", title: "rennet", group: "Recent", run: one },
+      { id: "recent.project:two", title: "rennet", group: "Recent", run: two },
+    ];
+    const { user, getByLabelText } = mount(
+      <CommandPalette open={true} commands={list} onClose={vi.fn()} />,
+    );
+    expect(document.querySelectorAll(".command-palette-row").length).toBe(2);
+    getByLabelText("Search commands").focus();
+    // cmdk auto-selects row 0; one ArrowDown lands on the DISTINCT second row.
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(two).toHaveBeenCalledTimes(1);
+    expect(one).not.toHaveBeenCalled();
+  });
+
+  it("ranks a title-prefix match ahead of a mid-title match (title-first keywords)", async () => {
+    const light = vi.fn();
+    const dual = vi.fn();
+    const list: Command[] = [
+      { id: "view.scheme", title: "Switch to light", group: "Appearance", run: light },
+      { id: "review.dual", title: "Toggle review: switch mode", group: "Review", run: dual },
+    ];
+    const { user, getByLabelText } = mount(
+      <CommandPalette open={true} commands={list} onClose={vi.fn()} />,
+    );
+    await user.type(getByLabelText("Search commands"), "switch");
+    await user.keyboard("{Enter}");
+    // "Switch to light" (query is a title PREFIX) outranks the mid-title match.
+    expect(light).toHaveBeenCalledTimes(1);
+    expect(dual).not.toHaveBeenCalled();
+  });
+
+  it("leaks no accessible heading into the DOM while closed", () => {
+    const { list } = commands();
+    mount(<CommandPalette open={false} commands={list} onClose={vi.fn()} />);
+    // The sr-only DialogTitle/Description live INSIDE the portal content, so a
+    // closed palette renders neither a dialog nor its heading text.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("Command palette");
   });
 
   it("runs the filtered command on Enter and then closes", async () => {
@@ -53,7 +100,7 @@ describe("CommandPalette", () => {
       <CommandPalette open={true} commands={list} onClose={onClose} />,
     );
     // Narrow to the single Flagged command, then Enter runs it.
-    await user.type(getByLabelText("Search commands"), "flag");
+    await user.type(getByLabelText("Search commands"), "flagged");
     await user.keyboard("{Enter}");
     expect(ran.flagged).toHaveBeenCalledTimes(1);
     // Only the selected command fires — no other action leaks.

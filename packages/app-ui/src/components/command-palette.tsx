@@ -103,7 +103,7 @@ export function CommandPalette({ open, commands, overrides, onClose }: CommandPa
         placeholder="Type a command…"
         aria-label="Search commands"
       />
-      <CommandList>
+      <CommandList className="command-palette-list">
         <CommandEmpty className="command-palette-empty">
           No commands match your search.
         </CommandEmpty>
@@ -113,9 +113,13 @@ export function CommandPalette({ open, commands, overrides, onClose }: CommandPa
               <CommandItem
                 key={command.id}
                 className="command-palette-row"
-                // Filter/rank on "Group Title", the same corpus the old fuzzy filter
-                // scored; unique per command so cmdk never dedupes two rows together.
-                value={`${command.group} ${command.title}`}
+                // value is the UNIQUE selection identity (command.id) so two rows
+                // with the same display title — e.g. two recent projects with the
+                // same label — never collapse into one cmdk selection. The human
+                // search corpus is the title + group via `keywords`, title first so
+                // a title match outranks a group match.
+                value={command.id}
+                keywords={[command.title, command.group]}
                 onSelect={() => {
                   // Run the wrapped action FIRST, then close — closing before running
                   // would drop a command whose handler reads palette-adjacent state.

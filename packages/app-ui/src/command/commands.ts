@@ -298,45 +298,6 @@ export function buildCommands(ctx: CommandContext): Command[] {
 }
 
 /**
- * A subsequence fuzzy match: `query`'s characters must appear in order in `text`.
- * Returns a cost (lower is better: leading gap + gaps between matches) or null when
- * it is not a subsequence at all. Contiguous, early matches score best.
- */
-export function fuzzyScore(text: string, query: string): number | null {
-  const haystack = text.toLowerCase();
-  const needle = query.toLowerCase();
-  let from = 0;
-  let cost = 0;
-  let previous = -1;
-  for (const char of needle) {
-    const at = haystack.indexOf(char, from);
-    if (at === -1) return null;
-    cost += previous === -1 ? at : at - previous - 1;
-    previous = at;
-    from = at + 1;
-  }
-  return cost;
-}
-
-/**
- * Filter + rank commands against a query. An empty query keeps the registry order
- * (so the palette opens on the full, stably-ordered list); otherwise commands whose
- * "Group Title" contains the query as a subsequence pass, ranked by match cost then
- * original order (a stable tiebreak).
- */
-export function filterCommands(commands: Command[], query: string): Command[] {
-  const trimmed = query.trim();
-  if (trimmed.length === 0) return commands;
-  const scored: { command: Command; cost: number; index: number }[] = [];
-  commands.forEach((command, index) => {
-    const cost = fuzzyScore(`${command.group} ${command.title}`, trimmed);
-    if (cost !== null) scored.push({ command, cost, index });
-  });
-  scored.sort((a, b) => a.cost - b.cost || a.index - b.index);
-  return scored.map((entry) => entry.command);
-}
-
-/**
  * Whether the renderer is running on macOS — decides the modifier SYMBOL only
  * (add-windows-support). Safe when `navigator` is absent (SSR/tests): defaults to
  * non-mac. `userAgentData.platform` is preferred (`navigator.platform` is deprecated)

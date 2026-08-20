@@ -7,10 +7,8 @@ import {
   catalogueDef,
   chordFromEvent,
   effectiveKeybinding,
-  filterCommands,
   findConflicts,
   formatKeybinding,
-  fuzzyScore,
   matchKeybinding,
   normalizeChord,
   type Screen,
@@ -181,32 +179,6 @@ describe("buildCommands — context-aware registry", () => {
     expect(off?.title).toMatch(/switch back on/i);
     const light = buildCommands(context({ scheme: "dark" })).find((c) => c.id === "view.scheme");
     expect(light?.title).toMatch(/switch to light/i);
-  });
-});
-
-describe("fuzzy filter", () => {
-  it("keeps registry order for an empty query", () => {
-    const commands = buildCommands(context());
-    expect(filterCommands(commands, "  ")).toEqual(commands);
-  });
-
-  it("matches a subsequence and drops non-matches", () => {
-    const commands = buildCommands(context());
-    const titles = filterCommands(commands, "flag").map((command) => command.title);
-    expect(titles.some((title) => /flagged/i.test(title))).toBe(true);
-    expect(titles.every((title) => /zoom in/i.test(title))).toBe(false);
-  });
-
-  it("ranks a tighter (earlier, more contiguous) match ahead of a looser one", () => {
-    // "zoom" hits "Zoom in" contiguously; it must outrank an incidental subsequence.
-    const commands = buildCommands(context());
-    const first = filterCommands(commands, "zoom")[0];
-    expect(first?.title).toMatch(/^Zoom/);
-  });
-
-  it("scores a non-subsequence as null", () => {
-    expect(fuzzyScore("Zoom in", "xyz")).toBeNull();
-    expect(fuzzyScore("Zoom in", "zi")).not.toBeNull();
   });
 });
 

@@ -129,13 +129,21 @@ export default [
     },
   },
   {
-    // No hardcoded hex colours in the UI package: every colour comes from the
-    // shared @rennet/theme tokens (Tailwind utilities or var(--rn-…)), and
+    // No hardcoded hex colours in EITHER UI package — the vendored kit
+    // (packages/ui) and the composites (packages/app-ui): every colour comes from
+    // the shared @rennet/theme tokens (Tailwind utilities or var(--rn-…)), and
     // packages/theme/src/theme.css is the ONLY place raw hex lives (issue #11,
     // re-homed in the 2026-08-19 overhaul). Test files and fixtures are exempt —
     // the hex-lint test lints code strings through the ESLint API (hex-lint.test.ts).
-    files: ["packages/app-ui/src/**/*.ts", "packages/app-ui/src/**/*.tsx"],
+    files: [
+      "packages/ui/src/**/*.ts",
+      "packages/ui/src/**/*.tsx",
+      "packages/app-ui/src/**/*.ts",
+      "packages/app-ui/src/**/*.tsx",
+    ],
     ignores: [
+      "packages/ui/src/**/*.test.ts",
+      "packages/ui/src/**/*.test.tsx",
       "packages/app-ui/src/**/*.test.ts",
       "packages/app-ui/src/**/*.test.tsx",
       "packages/app-ui/src/canvas/fixtures.ts",
@@ -149,7 +157,7 @@ export default [
         {
           selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
           message:
-            "No hardcoded hex colours in packages/app-ui — use a theme utility or var(--rn-…) token from @rennet/theme.",
+            "No hardcoded hex colours in the UI packages — use a theme utility or var(--rn-…) token from @rennet/theme.",
         },
       ],
     },
