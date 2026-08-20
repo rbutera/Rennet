@@ -28,9 +28,11 @@ A client can reconstruct durable state by querying the daemon. Push frames carry
 | Cancellation | `AbortSignal` | One signal travels from the command to the harness process. |
 | Durable review changes | Commands and append-only events | Transactions remain replayable and inspectable after restart. |
 | Command progress | `onProgress(commandId)` | The server assigns order and sends terminal state that agrees with the command result. |
+| Project-detail progress | `onProjectDetailProgress(commandId)` | Each completed forge repository advances the pull-request fetch count for one project-detail request. |
 | Review conversation | `onAskStream(reviewId)` | The server broadcasts deltas by review and the client filters them by subscription. |
 | Connection state | `ConnectionSupervisor.subscribe` | Each client receives reachability changes from one supervisor. |
 | Bounded concurrent jobs | `p-queue` | Concurrency stays explicit at the scheduler that owns the work. |
+| Project-detail repository fetches | `mapLimit(..., 4, ...)` | At most four forge repositories fetch pull requests at once. |
 
 Rennet does not use RxJS. These mechanisms cover one-pass harness streams, keyed WebSocket subscriptions, cancellation, and explicit concurrency without placing durable review state in an observable graph.
 
@@ -46,7 +48,17 @@ Every push path has these properties:
 
 The server owns progress terminal events, so the final pushed state agrees with the resolved command. It keeps a bounded progress replay suffix for a reconnecting client. Ask deltas broadcast to every authorized socket subscribed to the review.
 
-`ConnectionSupervisor` keeps `onProgress`, `onAskStream`, and attention registrations above the current socket. After reconnect, it attaches those listeners to the new bridge and runs `review.reattach` for subscribed reviews. Components do not create transports or retry loops.
+Project-detail progress uses `prs-start` followed by one `repo-prs` event for
+each completed forge repository. This channel has no server replay buffer or
+live-run registry; the resolved `project.detail` response is authoritative. The
+client keeps the registration across bridge replacement so later frames still
+reach the same listener, but it does not invent missed counts.
+
+`ConnectionSupervisor` keeps `onProgress`, `onProjectDetailProgress`,
+`onAskStream`, and attention registrations above the current socket. After
+reconnect, it attaches those listeners to the new bridge and runs
+`review.reattach` for subscribed reviews. Components do not create transports or
+retry loops.
 
 ## Persistence boundary
 

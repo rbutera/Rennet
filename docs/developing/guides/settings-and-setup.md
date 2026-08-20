@@ -165,6 +165,10 @@ project registry, pull-request worktree index, and review database.
 test daemon. It does not relocate the machine-wide `~/.rennet/config.json`,
 device stores, or path-keyed Repo Maps.
 
+The desktop launcher and `rennet serve` set `UV_THREADPOOL_SIZE` to `16` before
+the daemon starts when the variable is absent. An explicit operator value wins.
+The pool is shared by filesystem work and GitHub name resolution.
+
 ```text
 rennet serve
 rennet status

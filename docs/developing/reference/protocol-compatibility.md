@@ -124,13 +124,18 @@ Remove the shim when the minimum compatible version makes it unreachable.
 | `request` | client to server | request ID, registered command, input |
 | `response` | server to client | request ID, output |
 | `rpcError` | server to client | request ID, code, message, optional details |
-| `progressEvent` | server to client | command ID and project-processing event |
+| `progressEvent` | server to client | command ID and project-processing or project-detail event |
 | `askStreamEvent` | server to client | review ID and ask-stream event |
 | `serverRequest` | server to client | server request ID, kind, payload |
 | `serverResponse` | client to server | server request ID, payload |
 | `serverRequestResolved` | server to client | server request ID |
 | `presence` | client to server | focus, visibility, device class, optional focused review |
 | `attentionEvent` | server to client | raised item or cleared IDs |
+
+`progressEvent.event` accepts the `ProjectProgressEvent` union. General project
+processing uses `onProgress(commandId)`; per-repository pull-request loading for
+project detail uses `onProjectDetailProgress(commandId)`. Both share the wire
+frame and remain distinct bridge subscriptions.
 
 `hello.deviceToken` carries a paired device's bearer token. Loopback clients omit
 it. The daemon hashes stored device tokens and uses the presented value to

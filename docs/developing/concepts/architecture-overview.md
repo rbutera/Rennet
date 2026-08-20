@@ -74,7 +74,9 @@ package does not import a transport or Node APIs.
 `@rennet/client` supplies `WsRennetBridge` and `ConnectionSupervisor`. The
 supervisor owns the `idle`, `connecting`, `online`, `offline`, and `error`
 states, reconnects with bounded backoff, and restores registered progress and
-ask-stream subscriptions after a reconnect.
+ask-stream subscriptions after a reconnect. Progress registrations cover both
+long-running project processing and per-repository pull-request fetches for the
+project detail view.
 
 The Expo mobile app uses `@rennet/client` and the portable protocol directly. It
 has its own native UI rather than mounting `@rennet/ui`. Remote clients receive

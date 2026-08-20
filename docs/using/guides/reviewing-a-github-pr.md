@@ -24,6 +24,9 @@ OAuth app provides expiring user tokens, Rennet refreshes them before expiry.
 Settings also accepts a personal access token. Rennet validates it before storing
 it. The current forge adapter supports github.com, not GitHub Enterprise hosts.
 Network failures are reported separately from authentication failures.
+The project view shows local changes before pull-request loading finishes. If a
+credential is missing or rejected, that view offers device sign-in and reloads
+the pull-request rows after reconnection.
 
 Rennet also needs a supported coding harness. It discovers Claude Code without
 asking for a model API key. When Codex is available, it can run as a second review
@@ -58,6 +61,10 @@ sequenceDiagram
 3. Approve, question, comment, or request a change at the relevant anchor.
 4. Open the draft and edit the selected comments.
 5. Review the composed outbound artifact, then post it as one GitHub review.
+
+When a project spans several repositories, pull-request loading reports the
+repository currently being read and the number completed. Local branch rows
+remain usable throughout the fetch.
 
 ## Patchset source
 

@@ -31,6 +31,13 @@ flowchart LR
 6. **Review the outbound artifact.** Rennet composes the GitHub review, pull
    request, or coding-agent handoff from that draft.
 
+The change list paints local branches first, without waiting for GitHub. Pull
+requests join the same list as each repository finishes loading. While that work
+is in flight, the status names the repository and reports the completed count
+instead of estimating a percentage. If GitHub authentication or networking
+fails, local work stays available and the project view offers reconnection where
+it is needed.
+
 ## Team pull requests and your own branch
 
 ```mermaid
