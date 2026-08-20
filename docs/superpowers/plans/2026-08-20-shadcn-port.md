@@ -380,6 +380,15 @@ One PR.
 
 ### Task 5.4: Lists and trees
 
+**Assessment (2026-08-20) — NO applicable migration target; no deps pulled (like 3.2 resizable / 5.2 diff).** Every candidate was read before touching anything; none is a real Data Table, Combobox, or a tree that composing kit primitives improves.
+
+- **Data Table — none.** `flagged.tsx` and `decisions.tsx` are narrative finding/decision **card lists** (per-row severity chips, model-agreement/disagreement blocks, evidence chips, reconstructed-why prose, per-item jump/disposition affordances), not columnar sortable/filterable grids. `settings-screen.tsx` is tabs + settings forms already riding kit `Button`/`Input`; its `KeyboardPanel` is a per-row keybinding list with inline conflict notes + per-row Set/Unbind buttons — a list with per-item affordances, not a data grid. Forcing any onto `@tanstack/react-table` would be a restyle + behavior change, not a migration (Rule Zero / YAGNI). **`@tanstack/react-table` NOT added.**
+- **Combobox — none.** No filterable single-select picker exists in the candidates (no `<select>`, no listbox/combobox roles; settings uses tabs + buttons + text inputs). **combobox NOT pulled.**
+- **Trees — left bespoke.** `symbol-inspector.tsx` is not a tree at all — a flat sectioned panel (definition/references-by-file/neighbor chip lists + breadcrumb). `context-map-view.tsx` has a real bespoke file tree (`ScopeRow`→`DirRow` recursive→`FileRow`, local open-state, depth padding, selection, semantic `context-map-*` classNames + tests). It works, is small, and is lazy-rendered (children mount only when expanded) — **no virtualization need, so `react-arborist` NOT added.** The kit ships no Collapsible/Accordion; adding one purely to re-express a working tree would be net-new code + a ~170-line rewrite risking its dom tests, for a marginal `aria-expanded` gain — composing kit primitives adds nothing here, so the bespoke tree stays. (Cheap future nicety, out of scope for a port wave: add `aria-expanded={open}` to the scope/dir toggle buttons.)
+
+Docs-only outcome: no code change, no chart/sidebar token aliases (nothing pulled demanded them), no dependency-standard entry needed (no dep decision was made).
+
+**Files (original plan — not executed, see assessment above):**
 **Files:**
 - Pull: `npx shadcn add data-table combobox` (Base UI variants; data-table brings `@tanstack/react-table` — MIT, exact-pin, 7-day check)
 - Modify: `packages/app-ui/src/components/flagged.tsx`, `decisions.tsx`, `settings-screen.tsx` list sections → Data Table/Combobox where they are actual tables/pickers (leave narrative lists alone)
