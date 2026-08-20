@@ -84,17 +84,31 @@ for the user‑facing locus setting.
 
 ## Built vs remaining
 
-Built (this change): node detection and the `wsl.exe -e <node> <bundle> serve
---data-dir` launch descriptor (`resolveWslNode`, `buildWslDaemonLaunch`), reusing
-the existing locus argv/path primitives.
+Built and unit‑tested (all behind the `ensureDaemonForProject` seam):
 
-Remaining (de‑risked by the spike, tracked next):
+1. **Node detection** and the `wsl.exe -e <node> <bundle> serve --data-dir` launch
+   descriptor (`resolveWslNode`, `buildWslDaemonLaunch`), reusing the existing locus
+   argv/path primitives.
+2. **Bundle delivery** into the distro's native fs, copied once per version
+   (`~/.rennet/server/<version>/`), never run back over 9P
+   (`ensureWslBundleDelivered`).
+3. **Lifecycle** over `wsl.exe` (`packages/server/src/wsl-daemon.ts`): detached
+   spawn, health polled on the port (not the claim file over 9P), version‑skew
+   restart (stop the old daemon by pid, wait for it gone, respawn, and confirm the
+   new version), and kill by pid.
+4. **Routing orchestration**: `ensureWslDaemon` composes the above into one
+   "ensure a healthy daemon for this distro" call — reuse a healthy same‑version
+   daemon, else deliver + spawn — and `ensureDaemonForProject` selects host‑ vs
+   WSL‑locus and single‑flights concurrent opens on the same distro.
+5. **Secret store** is distro‑native: the daemon's `--data-dir` is
+   `~/.local/share/rennet` inside the distro, so its `github-token` and all GitHub
+   egress sit natively in the distro, never host‑side.
 
-1. **Bundle delivery** into the distro's native fs, copied once per version
-   (`~/.rennet/server/<version>/`), never run back over 9P.
-2. **Lifecycle** over `wsl.exe`: health polled on the port (not the claim file
-   over 9P), version‑skew restart, kill by pid.
-3. **Routing**: run a daemon per distro and route each project to its locus's
-   daemon; translate paths at the boundary with `toDistroPath` / `toWindowsView`.
-4. **Secret store** lives Linux‑side per WSL daemon — a bonus, since GitHub egress
-   and the token then both sit natively in the distro.
+Remaining:
+
+- **Renderer/startup wiring.** `apps/desktop/src/main/index.ts` still connects the
+  renderer to a single host daemon port (`ensureDaemon(dataDir)`); wiring
+  `ensureDaemonForProject` in so a WSL‑locus project dials its distro daemon is the
+  last production step.
+- **Live field proof** on lancelot (the real Windows + WSL host), validating the
+  end‑to‑end wiring the unit tests exercise with injected effects.

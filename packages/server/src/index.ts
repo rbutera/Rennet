@@ -42,3 +42,21 @@ export {
   type WsListener,
   type WsListenerDeps,
 } from "./ws-listener";
+// The WSL daemon runtime (change `wsl-daemon-runtime`): the spawn/health/stop primitives
+// that run a daemon INSIDE a distro over `wsl.exe`, and the orchestrator that composes them
+// (+ core's home/bundle/node builders) into one "ensure a healthy WSL daemon" call.
+export {
+  type FetchLike,
+  probeWslDaemonHealth,
+  readWslDaemonPort,
+  spawnWslDaemon,
+  stopWslDaemon,
+  type WslDaemonLocation,
+  type WslRunner,
+  waitForWslDaemon,
+} from "./wsl-daemon";
+export {
+  type EnsureWslDaemonDeps,
+  ensureWslDaemon,
+  type WslDaemonHandle,
+} from "./wsl-supervisor";
