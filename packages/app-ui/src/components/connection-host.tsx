@@ -1,4 +1,5 @@
 import type { RennetBridge } from "@rennet/protocol";
+import { Toaster } from "@rennet/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RennetApp } from "../app";
 
@@ -624,6 +625,10 @@ export function ConnectionHost({
     <>
       <RennetApp key={activeId} bridge={bridge} connectionSlot={connectionBar} />
       {daemonBanner}
+      {/* One app-root toast channel (issue: transient feedback). The manager is a
+          module singleton, so any `toast(...)` in the tree routes here; mounted
+          above the remount-keyed RennetApp so toasts survive a daemon switch. */}
+      <Toaster />
     </>
   ) : null;
 }

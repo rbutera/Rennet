@@ -1,7 +1,16 @@
 import type { GitHubAuthStatus, RennetBridge } from "@rennet/protocol";
+import { toast } from "@rennet/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import { GitHubIcon } from "./icons";
+
+/** Transient "you're connected" confirmation — the persistent status row/card is the durable truth. */
+function announceConnected(status: GitHubAuthStatus): void {
+  toast.add({
+    title: status.login ? `Connected to GitHub as @${status.login}` : "Connected to GitHub",
+    type: "success",
+  });
+}
 
 /**
  * The GitHub account surfaces (v4.2 — wireframes 01 + 15): the SKIPPABLE
@@ -75,8 +84,10 @@ export function useGitHubAccount(bridge: RennetBridge) {
             if (poll.phase === "pending") return;
             stopPolling();
             setFlow(null);
-            if (poll.phase === "connected") setStatus(poll.status);
-            else if (poll.phase === "failed") setError(poll.message);
+            if (poll.phase === "connected") {
+              setStatus(poll.status);
+              announceConnected(poll.status);
+            } else if (poll.phase === "failed") setError(poll.message);
             // "idle" mid-flow means the daemon lost the flow (restart): the code
             // the user is holding is dead — say so, never just vanish the prompt.
             else setError("The sign-in was interrupted. Start again.");
@@ -113,7 +124,10 @@ export function useGitHubAccount(bridge: RennetBridge) {
       try {
         const { status: next } = await bridge.invoke("github.setToken", { token });
         if (next.state === "connected") {
-          if (alive.current) setStatus(next);
+          if (alive.current) {
+            setStatus(next);
+            announceConnected(next);
+          }
           return true;
         }
         // A REJECTED paste is the candidate's failure, not the account's: surface
