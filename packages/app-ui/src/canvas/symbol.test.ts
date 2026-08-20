@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TokenType } from "../syntax/languages";
+import type { TokenType } from "../syntax/shiki";
 import {
   basename,
   groupReferencesByFile,

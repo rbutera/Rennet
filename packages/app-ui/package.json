@@ -9,10 +9,12 @@
     "@rennet/theme": "workspace:*",
     "@rennet/types": "workspace:*",
     "@rennet/ui": "workspace:*",
+    "@shikijs/langs": "4.4.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-error-boundary": "6.1.2",
     "react-markdown": "10.1.0",
+    "shiki": "4.4.3",
     "zustand": "5.0.14"
   },
   "devDependencies": {

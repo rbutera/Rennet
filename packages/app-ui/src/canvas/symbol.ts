@@ -7,7 +7,7 @@ import type {
   SymbolNeighbors,
   SymbolTier,
 } from "@rennet/types";
-import type { TokenType } from "../syntax/languages";
+import type { TokenType } from "../syntax/shiki";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The in-app symbol inspector (Rai, wireframes #8).

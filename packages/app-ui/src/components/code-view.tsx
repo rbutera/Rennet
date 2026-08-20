@@ -20,7 +20,7 @@ import {
   spanAnchorForRows,
 } from "../canvas/registrar";
 import { splitIdentifierRuns, tokenTextMayContainSymbol } from "../canvas/symbol";
-import { detectLanguage, type LanguageId, tokenizeDiffLine } from "../syntax/highlight";
+import { detectLanguage, type LanguageId, tokenizeDiffLine } from "../syntax/shiki";
 import { DiscussControl } from "./conversation-cluster";
 import { DispositionCluster } from "./disposition-cluster";
 
