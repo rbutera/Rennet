@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 // the utilities. Flipping the rail to flexible (or letting the diff column shrink to zero)
 // reddens here.
 
-const app = readFileSync(fileURLToPath(new URL("../app.tsx", import.meta.url)), "utf8");
+const app = readFileSync(fileURLToPath(new URL("../app/shell.tsx", import.meta.url)), "utf8");
 const panel = readFileSync(
   fileURLToPath(new URL("./conversation-panel.tsx", import.meta.url)),
   "utf8",
