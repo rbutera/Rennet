@@ -22,13 +22,24 @@ function sources(dir: string): string[] {
 const BANS: ReadonlyArray<readonly [RegExp, string]> = [
   // Arbitrary text utilities: sizes AND colors ride the same escape hatch.
   [/\btext-\[/, "arbitrary text-[…] (use the ramp: text-2xs…text-2xl, text-display)"],
+  // Named off-ramp text sizes: the ramp stops at text-2xl (+ text-display).
+  // text-3xl and up are Tailwind defaults, untracked by the Rennet scale.
+  [/\btext-(?:[3-9]|\d\d)xl\b/, "off-ramp text size (ramp stops at text-2xl / text-display)"],
   // Arbitrary radius: the radius scale is rounded-micro…rounded-window (+full),
   // plus the shadcn aliases rounded-sm…rounded-2xl (Wave 1).
   [/\brounded(?:-[trbse]{0,2})?-\[/, "arbitrary rounded-[…] (use the radius scale)"],
-  // Colors outside the theme. Dimension arbitraries (w-[340px]) stay legal;
-  // only literal color payloads are escapes.
+  // Named off-ramp radius: the scale stops at rounded-2xl. rounded-3xl/4xl… are
+  // Tailwind defaults with no --radius-* token (base-nova pulls ship these).
   [
-    /\b(?:bg|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|shadow)-\[(?:#|rgb|hsl|oklch|color:)/,
+    /\brounded(?:-[trbse]{0,2})?-(?:[3-9]|\d\d)xl\b/,
+    "off-ramp radius rounded-Nxl (use rounded-sm…2xl / micro…window / full)",
+  ],
+  // Colors outside the theme. Dimension arbitraries (w-[340px]) stay legal;
+  // only literal color payloads are escapes — including a color-function
+  // (color-mix/oklab/lab/lch) wrapped inside the bracket, which the bare
+  // #|rgb|hsl|oklch anchor misses (a base-nova hover default did exactly this).
+  [
+    /\b(?:bg|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|shadow)-\[(?:#|rgb|hsl|oklch|oklab|lab|lch|color-mix|color:)/,
     "arbitrary color (every color comes from @rennet/theme)",
   ],
   // Inline style font sizing bypasses the ramp entirely.
