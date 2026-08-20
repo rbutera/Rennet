@@ -4,7 +4,7 @@
 // mark opens an anchored panel of app destinations; when an update is staged the
 // panel grows a highlighted "Restart to update" row and the mark grows its badge.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, mount } from "../test/dom";
+import { cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { ChromeMenu, useUpdateReady } from "./update-ready";
 
 afterEach(() => {
@@ -52,18 +52,20 @@ describe("ChromeMenu", () => {
   });
 
   it("shows the version footer and a docs link", () => {
-    const { getByRole, container } = render();
+    // The kit Menu portals its panel to the document body, so query the document
+    // (not the trigger's container) for panel content — the semantic hook is kept.
+    const { getByRole } = render();
     fireEvent.click(getByRole("button", { name: "Rennet menu" }));
-    expect(container.querySelector(".chrome-menu-version")?.textContent).toContain("Rennet v0.3.6");
+    expect(document.querySelector(".chrome-menu-version")?.textContent).toContain("Rennet v0.3.6");
     expect((getByRole("menuitem", { name: "Documentation" }) as HTMLAnchorElement).href).toContain(
       "docs.rennet.dev",
     );
   });
 
   it("omits the version footer when the host reports none", () => {
-    const { getByRole, container } = render({ version: undefined });
+    const { getByRole } = render({ version: undefined });
     fireEvent.click(getByRole("button", { name: "Rennet menu" }));
-    expect(container.querySelector(".chrome-menu-version")).toBeNull();
+    expect(document.querySelector(".chrome-menu-version")).toBeNull();
   });
 
   it("badges the mark and offers a restart row only when an update is staged", () => {
@@ -80,10 +82,11 @@ describe("ChromeMenu", () => {
     expect(container.querySelector(".chrome-mark-badge")).not.toBeNull();
   });
 
-  it("dismisses on Escape", () => {
-    const { getByRole, queryByRole } = render();
+  it("dismisses on Escape", async () => {
+    const { getByRole, queryByRole, user } = render();
     fireEvent.click(getByRole("button", { name: "Rennet menu" }));
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(queryByRole("menu")).toBeNull();
+    expect(queryByRole("menu")).not.toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(queryByRole("menu")).toBeNull());
   });
 });

@@ -1,5 +1,12 @@
 import type { UpdateReadyInfo } from "@rennet/protocol";
-import { useEffect, useRef, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@rennet/ui";
 import { create } from "zustand";
 import { RennetBrandMark } from "./brand-mark";
 
@@ -95,29 +102,6 @@ export function ChromeMenu({
 }) {
   const ready = useUpdateReady((state) => state.ready);
   const openPrompt = useUpdateReady((state) => state.openPrompt);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(event: MouseEvent): void {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent): void {
-      if (event.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  function run(action: () => void): void {
-    setOpen(false);
-    action();
-  }
 
   // Layout separated from colour: the update row swaps in the accent colours, and a
   // combined class string would let base `text-ink`/`bg-transparent` win by source
@@ -126,15 +110,18 @@ export function ChromeMenu({
     "chrome-menu-item flex w-full cursor-pointer items-center gap-2 rounded-chip border-0 px-2.5 py-2 text-left font-sans text-base font-medium no-underline";
   const itemClass = `${itemBase} bg-transparent text-ink hover:bg-raised`;
 
+  // The kit Menu owns the outside-click + Escape dismissal and item activation that
+  // this component hand-rolled before; picking a row runs its action and closes.
   return (
-    <div ref={rootRef} className="chrome-menu relative flex items-center">
-      <button
-        type="button"
-        className={`${className} chrome-menu-trigger relative m-0 cursor-pointer border-0 bg-transparent p-0 text-inherit`}
-        aria-label="Rennet menu"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            className={`${className} chrome-menu-trigger relative m-0 cursor-pointer border-0 bg-transparent p-0 text-inherit`}
+            aria-label="Rennet menu"
+          />
+        }
       >
         <RennetBrandMark size={size} />
         {ready ? (
@@ -143,58 +130,40 @@ export function ChromeMenu({
             aria-hidden="true"
           />
         ) : null}
-      </button>
-      {open ? (
-        <div
-          className="chrome-menu-panel absolute left-0 top-[calc(100%+6px)] z-30 flex min-w-[220px] flex-col gap-0.5 rounded-control border border-line bg-overlay p-1.5 shadow-overlay"
-          role="menu"
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="chrome-menu-panel w-auto min-w-[220px] gap-0.5 rounded-control border border-line bg-overlay p-1.5 shadow-overlay"
+      >
+        <DropdownMenuItem className={itemClass} onClick={onOpenSettings}>
+          Settings
+        </DropdownMenuItem>
+        {canBackToProjects ? (
+          <DropdownMenuItem className={itemClass} onClick={onBackToProjects}>
+            Back to projects
+          </DropdownMenuItem>
+        ) : null}
+        {ready ? (
+          <DropdownMenuItem
+            className={`${itemBase} chrome-menu-update bg-accent-soft text-accent hover:bg-accent-soft`}
+            onClick={openPrompt}
+          >
+            {updateActionLabel(ready)}
+          </DropdownMenuItem>
+        ) : null}
+        <DropdownMenuItem
+          className={itemClass}
+          render={<a href={DOCS_URL} target="_blank" rel="noreferrer" />}
         >
-          <button
-            type="button"
-            role="menuitem"
-            className={itemClass}
-            onClick={() => run(onOpenSettings)}
-          >
-            Settings
-          </button>
-          {canBackToProjects ? (
-            <button
-              type="button"
-              role="menuitem"
-              className={itemClass}
-              onClick={() => run(onBackToProjects)}
-            >
-              Back to projects
-            </button>
-          ) : null}
-          {ready ? (
-            <button
-              type="button"
-              role="menuitem"
-              className={`${itemBase} chrome-menu-update bg-accent-soft text-accent hover:bg-accent-soft`}
-              onClick={() => run(openPrompt)}
-            >
-              {updateActionLabel(ready)}
-            </button>
-          ) : null}
-          <a
-            role="menuitem"
-            className={itemClass}
-            href={DOCS_URL}
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            Documentation
-          </a>
-          {version ? (
-            <p className="chrome-menu-version m-0 border-t border-line px-2.5 pb-1 pt-2 font-sans text-2xs text-ink-faint">
-              Rennet v{version}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+          Documentation
+        </DropdownMenuItem>
+        {version ? (
+          <p className="chrome-menu-version m-0 border-t border-line px-2.5 pb-1 pt-2 font-sans text-2xs text-ink-faint">
+            Rennet v{version}
+          </p>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -207,25 +176,22 @@ export function UpdateReadyPrompt({ onApply }: { onApply: () => void }) {
   const ready = useUpdateReady((state) => state.ready);
   const promptOpen = useUpdateReady((state) => state.promptOpen);
   const closePrompt = useUpdateReady((state) => state.closePrompt);
-  if (!ready || !promptOpen) return null;
+  if (!ready) return null;
   const heading = ready.version ? `Restart into ${ready.version}?` : "Restart into the update?";
+  // The kit Dialog owns the portal, backdrop, focus return, Escape and backdrop-click
+  // dismissal this prompt hand-rolled. Closing (Escape / backdrop / Not now) keeps the
+  // badge and never re-prompts — the update NEVER applies without the user choosing it.
   return (
-    <div
-      className="command-palette-backdrop fixed inset-0 z-[60] grid items-start justify-items-center bg-black/60 px-6 pb-6 pt-[12vh]"
-      role="presentation"
+    <Dialog
+      open={promptOpen}
+      onOpenChange={(open) => {
+        if (!open) closePrompt();
+      }}
     >
-      {/* Click-away scrim, matching the palette idiom: behind the dialog, never hit by it. */}
-      <button
-        type="button"
-        className="update-prompt-scrim absolute inset-0 z-0 cursor-default border-0 bg-transparent p-0"
-        aria-label="Dismiss update prompt"
-        onClick={closePrompt}
-      />
-      <div
-        className="update-prompt relative z-[1] mt-[18vh] w-[min(400px,100%)] rounded-surface border border-line bg-overlay p-5 shadow-overlay"
-        role="dialog"
-        aria-modal="true"
+      <DialogContent
         aria-label={heading}
+        showCloseButton={false}
+        className="update-prompt block w-[min(400px,100%)] max-w-[min(400px,100%)] rounded-surface border border-line bg-overlay p-5 shadow-overlay ring-0"
       >
         <h2 className="m-0 mb-1.5 text-lg font-semibold text-ink">{heading}</h2>
         <p className="m-0 mb-4 text-base leading-relaxed text-ink-soft">
@@ -247,7 +213,7 @@ export function UpdateReadyPrompt({ onApply }: { onApply: () => void }) {
             Not now
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
