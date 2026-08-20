@@ -132,6 +132,11 @@ describe("validateKnowledgeSet", () => {
   it("rejects a set with malformed identity pins", () => {
     expect(validateKnowledgeSet({ ...set([]), baseOid: 123 })).toBeUndefined();
   });
+
+  it("keeps a rejected statement — a human disposition must survive persistence", () => {
+    const validated = validateKnowledgeSet(set([statement({ id: "r", status: "rejected" })]));
+    expect(validated?.statements.map((s) => s.status)).toEqual(["rejected"]);
+  });
 });
 
 describe("knowledgeStatementId", () => {

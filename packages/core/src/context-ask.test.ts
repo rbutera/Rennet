@@ -227,6 +227,38 @@ describe("runContextAsk", () => {
     expect(prompt).toContain("PROJECT FILE NAMES (navigation only; NOT evidence)");
   });
 
+  it("never offers a rejected statement as evidence to the orchestrator", async () => {
+    let prompt = "";
+    const [only] = KNOWLEDGE.statements;
+    if (!only) throw new Error("fixture");
+    const rejected: KnowledgeSet = {
+      ...KNOWLEDGE,
+      statements: [{ ...only, status: "rejected" }],
+    };
+    await runContextAsk({
+      snapshot: loaded(),
+      knowledgeSet: rejected,
+      query: { question: "what is in core?" },
+      council: COUNCIL,
+      runTurn: async (value) => {
+        prompt = value;
+        return {
+          status: "emitted",
+          body: {
+            answer: "",
+            confidence: "low",
+            evidence: [],
+            unanswered: { reason: "no evidence" },
+          },
+        };
+      },
+      maxRetries: 0,
+    });
+    // The human disowned k1; its claim must not reach the model as offered evidence.
+    expect(prompt).not.toContain("core holds the deterministic reads");
+    expect(prompt).not.toContain("statement=k1");
+  });
+
   it("returns unanswered-with-reason as a first-class success", async () => {
     const result = await runContextAsk({
       snapshot: loaded(),

@@ -47,6 +47,7 @@ export default defineConfig({
                     label: "Reviewing a GitHub PR",
                     link: "/using/guide/reviewing-a-github-pr/",
                   },
+                  { label: "The Context Map", link: "/using/guide/context-map/" },
                   { label: "Remote access", link: "/using/guide/remote-access/" },
                   { label: "Rennet in a browser", link: "/using/guide/browser-rennet/" },
                   { label: "Rennet on your phone", link: "/using/guide/mobile/" },

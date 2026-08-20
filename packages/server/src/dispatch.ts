@@ -31,10 +31,13 @@ import {
   type DiscoveryResult,
   type GitHubAuthStatus,
   type GitHubConnectPoll,
+  type KnowledgeDispositionResult,
   type PairedDevice,
   type PersistedThreadMessageWire,
   type ProcessedRepoSummary,
   type Project,
+  type ProjectContextAskResult,
+  type ProjectContextMapResult,
   type ProjectDetail,
   type ProjectKind,
   type ProjectProcessEvent,
@@ -314,6 +317,31 @@ export interface DispatchDeps {
    * destructive local act; the host handler is a documented stub this wave.
    */
   cleanupWorktree(input: { projectId: string; worktreeId: string }): Promise<{ ok: boolean }>;
+  /**
+   * The Context Map surface's read (change add-context-map-view): the persisted Repo
+   * Map — deterministic ProjectMap + local knowledge set — from the on-disk project
+   * store. Pure read: no rebuild, no model spend; absent/stale gates to typed absent.
+   */
+  projectContextMap(projectId: string): Promise<ProjectContextMapResult>;
+  /**
+   * Project-scoped context ask (change add-context-map-view): the same engine
+   * `context.ask` runs for a review, keyed at the project's persisted tip. Model
+   * spend through the user's own harness; unanswered/failed are first-class.
+   */
+  projectContextAsk(input: {
+    projectId: string;
+    question: string;
+    scope?: string;
+  }): Promise<ProjectContextAskResult>;
+  /**
+   * Human disposition of a knowledge statement (the R54 "a human confirms it"
+   * surface): flip status by id, persist the set. Never edits the claim.
+   */
+  knowledgeDisposition(input: {
+    projectId: string;
+    statementId: string;
+    disposition: "confirmed" | "rejected";
+  }): Promise<KnowledgeDispositionResult>;
   /**
    * The Flagged lens's input (issue #138): the automated review layer's findings for
    * a review. The LIVE finding-generation runner (#32) is wired behind this — it
@@ -1392,6 +1420,41 @@ export function createDispatch(
             worktreeId: input.worktreeId,
           });
           return parseCommandOutput(name, result);
+        }
+        // ── The Context Map surface (change add-context-map-view) ─────────────────
+        case "project.contextMap": {
+          // Pure read of the persisted Repo Map — no rebuild, no model spend. An
+          // absent or gate-failing snapshot returns the typed absent, never a
+          // fabricated or partially-served map.
+          const input = parseCommandInput(name, rawInput);
+          return parseCommandOutput(name, await deps.projectContextMap(input.projectId));
+        }
+        case "project.contextAsk": {
+          // Project-scoped ask over the persisted snapshot + knowledge set. A real
+          // model turn through the user's own harness; an absent harness or a
+          // snapshot refusal is an honest failed result carrying its cost.
+          const input = parseCommandInput(name, rawInput);
+          return parseCommandOutput(
+            name,
+            await deps.projectContextAsk({
+              projectId: input.projectId,
+              question: input.question,
+              ...(input.scope === undefined ? {} : { scope: input.scope }),
+            }),
+          );
+        }
+        case "project.knowledgeDisposition": {
+          // The human-confirm surface (R54): flip the statement's status by id and
+          // persist. Disposition never edits the claim, so the id stays stable.
+          const input = parseCommandInput(name, rawInput);
+          return parseCommandOutput(
+            name,
+            await deps.knowledgeDisposition({
+              projectId: input.projectId,
+              statementId: input.statementId,
+              disposition: input.disposition,
+            }),
+          );
         }
         // ── The Flagged lens (issue #138) ─────────────────────────────────────────
         case "flagged.review": {

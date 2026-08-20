@@ -86,6 +86,7 @@ import {
 } from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
 import { ContextManifestPanel } from "./components/context-manifest-panel";
+import { ContextMapView } from "./components/context-map-view";
 import { ConversationPanel } from "./components/conversation-panel";
 import { DeltaAccountPanel } from "./components/delta-account-panel";
 import { DestinationFrame } from "./components/destination-frame";
@@ -2831,6 +2832,32 @@ export function RennetApp({
           initialDetail={projectDetailData ?? undefined}
           scheme={effectiveScheme}
           onOpenRow={(row) => void openRow(projectDetail, row)}
+          onOpenContextMap={() =>
+            navigate(pushSurface({ kind: "contextMap", projectId: projectDetail.id }))
+          }
+          onBack={() => navigate(navigateBack())}
+        />
+        {palette}
+        {updatePrompt}
+      </>,
+    );
+  }
+
+  // The Context Map surface (change add-context-map-view): a per-project view of the
+  // Repo Map — structure, the knowledge layer, and a project-scoped ask rail. Self-
+  // loading over `project.contextMap`; an absent snapshot is stated plainly.
+  if (currentSurface.kind === "contextMap") {
+    return navigationSurface(
+      <>
+        {error ? (
+          <div className="error-toast fixed left-1/2 top-3.5 z-10 -translate-x-1/2 rounded-control border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">
+            {error}
+          </div>
+        ) : null}
+        <ContextMapView
+          key={currentSurface.projectId}
+          bridge={bridge}
+          projectId={currentSurface.projectId}
           onBack={() => navigate(navigateBack())}
         />
         {palette}

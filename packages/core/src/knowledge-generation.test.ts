@@ -209,6 +209,35 @@ describe("runKnowledgeDeltaPass", () => {
     expect(called).toBe(false);
   });
 
+  it("preserves a human disposition on an unchanged-region survivor across a delta", async () => {
+    // A confirmed and a rejected statement in an UNTOUCHED region must survive a delta
+    // verbatim — the human's disposition is a recorded state, not a re-derivable one, so
+    // the carry path may never reset it to `hypothesis`.
+    const [survivor, changed] = priorSet.statements;
+    if (!survivor || !changed) throw new Error("fixture");
+    const disposedPrior: KnowledgeSet = {
+      ...priorSet,
+      statements: [
+        { ...survivor, id: "confirmed-survivor", status: "confirmed" },
+        { ...survivor, id: "rejected-survivor", status: "rejected" },
+        changed,
+      ],
+    };
+    const result = await runKnowledgeDeltaPass({
+      snapshot: SNAPSHOT,
+      priorSet: disposedPrior,
+      changedPaths: ["packages/a/src/index.ts"],
+      provenance: SEED,
+      budget: createInvocationBudget(2),
+      runTurn: emit({ statements: [] }),
+    });
+    expect(result.status).toBe("ok");
+    const set = result.set as KnowledgeSet;
+    const byId = new Map(set.statements.map((s) => [s.id, s.status]));
+    expect(byId.get("confirmed-survivor")).toBe("confirmed");
+    expect(byId.get("rejected-survivor")).toBe("rejected");
+  });
+
   it("statementIntersectsChange detects a cited changed path", () => {
     const [survivor, changed] = priorSet.statements;
     if (!survivor || !changed) throw new Error("fixture");

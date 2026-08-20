@@ -191,6 +191,9 @@ function harness(
     inFlightReviews?: DispatchDeps["inFlightReviews"];
     threadPersistence?: DispatchDeps["threadPersistence"];
     reattachThreads?: DispatchDeps["reattachThreads"];
+    projectContextMap?: DispatchDeps["projectContextMap"];
+    projectContextAsk?: DispatchDeps["projectContextAsk"];
+    knowledgeDisposition?: DispatchDeps["knowledgeDisposition"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -282,6 +285,26 @@ function harness(
   const deps: DispatchDeps = {
     service,
     allowedRoots,
+    projectContextMap:
+      extra.projectContextMap ?? (() => Promise.resolve({ status: "absent", reason: "stub" })),
+    projectContextAsk:
+      extra.projectContextAsk ??
+      (() =>
+        Promise.resolve({
+          status: "failed",
+          failureReason: "stub",
+          cost: {
+            turns: 0,
+            model: null,
+            effort: null,
+            budgetGranted: true,
+            overage: false,
+            resolution: null,
+          },
+        })),
+    knowledgeDisposition:
+      extra.knowledgeDisposition ??
+      (({ statementId }) => Promise.resolve({ status: "not-found", statementId })),
     pairing: {
       mint: () => ({ code: "PAIRCODE", expiresAt: new Date().toISOString() }),
       exchange: () => ({ deviceToken: "device-token", deviceId: "device-1" }),
@@ -2582,6 +2605,22 @@ function frontDoorHarness(seed: {
   const deps: DispatchDeps = {
     service,
     allowedRoots,
+    projectContextMap: () => Promise.resolve({ status: "absent", reason: "stub" }),
+    projectContextAsk: () =>
+      Promise.resolve({
+        status: "failed",
+        failureReason: "stub",
+        cost: {
+          turns: 0,
+          model: null,
+          effort: null,
+          budgetGranted: true,
+          overage: false,
+          resolution: null,
+        },
+      }),
+    knowledgeDisposition: ({ statementId }) =>
+      Promise.resolve({ status: "not-found", statementId }),
     pairing: {
       mint: () => ({ code: "PAIRCODE", expiresAt: new Date().toISOString() }),
       exchange: () => ({ deviceToken: "device-token", deviceId: "device-1" }),
@@ -4619,5 +4658,134 @@ describe("createDispatch — device.registerPush + attention.acknowledge (#383 M
     const event = raiseAttention.mock.calls[0]?.[0];
     expect(event).toMatchObject({ family: "review-finished" });
     expect(event.deepLink).toMatch(/^rennet:\/\/review\/.+\/digest$/);
+  });
+});
+
+// ── The Context Map surface (change add-context-map-view) ────────────────────
+describe("createDispatch — project.contextMap / contextAsk / knowledgeDisposition", () => {
+  const sampleMap = {
+    baseRef: "main",
+    baseRefResolution: "symbolic-head" as const,
+    baseOid: "abc123",
+    fingerprint: "fp-1",
+    files: [{ path: "src/a.ts", blobOid: "blob-1", size: 10, mode: "100644" }],
+    scopes: [],
+    edges: [],
+    entryPoints: [],
+    tests: [],
+    ownership: [],
+    conventions: [],
+  };
+  const sampleStatement = {
+    id: "stmt-1",
+    subject: "src/a.ts",
+    aspect: "purpose" as const,
+    claim: "a.ts is the entrypoint",
+    evidence: [{ path: "src/a.ts", blobOid: "blob-1" }],
+    confidence: "high" as const,
+    status: "hypothesis" as const,
+    provenance: { generator: "test", model: null, apiKeySource: null },
+    learnedAgainst: { baseOid: "abc123", snapshotFingerprint: "fp-1" },
+  };
+  const sampleKnowledge = {
+    schemaVersion: 1,
+    repoKey: "repo-1",
+    baseOid: "abc123",
+    snapshotFingerprint: "fp-1",
+    generator: "test",
+    statements: [sampleStatement],
+  };
+
+  it("project.contextMap serves the persisted map + knowledge verbatim", async () => {
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        projectContextMap: () =>
+          Promise.resolve({ status: "ok", map: sampleMap, knowledge: sampleKnowledge }),
+      },
+    );
+    const out = await dispatch("project.contextMap", { projectId: "proj-1" });
+    expect(out).toEqual({ status: "ok", map: sampleMap, knowledge: sampleKnowledge });
+  });
+
+  it("project.contextMap returns a typed absent when nothing is persisted", async () => {
+    const { dispatch } = harness();
+    const out = await dispatch("project.contextMap", { projectId: "proj-1" });
+    expect(out).toEqual({ status: "absent", reason: "stub" });
+  });
+
+  it("project.contextAsk carries the answered result with evidence + cost", async () => {
+    const answered = {
+      status: "answered" as const,
+      answer: {
+        answer: "yes",
+        evidence: [{ path: "src/a.ts", blobOid: "blob-1" }],
+        confidence: "high" as const,
+        consulted: ["src/a.ts"],
+        cost: {
+          turns: 1,
+          model: "claude",
+          effort: null,
+          budgetGranted: true,
+          overage: false,
+          resolution: null,
+        },
+      },
+    };
+    const projectContextAsk = vi.fn<DispatchDeps["projectContextAsk"]>(() =>
+      Promise.resolve(answered),
+    );
+    const { dispatch } = harness(undefined, {}, { projectContextAsk });
+    const out = await dispatch("project.contextAsk", {
+      projectId: "proj-1",
+      question: "is a.ts the entrypoint?",
+      scope: "src",
+    });
+    expect(out).toEqual(answered);
+    expect(projectContextAsk).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      question: "is a.ts the entrypoint?",
+      scope: "src",
+    });
+  });
+
+  it("project.contextAsk surfaces the honest failed result (no harness) with its cost", async () => {
+    const { dispatch } = harness();
+    const out = (await dispatch("project.contextAsk", {
+      projectId: "proj-1",
+      question: "anything?",
+    })) as { status: string; failureReason: string };
+    expect(out.status).toBe("failed");
+    expect(out.failureReason).toBe("stub");
+  });
+
+  it("project.knowledgeDisposition round-trips the flipped statement", async () => {
+    const confirmed = { ...sampleStatement, status: "confirmed" as const };
+    const knowledgeDisposition = vi.fn<DispatchDeps["knowledgeDisposition"]>(() =>
+      Promise.resolve({ status: "ok", statement: confirmed }),
+    );
+    const { dispatch } = harness(undefined, {}, { knowledgeDisposition });
+    const out = await dispatch("project.knowledgeDisposition", {
+      projectId: "proj-1",
+      statementId: "stmt-1",
+      disposition: "confirmed",
+    });
+    expect(out).toEqual({ status: "ok", statement: confirmed });
+    expect(knowledgeDisposition).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      statementId: "stmt-1",
+      disposition: "confirmed",
+    });
+  });
+
+  it("project.knowledgeDisposition returns typed not-found for an unknown id", async () => {
+    const { dispatch } = harness();
+    const out = await dispatch("project.knowledgeDisposition", {
+      projectId: "proj-1",
+      statementId: "ghost",
+      disposition: "rejected",
+    });
+    expect(out).toEqual({ status: "not-found", statementId: "ghost" });
   });
 });

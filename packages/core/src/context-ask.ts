@@ -343,7 +343,10 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
     snapshot,
     query.scope !== undefined ? { path: query.scope } : undefined,
   );
-  const offeredEvidence = offeredEvidenceFor(knowledgeView.statements.slice(0, maxStatements));
+  // A `rejected` statement is one the human explicitly disowned; never offer it
+  // to the orchestrator as evidence (change add-context-map-view, task 4.5).
+  const offerable = knowledgeView.statements.filter((s) => s.status !== "rejected");
+  const offeredEvidence = offeredEvidenceFor(offerable.slice(0, maxStatements));
   const offeredById = new Map(offeredEvidence.map((evidence) => [evidence.id, evidence]));
   const paths = map.files.map((f) => f.path).slice(0, maxFiles);
   const consulted = [

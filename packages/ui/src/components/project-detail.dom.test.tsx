@@ -142,7 +142,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("renders the unreachable-GitHub hint and still shows local work", async () => {
     const { bridge } = fakeBridge(detail({ prs: [], authUnavailable: "network" }));
     const { container } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() =>
       expect(container.querySelector(".project-detail-auth-hint")?.textContent).toContain(
@@ -156,7 +162,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("dedupes a local branch that has a PR into a single PR row with an annotation", async () => {
     const { bridge } = fakeBridge(detail());
     const { container } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
 
     await waitFor(() => expect(container.querySelectorAll(".smart-row").length).toBeGreaterThan(0));
@@ -170,7 +182,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("floats a needs-you row to the top under the HOT default", async () => {
     const { bridge } = fakeBridge(detail());
     const { container } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() => expect(container.querySelector(".smart-row")).not.toBeNull());
     // pr-131 requested my review → it leads despite being the oldest.
@@ -182,7 +200,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("marks the merged PR read-only and offers Clean up, which invokes the command", async () => {
     const { bridge, calls } = fakeBridge(detail());
     const { container, getByRole } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() => expect(container.querySelector(".smart-row")).not.toBeNull());
     const merged = container.querySelector('.smart-row[data-read-only="true"]');
@@ -209,7 +233,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("restores the annotation when clean-up REJECTS (never silently hidden)", async () => {
     const { bridge } = fakeBridge(detail(), "reject");
     const { container, getByRole } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() => expect(container.querySelector(".smart-row")).not.toBeNull());
     const annotation = () =>
@@ -229,7 +259,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("restores the annotation when clean-up returns { ok: false }", async () => {
     const { bridge } = fakeBridge(detail(), "not-ok");
     const { container, getByRole } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() => expect(container.querySelector(".smart-row")).not.toBeNull());
     const annotation = () =>
@@ -249,7 +285,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("filters to just the local work via the Local chip", async () => {
     const { bridge } = fakeBridge(detail());
     const { container, getByRole } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() => expect(container.querySelector(".smart-row")).not.toBeNull());
     fireEvent.click(getByRole("button", { name: /Local/ }));
@@ -263,7 +305,13 @@ describe("ProjectDetail — the unified smart list", () => {
   it("renders the partial-results banner on a truncated substrate", async () => {
     const { bridge } = fakeBridge(detail({ truncated: true }));
     const { container } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={vi.fn()} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() =>
       expect(container.querySelector(".project-detail-truncated")).not.toBeNull(),
@@ -277,7 +325,13 @@ describe("ProjectDetail — the unified smart list", () => {
     const onOpenRow = vi.fn();
     const { bridge } = fakeBridge(detail());
     const { container } = mount(
-      <ProjectDetail bridge={bridge} project={project} onOpenRow={onOpenRow} onBack={vi.fn()} />,
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={onOpenRow}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
     await waitFor(() => expect(container.querySelector(".smart-row-open")).not.toBeNull());
     fireEvent.click(container.querySelector(".smart-row-open") as HTMLElement);

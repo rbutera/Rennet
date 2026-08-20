@@ -94,6 +94,13 @@ describe("L2 is user-sovereign: no agent/orchestrator disposition-write command 
     const dispositionWriters = Object.keys(commandDefinitions).filter((name) =>
       /dispos/i.test(name),
     );
-    expect(dispositionWriters.sort()).toEqual(["canvas.disposition", "review.setDisposition"]);
+    // All three are USER surfaces: canvas comment disposition, review disposition,
+    // and the Context Map knowledge disposition (confirm/reject a claim). None is
+    // agent/orchestrator-namespaced — the invariant this test guards.
+    expect(dispositionWriters.sort()).toEqual([
+      "canvas.disposition",
+      "project.knowledgeDisposition",
+      "review.setDisposition",
+    ]);
   });
 });
