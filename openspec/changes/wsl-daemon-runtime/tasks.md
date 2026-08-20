@@ -13,15 +13,15 @@
 
 ## 3. Locus routing in the supervisor
 
-- [ ] 3.1 In `apps/desktop/src/main/daemon-supervisor.ts`, select the launch by project locus: host-locus keeps today's `execPath=process.execPath` path; wsl-locus resolves Node (`resolveWslNode`), delivers the bundle (task 1), and uses the WSL spawn/health path (task 2).
-- [ ] 3.2 Keep a `locus → daemon handle (port)` map; lazily spawn a distro's daemon on the first project for that distro; route the renderer's bridge to the correct port.
-- [ ] 3.3 Translate repo paths crossing the boundary with `toDistroPath` (spawn/cwd) and `toWindowsView` (any host-side read); a host-locus project's path handling is unchanged.
-- [ ] 3.4 Tests: a wsl-locus project routes to the distro daemon's port; a host-locus project is byte-identical to before (regression guard).
+- [x] 3.1 In `apps/desktop/src/main/daemon-supervisor.ts`, select the launch by project locus: host-locus keeps today's `execPath=process.execPath` path; wsl-locus resolves Node (`resolveWslNode`), delivers the bundle (task 1), and uses the WSL spawn/health path (task 2).
+- [x] 3.2 Keep a `locus → daemon handle (port)` map; lazily spawn a distro's daemon on the first project for that distro; route the renderer's bridge to the correct port.
+- [x] 3.3 Translate repo paths crossing the boundary with `toDistroPath` (spawn/cwd) and `toWindowsView` (any host-side read); a host-locus project's path handling is unchanged.
+- [x] 3.4 Tests: a wsl-locus project routes to the distro daemon's port; a host-locus project is byte-identical to before (regression guard).
 
 ## 4. Distro-native secret store
 
-- [ ] 4.1 Point a WSL daemon's `createGitHubTokenStore(...)` at its distro-native data dir so the GitHub credential is stored inside the distro; the host daemon's store is unaffected.
-- [ ] 4.2 Test: a WSL daemon's credential path is under the distro data dir (not the host dir, not a 9P path).
+- [x] 4.1 Point a WSL daemon's `createGitHubTokenStore(...)` at its distro-native data dir so the GitHub credential is stored inside the distro; the host daemon's store is unaffected.
+- [x] 4.2 Test: a WSL daemon's credential path is under the distro data dir (not the host dir, not a 9P path).
 
 ## 5. Gate
 

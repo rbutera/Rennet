@@ -6,15 +6,20 @@
 // daemon with the app); in-flight turns from the old daemon fold to `interrupted` via the
 // existing lazy crash recovery.
 
+import { execFile } from "node:child_process";
 import { join, resolve } from "node:path";
+import { detectLocus } from "@rennet/core";
 import {
   type DaemonInfo,
   type DaemonVerdict,
+  type EnsureWslDaemonDeps,
+  ensureWslDaemon,
   findHealthyDaemon,
   readDaemonFile,
   removeDaemonFile,
   type SpawnDaemonOptions,
   spawnDaemon,
+  type WslRunner,
   waitForHealthy,
 } from "@rennet/server";
 import { app } from "electron";
@@ -219,4 +224,98 @@ export async function ensureDaemon(
   });
   const healthy = await deps.waitForHealthy(dataDir);
   return healthy.identity.wsPort;
+}
+
+/**
+ * A bounded `WslRunner` over `child_process.execFile`: one `wsl.exe … -e <program> <argv>`
+ * exec → `{stdout, code}`, with its OWN timeout so a wedged distro call can never stall the
+ * health-wait loop (which only bounds the interval BETWEEN polls, not a single hanging run).
+ * No `execa` dependency — the built-in with a `timeout` is exactly enough. `windowsHide`
+ * keeps the console window from flashing; a non-zero/failed exec resolves a non-zero `code`
+ * (delivery and health both branch on the code, never on a thrown spawn error).
+ */
+export function createWslRunner(timeoutMs = 15_000): WslRunner {
+  return (command) =>
+    new Promise((resolvePromise) => {
+      execFile(
+        command.file,
+        [...command.args],
+        {
+          timeout: timeoutMs,
+          windowsHide: true,
+          maxBuffer: 8 * 1024 * 1024,
+          ...(command.cwd ? { cwd: command.cwd } : {}),
+        },
+        (error, stdout) => {
+          const code =
+            error && typeof (error as { code?: unknown }).code === "number"
+              ? (error as { code: number }).code
+              : error
+                ? 1
+                : 0;
+          resolvePromise({ stdout: stdout ?? "", code });
+        },
+      );
+    });
+}
+
+/** The WSL deps the shell hands `ensureWslDaemon`: this app's version + host bundle + the real runner. */
+function defaultWslDeps(): EnsureWslDaemonDeps {
+  return {
+    serverVersion: app.getVersion(),
+    hostBundlePath: resolveServerBundle(),
+    run: createWslRunner(),
+  };
+}
+
+/** distro → the WS port of that distro's daemon, spawned lazily once and then reused. */
+const wslDaemonPorts = new Map<string, number>();
+
+export interface DaemonForProjectDeps {
+  /** The host-locus path — TODAY's `ensureDaemon(dataDir)`, unchanged (byte-identical). */
+  readonly ensureHostDaemon: (dataDir: string) => Promise<number>;
+  /** The WSL orchestrator (packages/server); returns the distro daemon's port + identity. */
+  readonly ensureWslDaemon: (
+    distro: string,
+    deps: EnsureWslDaemonDeps,
+  ) => Promise<{ port: number }>;
+  /** Build the WSL deps for a distro (version + host bundle + bounded runner). */
+  readonly wslDeps: (distro: string) => EnsureWslDaemonDeps;
+  /** The distro → port map (injectable so tests get a fresh one). */
+  readonly ports: Map<string, number>;
+}
+
+/**
+ * Resolve the WS port that serves a project, SELECTED BY its execution locus (design D3/D4).
+ *
+ * - Host-locus: exactly today's `ensureDaemon(dataDir)` — byte-identical, no WSL code runs.
+ * - WSL-locus: routes to the project's distro daemon, spawned lazily ONCE per distro (via
+ *   `ensureWslDaemon`) and reused through the `distro → port` map, so opening a second project
+ *   on the same distro dials the already-running daemon. The renderer's bridge dials the port
+ *   this returns; repo paths crossing into the distro are translated where they are spawned
+ *   (adapters' `locusCommand` / `toDistroPath`), not here — this seam only resolves the port.
+ *
+ * The desktop main is deliberately thin here: the composed logic lives in the injectable-effect
+ * `ensureWslDaemon` orchestrator (unit-tested in packages/server); the live end-to-end wiring is
+ * validated by the lancelot field proof (Wave 6, deferred).
+ */
+export async function ensureDaemonForProject(
+  projectPath: string,
+  hostDataDir: string,
+  overrides: Partial<DaemonForProjectDeps> = {},
+): Promise<number> {
+  const deps: DaemonForProjectDeps = {
+    ensureHostDaemon: (dataDir) => ensureDaemon(dataDir),
+    ensureWslDaemon,
+    wslDeps: defaultWslDeps,
+    ports: wslDaemonPorts,
+    ...overrides,
+  };
+  const locus = detectLocus(projectPath);
+  if (locus.kind === "host") return deps.ensureHostDaemon(hostDataDir);
+  const cached = deps.ports.get(locus.distro);
+  if (cached !== undefined) return cached;
+  const { port } = await deps.ensureWslDaemon(locus.distro, deps.wslDeps(locus.distro));
+  deps.ports.set(locus.distro, port);
+  return port;
 }

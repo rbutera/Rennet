@@ -19,7 +19,12 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { ensureDaemon, isOwnedDaemonRunning, stopOwnedDaemon } from "./daemon-supervisor";
+import {
+  ensureDaemon,
+  ensureDaemonForProject,
+  isOwnedDaemonRunning,
+  stopOwnedDaemon,
+} from "./daemon-supervisor";
 
 const claim: DaemonInfo = {
   pid: 4242,
@@ -366,5 +371,75 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(port).toBe(spawned.wsPort);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("restarting the bundled daemon"));
     expect(readDaemonFile(dataDir)).toEqual(spawned);
+  });
+});
+
+describe("ensureDaemonForProject (locus-selected routing)", () => {
+  it("routes a host-locus project through today's ensureDaemon path, untouched", async () => {
+    const ensureHostDaemon = vi.fn(async () => 40_100);
+    const ensureWslDaemonSpy = vi.fn(async () => ({ port: 0 }));
+
+    const port = await ensureDaemonForProject("/Users/rai/code/repo", "/host/data", {
+      ensureHostDaemon,
+      ensureWslDaemon: ensureWslDaemonSpy,
+      ports: new Map(),
+    });
+
+    expect(port).toBe(40_100);
+    expect(ensureHostDaemon).toHaveBeenCalledWith("/host/data");
+    expect(ensureWslDaemonSpy).not.toHaveBeenCalled(); // no WSL code runs for a host project.
+  });
+
+  it("treats a Windows drive path as host-locus (no distro daemon)", async () => {
+    const ensureHostDaemon = vi.fn(async () => 40_200);
+    const ensureWslDaemonSpy = vi.fn(async () => ({ port: 0 }));
+
+    const port = await ensureDaemonForProject("C:\\Users\\rai\\repo", "/host/data", {
+      ensureHostDaemon,
+      ensureWslDaemon: ensureWslDaemonSpy,
+      ports: new Map(),
+    });
+
+    expect(port).toBe(40_200);
+    expect(ensureWslDaemonSpy).not.toHaveBeenCalled();
+  });
+
+  it("spawns a WSL-locus project's distro daemon once and reuses its port on the next project", async () => {
+    const ensureHostDaemon = vi.fn(async () => 1);
+    const ensureWslDaemonSpy = vi.fn(async () => ({ port: 51_515 }));
+    const ports = new Map<string, number>();
+    const wslDeps = vi.fn(() => ({
+      serverVersion: "1.2.3",
+      hostBundlePath: "C:\\b",
+      run: () => Promise.resolve({ stdout: "", code: 0 }),
+    }));
+
+    const first = await ensureDaemonForProject(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\repo-a",
+      "/host/data",
+      {
+        ensureHostDaemon,
+        ensureWslDaemon: ensureWslDaemonSpy,
+        wslDeps,
+        ports,
+      },
+    );
+    const second = await ensureDaemonForProject(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\repo-b",
+      "/host/data",
+      {
+        ensureHostDaemon,
+        ensureWslDaemon: ensureWslDaemonSpy,
+        wslDeps,
+        ports,
+      },
+    );
+
+    expect(first).toBe(51_515);
+    expect(second).toBe(51_515);
+    expect(ensureWslDaemonSpy).toHaveBeenCalledTimes(1); // lazily spawned once, then reused.
+    expect(ensureWslDaemonSpy).toHaveBeenCalledWith("Ubuntu", expect.anything());
+    expect(ensureHostDaemon).not.toHaveBeenCalled();
+    expect(ports.get("Ubuntu")).toBe(51_515);
   });
 });
