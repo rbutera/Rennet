@@ -1,4 +1,5 @@
 import type { CanvasAngle } from "@rennet/types";
+import { Badge, Button } from "@rennet/ui";
 import { type KeyboardEvent, useRef } from "react";
 import { CANVAS_LENSES } from "../canvas/logic";
 
@@ -78,8 +79,8 @@ export function LensSwitcher({
     >
       <div className="lens-tabs flex gap-1" role="tablist" aria-label="Canvases">
         {CANVAS_LENSES.map((candidate, index) => (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             role="tab"
             key={candidate}
             id={`lens-tab-${candidate}`}
@@ -98,7 +99,7 @@ export function LensSwitcher({
             onClick={() => onSelectAngle(candidate)}
           >
             {ANGLE_LABELS[candidate]}
-          </button>
+          </Button>
         ))}
       </div>
     </nav>
@@ -133,13 +134,14 @@ export function BlastNotAssessed({ signals }: { signals: { signal: string; reaso
         Not assessed
       </span>
       {signals.map((entry) => (
-        <span
+        <Badge
           key={entry.signal}
-          className="blast-chip rounded-full border border-accent-line bg-accent-soft px-2.5 py-0.5 text-2xs text-accent"
+          variant="outline"
+          className="blast-chip border-accent-line bg-accent-soft px-2.5 py-0.5 text-2xs text-accent"
           title={entry.reason}
         >
           {SIGNAL_LABELS[entry.signal] ?? entry.signal}
-        </span>
+        </Badge>
       ))}
     </div>
   );

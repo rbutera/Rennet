@@ -6,7 +6,7 @@ import type {
   ProjectKind,
   RennetBridge,
 } from "@rennet/protocol";
-import { Button, Input } from "@rennet/ui";
+import { Button, Input, Switch } from "@rennet/ui";
 import { type ReactNode, useEffect, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import { GitHubConnectCard } from "./github-connect";
@@ -654,19 +654,12 @@ function WorktreeConfig({
 /** A private-to-reviewer backlight toggle switch. */
 function Toggle({ on, label, onToggle }: { on: boolean; label: string; onToggle(): void }) {
   return (
-    <button
-      type="button"
-      className={`toggle flex-none ml-auto w-10 h-6 p-0.5 rounded-full border transition ${on ? "is-on border-accent-line bg-accent-soft shadow-[inset_0_0_10px_var(--rn-accent-soft)]" : "border-line-strong bg-raised"}`}
-      role="switch"
-      aria-checked={on}
+    <Switch
+      className={`toggle flex-none ml-auto${on ? " is-on" : ""}`}
+      checked={on}
       aria-label={label}
-      onClick={onToggle}
-    >
-      <span
-        className={`toggle-knob block w-[17px] h-[17px] rounded-full transition-transform ${on ? "translate-x-[17px] bg-accent" : "bg-ink-faint"}`}
-        aria-hidden="true"
-      />
-    </button>
+      onCheckedChange={onToggle}
+    />
   );
 }
 

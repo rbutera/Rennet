@@ -4,7 +4,15 @@ import type {
   PullRequestState,
   RennetBridge,
 } from "@rennet/protocol";
-import { Button, Skeleton } from "@rennet/ui";
+import {
+  Button,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Skeleton,
+} from "@rennet/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import {
@@ -447,38 +455,40 @@ function FilterBar({
           );
         })}
       </div>
-      <label className="smart-pr-scope inline-flex items-center gap-2">
+      <span className="smart-pr-scope inline-flex items-center gap-2">
         <span className="smart-pr-scope-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
           PRs
         </span>
-        <select
-          className="smart-pr-scope-select px-2.5 py-1.5 rounded-chip border border-line-strong bg-surface text-ink"
-          value={prScope}
-          onChange={(event) => onPrScope(event.target.value as PrScope)}
-        >
-          {PR_SCOPES.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="smart-sort inline-flex items-center gap-2">
+        <Select value={prScope} onValueChange={(value) => onPrScope(value as PrScope)}>
+          <SelectTrigger size="sm" className="smart-pr-scope-select" aria-label="PR scope">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PR_SCOPES.map((entry) => (
+              <SelectItem key={entry.id} value={entry.id}>
+                {entry.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </span>
+      <span className="smart-sort inline-flex items-center gap-2">
         <span className="smart-sort-label text-2xs font-semibold uppercase tracking-wide text-ink-faint">
           Sort
         </span>
-        <select
-          className="smart-sort-select px-2.5 py-1.5 rounded-chip border border-line-strong bg-surface text-ink"
-          value={sort}
-          onChange={(event) => onSort(event.target.value as SmartSort)}
-        >
-          {SORTS.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.label}
-            </option>
-          ))}
-        </select>
-      </label>
+        <Select value={sort} onValueChange={(value) => onSort(value as SmartSort)}>
+          <SelectTrigger size="sm" className="smart-sort-select" aria-label="Sort">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SORTS.map((entry) => (
+              <SelectItem key={entry.id} value={entry.id}>
+                {entry.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </span>
     </div>
   );
 }
