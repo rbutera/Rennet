@@ -32,7 +32,7 @@ export function lastAbsolutePathLine(raw: string): string | null {
   const lines = shellLines(raw);
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
-    if (line !== undefined && line.startsWith("/")) return line;
+    if (line?.startsWith("/")) return line;
   }
   return null;
 }

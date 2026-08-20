@@ -67,12 +67,24 @@ describe("ensureWslBundleDelivered", () => {
   };
   const target = "/home/rai/.rennet/server/0.3.12/rennet.cjs";
 
-  /** A fake runner: records every command; returns scripted results by index. */
+  /**
+   * A fake runner that records commands and returns scripted results by index —
+   * and THROWS on any unscripted call. That makes the failure tests mutation-
+   * sensitive: if a guard were removed, delivery would call one command too many
+   * and this throws a plain Error, so the `WslBundleDeliveryError` expectation
+   * fails instead of passing for the wrong reason.
+   */
   function recorder(results: WslRunResult[]) {
     const calls: LocusCommand[] = [];
     const run = async (command: LocusCommand): Promise<WslRunResult> => {
+      const result = results[calls.length];
+      if (result === undefined) {
+        throw new Error(
+          `unscripted run() call #${calls.length + 1}: ${JSON.stringify(command.args)}`,
+        );
+      }
       calls.push(command);
-      return results[calls.length - 1] ?? { stdout: "", code: 0 };
+      return result;
     };
     return { calls, run };
   }
@@ -105,45 +117,59 @@ describe("ensureWslBundleDelivered", () => {
     expect(calls.every((c) => c.file === WSL_EXE)).toBe(true);
   });
 
-  it("throws (never spawns) when distroHome is not absolute", async () => {
-    const { run } = recorder([]);
+  it("throws before ANY command when distroHome is not absolute", async () => {
+    const { calls, run } = recorder([]);
     await expect(
       ensureWslBundleDelivered({ ...delivery, distroHome: "" }, run),
     ).rejects.toBeInstanceOf(WslBundleDeliveryError);
+    expect(calls).toHaveLength(0); // never spawned anything.
   });
 
-  it("throws when the `test` probe itself fails (code neither 0 nor 1)", async () => {
-    const { run } = recorder([{ stdout: "", code: 2 }]);
+  it("stops AT the `test` probe when it fails (code neither 0 nor 1)", async () => {
+    const { calls, run } = recorder([{ stdout: "", code: 2 }]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
+    expect(calls).toHaveLength(1); // only the probe ran — the guard stopped here.
   });
 
-  it("throws when mkdir fails", async () => {
-    const { run } = recorder([
+  it("stops AT mkdir when it fails", async () => {
+    const { calls, run } = recorder([
       { stdout: "", code: 1 }, // absent
       { stdout: "", code: 1 }, // mkdir fails
     ]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
+    expect(calls).toHaveLength(2);
   });
 
-  it("throws when wslpath translation is empty/non-absolute, and never issues cp", async () => {
+  it("stops AT wslpath when it exits nonzero (even with absolute stdout), never issuing cp", async () => {
     const { calls, run } = recorder([
       { stdout: "", code: 1 }, // absent
       { stdout: "", code: 0 }, // mkdir ok
-      { stdout: "wslpath: cannot access\n", code: 0 }, // non-absolute output
+      { stdout: "/mnt/c/x/rennet.cjs\n", code: 3 }, // absolute stdout BUT nonzero exit
     ]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
-    // cp must not have been attempted with a bad source.
-    expect(calls.map((c) => c.args[3])).not.toContain("cp");
+    expect(calls).toHaveLength(3); // cp never issued.
   });
 
-  it("throws when cp fails (a failed copy is never reported as delivered)", async () => {
-    const { run } = recorder([
+  it("stops AT wslpath when its output is non-absolute, never issuing cp", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 1 }, // absent
+      { stdout: "", code: 0 }, // mkdir ok
+      { stdout: "wslpath: cannot access\n", code: 0 }, // exit 0 but non-absolute output
+    ]);
+    await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
+      WslBundleDeliveryError,
+    );
+    expect(calls).toHaveLength(3); // cp never issued.
+  });
+
+  it("throws AT cp when it fails (a failed copy is never reported as delivered)", async () => {
+    const { calls, run } = recorder([
       { stdout: "", code: 1 }, // absent
       { stdout: "", code: 0 }, // mkdir ok
       { stdout: "/mnt/c/x/rennet.cjs\n", code: 0 }, // wslpath ok
@@ -152,5 +178,6 @@ describe("ensureWslBundleDelivered", () => {
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
+    expect(calls).toHaveLength(4);
   });
 });
