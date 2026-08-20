@@ -39,6 +39,6 @@
 
 - [x] 6.1 Run the documentation structural checks, projection tests, link checks, and `rennet-docs` build with a refuting control.
 - [x] 6.2 Run the affected Nx targets and the full `pnpm check` gate.
-- [ ] 6.3 Commit the reviewed diff, push the branch, open the pull request, and verify the remote branch contents.
+- [x] 6.3 Commit the reviewed diff, push the branch, open the pull request, and verify the remote branch contents.
 - [ ] 6.4 Run independent Codex standards/spec reviews and a Claude PR review, then resolve every actionable finding.
-- [ ] 6.5 Re-run the full gate, push the reviewed head, verify CI, and merge the pull request.
+- [ ] 6.5 Re-run the full gate on the reviewed diff before its final push.
