@@ -63,7 +63,7 @@ function SheetContent({
             data-slot="sheet-close"
             render={<Button variant="ghost" className="absolute top-3 right-3" size="icon-sm" />}
           >
-            <XIcon />
+            <XIcon strokeWidth={1.6} />
             <span className="sr-only">Close</span>
           </SheetPrimitive.Close>
         )}
