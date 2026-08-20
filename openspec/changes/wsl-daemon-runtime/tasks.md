@@ -1,8 +1,8 @@
 ## 1. Distro paths and bundle delivery (pure + effectful)
 
-- [ ] 1.1 In `core`, add pure helpers: `wslServerBundlePath(version)` → `~/.rennet/server/<version>/rennet.cjs` (distro-native) and `wslDaemonDataDir()` → the distro-native data dir, alongside `wsl-node.ts`. Unit-test them.
-- [ ] 1.2 Add a delivery step (desktop/server side) that ensures the versioned bundle exists in the distro: check via `wsl.exe … -e test -f <path>`; when absent, `cp` the host bundle (translate the host path with `wslpath`) into the versioned dir. Skip when present. Inject the runner so it is testable.
-- [ ] 1.3 Test: delivery copies once when absent and is a no-op when the versioned path exists (fake runner asserts the command sequence).
+- [x] 1.1 In `core`, add pure helpers: `wslServerBundlePath(version)` → `~/.rennet/server/<version>/rennet.cjs` (distro-native) and `wslDaemonDataDir()` → the distro-native data dir, alongside `wsl-node.ts`. Unit-test them.
+- [x] 1.2 Add a delivery step (desktop/server side) that ensures the versioned bundle exists in the distro: check via `wsl.exe … -e test -f <path>`; when absent, `cp` the host bundle (translate the host path with `wslpath`) into the versioned dir. Skip when present. Inject the runner so it is testable.
+- [x] 1.3 Test: delivery copies once when absent and is a no-op when the versioned path exists (fake runner asserts the command sequence).
 
 ## 2. WSL spawn + port-first health
 
