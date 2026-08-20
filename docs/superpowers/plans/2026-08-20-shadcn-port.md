@@ -12,7 +12,7 @@
 
 ## Decisions (the spec)
 
-1. **Base UI supersedes React Aria** as Rennet's one primitive family (Rai, 2026-08-20). shadcn core has shipped Base UI variants of every component since Dec-2025 and defaults to Base UI since Jul-2026, so shadcn core *is* the Base UI registry. The package is `@base-ui/react` (MUI renamed it from the frozen `@base-ui-components/react@1.0.0-rc.0`; verify at install). The **kit (`@rennet/ui`) carries no `@radix-ui/*`** — a boundary on the kit, not a whole-repo claim (Radix appears transitively via Expo Router/Vaul elsewhere). Never install raw `cmdk` (it depends on Radix) — use shadcn's Base UI Command.
+1. **Base UI supersedes React Aria** as the kit's primary primitive family (Rai, 2026-08-20). shadcn core has shipped Base UI variants of every component since Dec-2025 and defaults to Base UI since Jul-2026, so shadcn core *is* the Base UI registry. The package is `@base-ui/react` (MUI renamed it from the frozen `@base-ui-components/react@1.0.0-rc.0`; verify at install). **Radix is NOT banned** (Rai, 2026-08-20 — an earlier "no Radix" line was an over-inference, corrected): a Radix dependency is fine where a shadcn component brings it — notably `cmdk` for the command palette. The soft preference is to not run two *different* families for the *same* primitive gratuitously, but a pragmatic Radix/cmdk dep is acceptable, not a blocker.
 2. **Registry policy:** shadcn core is primary. Other registries allowed case-by-case, license-verified **per component** at pull time (none admitted wholesale). Blocklist (checked 2026-08-20, re-verify at pull time): Origin UI (mixed licensing, parts not MIT), Aceternity (published proprietary terms), animate-ui (MIT + Commons Clause — forbids selling), Kibo UI + diceui (MIT but Radix-based — only if Base UI native falls short). Gap-fillers if needed: 9ui, basecn, baseui-cn (all MIT, Base UI).
 3. **Theme:** Affineur's Bench identity kept. `palette.css` stays the only hex source. shadcn semantic tokens defined in `theme.css` `@theme inline`, mapped from `--rn-*`. Dark mode comes free (`--rn-*` already flips on `[data-scheme="dark"]`).
 4. **Scope:** full sweep — all tiers T1 (primitives + overlays), T2 (command palette, resizable, markdown, toast), T3 (shiki, diff, lists/trees, icons), T4 (conversation surfaces re-platformed on shadcn's native Base UI AI-chat components — same UX, redesign is a later separate effort).
@@ -25,7 +25,7 @@
 - All new deps: exact version pins, `pnpm-lock.yaml` committed, version ≥ 7 days old (`minimumReleaseAge: 10080`). MIT/permissive license only; license gate must pass.
 - No hardcoded hex in components — `packages/ui/src/hex-lint.test.ts` pattern + eslint rule apply to BOTH ui packages. Vendored code's `--color-*` utilities are fine (they resolve to tokens); literal hex/oklch is not — strip any from pulled components.
 - Type/radius off-ramp forbidden: only the enumerated ramp (`text-2xs..2xl/display`, `rounded-micro/chip/control/surface/window` + the shadcn aliases defined in Wave 1). `design-ramp.test.ts` enforces.
-- No `@radix-ui/*`, no raw `cmdk` package, ever. Boundary + license gates are the backstop; also grep in review.
+- Radix/cmdk are acceptable where a shadcn component brings them (e.g. cmdk for the command palette) — not banned. The `@rennet/*` package-boundary arrows (kit imports only `types`+`theme`) and the license gate still apply to every dependency.
 - Gate command: `pnpm check`. Run before every push. One nx invocation at a time per worktree.
 - Semantic test-hook classNames (e.g. `canvas-app`) on existing components must survive refactors — tests select on them.
 - Never bundle/commit anything from client repos; no AI attribution.
@@ -104,7 +104,7 @@ One PR. Pure mechanics + the decision docs. No visual change.
 - Modify: `docs/src/content/docs/developing/reference/delivery-order.md`
 
 **Steps:**
-- [ ] dependency-standard: replace the React-Aria-Components renderer-stack selection with the Decisions §1–2 content above (Base UI family, shadcn core primary, registry policy + blocklist with license evidence, raw-cmdk ban, "avoid parallel primitive families" retained with Base UI as the family). Date it 2026-08-20, Rai's decision.
+- [ ] dependency-standard: replace the React-Aria-Components renderer-stack selection with the Decisions §1–2 content above (Base UI as the primary family, shadcn core primary, registry policy + license blocklist with evidence, Radix/cmdk acceptable where a component brings it, soft "avoid gratuitously parallel families"). Date it 2026-08-20, Rai's decision.
 - [ ] delivery-order: add the shadcn-port arc as current open desktop work (supersedes "no open desktop UI work"), listing Waves 0–7 of this plan, pointer to this file.
 - [ ] `pnpm nx run docs:build` (or the docs project's build target per `pnpm nx show project docs`) green. Commit: `docs: record Base UI ruling and shadcn-port delivery arc`
 
@@ -279,23 +279,23 @@ Wave gate: `pnpm check`, plus manual run (`pnpm nx run rennet-desktop:serve` or 
 
 ## Wave 3 — Command palette, resizable panes, markdown
 
-One PR. **Delivered 2026-08-20: only Task 3.3 (markdown) was applicable.** 3.1 is blocked on a false premise and 3.2 had no migration target — both recorded below; neither was forced.
+One PR. Markdown (3.3) is delivered; the command palette (3.1) uses the standard cmdk Command (Radix is fine — Rai, 2026-08-20); resizable (3.2) is dropped (no migration target).
 
-> **3.1 BLOCKED — there is no cmdk-free "Base UI Command."** `npx shadcn add command` pulls a Command that hard-depends on `cmdk` (which drags `@radix-ui/*`) in **every** registry checked (`base-nova` core and the MIT `basecn` gap-filler both list `cmdk` in their `command.json`). Decision §1's premise ("shadcn's Base UI Command") does not exist as a shippable artifact, and the no-Radix / no-cmdk rule is firm. The existing hand-rolled `command-palette.tsx` is kept (it works and pulls no Radix). **Open decision for Rai:** either keep it bespoke, or hand-vendor a kit `Command` on Base UI's native `Autocomplete`/`Combobox` (they own filtering + keyboard-nav natively) — that would honor the boundary and the delete-the-glue intent, but it is a real build, not a pull. Not done unilaterally.
+> **3.1 note — use the standard cmdk Command.** `npx shadcn add command` pulls a Command that depends on `cmdk` (which brings `@radix-ui/*`). That is acceptable (the earlier "no cmdk/Radix" block was an over-inference, corrected by Rai 2026-08-20). Pull it, theme it onto the ramp, and wire `command-palette.tsx` over it.
 >
 > **3.2 DROPPED — no resizable panes exist to migrate.** Repo-wide search found no hand-managed split panes in `workspace.tsx`/`project-detail.tsx` (no pointer/drag handlers, no `onLayout`, no persisted sizes). The one two-column region is a fixed `flex` 1fr/1fr split with nothing to persist. Converting it to a draggable `ResizablePanelGroup` is net-new feature work (Rule Zero / YAGNI), not a migration — so `react-resizable-panels` was NOT added. Revisit only if a genuinely resizable surface is specced. (For the record, its latest is <7 days old; the correct pin would be `react-resizable-panels@4.12.2`, 2026-07-12, MIT.)
 
-### Task 3.1: Command palette on kit Command — SUPERSEDED (see box above)
+### Task 3.1: Command palette on shadcn Command (cmdk)
 
 **Files:**
-- Pull: `npx shadcn add command` (Base UI variant — verify no `cmdk` or `@radix-ui/*` lands in `pnpm-lock.yaml`; if the pulled file imports raw cmdk, stop and use the Base UI Command from shadcn's `/components/base/` docs path)
+- Pull: `npx shadcn add command` (brings `cmdk` + its Radix deps — fine; exact-pin them, verify ≥7 days old + MIT)
 - Modify: `packages/app-ui/src/components/command-palette.tsx` — becomes a thin wrapper: kit `CommandDialog` + `CommandInput` + `CommandList` fed from the existing command registry
 - Keep: `packages/app-ui/src/command/commands.ts` (registry = domain data); delete its fuzzy-filter + keyboard-nav glue (kit Command owns filtering/nav)
 
 **Steps:**
 - [ ] Wire registry → `CommandItem`s (group by existing command categories); keep ⌘K binding wherever it's currently registered.
 - [ ] Tests: palette opens on ⌘K, typing filters to expected command, Enter executes (spy on the command's run fn), esc closes. Port the existing command-palette tests to the new markup.
-- [ ] `grep -n 'radix\|"cmdk"' pnpm-lock.yaml` → zero hits. Commit: `refactor(app-ui): command palette onto kit Command (Base UI)`
+- [ ] Commit: `refactor(app-ui): command palette onto shadcn Command`
 
 ### Task 3.2: Resizable panes
 
@@ -403,7 +403,7 @@ One PR. Same UX, new substrate. Redesign is explicitly out of scope (separate fu
 - [ ] Map: message rows → `Message`/`Bubble`, autoscroll behavior → `Message Scroller`, attachments/context chips → `Attachment`. All conversation domain logic (protocol wiring, streaming, marks) stays; only presentation swaps.
 - [ ] The margin-rail conversation layout (design pass #85) is identity — keep the rail geometry, restyle kit components into it via kit-side variant edits, not per-site overrides.
 - [ ] Behavior parity tests: streaming append renders, autoscroll pins to bottom until user scrolls up, attachment chips render, existing conversation tests green.
-- [ ] If the native set proves insufficient for a specific need, the recorded fallback order is: compose from kit primitives → 9ui/basecn (MIT, Base UI) → Kibo (MIT but drags Radix; requires a dependency-standard amendment). Do not silently pick; record in dependency-standard if leaving shadcn core.
+- [ ] If the native set proves insufficient for a specific need, the recorded fallback order is: compose from kit primitives → 9ui/basecn (MIT, Base UI) → Kibo (MIT, Radix-based — fine). Do not silently pick; record in dependency-standard if leaving shadcn core.
 - [ ] Commit: `refactor(app-ui): conversation surfaces onto shadcn AI-chat primitives`
 
 ---
