@@ -515,8 +515,8 @@ describe("RennetApp — the handoff compose→preview→run loop (issue #72)", (
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     const reviewDirectly = await waitFor(() => {
-      const el = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-        button.textContent?.includes("Review directly"),
+      const el = [...document.querySelectorAll<HTMLElement>("[role='option']")].find((option) =>
+        option.textContent?.includes("Review directly"),
       );
       if (!el) throw new Error("no Review directly command");
       return el;

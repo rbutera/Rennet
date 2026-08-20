@@ -126,20 +126,18 @@ function clickRowButton(row: HTMLElement, label: string): void {
 
 describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
   it("a remapped palette.toggle opens on the new chord; the old ⌘K no longer does", async () => {
-    const { container, getByText } = mount(
-      <RennetApp bridge={bridge({ "palette.toggle": "mod+j" })} />,
-    );
+    const { getByText } = mount(<RennetApp bridge={bridge({ "palette.toggle": "mod+j" })} />);
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
     // The override has been fetched (settings.get resolved) before we press.
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
 
     // The DEFAULT ⌘K is now dead — pressing it does not open the palette.
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    expect(container.querySelector(".command-palette")).toBeNull();
+    expect(document.querySelector(".command-palette")).toBeNull();
 
     // The remapped ⌘J opens it.
     fireEvent.keyDown(window, { key: "j", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".command-palette")).toBeTruthy());
   });
 
   it("a remapped nav.back runs on its new chord and the default stops navigating", async () => {
@@ -191,7 +189,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
 
     fireEvent.click(container.querySelector(".settings-back") as HTMLButtonElement);
     fireEvent.keyDown(window, { key: "j", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector(".command-palette")).not.toBeNull());
     fireEvent.keyDown(getByLabelText("Search commands"), { key: "Escape" });
 
     openSettings();
@@ -201,7 +199,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     await waitFor(() => expect(harness.writes).toHaveLength(2));
     fireEvent.click(container.querySelector(".settings-back") as HTMLButtonElement);
     fireEvent.keyDown(window, { key: "j", metaKey: true });
-    expect(container.querySelector(".command-palette")).toBeNull();
+    expect(document.querySelector(".command-palette")).toBeNull();
 
     openSettings();
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
@@ -210,7 +208,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
     await waitFor(() => expect(harness.writes).toHaveLength(3));
     fireEvent.click(container.querySelector(".settings-back") as HTMLButtonElement);
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector(".command-palette")).not.toBeNull());
   });
 
   it("recording mod+k writes once without opening the palette", async () => {
@@ -226,7 +224,7 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
       metaKey: true,
     });
     await waitFor(() => expect(harness.writes).toHaveLength(1));
-    expect(container.querySelector(".command-palette")).toBeNull();
+    expect(document.querySelector(".command-palette")).toBeNull();
   });
 
   it("falls back from mod+ end to end and reports the raw invalid override", async () => {
@@ -236,8 +234,8 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
 
     // The invalid stored chord falls back to the default ⌘K at dispatch.
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).not.toBeNull());
-    fireEvent.keyDown(container.querySelector(".command-palette-input") as HTMLInputElement, {
+    await waitFor(() => expect(document.querySelector(".command-palette")).not.toBeNull());
+    fireEvent.keyDown(document.querySelector(".command-palette-input") as HTMLInputElement, {
       key: "Escape",
     });
     openSettings();

@@ -188,7 +188,7 @@ describe("RennetApp navigation spine", () => {
 
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.click(await waitFor(() => getByRole("button", { name: /project-1/ })));
+    fireEvent.click(await waitFor(() => getByRole("option", { name: /project-1/ })));
 
     await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
     expect(calls).toContainEqual({
@@ -218,7 +218,7 @@ describe("RennetApp navigation spine", () => {
 
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.click(await waitFor(() => getByRole("button", { name: /project-1/ })));
+    fireEvent.click(await waitFor(() => getByRole("option", { name: /project-1/ })));
 
     await waitFor(() => expect(getByText("Project detail unavailable.")).not.toBeNull());
     expect(container.querySelector(".front-door")).not.toBeNull();
@@ -300,7 +300,7 @@ describe("RennetApp navigation spine", () => {
     await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.click(await waitFor(() => getByRole("button", { name: /Open review/ })));
+    fireEvent.click(await waitFor(() => getByRole("option", { name: /Open review/ })));
     fireEvent.click(getByRole("button", { name: "Choose a repository" }));
 
     await waitFor(() => {
@@ -324,14 +324,14 @@ describe("RennetApp navigation spine", () => {
     const crumbBefore = getByRole("navigation", { name: "Breadcrumb" }).textContent;
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.click(await waitFor(() => getByRole("button", { name: /Open review/ })));
+    fireEvent.click(await waitFor(() => getByRole("option", { name: /Open review/ })));
     await waitFor(() => expect(getByRole("heading", { name: "Start a review." })).not.toBeNull());
     fireEvent.keyDown(window, { key: "[", metaKey: true });
     await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
     expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toBe(crumbBefore);
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.click(await waitFor(() => getByRole("button", { name: /Open Settings/ })));
+    fireEvent.click(await waitFor(() => getByRole("option", { name: /Open Settings/ })));
     await waitFor(() => expect(getByRole("heading", { name: "Settings" })).not.toBeNull());
     fireEvent.keyDown(window, { key: "[", metaKey: true });
 
@@ -350,11 +350,11 @@ describe("RennetApp navigation spine", () => {
     await waitFor(() => expect(container.querySelector(".canvas-app")).not.toBeNull());
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).not.toBeNull());
-    const palette = container.querySelector(".command-palette") as HTMLElement;
+    await waitFor(() => expect(document.querySelector(".command-palette")).not.toBeNull());
+    const palette = document.querySelector(".command-palette") as HTMLElement;
     const paletteQueries = within(palette);
-    expect(paletteQueries.queryByRole("button", { name: /\/code\/rennet/ })).toBeNull();
-    const recentProject = paletteQueries.getByRole("button", { name: /rennet/ });
+    expect(paletteQueries.queryByRole("option", { name: /\/code\/rennet/ })).toBeNull();
+    const recentProject = paletteQueries.getByRole("option", { name: /rennet/ });
     expect(recentProject.textContent).toContain("Recent");
 
     fireEvent.click(recentProject);
@@ -381,9 +381,9 @@ describe("RennetApp navigation spine", () => {
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    const palette = await waitFor(() => container.querySelector(".command-palette") as HTMLElement);
-    expect(within(palette).getByRole("button", { name: /rennet/ })).not.toBeNull();
-    expect(within(palette).queryByRole("button", { name: /\/code\/rennet/ })).toBeNull();
+    const palette = await waitFor(() => document.querySelector(".command-palette") as HTMLElement);
+    expect(within(palette).getByRole("option", { name: /rennet/ })).not.toBeNull();
+    expect(within(palette).queryByRole("option", { name: /\/code\/rennet/ })).toBeNull();
   });
 
   it("a recent Projects jump ascends to the existing root without duplicating it", async () => {
@@ -393,8 +393,8 @@ describe("RennetApp navigation spine", () => {
     fireEvent.click(container.querySelector(".project-row") as HTMLButtonElement);
     await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    const palette = await waitFor(() => container.querySelector(".command-palette") as HTMLElement);
-    fireEvent.click(within(palette).getByRole("button", { name: "Recent Projects" }));
+    const palette = await waitFor(() => document.querySelector(".command-palette") as HTMLElement);
+    fireEvent.click(within(palette).getByRole("option", { name: "Recent Projects" }));
 
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
     const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });

@@ -76,10 +76,10 @@ describe("RennetApp — app-wide appearance via the document root", () => {
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
     // The legacy door is no longer drawn; its existing palette command is the seam
     // until Phase 4 replaces the command registry's navigation group.
-    expect(queryByRole("button", { name: /Review directly/ })).toBeNull();
+    expect(queryByRole("option", { name: /Review directly/ })).toBeNull();
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => getByRole("button", { name: /Review directly/ }));
-    fireEvent.click(getByRole("button", { name: /Review directly/ }));
+    await waitFor(() => getByRole("option", { name: /Review directly/ }));
+    fireEvent.click(getByRole("option", { name: /Review directly/ }));
     await waitFor(() => getByRole("heading", { name: /Start a review/ }));
     // The root is STILL light — the screen inherits it rather than falling to dark.
     expect(document.documentElement.getAttribute("data-scheme")).toBe("light");

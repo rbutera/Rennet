@@ -67,14 +67,14 @@ function bridge(): RennetBridge {
 
 describe("RennetApp — ⌘K command palette", () => {
   it("opens on ⌘K and runs a command that switches the app to the Files view", async () => {
-    const { user, container, getByLabelText, getByText } = mount(<RennetApp bridge={bridge()} />);
+    const { user, getByLabelText, getByText } = mount(<RennetApp bridge={bridge()} />);
 
     // Land on the workspace (the view toggle appears once a review is open).
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
 
     // ⌘K from anywhere opens the palette (window-level listener).
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".command-palette")).toBeTruthy());
 
     // Filter to the Files command and run it.
     await user.type(getByLabelText("Search commands"), "Files");
@@ -83,17 +83,17 @@ describe("RennetApp — ⌘K command palette", () => {
     // The real handler fired: the app is now on the Files view (its "Changes" panel).
     await waitFor(() => expect(getByText("Changes")).toBeTruthy());
     // The palette closed after running.
-    expect(container.querySelector(".command-palette")).toBeNull();
+    expect(document.querySelector(".command-palette")).toBeNull();
   });
 
   it("toggles closed on a second ⌘K", async () => {
-    const { container, getByText } = mount(<RennetApp bridge={bridge()} />);
+    const { getByText } = mount(<RennetApp bridge={bridge()} />);
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".command-palette")).toBeTruthy());
     fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(container.querySelector(".command-palette")).toBeNull());
+    await waitFor(() => expect(document.querySelector(".command-palette")).toBeNull());
   });
 });
 
@@ -171,10 +171,10 @@ describe("RennetApp — the lifted store resets on review change (regression)", 
     // Drive A to the Flagged lens via ⌘K, then zoom in — moving off the defaults.
     async function runCommand(query: string): Promise<void> {
       fireEvent.keyDown(window, { key: "k", metaKey: true });
-      await waitFor(() => expect(container.querySelector(".command-palette")).toBeTruthy());
-      await user.type(container.querySelector(".command-palette-input") as HTMLElement, query);
+      await waitFor(() => expect(document.querySelector(".command-palette")).toBeTruthy());
+      await user.type(document.querySelector(".command-palette-input") as HTMLElement, query);
       await user.keyboard("{Enter}");
-      await waitFor(() => expect(container.querySelector(".command-palette")).toBeNull());
+      await waitFor(() => expect(document.querySelector(".command-palette")).toBeNull());
     }
     await runCommand("Go to Flagged lens");
     await waitFor(() =>

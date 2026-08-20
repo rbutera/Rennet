@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 //
-// The ⌘K command palette (wireframes screen 16). This mounts the real overlay over
-// a set of spy commands and drives the whole interaction — it opens, filters as you
-// type, runs the selected command (asserting the WRAPPED action actually fired), and
-// closes on Escape / click-out. The run assertions are behavioural (the spy was
-// called), never a presence check.
+// The ⌘K command palette (wireframes screen 16), now a thin wrapper over the kit
+// Command (cmdk) + kit Dialog (Base UI). This mounts the real overlay over a set of
+// spy commands and drives the whole interaction — it opens, filters as you type, runs
+// the selected command (asserting the WRAPPED action actually fired), and closes on
+// Escape / click-out. The run assertions are behavioural (the spy was called), never a
+// presence check. The dialog content is PORTALLED to document.body, so the structural
+// selectors are document-scoped (the bound getBy* queries already search the whole body).
 import { describe, expect, it, vi } from "vitest";
 import type { Command } from "../command/commands";
 import { mount } from "../test/dom";
@@ -27,19 +29,19 @@ function commands(): { list: Command[]; ran: Record<string, ReturnType<typeof vi
 describe("CommandPalette", () => {
   it("renders nothing while closed", () => {
     const { list } = commands();
-    const { container } = mount(<CommandPalette open={false} commands={list} onClose={vi.fn()} />);
-    expect(container.querySelector(".command-palette")).toBeNull();
+    mount(<CommandPalette open={false} commands={list} onClose={vi.fn()} />);
+    expect(document.querySelector(".command-palette")).toBeNull();
   });
 
   it("lists every command when open, then filters as the query narrows", async () => {
     const { list } = commands();
-    const { user, container, getByLabelText } = mount(
+    const { user, getByLabelText } = mount(
       <CommandPalette open={true} commands={list} onClose={vi.fn()} />,
     );
-    expect(container.querySelectorAll(".command-palette-row").length).toBe(3);
+    expect(document.querySelectorAll(".command-palette-row").length).toBe(3);
 
     await user.type(getByLabelText("Search commands"), "flag");
-    const rows = [...container.querySelectorAll(".command-palette-row")];
+    const rows = [...document.querySelectorAll(".command-palette-row")];
     expect(rows.length).toBe(1);
     expect(rows[0]?.textContent).toMatch(/Flagged/);
   });
@@ -65,7 +67,7 @@ describe("CommandPalette", () => {
       <CommandPalette open={true} commands={list} onClose={vi.fn()} />,
     );
     getByLabelText("Search commands").focus();
-    // Row 0 is Files; one ArrowDown lands on Canvases.
+    // Row 0 is Files (cmdk auto-selects the first); one ArrowDown lands on Canvases.
     await user.keyboard("{ArrowDown}{Enter}");
     expect(ran.canvases).toHaveBeenCalledTimes(1);
     expect(ran.files).not.toHaveBeenCalled();
@@ -97,12 +99,12 @@ describe("CommandPalette", () => {
 
   it("shows an honest empty state when nothing matches", async () => {
     const { list } = commands();
-    const { user, getByLabelText, container } = mount(
+    const { user, getByLabelText } = mount(
       <CommandPalette open={true} commands={list} onClose={vi.fn()} />,
     );
     await user.type(getByLabelText("Search commands"), "zzzznomatch");
-    expect(container.querySelectorAll(".command-palette-row").length).toBe(0);
-    expect(container.querySelector(".command-palette-empty")?.textContent).toMatch(/No commands/i);
+    expect(document.querySelectorAll(".command-palette-row").length).toBe(0);
+    expect(document.querySelector(".command-palette-empty")?.textContent).toMatch(/No commands/i);
   });
 
   it("discloses a chord collision on both colliding rows and leaves others clean (#44)", () => {
@@ -113,9 +115,9 @@ describe("CommandPalette", () => {
       { id: "nav.forward", title: "Forward", group: "Navigate", keybinding: "mod+e", run: vi.fn() },
       { id: "zoom.in", title: "Zoom in", group: "Zoom", keybinding: "l", run: vi.fn() },
     ];
-    const { container } = mount(<CommandPalette open={true} commands={list} onClose={vi.fn()} />);
+    mount(<CommandPalette open={true} commands={list} onClose={vi.fn()} />);
     const conflicting = [
-      ...container.querySelectorAll(".command-palette-key[data-conflict='true']"),
+      ...document.querySelectorAll(".command-palette-key[data-conflict='true']"),
     ];
     expect(conflicting.length).toBe(2);
     // Each names its counterpart in the disclosure.
@@ -123,7 +125,7 @@ describe("CommandPalette", () => {
     expect(titles).toContain("Also bound to Forward");
     expect(titles).toContain("Also bound to Back");
     // The distinct row carries no conflict marker.
-    const clean = [...container.querySelectorAll(".command-palette-key")].filter(
+    const clean = [...document.querySelectorAll(".command-palette-key")].filter(
       (node) => node.getAttribute("data-conflict") !== "true",
     );
     expect(clean.some((node) => node.textContent === "l")).toBe(true);
@@ -133,7 +135,7 @@ describe("CommandPalette", () => {
     const list: Command[] = [
       { id: "nav.back", title: "Back", group: "Navigate", keybinding: "mod+[", run: vi.fn() },
     ];
-    const { container } = mount(
+    mount(
       <CommandPalette
         open={true}
         commands={list}
@@ -141,7 +143,7 @@ describe("CommandPalette", () => {
         onClose={vi.fn()}
       />,
     );
-    const key = container.querySelector(".command-palette-key");
+    const key = document.querySelector(".command-palette-key");
     expect(key?.textContent).toMatch(/e$/);
   });
 
@@ -149,7 +151,7 @@ describe("CommandPalette", () => {
     const list: Command[] = [
       { id: "nav.back", title: "Back", group: "Navigate", keybinding: "mod+[", run: vi.fn() },
     ];
-    const { container } = mount(
+    mount(
       <CommandPalette
         open={true}
         commands={list}
@@ -157,7 +159,7 @@ describe("CommandPalette", () => {
         onClose={vi.fn()}
       />,
     );
-    const key = container.querySelector(".command-palette-key[data-conflict='true']");
+    const key = document.querySelector(".command-palette-key[data-conflict='true']");
     expect(key?.getAttribute("title")).toBe("Also bound to Toggle command palette");
   });
 });
