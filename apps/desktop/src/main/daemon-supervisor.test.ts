@@ -254,6 +254,36 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(readDaemonFile(dataDir)).toEqual(spawned);
   });
 
+  it("gives the spawned daemon thread-pool headroom and drops the shell data-dir override", async () => {
+    const dataDir = makeDir();
+    const stale = info(112, 40_500);
+    const spawned = info(223, 41_500);
+    writeDaemonFile(dataDir, stale);
+    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
+
+    await ensureDaemon(dataDir, {
+      probe: async () => ({ kind: "stale", claim: stale }),
+      spawn,
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: { RENNET_USER_DATA: "/shell/override", PATH: "/usr/bin" },
+      warn: vi.fn(),
+    });
+
+    expect(spawn).toHaveBeenCalledOnce();
+    const calls = spawn.mock.calls as unknown as Array<[{ env: NodeJS.ProcessEnv }]>;
+    const options = calls[0]?.[0];
+    expect(options).toBeDefined();
+    const passedEnv: NodeJS.ProcessEnv = options?.env ?? {};
+    expect(passedEnv.UV_THREADPOOL_SIZE).toBe("16");
+    expect(passedEnv.RENNET_USER_DATA).toBeUndefined();
+    expect(passedEnv.PATH).toBe("/usr/bin");
+  });
+
   it("kills an incompatible daemon, spawns the bundled daemon, and preserves the new claim", async () => {
     const dataDir = makeDir();
     const old = info(333, 42_000, PROTOCOL_VERSION + 500);

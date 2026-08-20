@@ -206,6 +206,10 @@ export async function ensureDaemon(
   // The daemon resolves its own data dir from `--data-dir` (spawnDaemon passes it), so the
   // shell's RENNET_USER_DATA override must not double-apply from the inherited env.
   delete spawnEnv.RENNET_USER_DATA;
+  // Give the daemon's libuv thread pool headroom from birth so the repo-watcher's
+  // fs load cannot starve undici's DNS for GitHub (see daemon-main.ts). Setting it
+  // at spawn guarantees it precedes the pool's first use; an explicit value wins.
+  spawnEnv.UV_THREADPOOL_SIZE ??= "16";
   deps.spawn({
     dataDir,
     execPath: deps.execPath,
