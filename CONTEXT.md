@@ -24,6 +24,13 @@ No implementation detail lives here; decisions go to `docs/` and ADRs.
 
 ## Reviewing pull requests
 
+- **Smart list** — a project's unified change list: a row per local working
+  branch and a row per GitHub pull request, narrowed by the Local, PRs, Mine,
+  and Needs-you filters. Local work appears immediately; the pull-request rows
+  arrive from [[github-oauth-device-flow]] GitHub egress and the list degrades to
+  local-only when GitHub is unavailable, never blocking the local view. While the
+  PR half is in flight the daemon narrates it per repo, so the wait shows an
+  honest determinate fraction rather than a fabricated percentage.
 - **Retrospective review** — a read-only review of an already-merged (or any)
   pull request: same engine, same frozen diff, but nothing can ever be posted
   back. The mode for reading history rather than reviewing live work.

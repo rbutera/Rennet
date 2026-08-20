@@ -857,6 +857,45 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
 ]);
 export type ProjectProcessEvent = z.infer<typeof projectProcessEventSchema>;
 
+/**
+ * Live narration for a `project.detail` fetch — the PR half only (the local half
+ * is instant git). `prs-start` announces the determinate total (forge repos to
+ * fetch); one `repo-prs` fires as each repo's PRs land, carrying its 1-based
+ * position and how many it contributed. A separate, smaller union from
+ * `ProjectProcessEvent` (snapshot-build narration is a different shape), streamed
+ * on its own `onProjectDetailProgress` channel so the two never intermix.
+ */
+export const projectDetailProgressEventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("prs-start"),
+    /** Forge repos whose PRs will be fetched — the honest denominator. */
+    total: z.number().int().nonnegative(),
+  }),
+  z.object({
+    kind: z.literal("repo-prs"),
+    repo: z.string().min(1),
+    /** 1-based position among the forge repos being fetched. */
+    index: z.number().int().positive(),
+    total: z.number().int().positive(),
+    /** PRs this repo contributed (for a truthful running tally). */
+    count: z.number().int().nonnegative(),
+  }),
+]);
+export type ProjectDetailProgressEvent = z.infer<typeof projectDetailProgressEventSchema>;
+
+/**
+ * Every event the single commandId-keyed progress frame can carry. The transport
+ * routes by commandId and stays agnostic to shape; the two public channels
+ * (`onProgress` / `onProjectDetailProgress`) each expose their own member. The
+ * wire frame validates against this union, so a detail event is not dropped as
+ * unparseable (a given commandId only ever carries one member's kinds).
+ */
+export const projectProgressEventSchema = z.union([
+  projectProcessEventSchema,
+  projectDetailProgressEventSchema,
+]);
+export type ProjectProgressEvent = z.infer<typeof projectProgressEventSchema>;
+
 // ── Project detail: the unified smart list (issue #37) ───────────────────────
 // Clicking a project opens ONE scrolling surface: local work AND every pull
 // request in a single list, rows visually distinct by state, filterable, HOT-sorted
@@ -2652,6 +2691,14 @@ export const commandDefinitions = {
        * then fires the full detail to fold PRs in. Omitted/false ⇒ the full detail.
        */
       localOnly: z.boolean().optional(),
+      /**
+       * Correlates this fetch with an `onProjectDetailProgress` subscription: when
+       * present, MAIN streams per-repo PR-fetch progress under this id (the slow,
+       * opaque phase), so the renderer can narrate exactly which repo it is on and
+       * show an honest determinate fraction. Omitted ⇒ no live narration, only the
+       * final resolved detail (the `localOnly` first paint never needs one).
+       */
+      commandId: commandIdSchema.optional(),
     }),
     output: projectDetailSchema,
   },
@@ -3255,6 +3302,17 @@ export interface RennetBridge {
    * command's final resolved value with no live narration.
    */
   onProgress?(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
+  /**
+   * Subscribe to a `project.detail` fetch's per-repo PR-fetch narration, keyed by
+   * the `commandId` the caller passes in that command's input. A sibling of
+   * `onProgress` (distinct event shape), routed over the same commandId-keyed
+   * push channel. Returns an unsubscribe. Optional: a bridge without a push
+   * channel omits it and the subscriber degrades to the final resolved detail.
+   */
+  onProjectDetailProgress?(
+    commandId: string,
+    listener: (event: ProjectDetailProgressEvent) => void,
+  ): () => void;
   /**
    * Subscribe to a conversation's token STREAM (issue #251), keyed by `reviewId` rather
    * than a commandId — a stream must survive a renderer reload while its turn keeps

@@ -80,9 +80,14 @@ export function ProjectDetail({
   // Branches whose local worktree has been cleaned up (optimistic; the row's
   // annotation disappears immediately, the command acknowledges behind it).
   const [cleaned, setCleaned] = useState<ReadonlySet<string>>(new Set());
+  // Live PR-fetch narration streamed under the full fetch's commandId: the honest
+  // determinate total, how many repos are done, and the one just fetched. Null
+  // until the daemon announces `prs-start` (or when the host has no push channel).
+  const [progress, setProgress] = useState<DetailProgress | null>(null);
 
   useEffect(() => {
     setError(undefined);
+    setProgress(null);
     // Fast path: the projects list already handed us the full open-state detail.
     if (initialDetail && prScope === "open" && reloadNonce === 0) {
       setFull(initialDetail);
@@ -94,6 +99,18 @@ export function ProjectDetail({
     setFull(null);
     setLocal(null);
     setFetchingFull(true);
+    // Correlate the full fetch with its per-repo PR-fetch narration. Subscribe
+    // BEFORE invoking so no early event is missed; a host with no push channel
+    // simply omits onProjectDetailProgress and the banner stays indeterminate.
+    const commandId = crypto.randomUUID();
+    const unsubscribe = bridge.onProjectDetailProgress?.(commandId, (event) => {
+      if (!alive) return;
+      setProgress(
+        event.kind === "prs-start"
+          ? { total: event.total, done: 0 }
+          : { total: event.total, done: event.index, repo: event.repo, count: event.count },
+      );
+    });
     // Instant local paint: git only, no auth, no network — first content on screen.
     // A failure here is non-fatal; the full fetch below reports the real error.
     bridge
@@ -102,9 +119,14 @@ export function ProjectDetail({
         if (alive) setLocal(detail);
       })
       .catch(() => undefined);
-    // Authoritative full detail: local work + live PRs for the chosen scope.
+    // Authoritative full detail: local work + live PRs for the chosen scope, its
+    // per-repo progress streamed under `commandId`.
     bridge
-      .invoke("project.detail", { projectId: project.id, prStates: PR_SCOPE_STATES[prScope] })
+      .invoke("project.detail", {
+        projectId: project.id,
+        prStates: PR_SCOPE_STATES[prScope],
+        commandId,
+      })
       .then((detail) => {
         if (!alive) return;
         setFull(detail);
@@ -117,6 +139,7 @@ export function ProjectDetail({
       });
     return () => {
       alive = false;
+      unsubscribe?.();
     };
   }, [bridge, initialDetail, project.id, prScope, reloadNonce]);
 
@@ -218,7 +241,9 @@ export function ProjectDetail({
             onPrScope={setPrScope}
           />
 
-          {prsPending ? <PrPendingBanner detail={detail} prScope={prScope} /> : null}
+          {prsPending ? (
+            <PrPendingBanner detail={detail} prScope={prScope} progress={progress} />
+          ) : null}
 
           {detail.truncated ? (
             <p
@@ -289,26 +314,67 @@ function SmartListSkeleton() {
   );
 }
 
+/** Live PR-fetch progress: the honest determinate total, repos done, last repo. */
+type DetailProgress = { total: number; done: number; repo?: string; count?: number };
+
 /**
- * The truthful "still fetching PRs" banner: shown once local work is on screen but
- * the live pull-request half is still in flight. A pulsing dot, not a fake progress
- * bar — the renderer does not know a percentage, so it does not pretend to.
+ * The truthful "still fetching PRs" banner. Once the daemon streams per-repo
+ * progress it names exactly which repo it is on and fills an HONEST determinate
+ * bar (`done / total` real forge repos — never a fabricated percentage); the bar
+ * eases as each repo lands. Before the first event (or a host with no push
+ * channel) it degrades to the indeterminate pulsing dot, still never lying.
  */
-function PrPendingBanner({ detail, prScope }: { detail: ProjectDetailData; prScope: PrScope }) {
+function PrPendingBanner({
+  detail,
+  prScope,
+  progress,
+}: {
+  detail: ProjectDetailData;
+  prScope: PrScope;
+  progress: DetailProgress | null;
+}) {
   const repos = repoCount(detail);
   const across = repos > 1 ? ` across ${repos} repos` : "";
   const scope = prScope === "open" ? "" : `${prScope} `;
+  const total = progress?.total ?? 0;
+  const done = progress?.done ?? 0;
+  const fraction = total > 0 ? Math.min(1, done / total) : 0;
   return (
-    <p
-      className="project-detail-prs-pending flex items-center gap-2.5 mt-3 px-3.5 py-2 rounded-chip border border-accent-line bg-accent-surface text-ink-soft text-sm"
+    <div
+      className="project-detail-prs-pending mt-3 px-3.5 py-2 rounded-chip border border-accent-line bg-accent-surface text-ink-soft text-sm"
       role="status"
     >
-      <span className="relative inline-flex h-2 w-2 flex-none" aria-hidden="true">
-        <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+      <span className="flex items-center gap-2.5">
+        <span className="relative inline-flex h-2 w-2 flex-none" aria-hidden="true">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+        </span>
+        {progress?.repo ? (
+          <span className="min-w-0">
+            Fetching {scope}pull requests —{" "}
+            <span className="font-mono text-ink">{progress.repo}</span>{" "}
+            <span className="text-ink-faint">
+              ({done} of {total})
+            </span>
+          </span>
+        ) : (
+          <span>
+            Fetching {scope}pull requests{across}…
+          </span>
+        )}
       </span>
-      Fetching {scope}pull requests{across}…
-    </p>
+      {total > 0 ? (
+        <span
+          className="project-detail-prs-bar mt-2 block h-1 w-full overflow-hidden rounded-full bg-line"
+          aria-hidden="true"
+        >
+          <span
+            className="block h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
+            style={{ width: `${Math.round(fraction * 100)}%` }}
+          />
+        </span>
+      ) : null}
+    </div>
   );
 }
 

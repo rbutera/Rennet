@@ -2,6 +2,7 @@ import type {
   LocalWork,
   Project,
   ProjectDetail,
+  ProjectDetailProgressEvent,
   PullRequest,
   PullRequestState,
 } from "@rennet/protocol";
@@ -319,6 +320,12 @@ export async function loadProjectDetail(
   deps: ProjectDetailSourceDeps,
   project: Project,
   prStates?: readonly PullRequestState[],
+  /**
+   * Per-repo PR-fetch narration (the slow, opaque phase). `prs-start` fires once
+   * the forge-repo set is known (the honest total); a `repo-prs` fires as each
+   * repo's PRs land. Absent on the local-only paint and in tests that don't care.
+   */
+  onProgress?: (event: ProjectDetailProgressEvent) => void,
 ): Promise<ProjectDetail> {
   const roots = await deps.resolveRepoRoots(project);
   const gitViewer = await resolveViewerLogin(deps.git, roots);
@@ -340,12 +347,28 @@ export async function loadProjectDetail(
       // The GitHub login pins ownership; a null viewer keeps the git identity.
       const githubViewer = await prSource.resolveViewer();
       if (githubViewer) viewer = githubViewer;
+      // The determinate total: how many forge repos will be fetched. The renderer
+      // turns this into an honest progress fraction (no fabricated percentage).
+      onProgress?.({ kind: "prs-start", total: forgeRepos.length });
       // Bounded fan-out: each request already carries a 15s deadline, so an
       // unbounded Promise.all over a many-repo workspace would stack one worst
       // case per repo. Four in flight keeps the worst case near one deadline.
-      const results = await mapLimit(forgeRepos, MAX_CONCURRENT_PR_FETCHES, (identity) =>
-        prSource.listPullRequests(identity, prStates),
-      );
+      // A `repo-prs` fires as each repo lands, so the UI names exactly which repo
+      // it is on; `fetched` is the running COMPLETION count (JS is single-threaded,
+      // so the increment across the four workers never races).
+      let fetched = 0;
+      const results = await mapLimit(forgeRepos, MAX_CONCURRENT_PR_FETCHES, async (identity) => {
+        const result = await prSource.listPullRequests(identity, prStates);
+        fetched += 1;
+        onProgress?.({
+          kind: "repo-prs",
+          repo: identity,
+          index: fetched,
+          total: forgeRepos.length,
+          count: result.prs.length,
+        });
+        return result;
+      });
       prs = results.flatMap((result) => result.prs);
       truncated = results.some((result) => result.truncated);
     } catch (error) {

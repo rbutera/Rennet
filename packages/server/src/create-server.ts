@@ -2241,7 +2241,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
     // when auth is unavailable → the local-only list). An unknown projectId degrades
     // to an empty detail (fail-safe, mirroring the project store) rather than throwing.
-    projectDetail: async (projectId, prStates, localOnly) => {
+    projectDetail: async (projectId, prStates, localOnly, emit) => {
       const project = projectStore.list().find((entry) => entry.id === projectId);
       if (!project) {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
@@ -2262,6 +2262,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         defaultProjectDetailSourceDeps(gitForRepo(projectRoot), source ?? undefined),
         project,
         prStates,
+        emit,
       );
       return authUnavailable ? { ...detail, authUnavailable } : detail;
     },

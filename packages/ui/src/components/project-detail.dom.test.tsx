@@ -6,9 +6,14 @@
 // default floats a needs-you row up, filters narrow the list, the truncation banner
 // shows on a truncated fixture, and Clean up invokes the command. Assertions are
 // behavioural (rendered rows, recorded command inputs), not presence-only.
-import type { Project, ProjectDetail as ProjectDetailData, RennetBridge } from "@rennet/protocol";
+import type {
+  Project,
+  ProjectDetail as ProjectDetailData,
+  ProjectDetailProgressEvent,
+  RennetBridge,
+} from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, mount, waitFor } from "../test/dom";
+import { act, fireEvent, mount, waitFor } from "../test/dom";
 import { ProjectDetail } from "./project-detail";
 
 const project: Project = {
@@ -157,6 +162,49 @@ describe("ProjectDetail — the unified smart list", () => {
     );
     // The local half still renders — degraded, never empty-or-hung.
     expect(container.querySelectorAll(".smart-row").length).toBeGreaterThan(0);
+  });
+
+  it("streams per-repo PR progress into an honest determinate banner", async () => {
+    let emit: ((event: ProjectDetailProgressEvent) => void) | undefined;
+    const localData = detail({ prs: [] });
+    const bridge = {
+      invoke: (async (name: string, input: { localOnly?: boolean }) => {
+        if (name === "project.detail") {
+          if (input.localOnly) return localData;
+          return new Promise(() => undefined); // full fetch stays pending → banner up
+        }
+        return {};
+      }) as unknown as RennetBridge["invoke"],
+      onProjectDetailProgress: (
+        _id: string,
+        listener: (event: ProjectDetailProgressEvent) => void,
+      ) => {
+        emit = listener;
+        return () => undefined;
+      },
+    } as RennetBridge;
+    const { container } = mount(
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".project-detail-prs-pending")).not.toBeNull(),
+    );
+    act(() => emit?.({ kind: "prs-start", total: 2 }));
+    act(() => emit?.({ kind: "repo-prs", repo: "acme/widget", index: 1, total: 2, count: 3 }));
+    await waitFor(() => {
+      const banner = container.querySelector(".project-detail-prs-pending");
+      expect(banner?.textContent).toContain("acme/widget");
+      expect(banner?.textContent).toContain("(1 of 2)");
+      // Honest determinate fill: 1 of 2 repos done → 50%.
+      const bar = container.querySelector(".project-detail-prs-bar > span") as HTMLElement | null;
+      expect(bar?.style.width).toBe("50%");
+    });
   });
 
   it("dedupes a local branch that has a PR into a single PR row with an annotation", async () => {
