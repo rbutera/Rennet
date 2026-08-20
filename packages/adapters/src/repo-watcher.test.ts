@@ -12,9 +12,21 @@ describe("isIgnoredPath (add-windows-support: both separator flavours)", () => {
     expect(isIgnoredPath("C:\\dev\\repo\\.rennet\\map\\x")).toBe(true);
   });
 
+  it("ignores node_modules — the 9P poll storm's source (contents and the dir itself)", () => {
+    expect(isIgnoredPath("/repo/node_modules/foo/index.js")).toBe(true);
+    expect(
+      isIgnoredPath("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\node_modules\\.bin\\semver"),
+    ).toBe(true);
+    // The directory entry itself must match so chokidar prunes before descending.
+    expect(isIgnoredPath("/repo/node_modules")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo\\node_modules")).toBe(true);
+  });
+
   it("does not ignore ordinary source files", () => {
     expect(isIgnoredPath("/repo/src/app.ts")).toBe(false);
     expect(isIgnoredPath("C:\\dev\\repo\\src\\app.ts")).toBe(false);
+    // A file whose name merely starts with an ignored segment is not ignored.
+    expect(isIgnoredPath("/repo/src/node_modules_helper.ts")).toBe(false);
   });
 });
 
