@@ -119,11 +119,13 @@ target includes a deliberately forbidden import so the check proves it can fail.
 ```mermaid
 flowchart BT
   types["@rennet/types<br/>shared data shapes"]
+  theme["@rennet/theme<br/>shared design tokens (CSS)"]
   protocol["@rennet/protocol<br/>session protocol + review-document validation"]
   instructions["@rennet/instructions<br/>versioned prompt contracts"]
   core["@rennet/core<br/>portable review engine"]
   adapters["@rennet/adapters<br/>Node and service integrations"]
   server["@rennet/server<br/>composition root + command router"]
+  uikit["@rennet/ui<br/>vendored shadcn/Base UI kit"]
   ui["@rennet/app-ui<br/>React review surfaces"]
   client["@rennet/client<br/>browser-safe transport clients"]
   desktop["apps/desktop<br/>Electron shell"]
@@ -142,8 +144,12 @@ flowchart BT
   server --> instructions
   server --> core
   server --> adapters
+  uikit --> types
+  uikit --> theme
   ui --> types
   ui --> protocol
+  ui --> theme
+  ui --> uikit
   client --> types
   client --> protocol
   desktop --> protocol
@@ -160,7 +166,9 @@ flowchart BT
 | `@rennet/core` | Capture-independent review logic, event folds, canvases, routing, lineage, publication decisions | Electron, GitHub clients, filesystem calls, or renderer state |
 | `@rennet/adapters` | Git, GitHub, SQLite, local files, harness SDKs, and other host integrations | UI or product policy |
 | `@rennet/server` | The `createRennetServer` composition root: stores, adapter wiring, harness memoisers, and the 49-command dispatch router | Electron imports (its effects are injected as options) or renderer state |
-| `@rennet/app-ui` | React surfaces, ephemeral view state, and the shared `ConnectionHost` daemon-attachment shell | Core imports, Node APIs, a transport client, or durable review truth |
+| `@rennet/theme` | The shared design tokens as CSS (`--rn-*` palette + the Tailwind mapping) | Any in-repo dependency or runtime behaviour |
+| `@rennet/ui` | The vendored shadcn/Base UI component kit: headless primitives themed by tokens only | Protocol, core, Node APIs, or anything beyond `types` + `theme` |
+| `@rennet/app-ui` | React surfaces, ephemeral view state, and the shared `ConnectionHost` daemon-attachment shell; composes the `@rennet/ui` kit | Core imports, Node APIs, a transport client, or durable review truth |
 | `@rennet/client` | Browser-safe transport clients — the `WsRennetBridge` the renderer, the served browser tab, and the `rennet` CLI use to speak the session protocol (mobile clients will use it too) | Electron, Node APIs, filesystem, or review logic |
 | `apps/desktop` | Electron shell (windows, menu, `app://` protocol, auto-update, the WS port) **and** the served browser shell (`src/browser/` → `dist/browser`, which the daemon serves); both compose a `WsRennetBridge` into `ConnectionHost` | Reusable domain logic that belongs in a package, or a second copy of the UI |
 

@@ -62,6 +62,29 @@ try {
   rmSync(positiveControl, { force: true });
 }
 
+// The kit (@rennet/ui, layer:ui-kit) may import only types + theme. A manifest
+// check is not enough: with a hoisted node_modules a source `import` of a
+// non-declared package still resolves, so ESLint's module-boundary rule is the
+// real guard. Prove it fails on a protocol import from the kit.
+const uiKitPositiveControl = resolve(
+  workspaceRoot,
+  "packages/ui/src/.boundary-positive-control.ts",
+);
+try {
+  writeFileSync(uiKitPositiveControl, 'import "@rennet/protocol";\n');
+  const { command, args } = pnpmCommand(["exec", "eslint", uiKitPositiveControl]);
+  const result = spawnSync(command, args, {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (result.status === 0 || !output.includes("@nx/enforce-module-boundaries")) {
+    throw new Error(`UI-kit boundary positive control did not fail as expected:\n${output}`);
+  }
+} finally {
+  rmSync(uiKitPositiveControl, { force: true });
+}
+
 const electronPositiveControl = resolve(
   workspaceRoot,
   "packages/server/src/.electron-boundary-positive-control.ts",
@@ -82,5 +105,5 @@ try {
 }
 
 console.log(
-  "Package manifests obey the dependency arrows; the @rennet/core and Electron forbidden-import controls both failed as expected.",
+  "Package manifests obey the dependency arrows; the @rennet/core, ui-kit-protocol, and Electron forbidden-import controls all failed as expected.",
 );

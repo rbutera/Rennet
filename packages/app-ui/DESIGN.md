@@ -34,10 +34,10 @@ rounded:
 
 # Rennet desktop scale
 
-This file is the machine-readable design system for `packages/ui` — the desktop
+This file is the machine-readable design system for `packages/app-ui` — the desktop
 review app. It exists here, next to the CSS it governs, because the impeccable
 design detector resolves a design system by walking up from the file it scans and
-stops at the first package boundary (`packages/ui/package.json`); the root
+stops at the first package boundary (`packages/app-ui/package.json`); the root
 `DESIGN.md` (the shared world) is never reached from inside this package. So the
 desktop ramp lives where the lint can actually read it, and the root `DESIGN.md`
 documents the same ramp in prose for humans.
@@ -73,7 +73,7 @@ type scale, so components speak utilities, never raw sizes:
 | `clamp(34–56)` | — | `text-display` | display | the front-door display headline only |
 
 Arbitrary font sizes (`text-[…]`, raw `font-size`) are off-ramp; the package's
-design-ramp test forbids them in `packages/ui` sources.
+design-ramp test forbids them in `packages/app-ui` sources.
 
 ## Radius scale
 

@@ -10,7 +10,7 @@
 
 ## 1. Extract the shared organ (behaviour-preserving)
 
-- [x] 1.1 Extract the event fold (`deriveView`) and trail rendering from `packages/ui/src/components/project-processing.tsx` into a shared `ProgressFeed` component + pure fold module; consumers import the internal modules directly until another package needs them
+- [x] 1.1 Extract the event fold (`deriveView`) and trail rendering from `packages/app-ui/src/components/project-processing.tsx` into a shared `ProgressFeed` component + pure fold module; consumers import the internal modules directly until another package needs them
 - [x] 1.2 Refactor `ProjectProcessing` to consume the shared organ; the original `project-processing.dom.test.tsx` behaviour-preservation guard passed, and later regressions extend it
 - [x] 1.3 Red-proof the guard: reintroduce a one-line fold divergence in the consumer and confirm the existing DOM test reddens; revert
 - [x] 1.4 Unit-test the extracted fold directly (stage-collapse/done-ledger, degraded no-events path, unknown-kind tolerance)

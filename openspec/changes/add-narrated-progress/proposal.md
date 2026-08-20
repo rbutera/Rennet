@@ -36,7 +36,7 @@ While Rennet reads a repo or generates a review, waiting must never feel like a 
 
 ## Impact
 
-- **`packages/ui`** — new shared narration-feed component (extracted from `project-processing.tsx`'s fold + trail rendering); `ProjectProcessing` refactored to consume it; the capture/regenerate wait and the rehydration indicator become consumers; project card gains the in-progress glyph; feed-line anchor navigation.
+- **`packages/app-ui`** — new shared narration-feed component (extracted from `project-processing.tsx`'s fold + trail rendering); `ProjectProcessing` refactored to consume it; the capture/regenerate wait and the rehydration indicator become consumers; project card gains the in-progress glyph; feed-line anchor navigation.
 - **`packages/protocol`** — the progress event union gains the capture/review milestones (extending the `ProjectProcessEvent` pattern, hand-written Zod, discriminated by `kind`); stable command-id convention for resumable feeds (the rehydration precedent, made explicit).
 - **`apps/desktop/src/main`** — the capture/review pipeline path emits progress via the existing `emitProgress` context (dispatch keeps owning the terminal event so the stream and the resolved value always agree, the `project.process` precedent); processing progress re-broadcast under the stable per-project id so a re-mounted renderer can re-attach.
 - **Testability** — the narrated slots run under a stubbed utility port to pin the zero-model-call guarantee; the shared organ's fold is pure and unit-tested once, not three times.

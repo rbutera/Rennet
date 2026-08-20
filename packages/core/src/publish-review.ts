@@ -89,7 +89,7 @@ export interface ReviewCommentInput {
  * egress boundary can verify them independently of the renderer.
  *
  * ⚠️ These bytes MUST stay byte-identical to the ui layer's `reviewCommentsPayload`
- * (`packages/ui/src/canvas/publish.ts`): same `kind`, same field order, `line ?? null`.
+ * (`packages/app-ui/src/canvas/publish.ts`): same `kind`, same field order, `line ?? null`.
  * The two are separate copies across a layer boundary (ui cannot be imported by
  * core), so a change to one must change the other. The failure direction is SAFE —
  * a drift makes the round-trip check refuse a legitimate publish (fail closed), it

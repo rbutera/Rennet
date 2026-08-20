@@ -41,7 +41,7 @@
       {
         "rule": "side-tab",
         "value": "*",
-        "files": ["packages/ui/src/canvas.css"],
+        "files": ["packages/app-ui/src/canvas.css"],
         "createdAt": "2026-08-17T18:23:31.015Z",
         "reason": "Private backlight provenance system: 3px inset --private bar marking locally-private threads is intentional, documented in-file"
       },
@@ -80,7 +80,7 @@
         "value": "*",
         "files": ["apps/marketing/src/styles/global.css"],
         "createdAt": "2026-08-18T15:12:55.038Z",
-        "reason": "Agent: DESIGN.md scopes the enumerated font ramp to packages/ui; marketing uses the documented fluid clamp scale"
+        "reason": "Agent: DESIGN.md scopes the enumerated font ramp to packages/app-ui; marketing uses the documented fluid clamp scale"
       },
       {
         "rule": "design-system-color",
@@ -388,7 +388,7 @@
       {
         "rule": "side-tab",
         "value": "*",
-        "files": ["packages/ui/src/index.css"],
+        "files": ["packages/app-ui/src/index.css"],
         "createdAt": "2026-08-19T19:15:56.712Z",
         "reason": "cv-focus-pulse keyframe: transient 700ms deixis flash that animates to transparent, not a resting side-tab border (design law: conversation pointing at code pulses the row)"
       }

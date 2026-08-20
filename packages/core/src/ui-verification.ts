@@ -52,7 +52,7 @@ import type { VerificationTurn } from "./finding-verification";
 // ── ① The deterministic UI-surface classifier ────────────────────────────────
 
 /** Bumped when the classifier's rule set changes (A/B-able against verify quality). */
-export const UI_SURFACE_CLASSIFIER_VERSION = 1;
+export const UI_SURFACE_CLASSIFIER_VERSION = 2;
 
 /** Extensions that are UI surface regardless of where they live. */
 const UI_SURFACE_EXTENSIONS: readonly string[] = [
@@ -66,8 +66,10 @@ const UI_SURFACE_EXTENSIONS: readonly string[] = [
   ".less",
 ];
 
-/** A `.ts`/`.js` file counts as UI only under one of these path segments. */
-const UI_PATH_SEGMENTS: readonly string[] = ["renderer", "components", "ui"];
+/** A `.ts`/`.js` file counts as UI only under one of these path segments.
+ * `ui` is the vendored kit (packages/ui); `app-ui` is Rennet's composites
+ * (packages/app-ui, renamed from packages/ui) — both are UI surface. */
+const UI_PATH_SEGMENTS: readonly string[] = ["renderer", "components", "ui", "app-ui"];
 const AMBIGUOUS_SCRIPT_EXTENSIONS: readonly string[] = [".ts", ".js"];
 
 function lowerExtension(path: string): string {
@@ -101,8 +103,8 @@ export interface UiSurfaceClassification {
 /**
  * Decide whether a changeset touches UI. Deterministic, versioned, no model turn
  * (§spec). Extensions `.tsx .jsx .vue .svelte .html .css .scss .less` are UI wherever
- * they live; a `.ts`/`.js` file is UI only under a `renderer/`, `components/`, or
- * `ui/` path segment (a `.d.ts` is never a rendered surface). No UI file ⇒
+ * they live; a `.ts`/`.js` file is UI only under a `renderer/`, `components/`,
+ * `ui/`, or `app-ui/` path segment (a `.d.ts` is never a rendered surface). No UI file ⇒
  * `touchesUi: false`, and the caller records `not-ui` — a distinct status, not a
  * failure and not an all-clear.
  */

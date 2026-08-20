@@ -13,7 +13,7 @@ import type { AskAnswer, AskMode, AskReviewResult } from "@rennet/types";
 //      card — "no synthesis, ever" is structural on the surface too, not merely a
 //      rendering choice.
 //
-// Kept in `@rennet/ui` (types + protocol only), so every rule here is unit-testable
+// Kept in `@rennet/app-ui` (types + protocol only), so every rule here is unit-testable
 // without a DOM (mirroring `canvas/flagged.ts`).
 // ─────────────────────────────────────────────────────────────────────────────
 

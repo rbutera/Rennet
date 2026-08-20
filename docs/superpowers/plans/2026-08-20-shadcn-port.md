@@ -6,14 +6,14 @@
 
 **Architecture:** New `packages/ui` (`@rennet/ui`) is the vendored component kit — shadcn core on its Base UI default plus primitive-agnostic libs (shiki, react-resizable-panels, react-markdown), importing only `@rennet/theme`/`@rennet/types`. The existing UI package is renamed `packages/app-ui` (`@rennet/app-ui`) and holds Rennet's composites/screens, refactored wave-by-wave onto the kit. Theming is a single `@theme inline` extension in `packages/theme/src/theme.css` mapping shadcn semantic names onto `--rn-*` tokens — no shim, no second palette source.
 
-**Tech Stack:** React 19.2.8, Tailwind v4 (CSS-first), shadcn/ui core on `@base-ui-components/react` (MIT), lucide-react, class-variance-authority + clsx + tailwind-merge, shiki, react-resizable-panels, react-markdown. Vite 8 / Electron 43 / Vitest 4 + happy-dom unchanged.
+**Tech Stack:** React 19.2.8, Tailwind v4 (CSS-first), shadcn/ui core on `@base-ui/react` (MIT), lucide-react, class-variance-authority + clsx + tailwind-merge, shiki, react-resizable-panels, react-markdown. Vite 8 / Electron 43 / Vitest 4 + happy-dom unchanged.
 
 **Spec:** This document's *Decisions* section below (product decisions grilled with Rai, 2026-08-20; no separate spec file).
 
 ## Decisions (the spec)
 
-1. **Base UI supersedes React Aria** as Rennet's one primitive family (Rai, 2026-08-20). shadcn core has shipped Base UI variants of every component since Dec-2025 and defaults to Base UI since Jul-2026, so shadcn core *is* the Base UI registry. Zero `@radix-ui/*` anywhere. Never install raw `cmdk` (it depends on Radix) — use shadcn's Base UI Command.
-2. **Registry policy:** shadcn core is primary. Other registries allowed case-by-case, MIT-verified at pull time. Blocklist (license-verified 2026-08-20): Origin UI (AGPL-3.0), Aceternity (unlicensed free tier), animate-ui (Commons Clause), Kibo UI + diceui (MIT but Radix-based — only if Base UI native falls short). Gap-fillers if needed: 9ui, basecn, baseui-cn (all MIT, Base UI).
+1. **Base UI supersedes React Aria** as Rennet's one primitive family (Rai, 2026-08-20). shadcn core has shipped Base UI variants of every component since Dec-2025 and defaults to Base UI since Jul-2026, so shadcn core *is* the Base UI registry. The package is `@base-ui/react` (MUI renamed it from the frozen `@base-ui-components/react@1.0.0-rc.0`; verify at install). The **kit (`@rennet/ui`) carries no `@radix-ui/*`** — a boundary on the kit, not a whole-repo claim (Radix appears transitively via Expo Router/Vaul elsewhere). Never install raw `cmdk` (it depends on Radix) — use shadcn's Base UI Command.
+2. **Registry policy:** shadcn core is primary. Other registries allowed case-by-case, license-verified **per component** at pull time (none admitted wholesale). Blocklist (checked 2026-08-20, re-verify at pull time): Origin UI (mixed licensing, parts not MIT), Aceternity (published proprietary terms), animate-ui (MIT + Commons Clause — forbids selling), Kibo UI + diceui (MIT but Radix-based — only if Base UI native falls short). Gap-fillers if needed: 9ui, basecn, baseui-cn (all MIT, Base UI).
 3. **Theme:** Affineur's Bench identity kept. `palette.css` stays the only hex source. shadcn semantic tokens defined in `theme.css` `@theme inline`, mapped from `--rn-*`. Dark mode comes free (`--rn-*` already flips on `[data-scheme="dark"]`).
 4. **Scope:** full sweep — all tiers T1 (primitives + overlays), T2 (command palette, resizable, markdown, toast), T3 (shiki, diff, lists/trees, icons), T4 (conversation surfaces re-platformed on shadcn's native Base UI AI-chat components — same UX, redesign is a later separate effort).
 5. **Icons:** lucide-react replaces `icons.tsx`. `brand-mark.tsx` (wordmark glyph) stays.
@@ -84,7 +84,7 @@ One PR. Pure mechanics + the decision docs. No visual change.
 }
 ```
 
-- [ ] `tsconfig.json` and `project.json`: copy `packages/app-ui`'s, path-adjusted, nx name `rennet-ui`, tags `["scope:rennet", "layer:ui"]`. `src/index.ts` starts as `export {};`.
+- [ ] `tsconfig.json` and `project.json`: copy `packages/app-ui`'s, path-adjusted, nx name `rennet-ui`, tags `["scope:rennet", "layer:ui-kit"]` (a DISTINCT tag from app-ui's `layer:ui` — add a matching `layer:ui-kit` block in `eslint.config.mjs` permitting only `layer:types` + `layer:theme`, add `layer:ui-kit` to `layer:ui`'s allowed deps, and add a check-boundaries positive control importing `@rennet/protocol` from the kit that expects `@nx/enforce-module-boundaries` to fail — a hoisted node_modules resolves a non-declared import, so the ESLint boundary is the real guard). `src/index.ts` starts as `export {};`.
 - [ ] `check-boundaries.mjs` map becomes:
 
 ```js
@@ -165,7 +165,7 @@ One PR. Kit becomes real; nothing consumes it yet except smoke tests.
 - Modify: `packages/ui/package.json`
 
 **Steps:**
-- [ ] Add deps (exact-pin the latest version that is ≥7 days old on install day; verify each with `npm view <pkg> time --json`): `@base-ui-components/react`, `lucide-react`, `class-variance-authority`, `clsx`, `tailwind-merge`, `tw-animate-css`.
+- [ ] Add deps (exact-pin the latest version that is ≥7 days old on install day; verify each with `npm view <pkg> time --json`): `@base-ui/react`, `lucide-react`, `class-variance-authority`, `clsx`, `tailwind-merge`, `tw-animate-css`.
 - [ ] `packages/ui/src/index.css`:
 
 ```css

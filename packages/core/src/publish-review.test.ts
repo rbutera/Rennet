@@ -30,7 +30,7 @@ const CAPS: ForgeCapabilities = {
 
 describe("canonicalReviewPayload (issue #21) — the egress round-trip bytes", () => {
   it("matches the ui `reviewCommentsPayload` byte-for-byte (pinned exact string)", () => {
-    // ⚠️ This EXACT string is the coupling with `packages/ui/src/canvas/publish.ts`
+    // ⚠️ This EXACT string is the coupling with `packages/app-ui/src/canvas/publish.ts`
     // `reviewCommentsPayload`. If this pin ever changes, the ui counterpart must
     // change with it, or the egress round-trip refuses every legitimate publish.
     const comments: ReviewCommentInput[] = [

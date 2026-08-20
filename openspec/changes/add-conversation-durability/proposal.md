@@ -23,7 +23,7 @@ No wireframe governs this facet: it is Electron-main infrastructure, and frames 
 
 ## Impact
 
-- **`packages/ui/src/canvas/conversation.ts`** — the pure model gains a turn-status and orphaned-anchor notion; the streaming seam stays `answerInThread` (completed message appended), plus a coalescing helper under an injected clock. No change to the privacy law.
+- **`packages/app-ui/src/canvas/conversation.ts`** — the pure model gains a turn-status and orphaned-anchor notion; the streaming seam stays `answerInThread` (completed message appended), plus a coalescing helper under an injected clock. No change to the privacy law.
 - **`packages/protocol`** — `review.ask` moves from a single response to a streamed event contract (delta / done / interrupted), with hand-written Zod schemas (optional fields are not build-protected — added deliberately).
 - **`packages/adapters`** — harness spawn sites (`codex-exec.ts`, the claude turn runners) register their child PID with an injected process registry; `harness-discovery.ts` supplies `harnessVersionAtCreation`.
 - **`apps/desktop/src/main`** — `review-ask-live.ts` emits a stream instead of awaiting a whole turn; a new thread store (following `sqlite-review-store.ts`/file-store patterns) persists threads; a process registry is reaped in `index.ts` `before-quit`; dispatch gains re-attach + orphan-resolution handlers.

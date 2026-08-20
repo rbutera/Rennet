@@ -175,7 +175,7 @@ front-door display expression `text-display` = `clamp(2.125rem, 5vw, 3.5rem)`.
 - **24px / `text-2xl`** title — the largest in-app screen title.
 
 Arbitrary sizes (`text-[…]`, raw `font-size`) are off-ramp. The machine-readable
-source is [`packages/ui/DESIGN.md`](packages/ui/DESIGN.md); the package's
+source is [`packages/app-ui/DESIGN.md`](packages/app-ui/DESIGN.md); the package's
 design-ramp test enforces the ramp over the component sources.
 
 ## Layout

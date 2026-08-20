@@ -4,7 +4,7 @@
 
 See `proposal.md` — Why. The load-bearing facts the approach builds on:
 
-- `ProjectProcessing` (`packages/ui/src/components/project-processing.tsx`) already implements the full narrated-feed behaviour for one slot: a pure fold (`deriveView`) from an ordered `ProjectProcessEvent[]` into headline + per-repo trail with stage-collapse, plus honest degraded and failure modes. The fold is inline and private.
+- `ProjectProcessing` (`packages/app-ui/src/components/project-processing.tsx`) already implements the full narrated-feed behaviour for one slot: a pure fold (`deriveView`) from an ordered `ProjectProcessEvent[]` into headline + per-repo trail with stage-collapse, plus honest degraded and failure modes. The fold is inline and private.
 - The transport exists and is shared: `rennet:progress` (main → renderer), keyed by `commandId`, typed as `ProjectProcessEvent` (`packages/protocol/src/index.ts`), subscribed via `bridge.onProgress`. Dispatch owns the terminal `done` event so the stream and the resolved value always agree (`project.process` in `apps/desktop/src/main/dispatch.ts`).
 - Proactive rehydration (`apps/desktop/src/main/proactive-rehydration.ts`) already narrates background passes on that same channel under a stable id (`PROACTIVE_REHYDRATION_COMMAND_ID`), broadcast to all windows. No renderer subscribes — its own handoff notes call the indicator "a one-line follow-up".
 - The capture/review wait has no events at all: `review.capture` / regenerate run behind a `busy` boolean in `app.tsx` (busy-bar + disabled controls).

@@ -60,11 +60,21 @@ export default [
               onlyDependOnLibsWithTags: ["layer:theme"],
             },
             {
+              // layer:ui-kit is the vendored shadcn/Base UI component kit
+              // (@rennet/ui): headless primitives themed by tokens only. It may
+              // import types + theme and nothing else — no protocol, no core.
+              sourceTag: "layer:ui-kit",
+              onlyDependOnLibsWithTags: ["layer:types", "layer:theme", "layer:ui-kit"],
+            },
+            {
+              // layer:ui is @rennet/app-ui, Rennet's composites/screens: it
+              // consumes the kit (layer:ui-kit) plus protocol + theme.
               sourceTag: "layer:ui",
               onlyDependOnLibsWithTags: [
                 "layer:types",
                 "layer:protocol",
                 "layer:theme",
+                "layer:ui-kit",
                 "layer:ui",
               ],
             },

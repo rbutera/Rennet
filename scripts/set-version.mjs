@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Rewrites the "version" field of every workspace package.json to the given
 // semver, in lockstep. Used by .github/workflows/auto-release.yml to bump the
-// patch version on each release. All 10 files roundtrip exactly through
+// patch version on each release. All 11 files roundtrip exactly through
 // JSON.stringify(…, null, 2) + "\n" (verified), so formatting is preserved.
 //
 //   node scripts/set-version.mjs 0.1.3

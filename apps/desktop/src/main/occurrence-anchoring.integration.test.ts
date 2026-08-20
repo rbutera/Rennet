@@ -1,7 +1,7 @@
 // Real-projector proof for #84: occurrence marks land on the RIGHT rows in the two
 // shapes positional hunk→occurrence matching got wrong — a multi-file element and an
 // oversize-split (R18) element. This is the ONLY package that sees both @rennet/core
-// (the projector: decompose + buildElementDiffs) and @rennet/ui (the consumer: the
+// (the projector: decompose + buildElementDiffs) and @rennet/app-ui (the consumer: the
 // anchor↔row registrar), so the whole seam is exercised end-to-end here.
 //
 // The diff text AND its occurrence mapping both come from the REAL `buildElementDiffs`

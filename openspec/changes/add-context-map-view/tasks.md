@@ -9,10 +9,10 @@
 
 ## 2. Surface + Context Map screen
 
-- [x] 2.1 `packages/ui/nav/history.ts`: add `contextMap` kind + `surfaceIdentity` case (no recents, no version bump)
-- [x] 2.2 `packages/ui/app.tsx`: render branch, rehydrator landing case, breadcrumb label, `pushSurface` nav-out wiring
-- [x] 2.3 `packages/ui/components/project-detail.tsx`: Context Map nav-out affordance (callback prop like `onOpenRow`)
-- [x] 2.4 `packages/ui/components/context-map-view.tsx`: tree spine (roll-up counts, collapsed dirs, symbols on expand), neighborhood graph (selected scope + direct edges, SVG), knowledge panel (hypothesis/confirmed/rejected rendering), freshness badge — Affineur's Bench tokens + DESIGN.md ramp
+- [x] 2.1 `packages/app-ui/nav/history.ts`: add `contextMap` kind + `surfaceIdentity` case (no recents, no version bump)
+- [x] 2.2 `packages/app-ui/app.tsx`: render branch, rehydrator landing case, breadcrumb label, `pushSurface` nav-out wiring
+- [x] 2.3 `packages/app-ui/components/project-detail.tsx`: Context Map nav-out affordance (callback prop like `onOpenRow`)
+- [x] 2.4 `packages/app-ui/components/context-map-view.tsx`: tree spine (roll-up counts, collapsed dirs, symbols on expand), neighborhood graph (selected scope + direct edges, SVG), knowledge panel (hypothesis/confirmed/rejected rendering), freshness badge — Affineur's Bench tokens + DESIGN.md ramp
 - [x] 2.5 `context-map-view.dom.test.tsx`: recording fake bridge — loads `project.contextMap`, tree selection re-centers graph, knowledge filters to selection
 
 ## 3. project.contextAsk

@@ -13,7 +13,7 @@
 
 ## 3. UI: badge + prompt
 
-- [x] 3.1 In `packages/ui`, subscribe once in the app shell via optional `window.rennet?.onUpdateReady`; hold `updateReady` state; absent host surface (browser shell, tests) leaves the feature inert.
+- [x] 3.1 In `packages/app-ui`, subscribe once in the app shell via optional `window.rennet?.onUpdateReady`; hold `updateReady` state; absent host surface (browser shell, tests) leaves the feature inert.
 - [x] 3.2 When ready, render the corner badge on the chrome `RennetBrandMark` sites (app.tsx topbars + front-door): logo becomes a button with an `aria-label` naming the action ("Update ready — restart into <version>"), badge is a non-text dot (pill exemption, `--accent`), never color-alone (the label carries meaning).
 - [x] 3.3 Clicking opens the in-app confirm using the existing dialog idiom: "Restart into <version>?" with Apply / Not now; Apply calls `window.rennet.applyUpdate()`, Not now closes and keeps the badge; no self-re-prompting.
 - [x] 3.4 New CSS stays on-system: ramp sizes, radius scale (dot = 50% or 999px exemption), ink text on opaque grounds; classify any new hue text in the tokens.test.ts guard or use ink.
@@ -21,5 +21,5 @@
 
 ## 4. Gate + docs
 
-- [x] 4.1 Run the package gates (scoped `pnpm exec vitest run src` in packages/ui, desktop test target, then `pnpm check`) — all green with the new tests counted.
+- [x] 4.1 Run the package gates (scoped `pnpm exec vitest run src` in packages/app-ui, desktop test target, then `pnpm check`) — all green with the new tests counted.
 - [x] 4.2 Update the docsite page that describes updates/releases (search `docs/src/content/docs` for auto-update/release copy) so the 5-minute cadence, badge, and click-to-restart flow are documented in the same change; honest-egress copy still names update.electronjs.org/GitHub as the only endpoints.

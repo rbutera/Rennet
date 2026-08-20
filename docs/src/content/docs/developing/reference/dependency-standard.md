@@ -288,19 +288,26 @@ panel, and transient interaction state.
 
 **Base UI is Rennet's one primitive family** (Rai's decision, 2026-08-20,
 superseding the old React Aria selection). shadcn/ui core has shipped Base UI
-(`@base-ui-components/react`, MIT) variants of every component since Dec-2025 and
-defaults to them since Jul-2026, so shadcn core *is* the Base UI registry. There
-is **zero `@radix-ui/*` anywhere**, and the raw `cmdk` package is **banned** — it
-depends on Radix; use shadcn's Base UI Command instead. Keep one dialog/menu/toast
-primitive family: Base UI.
+(MIT, `@base-ui/react` — the package MUI renamed from the now-frozen
+`@base-ui-components/react@1.0.0-rc.0`; verify the exact name at install time)
+variants of every component since Dec-2025 and defaults to them since Jul-2026,
+so shadcn core *is* the Base UI registry. The **desktop UI kit (`@rennet/ui`)
+carries no `@radix-ui/*`**, and the raw `cmdk` package is **banned** there — it
+depends on Radix; use shadcn's Base UI Command instead. (Radix still appears
+transitively elsewhere in the lockfile, e.g. through Expo Router and Vaul on the
+mobile/other trees — the no-Radix rule is a boundary on the kit, not a
+whole-repo claim.) Keep one dialog/menu/toast primitive family in the kit: Base UI.
 
 **Registry policy.** shadcn core is the primary registry; other registries are
-allowed case-by-case, MIT-verified at pull time. License-verified blocklist
-(2026-08-20): **Origin UI** (AGPL-3.0), **Aceternity** (unlicensed free tier),
-**animate-ui** (MIT + Commons Clause) — all forbidden. **Kibo UI / diceui** are
-MIT but Radix-based — avoid unless a Base UI native component genuinely falls
-short, and record the exception here. Vetted MIT gap-fillers on Base UI: 9ui,
-basecn, baseui-cn.
+allowed case-by-case, license-verified **per component** at pull time — none is
+admitted wholesale. Blocklist (checked 2026-08-20; re-verify at pull time because
+these terms change): **Origin UI** — mixed licensing, parts are not MIT (do not
+assume the whole registry is MIT); **Aceternity** — published proprietary terms,
+not a blanket open licence; **animate-ui** — MIT **+ Commons Clause** (the Commons
+Clause forbids selling, so it fails our permissive bar). All three are forbidden
+as wholesale sources. **Kibo UI / diceui** are MIT but Radix-based — avoid unless
+a Base UI native component genuinely falls short, and record the exception here.
+Vetted MIT gap-fillers on Base UI: 9ui, basecn, baseui-cn.
 
 The old research ledger also named TanStack Router/Query, Tinykeys, TanStack
 Virtual for non-diff lists, Pierre for the diff surface, and a sanitised React

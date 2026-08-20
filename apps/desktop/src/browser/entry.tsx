@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { composeBrowserInvoke } from "./shell-intercepts";
 
 // The browser shell (issue #381, design D4/D5). A tab served by the daemon is a full peer
-// of the desktop app: it mounts the SAME `ConnectionHost` over the SAME `packages/ui`. The
+// of the desktop app: it mounts the SAME `ConnectionHost` over the SAME `packages/app-ui`. The
 // only shell-specific pieces are the bridge factory (the serving origin is the default
 // daemon; saved remotes carry a device token) and the `repository.choose` fallback — a
 // browser has no native directory picker, so first-contact choose prompts for an absolute

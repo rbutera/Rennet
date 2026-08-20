@@ -3222,7 +3222,7 @@ export interface KnowledgeSet {
 // rather than as a markdown dump: the requirement/scenario tree, the task
 // checklist with an honest progress roll-up, the capabilities, the spec deltas as
 // structured diffs. These types are the parsed model `parseOpenSpecChange`
-// (`@rennet/core`) produces and the reading surface (`@rennet/ui`) renders.
+// (`@rennet/core`) produces and the reading surface (`@rennet/app-ui`) renders.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Which artifact file a reviewable node came from. */

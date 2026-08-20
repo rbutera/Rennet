@@ -3,7 +3,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "packages/ui/src",
   "projectType": "library",
-  "tags": ["scope:rennet", "layer:ui"],
+  "tags": ["scope:rennet", "layer:ui-kit"],
   "targets": {
     "build": { "command": "pnpm exec tsc -p packages/ui/tsconfig.json" },
     "lint": {
