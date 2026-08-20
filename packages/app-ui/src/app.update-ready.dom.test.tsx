@@ -135,6 +135,10 @@ describe("RennetApp — update readiness badge on the chrome mark", () => {
     expect(host.applied).toBe(0);
     fireEvent.click(getAllByRole("button", { name: /Update ready/ })[0] as HTMLElement);
     await waitFor(() => getByRole("dialog", { name: "Restart into 0.3.0?" }));
+    // The kit Dialog is a real modal — aria-modal is preserved from the old prompt.
+    expect(getByRole("dialog", { name: "Restart into 0.3.0?" }).getAttribute("aria-modal")).toBe(
+      "true",
+    );
     fireEvent.click(getByRole("button", { name: "Restart now" }));
     expect(host.applied).toBe(1);
   });

@@ -247,7 +247,9 @@ test("dialog opens, traps focus, closes on escape", async () => {
 
 ## Wave 2 — Overlay surfaces onto kit Dialog/Sheet/Popover + Toast
 
-One PR. The 7 hand-rolled `role="dialog"`/overlay sites move to kit primitives; app gains a toast channel. Command palette is deliberately excluded (Wave 3).
+One PR. The hand-rolled `role="dialog"`/overlay sites move to kit primitives; app gains a toast channel. Command palette is deliberately excluded (Wave 3).
+
+**Delivered (2026-08-20):** five sites migrated — `update-ready.tsx` (Dialog + DropdownMenu, `modal={false}` to preserve click-through), `ask.tsx` and `conversation-cluster.tsx` (routing menus → Popover with `aria-haspopup="menu"` on the trigger), `connection-host.tsx` (switcher → named Popover; a wrong `role="menu"` on the pairing form dropped), plus the root `<Toaster/>` + a github-connect success toast. **Deferred, on review (Rule Zero):** `publish-sheet.tsx` and `collation-draft-canvas.tsx` are plain centered `fixed inset-0` modals with only a simple backdrop/aria wrapper (not a hand-rolled portal/focus-trap). A nominally behavior-preserving kit-Dialog migration would need to DISABLE modal focus/initial-focus/final-focus/Escape/outside-dismiss and rewrite ~50 container-scoped assertions across ~12 test files — making the primitive imitate the existing wrapper while adding portal risk around the hold-to-sign gesture. Not worth it; revisit if those surfaces are redesigned (they keep their own backdrop until then).
 
 ### Task 2.1: Toast provider + adoption sites
 

@@ -115,11 +115,13 @@ describe("ConnectionHost (#381)", () => {
       target.id === "local" ? local : remote,
     );
 
-    const { getByLabelText, getByText, user } = mount(
+    const { getByLabelText, getByRole, getByText, user } = mount(
       <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
     );
 
     await user.click(getByLabelText(/Switch daemon/));
+    // The switcher popup is a NAMED dialog (it holds a pairing form, not a menu).
+    await waitFor(() => expect(getByRole("dialog", { name: "Connection switcher" })).toBeTruthy());
     await user.click(getByText(/Laptop/));
 
     await waitFor(() =>

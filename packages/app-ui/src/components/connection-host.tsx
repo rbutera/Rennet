@@ -485,6 +485,7 @@ export function ConnectionHost({
         <PopoverContent
           align="start"
           sideOffset={6}
+          aria-label="Connection switcher"
           className="connection-switcher block w-auto min-w-[280px] rounded-surface border border-line bg-overlay p-2 shadow-overlay ring-0"
         >
           <ul className="connection-list mb-1.5 list-none">

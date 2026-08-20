@@ -112,8 +112,11 @@ export function ChromeMenu({
 
   // The kit Menu owns the outside-click + Escape dismissal and item activation that
   // this component hand-rolled before; picking a row runs its action and closes.
+  // modal={false}: the old menu let an outside mousedown close it AND the click
+  // continue to the element beneath (no backdrop) — modal mode would swallow that
+  // click, so non-modal preserves the click-through behaviour.
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger
         render={
           <button
@@ -178,9 +181,12 @@ export function UpdateReadyPrompt({ onApply }: { onApply: () => void }) {
   const closePrompt = useUpdateReady((state) => state.closePrompt);
   if (!ready) return null;
   const heading = ready.version ? `Restart into ${ready.version}?` : "Restart into the update?";
-  // The kit Dialog owns the portal, backdrop, focus return, Escape and backdrop-click
-  // dismissal this prompt hand-rolled. Closing (Escape / backdrop / Not now) keeps the
-  // badge and never re-prompts — the update NEVER applies without the user choosing it.
+  // The kit Dialog owns the portal, backdrop, and focus management. The old prompt
+  // hand-rolled only the scrim + a "Not now" / backdrop-click dismissal (no Escape,
+  // no focus trap); the kit adds Escape and focus return as the standard modal
+  // affordance. `aria-modal` is preserved. Closing (Escape / backdrop / Not now)
+  // keeps the badge and never re-prompts — the update NEVER applies without the
+  // user choosing it (Rule Zero: dismissal is less friction, not a gate).
   return (
     <Dialog
       open={promptOpen}
@@ -190,6 +196,7 @@ export function UpdateReadyPrompt({ onApply }: { onApply: () => void }) {
     >
       <DialogContent
         aria-label={heading}
+        aria-modal="true"
         showCloseButton={false}
         className="update-prompt block w-[min(400px,100%)] max-w-[min(400px,100%)] rounded-surface border border-line bg-overlay p-5 shadow-overlay ring-0"
       >

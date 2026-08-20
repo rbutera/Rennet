@@ -76,6 +76,26 @@ describe("AskControl — the send control + routing caret", () => {
     expect(orchestrator?.getAttribute("aria-checked")).toBe("true");
   });
 
+  it("advertises a menu popup and Escape light-dismisses it (kit Popover parity)", async () => {
+    const { container, user } = mount(
+      <AskControl
+        mode="orchestrator"
+        question=""
+        onQuestionChange={vi.fn()}
+        onModeChange={vi.fn()}
+        onAsk={vi.fn()}
+      />,
+    );
+    const caret = need<HTMLButtonElement>(container, ".ask-send-caret");
+    // The trigger advertises a MENU (not a dialog) around the menuitemradio rows.
+    expect(caret.getAttribute("aria-haspopup")).toBe("menu");
+    await user.click(caret);
+    expect(document.querySelector(".ask-menu")).toBeTruthy();
+    // Escape dismisses (an affordance the bare toggle lacked; the kit provides it).
+    await user.keyboard("{Escape}");
+    expect(document.querySelector(".ask-menu")).toBeNull();
+  });
+
   it("picking 'ask both models' is a mode change and closes the menu", async () => {
     const onModeChange = vi.fn();
     const { container, user } = mount(

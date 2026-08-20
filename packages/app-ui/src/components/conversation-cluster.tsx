@@ -275,6 +275,7 @@ export function AskComposer({
                 type="button"
                 className="conversation-composer-caret inline-flex items-center justify-center min-w-8 rounded-control border border-line bg-raised px-2 font-sans text-base text-ink cursor-pointer disabled:opacity-50 disabled:cursor-default"
                 aria-label="ask options"
+                aria-haspopup="menu"
                 disabled={pending}
               />
             }

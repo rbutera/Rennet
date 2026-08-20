@@ -80,6 +80,7 @@ export function AskButton({
               type="button"
               className="ask-send-caret inline-flex min-w-[30px] cursor-pointer items-center justify-center rounded-r-control border border-accent-line bg-accent-fill text-base text-accent-ink disabled:cursor-default disabled:opacity-50"
               aria-label="ask options"
+              aria-haspopup="menu"
               disabled={pending}
             />
           }
