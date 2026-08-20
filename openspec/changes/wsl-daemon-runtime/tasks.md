@@ -6,10 +6,10 @@
 
 ## 2. WSL spawn + port-first health
 
-- [ ] 2.1 Add a WSL spawn path (in `packages/server` supervise or a sibling) that spawns `buildWslDaemonLaunch(...)` detached and `unref`'d, with stdio the daemon owns (daemon writes its own `daemon.log` in the distro data dir — the host opens no Windows-side log fd).
-- [ ] 2.2 Learn the port once (single `wsl.exe … -e cat <dataDir>/daemon.json` after spawn), then health-check `http://localhost:<port>/healthz`; treat an identity-matching 200 as healthy.
-- [ ] 2.3 Stop a WSL daemon by signalling its pid inside the distro (`wsl.exe … -e kill <pid>`); restart on version skew. Reuse the host verify/restart logic where possible.
-- [ ] 2.4 Tests: healthy-spawn resolves a port; version-skew triggers a stop-by-pid + respawn; no-Node surfaces the missing-Node condition (does not hang).
+- [x] 2.1 Add a WSL spawn path (`packages/server/src/wsl-daemon.ts`) that spawns `buildWslDaemonLaunch(...)` detached and `unref`'d, with stdio the daemon owns (daemon writes its own `daemon.log` in the distro data dir — the host opens no Windows-side log fd).
+- [x] 2.2 Learn the port once (single `wsl.exe … -e cat <dataDir>/daemon.json` after spawn), then health-check `http://localhost:<port>/healthz`; treat an identity-matching 200 as healthy.
+- [x] 2.3 Stop a WSL daemon by signalling its pid inside the distro (`wsl.exe … -e kill <pid>`). (Version-skew stop-then-respawn is composed in Wave 3's supervisor from this stop + the identity `probe`/`waitFor` return.)
+- [x] 2.4 Tests: healthy-spawn resolves a port; stop-by-pid emits the right `kill`; port read returns null on missing/garbage JSON; health maps 200→identity / non-200→null; wait gives up at the deadline. (Version-skew respawn + no-Node-does-not-hang are exercised at the Wave 3 supervisor seam.)
 
 ## 3. Locus routing in the supervisor
 
