@@ -23,23 +23,23 @@ When GitHub answers the `refresh_token` grant with HTTP 200 and an `error` field
 - **WHEN** the refresh exchange receives HTTP 200 with `{ "error": "bad_refresh_token" }`
 - **THEN** the daemon logs the `error` code, does not overwrite the stored credential with a partial value, and reports `token-invalid`
 
-### Requirement: A transient network failure at refresh time is retried once
+### Requirement: A connect-phase blip is absorbed replay-safely by the shared transport
 
-The refresh exchange SHALL retry exactly once when the first attempt fails with a transient transport error (an `undici` `UND_ERR_*` code, a timeout, or an abort), before degrading. This prevents a boot-time connectivity storm from dropping a live session over a momentary blip.
+GitHub egress — including the refresh exchange — runs through the shared GitHub transport, which retries a CONNECT-PHASE failure (e.g. `UND_ERR_CONNECT_TIMEOUT`) exactly once. That retry is provably replay-safe: no request reached GitHub, so nothing could have rotated. The transport deliberately does NOT replay a post-send failure (a timeout/reset after the request was sent), which could double a rotation. The refresh path SHALL NOT add its own retry — a second retry would duplicate connect attempts and could burn a rotated refresh token on an ambiguous post-send error.
 
-#### Scenario: The first refresh attempt times out, the retry succeeds
+#### Scenario: A connect-phase blip is retried once, without duplicating a request
 
-- **WHEN** the first refresh attempt fails with `UND_ERR_CONNECT_TIMEOUT` and a second attempt would succeed
-- **THEN** the daemon retries once, persists the rotated pair, and resolves `ok` — the session is not dropped
+- **WHEN** a refresh's request fails with a connect-phase code and the retry would succeed
+- **THEN** the shared transport retries once, the refresh persists the rotated pair, and resolution is `ok` — no request was duplicated and no rotation was doubled
 
-#### Scenario: Both attempts fail on the network
+#### Scenario: The refresh layer adds no retry of its own
 
-- **WHEN** both the first attempt and its single retry fail with a transient transport error
-- **THEN** the daemon resolves reason `network`, leaves the stored credential untouched, and does NOT report `token-invalid`
+- **WHEN** a refresh fails with a network error
+- **THEN** the refresh path makes exactly one `refresh` call, emits a `network` record, and propagates — it does not itself retry (retry ownership lives in the shared transport)
 
 ### Requirement: A network failure never invalidates the stored credential
 
-A refresh that fails for a network reason (after its single retry) SHALL leave the stored credential exactly as it was and surface reason `network`. GitHub rotates the refresh token only on a successful exchange, so an unreached GitHub says nothing about the credential's validity.
+A refresh that fails for a network reason (after the shared transport's connect-phase retry) SHALL leave the stored credential exactly as it was and surface reason `network`. GitHub rotates the refresh token only on a successful exchange, so an unreached GitHub says nothing about the credential's validity.
 
 #### Scenario: Network-degraded refresh preserves the credential
 

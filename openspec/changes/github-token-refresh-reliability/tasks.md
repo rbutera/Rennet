@@ -9,11 +9,11 @@
 - [ ] 2.1 In `refreshGitHubCredential` (`github-device-flow.ts`), ensure a 200-with-`error` throws `GitHubOAuthDeclined` carrying the verbatim `error` code (already partly true — confirm the code is on the error and reachable by the caller).
 - [ ] 2.2 In `refreshAndPersist`, on `GitHubOAuthDeclined` emit a `declined` record with `githubError` = the code, then return null (unchanged control flow), so the surface still resolves `token-invalid`.
 
-## 3. Retry-once on transient network error
+## 3. Observe network failures; retry stays in the shared transport
 
-- [ ] 3.1 In `refreshAndPersist`, wrap the `refresh(...)` call so a first failure that `isGitHubNetworkError` classifies as transient emits a `network` attempt record and retries exactly once (still inside the account-lock section, re-reading is not needed between the two attempts of the same rotation).
-- [ ] 3.2 A `GitHubOAuthDeclined` is never retried; a second transient failure propagates so `resolveGitHubAuth` degrades to `network` and leaves the credential untouched.
-- [ ] 3.3 On a successful (possibly retried) refresh, emit a `persisted` record after `setGitHubCredential`.
+- [ ] 3.1 In `refreshAndPersist`, on a `refresh(...)` failure that `isGitHubNetworkError` classifies as a network error, emit a `network` record and propagate — do NOT add a retry. Retry ownership lives in the shared `withConnectResilience` transport (connect-phase, replay-safe); a second retry here would duplicate connect attempts and risk burning a rotated refresh token on a post-send error.
+- [ ] 3.2 A `GitHubOAuthDeclined` emits a `declined` record with its verbatim code and resolves `token-invalid`; a propagated network error leaves `resolveGitHubAuth` to classify `network` with the credential untouched.
+- [ ] 3.3 On a successful refresh, emit a `persisted` record (with the new token's `tokenKind`, never the token) after `setGitHubCredential`.
 
 ## 4. Wire the logger in the daemon
 

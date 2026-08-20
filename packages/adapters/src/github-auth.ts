@@ -60,20 +60,32 @@ export interface RefreshLogRecord {
   phase: "attempt" | "persisted" | "declined" | "network";
   /** The verbatim GitHub `error` code on a decline (e.g. `bad_refresh_token`). */
   githubError?: string;
-  httpStatus?: number;
-  /** A non-secret token-kind prefix (`ghu_`/`gho_`/…), never the token body. */
+  /** A non-secret token-kind label (`ghu_`/`gho_`/…), never the token body. */
   tokenKind?: string;
-  attempt?: number;
 }
 
 /**
- * The non-secret token-kind prefix (`ghu_`, `gho_`, `ghp_`, …) — the substring up
- * to and including the first underscore, or a fixed label when there is none.
- * NEVER returns the token body: safe to put in a log record.
+ * GitHub credential prefixes, a CLOSED allowlist. `tokenKind` returns ONLY one of
+ * these constants (or the fixed `"token"`), never a slice of the token — so an
+ * unexpected value like `customerSecret_x` can never put credential bytes in a log.
+ */
+const GITHUB_TOKEN_PREFIXES = [
+  "github_pat_",
+  "ghu_",
+  "gho_",
+  "ghp_",
+  "ghr_",
+  "ghs_",
+  "ghe_",
+] as const;
+
+/**
+ * The non-secret token-kind label of a GitHub credential — an allowlisted prefix
+ * (`ghu_`/`gho_`/…) or the fixed `"token"`. Returns only a constant, never any part
+ * of the token body: safe to put in a log record by construction.
  */
 export function tokenKind(token: string): string {
-  const underscore = token.indexOf("_");
-  return underscore >= 0 ? token.slice(0, underscore + 1) : "token";
+  return GITHUB_TOKEN_PREFIXES.find((prefix) => token.startsWith(prefix)) ?? "token";
 }
 
 export interface ResolveAuthDeps {
@@ -226,37 +238,28 @@ async function refreshAndPersist(
     if (!current) return null; // disconnected while we waited for the lock
     if (current.token !== expected.token) return current; // another caller rotated
     if (!current.refreshToken) return null;
-    const refreshToken = current.refreshToken;
     // Emitted at the START of the exchange (both proactive and reactive branches
     // route through here) so an attempt is visible in daemon.log even if the
     // process dies mid-exchange.
     log({ phase: "attempt" });
     let minted: GitHubCredential;
     try {
-      minted = await refresh(refreshToken);
+      minted = await refresh(current.refreshToken);
     } catch (error) {
-      // A decline is deterministic — name its cause and surface token-invalid,
-      // never retried.
+      // A decline is deterministic — name its cause; the surface resolves token-invalid.
       if (error instanceof GitHubOAuthDeclined) {
         log({ phase: "declined", githubError: error.code });
         return null;
       }
-      // A transient transport blip gets exactly ONE retry inside the lock, so a
-      // boot-time connectivity storm never drops a live session over a momentary
-      // failure.
-      if (!isGitHubNetworkError(error)) throw error;
-      log({ phase: "network", attempt: 1 });
-      try {
-        minted = await refresh(refreshToken);
-      } catch (retryError) {
-        if (retryError instanceof GitHubOAuthDeclined) {
-          log({ phase: "declined", githubError: retryError.code });
-          return null;
-        }
-        // A second transient failure propagates so resolveGitHubAuth classifies
-        // it `network` and leaves the credential untouched.
-        throw retryError;
-      }
+      // NO retry here. The shared GitHub transport (`withConnectResilience`) already
+      // retries a CONNECT-PHASE blip exactly once — provably replay-safe, since no
+      // request reached GitHub — and deliberately never replays a post-send failure,
+      // which could double a rotation. A second retry at this layer would duplicate
+      // connect attempts AND risk burning a rotated refresh token on an ambiguous
+      // post-send error. So observe the network failure and propagate it:
+      // resolveGitHubAuth classifies it `network` and leaves the credential untouched.
+      if (isGitHubNetworkError(error)) log({ phase: "network" });
+      throw error;
     }
     await deps.secretStore.setGitHubCredential(minted);
     log({ phase: "persisted", tokenKind: tokenKind(minted.token) });

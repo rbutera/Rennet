@@ -624,9 +624,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       log: (record) => {
         const parts = [`phase=${record.phase}`];
         if (record.githubError !== undefined) parts.push(`githubError=${record.githubError}`);
-        if (record.httpStatus !== undefined) parts.push(`httpStatus=${record.httpStatus}`);
         if (record.tokenKind !== undefined) parts.push(`tokenKind=${record.tokenKind}`);
-        if (record.attempt !== undefined) parts.push(`attempt=${record.attempt}`);
         console.log(`[github-auth] ${parts.join(" ")}`);
       },
     });
