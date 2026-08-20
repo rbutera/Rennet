@@ -1,5 +1,5 @@
 import type { RennetBridge } from "@rennet/protocol";
-import { Toaster } from "@rennet/ui";
+import { Popover, PopoverContent, PopoverTrigger, Toaster } from "@rennet/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RennetApp } from "../app";
 
@@ -461,26 +461,31 @@ export function ConnectionHost({
         ? "bg-danger"
         : "bg-ink-faint";
   const connectionBar = (
-    <div className="connection-bar relative ml-auto inline-flex items-center">
-      <button
-        type="button"
-        className="connection-indicator inline-flex cursor-pointer items-center gap-1.5 rounded-chip border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:bg-raised"
-        data-state={dotState}
-        onClick={() => setSwitcherOpen((open) => !open)}
-        aria-expanded={switcherOpen}
-        aria-label={announce}
-      >
-        <span
-          className={`connection-dot h-2 w-2 flex-none rounded-full ${dotColor}`}
-          data-state={dotState}
-          aria-hidden="true"
-        />
-        <span className="connection-name text-ink">{activeTarget.label}</span>
-      </button>
-      {switcherOpen ? (
-        <div
-          className="connection-switcher absolute left-0 top-full z-40 mt-1.5 min-w-[280px] rounded-surface border border-line bg-overlay p-2 shadow-overlay"
-          role="menu"
+    // The switcher rides the kit Popover: it owns the anchored positioning, the
+    // portal, and the outside-click / Escape dismissal the bare toggle lacked.
+    <Popover open={switcherOpen} onOpenChange={setSwitcherOpen}>
+      <div className="connection-bar relative ml-auto inline-flex items-center">
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              className="connection-indicator inline-flex cursor-pointer items-center gap-1.5 rounded-chip border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:bg-raised"
+              data-state={dotState}
+              aria-label={announce}
+            />
+          }
+        >
+          <span
+            className={`connection-dot h-2 w-2 flex-none rounded-full ${dotColor}`}
+            data-state={dotState}
+            aria-hidden="true"
+          />
+          <span className="connection-name text-ink">{activeTarget.label}</span>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          sideOffset={6}
+          className="connection-switcher block w-auto min-w-[280px] rounded-surface border border-line bg-overlay p-2 shadow-overlay ring-0"
         >
           <ul className="connection-list mb-1.5 list-none">
             {allTargets.map((target) => (
@@ -579,9 +584,9 @@ export function ConnectionHost({
           <p className="connection-note mt-2 text-2xs leading-relaxed text-ink-faint">
             A remote daemon shows only repo references, never a host path. Pairing is one-time.
           </p>
-        </div>
-      ) : null}
-    </div>
+        </PopoverContent>
+      </div>
+    </Popover>
   );
 
   const daemonBanner =
