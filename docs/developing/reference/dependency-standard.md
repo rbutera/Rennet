@@ -159,15 +159,15 @@ not bundle a harness executable or read a harness credential.
 ## Browser and mobile UI
 
 React owns rendering, and the desktop UI splits in two (2026-08-20 shadcn/Base UI
-port). `@rennet/ui` is a **vendored shadcn/ui component kit built on Base UI**
-(`@base-ui/react`, MIT) — Button, Input, Dialog, Sheet, Popover, DropdownMenu,
-Select, Switch, Checkbox, Tabs, Tooltip, ScrollArea, Badge, Skeleton, Separator,
-Toast, and the `cmdk` Command palette — importing only `types` and `theme`.
-`@rennet/app-ui` composes the kit into Rennet's screens and imports only `types`,
-`protocol`, `theme`, `ui`, and browser-safe dependencies. Neither imports `core`,
-adapters, Node, or Electron.
+port). `@rennet/ui` is a vendored shadcn/ui component kit built on Base UI
+(`@base-ui/react`, MIT). It carries Button, Input, Dialog, Sheet, Popover,
+DropdownMenu, Select, Switch, Checkbox, Tabs, Tooltip, ScrollArea, Badge,
+Skeleton, Separator, Toast, and the `cmdk` Command palette, importing only
+`types` and `theme`. `@rennet/app-ui` composes the kit into Rennet's screens and
+imports only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies.
+Neither imports `core`, adapters, Node, or Electron.
 
-Base UI is the primary primitive family; **Radix is not banned** — a Radix
+Base UI is the primary primitive family. Radix is not banned: a Radix
 dependency is fine where a shadcn component brings it (`cmdk` pulls Radix Dialog).
 The soft rule is to not run two *different* families for the *same* primitive
 without reason. Vendored components are re-themed onto the `--rn-*` palette (no

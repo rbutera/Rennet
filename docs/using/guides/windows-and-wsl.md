@@ -1,10 +1,12 @@
 ---
 title: Windows and WSL
-description: Run commands on the Windows host or inside the WSL distro that owns a project.
+description: Run a project on the Windows host, or inside the WSL distro that owns it, where Rennet runs a daemon natively.
 ---
 
 Rennet supports projects on Windows drives and projects stored inside WSL. It
-records where each project's Git and coding-harness commands should run.
+records where each project's Git and coding-harness commands should run, and for
+a WSL project it runs its daemon inside the distro rather than reaching across the
+`\\wsl.localhost\…` bridge from Windows.
 
 Public signed Windows installers and auto-update are tracked in
 [GitHub issue #330](https://github.com/rbutera/rennet/issues/330).
@@ -61,15 +63,24 @@ The command palette shortcut is `Ctrl+K`. Navigation history uses `Ctrl+[` and
 
 ## WSL requirements
 
+For a WSL project, Rennet runs a Rennet daemon inside the distro. The Windows
+shell reaches that daemon over the loopback address, which a WSL 2 listener on
+`127.0.0.1` exposes to Windows over `localhost` with no configuration.
+
 ```mermaid
 flowchart LR
-  app[Rennet on Windows] -->|wsl.exe| distro[WSL distro]
-  distro --> git[Git]
-  distro --> harness[Claude or Codex]
-  distro --> repo[/home/you/repo]
+  shell[Rennet shell on Windows] -->|spawns via wsl.exe| daemon[Rennet daemon in the distro]
+  shell -->|localhost WebSocket| daemon
+  daemon --> git[Git]
+  daemon --> harness[Claude or Codex]
+  daemon --> repo[/home/you/repo native fs/]
 ```
 
 - WSL 2 with the selected distro installed.
+- Node.js available inside the distro. Rennet runs the daemon on the distro's own
+  Node and finds a version-managed install (nvm, asdf, fnm) through your login
+  shell. A distro with no Node reports that plainly instead of falling back to the
+  host.
 - Git and Claude Code installed inside that distro.
 - Codex installed inside the distro if you want a Codex review seat.
 - The project opened through its `\\wsl.localhost\<distro>\...` path.
@@ -77,9 +88,15 @@ flowchart LR
 Claude Code and Codex use their own authenticated sessions inside the distro.
 Rennet invokes those harnesses but does not read their credentials.
 
-## Commands routed into WSL
+## How a WSL project runs
 
-For a WSL project, Rennet routes these operations through the selected distro:
+Rennet delivers its daemon into the distro's native filesystem, copied once per
+version to `~/.rennet/server/<version>/`, and runs it there. The shell keeps its
+host daemon for host-locus projects and spawns one daemon per WSL distro for
+WSL-locus projects, routing each project to the daemon for its execution locus.
+Opening a WSL folder connects the app to that distro's daemon.
+
+Because the daemon runs inside the distro, everything happens on native Linux:
 
 - Git capture, checkpoint, submodule probes, branch push, pull request setup, and
   worktree cleanup.
@@ -89,36 +106,26 @@ For a WSL project, Rennet routes these operations through the selected distro:
 - Review model turns for lenses, findings, knowledge enrichment, symbol lookup,
   comment refinement, pull request drafting, delta summaries, and handoff
   composition.
-- Codex app-server turns when Codex is installed inside the distro.
-
-Rennet passes a distro-native working directory to each harness. Codex usage
-events arrive over the same app-server JSON-RPC stream as the turn itself.
+- Codex app-server turns when Codex is installed inside the distro. An agentic
+  Codex turn connects to Rennet's canvas over the distro's own loopback, so no
+  cross-boundary networking is involved.
 
 ## Filesystem and editor access
 
-The Windows app reads WSL files through the matching UNC path. Repository
-watching uses polling because Windows filesystem notifications do not reliably
-cross the WSL boundary. The poll skips `.git`, `.rennet`, and `node_modules` so
-generated dependency trees do not dominate each scan.
+The distro daemon reads the repository through the distro's native filesystem and
+watches it with native `inotify`. It does not poll across the `\\wsl.localhost\…`
+bridge, so a Windows daemon's 9P costs do not apply.
 
 **Open in editor** uses the editor's WSL remote support so a `path:line` target
 opens inside the distro.
-
-## Codex canvas connection
-
-Agentic Codex turns connect to Rennet's canvas MCP server. For a WSL project,
-Rennet first tests whether mirrored networking makes the Windows loopback address
-available inside the distro. If not, it binds to the Windows host address routed
-from that distro.
-
-The choice is probed for each session. If neither route works, the Codex turn
-fails and reports the unreachable address. It does not run a host Codex process
-against the WSL repository.
 
 ## Credential and publish boundaries
 
 Rennet does not read Claude Code or Codex credentials on either host. GitHub OAuth
 and paired-device tokens remain separate Rennet credentials.
+
+A WSL daemon keeps its GitHub credential in its own distro-native data dir, so the
+token and every GitHub connection sit inside the distro.
 
 GitHub receives a review or pull request only through the corresponding outbound
 operation. A coding-agent turn can push its working branch because opening a pull

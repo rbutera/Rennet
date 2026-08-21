@@ -9,6 +9,7 @@ with the short tour, then follow the guide for the change in front of you.
 ## Start here
 
 - [Getting started](./guides/getting-started.md) covers the main review loop.
+- [Connect to GitHub](./guides/github-auth.md) signs Rennet into GitHub for pull request reviews.
 - [Review a GitHub pull request](./guides/reviewing-a-github-pr.md) covers the team review path.
 - [The Context Map](./guides/context-map.md) shows the project context available to reviews.
 - [Remote access](./guides/remote-access.md) connects another device to a Rennet daemon.

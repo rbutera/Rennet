@@ -46,6 +46,7 @@ export default defineConfig({
                 label: "Guides",
                 items: [
                   { label: "Getting started", link: "/using/guides/getting-started/" },
+                  { label: "Connect to GitHub", link: "/using/guides/github-auth/" },
                   { label: "Windows and WSL", link: "/using/guides/windows-and-wsl/" },
                   {
                     label: "Reviewing a GitHub PR",

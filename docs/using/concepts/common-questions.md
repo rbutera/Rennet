@@ -54,7 +54,10 @@ boundary.
 
 Rennet uses coding harnesses already installed and authenticated on your
 machine. The Claude adapter launches your installed `claude` binary through
-Anthropic's agent SDK. It does not ask Rennet to store a Claude credential.
+Anthropic's agent SDK, so a turn runs on your existing subscription auth. Rennet
+never stores a Claude credential and adds no per-token markup of its own. If a
+session is authenticated by a metered API key instead of subscription auth,
+Rennet says so, because that key spends money per token.
 
 On macOS, Rennet can use the Codex binary bundled with ChatGPT desktop and its
 existing `~/.codex` login. A separately installed Codex CLI takes precedence.

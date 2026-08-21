@@ -1,9 +1,12 @@
 # Rennet documentation
 
-This directory is the canonical documentation library. GitHub reads these files
-directly. `apps/docs` projects the same files into Starlight for
+This directory is the canonical documentation library. GitHub renders these
+files as you browse. `apps/docs` projects the same files into Starlight for
 [docs.rennet.dev](https://docs.rennet.dev); the site homepage stays with the
 renderer because it uses Starlight components.
+
+Every page belongs to one of two audiences: **Using Rennet** for people who run
+reviews, and **Developing Rennet** for people who build Rennet.
 
 ## Using Rennet
 
@@ -11,6 +14,7 @@ renderer because it uses Starlight components.
 - Concepts: [product and vision](./using/concepts/product-and-vision.md) and
   [common questions](./using/concepts/common-questions.md)
 - Guides: [getting started](./using/guides/getting-started.md),
+  [connecting to GitHub](./using/guides/github-auth.md),
   [reviewing a GitHub PR](./using/guides/reviewing-a-github-pr.md),
   [the Context Map](./using/guides/context-map.md),
   [remote access](./using/guides/remote-access.md),
@@ -49,8 +53,9 @@ renderer because it uses Starlight components.
   [protocol compatibility](./developing/reference/protocol-compatibility.md),
   [Codex app-server integration](./developing/reference/codex-app-server.md),
   and [reactive streams](./developing/reference/reactive-streams.md)
-- Contributing: [docs style guide](./developing/contributing/docs-style-guide.md)
-  and [good docs standard](./developing/contributing/good-docs-standard.md)
+- Contributing: [docs style guide](./developing/contributing/docs-style-guide.md),
+  [good docs standard](./developing/contributing/good-docs-standard.md),
+  and [reader personas](./developing/contributing/personas.md)
 
 Planned pages carry a live issue or OpenSpec tracking link in their frontmatter.
 [GitHub issues](https://github.com/rbutera/rennet/issues) own the work queue. The

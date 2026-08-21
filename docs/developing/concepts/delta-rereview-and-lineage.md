@@ -141,7 +141,7 @@ a particular hunk.
 | Live disposition carry and successor fold | `packages/core/src/index.ts` |
 | Path and hunk delta account | `packages/core/src/delta-account.ts` |
 | Optional delta digest turn | `packages/server/src/delta-digest-live.ts` |
-| Delta account rendering | `packages/ui/src/components/delta-account-panel.tsx` |
+| Delta account rendering | `packages/app-ui/src/components/delta-account-panel.tsx` |
 
 See [agent handoff](./agent-handoff.md) for the acting loop and
 [architecture contracts](./architecture-contracts.md) for the patchset

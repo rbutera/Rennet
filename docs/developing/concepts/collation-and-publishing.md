@@ -84,7 +84,7 @@ For an own branch, `composePrSubmission()` builds the submission from branch
 context and the draft. The title and body remain editable before preview.
 `prSubmissionPayload()` serializes the final submission fields in a fixed order.
 
-The desktop and browser app build these projections in `@rennet/ui`. The mobile
+The desktop and browser app build these projections in `@rennet/app-ui`. The mobile
 app cannot import the DOM-bound draft package, so it calls `publish.compose` and
 previews the exact comments or submission returned by the daemon.
 

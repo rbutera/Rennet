@@ -9,24 +9,12 @@ account.
 
 ## Connect GitHub
 
-Choose **Connect GitHub** on first use or from Settings. Rennet displays a device
-code and opens [github.com/login/device](https://github.com/login/device). The
-OAuth token uses the `repo` and `workflow` scopes.
-
-GitHub connection is optional for local working-tree reviews. When a command
-needs GitHub and no account is connected, the interface offers the sign-in at
-that point.
-
-Rennet stores the token in its application data directory with owner-only file
-permissions. The token does not enter project files or the renderer. When the
-OAuth app provides expiring user tokens, Rennet refreshes them before expiry.
-
-Settings also accepts a personal access token. Rennet validates it before storing
-it. The current forge adapter supports github.com, not GitHub Enterprise hosts.
-Network failures are reported separately from authentication failures.
-The project view shows local changes before pull-request loading finishes. If a
-credential is missing or rejected, that view offers device sign-in and reloads
-the pull-request rows after reconnection.
+Reviewing a pull request needs a connected GitHub account. Choose **Connect
+GitHub** on first use or from Settings. Connection is optional for local
+working-tree reviews; when a command needs GitHub and no account is connected,
+the interface offers the sign-in at that point. See
+[Connect GitHub](./github-auth.md) for the device flow, token storage, personal
+access tokens, and reconnection after a failed credential.
 
 Rennet also needs a supported coding harness. It discovers Claude Code without
 asking for a model API key. When Codex is available, it can run as a second review
@@ -57,7 +45,7 @@ sequenceDiagram
 
 1. Open a project and select a pull request. Use **PRs** or **Needs you** to
    narrow the project list.
-2. Read the patchset through Sequence, Spec, Decisions, Flagged, and Noise.
+2. Read the patchset through Spec, Sequence, Decisions, Noise, and Flagged.
 3. Approve, question, comment, or request a change at the relevant anchor.
 4. Open the draft and edit the selected comments.
 5. Review the composed outbound artifact, then post it as one GitHub review.
@@ -117,7 +105,7 @@ shows their state in Flagged.
 
 - A failure tied to changed code can become an anchored finding.
 - A failure without a code anchor remains visible as a CI result.
-- Only recognized infrastructure signatures receive the infrastructure label.
+- Only recognized environmental signatures receive the environmental label.
 - Model classification can attribute a failure to the change or leave it
   unclassified.
 - Missing, truncated, or timed-out CI is reported as unavailable and does not

@@ -62,9 +62,9 @@ Rennet uses four type roles:
 
 The desktop component ramp is `11, 12, 14, 16, 18, 20, 24` pixels at a 16-pixel
 root, plus the front-door display size. Components express these through
-Tailwind utilities from `text-2xs` through `text-2xl` and `text-display`.
-`packages/ui/src/design-ramp.test.ts` rejects arbitrary text sizes, radii, and
-color escapes in component source.
+Tailwind utilities from `text-2xs` through `text-2xl` and `text-display`. A
+design-ramp test in each of `packages/ui` and `packages/app-ui` rejects
+arbitrary text sizes, radii, and color escapes in that package's source.
 
 ## Keep the review position fixed
 
@@ -171,12 +171,13 @@ Before a UI change is done, check:
 | --- | --- |
 | Visual authority | `DESIGN.md` |
 | Shared palette and Tailwind mappings | `packages/theme/src/palette.css`, `packages/theme/src/theme.css` |
-| Desktop type and radius ramp | `packages/ui/DESIGN.md` |
-| Shared product components | `packages/ui/src/components` |
-| Desktop and browser app state | `packages/ui/src/app.tsx` |
+| Desktop type and radius ramp | `packages/app-ui/DESIGN.md` |
+| Vendored component kit | `packages/ui/src/components` |
+| Rennet product components | `packages/app-ui/src/components` |
+| Desktop and browser app state | `packages/app-ui/src/app.tsx` |
 | Mobile theme projection | `apps/mobile/src/theme` |
 | Palette and contrast checks | `packages/theme/src/theme.test.ts`, `packages/theme/src/palette-sync.test.ts` |
-| Component ramp check | `packages/ui/src/design-ramp.test.ts` |
+| Component ramp checks | `packages/ui/src/design-ramp.test.ts`, `packages/app-ui/src/design-ramp.test.ts` |
 
 See [canvas model](./canvas-model.md) for review layers and
 [collation and publishing](./collation-and-publishing.md) for the draft and

@@ -18,8 +18,8 @@ it inside Electron.
 ```mermaid
 flowchart LR
   reviewer[Reviewer]
-  desktop["Desktop renderer<br/>@rennet/ui + @rennet/client"]
-  browser["Served browser client<br/>@rennet/ui + @rennet/client"]
+  desktop["Desktop renderer<br/>@rennet/app-ui + @rennet/client"]
+  browser["Served browser client<br/>@rennet/app-ui + @rennet/client"]
   mobile["Mobile client<br/>Expo + @rennet/client"]
   shell["Electron main<br/>native shell"]
   server["@rennet/server<br/>composition + dispatch + WebSocket"]
@@ -67,9 +67,11 @@ desktop's complete-quit action stops a daemon that the desktop owns.
 
 ## Clients and reconnection
 
-The desktop renderer and served browser client both mount the same `@rennet/ui`
-application. Each provides a connection factory to `ConnectionHost`; the UI
-package does not import a transport or Node APIs.
+The desktop renderer and served browser client both mount the same
+`@rennet/app-ui` application. `@rennet/app-ui` composes screens from the
+`@rennet/ui` primitive kit, a vendored shadcn/ui component set built on Base UI.
+Each client provides a connection factory to `ConnectionHost`; `@rennet/app-ui`
+does not import a transport or Node APIs.
 
 `@rennet/client` supplies `WsRennetBridge` and `ConnectionSupervisor`. The
 supervisor owns the `idle`, `connecting`, `online`, `offline`, and `error`
@@ -79,7 +81,7 @@ long-running project processing and per-repository pull-request fetches for the
 project detail view.
 
 The Expo mobile app uses `@rennet/client` and the portable protocol directly. It
-has its own native UI rather than mounting `@rennet/ui`. Remote clients receive
+has its own native UI rather than mounting `@rennet/app-ui`. Remote clients receive
 the projected protocol: server-side projection translates or redacts host-only
 state and commands before they cross the connection. Shell-specific operations,
 such as the desktop directory picker and updater, remain native-shell features.
@@ -97,7 +99,8 @@ flowchart LR
   core[@rennet/core]
   adapters[@rennet/adapters]
   server[@rennet/server]
-  ui[@rennet/ui]
+  ui["@rennet/ui<br/>primitive kit"]
+  appui["@rennet/app-ui<br/>screens"]
   client[@rennet/client]
 
   protocol --> types
@@ -115,15 +118,21 @@ flowchart LR
   server --> core
   server --> adapters
   ui --> types
-  ui --> protocol
   ui --> theme
+  appui --> types
+  appui --> protocol
+  appui --> theme
+  appui --> ui
   client --> types
   client --> protocol
 ```
 
-`@rennet/types` and `@rennet/theme` have no in-repository dependencies. Only the
-desktop app imports Electron. The architecture check includes positive controls
-that prove forbidden UI-to-core and server-to-Electron imports fail the check.
+`@rennet/types` and `@rennet/theme` have no in-repository dependencies. The
+`@rennet/ui` kit imports only `@rennet/types` and `@rennet/theme`; `@rennet/app-ui`
+adds `@rennet/protocol` and the kit. Only the desktop app imports Electron.
+`scripts/check-boundaries.mjs` runs three positive controls that prove forbidden
+imports fail: `@rennet/app-ui` importing `@rennet/core`, the `@rennet/ui` kit
+importing `@rennet/protocol`, and `@rennet/server` importing Electron.
 
 ## Review flow
 

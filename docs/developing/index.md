@@ -30,7 +30,7 @@ Read these pages in order when you need the whole system:
 3. [Canvas model](./concepts/canvas-model.md) explains how source material,
    analysis, dispositions, and orchestrator annotations share a review.
 4. [Review lenses](./concepts/review-lenses.md) explains the Spec, Sequence,
-   Decisions, Flagged, and Noise views.
+   Decisions, Noise, and Flagged views.
 5. [Surfacing and routing](./concepts/surfacing-and-routing.md) covers model
    output, validation, instructions, and model assignment.
 6. [Collation and publishing](./concepts/collation-and-publishing.md) follows
@@ -58,8 +58,9 @@ and [GitHub issues](https://github.com/rbutera/rennet/issues) track active work.
 
 The runtime is split across portable packages and thin applications.
 `@rennet/server` composes the daemon and command router. `@rennet/client` owns
-browser-safe connections to that daemon. `@rennet/ui` owns the shared React
-interface. `apps/desktop` and `apps/mobile` supply platform shells.
+browser-safe connections to that daemon. `@rennet/ui` is the vendored component
+kit, and `@rennet/app-ui` owns the Rennet application interface built on it.
+`apps/desktop` and `apps/mobile` supply platform shells.
 
 ## Work in the monorepo
 

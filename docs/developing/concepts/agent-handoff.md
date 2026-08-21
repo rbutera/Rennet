@@ -149,7 +149,7 @@ returns an error before pushing.
 | Handoff composition model turn | `packages/server/src/handoff-compose-live.ts` |
 | Command routing and successor capture | `packages/server/src/dispatch.ts` |
 | Per-project adapter composition | `packages/server/src/create-server.ts` |
-| Draft selection, preview model, and client calls | `packages/ui/src/canvas/publish.ts`, `packages/ui/src/app.tsx` |
+| Draft selection, preview model, and client calls | `packages/app-ui/src/canvas/publish.ts`, `packages/app-ui/src/app.tsx` |
 | Delta facts | `packages/core/src/delta-account.ts` |
 
 The current precision limit is carry across changed code. Handoff uses the
