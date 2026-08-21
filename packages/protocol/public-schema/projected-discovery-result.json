@@ -85,13 +85,31 @@
     },
     "reconciliation": {
       "type": "string"
+    },
+    "source": {
+      "default": "local",
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "local"
+        },
+        {
+          "type": "string",
+          "pattern": "^wsl:.+$"
+        },
+        {
+          "type": "string",
+          "pattern": "^remote:.+$"
+        }
+      ]
     }
   },
   "required": [
     "path",
     "kind",
     "repos",
-    "primaryBranch"
+    "primaryBranch",
+    "source"
   ],
   "additionalProperties": false
 }

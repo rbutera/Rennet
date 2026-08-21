@@ -12,7 +12,7 @@
  */
 export const RENNET_PRELOAD_KEYS = [
   "applyUpdate",
-  "chooseDirectory",
+  "listWslDistros",
   "logWslConnect",
   "onUpdateReady",
   "platform",

@@ -14,6 +14,7 @@ function project(overrides: Partial<import("@rennet/protocol").Project> = {}) {
     primaryBranch: "trunk",
     openPath: "/orbital",
     addedAt: "2026-08-11T00:00:00.000Z",
+    source: "local" as const,
     ...overrides,
   };
 }

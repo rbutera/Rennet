@@ -17,6 +17,7 @@ const project: Project = {
   primaryBranch: "main",
   openPath: "/code/rennet",
   addedAt: "2026-08-13T00:00:00.000Z",
+  source: "local",
 };
 
 const review: Review = {
@@ -119,6 +120,17 @@ function navigationBridge(
         return { detected: [] };
       case "project.detail":
         return projectDetail;
+      case "fs.listDir":
+        // The in-app directory picker modal browses here (the native OS dialog is retired):
+        // answer with the target root so the pick resolves to it and the capture proceeds.
+        return {
+          result: {
+            path: directReview.repositoryRoot,
+            home: directReview.repositoryRoot,
+            parent: null,
+            entries: [],
+          },
+        };
       case "repository.choose":
         return { path: directReview.repositoryRoot };
       case "review.capture":
@@ -302,6 +314,11 @@ describe("RennetApp navigation spine", () => {
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     fireEvent.click(await waitFor(() => getByRole("option", { name: /Open review/ })));
     fireEvent.click(getByRole("button", { name: "Choose a repository" }));
+    // The in-app picker modal opens; pick the browsed path, then Continue captures it.
+    await waitFor(() =>
+      expect((getByRole("button", { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(getByRole("button", { name: /Continue/ }));
 
     await waitFor(() => {
       const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });

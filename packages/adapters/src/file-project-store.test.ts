@@ -25,6 +25,7 @@ function draft(overrides: Partial<ProjectDraft> = {}): ProjectDraft {
     branchCount: 5,
     primaryBranch: "main",
     openPath: "/code/orbital/atlas",
+    source: "local",
     ...overrides,
   };
 }
@@ -53,6 +54,18 @@ describe("FileProjectStore", () => {
     expect(reopened.list()[0]?.id).toBe("id-fixed");
   });
 
+  it("persists a wsl-sourced project and reads it back with source intact", () => {
+    const store = new FileProjectStore(path, {
+      id: () => "id-wsl",
+      now: () => "2026-08-09T00:00:00.000Z",
+    });
+    const project = store.add(draft({ source: "wsl:Ubuntu" }));
+    expect(project.source).toBe("wsl:Ubuntu");
+
+    const reopened = new FileProjectStore(path);
+    expect(reopened.list()[0]?.source).toBe("wsl:Ubuntu");
+  });
+
   it("lists newest first", () => {
     let n = 0;
     const store = new FileProjectStore(path, {
@@ -62,6 +75,30 @@ describe("FileProjectStore", () => {
     store.add(draft({ name: "first" }));
     store.add(draft({ name: "second" }));
     expect(store.list().map((p) => p.name)).toEqual(["second", "first"]);
+  });
+
+  it("reads a legacy row with no source field back as local", () => {
+    // A row written before `source` existed — the schema default must fill it in.
+    const store = new FileProjectStore(path);
+    writeFileSync(
+      path,
+      JSON.stringify({
+        projects: [
+          {
+            id: "legacy",
+            name: "orbital",
+            path: "/code/orbital",
+            kind: "workspace",
+            repoCount: 1,
+            branchCount: 2,
+            primaryBranch: "main",
+            openPath: "/code/orbital",
+            addedAt: "2026-08-09T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    expect(store.list()[0]?.source).toBe("local");
   });
 
   it("degrades a corrupt store to an empty list, never a throw", () => {
@@ -95,6 +132,7 @@ describe("deriveProjectDraft", () => {
       { name: "navcore", path: "/code/orbital/navcore", branches: 2 },
       { name: "atlas-docs", path: "/code/orbital/atlas-docs", branches: 2 },
     ],
+    source: "local",
   };
 
   it("sums the included branch counts and opens the first included repo", () => {
@@ -118,6 +156,7 @@ describe("deriveProjectDraft", () => {
       kind: "repo",
       primaryBranch: "trunk",
       repos: [{ name: "atlas", path: "/code/atlas", branches: 4 }],
+      source: "local",
     };
     const result = deriveProjectDraft(repo, ["atlas"], "trunk");
     expect(result.kind).toBe("repo");

@@ -110,6 +110,7 @@ const repoProject = (path: string, primaryBranch = "main"): Project => ({
   primaryBranch,
   openPath: path,
   addedAt: "2026-08-09T00:00:00.000Z",
+  source: "local",
 });
 
 /** Deps that resolve fixed repo roots, so enumeration is testable without a workspace. */

@@ -356,13 +356,21 @@ function harness(
           primaryBranch: input.primaryBranch,
           openPath: input.discovery.repos[0]?.path ?? input.discovery.path,
           addedAt: "2026-08-09T00:00:00.000Z",
+          source: input.discovery.source,
         };
         return { project, projects: [project] };
       },
     },
     processProject: () => Promise.resolve({ repos: [] }),
     discoverProject: ({ path, kind }) =>
-      Promise.resolve({ path, kind, repos: [], primaryBranch: "main" }),
+      Promise.resolve({ path, kind, repos: [], primaryBranch: "main", source: "local" }),
+    listDir: (input) =>
+      Promise.resolve({
+        path: input.path ?? "/home/rai",
+        home: "/home/rai",
+        parent: "/home",
+        entries: [],
+      }),
     detectHarnesses: () => Promise.resolve([]),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
@@ -2603,6 +2611,7 @@ function frontDoorHarness(seed: {
     kind: "workspace",
     primaryBranch: "main",
     repos: [{ name: "atlas", path: "/orbital/atlas", branches: 3 }],
+    source: "local",
   };
   const deps: DispatchDeps = {
     service,
@@ -2657,6 +2666,7 @@ function frontDoorHarness(seed: {
           primaryBranch: input.primaryBranch,
           openPath: input.discovery.repos[0]?.path ?? input.discovery.path,
           addedAt: "2026-08-09T00:00:00.000Z",
+          source: input.discovery.source,
         };
         stored.push(project);
         return { project, projects: [...stored] };
@@ -2673,6 +2683,13 @@ function frontDoorHarness(seed: {
       discoverCalls.push(input);
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
     },
+    listDir: (input) =>
+      Promise.resolve({
+        path: input.path ?? "/home/rai",
+        home: "/home/rai",
+        parent: "/home",
+        entries: [],
+      }),
     detectHarnesses: () => Promise.resolve(seed.detected ?? []),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
@@ -2715,6 +2732,7 @@ function persistedProject(overrides: Partial<Project> = {}): Project {
     primaryBranch: "main",
     openPath: "/orbital/atlas",
     addedAt: "2026-08-09T00:00:00.000Z",
+    source: "local",
     ...overrides,
   };
 }
@@ -2765,6 +2783,7 @@ describe("createDispatch — front door (issue #29)", () => {
         { name: "atlas", path: "/orbital/atlas", branches: 3 },
         { name: "docs", path: "/orbital/docs", branches: 2 },
       ],
+      source: "local",
     };
     const out = (await dispatch("projects.add", {
       commandId: randomUUID(),
@@ -2778,6 +2797,36 @@ describe("createDispatch — front door (issue #29)", () => {
     expect(out.projects).toHaveLength(1);
     // The freshly added project is immediately openable.
     expect(allowedRoots.has("/orbital/atlas")).toBe(true);
+  });
+
+  it("carries the selected source end to end: discover(source) → add → persisted Project.source", async () => {
+    // The whole-branch promise: a non-local selection must survive to the persisted
+    // Project. `discoverProject` can't name its own source (an in-distro POSIX path
+    // reads as local), so the frontDoorHarness stub — like the real adapter — returns
+    // `source: "local"`; the discover HANDLER is what stamps the SELECTED source onto
+    // the discovery the client gets. This test fails if that stamp is missing.
+    const { dispatch, discoverCalls, addCalls } = frontDoorHarness({});
+    await dispatch("repository.choose", {});
+
+    const discovered = (await dispatch("project.discover", {
+      commandId: randomUUID(),
+      path: REPO,
+      kind: "repo",
+      source: "wsl:Ubuntu",
+    })) as { discovery: DiscoveryResult };
+    // The adapter ran locally and reported "local"; the handler overrode it.
+    expect(discoverCalls).toEqual([{ path: REPO, kind: "repo" }]);
+    expect(discovered.discovery.source).toBe("wsl:Ubuntu");
+
+    const added = (await dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: discovered.discovery,
+      includedRepos: [],
+      primaryBranch: "main",
+    })) as { project: Project; projects: Project[] };
+    // The selected source rode through into the persisted Project.
+    expect(added.project.source).toBe("wsl:Ubuntu");
+    expect(addCalls[0]?.discovery.source).toBe("wsl:Ubuntu");
   });
 
   it("harness.detect returns the detected harnesses for the ambient line", async () => {

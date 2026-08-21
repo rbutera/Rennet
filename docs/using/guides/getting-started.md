@@ -19,7 +19,7 @@ flowchart LR
 ```
 
 1. **Choose a project.** Add one repository or a workspace containing several
-   repositories and worktrees.
+   repositories and worktrees. See [Add a project](#add-a-project) below.
 2. **Choose a change.** The project list combines local branches and GitHub pull
    requests. **All**, **Needs you**, **Mine**, **Local**, and **PRs** filter that
    list.
@@ -38,6 +38,42 @@ is in flight, the status names the repository and reports the completed count
 instead of estimating a percentage. If GitHub authentication or networking
 fails, local work stays available and the project view offers reconnection where
 it is needed.
+
+## Add a project
+
+Adding a project starts at **Projects > Add**. **Project repo** is selected by
+default; switch to **Workspace** for a folder containing several repositories.
+
+Pick a **source** first:
+
+- **Local** — the machine Rennet is running on. Always present, always first.
+- **A WSL distro** — on Windows, every installed distro is listed automatically.
+  There is nothing to add by hand.
+- **A paired remote** — any device already paired under **Settings > Pairing**.
+
+Selecting a non-local source attaches that source's own daemon and shows a
+brief "connecting…" state.
+
+```mermaid
+flowchart LR
+  pick[Pick a source] --> attach[Attach that source's daemon]
+  attach --> list[fs.listDir on that daemon]
+  list --> browse[Browse or type a path]
+  browse --> add[Add the project]
+```
+
+Below the source picker, an in-app directory browser lists the selected
+source's own filesystem, starting at its home directory. Directories only,
+hidden directories included, and a folder containing a `.git` entry is badged
+**repo**. Click a row to descend, use **Up** or Backspace to go up, or type an
+absolute path directly into the path bar and press Enter to jump straight
+there. There is no native OS file dialog: browsing a WSL distro or a remote
+works the same way, over that source's own filesystem, because Rennet is
+asking that source's daemon rather than the local one.
+
+The project remembers which source it lives on, so reopening it reconnects to
+the right daemon automatically. See [Windows and
+WSL](./windows-and-wsl.md#wsl-requirements) for distro-specific requirements.
 
 ## Team pull requests and your own branch
 

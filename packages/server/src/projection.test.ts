@@ -466,6 +466,11 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // The reviewed PR's worktree lives under MAIN's data dir — a host path the
     // renderer shows and a remote projection must translate like any other root.
     "review.prWorktree.output.worktree.path",
+    // fs.listDir (the ungated filesystem browser) walks the daemon's own host
+    // filesystem — every path here is host-absolute like repository.choose's.
+    "fs.listDir.input.path",
+    "fs.listDir.output.result.path",
+    "fs.listDir.output.result.entries.path",
   ]),
   ...classified("repo-relative", [
     "review.setDisposition.input.path",

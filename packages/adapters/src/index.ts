@@ -185,6 +185,11 @@ export {
   flaggedReviewFixture,
   noChecksFlaggedReviewFixture,
 } from "./flagged-fixture";
+export {
+  defaultFsListDirDeps,
+  type FsListDirDeps,
+  listDir,
+} from "./fs-list-dir";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,

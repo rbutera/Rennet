@@ -652,6 +652,19 @@ const prSubmissionSchema = z.object({
 export const projectKindSchema = z.enum(["workspace", "repo"]);
 export type ProjectKind = z.infer<typeof projectKindSchema>;
 
+/**
+ * Which daemon a project lives on: the local machine, an in-distro WSL daemon
+ * (`wsl:<distro>`), or a paired remote (`remote:<deviceId>`). Persisted on the
+ * project so reopening it routes to the daemon that can actually see its path,
+ * instead of always assuming local.
+ */
+export const sourceSchema = z.union([
+  z.literal("local"),
+  z.string().regex(/^wsl:.+$/),
+  z.string().regex(/^remote:.+$/),
+]);
+export type ProjectSource = z.infer<typeof sourceSchema>;
+
 /** A git repo discovered at (repo kind) or under (workspace kind) the pointed-at path. */
 export const discoveredRepoSchema = z.object({
   name: z.string().min(1),
@@ -665,6 +678,32 @@ export const discoveredRepoSchema = z.object({
   note: z.string().optional(),
 });
 export type DiscoveredRepo = z.infer<typeof discoveredRepoSchema>;
+
+/** A single child directory entry returned by `fs.listDir`'s directory browser. */
+export const fsEntrySchema = z.object({
+  /** Directory name only (not the full path). */
+  name: z.string().min(1),
+  /** Absolute path on the source's filesystem. */
+  path: z.string().min(1),
+  /** True when this directory contains a `.git` entry (a git repo). */
+  isRepo: z.boolean(),
+  /** True when the directory could not be read (permission denied); render dim, non-descendable. */
+  unreadable: z.boolean(),
+});
+export type FsEntry = z.infer<typeof fsEntrySchema>;
+
+/** The `fs.listDir` output: one directory's listing plus enough context to navigate. */
+export const fsListDirResultSchema = z.object({
+  /** The resolved absolute directory that was listed. */
+  path: z.string().min(1),
+  /** The source daemon's home directory (the browser's start point). */
+  home: z.string().min(1),
+  /** The parent directory, or null at the filesystem root. */
+  parent: z.string().nullable(),
+  /** Child directories only (files omitted), hidden dirs included, name-sorted. */
+  entries: z.array(fsEntrySchema),
+});
+export type FsListDirResult = z.infer<typeof fsListDirResultSchema>;
 
 /**
  * The read-only discovery result: what the worktree-config step renders as
@@ -681,6 +720,8 @@ export const discoveryResultSchema = z.object({
   primaryBranch: z.string().min(1),
   /** A walk-vs-list disagreement, surfaced (not resolved); omitted when the two agree. */
   reconciliation: z.string().optional(),
+  /** The daemon this discovery ran on. Defaults to `local` for pre-existing callers. */
+  source: sourceSchema.default("local"),
 });
 export type DiscoveryResult = z.infer<typeof discoveryResultSchema>;
 
@@ -706,6 +747,11 @@ export const projectSchema = z.object({
    */
   includedRepoPaths: z.array(z.string().min(1)).optional(),
   addedAt: z.iso.datetime(),
+  /**
+   * Which daemon this project lives on. Defaults to `local` so a project
+   * persisted before this field existed reads back unchanged.
+   */
+  source: sourceSchema.default("local"),
 });
 export type Project = z.infer<typeof projectSchema>;
 
@@ -2637,8 +2683,17 @@ export const commandDefinitions = {
       commandId: commandIdSchema,
       path: z.string().min(1),
       kind: projectKindSchema,
+      /** The daemon to discover on. Defaults to `local` for pre-existing callers. */
+      source: sourceSchema.default("local"),
     }),
     output: z.object({ discovery: discoveryResultSchema }),
+  },
+  "fs.listDir": {
+    // Read-only directory listing on the ATTACHED source's own daemon (local, in-distro
+    // WSL, or a paired remote). Deliberately ungated: this is the browser, not a grant —
+    // an empty `path` answers from the daemon's home dir; any absolute path is listable.
+    input: z.object({ path: z.string().optional() }),
+    output: z.object({ result: fsListDirResultSchema }),
   },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.
@@ -2651,6 +2706,10 @@ export const commandDefinitions = {
       includedRepos: z.array(z.string().min(1)),
       /** The confirmed, possibly edited primary branch. */
       primaryBranch: z.string().min(1),
+      // The daemon this project lives on rides in ON THE DISCOVERY (`discovery.source`,
+      // stamped by the `project.discover` handler) — the single authoritative field. A
+      // redundant top-level `source` was dropped: it was never read, and a caller could
+      // silently disagree with `discovery.source` (persisting the wrong daemon).
     }),
     output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
   },

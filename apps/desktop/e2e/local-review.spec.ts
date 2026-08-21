@@ -52,11 +52,12 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
     // must consciously edit this spec, not just contract.ts.
     expect([...RENNET_PRELOAD_KEYS].sort()).toEqual([
       "applyUpdate",
-      "chooseDirectory",
-      "onMenuRun",
+      "listWslDistros",
+      "logWslConnect",
       "onUpdateReady",
       "platform",
-      "updateMenu",
+      "resolveDaemonForPath",
+      "version",
       "wsPort",
     ]);
 

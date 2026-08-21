@@ -5,7 +5,9 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 // WsRennetBridge. What remains is the Electron-native residue the renderer merges with
 // that bridge: the host platform, the WS port to dial, the directory picker, and the
 // host-app updater channels.
-const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
+// The source-aware project picker's WSL branch: lists installed distros so the
+// renderer offers them instead of the user typing a distro name.
+const LIST_WSL_DISTROS_CHANNEL = "rennet:list-wsl-distros";
 const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 // The renderer's connect-flow decisions (locus detect / daemon switch / failure) land here as
 // structured lines in MAIN's <userData>/wsl-connect.log — the SHELL-side trace of connecting a
@@ -52,11 +54,10 @@ export interface RennetPreload {
   /** The loopback WS port the server bound (#378), read from the injected argv flag. */
   readonly wsPort: number;
   /**
-   * Open the native directory picker and resolve the chosen path, or null if cancelled
-   * (#379). A detached daemon cannot open a dialog, so the renderer obtains the path here
-   * and forwards it to `repository.choose`. Honors RENNET_TEST_REPO on the main side.
+   * Installed WSL distros (`wsl.exe -l -q`), or `[]` off win32 / with no WSL / on
+   * any error — never rejects. Backs the source-aware project picker's WSL branch.
    */
-  chooseDirectory(): Promise<string | null>;
+  listWslDistros(): Promise<string[]>;
   /**
    * Ensure the daemon that should serve a project at `path` (host daemon for a host path,
    * the in-distro daemon for a `\\wsl.localhost\<distro>\…` path) and resolve its ws port.
@@ -90,7 +91,7 @@ const preload: RennetPreload = {
   platform: process.platform,
   version,
   wsPort,
-  chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
+  listWslDistros: () => ipcRenderer.invoke(LIST_WSL_DISTROS_CHANNEL) as Promise<string[]>,
   resolveDaemonForPath: (path) =>
     ipcRenderer.invoke(RESOLVE_DAEMON_FOR_PATH_CHANNEL, path) as Promise<number | null>,
   logWslConnect: (entry) => ipcRenderer.send(WSL_CONNECT_LOG_CHANNEL, entry),

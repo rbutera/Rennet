@@ -26,6 +26,7 @@ const project: Project = {
   primaryBranch: "main",
   openPath: "/code/rennet",
   addedAt: "2026-08-09T00:00:00.000Z",
+  source: "local",
 };
 
 function detail(over: Partial<ProjectDetailData> = {}): ProjectDetailData {

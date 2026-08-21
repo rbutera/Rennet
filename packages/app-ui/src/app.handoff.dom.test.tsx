@@ -167,6 +167,9 @@ function harness(
       runCalls.push(input as CommandInput<"review.handoff.run">);
       return run();
     }
+    if (name === "fs.listDir")
+      // The in-app directory picker modal browses here (native OS dialog retired).
+      return { result: { path: "/code/other", home: "/code/other", parent: null, entries: [] } };
     if (name === "repository.choose") return { path: "/code/other" };
     if (name === "review.capture") return { review: captureReview ?? review };
     if (name === "projects.list") return { projects: [] };
@@ -530,6 +533,16 @@ describe("RennetApp — the handoff compose→preview→run loop (issue #72)", (
       return el;
     });
     fireEvent.click(choose);
+    // The in-app picker modal opens (native OS dialog retired); pick the browsed path,
+    // then Continue captures review B.
+    const continueBtn = await waitFor(() => {
+      const el = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+        button.textContent?.includes("Continue"),
+      );
+      if (!el || el.disabled) throw new Error("Continue not ready");
+      return el;
+    });
+    fireEvent.click(continueBtn);
 
     // Review B is now open with a CLEARED draft: no actionable ask leaked from A, so no
     // handoff affordance and an empty staged count.

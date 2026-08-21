@@ -1,7 +1,8 @@
-import type { ProjectKind, RennetBridge } from "@rennet/protocol";
+import type { ProjectKind, ProjectSource, RennetBridge } from "@rennet/protocol";
 import { Popover, PopoverContent, PopoverTrigger, Toaster } from "@rennet/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RennetApp } from "../app";
+import type { SourceOption } from "./source-switcher";
 
 // The connections surface (issue #381, design D3). ONE component both shells mount —
 // the desktop renderer and the served browser tab — that owns "which daemon am I
@@ -102,6 +103,30 @@ export interface PendingAdd {
   readonly kind: ProjectKind;
 }
 
+/**
+ * Attach the daemon a chosen SOURCE lives on (source-aware project selection, task 6). Reuses the
+ * owned/attached-daemon machinery: a WSL source resolves its in-distro daemon, a remote source is
+ * one of the saved paired daemons. A non-local source `switched:true` REMOUNTS the app onto that
+ * daemon (the caller then tears down; the fresh mount restores the browse via
+ * {@link PendingSourceBrowse}). Local, or a source already attached, is `switched:false`.
+ */
+export type ConnectSource = (
+  source: ProjectSource,
+  kind: ProjectKind,
+  /** A directory to RESTORE the browse on once attached (a recent project's path); rides through
+   *  the remount via {@link PendingSourceBrowse} so it survives the daemon switch. */
+  browsePath?: string,
+) => Promise<{ switched: boolean; error?: string }>;
+
+/** A source (+kind) the NEXT-mounted FrontDoor should RESTORE the browse step on — set when a
+ *  source switch remounted the app onto that source's daemon. The sibling of {@link PendingAdd}. */
+export interface PendingSourceBrowse {
+  readonly source: ProjectSource;
+  readonly kind: ProjectKind;
+  /** The directory to reopen the browser at (a recent project's path), when restoring a recent. */
+  readonly path?: string;
+}
+
 export interface ConnectionHostProps {
   /**
    * Build a connection for a target (issue #383 M0). MUST be stable (module-level or
@@ -133,6 +158,12 @@ export interface ConnectionHostProps {
    * distro daemon — the `detect`/`switch` lines are already written by {@link resolveDaemonTarget}.
    */
   readonly logWslConnect?: LogWslConnect;
+  /**
+   * Enumerate the installed WSL distros for the add flow's source switcher (source-aware project
+   * selection). The desktop shell wires the preload's `listWslDistros`; absent in the browser shell
+   * (no WSL, no preload) — then the switcher offers only Local plus any saved remotes.
+   */
+  readonly listWslDistros?: () => Promise<string[]>;
 }
 
 const DEFAULT_STORAGE_KEY = "rennet.daemons";
@@ -336,6 +367,7 @@ export function ConnectionHost({
   storageKey,
   resolveDaemonTarget,
   logWslConnect,
+  listWslDistros,
 }: ConnectionHostProps) {
   const key = storageKey ?? DEFAULT_STORAGE_KEY;
   // Normalise the two seams to one stable factory: prefer `createConnection`, else adapt the
@@ -353,6 +385,11 @@ export function ConnectionHost({
   const [initial] = useState(() => readStoredDaemons(key));
   const [saved, setSaved] = useState<readonly ConnectionTarget[]>(initial.daemons);
   const [activeId, setActiveId] = useState(initial.activeId ?? defaultTarget.id);
+  // Which `ProjectSource` each attached target id represents, so the add flow's fresh
+  // default (and the switcher's `selected`) can AGREE with the daemon actually attached
+  // instead of always claiming "local". Populated when `connectSource` attaches a WSL
+  // target (whose loopback id is opaque); `daemon:`/default ids derive from the id itself.
+  const sourceByTargetId = useRef(new Map<string, ProjectSource>());
   // A repo path the NEXT-mounted app should capture on itself — set when a WSL pick switches
   // us onto a distro daemon, so the freshly remounted app adds the repo THERE (the switching
   // app is already tearing down). The app clears it via `onPendingRepoConsumed`.
@@ -361,6 +398,13 @@ export function ConnectionHost({
   // FrontDoor should ADD on itself (discover + projects.add), set when a WSL pick in the add flow
   // switches us onto a distro daemon. The remounted FrontDoor clears it via `onPendingAddConsumed`.
   const [pendingAddPath, setPendingAddPath] = useState<PendingAdd | null>(null);
+  // The source-switcher sibling of `pendingAddPath`: a source (+kind) the NEXT-mounted FrontDoor
+  // should RESTORE the browse step on, set when a source switch remounts us onto that source's
+  // daemon. The remounted FrontDoor clears it via `onPendingSourceBrowseConsumed`.
+  const [pendingSourceBrowse, setPendingSourceBrowse] = useState<PendingSourceBrowse | null>(null);
+  // Installed WSL distros for the add flow's source switcher — fetched once (desktop only). The
+  // shell's `listWslDistros` never rejects (it answers `[]` off win32 / with no WSL).
+  const [wslDistros, setWslDistros] = useState<readonly string[]>([]);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addLabel, setAddLabel] = useState("");
@@ -380,6 +424,15 @@ export function ConnectionHost({
   }, [defaultTarget, saved]);
   const allTargets = useMemo(() => [hydratedDefault, ...saved], [hydratedDefault, saved]);
   const activeTarget = allTargets.find((target) => target.id === activeId) ?? hydratedDefault;
+  // The `ProjectSource` of the daemon currently attached — threaded to the front door so a
+  // FRESH add defaults its source (and the SourceSwitcher's selection) to it, not "local".
+  const activeSource = useMemo<ProjectSource>(() => {
+    if (activeId === defaultTarget.id) return "local";
+    const mapped = sourceByTargetId.current.get(activeId);
+    if (mapped) return mapped;
+    if (activeId.startsWith("daemon:")) return `remote:${activeId.slice("daemon:".length)}`;
+    return "local";
+  }, [activeId, defaultTarget.id]);
 
   const [activeBridge, setActiveBridge] = useState<{
     readonly target: ConnectionTarget;
@@ -556,6 +609,84 @@ export function ConnectionHost({
       return { switched: false };
     },
     [resolveDaemonTarget, activateLocalTarget],
+  );
+
+  // Enumerate WSL distros once (desktop only); the shell's `listWslDistros` never rejects.
+  useEffect(() => {
+    if (!listWslDistros) return;
+    let live = true;
+    listWslDistros()
+      .then((distros) => {
+        if (live) setWslDistros(distros);
+      })
+      .catch(() => {
+        if (live) setWslDistros([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [listWslDistros]);
+
+  // The add flow's source options: Local (always first), each WSL distro, then each saved (paired)
+  // remote. A saved target's id is `daemon:<deviceId>`; the source id the switcher reports back is
+  // `remote:<deviceId>`, which `connectSource` maps back to the saved target.
+  const sources = useMemo<SourceOption[]>(() => {
+    const list: SourceOption[] = [{ id: "local", label: "Local" }];
+    for (const distro of wslDistros) list.push({ id: `wsl:${distro}`, label: `WSL: ${distro}` });
+    for (const target of saved) {
+      if (target.id.startsWith("daemon:")) {
+        list.push({ id: `remote:${target.id.slice("daemon:".length)}`, label: target.label });
+      }
+    }
+    return list;
+  }, [wslDistros, saved]);
+
+  // Attach the daemon a chosen source lives on (source-aware project selection). Non-local sources
+  // remount the app onto that daemon and stash a pending source-browse so the fresh mount restores
+  // the browse step there. Reuses `resolveDaemonTarget` (WSL, via a synthetic UNC keyed on the
+  // distro id) and the saved paired daemons (remote) — the same owned/attached machinery.
+  const connectSource = useCallback<ConnectSource>(
+    async (source, kind, browsePath) => {
+      if (source === "local") {
+        // Only a switch if we are currently on a NON-local daemon (a prior source browse).
+        if (activeId === defaultTarget.id) return { switched: false };
+        setPendingSourceBrowse({ source, kind, path: browsePath });
+        switchTo(defaultTarget.id);
+        return { switched: true };
+      }
+      if (source.startsWith("wsl:")) {
+        if (!resolveDaemonTarget) return { switched: false, error: "WSL is unavailable here." };
+        const distro = source.slice("wsl:".length);
+        const resolution = await resolveDaemonTarget(`\\\\wsl.localhost\\${distro}`);
+        if (resolution.error) return { switched: false, error: resolution.error };
+        if (resolution.switched && resolution.target) {
+          sourceByTargetId.current.set(resolution.target.id, source);
+          // Already attached to this distro daemon: no remount fires, so DON'T report
+          // `switched` (the caller would then wait forever for a browse restore that never
+          // comes). Report `switched:false` so it proceeds inline on the current daemon.
+          if (resolution.target.id === activeId) return { switched: false };
+          setPendingSourceBrowse({ source, kind, path: browsePath });
+          activateLocalTarget(resolution.target);
+          return { switched: true };
+        }
+        return { switched: false };
+      }
+      if (source.startsWith("remote:")) {
+        const deviceId = source.slice("remote:".length);
+        const target = saved.find((candidate) => candidate.id === `daemon:${deviceId}`);
+        if (!target) return { switched: false, error: "That remote is no longer paired here." };
+        sourceByTargetId.current.set(target.id, source);
+        // Already the active daemon: `switchTo` changes no id, so no remount fires. Report
+        // `switched:false` (not the old buggy `true`) so the caller proceeds inline instead
+        // of hanging `busy` on a browse restore that never arrives.
+        if (target.id === activeId) return { switched: false };
+        setPendingSourceBrowse({ source, kind, path: browsePath });
+        switchTo(target.id);
+        return { switched: true };
+      }
+      return { switched: false };
+    },
+    [activeId, defaultTarget.id, resolveDaemonTarget, activateLocalTarget, saved, switchTo],
   );
 
   const { announce, dotState } = describeConnection(activeTarget.label, status);
@@ -745,6 +876,11 @@ export function ConnectionHost({
         onPendingRepoConsumed={() => setPendingRepoPath(null)}
         pendingAddPath={pendingAddPath ?? undefined}
         onPendingAddConsumed={() => setPendingAddPath(null)}
+        sources={sources}
+        activeSource={activeSource}
+        connectSource={connectSource}
+        pendingSourceBrowse={pendingSourceBrowse ?? undefined}
+        onPendingSourceBrowseConsumed={() => setPendingSourceBrowse(null)}
         logWslConnect={logWslConnect}
       />
       {daemonBanner}

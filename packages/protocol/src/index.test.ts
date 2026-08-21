@@ -7,6 +7,7 @@ import {
   isCommandName,
   parseCommandInput,
   parseCommandOutput,
+  projectSchema,
   settingsLayerSchema,
   settingsProjectSchema,
 } from "./index";
@@ -372,5 +373,39 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
       parseCommandOutput("settings.setKeybinding", { keybindings: { "nav.back": "mod+e" } })
         .keybindings,
     ).toEqual({ "nav.back": "mod+e" });
+  });
+});
+
+describe("fs.listDir — source directory browser contract", () => {
+  it("accepts an optional path and returns dir entries", () => {
+    const input = commandDefinitions["fs.listDir"].input.parse({});
+    expect(input).toEqual({});
+    const out = commandDefinitions["fs.listDir"].output.parse({
+      result: {
+        path: "/home/rai",
+        home: "/home/rai",
+        parent: "/home",
+        entries: [{ name: "dev", path: "/home/rai/dev", isRepo: false, unreadable: false }],
+      },
+    });
+    expect(out.result.entries[0]?.name).toBe("dev");
+  });
+});
+
+describe("projectSchema — source defaults to local for pre-existing rows", () => {
+  it("projectSchema defaults missing source to local and accepts wsl/remote", () => {
+    const legacy = projectSchema.parse({
+      id: "1",
+      name: "x",
+      path: "/p",
+      kind: "repo",
+      repoCount: 1,
+      branchCount: 0,
+      primaryBranch: "main",
+      openPath: "/p",
+      addedAt: new Date().toISOString(),
+    });
+    expect(legacy.source).toBe("local");
+    expect(projectSchema.parse({ ...legacy, source: "wsl:Ubuntu" }).source).toBe("wsl:Ubuntu");
   });
 });
