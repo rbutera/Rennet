@@ -47,7 +47,7 @@ Contracts and rulings wins on general product and architecture conflicts, and Pr
 
 - Never use client repositories, code, pull requests, screenshots, data, time, or infrastructure for development, fixtures, calibration, or model-backed dogfood without written authorization.
 - Never add AI attribution or co-author trailers. Rai is the sole author.
-- Rennet is **MIT** licensed throughout, with one licence for every package.
+- Rennet is **FSL-1.1-MIT** licensed throughout (Functional Source License, MIT Future License: source-available, no competing commercial use, each release converting to MIT two years after publication), with one licence for every package. Reader-facing copy may call it "open source" in the colloquial sense; do not claim OSI approval or call the licence MIT (the competing-use restriction and the two-year MIT conversion are the real terms).
 - The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`**. The SDK spawns the user's installed `claude` binary through `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary or read a harness credential.
 - Nothing another human can see gets published without Rai clicking post. The review is his, in his voice, under his name. Use draft, preview, and post language. **Pushing a branch is not publishing**: Rennet's coding-agent loop writes and pushes freely, because submitting a pull request requires a push.
 - Say "no Rennet backend" and disclose harness/provider egress. Never claim universally that nothing leaves the machine. This is honest copy, not a consent screen — state the fact, do not make the user clear a dialog.

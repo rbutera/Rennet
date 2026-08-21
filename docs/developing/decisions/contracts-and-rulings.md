@@ -52,7 +52,7 @@ Apply the sources by scope:
 |---|---|
 | **R1** | The product and package namespace are Rennet and `@rennet/*`. |
 | **R2** | The Claude adapter uses `@anthropic-ai/claude-agent-sdk` with the user's installed `claude`. Packaging strips the SDK's platform executables. |
-| **R3** | Every Rennet package uses the MIT licence. `types` and `protocol` remain separate for architecture, not licensing. |
+| **R3** | Every Rennet package uses the FSL-1.1-MIT licence (Functional Source License, MIT Future License): source-available, free for any non-competing use, with each release converting to MIT two years after publication. This is the outbound licence and is independent of dependencies' inbound licences. `types` and `protocol` remain separate for architecture, not licensing. |
 | **R4** | Base instructions live in `@rennet/instructions`. They are product behavior, not part of the public RSP wire contract. |
 | **R6** | Disagreement is a product data shape. It requires more than one real opinion; repeated concern is evidence, not a fixed model-call count. |
 | **R7** | Review of another person's pull request and review of the user's own branch are first-class modes. |
