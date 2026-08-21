@@ -374,3 +374,19 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
     ).toEqual({ "nav.back": "mod+e" });
   });
 });
+
+describe("fs.listDir — source directory browser contract", () => {
+  it("accepts an optional path and returns dir entries", () => {
+    const input = commandDefinitions["fs.listDir"].input.parse({});
+    expect(input).toEqual({});
+    const out = commandDefinitions["fs.listDir"].output.parse({
+      result: {
+        path: "/home/rai",
+        home: "/home/rai",
+        parent: "/home",
+        entries: [{ name: "dev", path: "/home/rai/dev", isRepo: false, unreadable: false }],
+      },
+    });
+    expect(out.result.entries[0]?.name).toBe("dev");
+  });
+});

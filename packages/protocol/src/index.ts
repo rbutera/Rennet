@@ -666,6 +666,32 @@ export const discoveredRepoSchema = z.object({
 });
 export type DiscoveredRepo = z.infer<typeof discoveredRepoSchema>;
 
+/** A single child directory entry returned by `fs.listDir`'s directory browser. */
+export const fsEntrySchema = z.object({
+  /** Directory name only (not the full path). */
+  name: z.string().min(1),
+  /** Absolute path on the source's filesystem. */
+  path: z.string().min(1),
+  /** True when this directory contains a `.git` entry (a git repo). */
+  isRepo: z.boolean(),
+  /** True when the directory could not be read (permission denied); render dim, non-descendable. */
+  unreadable: z.boolean(),
+});
+export type FsEntry = z.infer<typeof fsEntrySchema>;
+
+/** The `fs.listDir` output: one directory's listing plus enough context to navigate. */
+export const fsListDirResultSchema = z.object({
+  /** The resolved absolute directory that was listed. */
+  path: z.string().min(1),
+  /** The source daemon's home directory (the browser's start point). */
+  home: z.string().min(1),
+  /** The parent directory, or null at the filesystem root. */
+  parent: z.string().nullable(),
+  /** Child directories only (files omitted), hidden dirs included, name-sorted. */
+  entries: z.array(fsEntrySchema),
+});
+export type FsListDirResult = z.infer<typeof fsListDirResultSchema>;
+
 /**
  * The read-only discovery result: what the worktree-config step renders as
  * EDITABLE DEFAULTS, never questions (User Journey stage 1). `repos` are the
@@ -2639,6 +2665,13 @@ export const commandDefinitions = {
       kind: projectKindSchema,
     }),
     output: z.object({ discovery: discoveryResultSchema }),
+  },
+  "fs.listDir": {
+    // Read-only directory listing on the ATTACHED source's own daemon (local, in-distro
+    // WSL, or a paired remote). Deliberately ungated: this is the browser, not a grant —
+    // an empty `path` answers from the daemon's home dir; any absolute path is listable.
+    input: z.object({ path: z.string().optional() }),
+    output: z.object({ result: fsListDirResultSchema }),
   },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.
