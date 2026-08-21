@@ -21,6 +21,8 @@ interface FakeState {
   node: string;
   /** Exit code the bundle `test -f` returns (1 = absent ⇒ deliver; 2 = probe failed). */
   testExit: number;
+  /** Set true once `cp` runs, so the post-copy verify `test -f` reads present. */
+  copied?: boolean;
   /** What `cat daemon.json` + `/healthz` currently reflect (null ⇒ no daemon). */
   daemon: FakeDaemon | null;
   /** Pids `kill` was asked to signal, in order. */
@@ -59,10 +61,13 @@ function makeRun(state: FakeState): WslRunner {
           }
         : { stdout: "", code: 1 };
     }
-    if (program === "test") return { stdout: "", code: state.testExit };
+    if (program === "test") return { stdout: "", code: state.copied ? 0 : state.testExit };
     if (program === "mkdir") return { stdout: "", code: 0 };
-    if (program === "wslpath") return { stdout: "/mnt/c/rennet/rennet.cjs\n", code: 0 };
-    if (program === "cp") return { stdout: "", code: 0 };
+    if (program === "wslpath") return { stdout: "/mnt/c/rennet/dist/server/index.cjs\n", code: 0 };
+    if (program === "cp") {
+      state.copied = true;
+      return { stdout: "", code: 0 };
+    }
     if (program === "kill") {
       const pid = Number(progArgs[0]);
       state.killed.push(pid);
@@ -106,7 +111,7 @@ function makeSpawn(state: FakeState, next: FakeDaemon) {
 function baseDeps(state: FakeState, spawn: ReturnType<typeof makeSpawn>) {
   return {
     serverVersion: "1.2.3",
-    hostBundlePath: "C:\\Users\\rai\\rennet\\rennet.cjs",
+    hostBundlePath: "C:\\Users\\rai\\rennet\\dist\\server\\index.cjs",
     run: makeRun(state),
     spawn,
     fetch: makeFetch(state),
@@ -262,7 +267,7 @@ describe("WSL secret store is distro-native (Group 4)", () => {
 
     await ensureWslDaemon("Ubuntu", {
       serverVersion: "1.2.3",
-      hostBundlePath: "C:\\Users\\rai\\rennet\\rennet.cjs",
+      hostBundlePath: "C:\\Users\\rai\\rennet\\dist\\server\\index.cjs",
       run: makeRun(state),
       spawn,
       fetch: makeFetch(state),

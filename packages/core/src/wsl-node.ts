@@ -69,12 +69,15 @@ export interface WslDaemonLaunchSpec {
 }
 
 /**
- * The `wsl.exe … -e <node> <bundle> serve --data-dir <dir>` descriptor the shell
+ * The `wsl.exe … -e <node> <bundle> --data-dir <dir>` descriptor the shell
  * spawns (exactly the invocation the spike ran). Built through `locusCommand`, so
  * argv is byte-verbatim and there is no shell in the daemon's launch path.
  */
 export function buildWslDaemonLaunch(spec: WslDaemonLaunchSpec): LocusCommand {
-  const args = [spec.bundlePath, "serve", "--data-dir", spec.dataDir];
+  // No `serve` subcommand: the packaged daemon entry (index.cjs = daemon-main) takes
+  // `--data-dir` directly, exactly as the host `spawnDaemon` invokes it. (The CLI with
+  // subcommands is a different bundle; this is the daemon entry.)
+  const args = [spec.bundlePath, "--data-dir", spec.dataDir];
   if (spec.serverVersion) args.push("--server-version", spec.serverVersion);
   if (spec.uiDistPath) args.push("--ui-dist", spec.uiDistPath);
   return locusCommand({ kind: "wsl", distro: spec.distro }, spec.nodePath, args);

@@ -14,14 +14,14 @@ import {
 const PROMPT_ESC = "\x1b[5 q";
 
 describe("wslServerBundlePath", () => {
-  it("builds the versioned distro-native bundle path", () => {
+  it("builds the versioned distro-native entry path (index.cjs)", () => {
     expect(wslServerBundlePath("/home/rai", "0.3.12")).toBe(
-      "/home/rai/.rennet/server/0.3.12/rennet.cjs",
+      "/home/rai/.rennet/server/0.3.12/index.cjs",
     );
   });
 
   it("does not double the separator for a root-ish home", () => {
-    expect(wslServerBundlePath("/root/", "1.0.0")).toBe("/root/.rennet/server/1.0.0/rennet.cjs");
+    expect(wslServerBundlePath("/root/", "1.0.0")).toBe("/root/.rennet/server/1.0.0/index.cjs");
   });
 });
 
@@ -63,17 +63,12 @@ describe("ensureWslBundleDelivered", () => {
     distro: "Ubuntu",
     distroHome: "/home/rai",
     version: "0.3.12",
-    hostBundlePath: "C:\\Users\\rai\\rennet\\rennet.cjs",
+    hostBundlePath: "C:\\Users\\rai\\Rennet\\dist\\server\\index.cjs",
   };
-  const target = "/home/rai/.rennet/server/0.3.12/rennet.cjs";
+  const targetDir = "/home/rai/.rennet/server/0.3.12";
+  const entry = `${targetDir}/index.cjs`;
 
-  /**
-   * A fake runner that records commands and returns scripted results by index —
-   * and THROWS on any unscripted call. That makes the failure tests mutation-
-   * sensitive: if a guard were removed, delivery would call one command too many
-   * and this throws a plain Error, so the `WslBundleDeliveryError` expectation
-   * fails instead of passing for the wrong reason.
-   */
+  /** A fake runner: scripted results by index; THROWS on any unscripted call (mutation-sensitive). */
   function recorder(results: WslRunResult[]) {
     const calls: LocusCommand[] = [];
     const run = async (command: LocusCommand): Promise<WslRunResult> => {
@@ -89,30 +84,32 @@ describe("ensureWslBundleDelivered", () => {
     return { calls, run };
   }
 
-  it("is a no-op when the versioned bundle already exists", async () => {
-    const { calls, run } = recorder([{ stdout: "", code: 0 }]); // test -f → present
+  it("is a no-op when the versioned entry already exists", async () => {
+    const { calls, run } = recorder([{ stdout: "", code: 0 }]); // test -f entry → present
     const result = await ensureWslBundleDelivered(delivery, run);
 
-    expect(result).toBe(target);
+    expect(result).toBe(entry);
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual({ file: WSL_EXE, args: ["-d", "Ubuntu", "-e", "test", "-f", target] });
+    expect(calls[0]).toEqual({ file: WSL_EXE, args: ["-d", "Ubuntu", "-e", "test", "-f", entry] });
   });
 
-  it("copies once when absent: test → mkdir → wslpath → cp", async () => {
+  it("delivers the whole server DIRECTORY when absent: test → mkdir → wslpath → cp -r → verify", async () => {
     const { calls, run } = recorder([
-      { stdout: "", code: 1 }, // test -f → absent
-      { stdout: "", code: 0 }, // mkdir -p
-      { stdout: "/mnt/c/Users/rai/rennet/rennet.cjs\n", code: 0 }, // wslpath -u
-      { stdout: "", code: 0 }, // cp
+      { stdout: "", code: 1 }, // test -f entry → absent
+      { stdout: "", code: 0 }, // mkdir -p targetDir
+      { stdout: "/mnt/c/Users/rai/Rennet/dist/server/index.cjs\n", code: 0 }, // wslpath -u
+      { stdout: "", code: 0 }, // cp -r <dir>/. targetDir
+      { stdout: "", code: 0 }, // verify test -f entry
     ]);
     const result = await ensureWslBundleDelivered(delivery, run);
 
-    expect(result).toBe(target);
+    expect(result).toBe(entry);
     expect(calls.map((c) => c.args)).toEqual([
-      ["-d", "Ubuntu", "-e", "test", "-f", target],
-      ["-d", "Ubuntu", "-e", "mkdir", "-p", "/home/rai/.rennet/server/0.3.12"],
-      ["-d", "Ubuntu", "-e", "wslpath", "-u", "C:\\Users\\rai\\rennet\\rennet.cjs"],
-      ["-d", "Ubuntu", "-e", "cp", "/mnt/c/Users/rai/rennet/rennet.cjs", target],
+      ["-d", "Ubuntu", "-e", "test", "-f", entry],
+      ["-d", "Ubuntu", "-e", "mkdir", "-p", targetDir],
+      ["-d", "Ubuntu", "-e", "wslpath", "-u", "C:\\Users\\rai\\Rennet\\dist\\server\\index.cjs"],
+      ["-d", "Ubuntu", "-e", "cp", "-r", "/mnt/c/Users/rai/Rennet/dist/server/.", targetDir],
+      ["-d", "Ubuntu", "-e", "test", "-f", entry],
     ]);
     expect(calls.every((c) => c.file === WSL_EXE)).toBe(true);
   });
@@ -122,7 +119,7 @@ describe("ensureWslBundleDelivered", () => {
     await expect(
       ensureWslBundleDelivered({ ...delivery, distroHome: "" }, run),
     ).rejects.toBeInstanceOf(WslBundleDeliveryError);
-    expect(calls).toHaveLength(0); // never spawned anything.
+    expect(calls).toHaveLength(0);
   });
 
   it("stops AT the `test` probe when it fails (code neither 0 nor 1)", async () => {
@@ -130,13 +127,13 @@ describe("ensureWslBundleDelivered", () => {
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
-    expect(calls).toHaveLength(1); // only the probe ran — the guard stopped here.
+    expect(calls).toHaveLength(1);
   });
 
   it("stops AT mkdir when it fails", async () => {
     const { calls, run } = recorder([
-      { stdout: "", code: 1 }, // absent
-      { stdout: "", code: 1 }, // mkdir fails
+      { stdout: "", code: 1 },
+      { stdout: "", code: 1 },
     ]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
@@ -144,40 +141,54 @@ describe("ensureWslBundleDelivered", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("stops AT wslpath when it exits nonzero (even with absolute stdout), never issuing cp", async () => {
+  it("stops AT wslpath when it exits nonzero, never issuing cp", async () => {
     const { calls, run } = recorder([
-      { stdout: "", code: 1 }, // absent
-      { stdout: "", code: 0 }, // mkdir ok
-      { stdout: "/mnt/c/x/rennet.cjs\n", code: 3 }, // absolute stdout BUT nonzero exit
+      { stdout: "", code: 1 },
+      { stdout: "", code: 0 },
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 3 },
     ]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
-    expect(calls).toHaveLength(3); // cp never issued.
+    expect(calls).toHaveLength(3);
   });
 
   it("stops AT wslpath when its output is non-absolute, never issuing cp", async () => {
     const { calls, run } = recorder([
-      { stdout: "", code: 1 }, // absent
-      { stdout: "", code: 0 }, // mkdir ok
-      { stdout: "wslpath: cannot access\n", code: 0 }, // exit 0 but non-absolute output
+      { stdout: "", code: 1 },
+      { stdout: "", code: 0 },
+      { stdout: "wslpath: cannot access\n", code: 0 },
     ]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
-    expect(calls).toHaveLength(3); // cp never issued.
+    expect(calls).toHaveLength(3);
   });
 
   it("throws AT cp when it fails (a failed copy is never reported as delivered)", async () => {
     const { calls, run } = recorder([
-      { stdout: "", code: 1 }, // absent
-      { stdout: "", code: 0 }, // mkdir ok
-      { stdout: "/mnt/c/x/rennet.cjs\n", code: 0 }, // wslpath ok
-      { stdout: "", code: 1 }, // cp fails
+      { stdout: "", code: 1 },
+      { stdout: "", code: 0 },
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 },
+      { stdout: "", code: 1 }, // cp -r fails
     ]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
     expect(calls).toHaveLength(4);
+  });
+
+  it("throws when the entry is missing after copy (partial delivery is not 'delivered')", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 1 }, // absent
+      { stdout: "", code: 0 }, // mkdir
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 }, // wslpath
+      { stdout: "", code: 0 }, // cp -r ok
+      { stdout: "", code: 1 }, // verify test -f entry → MISSING
+    ]);
+    await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
+      WslBundleDeliveryError,
+    );
+    expect(calls).toHaveLength(5);
   });
 });
