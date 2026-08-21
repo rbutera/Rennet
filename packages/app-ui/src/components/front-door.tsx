@@ -159,6 +159,9 @@ export function FrontDoor({
       step: "type-path",
       kind: pendingSourceBrowse.kind,
       source: pendingSourceBrowse.source,
+      // A recent restore carries its path across the remount; a plain switcher browse has none
+      // (the DirectoryBrowser then opens at the newly attached daemon's home dir).
+      path: pendingSourceBrowse.path,
       busy: false,
     });
     onPendingSourceBrowseConsumed?.();
@@ -501,23 +504,36 @@ function TypeAndPath({
   // the whole app onto that daemon (this instance tears down; the fresh mount restores the browse
   // via `pendingSourceBrowse`). Local, or already attached, stays put. `busy` doubles as the
   // switcher's "connecting…" state — the two never overlap (you either switch or continue).
-  async function selectSource(id: ProjectSource): Promise<void> {
-    if (id === flow.source || flow.busy) return;
-    onError(undefined);
-    if (!connectSource) {
-      onFlow({ ...flow, source: id, path: undefined });
+  async function selectSource(
+    id: ProjectSource,
+    // A recent row passes its kind + path so re-selecting a recent RESTORES them (rather than
+    // clearing the path like a plain switcher select); they ride through the attach/remount.
+    browse?: { kind: ProjectKind; path: string },
+  ): Promise<void> {
+    if (flow.busy) return;
+    const kind = browse?.kind ?? flow.kind;
+    const path = browse?.path;
+    if (id === flow.source) {
+      // Same daemon already attached: no switch. A recent still jumps to its path + kind;
+      // a plain re-select of the current source is a no-op.
+      if (browse) onFlow({ ...flow, kind, path });
       return;
     }
-    onFlow({ ...flow, source: id, path: undefined, busy: true });
+    onError(undefined);
+    if (!connectSource) {
+      onFlow({ ...flow, kind, source: id, path });
+      return;
+    }
+    onFlow({ ...flow, kind, source: id, path: undefined, busy: true });
     try {
-      const outcome = await connectSource(id, flow.kind);
+      const outcome = await connectSource(id, kind, path);
       if (outcome.error) {
         onFlow({ ...flow, busy: false }); // the prior source stays selected; surface the fault
         onError(outcome.error);
         return;
       }
       if (outcome.switched) return; // remounting onto that daemon; this instance tears down
-      onFlow({ ...flow, source: id, path: undefined, busy: false });
+      onFlow({ ...flow, kind, source: id, path, busy: false });
     } catch (reason) {
       onFlow({ ...flow, busy: false });
       onError(messageFrom(reason));
@@ -593,6 +609,7 @@ function TypeAndPath({
       <DirectoryBrowser
         bridge={bridge}
         reloadKey={flow.source}
+        initialPath={flow.path}
         onPathChange={(path) => onFlow({ ...flow, path })}
       />
 
@@ -606,8 +623,11 @@ function TypeAndPath({
               type="button"
               key={`${recent.kind}:${recent.path}`}
               className="recent-row w-full flex items-center gap-2.5 px-3.5 py-2.5 border-t border-line bg-transparent text-ink text-left text-base hover:bg-raised [&:first-of-type]:border-t-0"
+              // Route a recent through the SAME source-selection path the switcher takes, so a
+              // non-local recent attaches its daemon (not just relabels the source) before its
+              // path is restored — carrying kind + path across the attach/remount.
               onClick={() =>
-                onFlow({ ...flow, kind: recent.kind, path: recent.path, source: recent.source })
+                void selectSource(recent.source, { kind: recent.kind, path: recent.path })
               }
             >
               <span className="recent-icon flex-none inline-flex text-ink-faint" aria-hidden="true">

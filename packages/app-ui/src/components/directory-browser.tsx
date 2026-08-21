@@ -19,11 +19,19 @@ import { Icon } from "./icon";
 export function DirectoryBrowser({
   bridge,
   reloadKey,
+  initialPath,
   onPathChange,
 }: {
   bridge: RennetBridge;
   /** Bump this to force a reload (e.g. when the source changes). */
   reloadKey?: string;
+  /**
+   * The directory to open on mount / reload, instead of the daemon's home dir — used to
+   * RESTORE a recent project's path when a source switch remounts onto its daemon. Read
+   * only when a load fires (mount or `reloadKey` change), never reactively, so browsing
+   * away from it does not snap back.
+   */
+  initialPath?: string;
   /** Called whenever the current directory changes (browse or type). */
   onPathChange(path: string): void;
 }) {
@@ -62,9 +70,9 @@ export function DirectoryBrowser({
       });
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — fires on mount and whenever bridge/reloadKey change; the body reads `load` (redefined fresh each render off the same bridge) rather than a stale closure, so listing `load` itself would re-run every render.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — fires on mount and whenever bridge/reloadKey change; the body reads `load`/`initialPath` fresh each render (off the same bridge) rather than a stale closure, so listing them would re-run every render. `initialPath` is a mount-time SEED, not a reactive input.
   useEffect(() => {
-    load();
+    load(initialPath);
   }, [bridge, reloadKey]);
 
   const loaded = path !== null;

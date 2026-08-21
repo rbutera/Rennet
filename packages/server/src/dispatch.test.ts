@@ -2799,6 +2799,36 @@ describe("createDispatch — front door (issue #29)", () => {
     expect(allowedRoots.has("/orbital/atlas")).toBe(true);
   });
 
+  it("carries the selected source end to end: discover(source) → add → persisted Project.source", async () => {
+    // The whole-branch promise: a non-local selection must survive to the persisted
+    // Project. `discoverProject` can't name its own source (an in-distro POSIX path
+    // reads as local), so the frontDoorHarness stub — like the real adapter — returns
+    // `source: "local"`; the discover HANDLER is what stamps the SELECTED source onto
+    // the discovery the client gets. This test fails if that stamp is missing.
+    const { dispatch, discoverCalls, addCalls } = frontDoorHarness({});
+    await dispatch("repository.choose", {});
+
+    const discovered = (await dispatch("project.discover", {
+      commandId: randomUUID(),
+      path: REPO,
+      kind: "repo",
+      source: "wsl:Ubuntu",
+    })) as { discovery: DiscoveryResult };
+    // The adapter ran locally and reported "local"; the handler overrode it.
+    expect(discoverCalls).toEqual([{ path: REPO, kind: "repo" }]);
+    expect(discovered.discovery.source).toBe("wsl:Ubuntu");
+
+    const added = (await dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: discovered.discovery,
+      includedRepos: [],
+      primaryBranch: "main",
+    })) as { project: Project; projects: Project[] };
+    // The selected source rode through into the persisted Project.
+    expect(added.project.source).toBe("wsl:Ubuntu");
+    expect(addCalls[0]?.discovery.source).toBe("wsl:Ubuntu");
+  });
+
   it("harness.detect returns the detected harnesses for the ambient line", async () => {
     const { dispatch } = frontDoorHarness({
       detected: [

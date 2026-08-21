@@ -227,7 +227,8 @@ describe("FrontDoor — source switcher in the add flow", () => {
     // flow's default kind ("repo"). switched:true remounts the app — this instance stops.
     fireEvent.click(getByRole("button", { name: /WSL: Ubuntu/ }));
     await waitFor(() => expect(connectSource).toHaveBeenCalledTimes(1));
-    expect(connectSource).toHaveBeenCalledWith("wsl:Ubuntu", "repo");
+    // A plain switcher select carries no browse path (only a recent restore does).
+    expect(connectSource).toHaveBeenCalledWith("wsl:Ubuntu", "repo", undefined);
   });
 
   it("carries the selected source into discover on a local add (switched:false)", async () => {
@@ -315,6 +316,44 @@ describe("FrontDoor — source switcher in the add flow", () => {
     // The switcher now shows the recent's source selected — proof the source was restored.
     expect(getByRole("button", { name: /WSL: Ubuntu/ }).getAttribute("aria-pressed")).toBe("true");
     expect(getByRole("button", { name: /^Local/ }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("ATTACHES a non-local recent's daemon (not just relabels the source)", async () => {
+    // The I2 defect: a non-local recent set the source LABEL but never asked the shell to
+    // attach that source's daemon, so the browse then ran on the wrong (local) daemon. The
+    // recent must route through `connectSource` exactly like the switcher, carrying its path.
+    const wslProject: Project = {
+      id: "p1",
+      name: "orbital",
+      path: "/home/rai/orbital",
+      kind: "repo",
+      repoCount: 1,
+      branchCount: 2,
+      primaryBranch: "main",
+      openPath: "/home/rai/orbital",
+      addedAt: "2026-08-09T00:00:00.000Z",
+      source: "wsl:Ubuntu",
+    };
+    const { bridge } = fakeBridge({ projects: [wslProject], chosenPath: "/home/rai" });
+    const connectSource = vi.fn(async () => ({ switched: true }));
+    const { container, getByRole } = mount(
+      <FrontDoor
+        bridge={bridge}
+        sources={sources}
+        connectSource={connectSource}
+        onOpenProject={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".project-rows")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Add a project/ }));
+    await waitFor(() => expect(container.querySelector(".recent-row")).not.toBeNull());
+
+    fireEvent.click(container.querySelector(".recent-row") as HTMLElement);
+
+    // The recent attached its OWN daemon, carrying its kind + path across the switch.
+    await waitFor(() => expect(connectSource).toHaveBeenCalledTimes(1));
+    expect(connectSource).toHaveBeenCalledWith("wsl:Ubuntu", "repo", "/home/rai/orbital");
   });
 
   it("completes a pending add on the distro daemon exactly once, then clears it", async () => {

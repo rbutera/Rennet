@@ -113,6 +113,9 @@ export interface PendingAdd {
 export type ConnectSource = (
   source: ProjectSource,
   kind: ProjectKind,
+  /** A directory to RESTORE the browse on once attached (a recent project's path); rides through
+   *  the remount via {@link PendingSourceBrowse} so it survives the daemon switch. */
+  browsePath?: string,
 ) => Promise<{ switched: boolean; error?: string }>;
 
 /** A source (+kind) the NEXT-mounted FrontDoor should RESTORE the browse step on — set when a
@@ -120,6 +123,8 @@ export type ConnectSource = (
 export interface PendingSourceBrowse {
   readonly source: ProjectSource;
   readonly kind: ProjectKind;
+  /** The directory to reopen the browser at (a recent project's path), when restoring a recent. */
+  readonly path?: string;
 }
 
 export interface ConnectionHostProps {
@@ -627,11 +632,11 @@ export function ConnectionHost({
   // the browse step there. Reuses `resolveDaemonTarget` (WSL, via a synthetic UNC keyed on the
   // distro id) and the saved paired daemons (remote) — the same owned/attached machinery.
   const connectSource = useCallback<ConnectSource>(
-    async (source, kind) => {
+    async (source, kind, browsePath) => {
       if (source === "local") {
         // Only a switch if we are currently on a NON-local daemon (a prior source browse).
         if (activeId === defaultTarget.id) return { switched: false };
-        setPendingSourceBrowse({ source, kind });
+        setPendingSourceBrowse({ source, kind, path: browsePath });
         switchTo(defaultTarget.id);
         return { switched: true };
       }
@@ -641,7 +646,7 @@ export function ConnectionHost({
         const resolution = await resolveDaemonTarget(`\\\\wsl.localhost\\${distro}`);
         if (resolution.error) return { switched: false, error: resolution.error };
         if (resolution.switched && resolution.target) {
-          setPendingSourceBrowse({ source, kind });
+          setPendingSourceBrowse({ source, kind, path: browsePath });
           activateLocalTarget(resolution.target);
           return { switched: true };
         }
@@ -651,7 +656,7 @@ export function ConnectionHost({
         const deviceId = source.slice("remote:".length);
         const target = saved.find((candidate) => candidate.id === `daemon:${deviceId}`);
         if (!target) return { switched: false, error: "That remote is no longer paired here." };
-        setPendingSourceBrowse({ source, kind });
+        setPendingSourceBrowse({ source, kind, path: browsePath });
         switchTo(target.id);
         return { switched: true };
       }

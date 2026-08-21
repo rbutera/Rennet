@@ -159,11 +159,23 @@ describe("RennetApp — the lifted store resets on review change (regression)", 
       // Front-door mount + the direct-entry capture door.
       if (name === "projects.list") return { projects: [] };
       if (name === "harness.detect") return { harness: null };
+      if (name === "fs.listDir")
+        // The in-app directory picker modal browses here (native OS dialog retired).
+        return {
+          result: {
+            path: reviewB.repositoryRoot,
+            home: reviewB.repositoryRoot,
+            parent: null,
+            entries: [],
+          },
+        };
       if (name === "repository.choose") return { path: reviewB.repositoryRoot };
       if (name === "review.capture") return { review: nextCapture };
       throw new Error(`unhandled ${name}`);
     };
-    const { user, container, getByText } = mount(<RennetApp bridge={{ invoke } as RennetBridge} />);
+    const { user, container, getByRole, getByText } = mount(
+      <RennetApp bridge={{ invoke } as RennetBridge} />,
+    );
 
     // Review A's workspace (the enriched canvas set) renders.
     await waitFor(() => expect(container.querySelector(".canvas-app")).toBeTruthy());
@@ -190,6 +202,11 @@ describe("RennetApp — the lifted store resets on review change (regression)", 
     expect(container.querySelector(".front-door-direct")).toBeNull();
     await runCommand("Review directly");
     await user.click(getByText("Choose a repository"));
+    // The in-app picker modal opens; pick the browsed path, then Continue captures it.
+    await waitFor(() =>
+      expect((getByRole("button", { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    await user.click(getByRole("button", { name: /Continue/ }));
 
     // Review B's workspace renders — and it is CLEAN: the default Decisions lens at
     // the Roll-up altitude, not A's Flagged/Cohort view (the regression this guards).

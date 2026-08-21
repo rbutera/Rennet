@@ -1362,7 +1362,12 @@ export function createDispatch(
           const input = parseCommandInput(name, rawInput);
           assertAllowedRepository(input.path);
           const discovery = await deps.discoverProject({ path: input.path, kind: input.kind });
-          return parseCommandOutput(name, { discovery });
+          // `discoverProject` runs on the selected source's daemon but can't name
+          // itself (an in-distro POSIX path is indistinguishable from local), so it
+          // hardcodes `source: "local"`. Stamp the SELECTED source onto the discovery
+          // the client gets, so it rides through `projects.add` into the persisted
+          // Project — without this, every project persists as `local`.
+          return parseCommandOutput(name, { discovery: { ...discovery, source: input.source } });
         }
         case "fs.listDir": {
           // Ungated browse on the attached source's own daemon. Empty path ⇒ home dir.
@@ -1374,11 +1379,12 @@ export function createDispatch(
           // Confirm. MAIN derives the stored shape from the discovery + the toggle
           // choices, then grants the new open target so the row is immediately openable.
           const input = parseCommandInput(name, rawInput);
-          // The daemon this project lives on: prefer the discovery's own stamp
-          // (where it actually ran), else the confirmed top-level source, else local.
-          const source = input.discovery.source ?? input.source ?? "local";
+          // The daemon this project lives on rides in on the discovery: the discover
+          // handler stamped the selected source onto it, and `deriveProjectDraft`
+          // persists `discovery.source`. The `?? "local"` only fires for a caller that
+          // omitted it entirely (schema default), never masking a real selection.
           const { project, projects } = deps.projects.add({
-            discovery: { ...input.discovery, source },
+            discovery: { ...input.discovery, source: input.discovery.source ?? "local" },
             includedRepos: [...input.includedRepos],
             primaryBranch: input.primaryBranch,
           });

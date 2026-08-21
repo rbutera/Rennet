@@ -94,6 +94,7 @@ import { ContextMapView } from "../components/context-map-view";
 import { ConversationPanel } from "../components/conversation-panel";
 import { DeltaAccountPanel } from "../components/delta-account-panel";
 import { DestinationFrame } from "../components/destination-frame";
+import { DirectoryPickerModal } from "../components/directory-picker-modal";
 import { FrontDoor } from "../components/front-door";
 import { HandoffPaper, type HandoffRunState } from "../components/handoff-paper";
 import { Icon } from "../components/icon";
@@ -403,6 +404,18 @@ export function RennetApp({
   // The legacy direct-entry capability is palette-only. It is an overlay beside
   // the surface stack, never a location recorded in navigation history.
   const [directEntryOpen, setDirectEntryOpen] = useState(false);
+  // The in-app directory picker (source-aware project selection): the native OS folder
+  // dialog is retired, so `chooseRepository` and the PR clone fallback pick a path THROUGH
+  // the DirectoryBrowser modal on the CURRENT daemon. A pending pick holds its title +
+  // resolve; the modal (rendered globally beside `updatePrompt`) settles the promise.
+  const [pickRequest, setPickRequest] = useState<{
+    title: string;
+    confirmLabel?: string;
+    resolve: (path: string | null) => void;
+  } | null>(null);
+  function pickDirectory(title: string, confirmLabel?: string): Promise<string | null> {
+    return new Promise((resolve) => setPickRequest({ title, confirmLabel, resolve }));
+  }
   // The settings screen (wireframe #15): opened from the front door, closed back
   // to it. `scheme` is the reviewer's chosen appearance, fetched once and applied
   // to the front door's `data-scheme` — so changing it in settings re-themes here.
@@ -1294,10 +1307,15 @@ export function RennetApp({
   }, [pendingRepoPath, captureRepository, onPendingRepoConsumed]);
 
   async function chooseRepository(): Promise<void> {
+    // Pick a directory in-app (the native OS dialog is retired) BEFORE going busy — the
+    // modal is the interactive step; cancelling just closes it.
+    const picked = await pickDirectory("Choose a repository");
+    if (!picked) return;
     setBusy(true);
     setError(undefined);
     try {
-      const { path } = await bridge.invoke("repository.choose", {});
+      // Grant the picked path on the current daemon (repository.choose forwards {path}).
+      const { path } = await bridge.invoke("repository.choose", { path: picked });
       if (!path) return;
       // WSL connect flow: a directory inside a distro switches the whole app onto that
       // distro's daemon (a remount) and the remounted app captures the repo there — so this
@@ -1395,8 +1413,11 @@ export function RennetApp({
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
         if (!message.includes("Pick a local clone")) throw reason;
-        // Clone-on-demand could not clone the repo; fall back to the picker.
-        const { path } = await bridge.invoke("repository.choose", {});
+        // Clone-on-demand could not clone the repo; fall back to the in-app picker
+        // (the native OS dialog is retired) to point at a local clone.
+        const picked = await pickDirectory("Pick a local clone", "Use this clone");
+        if (!picked) return;
+        const { path } = await bridge.invoke("repository.choose", { path: picked });
         if (!path) return;
         repoPath = path;
       }
@@ -2340,6 +2361,23 @@ export function RennetApp({
     });
   }, [bridge]);
   const updatePrompt = <UpdateReadyPrompt onApply={() => bridge.applyUpdate?.()} />;
+  // The in-app directory picker overlay (source-aware project selection). Portalled, so it
+  // sits beside `updatePrompt` in every surface branch and settles the pending pick promise.
+  const pickerModal = pickRequest ? (
+    <DirectoryPickerModal
+      bridge={bridge}
+      title={pickRequest.title}
+      confirmLabel={pickRequest.confirmLabel}
+      onPick={(path) => {
+        pickRequest.resolve(path);
+        setPickRequest(null);
+      }}
+      onCancel={() => {
+        pickRequest.resolve(null);
+        setPickRequest(null);
+      }}
+    />
+  ) : null;
 
   const palette = (
     <CommandPalette
@@ -2440,6 +2478,7 @@ export function RennetApp({
     return (
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
         {updatePrompt}
+        {pickerModal}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
           <ChromeMenu
             size={16}
@@ -2473,6 +2512,7 @@ export function RennetApp({
     return (
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
         {updatePrompt}
+        {pickerModal}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
           <ChromeMenu
             size={16}
@@ -2510,6 +2550,7 @@ export function RennetApp({
       <div className="navigation-shell min-h-screen bg-canvas text-ink">
         {palette}
         {updatePrompt}
+        {pickerModal}
         <header className="navigation-titlebar fixed inset-x-0 top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-canvas px-4 [[data-platform=darwin]_&]:pl-20">
           <ChromeMenu
             size={16}
@@ -2668,6 +2709,7 @@ export function RennetApp({
         />
         {palette}
         {updatePrompt}
+        {pickerModal}
       </>,
     );
   }
@@ -2691,6 +2733,7 @@ export function RennetApp({
         />
         {palette}
         {updatePrompt}
+        {pickerModal}
       </>,
     );
   }
@@ -2727,6 +2770,7 @@ export function RennetApp({
         />
         {palette}
         {updatePrompt}
+        {pickerModal}
       </>,
     );
   }
@@ -3095,6 +3139,7 @@ export function RennetApp({
       {destinationChrome}
       {palette}
       {updatePrompt}
+      {pickerModal}
     </>,
   );
 }
