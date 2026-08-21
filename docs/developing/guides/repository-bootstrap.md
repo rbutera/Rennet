@@ -29,12 +29,12 @@ pnpm nx show project rennet-core --json
 pnpm nx show project rennet-desktop --json
 ```
 
-The production workspace contains four apps and nine packages:
+The production workspace contains four apps and ten packages:
 
 | Area | Projects |
 |---|---|
 | Apps | `rennet-desktop`, `rennet-docs`, `rennet-marketing`, `rennet-mobile` |
-| Product packages | `rennet-types`, `rennet-protocol`, `rennet-instructions`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-theme` |
+| Product packages | `rennet-types`, `rennet-protocol`, `rennet-instructions`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-app-ui`, `rennet-theme` |
 
 `rennet-docs-content` represents the canonical Markdown library under `docs/`.
 The root `rennet` project owns repository-wide checks. Spikes have their own Nx
@@ -55,6 +55,7 @@ flowchart TD
   server["@rennet/server"]
   client["@rennet/client"]
   ui["@rennet/ui"]
+  appui["@rennet/app-ui"]
   desktop["apps/desktop"]
   mobile["apps/mobile"]
 
@@ -74,11 +75,14 @@ flowchart TD
   client --> types
   client --> protocol
   ui --> types
-  ui --> protocol
   ui --> theme
+  appui --> types
+  appui --> protocol
+  appui --> theme
+  appui --> ui
   desktop --> server
   desktop --> client
-  desktop --> ui
+  desktop --> appui
   mobile --> client
   mobile --> protocol
   mobile --> types
@@ -87,8 +91,10 @@ flowchart TD
 An arrow means "imports." `types` and `theme` import no Rennet package. `core`
 contains platform-neutral product logic. `adapters` owns Git, filesystem,
 GitHub, harness, and process effects. `server` composes the daemon. `client`
-implements the transport-neutral client. `ui` stays browser-safe. The desktop
-and mobile apps are composition roots for their platforms.
+implements the transport-neutral client. `ui` is the vendored component kit,
+importing only `types` and `theme`. `app-ui` builds the Rennet interface on that
+kit. Both stay browser-safe. The desktop and mobile apps are composition roots
+for their platforms.
 
 `scripts/check-boundaries.mjs` checks manifest dependencies and source imports.
 See the [architecture overview](../concepts/architecture-overview.md) and
@@ -135,7 +141,8 @@ command. Long-running, interactive, and end-to-end targets are not cacheable.
 | Git, filesystem, network, or process effect | `packages/adapters` |
 | Daemon composition or dispatch | `packages/server` |
 | Client transport and projection | `packages/client` |
-| Browser-safe React UI | `packages/ui` |
+| Vendored component primitive | `packages/ui` |
+| Rennet review interface | `packages/app-ui` |
 | Electron integration | `apps/desktop` |
 | Expo integration | `apps/mobile` |
 

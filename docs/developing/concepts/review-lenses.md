@@ -1,6 +1,6 @@
 ---
 title: Review lenses
-description: How Sequence, Spec, Decisions, Flagged, and Noise organize one immutable changeset.
+description: How Spec, Sequence, Decisions, Noise, and Flagged organize one immutable changeset.
 ---
 
 The five review lenses share one immutable patchset and give it five useful
@@ -10,24 +10,36 @@ recorded disposition.
 ```mermaid
 flowchart LR
   patch["Immutable patchset"]
-  sequence["Sequence<br/>reading order"]
   spec["Spec<br/>requirement coverage"]
+  sequence["Sequence<br/>reading order"]
   decisions["Decisions<br/>judgment queue"]
-  flagged["Flagged<br/>finding index"]
   noise["Noise<br/>visible remainder"]
+  flagged["Flagged<br/>finding index"]
   blast["Blast radius<br/>overlay"]
 
-  patch --> sequence
   patch --> spec
+  patch --> sequence
   patch --> decisions
-  patch --> flagged
   patch --> noise
-  blast -.-> sequence
+  patch --> flagged
   blast -.-> spec
+  blast -.-> sequence
   blast -.-> decisions
-  blast -.-> flagged
   blast -.-> noise
+  blast -.-> flagged
 ```
+
+## Spec
+
+Spec answers "did the implementation satisfy its stated intent?" The server
+captures available OpenSpec material with the patchset and builds a structured
+spec model from that frozen input. Coverage mapping connects requirements to
+implementation occurrences and preserves unmatched requirements as visible
+gaps.
+
+The lens distinguishes the requirement text, its implementation evidence, and
+the model's coverage judgment. A coverage claim does not replace the underlying
+source anchors.
 
 ## Sequence
 
@@ -43,18 +55,6 @@ make captured code disappear.
 Each cohort carries its source anchors. Opening a cohort reveals the same
 occurrences used by the other lenses.
 
-## Spec
-
-Spec answers "did the implementation satisfy its stated intent?" The server
-captures available OpenSpec material with the patchset and builds a structured
-spec model from that frozen input. Coverage mapping connects requirements to
-implementation occurrences and preserves unmatched requirements as visible
-gaps.
-
-The lens distinguishes the requirement text, its implementation evidence, and
-the model's coverage judgment. A coverage claim does not replace the underlying
-source anchors.
-
 ## Decisions
 
 Decisions answers "which choices deserve judgment?" Its runner receives the
@@ -65,6 +65,16 @@ evidence and a reconstructed rationale where the source does not state one.
 The reconstruction is labeled as model analysis. It is not presented as an
 author quote or repository fact. The reviewer can inspect the anchored code and
 record a disposition without accepting the proposed rationale.
+
+## Noise
+
+Noise is the visible remainder, not a discard bin. The noise runner proposes
+patterns and classifies matching occurrences. Items that deviate from a proposed
+pattern are ejected back into ordinary review attention.
+
+Noise groups identify whether their source is a rule or a noise job. The UI
+distinguishes a successful empty result from a failed analysis. Every item keeps
+its occurrence identity and can still receive a disposition or question.
 
 ## Flagged
 
@@ -100,16 +110,6 @@ from the evidence store when the reviewer opens them.
 The status distinguishes a completed run, a non-UI change, a pending pass, and
 an unavailable verifier. A mount failure or missing evidence remains
 inconclusive; it is never presented as an all-clear.
-
-## Noise
-
-Noise is the visible remainder, not a discard bin. The noise runner proposes
-patterns and classifies matching occurrences. Items that deviate from a proposed
-pattern are ejected back into ordinary review attention.
-
-Noise groups identify whether their source is a rule or a noise job. The UI
-distinguishes a successful empty result from a failed analysis. Every item keeps
-its occurrence identity and can still receive a disposition or question.
 
 ## Blast radius
 

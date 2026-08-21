@@ -84,7 +84,7 @@ For an own branch, `composePrSubmission()` builds the submission from branch
 context and the draft. The title and body remain editable before preview.
 `prSubmissionPayload()` serializes the final submission fields in a fixed order.
 
-The desktop and browser app build these projections in `@rennet/ui`. The mobile
+The desktop and browser app build these projections in `@rennet/app-ui`. The mobile
 app cannot import the DOM-bound draft package, so it calls `publish.compose` and
 previews the exact comments or submission returned by the daemon.
 
@@ -159,10 +159,10 @@ network.
 
 | Concern | Owner |
 | --- | --- |
-| Ordered draft and editing transforms | `packages/ui/src/canvas/collation.ts` |
-| Local and outbound lane rules | `packages/ui/src/canvas/staging.ts` |
-| Desktop and browser destination projections | `packages/ui/src/canvas/publish.ts` |
-| Shared draft and preview interaction | `packages/ui/src/app.tsx` |
+| Ordered draft and editing transforms | `packages/app-ui/src/canvas/collation.ts` |
+| Local and outbound lane rules | `packages/app-ui/src/canvas/staging.ts` |
+| Desktop and browser destination projections | `packages/app-ui/src/canvas/publish.ts` |
+| Shared draft and preview interaction | `packages/app-ui/src/app.tsx` |
 | Protocol commands and payload schemas | `packages/protocol/src/index.ts` |
 | Forge-neutral review and pull request payloads | `packages/core/src/publish-review.ts`, `packages/core/src/publish-submission.ts` |
 | Daemon composition and command routing | `packages/server/src/create-server.ts`, `packages/server/src/dispatch.ts` |

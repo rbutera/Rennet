@@ -24,11 +24,11 @@ The Claude adapter starts the user's installed `claude` through
 `codex app-server`. Each harness owns its authentication; Rennet does not ask for
 provider credentials.
 
-GitHub uses Rennet's OAuth device flow and does not require the `gh` CLI. The
-Connect GitHub card shows a one-time code for `github.com/login/device`. Settings
-also accepts a personal access token and can disconnect the current account.
-Rennet stores the GitHub credential in an owner-only file under its data
-directory and validates it when a GitHub operation needs it.
+The Connect GitHub card signs in with Rennet's OAuth device flow, which needs no
+`gh` CLI. Settings also accepts a personal access token and disconnects the
+current account. Rennet stores the GitHub credential in an owner-only file under
+its data directory and validates it when a GitHub operation needs it. See
+[GitHub authentication](../../using/guides/github-auth.md) for the sign-in flow.
 
 ```mermaid
 flowchart TD
@@ -61,9 +61,12 @@ Global settings live in `~/.rennet/config.json`.
 | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
 | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
 
-The Settings screen edits appearance and keybindings. It displays shortcut
-collisions but still stores them; the first matching command wins. An invalid
-stored shortcut falls back to the catalogue default or remains unbound.
+Settings has four tabs: Global, Repo, Keyboard, and Pairing. The Global tab
+edits appearance; the Keyboard tab edits keybindings. The keybinding recorder
+needs a platform primary modifier or a bare key and rejects Shift or Alt
+combinations. It shows shortcut collisions but still stores them; the first
+matching command wins. An invalid stored shortcut falls back to the catalogue
+default or remains unbound.
 
 If `~/.rennet/config.json` is malformed, Rennet uses built-in values and disables
 writes that would replace the unreadable file. Fix or move the file, then reopen

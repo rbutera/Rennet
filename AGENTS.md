@@ -140,3 +140,10 @@ Each agent works in its own worktree, and each worktree spawns its OWN persisten
 
 
 <!-- nx configuration end-->
+
+## Design Context
+
+Target audience: software engineers who use coding agents and must answer for the large changes those agents produce. Positioning is "you stopped writing the code, you still have to answer for it" and "not for vibe coders, for agentic engineers". Two using-side readers run reviews: an engineer reviewing their own agent-written branch (question the change, hand a work order to a coding agent, review the delta, push, open a pull request) and a team reviewer posting one GitHub review under their own name. A third using reader weighs local-first operation and honest provenance before installing. The developing-side reader builds Rennet with the repo open under Rule Zero. Full personas with red flags: `docs/developing/contributing/personas.md`.
+
+Brand and voice: Rennet turns dense change into readable objects without hiding the source. The look is "The Affineur's Bench": warm opaque grounds, one gold accent, serif for review prose. Palette, type, and component rules live in `DESIGN.md`. Documentation voice, the two-audience split, and structure rules live in `docs/developing/contributing/docs-style-guide.md`. Direct and concrete language; models surface, suggest, and flag while the reviewer judges, approves, and publishes; never imply Rennet approved or posted something it did not.
+

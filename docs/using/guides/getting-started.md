@@ -21,11 +21,12 @@ flowchart LR
 1. **Choose a project.** Add one repository or a workspace containing several
    repositories and worktrees.
 2. **Choose a change.** The project list combines local branches and GitHub pull
-   requests. **Local**, **PRs**, **Mine**, and **Needs you** filter that list.
-3. **Read the change.** Use Sequence, Spec, Decisions, Flagged, and Noise without
+   requests. **All**, **Needs you**, **Mine**, **Local**, and **PRs** filter that
+   list.
+3. **Read the change.** Use Spec, Sequence, Decisions, Noise, and Flagged without
    changing the patchset under review.
-4. **Record decisions.** Comment, ask a question, request a change, discuss, or
-   approve at the relevant cohort, requirement, chunk, range, or line.
+4. **Record decisions.** Comment, ask a question, request a change, or approve at
+   the relevant cohort, requirement, chunk, range, or line.
 5. **Edit the draft.** Reword, reorder, merge, split, stage, or withdraw the
    collected items.
 6. **Review the outbound artifact.** Rennet composes the GitHub review, pull

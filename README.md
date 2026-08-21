@@ -2,7 +2,7 @@
 
 Rennet is a **local-first** code review application. It turns local changes and GitHub pull requests into an ordered review with source evidence. The reviewer remains responsible for anything posted in their name.
 
-The local daemon captures immutable patchsets, builds deterministic project context, and runs reviews through installed coding agents. Desktop, browser, and mobile clients use the same daemon. Team work can become a GitHub review. Your own branch can become an agent work order, a reviewed delta, and a pull request.
+The local daemon captures immutable patchsets, builds deterministic project context, and runs reviews through installed coding agents. Desktop and browser clients connect to the same daemon, and a native mobile client is in progress ([#383](https://github.com/rbutera/rennet/issues/383)). Team work can become a GitHub review. Your own branch can become an agent work order, a reviewed delta, and a pull request.
 
 **Website:** [rennet.dev](https://rennet.dev). **Documentation:** [docs.rennet.dev](https://docs.rennet.dev).
 
@@ -20,11 +20,14 @@ The local daemon captures immutable patchsets, builds deterministic project cont
 
 ```text
 apps/          Desktop, browser-hosting, mobile, documentation, and marketing apps
-packages/      Shared types, protocol, instructions, core, adapters, server, client, UI, and theme
+packages/      Shared types, protocol, instructions, core, adapters, server, client, UI, app UI, and theme
 scripts/       Repository gates and maintenance tooling
+tools/         Build tooling (the Nx cache proxy)
 docs/          Canonical Markdown documentation and architecture decisions
+brand/         Canonical brand assets, sources, and generated exports
 wireframes/    Current flow references, rendered images, HTML sources, and gallery
 prototypes/    Non-authoritative interface experiments
+site/          Frozen pre-launch site kept as design history, not deployed
 spikes/        Isolated evidence probes, excluded from the workspace
 ```
 

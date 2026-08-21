@@ -18,8 +18,9 @@ The center pane contains two related views. The neighborhood graph shows direct
 manifest and import relationships around the selected scope. The detail view
 shows the selected node's stored claims, evidence, confidence, and disposition.
 
-The right pane contains the orchestrator ask rail. Selecting an item in the tree
-updates the graph, details, and evidence available to that conversation.
+The right pane contains the orchestrator ask rail, titled **Orchestrator**.
+Selecting an item in the tree updates the graph, details, and evidence available
+to that conversation.
 
 A freshness badge identifies the snapshot used to build the map.
 

@@ -16,9 +16,8 @@ flat list of changed files shows where bytes moved, but not which files form one
 decision or what should be read first.
 
 Rennet groups related changes, orders them for reading, shows model findings and
-disagreements, records the reviewer's decisions, and assembles those decisions
-into an editable outbound artifact. Models assist. The reviewer decides and
-posts.
+disagreements, records the reviewer's decisions, and assembles them into an
+editable outbound artifact. Models assist. The reviewer decides and posts.
 
 ## The review loop
 
@@ -68,7 +67,7 @@ what should be sent.
 ## Reading order and risk
 
 The baseline reading order comes from deterministic dependency information. A
-model can suggest an order that introduces intent before implementation detail.
+model can suggest an order that puts intent before implementation detail.
 
 Risk is metadata on the same material, not a separate reading order. A risky
 change can be marked across the lenses without forcing every review to start at
@@ -81,8 +80,8 @@ the highest-risk line.
 | Spec | What should the change do, and which requirements have evidence? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
-| Flagged | Where did automated analysis find a problem or disagreement? |
 | Noise | What remains, and why may it need less attention? |
+| Flagged | Where did automated analysis find a problem or disagreement? |
 
 Blast-radius signals annotate these lenses. Every lens refers to the same
 patchset and anchors, so changing lenses does not change the code under review.

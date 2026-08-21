@@ -31,8 +31,7 @@ A client can reconstruct durable state by querying the daemon. Push frames carry
 | Project-detail progress | `onProjectDetailProgress(commandId)` | Each completed forge repository advances the pull-request fetch count for one project-detail request. |
 | Review conversation | `onAskStream(reviewId)` | The server broadcasts deltas by review and the client filters them by subscription. |
 | Connection state | `ConnectionSupervisor.subscribe` | Each client receives reachability changes from one supervisor. |
-| Bounded concurrent jobs | `p-queue` | Concurrency stays explicit at the scheduler that owns the work. |
-| Project-detail repository fetches | `mapLimit(..., 4, ...)` | At most four forge repositories fetch pull requests at once. |
+| Project-detail repository fetches | `mapLimit(..., 4, ...)` | At most four forge repositories fetch pull requests at once. A sibling semaphore (`MAX_CONCURRENT_LIST_FETCHES`) bounds pull-request list fetches the same way. |
 
 Rennet does not use RxJS. These mechanisms cover one-pass harness streams, keyed WebSocket subscriptions, cancellation, and explicit concurrency without placing durable review state in an observable graph.
 

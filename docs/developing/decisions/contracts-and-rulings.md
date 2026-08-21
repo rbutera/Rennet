@@ -56,7 +56,7 @@ Apply the sources by scope:
 | **R4** | Base instructions live in `@rennet/instructions`. They are product behavior, not part of the public RSP wire contract. |
 | **R6** | Disagreement is a product data shape. It requires more than one real opinion; repeated concern is evidence, not a fixed model-call count. |
 | **R7** | Review of another person's pull request and review of the user's own branch are first-class modes. |
-| **R11** | The five canvases are Spec, Sequence, Decisions, Flagged, and Noise. Blast radius is an overlay. |
+| **R11** | The five canvases are Spec, Sequence, Decisions, Noise, and Flagged. Blast radius is an overlay. |
 | **R23** | `omp` means `@oh-my-pi/pi-coding-agent`. |
 | **R26** | Rennet uses one opaque Affineur's Bench interface. Code and diff regions remain opaque. |
 
