@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import { basename } from "node:path";
 import { expect, test } from "@playwright/test";
 import { launchRennet, makeTempDir, seedReviewRepo } from "./harness";
 
@@ -31,9 +32,19 @@ test("adds a project, processes it, lists local work, and opens a review", async
       "true",
     );
 
-    // Point at a single repo, browse to the path (the test-repo env), continue.
+    // Point at a single repo. The source switcher defaults to Local, and the in-app directory
+    // browser (source-aware project selection) replaces the native picker: type the fixture path
+    // into its path bar to navigate there, then continue. No native dialog anywhere.
     await page.getByRole("button", { name: /Project repo/ }).click();
-    await page.getByRole("button", { name: "Browse" }).click();
+    await expect(page.getByRole("button", { name: /^Local/ })).toBeVisible();
+    const pathBar = page.getByRole("textbox", { name: "Directory path" });
+    await pathBar.fill(repository);
+    await pathBar.press("Enter");
+    // The breadcrumb shows the repo's own directory once the browser resolved the typed path —
+    // proof the flow's path is now the fixture, not the daemon's home it opened on.
+    await expect(
+      page.getByRole("button", { name: basename(repository), exact: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Continue" }).click();
 
     // Step 2: worktree config — the discovered repo is included by default; confirm.

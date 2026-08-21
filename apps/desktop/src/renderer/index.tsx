@@ -23,11 +23,12 @@ if (preload.platform) {
 
 // The connections surface (#381, design D4): the renderer now mounts `ConnectionHost`
 // rather than `RennetApp` directly. The DEFAULT target is this machine's own daemon (the
-// loopback port the preload injected), reached with the native directory picker for
-// `repository.choose`. A SAVED remote target is a `WsRennetBridge` at its host with its
-// device token; a browser-style path prompt stands in for the native picker (a remote
-// choose is server-side). The Electron-native preload residue (platform, the app-updater
-// channels) merges onto every target — it operates whichever daemon the window is attached
+// loopback port the preload injected). A SAVED remote target is a `WsRennetBridge` at its
+// host with its device token. The in-app directory browser (source-aware project selection)
+// retired the native directory picker AND the remote path prompt — `repository.choose` now
+// always arrives with a `{ path }` the browser supplied, on whichever source's daemon is
+// attached. The Electron-native preload residue (platform, the app-updater channels, the WSL
+// distro list) merges onto every target — it operates whichever daemon the window is attached
 // to, since those are about the installed app, not the daemon. Switching a target is a clean
 // RennetApp remount; the desktop's own daemon spawn/supervision is untouched (remote
 // attach is purely a renderer-level bridge choice).
@@ -43,22 +44,15 @@ function targetTokenStore(target: ConnectionTarget): TokenStore {
   };
 }
 
-/** Compose a full RennetBridge from the supervisor + the shell's `repository.choose` fallback. */
-function composeBridge(
-  supervisor: ConnectionSupervisor,
-  chooseDirectory: () => Promise<string | null>,
-): RennetBridge & { close?(): void } {
-  const wsInvoke = supervisor.invoke.bind(supervisor);
-  const invoke: RennetBridge["invoke"] = async (name, input) => {
-    if (name === "repository.choose" && (input as { path?: string }).path === undefined) {
-      const path = await chooseDirectory();
-      if (path === null) return { path: null } as never;
-      return wsInvoke("repository.choose", { path }) as never;
-    }
-    return wsInvoke(name, input);
-  };
+/**
+ * Compose a full RennetBridge from the supervisor + the Electron-native preload residue. The
+ * native directory picker is retired (source-aware project selection): the in-app directory
+ * browser now supplies the path, so `repository.choose` always arrives with its `{ path }` and the
+ * bridge forwards every command straight through — no interception.
+ */
+function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close?(): void } {
   return {
-    invoke,
+    invoke: supervisor.invoke.bind(supervisor),
     onProgress: supervisor.onProgress.bind(supervisor),
     onProjectDetailProgress: supervisor.onProjectDetailProgress.bind(supervisor),
     onAskStream: supervisor.onAskStream.bind(supervisor),
@@ -90,14 +84,6 @@ function createConnection(target: ConnectionTarget): Connection {
   const url = isLocal
     ? `ws://127.0.0.1:${preload.wsPort}`
     : `ws://${target.port ? `${target.host}:${target.port}` : target.host}`;
-  // The local daemon uses the native picker; a remote daemon's repository is server-side, so
-  // a path prompt on ITS machine stands in.
-  const chooseDirectory = isLocal
-    ? preload.chooseDirectory
-    : (): Promise<string | null> =>
-        Promise.resolve(
-          window.prompt("Absolute path to a repository on the daemon's machine:") || null,
-        );
   const supervisor = new ConnectionSupervisor({
     daemonId: target.id,
     tokenStore: targetTokenStore(target),
@@ -113,7 +99,7 @@ function createConnection(target: ConnectionTarget): Connection {
       }),
   });
   return {
-    bridge: composeBridge(supervisor, chooseDirectory),
+    bridge: composeBridge(supervisor),
     subscribe: (listener) => supervisor.subscribe(listener),
     close: () => supervisor.close(),
   };
@@ -126,6 +112,7 @@ createRoot(root).render(
       defaultTarget={DEFAULT_TARGET}
       resolveDaemonTarget={resolveDaemonTarget}
       logWslConnect={preload.logWslConnect}
+      listWslDistros={preload.listWslDistros}
     />
   </StrictMode>,
 );

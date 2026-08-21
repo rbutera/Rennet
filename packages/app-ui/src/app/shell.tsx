@@ -5,6 +5,7 @@ import {
   type Project,
   type ProjectDetail as ProjectDetailData,
   type ProjectKind,
+  type ProjectSource,
   type RennetBridge,
 } from "@rennet/protocol";
 import type {
@@ -101,6 +102,7 @@ import { PrWorktreeStatus } from "../components/pr-worktree-status";
 import { ProjectDetail } from "../components/project-detail";
 import { type PublishOutcome, PublishSheet } from "../components/publish-sheet";
 import { SettingsScreen } from "../components/settings-screen";
+import type { SourceOption } from "../components/source-switcher";
 import { ChromeMenu, UpdateReadyPrompt, useUpdateReady } from "../components/update-ready";
 import { CanvasWorkspace } from "../components/workspace";
 import { runBatched } from "../concurrency";
@@ -300,6 +302,10 @@ export function RennetApp({
   onPendingRepoConsumed,
   pendingAddPath,
   onPendingAddConsumed,
+  sources,
+  connectSource,
+  pendingSourceBrowse,
+  onPendingSourceBrowseConsumed,
   logWslConnect,
 }: {
   bridge: RennetBridge;
@@ -329,6 +335,19 @@ export function RennetApp({
   pendingAddPath?: { readonly path: string; readonly kind: ProjectKind };
   /** Called after {@link pendingAddPath} is consumed, so the host clears it. */
   onPendingAddConsumed?: () => void;
+  /** The add flow's selectable sources (source-aware project selection): Local + WSL distros +
+   *  paired remotes. Absent in the browser shell (Local only). Forwarded straight to the front door. */
+  sources?: SourceOption[];
+  /** Attach the daemon a chosen source lives on (a non-local source remounts the app). Forwarded to
+   *  the front door; the browse is restored on the fresh mount via {@link pendingSourceBrowse}. */
+  connectSource?: (
+    source: ProjectSource,
+    kind: ProjectKind,
+  ) => Promise<{ switched: boolean; error?: string }>;
+  /** A source (+kind) this freshly mounted app should restore the browse step on, once. */
+  pendingSourceBrowse?: { readonly source: ProjectSource; readonly kind: ProjectKind };
+  /** Called after {@link pendingSourceBrowse} is consumed, so the host clears it. */
+  onPendingSourceBrowseConsumed?: () => void;
   /** Append one line to the desktop's wsl-connect.log (shell-owned); traces the add flow's
    *  completion on the distro daemon. Absent in the browser shell. */
   logWslConnect?: (entry: {
@@ -2691,7 +2710,10 @@ export function RennetApp({
         ) : null}
         <FrontDoor
           bridge={bridge}
-          connectDaemonForPath={connectDaemonForPath}
+          sources={sources}
+          connectSource={connectSource}
+          pendingSourceBrowse={pendingSourceBrowse}
+          onPendingSourceBrowseConsumed={onPendingSourceBrowseConsumed}
           pendingAddPath={pendingAddPath}
           onPendingAddConsumed={onPendingAddConsumed}
           logWslConnect={logWslConnect}

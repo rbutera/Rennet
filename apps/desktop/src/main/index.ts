@@ -46,12 +46,9 @@ if (squirrelStartup) {
   app.quit();
 }
 
-// The native directory picker (#379): the detached daemon cannot open a dialog, so the
-// renderer asks MAIN for the path and forwards it to `repository.choose`. Electron-native
-// residue.
-const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 // The source-aware project picker's WSL branch: the renderer asks MAIN which distros
-// are installed, so it can list them instead of the user typing a distro name.
+// are installed, so it can list them instead of the user typing a distro name. The native
+// directory picker (#379) is retired — the in-app directory browser supplies the path now.
 const LIST_WSL_DISTROS_CHANNEL = "rennet:list-wsl-distros";
 // The renderer asks MAIN to ensure the daemon for a project PATH and hand back its ws port —
 // a host path resolves the host daemon, a `\\wsl.localhost\<distro>\…` path spawns (or
@@ -97,22 +94,6 @@ function installApplicationMenu(): void {
   // surfaces. Set once at startup — it never depends on renderer state.
   const template = buildStaticMenu(process.platform === "darwin");
   Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null);
-}
-
-function registerDialogHandler(): void {
-  // The renderer's bridge composition calls this to satisfy `repository.choose` (#379).
-  // RENNET_TEST_REPO short-circuits the dialog (e2e / headless), mirroring the server's
-  // former chooser so the picker path stays test-driveable; otherwise the native dialog
-  // runs and the chosen directory is forwarded to the daemon as the command's `path`.
-  ipcMain.handle(CHOOSE_DIRECTORY_CHANNEL, async (event) => {
-    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
-    if (process.env.RENNET_TEST_REPO) return process.env.RENNET_TEST_REPO;
-    const result = await dialog.showOpenDialog({
-      title: "Choose a repository to review",
-      properties: ["openDirectory"],
-    });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
-  });
 }
 
 const execFileAsync = promisify(execFile);
@@ -349,7 +330,6 @@ app.whenReady().then(async () => {
     callback(false);
   });
   registerAppProtocol();
-  registerDialogHandler();
   registerListWslDistrosHandler();
   registerDaemonForPathResolver(dataDir);
   await createWindow(wsPort);

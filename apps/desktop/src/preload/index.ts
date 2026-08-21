@@ -5,7 +5,6 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 // WsRennetBridge. What remains is the Electron-native residue the renderer merges with
 // that bridge: the host platform, the WS port to dial, the directory picker, and the
 // host-app updater channels.
-const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
 // The source-aware project picker's WSL branch: lists installed distros so the
 // renderer offers them instead of the user typing a distro name.
 const LIST_WSL_DISTROS_CHANNEL = "rennet:list-wsl-distros";
@@ -55,12 +54,6 @@ export interface RennetPreload {
   /** The loopback WS port the server bound (#378), read from the injected argv flag. */
   readonly wsPort: number;
   /**
-   * Open the native directory picker and resolve the chosen path, or null if cancelled
-   * (#379). A detached daemon cannot open a dialog, so the renderer obtains the path here
-   * and forwards it to `repository.choose`. Honors RENNET_TEST_REPO on the main side.
-   */
-  chooseDirectory(): Promise<string | null>;
-  /**
    * Installed WSL distros (`wsl.exe -l -q`), or `[]` off win32 / with no WSL / on
    * any error — never rejects. Backs the source-aware project picker's WSL branch.
    */
@@ -98,7 +91,6 @@ const preload: RennetPreload = {
   platform: process.platform,
   version,
   wsPort,
-  chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
   listWslDistros: () => ipcRenderer.invoke(LIST_WSL_DISTROS_CHANNEL) as Promise<string[]>,
   resolveDaemonForPath: (path) =>
     ipcRenderer.invoke(RESOLVE_DAEMON_FOR_PATH_CHANNEL, path) as Promise<number | null>,

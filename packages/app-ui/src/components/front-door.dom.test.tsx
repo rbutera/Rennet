@@ -52,6 +52,17 @@ function fakeBridge(config: FakeConfig = {}): {
         return { detected: config.detected ?? [] };
       case "repository.choose":
         return { path: config.chosenPath ?? "/orbital" };
+      case "fs.listDir": {
+        // The in-app directory browser opens on the daemon's home (source-aware project
+        // selection): answer with the fixture path so the browse lands there and the flow's
+        // path becomes it, exactly as a real daemon's home listing would.
+        const requested = (input as { path?: string }).path;
+        const path =
+          requested && requested.length > 0 ? requested : (config.chosenPath ?? "/orbital");
+        return {
+          result: { path, home: config.chosenPath ?? "/orbital", parent: "/", entries: [] },
+        };
+      }
       case "project.discover":
         return { discovery: config.discovery ?? discovery };
       case "projects.add": {
@@ -117,12 +128,13 @@ describe("FrontDoor — the add-a-project flow", () => {
     await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
     fireEvent.click(getByRole("button", { name: /Add a project/ }));
 
-    // Step 1: pick the "Project repo" type, then Browse for a path.
+    // Step 1: pick the "Project repo" type. The in-app directory browser opens on the daemon's
+    // home (the fixture path here), which becomes the flow's selected path — no native picker.
     await waitFor(() => expect(container.querySelector(".type-choice")).not.toBeNull());
     fireEvent.click(getByRole("button", { name: /Project repo/ }));
-    fireEvent.click(getByRole("button", { name: "Browse" }));
+    await waitFor(() => expect(container.querySelector(".directory-browser")).not.toBeNull());
     await waitFor(() =>
-      expect(container.querySelector(".path-field")?.textContent).toContain("/orbital"),
+      expect((getByRole("button", { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false),
     );
 
     // Continue runs read-only discovery and lands on step 2.
@@ -173,9 +185,8 @@ describe("FrontDoor — the add-a-project flow", () => {
     await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
     fireEvent.click(getByRole("button", { name: /Add a project/ }));
     await waitFor(() => expect(container.querySelector(".type-choice")).not.toBeNull());
-    fireEvent.click(getByRole("button", { name: "Browse" }));
     await waitFor(() =>
-      expect(container.querySelector(".path-field")?.textContent).toContain("/orbital"),
+      expect((getByRole("button", { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false),
     );
     fireEvent.click(getByRole("button", { name: /Continue/ }));
     await waitFor(() => expect(container.querySelector(".worktree-rows")).not.toBeNull());
@@ -191,70 +202,85 @@ describe("FrontDoor — the add-a-project flow", () => {
   });
 });
 
-describe("FrontDoor — WSL connect in the add flow", () => {
-  const WSL_PATH = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\orbital";
+describe("FrontDoor — source switcher in the add flow", () => {
+  const sources = [
+    { id: "local" as const, label: "Local" },
+    { id: "wsl:Ubuntu" as const, label: "WSL: Ubuntu" },
+  ];
 
-  it("switches onto the distro daemon on a WSL path and HALTS the local discover", async () => {
-    const { bridge, calls } = fakeBridge({ chosenPath: WSL_PATH });
-    const connectDaemonForPath = vi.fn(async () => ({ switched: true }));
+  it("attaches a non-local source's daemon when its switcher row is selected", async () => {
+    const { bridge } = fakeBridge({ chosenPath: "/orbital" });
+    const connectSource = vi.fn(async () => ({ switched: true }));
     const { container, getByRole } = mount(
       <FrontDoor
         bridge={bridge}
-        connectDaemonForPath={connectDaemonForPath}
+        sources={sources}
+        connectSource={connectSource}
         onOpenProject={vi.fn()}
       />,
     );
 
     await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
     fireEvent.click(getByRole("button", { name: /Add a project/ }));
-    await waitFor(() => expect(container.querySelector(".type-choice")).not.toBeNull());
-    fireEvent.click(getByRole("button", { name: "Browse" }));
-    await waitFor(() =>
-      expect(container.querySelector(".path-field")?.textContent).toContain(WSL_PATH),
-    );
-    fireEvent.click(getByRole("button", { name: /Continue/ }));
-
-    // The daemon switch is requested for the WSL path, tagged as an add (kind carried).
-    // No TypeCard click here, so the flow's default kind ("repo") is what's carried.
-    await waitFor(() => expect(connectDaemonForPath).toHaveBeenCalledTimes(1));
-    expect(connectDaemonForPath).toHaveBeenCalledWith(WSL_PATH, { kind: "repo" });
-    // switched:true tears this instance down — the local discover must NOT run here.
-    expect(calls.some((call) => call.name === "project.discover")).toBe(false);
+    await waitFor(() => expect(container.querySelector(".source-switcher")).not.toBeNull());
+    // Selecting the WSL row asks the shell to attach that source's daemon, carrying the
+    // flow's default kind ("repo"). switched:true remounts the app — this instance stops.
+    fireEvent.click(getByRole("button", { name: /WSL: Ubuntu/ }));
+    await waitFor(() => expect(connectSource).toHaveBeenCalledTimes(1));
+    expect(connectSource).toHaveBeenCalledWith("wsl:Ubuntu", "repo");
   });
 
-  it("proceeds with the local discover/add unchanged on a host path (switched:false)", async () => {
+  it("carries the selected source into discover on a local add (switched:false)", async () => {
     const { bridge, calls } = fakeBridge({
       chosenPath: "/orbital",
       processedRepos: [{ repo: "orbital", path: "/orbital", ok: true, files: 3, symbols: 2 }],
     });
-    const connectDaemonForPath = vi.fn(async () => ({ switched: false }));
     const { container, getByRole } = mount(
-      <FrontDoor
-        bridge={bridge}
-        connectDaemonForPath={connectDaemonForPath}
-        onOpenProject={vi.fn()}
-      />,
+      <FrontDoor bridge={bridge} sources={sources} onOpenProject={vi.fn()} />,
     );
 
     await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
     fireEvent.click(getByRole("button", { name: /Add a project/ }));
     await waitFor(() => expect(container.querySelector(".type-choice")).not.toBeNull());
     fireEvent.click(getByRole("button", { name: /Project repo/ }));
-    fireEvent.click(getByRole("button", { name: "Browse" }));
     await waitFor(() =>
-      expect(container.querySelector(".path-field")?.textContent).toContain("/orbital"),
+      expect((getByRole("button", { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false),
     );
     fireEvent.click(getByRole("button", { name: /Continue/ }));
 
-    // The resolver was consulted, said host, and the flow discovered here as before.
+    // The browsed path is granted then discovered on the attached (local) daemon, tagged local.
     await waitFor(() => expect(container.querySelector(".worktree-rows")).not.toBeNull());
-    expect(connectDaemonForPath).toHaveBeenCalledWith("/orbital", { kind: "repo" });
     expect(calls.find((call) => call.name === "project.discover")?.input).toMatchObject({
       path: "/orbital",
       kind: "repo",
+      source: "local",
     });
     fireEvent.click(getByRole("button", { name: /Confirm/ }));
     await waitFor(() => expect(calls.some((call) => call.name === "projects.add")).toBe(true));
+    expect(calls.find((call) => call.name === "projects.add")?.input).toMatchObject({
+      source: "local",
+    });
+  });
+
+  it("restores the browse step from a pending source browse, once", async () => {
+    const { bridge } = fakeBridge({ chosenPath: "/home/rai" });
+    const onConsumed = vi.fn();
+    const { container, getByRole } = mount(
+      <FrontDoor
+        bridge={bridge}
+        sources={sources}
+        pendingSourceBrowse={{ source: "wsl:Ubuntu", kind: "workspace" }}
+        onPendingSourceBrowseConsumed={onConsumed}
+        onOpenProject={vi.fn()}
+      />,
+    );
+
+    // The freshly mounted front door re-opens the add flow at the browse step with the
+    // restored source selected, and tells the host to clear the pending browse exactly once.
+    await waitFor(() => expect(container.querySelector(".directory-browser")).not.toBeNull());
+    expect(container.querySelector(".source-switcher")).not.toBeNull();
+    expect(getByRole("button", { name: /WSL: Ubuntu/ }).getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(onConsumed).toHaveBeenCalledTimes(1));
   });
 
   it("completes a pending add on the distro daemon exactly once, then clears it", async () => {

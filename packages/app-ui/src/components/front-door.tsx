@@ -4,13 +4,13 @@ import type {
   DiscoveryResult,
   Project,
   ProjectKind,
+  ProjectSource,
   RennetBridge,
 } from "@rennet/protocol";
 import { Button, Input, Switch } from "@rennet/ui";
 import {
   ArrowRight,
   ChevronDown,
-  Folder,
   GitBranch,
   Monitor,
   Plus,
@@ -19,10 +19,12 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
-import type { ConnectDaemonForPath, LogWslConnect } from "./connection-host";
+import type { ConnectSource, LogWslConnect, PendingSourceBrowse } from "./connection-host";
+import { DirectoryBrowser } from "./directory-browser";
 import { GitHubConnectCard } from "./github-connect";
 import { Icon } from "./icon";
 import { ProjectProcessing } from "./project-processing";
+import { type SourceOption, SourceSwitcher } from "./source-switcher";
 import { ChromeMark } from "./update-ready";
 
 /**
@@ -39,7 +41,10 @@ import { ChromeMark } from "./update-ready";
  */
 export function FrontDoor({
   bridge,
-  connectDaemonForPath,
+  sources,
+  connectSource,
+  pendingSourceBrowse,
+  onPendingSourceBrowseConsumed,
   pendingAddPath,
   onPendingAddConsumed,
   logWslConnect,
@@ -49,13 +54,24 @@ export function FrontDoor({
 }: {
   bridge: RennetBridge;
   /**
-   * Connect the daemon that should serve a just-picked path in the ADD flow (WSL connect). When a
-   * pick resolves to a WSL distro this switches the whole app onto that distro's daemon (a remount)
-   * and returns `switched:true` — the add then completes on the distro daemon via
-   * {@link pendingAddPath}. A host path is `switched:false` and the add proceeds here unchanged; an
-   * `error` is honest failure copy shown inline. Absent in the browser shell (no WSL, no preload).
+   * The selectable sources for the add flow (source-aware project selection, task 6): Local plus
+   * each WSL distro and paired remote. Absent ⇒ Local only (the browser shell / tests). Built by
+   * the shell, which owns distro enumeration and the paired-daemon list.
    */
-  connectDaemonForPath?: ConnectDaemonForPath;
+  sources?: SourceOption[];
+  /**
+   * Attach the daemon a chosen source lives on (WSL/remote reuse the owned/attached-daemon
+   * machinery from #437/#439). A non-local source `switched:true` remounts the app onto that
+   * daemon — this instance then tears down, and the freshly mounted one restores the browse via
+   * {@link pendingSourceBrowse}. Local (or already-attached) is `switched:false`. Absent ⇒ only
+   * Local is reachable.
+   */
+  connectSource?: ConnectSource;
+  /** A source (+kind) this freshly mounted front door should RESTORE the browse step on, once —
+   *  set when a source switch remounted the app onto that source's daemon. */
+  pendingSourceBrowse?: PendingSourceBrowse;
+  /** Called after {@link pendingSourceBrowse} is consumed, so the host clears it. */
+  onPendingSourceBrowseConsumed?(): void;
   /** A distro-native path (+kind) this freshly mounted front door should ADD on itself, once. */
   pendingAddPath?: { readonly path: string; readonly kind: ProjectKind };
   /** Called after {@link pendingAddPath} is consumed, so the host clears it. */
@@ -129,6 +145,25 @@ export function FrontDoor({
     })();
   }, [pendingAddPath, bridge, onPendingAddConsumed, logWslConnect]);
 
+  // Source-switch, receiving end: a non-local source select remounted the app onto that source's
+  // daemon (this front door is that fresh mount), carrying the source (+kind) the add flow was on.
+  // Re-open the add flow at the browse step with that source selected — the DirectoryBrowser below
+  // now lists the newly attached daemon — then tell the host to clear the pending browse. A plain
+  // ref guards the single run (StrictMode's dev double-mount reruns harmlessly), mirroring the
+  // pending-add guard above.
+  const pendingBrowseConsumed = useRef(false);
+  useEffect(() => {
+    if (!pendingSourceBrowse || pendingBrowseConsumed.current) return;
+    pendingBrowseConsumed.current = true;
+    setFlow({
+      step: "type-path",
+      kind: pendingSourceBrowse.kind,
+      source: pendingSourceBrowse.source,
+      busy: false,
+    });
+    onPendingSourceBrowseConsumed?.();
+  }, [pendingSourceBrowse, onPendingSourceBrowseConsumed]);
+
   // The ambient detection line loads independently and never blocks the list.
   useEffect(() => {
     bridge
@@ -199,7 +234,8 @@ export function FrontDoor({
       {flow ? (
         <AddProject
           bridge={bridge}
-          connectDaemonForPath={connectDaemonForPath}
+          sources={sources}
+          connectSource={connectSource}
           flow={flow}
           projects={projects ?? []}
           onFlow={setFlow}
@@ -212,7 +248,7 @@ export function FrontDoor({
           projects={projects}
           detected={detected}
           bridge={bridge}
-          onAdd={() => setFlow({ step: "type-path", kind: "repo", busy: false })}
+          onAdd={() => setFlow({ step: "type-path", kind: "repo", source: "local", busy: false })}
           onOpen={onOpenProject}
           onRemove={(id) => {
             // Forget a project (the repo on disk is untouched); refresh from the
@@ -381,10 +417,11 @@ function HarnessLine({ detected }: { detected: DetectedHarness[] | null }) {
 /* ── The add-a-project flow (two terse steps) ──────────────────────────────── */
 
 type AddFlow =
-  | { step: "type-path"; kind: ProjectKind; path?: string; busy: boolean }
+  | { step: "type-path"; kind: ProjectKind; source: ProjectSource; path?: string; busy: boolean }
   | {
       step: "worktree";
       kind: ProjectKind;
+      source: ProjectSource;
       path: string;
       discovery: DiscoveryResult;
       included: string[];
@@ -398,7 +435,8 @@ type AddFlow =
 
 function AddProject({
   bridge,
-  connectDaemonForPath,
+  sources,
+  connectSource,
   flow,
   projects,
   onFlow,
@@ -407,7 +445,8 @@ function AddProject({
   onError,
 }: {
   bridge: RennetBridge;
-  connectDaemonForPath?: ConnectDaemonForPath;
+  sources?: SourceOption[];
+  connectSource?: ConnectSource;
   flow: AddFlow;
   projects: Project[];
   onFlow(flow: AddFlow | null): void;
@@ -419,7 +458,8 @@ function AddProject({
     return (
       <TypeAndPath
         bridge={bridge}
-        connectDaemonForPath={connectDaemonForPath}
+        sources={sources}
+        connectSource={connectSource}
         flow={flow}
         projects={projects}
         onFlow={onFlow}
@@ -442,25 +482,44 @@ function AddProject({
 
 function TypeAndPath({
   bridge,
-  connectDaemonForPath,
+  sources,
+  connectSource,
   flow,
   projects,
   onFlow,
   onError,
 }: {
   bridge: RennetBridge;
-  connectDaemonForPath?: ConnectDaemonForPath;
+  sources?: SourceOption[];
+  connectSource?: ConnectSource;
   flow: Extract<AddFlow, { step: "type-path" }>;
   projects: Project[];
   onFlow(flow: AddFlow | null): void;
   onError(message: string | undefined): void;
 }) {
-  async function browse(): Promise<void> {
+  // Switch which source's daemon the browser lists. A non-local source `switched:true` remounts
+  // the whole app onto that daemon (this instance tears down; the fresh mount restores the browse
+  // via `pendingSourceBrowse`). Local, or already attached, stays put. `busy` doubles as the
+  // switcher's "connecting…" state — the two never overlap (you either switch or continue).
+  async function selectSource(id: ProjectSource): Promise<void> {
+    if (id === flow.source || flow.busy) return;
     onError(undefined);
+    if (!connectSource) {
+      onFlow({ ...flow, source: id, path: undefined });
+      return;
+    }
+    onFlow({ ...flow, source: id, path: undefined, busy: true });
     try {
-      const { path } = await bridge.invoke("repository.choose", {});
-      if (path) onFlow({ ...flow, path });
+      const outcome = await connectSource(id, flow.kind);
+      if (outcome.error) {
+        onFlow({ ...flow, busy: false }); // the prior source stays selected; surface the fault
+        onError(outcome.error);
+        return;
+      }
+      if (outcome.switched) return; // remounting onto that daemon; this instance tears down
+      onFlow({ ...flow, source: id, path: undefined, busy: false });
     } catch (reason) {
+      onFlow({ ...flow, busy: false });
       onError(messageFrom(reason));
     }
   }
@@ -469,35 +528,21 @@ function TypeAndPath({
     if (!flow.path) return;
     onError(undefined);
     onFlow({ ...flow, busy: true });
-    // WSL connect: a distro path switches the whole app onto that distro's daemon (a remount);
-    // the add then completes THERE via `pendingAddPath`, so this instance stops. The desktop
-    // resolver owns the WSL detection — a host path (or a shell without the capability) returns
-    // `switched:false` and falls through to discover here, byte-identical to before.
-    if (connectDaemonForPath) {
-      let outcome: { switched: boolean; error?: string };
-      try {
-        outcome = await connectDaemonForPath(flow.path, { kind: flow.kind });
-      } catch (reason) {
-        onFlow({ ...flow, busy: false });
-        onError(messageFrom(reason));
-        return;
-      }
-      if (outcome.error) {
-        onFlow({ ...flow, busy: false });
-        onError(outcome.error);
-        return;
-      }
-      if (outcome.switched) return; // remounting onto the distro daemon; this instance tears down
-    }
     try {
+      // Grant the browsed path on the ATTACHED daemon before discovering it — the daemon only
+      // scans paths granted via repository.choose, which now always forwards {path} (the native
+      // picker is retired). The user browsed to this path; forwarding the grant is not a gate.
+      await bridge.invoke("repository.choose", { path: flow.path });
       const { discovery } = await bridge.invoke("project.discover", {
         commandId: crypto.randomUUID(),
         path: flow.path,
         kind: flow.kind,
+        source: flow.source,
       });
       onFlow({
         step: "worktree",
         kind: flow.kind,
+        source: flow.source,
         path: flow.path,
         discovery,
         included: discovery.repos.map((repo) => repo.name),
@@ -533,29 +578,26 @@ function TypeAndPath({
         />
       </div>
 
+      {sources && sources.length > 0 ? (
+        <SourceSwitcher
+          sources={sources}
+          selected={flow.source}
+          connecting={flow.busy}
+          onSelect={(id) => void selectSource(id)}
+        />
+      ) : null}
+
       <p className="eyebrow mt-4 mb-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
         PATH
       </p>
-      <div className="path-row flex gap-2">
-        <span
-          className={`path-field flex-1 min-w-0 inline-flex items-center gap-2 px-3.5 py-2.5 rounded-control border border-line-strong bg-surface text-base truncate [&>svg]:flex-none [&>svg]:text-ink-faint ${flow.path ? "text-ink" : "text-ink-faint"}`}
-          data-empty={flow.path ? "false" : "true"}
-        >
-          <Icon icon={Folder} className="size-3.5" />
-          {flow.path ?? "Choose a folder…"}
-        </span>
-        <Button
-          variant="outline"
-          size="lg"
-          className="path-browse flex-none"
-          onClick={() => void browse()}
-        >
-          Browse
-        </Button>
-      </div>
+      <DirectoryBrowser
+        bridge={bridge}
+        reloadKey={flow.source}
+        onPathChange={(path) => onFlow({ ...flow, path })}
+      />
 
       {projects.length > 0 ? (
-        <div className="recents mt-1 rounded-control border border-line overflow-hidden bg-surface">
+        <div className="recents mt-3 rounded-control border border-line overflow-hidden bg-surface">
           <p className="eyebrow recents-eyebrow m-0 px-3.5 py-2.5 border-b border-line bg-raised text-2xs font-semibold uppercase tracking-wide text-ink-faint">
             RECENT
           </p>
@@ -564,7 +606,9 @@ function TypeAndPath({
               type="button"
               key={`${recent.kind}:${recent.path}`}
               className="recent-row w-full flex items-center gap-2.5 px-3.5 py-2.5 border-t border-line bg-transparent text-ink text-left text-base hover:bg-raised [&:first-of-type]:border-t-0"
-              onClick={() => onFlow({ ...flow, kind: recent.kind, path: recent.path })}
+              onClick={() =>
+                onFlow({ ...flow, kind: recent.kind, path: recent.path, source: recent.source })
+              }
             >
               <span className="recent-icon flex-none inline-flex text-ink-faint" aria-hidden="true">
                 {recent.kind === "workspace" ? (
@@ -670,6 +714,7 @@ function WorktreeConfig({
         discovery,
         includedRepos: flow.included,
         primaryBranch: flow.primaryBranch.trim() || discovery.primaryBranch,
+        source: flow.source,
       });
       // Persisted — now build its snapshot (the initial context dump) with live
       // narration. The post-add list rides through, applied when processing ends.
@@ -778,7 +823,13 @@ function WorktreeConfig({
           size="lg"
           className="ghost text-ink-soft"
           onClick={() =>
-            onFlow({ step: "type-path", kind: flow.kind, path: flow.path, busy: false })
+            onFlow({
+              step: "type-path",
+              kind: flow.kind,
+              source: flow.source,
+              path: flow.path,
+              busy: false,
+            })
           }
           disabled={flow.busy}
         >
@@ -826,10 +877,12 @@ function plural(count: number, one: string, many = `${one}s`): string {
 interface RecentPath {
   path: string;
   kind: ProjectKind;
+  source: ProjectSource;
   repoCount: number;
 }
 
-/** The recent paths for step 1, deduped by (kind, path), newest first, capped. */
+/** The recent paths for step 1, deduped by (kind, path), newest first, capped. Each carries the
+ *  project's SOURCE so re-selecting a recent points the flow at the right daemon. */
 function recentPaths(projects: readonly Project[]): RecentPath[] {
   const seen = new Set<string>();
   const recents: RecentPath[] = [];
@@ -837,7 +890,12 @@ function recentPaths(projects: readonly Project[]): RecentPath[] {
     const key = `${project.kind}:${project.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    recents.push({ path: project.path, kind: project.kind, repoCount: project.repoCount });
+    recents.push({
+      path: project.path,
+      kind: project.kind,
+      source: project.source,
+      repoCount: project.repoCount,
+    });
     if (recents.length >= 4) break;
   }
   return recents;

@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { makeTempDir, modelFreeEnv, seedReviewRepo } from "./harness";
 
@@ -84,10 +84,6 @@ test("adds a project and opens a review from a served browser tab", async ({ pag
   try {
     const port = await waitForPort(claimPath, 15_000);
 
-    // The browser's `repository.choose` fallback is a prompt (design D5): answer every
-    // prompt with the fixture path so "Browse" reaches the daemon with a repo path.
-    page.on("dialog", (dialog) => void dialog.accept(repository));
-
     await page.goto(`http://127.0.0.1:${port}/`);
 
     // The front door rendering proves the tab got the app AND connected over WS
@@ -95,9 +91,16 @@ test("adds a project and opens a review from a served browser tab", async ({ pag
     await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible({ timeout: 15_000 });
 
     // The add-a-project journey (mirrors the passing Electron add-project spec), model-free.
+    // The in-app directory browser replaced the remote path prompt: type the fixture path into
+    // the browser's path bar (the served daemon lists its own filesystem), then continue.
     await page.getByRole("button", { name: "Add a project" }).click();
     await page.getByRole("button", { name: /Project repo/ }).click();
-    await page.getByRole("button", { name: "Browse" }).click();
+    const pathBar = page.getByRole("textbox", { name: "Directory path" });
+    await pathBar.fill(repository);
+    await pathBar.press("Enter");
+    await expect(
+      page.getByRole("button", { name: basename(repository), exact: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Continue" }).click();
 
     await expect(page.getByText(/^Found in/)).toBeVisible();
