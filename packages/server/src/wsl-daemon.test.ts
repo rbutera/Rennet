@@ -77,7 +77,6 @@ describe("spawnWslDaemon", () => {
 
     expect(spawner).toHaveBeenCalledTimes(1);
     expect(spawner).toHaveBeenCalledWith(launch.file, launch.args, {
-      detached: true,
       stdio: "ignore",
       windowsHide: true,
     });

@@ -52,26 +52,30 @@ export interface WslSpawnDeps {
   readonly spawn?: (
     file: string,
     args: readonly string[],
-    options: { readonly detached: true; readonly stdio: "ignore"; readonly windowsHide: true },
+    options: { readonly stdio: "ignore"; readonly windowsHide: true },
   ) => WslChild;
 }
 
 /**
- * Spawn the WSL daemon DETACHED and `unref`'d, `stdio: "ignore"` (the daemon owns
- * its own `daemon.log` inside the distro — the host opens no log fd). `launch` is a
- * `buildWslDaemonLaunch(...)` descriptor: `wsl.exe … -e <node> <bundle> serve …`.
+ * Spawn the WSL daemon as the shell's MANAGED CHILD — NOT detached. A WSL daemon
+ * cannot outlive its launcher anyway (WSL reaps a distro's processes when the
+ * launching interop instance ends — proven on lancelot: setsid/nohup/hidden-launch
+ * all die once the launcher exits), so the daemon is app-lifetime by nature. Two
+ * consequences drive the options:
+ *   - NO `detached`: Node's `windowsHide` is a no-op when `detached` is set (a known
+ *     Node bug), which is exactly why the old detached spawn flashed an empty
+ *     `wsl.exe` console window. Without `detached`, `windowsHide` hides the console
+ *     (it stays a hidden console, which `wsl.exe` needs — `CreateNoWindow`/no console
+ *     breaks the interop, proven on lancelot), so the daemon starts with NO window.
+ *   - `unref` so the shell can quit without waiting on the long-running child; the
+ *     daemon dies with the shell (the honest WSL model — see above).
+ * `stdio: "ignore"`: the daemon writes its own `daemon.log` inside the distro.
  */
 export function spawnWslDaemon(launch: LocusCommand, deps: WslSpawnDeps = {}): void {
   const spawner = deps.spawn ?? ((file, args, options) => spawn(file, args as string[], options));
-  // `windowsHide` stops `wsl.exe` from flashing an empty console window on Windows.
-  const child = spawner(launch.file, launch.args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  // A detached child's async spawn failure (ENOENT: no wsl.exe, EACCES) would be an
-  // UNHANDLED 'error' event — which terminates the host process. Own it here (the
-  // wsl.exe pid is not useful for stopping the in-distro daemon, so we log, not throw).
+  const child = spawner(launch.file, launch.args, { stdio: "ignore", windowsHide: true });
+  // An async spawn failure (ENOENT: no wsl.exe, EACCES) would be an UNHANDLED 'error'
+  // event — a process crash. Own it here: log, never throw.
   child.on("error", (error) => {
     console.error(`[wsl-daemon] failed to spawn ${launch.file}: ${error.message}`);
   });
