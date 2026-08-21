@@ -19,6 +19,15 @@ describe("the app stylesheet scans the vendored @rennet/ui kit", () => {
   it("declares an @source pointing at packages/ui/src/components", () => {
     expect(css).toMatch(/@source\s+"[^"]*\bui\/src\/components"/);
   });
+
+  // RED-proof for the titlebar-overlap regression: the shell's h-14 titlebar and its pt-14
+  // content offset live in ./app/shell.tsx. A named glob (@source "./app.tsx") stopped
+  // covering that file when Wave 4.1 split the monolith into ./app/, so pt-14 was never
+  // generated and the fixed titlebar overlapped the view. Scan the whole tree so a future
+  // move can't drop a file's utilities again. Revert to a single-file glob and this fires.
+  it("scans the whole app-ui source tree, not a single named file", () => {
+    expect(css).toMatch(/@source\s+"\.\/"/);
+  });
 });
 
 describe("hold-to-sign fill contract (critique P1-C)", () => {
