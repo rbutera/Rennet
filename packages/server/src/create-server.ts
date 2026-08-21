@@ -47,6 +47,7 @@ import {
   defaultCodexExecEffects,
   defaultCodexTransportEffects,
   defaultDiscoveryDeps,
+  defaultFsListDirDeps,
   defaultGlobalConfigPath,
   defaultOmpDiscoveryDeps,
   defaultProjectDetailSourceDeps,
@@ -79,6 +80,7 @@ import {
   inspectUiEvidence,
   isGitHubNetworkError,
   KnowledgeStore,
+  listDir,
   loadConventionCatalogue,
   loadProjectDetail,
   matchWorktree,
@@ -2248,6 +2250,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(gitForRepo(path)), path, kind),
+    // Rule Zero: the ungated filesystem browser. No allowedRoots assertion here —
+    // it's the picker that produces paths for the gated commands, not one itself.
+    listDir: (input) => listDir(input, defaultFsListDirDeps()),
     detectHarnesses,
     github: githubAccount,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half

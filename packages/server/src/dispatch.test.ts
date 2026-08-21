@@ -363,6 +363,13 @@ function harness(
     processProject: () => Promise.resolve({ repos: [] }),
     discoverProject: ({ path, kind }) =>
       Promise.resolve({ path, kind, repos: [], primaryBranch: "main" }),
+    listDir: (input) =>
+      Promise.resolve({
+        path: input.path ?? "/home/rai",
+        home: "/home/rai",
+        parent: "/home",
+        entries: [],
+      }),
     detectHarnesses: () => Promise.resolve([]),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
@@ -2673,6 +2680,13 @@ function frontDoorHarness(seed: {
       discoverCalls.push(input);
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
     },
+    listDir: (input) =>
+      Promise.resolve({
+        path: input.path ?? "/home/rai",
+        home: "/home/rai",
+        parent: "/home",
+        entries: [],
+      }),
     detectHarnesses: () => Promise.resolve(seed.detected ?? []),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),

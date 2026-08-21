@@ -29,6 +29,7 @@ import {
   type ConversationAnchorWire,
   type DetectedHarness,
   type DiscoveryResult,
+  type FsListDirResult,
   type GitHubAuthStatus,
   type GitHubConnectPoll,
   type KnowledgeDispositionResult,
@@ -293,6 +294,11 @@ export interface DispatchDeps {
   ): Promise<{ repos: ProcessedRepoSummary[] }>;
   /** Read-only discovery over an already-granted path → editable defaults. */
   discoverProject(input: { path: string; kind: ProjectKind }): Promise<DiscoveryResult>;
+  /**
+   * The ungated filesystem browser (Rule Zero: this is the browser, not a gated
+   * reader). Empty/omitted path ⇒ the daemon's home dir.
+   */
+  listDir(input: { path?: string }): Promise<FsListDirResult>;
   /** The harnesses found on the machine, for the ambient first-run detection line. */
   detectHarnesses(): Promise<DetectedHarness[]>;
   /**
@@ -1357,6 +1363,12 @@ export function createDispatch(
           assertAllowedRepository(input.path);
           const discovery = await deps.discoverProject({ path: input.path, kind: input.kind });
           return parseCommandOutput(name, { discovery });
+        }
+        case "fs.listDir": {
+          // Ungated browse on the attached source's own daemon. Empty path ⇒ home dir.
+          const input = parseCommandInput(name, rawInput);
+          const result = await deps.listDir({ path: input.path });
+          return parseCommandOutput(name, { result });
         }
         case "projects.add": {
           // Confirm. MAIN derives the stored shape from the discovery + the toggle
