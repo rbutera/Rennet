@@ -80,8 +80,8 @@ the highest-risk line.
 | Spec | What should the change do, and which requirements have evidence? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
-| Flagged | Where did automated analysis find a problem or disagreement? |
 | Noise | What remains, and why may it need less attention? |
+| Flagged | Where did automated analysis find a problem or disagreement? |
 
 Blast-radius signals annotate these lenses. Every lens refers to the same
 patchset and anchors, so changing lenses does not change the code under review.

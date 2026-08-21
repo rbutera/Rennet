@@ -11,7 +11,7 @@ Every trait below comes from the product sources: [Product and vision](../../usi
 
 These readers run reviews. They do not have the codebase open, and most of them do not want to.
 
-##### Agentic engineer reviewing their own branch: "Mara"
+### Agentic engineer reviewing their own branch: "Mara"
 
 **Profile**: Ships fast with Claude Code and Codex and hand-writes little, but signs off on every merge and answers for it. Faces changesets too large to read file by file and wants grouped cohorts and a reading order, not a flat list of changed files.
 
@@ -27,7 +27,7 @@ These readers run reviews. They do not have the codebase open, and most of them 
 - A guide that stops at "review a pull request" and never shows the own-branch handoff and rereview loop.
 - Any hint that she needs a Rennet backend, a model API key, or an inference markup.
 
-##### Team reviewer on a pull request: "Tomas"
+### Team reviewer on a pull request: "Tomas"
 
 **Profile**: Reviews other people's GitHub pull requests and posts one review under his own name, in his own words. Knows the GitHub review flow well but is new to Rennet's lenses.
 
@@ -43,7 +43,7 @@ These readers run reviews. They do not have the codebase open, and most of them 
 - A preview that hides what will actually be sent to GitHub.
 - Recorded dispositions that vanish when he switches lenses or navigates away.
 
-##### Local-first adopter: "Rune"
+### Local-first adopter: "Rune"
 
 **Profile**: Deciding whether to run agent-assembled context through Rennet, and wants to know exactly what leaves the machine. Values honest provenance over marketing and reads concept and FAQ pages closely before installing.
 
@@ -63,7 +63,7 @@ These readers run reviews. They do not have the codebase open, and most of them 
 
 This reader builds Rennet with the repo open.
 
-##### Rennet contributor: "Wei"
+### Rennet contributor: "Wei"
 
 **Profile**: Reads the contracts, rulings, and dependency standard before changing product behavior. Works under Rule Zero, so she adds capability rather than gates or ceremony, and treats the docs as part of done.
 
@@ -83,4 +83,4 @@ This reader builds Rennet with the repo open.
 
 Pick the one or two readers a page actually serves, and write for them: match their vocabulary, answer the question they arrive with, and put the shortest path to it first. A using page written for Mara or Tomas should not read like it was written for Wei.
 
-Before you call a page done, read it once as each of its personas and check it against their red flags. If the page would lose that reader or mislead them, it is not done yet. The same list drives an impeccable interface critique, so a red flag caught here is one caught before it ships.
+Before you call a page done, read it once as each of its personas and check it against their red flags. If the page would lose that reader or mislead them, it is not done yet. The same red-flag list feeds the interface critique in the impeccable skill, so a check written here does double duty.

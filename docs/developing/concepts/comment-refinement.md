@@ -107,9 +107,9 @@ note remains the effective body unless a valid refinement was stored.
 | Prompt and result rules | `packages/core/src/refine-comment.ts` |
 | Claude and Codex turn composition | `packages/server/src/refine-comment-live.ts` |
 | Command schema | `packages/protocol/src/index.ts` |
-| Raw, refined, signature, and effective body | `packages/ui/src/canvas/collation.ts` |
-| Request lifecycle and stale-result check | `packages/ui/src/app.tsx` |
-| Draft controls | `packages/ui/src/components/collation-draft-canvas.tsx` |
+| Raw, refined, signature, and effective body | `packages/app-ui/src/canvas/collation.ts` |
+| Request lifecycle and stale-result check | `packages/app-ui/src/app.tsx` |
+| Draft controls | `packages/app-ui/src/components/collation-draft-canvas.tsx` |
 
 See [collation and publishing](./collation-and-publishing.md) for the draft and
 its destination-specific payloads.

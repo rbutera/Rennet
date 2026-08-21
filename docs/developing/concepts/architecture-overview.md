@@ -144,8 +144,8 @@ One review moves through the system as follows:
    counts even when the visible payload must be truncated.
 3. The server records an immutable patchset and derives review artifacts against
    that identity.
-4. Deterministic analysis and model jobs populate the Sequence, Spec, Decisions,
-   Flagged, and Noise canvases.
+4. Deterministic analysis and model jobs populate the Spec, Sequence, Decisions,
+   Noise, and Flagged canvases.
 5. The reviewer reads, asks questions, records dispositions, and previews any
    outbound GitHub result.
 6. The outbound action for a review submits the previewed review. The outbound

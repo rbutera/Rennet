@@ -159,10 +159,10 @@ network.
 
 | Concern | Owner |
 | --- | --- |
-| Ordered draft and editing transforms | `packages/ui/src/canvas/collation.ts` |
-| Local and outbound lane rules | `packages/ui/src/canvas/staging.ts` |
-| Desktop and browser destination projections | `packages/ui/src/canvas/publish.ts` |
-| Shared draft and preview interaction | `packages/ui/src/app.tsx` |
+| Ordered draft and editing transforms | `packages/app-ui/src/canvas/collation.ts` |
+| Local and outbound lane rules | `packages/app-ui/src/canvas/staging.ts` |
+| Desktop and browser destination projections | `packages/app-ui/src/canvas/publish.ts` |
+| Shared draft and preview interaction | `packages/app-ui/src/app.tsx` |
 | Protocol commands and payload schemas | `packages/protocol/src/index.ts` |
 | Forge-neutral review and pull request payloads | `packages/core/src/publish-review.ts`, `packages/core/src/publish-submission.ts` |
 | Daemon composition and command routing | `packages/server/src/create-server.ts`, `packages/server/src/dispatch.ts` |

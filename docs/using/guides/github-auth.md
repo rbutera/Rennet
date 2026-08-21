@@ -4,7 +4,7 @@ description: Sign in to GitHub with the OAuth device flow, and see where the tok
 ---
 
 Rennet talks to GitHub directly from your machine. It signs in through GitHub's
-OAuth device flow, stores one token in a private file on disk, and uses it to
+OAuth device flow, stores one credential in a private file on disk, and uses it to
 read pull requests and post your review. There is no Rennet backend in the path.
 
 You only need this to review GitHub pull requests or post a review. Reviewing
@@ -18,7 +18,7 @@ sign-in. You can also start it from Settings.
 1. Choose Connect GitHub. Rennet asks GitHub for a device code and shows you a
    short one-time user code.
 2. Open `github.com/login/device`, enter the code, and authorize the Rennet
-   OAuth app for the account and repositories you want.
+   OAuth app for your account. An organization owner may need to approve it.
 3. Rennet polls GitHub in the background until you authorize, then stores the
    token. The Connect card turns into your connected account.
 
@@ -51,20 +51,21 @@ server that sees your code, your token, or the sign-in.
 
 The sign-in requests two scopes:
 
-- `repo` reads and writes the repositories you grant, so Rennet can read a pull
-  request and post your review.
-- `workflow` lets a push touch files under `.github/workflows/`. GitHub rejects a
-  push that changes a workflow without it, so a coding agent could not push a CI
-  fix.
+- `repo` reads and writes the repositories your account can already reach, so
+  Rennet can read a pull request and post your review. Classic OAuth `repo`
+  access is account-wide, not a per-repository pick.
+- `workflow` is requested alongside `repo` so a token-authenticated request that
+  touches files under `.github/workflows/` is not rejected. Your coding agent's
+  branch push uses git's own credentials, not this token.
 
 GitHub shows these scopes on the authorization screen. The token acts as you, so
-it can do only what your GitHub account can do on the repositories you approve.
+it can do only what your GitHub account can already do.
 
 ## Where the token lives
 
 Rennet stores one credential as a single file named `github-token` in the
-daemon's data directory, with owner-only (`0600`) permissions. It is the same
-trust model as an SSH private key.
+daemon's data directory, with owner-only (`0600`) permissions. Anyone who can read that file can act as
+you on GitHub until you disconnect.
 
 | Platform | Location |
 | --- | --- |
@@ -116,8 +117,7 @@ Rennet separates the failure states so you know what to fix:
 
 - Not connected: no account yet. Sign in.
 - Token invalid: the stored token was revoked or rejected. Sign in again.
-- Insufficient scope: the token is missing `repo` or `workflow`. Reconnect and
-  approve both.
+- Insufficient scope: the token lacks `repo` access. Reconnect and approve it.
 - Network: Rennet could not reach `github.com`. This is never reported as a bad
   token, because an unreachable GitHub says nothing about the token. Check your
   connection and retry.

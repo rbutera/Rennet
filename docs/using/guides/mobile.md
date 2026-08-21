@@ -6,13 +6,13 @@ tracking: https://github.com/rbutera/rennet/issues/383
 ---
 
 Rennet's native phone client is planned, not released. It is tracked in
-[GitHub issue #383](https://github.com/rbutera/rennet/issues/383) and gated behind
-the mobile design pass in [#382](https://github.com/rbutera/rennet/issues/382).
-This page describes what that work promises so you can tell whether it fits how
-you review. It is not yet a guide to an app you can install.
+[GitHub issue #383](https://github.com/rbutera/rennet/issues/383) and follows the
+mobile design pass in [#382](https://github.com/rbutera/rennet/issues/382). This
+page describes what #383 will do so you can tell whether it fits how you review.
+It is not yet a guide to an app you can install.
 
 The phone is a client for a daemon running on the machine that holds the
-repositories. The promise of #383 is a full peer within its private network: pair
+repositories. Within its private network the phone acts as a full client: pair
 once, then read a review, watch a running turn live, answer an ask, and sign and
 post from the phone, with a push when a turn needs you.
 

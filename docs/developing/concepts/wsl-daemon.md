@@ -7,7 +7,7 @@ For a project stored inside WSL, Rennet runs its daemon **inside that distro**,
 with native Linux `inotify`, `git`, and filesystem, instead of running the daemon
 on Windows and reaching across the `\\wsl.localhost\…` (9P/UNC) bridge. This is
 the same model VS Code Remote-WSL uses, and for the same reason: the bridge is
-wrong for every file operation, not one subsystem.
+wrong across filesystem watching, symlinks, and Git semantics, not one subsystem.
 
 ## Why the bridge fails
 
@@ -89,13 +89,11 @@ for the user-facing locus setting.
 The daemon-in-distro runtime is built, unit-tested behind the
 `ensureDaemonForProject` seam, and wired into the desktop shell. Its scope is the
 `wsl-daemon-runtime` capability in
-[openspec/changes/wsl-daemon-runtime](https://github.com/rbutera/rennet/tree/main/openspec/changes/wsl-daemon-runtime),
-landed across PRs [#437](https://github.com/rbutera/rennet/pull/437) (Node
-resolution and launch descriptor) and
-[#439](https://github.com/rbutera/rennet/pull/439) (delivery, lifecycle,
-routing).
+[openspec/changes/wsl-daemon-runtime](https://github.com/rbutera/rennet/tree/main/openspec/changes/wsl-daemon-runtime).
+Live field validation on a real Windows host is the remaining step before that
+change archives.
 
-1. **Node detection** and the `wsl.exe -e <node> <bundle> serve --data-dir`
+1. **Node detection** and the `wsl.exe -e <node> <bundle> --data-dir`
    launch descriptor (`resolveWslNode`, `buildWslDaemonLaunch` in
    `packages/core/src/wsl-node.ts`), reusing the existing locus argv/path
    primitives.
