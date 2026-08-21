@@ -356,13 +356,14 @@ function harness(
           primaryBranch: input.primaryBranch,
           openPath: input.discovery.repos[0]?.path ?? input.discovery.path,
           addedAt: "2026-08-09T00:00:00.000Z",
+          source: input.discovery.source,
         };
         return { project, projects: [project] };
       },
     },
     processProject: () => Promise.resolve({ repos: [] }),
     discoverProject: ({ path, kind }) =>
-      Promise.resolve({ path, kind, repos: [], primaryBranch: "main" }),
+      Promise.resolve({ path, kind, repos: [], primaryBranch: "main", source: "local" }),
     listDir: (input) =>
       Promise.resolve({
         path: input.path ?? "/home/rai",
@@ -2610,6 +2611,7 @@ function frontDoorHarness(seed: {
     kind: "workspace",
     primaryBranch: "main",
     repos: [{ name: "atlas", path: "/orbital/atlas", branches: 3 }],
+    source: "local",
   };
   const deps: DispatchDeps = {
     service,
@@ -2664,6 +2666,7 @@ function frontDoorHarness(seed: {
           primaryBranch: input.primaryBranch,
           openPath: input.discovery.repos[0]?.path ?? input.discovery.path,
           addedAt: "2026-08-09T00:00:00.000Z",
+          source: input.discovery.source,
         };
         stored.push(project);
         return { project, projects: [...stored] };
@@ -2729,6 +2732,7 @@ function persistedProject(overrides: Partial<Project> = {}): Project {
     primaryBranch: "main",
     openPath: "/orbital/atlas",
     addedAt: "2026-08-09T00:00:00.000Z",
+    source: "local",
     ...overrides,
   };
 }
@@ -2779,6 +2783,7 @@ describe("createDispatch — front door (issue #29)", () => {
         { name: "atlas", path: "/orbital/atlas", branches: 3 },
         { name: "docs", path: "/orbital/docs", branches: 2 },
       ],
+      source: "local",
     };
     const out = (await dispatch("projects.add", {
       commandId: randomUUID(),

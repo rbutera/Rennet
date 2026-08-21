@@ -99,7 +99,13 @@ export async function discoverProject(
     const repos = (await isWorkTree(git, path))
       ? [await describeRepo(git, path, basename(path) || path)]
       : [];
-    return { path, kind, repos, primaryBranch: await detectPrimaryBranch(git, path) };
+    return {
+      path,
+      kind,
+      repos,
+      primaryBranch: await detectPrimaryBranch(git, path),
+      source: "local",
+    };
   }
 
   // Workspace: scan the immediate children.
@@ -127,6 +133,7 @@ export async function discoverProject(
     repos,
     primaryBranch,
     ...(reconciliation ? { reconciliation } : {}),
+    source: "local",
   };
 }
 

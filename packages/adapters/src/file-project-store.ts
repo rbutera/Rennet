@@ -1,6 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { type DiscoveryResult, type Project, projectSchema } from "@rennet/protocol";
+import {
+  type DiscoveryResult,
+  type Project,
+  type ProjectSource,
+  projectSchema,
+} from "@rennet/protocol";
 import { z } from "zod";
 
 /**
@@ -25,6 +30,8 @@ export interface ProjectDraft {
   openPath: string;
   /** The working-tree paths of the included repos, so live detail honours the selection. */
   includedRepoPaths?: readonly string[];
+  /** Which daemon this project lives on (issue: source-aware project selection). */
+  source: ProjectSource;
 }
 
 const fileSchema = z.object({ projects: z.array(projectSchema) });
@@ -87,6 +94,7 @@ export class FileProjectStore {
       openPath: draft.openPath,
       ...(draft.includedRepoPaths ? { includedRepoPaths: [...draft.includedRepoPaths] } : {}),
       addedAt: this.now(),
+      source: draft.source,
     });
     const existing = this.list();
     writeFileSync(
@@ -135,5 +143,6 @@ export function deriveProjectDraft(
     primaryBranch,
     openPath,
     includedRepoPaths: included.map((repo) => repo.path),
+    source: discovery.source,
   };
 }

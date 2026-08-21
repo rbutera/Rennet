@@ -22,6 +22,7 @@ const discovery: DiscoveryResult = {
   kind: "repo",
   primaryBranch: "main",
   repos: [{ name: "atlas", path: "/orbital", branches: 3, remote: "github.com/orbital/atlas" }],
+  source: "local",
 };
 
 interface FakeConfig {
@@ -64,6 +65,7 @@ function fakeBridge(config: FakeConfig = {}): {
           primaryBranch: (input as CommandInput<"projects.add">).primaryBranch,
           openPath: "/orbital",
           addedAt: "2026-08-09T00:00:00.000Z",
+          source: "local",
         };
         projects = [...projects, added];
         return { project: added, projects };
@@ -163,6 +165,7 @@ describe("FrontDoor — the add-a-project flow", () => {
         { name: "atlas", path: "/orbital/atlas", branches: 3 },
         { name: "atlas-docs", path: "/orbital/atlas-docs", branches: 2, note: "docs only" },
       ],
+      source: "local",
     };
     const { bridge, calls } = fakeBridge({ discovery: twoRepos, chosenPath: "/orbital" });
     const { container, getByRole } = mount(<FrontDoor bridge={bridge} onOpenProject={vi.fn()} />);

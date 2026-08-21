@@ -17,6 +17,7 @@ const project: Project = {
   primaryBranch: "main",
   openPath: "/code/rennet",
   addedAt: "2026-08-13T00:00:00.000Z",
+  source: "local",
 };
 
 const review: Review = {

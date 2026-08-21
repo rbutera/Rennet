@@ -1374,8 +1374,11 @@ export function createDispatch(
           // Confirm. MAIN derives the stored shape from the discovery + the toggle
           // choices, then grants the new open target so the row is immediately openable.
           const input = parseCommandInput(name, rawInput);
+          // The daemon this project lives on: prefer the discovery's own stamp
+          // (where it actually ran), else the confirmed top-level source, else local.
+          const source = input.discovery.source ?? input.source ?? "local";
           const { project, projects } = deps.projects.add({
-            discovery: input.discovery,
+            discovery: { ...input.discovery, source },
             includedRepos: [...input.includedRepos],
             primaryBranch: input.primaryBranch,
           });
