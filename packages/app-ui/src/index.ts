@@ -239,6 +239,9 @@ export {
 } from "./components/conversation-host";
 export { CoverageMosaicView } from "./components/coverage";
 export { DestinationFrame } from "./components/destination-frame";
+// The in-app directory browser (source-aware project selection, task 5): fed by
+// `fs.listDir` so browsing works over a remote/WSL source with no native dialog.
+export { DirectoryBrowser } from "./components/directory-browser";
 export type {
   DispositionAnchorKind,
   DispositionClusterAnchor,
