@@ -41,12 +41,17 @@ resolves to an equal or newer compatible version and the owning tests pass.
 
 ## Licence policy
 
-Rennet packages are MIT licensed. Distributed dependencies may use the
-compatible licences allowlisted in `scripts/check-licenses.mjs`; attribution and
-notice obligations travel with the packaged artifact.
+Rennet's own packages are licensed under FSL-1.1-MIT (Functional Source License,
+MIT Future License): source-available, free for any non-competing use, with each
+release converting to MIT two years after publication. This is Rennet's outbound
+licence and is independent of the inbound licences of its dependencies.
+Distributed dependencies may use the compatible licences allowlisted in
+`scripts/check-licenses.mjs`; attribution and notice obligations travel with the
+packaged artifact and are collected in `THIRD-PARTY-LICENSES.md` (regenerate with
+`pnpm notices`).
 
 Self-hosted Geist, Geist Mono, Fraunces, and Newsreader assets use OFL-1.1. The
-font licence applies to the font files, not Rennet's MIT source.
+font licence applies to the font files, not Rennet's FSL-1.1-MIT source.
 
 The Anthropic Agent SDK and its platform packages are named exceptions because
 pnpm reports their commercial licence as `Unknown`. The gate does not allow the

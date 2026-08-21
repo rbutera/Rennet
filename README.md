@@ -55,4 +55,4 @@ Nx runs and locally caches formatting, architecture checks, licence checks, lint
 
 There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context; Rennet records the assembled context rather than pretending the whole loop is offline. Never use client repositories, data, screenshots, or pull requests as fixtures without written authorization.
 
-Rennet is MIT licensed throughout.
+Rennet is licensed under [FSL-1.1-MIT](./LICENSE), the Functional Source License with an MIT future grant: source-available and free to read, run, modify, and redistribute for any purpose except building a competing product, with each release converting to the MIT licence two years after publication. Bundled third-party dependencies keep their own permissive licences; see [`THIRD-PARTY-LICENSES.md`](./THIRD-PARTY-LICENSES.md).

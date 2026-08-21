@@ -14,7 +14,7 @@ Rennet does the structural reading work without taking the judgment away from th
 
 ## Product purpose
 
-Rennet is a local-first, MIT-licensed code review application. Its local daemon captures a changeset, groups related work into cohorts, orders those cohorts for comprehension, and keeps every claim connected to source evidence. Desktop, browser, and mobile clients read the same review.
+Rennet is a local-first, open-source code review application. Its local daemon captures a changeset, groups related work into cohorts, orders those cohorts for comprehension, and keeps every claim connected to source evidence. Desktop, browser, and mobile clients read the same review.
 
 Rennet supports two user stories.
 
@@ -54,7 +54,7 @@ For another person's pull request, the review preview posts as a batched GitHub 
 - Rennet never hides decisions behind a count limit. Reviewers can zoom and act at useful levels of detail.
 - The reviewer explicitly posts human-visible review content. Rennet can drive coding work, edit files, run tests, push branches, and prepare pull requests.
 - `.rennet/` contains local project context and is ignored by default. Rennet does not stage or commit it.
-- Every Rennet package uses the MIT licence. The product name and brand assets remain Rennet identity assets.
+- Every Rennet package uses the FSL-1.1-MIT licence (source-available; each release converts to MIT two years after publication). The product name and brand assets remain Rennet identity assets.
 
 ## Brand commitments
 
@@ -69,8 +69,8 @@ The marketing site should explain the human context-window problem before it lis
 Confirmed public claims are:
 
 - Available now
-- Free and open source
-- MIT licensed
+- Free and open source (FSL-1.1-MIT)
+- Converts to MIT two years after each release
 - Downloadable for macOS
 - Local-first
 - No Rennet backend and no telemetry

@@ -20,7 +20,7 @@ const allowed = new Set([
   // permissive / compatible licences transitively. The dependency standard admits
   // "compatible permissive licences" with attribution travelling with distributed
   // artifacts; each is permissive or a weak (file-level) copyleft that does not
-  // infect Rennet's MIT code:
+  // infect Rennet's own (FSL-1.1-MIT) source:
   //   • the dual-licence "OR" expressions each offer a permissive arm we take (MIT,
   //     BSD-3-Clause, CC0);
   //   • "MIT AND Apache-2.0" is two permissive licences;
@@ -39,7 +39,7 @@ const allowed = new Set([
   // Source Serif 4 via fontsource / expo-google-fonts). OFL-1.1 is the SIL Open
   // Font License: permissive for bundling and redistribution inside software of
   // any licence; its conditions (font stays OFL, reserved font names) bind the
-  // FONT FILES only and never infect Rennet's MIT code. "MIT AND OFL-1.1" is
+  // FONT FILES only and never infect Rennet's own source. "MIT AND OFL-1.1" is
   // the expo-google-fonts wrappers: MIT loader code + OFL font payload.
   "OFL-1.1",
   "MIT AND OFL-1.1",

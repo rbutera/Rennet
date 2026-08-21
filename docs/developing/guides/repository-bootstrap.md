@@ -148,7 +148,7 @@ command. Long-running, interactive, and end-to-end targets are not cacheable.
 
 Define a core port when product logic needs a platform capability. Implement the
 port in `adapters`, then compose it in the relevant app or server. Keep all
-packages under the repository's MIT licence.
+packages under the repository's FSL-1.1-MIT licence.
 
 ## Keep the checkout healthy
 
