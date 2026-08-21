@@ -86,6 +86,7 @@ export * from "./settings-resolver";
 export * from "./snapshot-overlay";
 export * from "./ui-verification";
 export * from "./wsl-bundle";
+export * from "./wsl-distros";
 export * from "./wsl-node";
 export * from "./wsl-shell";
 

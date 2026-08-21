@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { appendFileSync, existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { detectLocus } from "@rennet/core";
+import { promisify } from "node:util";
+import { detectLocus, listWslDistros } from "@rennet/core";
 import {
   app,
   BrowserWindow,
@@ -48,6 +50,9 @@ if (squirrelStartup) {
 // renderer asks MAIN for the path and forwards it to `repository.choose`. Electron-native
 // residue.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
+// The source-aware project picker's WSL branch: the renderer asks MAIN which distros
+// are installed, so it can list them instead of the user typing a distro name.
+const LIST_WSL_DISTROS_CHANNEL = "rennet:list-wsl-distros";
 // The renderer asks MAIN to ensure the daemon for a project PATH and hand back its ws port —
 // a host path resolves the host daemon, a `\\wsl.localhost\<distro>\…` path spawns (or
 // reuses) that distro's in-distro daemon and returns ITS loopback port. The renderer then
@@ -107,6 +112,23 @@ function registerDialogHandler(): void {
       properties: ["openDirectory"],
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * `wsl.exe -l -q` writes UTF-16LE (ponytail note in `listWslDistros`'s parser):
+ * decode stdout as `utf16le` here, at the edge, before it reaches the node-free
+ * core parser.
+ */
+function registerListWslDistrosHandler(): void {
+  ipcMain.handle(LIST_WSL_DISTROS_CHANNEL, async (event) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return [];
+    return listWslDistros(async (cmd, args) => {
+      const { stdout } = await execFileAsync(cmd, args, { encoding: "utf16le" });
+      return stdout;
+    });
   });
 }
 
@@ -328,6 +350,7 @@ app.whenReady().then(async () => {
   });
   registerAppProtocol();
   registerDialogHandler();
+  registerListWslDistrosHandler();
   registerDaemonForPathResolver(dataDir);
   await createWindow(wsPort);
   activeWsPort = wsPort;

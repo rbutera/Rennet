@@ -6,6 +6,9 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 // that bridge: the host platform, the WS port to dial, the directory picker, and the
 // host-app updater channels.
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
+// The source-aware project picker's WSL branch: lists installed distros so the
+// renderer offers them instead of the user typing a distro name.
+const LIST_WSL_DISTROS_CHANNEL = "rennet:list-wsl-distros";
 const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 // The renderer's connect-flow decisions (locus detect / daemon switch / failure) land here as
 // structured lines in MAIN's <userData>/wsl-connect.log — the SHELL-side trace of connecting a
@@ -58,6 +61,11 @@ export interface RennetPreload {
    */
   chooseDirectory(): Promise<string | null>;
   /**
+   * Installed WSL distros (`wsl.exe -l -q`), or `[]` off win32 / with no WSL / on
+   * any error — never rejects. Backs the source-aware project picker's WSL branch.
+   */
+  listWslDistros(): Promise<string[]>;
+  /**
    * Ensure the daemon that should serve a project at `path` (host daemon for a host path,
    * the in-distro daemon for a `\\wsl.localhost\<distro>\…` path) and resolve its ws port.
    * Rejects with a plain message when a WSL distro has no usable Node or is unreachable — the
@@ -91,6 +99,7 @@ const preload: RennetPreload = {
   version,
   wsPort,
   chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
+  listWslDistros: () => ipcRenderer.invoke(LIST_WSL_DISTROS_CHANNEL) as Promise<string[]>,
   resolveDaemonForPath: (path) =>
     ipcRenderer.invoke(RESOLVE_DAEMON_FOR_PATH_CHANNEL, path) as Promise<number | null>,
   logWslConnect: (entry) => ipcRenderer.send(WSL_CONNECT_LOG_CHANNEL, entry),
