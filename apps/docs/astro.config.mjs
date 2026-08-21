@@ -141,6 +141,10 @@ export default defineConfig({
                     label: "Root docs own the library",
                     link: "/adr/0002-root-docs-own-the-library/",
                   },
+                  {
+                    label: "Browse WSL via its own daemon",
+                    link: "/adr/0003-browse-wsl-via-in-distro-daemon/",
+                  },
                 ],
               },
               {

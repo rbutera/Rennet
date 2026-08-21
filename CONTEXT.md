@@ -17,6 +17,16 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Planned page**: documentation for accepted behavior that is not live on `main` and cites its active tracking source.
   _Avoid_: Historical page, roadmap
 
+## Projects
+
+- **Project**: the persisted thing Rennet opens for review. It is either a workspace or a project repo, and it remembers which source it lives on.
+- **Workspace**: a folder containing several git repos, which Rennet discovers by scanning under it.
+  _Avoid_: Monorepo, folder
+- **Project repo**: a single git repository opened on its own.
+  _Avoid_: Repository (bare), repo
+- **Source**: the machine whose filesystem a project lives on and whose daemon serves it: the local host, a WSL distro, or a paired remote.
+  _Avoid_: Host, location, target
+
 ## GitHub account
 
 - **Device sign-in**: the GitHub OAuth flow in which Rennet shows a short code and the user enters it on GitHub.

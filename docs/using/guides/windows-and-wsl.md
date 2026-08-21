@@ -83,7 +83,10 @@ flowchart LR
   host.
 - Git and Claude Code installed inside that distro.
 - Codex installed inside the distro if you want a Codex review seat.
-- The project opened through its `\\wsl.localhost\<distro>\...` path.
+- The project added by picking the distro as the **source** in [Add a
+  project](./getting-started.md#add-a-project): Rennet lists every installed
+  distro automatically, then browses its native filesystem directly — no
+  `\\wsl.localhost\...` path to type.
 
 Claude Code and Codex use their own authenticated sessions inside the distro.
 Rennet invokes those harnesses but does not read their credentials.

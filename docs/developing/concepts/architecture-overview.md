@@ -45,10 +45,12 @@ flowchart LR
 ```
 
 The Electron main process owns windows, the static application menu, the
-`app://` protocol, auto-update, the native repository picker, tray behavior, and
-daemon supervision. Its preload exposes only the small set of native facts and
-effects the renderer needs: platform, version, WebSocket port, directory
-selection, update readiness, and update application.
+`app://` protocol, auto-update, tray behavior, and daemon supervision. Its
+preload exposes only the small set of native facts and effects the renderer
+needs: platform, version, WebSocket port, installed WSL distros, daemon
+resolution for a chosen path, update readiness, and update application.
+Project browsing runs entirely over the `fs.listDir` daemon RPC, so no native
+directory-picker surface is exposed to the renderer.
 
 The daemon serves the browser client as well as the WebSocket protocol. It binds
 to loopback by default. A non-loopback bind is an explicit remote-access setup;
