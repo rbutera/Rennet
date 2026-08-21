@@ -12,18 +12,20 @@
 
 @import "tailwindcss";
 @import "@rennet/theme/theme.css";
-/* Utility candidates live in the app shell and the components; test files are
- * excluded so fixtures can't mint CSS. The vendored @rennet/ui kit is a sibling
- * package under node_modules (auto-detection skips node_modules), and it writes
- * the shadcn utility vocabulary — the radius aliases (rounded-lg…), bg-primary,
- * the button brightness hovers — that this app never types itself. Without this
- * source the kit's buttons/inputs render with Tailwind preflight's
- * border-radius:0 (square) and no gold fill. Scan the kit's real path so every
- * class it uses is generated. */
-@source "./app.tsx";
-@source "./components";
+/* Scan the WHOLE app-ui source tree, not named subpaths. A named glob silently
+ * stops covering code that moves: `@source "./app.tsx"` missed the Wave-4.1 split
+ * that relocated the shell (h-14 titlebar, the pt-14 content offset) into
+ * `./app/shell.tsx`, so `pt-14` was never generated and the fixed titlebar
+ * overlapped the view. Test files are excluded so fixtures can't mint CSS. The
+ * vendored @rennet/ui kit is a sibling package under node_modules (auto-detection
+ * skips node_modules), and it writes the shadcn utility vocabulary — the radius
+ * aliases (rounded-lg…), bg-primary, the button brightness hovers — that this app
+ * never types itself; without its explicit source the kit's buttons/inputs render
+ * with Tailwind preflight's border-radius:0 (square) and no gold fill. */
+@source "./";
 @source "../../ui/src/components";
-@source not "./components/**/*.test.tsx";
+@source not "./**/*.test.tsx";
+@source not "./**/*.test.ts";
 
 @layer base {
   :root {
