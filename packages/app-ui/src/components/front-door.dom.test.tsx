@@ -283,6 +283,40 @@ describe("FrontDoor — source switcher in the add flow", () => {
     await waitFor(() => expect(onConsumed).toHaveBeenCalledTimes(1));
   });
 
+  it("re-selects a recent's SOURCE (not just its path) into the flow", async () => {
+    // A recent project that lives on a WSL source: clicking it must point the flow at that
+    // source, not just its path — `recentPaths` carries `project.source` for exactly this.
+    const wslProject: Project = {
+      id: "p1",
+      name: "orbital",
+      path: "/home/rai/orbital",
+      kind: "repo",
+      repoCount: 1,
+      branchCount: 2,
+      primaryBranch: "main",
+      openPath: "/home/rai/orbital",
+      addedAt: "2026-08-09T00:00:00.000Z",
+      source: "wsl:Ubuntu",
+    };
+    const { bridge } = fakeBridge({ projects: [wslProject], chosenPath: "/home/rai" });
+    const { container, getByRole } = mount(
+      <FrontDoor bridge={bridge} sources={sources} onOpenProject={vi.fn()} />,
+    );
+
+    // The projects list is populated (one recent), so open the add flow from its add row.
+    await waitFor(() => expect(container.querySelector(".project-rows")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Add a project/ }));
+    // The flow opens on Local; the recent for the WSL project is offered.
+    await waitFor(() => expect(container.querySelector(".recent-row")).not.toBeNull());
+    expect(getByRole("button", { name: /^Local/ }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(container.querySelector(".recent-row") as HTMLElement);
+
+    // The switcher now shows the recent's source selected — proof the source was restored.
+    expect(getByRole("button", { name: /WSL: Ubuntu/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(getByRole("button", { name: /^Local/ }).getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("completes a pending add on the distro daemon exactly once, then clears it", async () => {
     const { bridge, calls } = fakeBridge({
       processedRepos: [
