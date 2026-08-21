@@ -212,8 +212,9 @@ describe("FrontDoor — WSL connect in the add flow", () => {
     fireEvent.click(getByRole("button", { name: /Continue/ }));
 
     // The daemon switch is requested for the WSL path, tagged as an add (kind carried).
+    // No TypeCard click here, so the flow's default kind ("repo") is what's carried.
     await waitFor(() => expect(connectDaemonForPath).toHaveBeenCalledTimes(1));
-    expect(connectDaemonForPath).toHaveBeenCalledWith(WSL_PATH, { kind: "workspace" });
+    expect(connectDaemonForPath).toHaveBeenCalledWith(WSL_PATH, { kind: "repo" });
     // switched:true tears this instance down — the local discover must NOT run here.
     expect(calls.some((call) => call.name === "project.discover")).toBe(false);
   });

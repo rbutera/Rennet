@@ -24,7 +24,14 @@ test("adds a project, processes it, lists local work, and opens a review", async
     await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible();
     await page.getByRole("button", { name: "Add a project" }).click();
 
-    // Step 1: point at a single repo, browse to the path (the test-repo env), continue.
+    // Step 1: the add flow defaults to the project-repo kind, so the card is
+    // already selected before any click.
+    await expect(page.getByRole("button", { name: /Project repo/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    // Point at a single repo, browse to the path (the test-repo env), continue.
     await page.getByRole("button", { name: /Project repo/ }).click();
     await page.getByRole("button", { name: "Browse" }).click();
     await page.getByRole("button", { name: "Continue" }).click();

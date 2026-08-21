@@ -212,7 +212,7 @@ export function FrontDoor({
           projects={projects}
           detected={detected}
           bridge={bridge}
-          onAdd={() => setFlow({ step: "type-path", kind: "workspace", busy: false })}
+          onAdd={() => setFlow({ step: "type-path", kind: "repo", busy: false })}
           onOpen={onOpenProject}
           onRemove={(id) => {
             // Forget a project (the repo on disk is untouched); refresh from the
@@ -518,18 +518,18 @@ function TypeAndPath({
       </p>
       <div className="type-choice grid grid-cols-2 gap-3">
         <TypeCard
-          selected={flow.kind === "workspace"}
-          icon={<Icon icon={Monitor} className="size-4.5" />}
-          title="Workspace"
-          sub="a folder holding several repos"
-          onSelect={() => onFlow({ ...flow, kind: "workspace" })}
-        />
-        <TypeCard
           selected={flow.kind === "repo"}
           icon={<Icon icon={GitBranch} className="size-4.5" />}
           title="Project repo"
           sub="one repo"
           onSelect={() => onFlow({ ...flow, kind: "repo" })}
+        />
+        <TypeCard
+          selected={flow.kind === "workspace"}
+          icon={<Icon icon={Monitor} className="size-4.5" />}
+          title="Workspace"
+          sub="a folder holding several repos"
+          onSelect={() => onFlow({ ...flow, kind: "workspace" })}
         />
       </div>
 
