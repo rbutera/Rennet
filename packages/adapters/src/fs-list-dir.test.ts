@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listDir } from "./fs-list-dir";
+import { defaultFsListDirDeps, listDir } from "./fs-list-dir";
 
 const deps = {
   homedir: () => "/home/rai",
@@ -28,5 +28,47 @@ describe("listDir", () => {
   it("returns null parent at filesystem root", async () => {
     const r = await listDir({ path: "/" }, { ...deps, readEntries: async () => [] });
     expect(r.parent).toBeNull();
+  });
+
+  it("propagates a bad TARGET path instead of turning it into an empty success", async () => {
+    // A nonexistent / permission-denied target must REJECT (so the browser shows an
+    // inline error + keeps Continue disabled), never resolve to `{ entries: [] }`.
+    await expect(
+      listDir(
+        { path: "/no/such/dir" },
+        {
+          ...deps,
+          readEntries: async () => {
+            throw new Error("ENOENT: no such file or directory");
+          },
+        },
+      ),
+    ).rejects.toThrow(/ENOENT/);
+  });
+
+  it("flags a genuinely-unreadable child dir as unreadable (not a false non-repo)", async () => {
+    const r = await listDir(
+      {},
+      {
+        ...deps,
+        hasGitEntry: async (dir: string) => {
+          if (dir === "/home/rai/dev") throw new Error("EACCES: permission denied");
+          return false;
+        },
+      },
+    );
+    const dev = r.entries.find((e) => e.name === "dev");
+    expect(dev?.unreadable).toBe(true);
+    expect(dev?.isRepo).toBe(false);
+    // A readable sibling is still flagged readable.
+    expect(r.entries.find((e) => e.name === ".config")?.unreadable).toBe(false);
+  });
+
+  it("defaultFsListDirDeps.hasGitEntry propagates a read failure (no longer swallows to false)", async () => {
+    // The root cause of the dead `unreadable` branch: the default probe used to catch its
+    // own error and answer `false`. It must now throw so `listDir` can flag the child.
+    await expect(
+      defaultFsListDirDeps().hasGitEntry("/no/such/dir/definitely/missing"),
+    ).rejects.toThrow();
   });
 });

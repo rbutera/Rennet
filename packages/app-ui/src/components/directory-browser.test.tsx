@@ -103,6 +103,22 @@ describe("DirectoryBrowser", () => {
     expect(container.querySelector(".directory-browser-list")?.textContent).not.toContain("dev");
   });
 
+  it("calls onPathInvalid when a load fails, so the flow can drop the selection", async () => {
+    const onPathInvalid = vi.fn();
+    const { bridge } = fakeBridge({ "": home });
+    mount(
+      <DirectoryBrowser bridge={bridge} onPathChange={vi.fn()} onPathInvalid={onPathInvalid} />,
+    );
+    await screen.findByText("dev");
+
+    const input = screen.getByRole("textbox", { name: "Directory path" }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "/nope" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // The bad path errored → the browser tells the flow the selection is now invalid.
+    await waitFor(() => expect(onPathInvalid).toHaveBeenCalledTimes(1));
+  });
+
   it("renders an empty state when a directory has no child folders", async () => {
     const { bridge } = fakeBridge({
       "": { path: "/empty", home: "/empty", parent: "/", entries: [] },

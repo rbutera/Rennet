@@ -385,6 +385,11 @@ export function ConnectionHost({
   const [initial] = useState(() => readStoredDaemons(key));
   const [saved, setSaved] = useState<readonly ConnectionTarget[]>(initial.daemons);
   const [activeId, setActiveId] = useState(initial.activeId ?? defaultTarget.id);
+  // Which `ProjectSource` each attached target id represents, so the add flow's fresh
+  // default (and the switcher's `selected`) can AGREE with the daemon actually attached
+  // instead of always claiming "local". Populated when `connectSource` attaches a WSL
+  // target (whose loopback id is opaque); `daemon:`/default ids derive from the id itself.
+  const sourceByTargetId = useRef(new Map<string, ProjectSource>());
   // A repo path the NEXT-mounted app should capture on itself — set when a WSL pick switches
   // us onto a distro daemon, so the freshly remounted app adds the repo THERE (the switching
   // app is already tearing down). The app clears it via `onPendingRepoConsumed`.
@@ -419,6 +424,15 @@ export function ConnectionHost({
   }, [defaultTarget, saved]);
   const allTargets = useMemo(() => [hydratedDefault, ...saved], [hydratedDefault, saved]);
   const activeTarget = allTargets.find((target) => target.id === activeId) ?? hydratedDefault;
+  // The `ProjectSource` of the daemon currently attached — threaded to the front door so a
+  // FRESH add defaults its source (and the SourceSwitcher's selection) to it, not "local".
+  const activeSource = useMemo<ProjectSource>(() => {
+    if (activeId === defaultTarget.id) return "local";
+    const mapped = sourceByTargetId.current.get(activeId);
+    if (mapped) return mapped;
+    if (activeId.startsWith("daemon:")) return `remote:${activeId.slice("daemon:".length)}`;
+    return "local";
+  }, [activeId, defaultTarget.id]);
 
   const [activeBridge, setActiveBridge] = useState<{
     readonly target: ConnectionTarget;
@@ -646,6 +660,11 @@ export function ConnectionHost({
         const resolution = await resolveDaemonTarget(`\\\\wsl.localhost\\${distro}`);
         if (resolution.error) return { switched: false, error: resolution.error };
         if (resolution.switched && resolution.target) {
+          sourceByTargetId.current.set(resolution.target.id, source);
+          // Already attached to this distro daemon: no remount fires, so DON'T report
+          // `switched` (the caller would then wait forever for a browse restore that never
+          // comes). Report `switched:false` so it proceeds inline on the current daemon.
+          if (resolution.target.id === activeId) return { switched: false };
           setPendingSourceBrowse({ source, kind, path: browsePath });
           activateLocalTarget(resolution.target);
           return { switched: true };
@@ -656,6 +675,11 @@ export function ConnectionHost({
         const deviceId = source.slice("remote:".length);
         const target = saved.find((candidate) => candidate.id === `daemon:${deviceId}`);
         if (!target) return { switched: false, error: "That remote is no longer paired here." };
+        sourceByTargetId.current.set(target.id, source);
+        // Already the active daemon: `switchTo` changes no id, so no remount fires. Report
+        // `switched:false` (not the old buggy `true`) so the caller proceeds inline instead
+        // of hanging `busy` on a browse restore that never arrives.
+        if (target.id === activeId) return { switched: false };
         setPendingSourceBrowse({ source, kind, path: browsePath });
         switchTo(target.id);
         return { switched: true };
@@ -853,6 +877,7 @@ export function ConnectionHost({
         pendingAddPath={pendingAddPath ?? undefined}
         onPendingAddConsumed={() => setPendingAddPath(null)}
         sources={sources}
+        activeSource={activeSource}
         connectSource={connectSource}
         pendingSourceBrowse={pendingSourceBrowse ?? undefined}
         onPendingSourceBrowseConsumed={() => setPendingSourceBrowse(null)}

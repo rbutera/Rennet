@@ -17,11 +17,11 @@ export function defaultFsListDirDeps(): FsListDirDeps {
       return entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() }));
     },
     async hasGitEntry(dir) {
-      try {
-        return (await readdir(dir)).includes(".git");
-      } catch {
-        return false;
-      }
+      // Read the child dir to look for `.git`. Do NOT swallow a read failure into
+      // `false` (that mislabels a permission-denied child as a readable non-repo, and
+      // makes `listDir`'s `unreadable` branch unreachable): let it throw so `listDir`
+      // flags the child `unreadable` instead.
+      return (await readdir(dir)).includes(".git");
     },
   };
 }
@@ -39,12 +39,11 @@ export async function listDir(
 ): Promise<FsListDirResult> {
   const home = deps.homedir();
   const path = input.path && input.path.length > 0 ? input.path : home;
-  let dirs: readonly { name: string; isDirectory: boolean }[];
-  try {
-    dirs = (await deps.readEntries(path)).filter((e) => e.isDirectory);
-  } catch {
-    dirs = []; // unreadable target dir → empty list; the UI still shows the path bar
-  }
+  // A failure to read the TARGET dir (nonexistent / permission-denied path) is a real
+  // fault, not an empty directory — let it propagate so the RPC rejects and the browser
+  // shows an inline error with Continue DISABLED (SPEC: invalid typed path), instead of
+  // an empty "No folders here" success on a bad path. Per-ENTRY faults stay soft below.
+  const dirs = (await deps.readEntries(path)).filter((e) => e.isDirectory);
   const entries: FsEntry[] = await Promise.all(
     [...dirs]
       .sort((a, b) => a.name.localeCompare(b.name))

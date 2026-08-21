@@ -258,8 +258,10 @@ describe("FrontDoor — source switcher in the add flow", () => {
     });
     fireEvent.click(getByRole("button", { name: /Confirm/ }));
     await waitFor(() => expect(calls.some((call) => call.name === "projects.add")).toBe(true));
+    // The source rides through on the DISCOVERY (the one authoritative field), not a
+    // redundant top-level `source` — dropped so a caller can't disagree with it.
     expect(calls.find((call) => call.name === "projects.add")?.input).toMatchObject({
-      source: "local",
+      discovery: { source: "local" },
     });
   });
 
@@ -386,5 +388,98 @@ describe("FrontDoor — source switcher in the add flow", () => {
     );
     // It lands in the same processing step a local add reaches.
     await waitFor(() => expect(container.querySelector(".processing")).not.toBeNull());
+  });
+
+  it("defaults a FRESH add flow's source to the attached daemon (activeSource), not always Local (F1)", async () => {
+    const { bridge } = fakeBridge({ chosenPath: "/home/rai" });
+    const { container, getByRole } = mount(
+      <FrontDoor
+        bridge={bridge}
+        sources={sources}
+        activeSource="wsl:Ubuntu"
+        onOpenProject={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Add a project/ }));
+    await waitFor(() => expect(container.querySelector(".source-switcher")).not.toBeNull());
+    // The flow (and the switcher's selection) must agree with the daemon actually attached.
+    expect(getByRole("button", { name: /WSL: Ubuntu/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(getByRole("button", { name: /^Local/ }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("navigates the browser to a SAME-source recent's directory, shown === submitted (F4)", async () => {
+    const localProject: Project = {
+      id: "p1",
+      name: "orbital",
+      path: "/home/rai/orbital",
+      kind: "repo",
+      repoCount: 1,
+      branchCount: 2,
+      primaryBranch: "main",
+      openPath: "/home/rai/orbital",
+      addedAt: "2026-08-09T00:00:00.000Z",
+      source: "local",
+    };
+    const { bridge, calls } = fakeBridge({ projects: [localProject], chosenPath: "/home/rai" });
+    const { container, getByRole } = mount(
+      <FrontDoor bridge={bridge} sources={sources} onOpenProject={vi.fn()} />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".project-rows")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Add a project/ }));
+    await waitFor(() => expect(container.querySelector(".recent-row")).not.toBeNull());
+    // The flow opened on Local (same source as the recent), browser at home /home/rai.
+    fireEvent.click(container.querySelector(".recent-row") as HTMLElement);
+
+    // A same-source recent must make the browser NAVIGATE to its directory (a reload), not just
+    // relabel — proven by an fs.listDir load for the recent's path. Without the reload token the
+    // browser would keep showing home while Continue submitted /home/rai/orbital.
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.name === "fs.listDir" &&
+            (call.input as { path?: string }).path === "/home/rai/orbital",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("disables Continue when the typed path is invalid (F5)", async () => {
+    // A bridge whose fs.listDir REJECTS a bad path (a real daemon does; the shared fake always
+    // echoes) — so a typed nonexistent path surfaces an error and must NOT stay submittable.
+    const invoke = async (name: string, input: unknown): Promise<unknown> => {
+      if (name === "projects.list") return { projects: [] };
+      if (name === "harness.detect") return { detected: [] };
+      if (name === "repository.choose") return { path: "/home/rai" };
+      if (name === "fs.listDir") {
+        const requested = (input as { path?: string }).path;
+        if (requested && requested.length > 0 && requested !== "/home/rai") {
+          throw new Error("No such directory");
+        }
+        return { result: { path: "/home/rai", home: "/home/rai", parent: "/", entries: [] } };
+      }
+      return {};
+    };
+    const bridge = { invoke: invoke as unknown as RennetBridge["invoke"] } as RennetBridge;
+    const { container, getByRole } = mount(<FrontDoor bridge={bridge} onOpenProject={vi.fn()} />);
+
+    await waitFor(() => expect(container.querySelector(".add-card")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /Add a project/ }));
+    await waitFor(() => expect(container.querySelector(".directory-browser")).not.toBeNull());
+    // The home listing loaded, so Continue is enabled.
+    await waitFor(() =>
+      expect((getByRole("button", { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(false),
+    );
+
+    const pathBar = getByRole("textbox", { name: "Directory path" }) as HTMLInputElement;
+    fireEvent.change(pathBar, { target: { value: "/nope" } });
+    fireEvent.keyDown(pathBar, { key: "Enter" });
+
+    await waitFor(() => expect(container.querySelector(".directory-browser-error")).not.toBeNull());
+    // The invalid path invalidated the selection — Continue is disabled (SPEC).
+    expect((getByRole("button", { name: /Continue/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

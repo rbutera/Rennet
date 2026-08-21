@@ -304,6 +304,7 @@ export function RennetApp({
   pendingAddPath,
   onPendingAddConsumed,
   sources,
+  activeSource,
   connectSource,
   pendingSourceBrowse,
   onPendingSourceBrowseConsumed,
@@ -339,6 +340,9 @@ export function RennetApp({
   /** The add flow's selectable sources (source-aware project selection): Local + WSL distros +
    *  paired remotes. Absent in the browser shell (Local only). Forwarded straight to the front door. */
   sources?: SourceOption[];
+  /** The `ProjectSource` of the daemon currently attached — a FRESH add defaults its source to
+   *  this (not always "local"), so the SourceSwitcher's selection matches the attached daemon. */
+  activeSource?: ProjectSource;
   /** Attach the daemon a chosen source lives on (a non-local source remounts the app). Forwarded to
    *  the front door; the browse is restored on the fresh mount via {@link pendingSourceBrowse}. */
   connectSource?: (
@@ -2754,6 +2758,7 @@ export function RennetApp({
         <FrontDoor
           bridge={bridge}
           sources={sources}
+          activeSource={activeSource}
           connectSource={connectSource}
           pendingSourceBrowse={pendingSourceBrowse}
           onPendingSourceBrowseConsumed={onPendingSourceBrowseConsumed}

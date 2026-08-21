@@ -42,6 +42,7 @@ import { ChromeMark } from "./update-ready";
 export function FrontDoor({
   bridge,
   sources,
+  activeSource,
   connectSource,
   pendingSourceBrowse,
   onPendingSourceBrowseConsumed,
@@ -59,6 +60,13 @@ export function FrontDoor({
    * the shell, which owns distro enumeration and the paired-daemon list.
    */
   sources?: SourceOption[];
+  /**
+   * The `ProjectSource` of the daemon currently attached. A FRESH add flow defaults its `source`
+   * to this — so when the app is already on a WSL/remote daemon, the flow (and the SourceSwitcher's
+   * selection) agree with the daemon actually attached, rather than always claiming Local while the
+   * browser lists a different daemon's filesystem. Absent ⇒ Local.
+   */
+  activeSource?: ProjectSource;
   /**
    * Attach the daemon a chosen source lives on (WSL/remote reuse the owned/attached-daemon
    * machinery from #437/#439). A non-local source `switched:true` remounts the app onto that
@@ -251,7 +259,16 @@ export function FrontDoor({
           projects={projects}
           detected={detected}
           bridge={bridge}
-          onAdd={() => setFlow({ step: "type-path", kind: "repo", source: "local", busy: false })}
+          onAdd={() =>
+            setFlow({
+              step: "type-path",
+              kind: "repo",
+              // Default to the daemon actually attached, not always "local": if the app is on a
+              // WSL/remote daemon, the browser lists THAT filesystem, so the flow must say so.
+              source: activeSource ?? "local",
+              busy: false,
+            })
+          }
           onOpen={onOpenProject}
           onRemove={(id) => {
             // Forget a project (the repo on disk is untouched); refresh from the
@@ -500,6 +517,11 @@ function TypeAndPath({
   onFlow(flow: AddFlow | null): void;
   onError(message: string | undefined): void;
 }) {
+  // A reload token the browser navigates on: a SAME-source recent updates `flow.path` but
+  // doesn't change `flow.source`, so without this the browser would keep showing the old
+  // directory while Continue submitted the recent's path. Bumping it on a recent jump forces
+  // the browser to navigate there; a plain browse never bumps it, so there is no reload loop.
+  const [browseNonce, setBrowseNonce] = useState(0);
   // Switch which source's daemon the browser lists. A non-local source `switched:true` remounts
   // the whole app onto that daemon (this instance tears down; the fresh mount restores the browse
   // via `pendingSourceBrowse`). Local, or already attached, stays put. `busy` doubles as the
@@ -516,7 +538,12 @@ function TypeAndPath({
     if (id === flow.source) {
       // Same daemon already attached: no switch. A recent still jumps to its path + kind;
       // a plain re-select of the current source is a no-op.
-      if (browse) onFlow({ ...flow, kind, path });
+      if (browse) {
+        // Bump the reload token so the browser actually NAVIGATES to the recent's directory
+        // (a `flow.path` change alone doesn't reload it) — keeping the shown dir === submitted.
+        setBrowseNonce((nonce) => nonce + 1);
+        onFlow({ ...flow, kind, path });
+      }
       return;
     }
     onError(undefined);
@@ -608,9 +635,12 @@ function TypeAndPath({
       </p>
       <DirectoryBrowser
         bridge={bridge}
-        reloadKey={flow.source}
+        reloadKey={`${flow.source}#${browseNonce}`}
         initialPath={flow.path}
         onPathChange={(path) => onFlow({ ...flow, path })}
+        // A failed load (bad typed path / unreachable target) invalidates the selection, so drop
+        // the path — Continue then disables until a good directory loads (SPEC: invalid path).
+        onPathInvalid={() => onFlow({ ...flow, path: undefined })}
       />
 
       {projects.length > 0 ? (
@@ -734,7 +764,8 @@ function WorktreeConfig({
         discovery,
         includedRepos: flow.included,
         primaryBranch: flow.primaryBranch.trim() || discovery.primaryBranch,
-        source: flow.source,
+        // `source` rides in on `discovery.source` (stamped by `project.discover`) — the one
+        // authoritative field; no redundant top-level `source` that could disagree with it.
       });
       // Persisted — now build its snapshot (the initial context dump) with live
       // narration. The post-add list rides through, applied when processing ends.

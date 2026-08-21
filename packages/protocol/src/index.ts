@@ -2706,8 +2706,10 @@ export const commandDefinitions = {
       includedRepos: z.array(z.string().min(1)),
       /** The confirmed, possibly edited primary branch. */
       primaryBranch: z.string().min(1),
-      /** The daemon this project lives on. Defaults to `local` for pre-existing callers. */
-      source: sourceSchema.default("local"),
+      // The daemon this project lives on rides in ON THE DISCOVERY (`discovery.source`,
+      // stamped by the `project.discover` handler) — the single authoritative field. A
+      // redundant top-level `source` was dropped: it was never read, and a caller could
+      // silently disagree with `discovery.source` (persisting the wrong daemon).
     }),
     output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
   },

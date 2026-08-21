@@ -5,6 +5,8 @@
 // RennetApp; here we mock it to a prop-capturing stub so we can call `connectSource` straight and
 // watch its observable effects (resolve → remount → pending-browse stash → no re-trigger loop),
 // black-box, without a resolvable front-door bridge.
+
+import type { ProjectSource } from "@rennet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, mount, waitFor } from "../test/dom";
 import type {
@@ -20,6 +22,7 @@ import type {
 const captured = vi.hoisted(() => ({
   connectSource: undefined as ConnectSource | undefined,
   pendingSourceBrowse: undefined as PendingSourceBrowse | undefined,
+  activeSource: undefined as ProjectSource | undefined,
   consume: undefined as (() => void) | undefined,
 }));
 
@@ -27,10 +30,12 @@ vi.mock("../app", () => ({
   RennetApp: (props: {
     connectSource?: ConnectSource;
     pendingSourceBrowse?: PendingSourceBrowse;
+    activeSource?: ProjectSource;
     onPendingSourceBrowseConsumed?: () => void;
   }) => {
     captured.connectSource = props.connectSource;
     captured.pendingSourceBrowse = props.pendingSourceBrowse;
+    captured.activeSource = props.activeSource;
     captured.consume = props.onPendingSourceBrowseConsumed;
     return null;
   },
@@ -65,6 +70,7 @@ describe("ConnectionHost.connectSource — source dispatch", () => {
   beforeEach(() => {
     captured.connectSource = undefined;
     captured.pendingSourceBrowse = undefined;
+    captured.activeSource = undefined;
     captured.consume = undefined;
   });
 
@@ -170,5 +176,53 @@ describe("ConnectionHost.connectSource — source dispatch", () => {
     expect(result).toEqual({ switched: false });
     expect(createConnection).toHaveBeenCalledTimes(dialsBefore); // no remount
     expect(captured.pendingSourceBrowse).toBeUndefined();
+  });
+
+  it("reports the attached daemon's ProjectSource so a fresh add defaults to it (F1)", async () => {
+    // Attached to a saved remote: `activeSource` must read `remote:<id>`, NOT "local" — the
+    // fresh add flow keys its default (and the SourceSwitcher's selection) off this.
+    globalThis.localStorage.setItem(
+      "rennet.daemons",
+      JSON.stringify({ ...JSON.parse(REMOTE_STORE), activeId: "daemon:dev-9" }),
+    );
+    const createConnection = vi.fn(() => stubConnection());
+    mount(<ConnectionHost createConnection={createConnection} defaultTarget={LOCAL} />);
+    await waitFor(() => expect(captured.connectSource).toBeDefined());
+    await waitFor(() => expect(captured.activeSource).toBe("remote:dev-9"));
+  });
+
+  it("defaults activeSource to local when attached to the owned default target (F1)", async () => {
+    const createConnection = vi.fn(() => stubConnection());
+    mount(<ConnectionHost createConnection={createConnection} defaultTarget={LOCAL} />);
+    await waitFor(() => expect(captured.connectSource).toBeDefined());
+    expect(captured.activeSource).toBe("local");
+  });
+
+  it("returns switched:false when the requested remote is ALREADY the active daemon (F3)", async () => {
+    // Selecting the already-attached target changes no activeId, so no remount fires. It must
+    // report `switched:false` (not the old buggy `true`) so the caller proceeds inline instead
+    // of hanging `busy` waiting for a browse restore that never arrives.
+    globalThis.localStorage.setItem(
+      "rennet.daemons",
+      JSON.stringify({ ...JSON.parse(REMOTE_STORE), activeId: "daemon:dev-9" }),
+    );
+    const createConnection = vi.fn(() => stubConnection());
+    mount(<ConnectionHost createConnection={createConnection} defaultTarget={LOCAL} />);
+    await waitFor(() => expect(captured.connectSource).toBeDefined());
+    await waitFor(() =>
+      expect(createConnection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: "daemon:dev-9" }),
+      ),
+    );
+    const dialsBefore = createConnection.mock.calls.length;
+
+    let result: { switched: boolean; error?: string } | undefined;
+    await act(async () => {
+      result = await captured.connectSource?.("remote:dev-9", "repo");
+    });
+
+    expect(result).toEqual({ switched: false });
+    expect(createConnection).toHaveBeenCalledTimes(dialsBefore); // no remount
+    expect(captured.pendingSourceBrowse).toBeUndefined(); // no dangling browse restore
   });
 });

@@ -21,6 +21,7 @@ export function DirectoryBrowser({
   reloadKey,
   initialPath,
   onPathChange,
+  onPathInvalid,
 }: {
   bridge: RennetBridge;
   /** Bump this to force a reload (e.g. when the source changes). */
@@ -34,6 +35,12 @@ export function DirectoryBrowser({
   initialPath?: string;
   /** Called whenever the current directory changes (browse or type). */
   onPathChange(path: string): void;
+  /**
+   * Called when a load FAILS (bad typed path, unreachable target): the shown directory is now
+   * invalid, so the flow must not treat a stale-good path as submittable — the add flow clears its
+   * selected path here to keep Continue disabled (SPEC: invalid typed path → Continue disabled).
+   */
+  onPathInvalid?(): void;
 }) {
   const [path, setPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
@@ -67,6 +74,9 @@ export function DirectoryBrowser({
         // Bad typed path: leave the bar (and the last-good listing) alone, just
         // surface the fault — the empty-on-error render comes from `rows` below.
         setError(messageFrom(reason) || "No such directory");
+        // The current directory is invalid — tell the flow so it drops the selected path
+        // and Continue disables (a bad path must never stay submittable).
+        onPathInvalid?.();
       });
   }
 
