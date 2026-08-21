@@ -34,11 +34,18 @@ export function DirectoryBrowser({
   const [typed, setTyped] = useState("");
   const [focusIndex, setFocusIndex] = useState(0);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  // Generation guard: `reloadKey` bumps on source-switch, so an in-flight load
+  // from the PREVIOUS source can resolve after a newer one and must not win.
+  // Each `load()` claims the next generation; a response only applies state if
+  // it's still the latest generation issued when it resolves.
+  const generationRef = useRef(0);
 
   function load(target?: string): void {
+    const generation = ++generationRef.current;
     bridge
       .invoke("fs.listDir", target ? { path: target } : {})
       .then(({ result }) => {
+        if (generation !== generationRef.current) return;
         setPath(result.path);
         setParent(result.parent);
         setEntries(result.entries);
@@ -48,6 +55,7 @@ export function DirectoryBrowser({
         onPathChange(result.path);
       })
       .catch((reason: unknown) => {
+        if (generation !== generationRef.current) return;
         // Bad typed path: leave the bar (and the last-good listing) alone, just
         // surface the fault — the empty-on-error render comes from `rows` below.
         setError(messageFrom(reason) || "No such directory");
@@ -151,7 +159,6 @@ export function DirectoryBrowser({
             <div
               key={entry.path}
               role="option"
-              aria-selected={false}
               aria-disabled={entry.unreadable}
               tabIndex={index === focusIndex ? 0 : -1}
               ref={(node) => {
