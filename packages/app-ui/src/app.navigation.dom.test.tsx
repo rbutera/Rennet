@@ -559,3 +559,40 @@ describe("RennetApp navigation-stack restore across restarts (#324/#297)", () =>
     expect(calls.some((call) => call.name === "review.checkFreshness")).toBe(false);
   });
 });
+
+describe("RennetApp chrome layout", () => {
+  it("offsets the scrolling content below the fixed titlebar so no view is obscured", async () => {
+    const { container } = mount(<RennetApp bridge={navigationBridge(null)} />);
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+
+    const titlebar = container.querySelector(".navigation-titlebar") as HTMLElement;
+    const content = container.querySelector(".navigation-surface-content") as HTMLElement;
+    expect(titlebar).not.toBeNull();
+    expect(content).not.toBeNull();
+
+    // The titlebar is position:fixed (the macOS drag surface reserving the traffic-
+    // light inset), so it is out of flow: the content needs a top offset at least as
+    // tall as the bar, or its first rows render hidden underneath it. Compare the two
+    // ramp steps directly so shrinking the pad (or growing the bar) past overlap reds.
+    expect(titlebar.className).toContain("fixed");
+    const barHeight = Number(/\bh-(\d+)\b/.exec(titlebar.className)?.[1]);
+    const topPad = Number(/\bpt-(\d+)\b/.exec(content.className)?.[1]);
+    expect(barHeight).toBeGreaterThan(0);
+    expect(topPad).toBeGreaterThanOrEqual(barHeight);
+  });
+
+  it("renders Back/Forward history controls as lucide icons, not text arrows", async () => {
+    const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null)} />);
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+
+    for (const name of ["Back", "Forward"]) {
+      const button = getByRole("button", { name });
+      const svg = button.querySelector("svg");
+      expect(svg, `${name} should render a lucide svg`).not.toBeNull();
+      // The Icon wrapper stamps the 1.6px product stroke on every lucide glyph.
+      expect(svg?.getAttribute("stroke-width")).toBe("1.6");
+      // No bespoke text arrow (← / →) left behind by the pre-lucide chrome.
+      expect(button.textContent ?? "").not.toMatch(/[←→]/);
+    }
+  });
+});
