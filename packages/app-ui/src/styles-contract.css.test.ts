@@ -6,6 +6,21 @@ import { describe, expect, it } from "vitest";
 // runs no CSS animations, and both 4px and 999px are ramp-legal so design-ramp.test.ts can't
 // catch a radius reversion). These pin the exact source declarations.
 
+describe("the app stylesheet scans the vendored @rennet/ui kit", () => {
+  // Tailwind v4 only generates utilities it finds in @source-scanned files, and it skips
+  // node_modules — where the kit resolves as a workspace symlink. The kit writes the shadcn
+  // vocabulary this app never types itself (the radius aliases rounded-lg…, bg-primary, the
+  // button brightness hovers). Without an @source at the kit's real path those classes are
+  // never emitted and every kit Button/Input renders with Tailwind preflight's
+  // border-radius:0 — square, no gold fill. RED-proof: delete the kit @source line and this
+  // fires. Guards the "square buttons" regression that shipped once already.
+  const css = readFileSync(fileURLToPath(new URL("./index.css", import.meta.url)), "utf8");
+
+  it("declares an @source pointing at packages/ui/src/components", () => {
+    expect(css).toMatch(/@source\s+"[^"]*\bui\/src\/components"/);
+  });
+});
+
 describe("hold-to-sign fill contract (critique P1-C)", () => {
   // Post-Tailwind conversion the fill's resting geometry rides utilities on the component
   // and the sign-hold-fill KEYFRAME + its `.is-holding` arming rule live in index.css (a
