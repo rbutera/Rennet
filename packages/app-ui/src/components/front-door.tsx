@@ -97,6 +97,11 @@ export function FrontDoor({
     const { path, kind } = pendingAddPath;
     void (async () => {
       try {
+        // Grant the distro-native path on THIS (distro) daemon before discovering it —
+        // the daemon only scans paths granted via repository.choose, and the pick
+        // happened on the host daemon we just switched away from. The user chose this
+        // path; forwarding the grant is not a new consent step.
+        await bridge.invoke("repository.choose", { path });
         const { discovery } = await bridge.invoke("project.discover", {
           commandId: crypto.randomUUID(),
           path,

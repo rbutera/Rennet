@@ -52,7 +52,7 @@ export interface WslSpawnDeps {
   readonly spawn?: (
     file: string,
     args: readonly string[],
-    options: { readonly detached: true; readonly stdio: "ignore" },
+    options: { readonly detached: true; readonly stdio: "ignore"; readonly windowsHide: true },
   ) => WslChild;
 }
 
@@ -63,7 +63,12 @@ export interface WslSpawnDeps {
  */
 export function spawnWslDaemon(launch: LocusCommand, deps: WslSpawnDeps = {}): void {
   const spawner = deps.spawn ?? ((file, args, options) => spawn(file, args as string[], options));
-  const child = spawner(launch.file, launch.args, { detached: true, stdio: "ignore" });
+  // `windowsHide` stops `wsl.exe` from flashing an empty console window on Windows.
+  const child = spawner(launch.file, launch.args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
   // A detached child's async spawn failure (ENOENT: no wsl.exe, EACCES) would be an
   // UNHANDLED 'error' event — which terminates the host process. Own it here (the
   // wsl.exe pid is not useful for stopping the in-distro daemon, so we log, not throw).
