@@ -19,31 +19,28 @@
   section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:16px; }
   h2 { font:600 13px/1 -apple-system,sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:0 0 10px; display:flex; justify-content:space-between; align-items:center; }
   h2 .sw { text-transform:none; letter-spacing:0; }
-  h2 .sw button { border:1px solid var(--line); background:var(--sur); padding:3px 9px; font-size:12px; cursor:pointer; }
+  h2 .sw button { border:1px solid var(--line); background:var(--sur); color:var(--ink); padding:3px 9px; font-size:12px; cursor:pointer; }
   h2 .sw button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
-  /* renderers */
   #stage { min-height:420px; background:var(--stage); border:1px solid var(--line); border-radius:6px; padding:14px; position:relative; overflow:hidden; }
   .fe { border-radius:5px; padding:9px 11px; font-size:13px; box-shadow:0 1px 3px rgba(0,0,0,.14); }
   .fe.card { background:var(--sur); border:1px solid var(--elborder); font-family:Georgia,serif; }
   .fe.note { background:var(--note); color:var(--noteink); }
   .fe.unknown { background:var(--unknown); border:1px dashed var(--mut); }
   .fe .who { display:block; font-size:10px; color:var(--mut); margin-top:4px; font-family:-apple-system,sans-serif; }
+  .fe.note .who { color:#5c5033; }
   .fe .kindtag { float:right; font-size:10px; color:var(--mut); text-transform:uppercase; letter-spacing:.06em; }
   .fe.hot { outline:3px solid var(--accent); box-shadow:0 0 14px 3px rgba(184,134,11,.5); }
-  /* feed renderer */
   .feed { display:flex; flex-direction:column; gap:8px; max-width:560px; }
   .feed .note { margin-left:26px; max-width:480px; }
   .threadchip { font-size:12px; color:var(--bad); padding:2px 0 2px 26px; }
-  /* corkboard renderer */
   .cork .fe { position:absolute; max-width:180px; }
   svg#strings { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   svg#strings line { stroke:var(--bad); stroke-width:2; }
-  /* tabs & buttons */
   .tabs { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:10px; }
-  .tabs button { border:1px solid var(--line); background:transparent; padding:6px 11px; border-radius:6px 6px 0 0; cursor:pointer; font-size:13px; }
+  .tabs button { border:1px solid var(--line); background:transparent; color:var(--ink); padding:6px 11px; border-radius:6px 6px 0 0; cursor:pointer; font-size:13px; }
   .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .pane { display:none; } .pane.on { display:block; }
-  .step { display:block; width:100%; text-align:left; margin:4px 0; padding:8px 10px; border:1px solid var(--line); background:var(--sur); border-radius:6px; cursor:pointer; font-size:13px; }
+  .step { display:block; width:100%; text-align:left; margin:4px 0; padding:8px 10px; border:1px solid var(--line); background:var(--sur); color:var(--ink); border-radius:6px; cursor:pointer; font-size:13px; }
   .step.done { opacity:.45; text-decoration:line-through; }
   .step.next { border-color:var(--accent); border-width:2px; }
   .free { display:flex; flex-wrap:wrap; gap:6px; }
@@ -63,7 +60,7 @@
 <body>
 <header>
   <h1>Whiteboard v1 — the collapsed surface</h1>
-  <div class="q"><b>The question:</b> after the collapse — five tools, elements are <b>{id, kind, data}</b>, the <b>host's schema</b> defines every kind ("XML for agents"), the protocol defines no presentation — does this surface feel right? The <b>Tool console</b> shows the exact JSON per call. The renderer toggle draws the <b>same log</b> two ways: Rennet-style feed vs corkboard. Actors: <b>navi</b> (gold), <b>rai</b> (blue).</div>
+  <div class="q"><b>The question:</b> five tools, elements are <b>{id, kind, data}</b>, one mutation verb — <code>whiteboard_apply</code> with a <b>flat, ordered ops list</b>. The host's schema defines every kind (each kind: id, description, <b>typed attributes</b> — string | number | boolean | element | json, pluralizable with many). Does this surface feel right? The <b>Tool console</b> shows the exact JSON per call. Actors: <b>navi</b> (gold), <b>rai</b> (blue).</div>
 </header>
 <main>
 <div>
@@ -132,18 +129,21 @@ const WB = (() => {
       if (upto !== undefined && ev.seq > upto) break;
       const p = ev.payload;
       if (ev.kind === "element.created") els.set(p.element.id, { ...p.element, created_by: ev.actor });
-      if (ev.kind === "element.updated" && els.has(p.id)) {
-        const el = els.get(p.id); el.data = { ...el.data, ...p.set };
-      }
+      if (ev.kind === "element.updated" && els.has(p.id)) { const el = els.get(p.id); el.data = { ...el.data, ...p.set }; }
       if (ev.kind === "element.deleted") els.delete(p.id);
     }
     return { elements: els };
   }
-  // schema validation: kind must exist; required fields present; extra fields pass through
-  function validate(schema, el) {
-    const k = schema.kinds.find(x => x.kind === el.kind);
-    if (!k) return `unknown kind "${el.kind}" — this board's schema defines: ${schema.kinds.map(x => x.kind).join(", ")}`;
-    for (const f of k.required || []) if (el.data?.[f] === undefined) return `kind "${el.kind}" requires data.${f}`;
+  const badType = (t, v) => t === "json" ? false : t === "element" ? typeof v !== "string" : typeof v !== t;
+  function validateCreate(schema, o) {
+    const k = schema.kinds.find(x => x.id === o.kind);
+    if (!k) return `unknown kind "${o.kind}" — this board's schema defines: ${schema.kinds.map(x => x.id).join(", ")}`;
+    for (const a of k.attributes) {
+      const v = o.data?.[a.name];
+      if (v === undefined) { if (a.required) return `kind "${o.kind}" requires data.${a.name} (${a.description})`; continue; }
+      const bad = a.many ? (!Array.isArray(v) || v.some(x => badType(a.type, x))) : badType(a.type, v);
+      if (bad) return `data.${a.name} must be ${a.type}${a.many ? "s (array)" : ""} — ${a.description}`;
+    }
     return null;
   }
   const tools = {
@@ -151,28 +151,27 @@ const WB = (() => {
       if (!schema?.kinds?.length) throw new Error("host must supply a schema with at least one kind");
       const id = mint("wb");
       boards.set(id, { id, title: title || "untitled", schema, log: [], ops: new Set() });
-      append(board(id), actor, "board.created", { title: title || "untitled", schema_kinds: schema.kinds.map(k => k.kind) });
+      append(board(id), actor, "board.created", { title: title || "untitled", schema_kinds: schema.kinds.map(k => k.id) });
       return { board_id: id, seq: 1 };
     },
-    whiteboard_schema({ board_id }) {
-      const b = board(board_id);
-      return { seq: b.log.length, schema: b.schema };
-    },
-    whiteboard_apply({ board_id, actor, op_id, create = [], update = [], del = [] }) {
+    whiteboard_schema({ board_id }) { const b = board(board_id); return { seq: b.log.length, schema: b.schema }; },
+    whiteboard_apply({ board_id, actor, op_id, ops = [] }) {
       const b = board(board_id);
       if (b.ops.has(op_id)) return { seq: b.log.length, deduped: true, created_ids: [] };
-      // validate the whole batch first — an invalid batch changes nothing
-      for (const el of create) { const err = validate(b.schema, el); if (err) throw new Error(err); }
-      for (const u of update) if (!project(b.log).elements.has(u.id)) throw new Error(`update: no element "${u.id}"`);
+      // validate the whole flat ops list, in order, against simulated state — an invalid batch changes NOTHING
+      const sim = new Set(project(b.log).elements.keys());
+      for (const o of ops) {
+        if (o.op === "create") { const err = validateCreate(b.schema, o); if (err) throw new Error(err); if (o.id) sim.add(o.id); }
+        else if (o.op === "update" || o.op === "delete") { if (!sim.has(o.id)) throw new Error(`${o.op}: no element "${o.id}"`); if (o.op === "delete") sim.delete(o.id); }
+        else throw new Error(`unknown op "${o.op}" — ops are create | update | delete`);
+      }
       b.ops.add(op_id);
       const created_ids = [];
-      for (const el of create) {
-        const e = { id: el.id || mint("el"), kind: el.kind, data: el.data || {} };
-        created_ids.push(e.id);
-        append(b, actor, "element.created", { element: e });
+      for (const o of ops) {
+        if (o.op === "create") { const e = { id: o.id || mint("el"), kind: o.kind, data: o.data || {} }; created_ids.push(e.id); append(b, actor, "element.created", { element: e }); }
+        if (o.op === "update") append(b, actor, "element.updated", { id: o.id, set: o.set });
+        if (o.op === "delete") append(b, actor, "element.deleted", { id: o.id });
       }
-      for (const u of update) append(b, actor, "element.updated", { id: u.id, set: u.set });
-      for (const id of del) append(b, actor, "element.deleted", { id });
       return { seq: b.log.length, deduped: false, created_ids };
     },
     whiteboard_describe({ board_id, since_seq }) {
@@ -196,7 +195,7 @@ const WB = (() => {
       return { seq: b.log.length, events: evs };
     },
     whiteboard_screenshot({ board_id }) {
-      return { seq: board(board_id).log.length, image: "<png — a render of the current projection by whatever renderer the service hosts>" };
+      return { seq: board(board_id).log.length, image: "<png — a render of the current projection>" };
     },
   };
   function summ(e) {
@@ -210,47 +209,53 @@ const WB = (() => {
 })();
 /* ================= END PURE MODULE ================= */
 
+const A = (name, description, type = "json", required = false, many = false) => { const a = { name, description, type, required }; if (many) a.many = true; return a; };
 const RENNET_SCHEMA = {
   kinds: [
-    { kind: "card", description: "One piece of evidence or prose. Set data.marked=true to direct attention at it; clear it when attention moves on.", required: ["text"], optional: ["marked", "finding", "file"] },
-    { kind: "note", description: "A sticky: short informal commentary. Set data.target to an element id to attach it to that element.", required: ["text"], optional: ["target"] },
-    { kind: "thread", description: "The red string: a relation between two elements. data.from and data.to are element ids.", required: ["from", "to"], optional: ["label"] },
+    { id: "card", description: "One piece of evidence or prose. data.marked=true directs attention; clear it when the moment passes.", attributes: [
+      A("text", "the card's prose", "string", true), A("marked", "true directs attention", "boolean"), A("finding", "id of the host finding this card presents", "string"), A("file", "path this card is about", "string") ] },
+    { id: "note", description: "A sticky: short informal commentary. data.target attaches it to an element.", attributes: [
+      A("text", "the note's text", "string", true), A("target", "element this note attaches to", "element") ] },
+    { id: "thread", description: "The red string: a relation between two elements.", attributes: [
+      A("from", "source element", "element", true), A("to", "target element", "element", true), A("label", "what the relation means", "string") ] },
   ],
 };
 
 const SCHEMAS = {
-  whiteboard_create: { input: { actor: "string", title: "string?", schema: "Schema — the host's language for this board: [{kind, description (prose an agent acts on), required[], optional[]}]. Host-supplied at creation; the protocol never defines kinds." }, output: { board_id: "opaque string (bearer semantics when unauthenticated)", seq: "int" } },
+  whiteboard_create: { input: { actor: "string", title: "string?", schema: "Schema — the host's language: kinds:[{id, description, attributes:[{name, description, type, required, many?}]}]. Types: string | number | boolean | element | json; many:true pluralizes any of them. element = a reference to another element — hierarchy and relations are just element-typed attributes. Authored in Zod (TS) / Pydantic (Python), compiled to this wire shape." }, output: { board_id: "opaque string (bearer semantics when unauthenticated)", seq: "int" } },
   whiteboard_schema: { input: { board_id: "string" }, output: { seq: "int", schema: "the board's schema — discovery; an agent's first call on an unfamiliar board" } },
-  whiteboard_apply: { input: { board_id: "string", actor: "string", op_id: "string (client-minted; repeat op_id = deduped, log unchanged)", create: "[{id? (caller-mintable, stable), kind, data}]?", update: "[{id, set — shallow-merged into data}]?", del: "string[]?" }, output: { seq: "int", created_ids: "string[]", deduped: "bool" }, errors: "invalid batch changes NOTHING: unknown kind or missing required field rejects with a precise message; extra data fields always pass through" },
+  whiteboard_apply: { input: { board_id: "string", actor: "string", op_id: "string (client-minted; repeat op_id = deduped, log unchanged)", ops: "flat ORDERED list: [{op:'create', id?, kind, data} | {op:'update', id, set (shallow-merged into data)} | {op:'delete', id}] — later ops may reference ids created earlier in the same list" }, output: { seq: "int", created_ids: "string[]", deduped: "bool" }, errors: "invalid batch changes NOTHING: unknown kind, missing required attribute, or wrong type rejects with a precise message; extra data fields always pass through" },
   whiteboard_describe: { input: { board_id: "string", since_seq: "int? — omit for full projection grouped by kind; pass your last seq for a delta" }, output: { seq: "int", text: "structured text; every line carries its author" } },
   whiteboard_events: { input: { board_id: "string", since_seq: "int", kinds: "string[]? (event kinds)" }, output: { seq: "int", events: "[{seq, ts, actor, kind, payload}] — attribution is a log fact, never an enforcement" } },
   whiteboard_screenshot: { input: { board_id: "string" }, output: { seq: "int", image: "png" } },
   "(event kinds)": ["board.created", "element.created", "element.updated", "element.deleted"],
-  "(what the protocol does NOT define)": "kinds, presentation (no x/y), relations, attention, references — all host-schema data. No sessions, no locks, no permissions, no per-actor rules.",
+  "(what the protocol does NOT define)": "kinds, presentation (no x/y), relations, attention, references, containment — all host-schema data. No sessions, no locks, no permissions, no per-actor rules.",
 };
 
 const INSTRUCTIONS = `You share a board with a human. It is a data surface you both write;
 a renderer draws it for them, describe/screenshot draw it for you.
 
 First call on an unfamiliar board: whiteboard_schema. The schema is the
-board's language — each kind's description tells you what it is FOR.
-Speak only in the schema's kinds; the service rejects anything else
-with a precise error. Extra data fields are allowed and preserved.
+board's language — each kind's description tells you what it is FOR, and
+each attribute's description tells you what the field means. An
+element-typed attribute holds another element's id; that is how
+relations and hierarchy work here. The service rejects anything outside
+the schema with a precise error; extra data fields are allowed and kept.
 
 Identity: pass board_id and your actor name on every call; there is no
 session. Mint an op_id per mutation; reuse it on retry (the log dedups).
+
+Mutating: ONE whiteboard_apply with a flat ordered ops list. Mint your
+own element ids so later ops in the same list can reference them.
 
 Seeing: whiteboard_describe = cheap structured text (your default eyes).
 Pass since_seq=<your last seq> to read only what changed. Screenshot
 only when you need pixels.
 
 Turn loop: read events/describe since your last seq before acting —
-the human writes the same board. Whatever attention convention the
-schema defines (e.g. data.marked, data.target), use it instead of
-describing locations in prose; clear it when attention moves on.
-
-Batch with one apply — mint your own element ids so relations in data
-can reference them in the same call.
+the human writes the same board. Use the schema's attention convention
+(here: data.marked) instead of describing locations in prose; clear it
+when attention moves on.
 
 The human will edit and delete your elements. That is them working,
 not an error. Read the log to see what they did; don't undo it.`;
@@ -329,49 +334,51 @@ function refTab(btn, id) {
 let opN = 0; const op = () => "op_" + (++opN);
 const FREE = {
   "navi: discover the schema": () => call("whiteboard_schema", { board_id: BID }),
-  "navi: add evidence card": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { text: "Exhibit " + String.fromCharCode(65 + opN % 26), finding: "F-" + opN } }] }),
-  "rai: sticky note on newest card": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card").at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), create: [{ kind: "note", data: { text: "hmm, check this", target: c.id } }] }); },
-  "navi: mark newest card (attention = data)": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card").at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: c.id, set: { marked: true } }] }); },
-  "navi: unmark it (attention moved on)": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.data.marked).at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: c.id, set: { marked: false } }] }); },
-  "navi: thread two newest cards": () => { const cs = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card"); if (cs.length < 2) return; const [a, z] = cs.slice(-2); call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "thread", data: { from: a.id, to: z.id } }] }); },
-  "rai: delete newest element": () => { const e = [...WB.project(WB.boards.get(BID).log).elements.values()].at(-1); if (!e) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), del: [e.id] }); },
-  "TRY: unknown kind (rejected)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "widget", data: { text: "nope" } }] }),
-  "TRY: card missing text (rejected)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { finding: "F-99" } }] }),
-  "TRY: extra data field (passes)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { text: "extra fields ride along", rennet: { patchset: "ps_7" }, confidence: 0.92 } }] }),
+  "navi: add evidence card": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "card", data: { text: "Exhibit " + String.fromCharCode(65 + opN % 26), finding: "F-" + opN } }] }),
+  "rai: sticky note on newest card": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card").at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), ops: [{ op: "create", kind: "note", data: { text: "hmm, check this", target: c.id } }] }); },
+  "navi: mark newest card (attention = data)": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card").at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "update", id: c.id, set: { marked: true } }] }); },
+  "navi: unmark it (attention moved on)": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.data.marked).at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "update", id: c.id, set: { marked: false } }] }); },
+  "navi: thread two newest cards": () => { const cs = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card"); if (cs.length < 2) return; const [a, z] = cs.slice(-2); call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "thread", data: { from: a.id, to: z.id } }] }); },
+  "rai: delete newest element": () => { const e = [...WB.project(WB.boards.get(BID).log).elements.values()].at(-1); if (!e) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), ops: [{ op: "delete", id: e.id }] }); },
+  "TRY: unknown kind (rejected)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "widget", data: { text: "nope" } }] }),
+  "TRY: marked:'yes' (type error)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "card", data: { text: "typed attrs", marked: "yes" } }] }),
+  "TRY: extra data field (passes)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "card", data: { text: "extra fields ride along", rennet: { patchset: "ps_7" }, confidence: 0.92 } }] }),
   "navi: describe (full)": () => call("whiteboard_describe", { board_id: BID }),
   "navi: describe since seq 5": () => call("whiteboard_describe", { board_id: BID, since_seq: 5 }),
-  "replay same op_id (retry)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "op_" + opN, create: [{ kind: "card", data: { text: "duplicate?" } }] }),
+  "replay same op_id (retry)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "op_" + opN, ops: [{ op: "create", kind: "card", data: { text: "duplicate?" } }] }),
 };
 for (const [k, f] of Object.entries(FREE)) { const btn = document.createElement("button"); btn.textContent = k; btn.onclick = f; $("freeplay").appendChild(btn); }
 
 const WALKS = [
-  { name: "1 · Discover, then speak", desc: "An agent lands on an unfamiliar board. First call: whiteboard_schema — the kinds' descriptions ARE its instructions. Then it lays the whole review in one validated apply batch, minting its own ids so the thread can reference them.", steps: [
+  { name: "1 · Discover, then speak", desc: "An agent lands on an unfamiliar board. First call: whiteboard_schema — kind descriptions + typed attribute descriptions ARE its instructions. Then it lays the whole review in ONE flat ops list, minting ids so later ops reference earlier ones.", steps: [
     ["navi: whiteboard_schema — learn this board's language", () => call("whiteboard_schema", { board_id: BID })],
-    ["navi: one apply — 3 cards + note + thread", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [
-      { id: "sus1", kind: "card", data: { text: "Auth middleware rewritten", finding: "F-12" } },
-      { id: "sus2", kind: "card", data: { text: "Token expiry uses < not <=", finding: "F-13" } },
-      { id: "sus3", kind: "card", data: { text: "Tests deleted in same PR", finding: "F-14" } },
-      { id: "n1", kind: "note", data: { text: "start here — root cause", target: "sus2" } },
-      { id: "t1", kind: "thread", data: { from: "sus2", to: "sus3", label: "hid the breakage" } } ] })],
+    ["navi: one apply, five ops — cards + note + thread", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [
+      { op: "create", id: "sus1", kind: "card", data: { text: "Auth middleware rewritten", finding: "F-12" } },
+      { op: "create", id: "sus2", kind: "card", data: { text: "Token expiry uses < not <=", finding: "F-13" } },
+      { op: "create", id: "sus3", kind: "card", data: { text: "Tests deleted in same PR", finding: "F-14" } },
+      { op: "create", id: "n1", kind: "note", data: { text: "start here — root cause", target: "sus2" } },
+      { op: "create", id: "t1", kind: "thread", data: { from: "sus2", to: "sus3", label: "hid the breakage" } } ] })],
     ["navi: describe — read the board back, grouped by kind", () => call("whiteboard_describe", { board_id: BID })],
   ]},
-  { name: "2 · The schema bites", desc: "Validation is data integrity, not ceremony: an invalid batch changes NOTHING and the error names the fix. Extra data fields always pass through — that's how a host rides its own data.", steps: [
-    ["navi: apply kind 'widget' — rejected, schema lists what exists", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "widget", data: { text: "nope" } }] })],
-    ["navi: card without required text — rejected with the field name", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { finding: "F-99" } }] })],
-    ["navi: card with extra host fields — accepted, preserved verbatim", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { text: "extra fields ride along", rennet: { patchset: "ps_7" }, confidence: 0.92 } }] })],
+  { name: "2 · The schema bites", desc: "Validation is data integrity, not ceremony: an invalid ops list changes NOTHING and the error names the fix — unknown kind, missing required attribute, or wrong TYPE. Extra data fields always pass through.", steps: [
+    ["navi: kind 'widget' — rejected, schema lists what exists", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "widget", data: { text: "nope" } }] })],
+    ["navi: card without required text — rejected with the attribute", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "card", data: { finding: "F-99" } }] })],
+    ["navi: marked:'yes' — type error (boolean expected)", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "card", data: { text: "typed", marked: "yes" } }] })],
+    ["navi: extra host fields — accepted, preserved verbatim", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "create", kind: "card", data: { text: "extra fields ride along", rennet: { patchset: "ps_7" }, confidence: 0.92 } }] })],
   ]},
-  { name: "3 · Attention is data", desc: "No point tool, no marker kind — Rennet's schema says data.marked directs attention. Navi sets it, the renderer glows, navi clears it when the moment passes. Social convention, zero machinery.", steps: [
-    ["navi: mark the expiry card (update data.marked=true)", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: "sus2", set: { marked: true } }] })],
-    ["navi: unmark it — attention moved on", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: "sus2", set: { marked: false } }] })],
+  { name: "3 · Attention is data", desc: "No point tool, no marker kind — Rennet's schema says data.marked (boolean) directs attention. Navi sets it, the renderer glows, navi clears it when the moment passes. Social convention, zero machinery.", steps: [
+    ["navi: mark the expiry card", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "update", id: "sus2", set: { marked: true } }] })],
+    ["navi: unmark it — attention moved on", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), ops: [{ op: "update", id: "sus2", set: { marked: false } }] })],
   ]},
-  { name: "4 · Human curates", desc: "Rai edits and deletes navi's elements. Nothing stops him — attribution is implicit in the log, never enforced. Then navi reads the delta and moves on; it doesn't undo him.", steps: [
-    ["rai: rewrite navi's card text", () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), update: [{ id: "sus1", set: { text: "Auth middleware rewritten (rai: confirmed intentional)" } }] })],
-    ["rai: delete the tests card", () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), del: ["sus3"] })],
+  { name: "4 · Human curates", desc: "Rai edits and deletes navi's elements in one flat ops list. Nothing stops him — attribution is implicit in the log, never enforced. Then navi reads the delta and moves on; it doesn't undo him.", steps: [
+    ["rai: one apply — rewrite one card, delete another", () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), ops: [
+      { op: "update", id: "sus1", set: { text: "Auth middleware rewritten (rai: confirmed intentional)" } },
+      { op: "delete", id: "sus3" } ] })],
     ["navi: describe since seq 8 — sees rai's curation", () => call("whiteboard_describe", { board_id: BID, since_seq: 8 })],
   ]},
   { name: "5 · Retry + replay", desc: "Same op_id twice: deduped, log unchanged, no double card. Then drag the Replay slider — the whole board rebuilds from any log prefix, because nothing was ever stored but events.", steps: [
-    ["navi: apply op_id='retry-1'", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", create: [{ kind: "card", data: { text: "flaky network exhibit" } }] })],
-    ["navi: EXACT same call — deduped:true", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", create: [{ kind: "card", data: { text: "flaky network exhibit" } }] })],
+    ["navi: apply op_id='retry-1'", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", ops: [{ op: "create", kind: "card", data: { text: "flaky network exhibit" } }] })],
+    ["navi: EXACT same call — deduped:true", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", ops: [{ op: "create", kind: "card", data: { text: "flaky network exhibit" } }] })],
     ["now drag the Replay slider on the right, then back to live", () => { $("replaySlider").focus(); }],
   ]},
 ];
