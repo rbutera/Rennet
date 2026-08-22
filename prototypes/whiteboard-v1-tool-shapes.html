@@ -2,65 +2,73 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Whiteboard v1 — tool shapes prototype</title>
+<title>Whiteboard Tool Shapes</title>
 <style>
-  :root { --accent:#b8860b; --ink:#2a2320; --paper:#faf6ef; --card:#fffdf8; --line:#d8cfc0; --mut:#8a7f72; }
+  :root { --accent:#b8860b; --ink:#2a2320; --paper:#faf6ef; --card:#fffdf8; --line:#d8cfc0; --mut:#8a7f72; --blue:#3a6ea5; --bad:#a4321f; }
   * { box-sizing:border-box; }
   body { margin:0; font:15px/1.5 -apple-system,"Segoe UI",sans-serif; color:var(--ink); background:var(--paper); }
   header { padding:20px 28px 12px; border-bottom:2px solid var(--accent); }
   h1 { font:600 21px Georgia,serif; margin:0 0 6px; }
-  .q { max-width:70em; color:var(--ink); }
+  .q { max-width:72em; }
   .q b { color:var(--accent); }
-  main { display:grid; grid-template-columns: 1fr 400px; gap:16px; padding:16px 28px; align-items:start; }
+  main { display:grid; grid-template-columns:1fr 400px; gap:16px; padding:16px 28px; align-items:start; }
   section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:16px; }
-  h2 { font:600 13px/1 -apple-system,sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:0 0 10px; }
-  /* board */
-  #board { position:relative; height:430px; background:#f3ecdf; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
-  .el { position:absolute; padding:8px 10px; border-radius:4px; font-size:13px; cursor:pointer; max-width:190px;
-        box-shadow:0 1px 3px rgba(0,0,0,.15); user-select:none; }
-  .el.card { background:#fff; border:1px solid #c9bfae; font-family:Georgia,serif; }
-  .el.note { background:#fbe98e; transform:rotate(-1.2deg); }
-  .el.zone { background:rgba(184,134,11,.07); border:1.5px dashed var(--accent); border-radius:8px; pointer-events:none; }
-  .el .who { display:block; font-size:10px; color:var(--mut); margin-top:4px; font-family:-apple-system,sans-serif; }
-  .el.sel { outline:3px solid #3a6ea5; }
-  .el.glow { outline:3px solid var(--accent); box-shadow:0 0 14px 3px rgba(184,134,11,.55); }
-  svg#threads { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
-  svg#threads line { stroke:#a4321f; stroke-width:2; }
-  .hint { font-size:12px; color:var(--mut); margin-top:6px; }
-  /* tabs */
+  h2 { font:600 13px/1 -apple-system,sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:0 0 10px; display:flex; justify-content:space-between; align-items:center; }
+  h2 .sw { text-transform:none; letter-spacing:0; }
+  h2 .sw button { border:1px solid var(--line); background:#fff; padding:3px 9px; font-size:12px; cursor:pointer; }
+  h2 .sw button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  /* renderers */
+  #stage { min-height:420px; background:#f3ecdf; border:1px solid var(--line); border-radius:6px; padding:14px; position:relative; overflow:hidden; }
+  .fe { border-radius:5px; padding:9px 11px; font-size:13px; box-shadow:0 1px 3px rgba(0,0,0,.14); }
+  .fe.card { background:#fff; border:1px solid #c9bfae; font-family:Georgia,serif; }
+  .fe.note { background:#fbe98e; }
+  .fe.unknown { background:#eee; border:1px dashed var(--mut); }
+  .fe .who { display:block; font-size:10px; color:var(--mut); margin-top:4px; font-family:-apple-system,sans-serif; }
+  .fe .kindtag { float:right; font-size:10px; color:var(--mut); text-transform:uppercase; letter-spacing:.06em; }
+  .fe.hot { outline:3px solid var(--accent); box-shadow:0 0 14px 3px rgba(184,134,11,.5); }
+  /* feed renderer */
+  .feed { display:flex; flex-direction:column; gap:8px; max-width:560px; }
+  .feed .note { margin-left:26px; max-width:480px; }
+  .threadchip { font-size:12px; color:var(--bad); padding:2px 0 2px 26px; }
+  /* corkboard renderer */
+  .cork .fe { position:absolute; max-width:180px; }
+  svg#strings { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  svg#strings line { stroke:#a4321f; stroke-width:2; }
+  /* tabs & buttons */
   .tabs { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:10px; }
   .tabs button { border:1px solid var(--line); background:transparent; padding:6px 11px; border-radius:6px 6px 0 0; cursor:pointer; font-size:13px; }
   .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .pane { display:none; } .pane.on { display:block; }
-  .step { display:block; width:100%; text-align:left; margin:4px 0; padding:8px 10px; border:1px solid var(--line); background:#fff;
-          border-radius:6px; cursor:pointer; font-size:13px; }
+  .step { display:block; width:100%; text-align:left; margin:4px 0; padding:8px 10px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }
   .step.done { opacity:.45; text-decoration:line-through; }
   .step.next { border-color:var(--accent); border-width:2px; }
   .free { display:flex; flex-wrap:wrap; gap:6px; }
   .free button { padding:7px 10px; border:1px solid var(--accent); color:var(--accent); background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }
   .free button:hover { background:var(--accent); color:#fff; }
-  /* log + console */
-  #log { max-height:230px; overflow:auto; font-size:12px; }
+  #log { max-height:210px; overflow:auto; font-size:12px; }
   .ev { padding:4px 6px; border-left:3px solid var(--line); margin:3px 0; background:#fff; }
-  .ev.navi { border-left-color:var(--accent); } .ev.rai { border-left-color:#3a6ea5; }
+  .ev.navi { border-left-color:var(--accent); } .ev.rai { border-left-color:var(--blue); }
   .ev .k { font-weight:600; } .ev .a { font-size:10px; color:var(--mut); }
-  pre { background:#231f1a; color:#e8e2d6; padding:12px; border-radius:6px; font-size:12px; overflow:auto; max-height:340px; white-space:pre-wrap; }
+  pre { background:#231f1a; color:#e8e2d6; padding:12px; border-radius:6px; font-size:12px; overflow:auto; max-height:330px; white-space:pre-wrap; }
   pre .lbl { color:var(--accent); }
+  pre .err { color:#f2a698; }
   #replay input { width:100%; }
   .note-p { font-size:13px; color:var(--mut); }
 </style>
 </head>
 <body>
 <header>
-  <h1>Whiteboard v1 — the agent-facing surface</h1>
-  <div class="q"><b>The question:</b> do these tool shapes feel right? Six tools over an <b>append-only, attributed event log</b> (state is a projection). Watch the <b>Tool console</b>: every button shows the exact JSON an agent would send and get back. Two actors: <b>navi</b> (agent, gold) and <b>rai</b> (you, blue). Click any element on the board to select it as rai — that selection lands in the same log the agent reads. No layer is off-limits to anyone.</div>
+  <h1>Whiteboard v1 — the collapsed surface</h1>
+  <div class="q"><b>The question:</b> after the collapse — five tools, elements are <b>{id, kind, data}</b>, the <b>host's schema</b> defines every kind ("XML for agents"), the protocol defines no presentation — does this surface feel right? The <b>Tool console</b> shows the exact JSON per call. The renderer toggle draws the <b>same log</b> two ways: Rennet-style feed vs corkboard. Actors: <b>navi</b> (gold), <b>rai</b> (blue).</div>
 </header>
 <main>
 <div>
   <section>
-    <h2>The board (one render of the log)</h2>
-    <div id="board"><svg id="threads"></svg></div>
-    <div class="hint">Click an element = rai selects it (human→agent deixis). Drag isn’t wired — use “rai moves navi’s card” to see curation.</div>
+    <h2>One log, any renderer
+      <span class="sw"><button id="swFeed" class="on">Rennet feed</button><button id="swCork">corkboard</button></span>
+    </h2>
+    <div id="stage"></div>
+    <div class="note-p" style="margin-top:6px">Neither renderer gets coordinates from the protocol — the feed is pure CSS flow; the corkboard derives positions by hashing element ids. Presentation is the renderer's problem.</div>
   </section>
   <section>
     <h2>Walkthroughs</h2>
@@ -68,16 +76,18 @@
     <div id="wpanes"></div>
   </section>
   <section>
-    <h2>Free play (each button = one tool call, as navi unless marked)</h2>
+    <h2>Free play (one tool call per button)</h2>
     <div class="free" id="freeplay"></div>
   </section>
   <section>
     <h2>Reference</h2>
     <div class="tabs">
       <button class="on" onclick="refTab(this,'schemas')">Tool schemas</button>
+      <button onclick="refTab(this,'hostschema')">Rennet's board schema</button>
       <button onclick="refTab(this,'instr')">Sample agent instructions</button>
     </div>
     <div class="pane on" id="ref-schemas"><pre id="schemadump"></pre></div>
+    <div class="pane" id="ref-hostschema"><pre id="hostschemadump"></pre></div>
     <div class="pane" id="ref-instr"><pre id="instrdump"></pre></div>
   </section>
 </div>
@@ -112,34 +122,48 @@ const WB = (() => {
     const ev = { seq: b.log.length + 1, ts: Date.now(), actor, kind, payload };
     b.log.push(ev); return ev;
   }
-  // projection: state = fold(log)
   function project(log, upto) {
-    const els = new Map(); const deixis = [];
+    const els = new Map();
     for (const ev of log) {
       if (upto !== undefined && ev.seq > upto) break;
       const p = ev.payload;
       if (ev.kind === "element.created") els.set(p.element.id, { ...p.element, created_by: ev.actor });
-      if (ev.kind === "element.updated" && els.has(p.id)) Object.assign(els.get(p.id), p.set);
+      if (ev.kind === "element.updated" && els.has(p.id)) {
+        const el = els.get(p.id); el.data = { ...el.data, ...p.set };
+      }
       if (ev.kind === "element.deleted") els.delete(p.id);
-      if (ev.kind === "deixis.point") deixis.push({ actor: ev.actor, ...p, seq: ev.seq });
-      if (ev.kind === "deixis.select") deixis.push({ actor: ev.actor, target_ids: p.target_ids, effect: "select", seq: ev.seq });
     }
-    return { elements: els, deixis };
+    return { elements: els };
+  }
+  // schema validation: kind must exist; required fields present; extra fields pass through
+  function validate(schema, el) {
+    const k = schema.kinds.find(x => x.kind === el.kind);
+    if (!k) return `unknown kind "${el.kind}" — this board's schema defines: ${schema.kinds.map(x => x.kind).join(", ")}`;
+    for (const f of k.required || []) if (el.data?.[f] === undefined) return `kind "${el.kind}" requires data.${f}`;
+    return null;
   }
   const tools = {
-    whiteboard_create({ title, actor }) {
+    whiteboard_create({ actor, title, schema }) {
+      if (!schema?.kinds?.length) throw new Error("host must supply a schema with at least one kind");
       const id = mint("wb");
-      boards.set(id, { id, title: title || "untitled", log: [], ops: new Set() });
-      append(board(id), actor, "board.created", { title: title || "untitled" });
+      boards.set(id, { id, title: title || "untitled", schema, log: [], ops: new Set() });
+      append(board(id), actor, "board.created", { title: title || "untitled", schema_kinds: schema.kinds.map(k => k.kind) });
       return { board_id: id, seq: 1 };
+    },
+    whiteboard_schema({ board_id }) {
+      const b = board(board_id);
+      return { seq: b.log.length, schema: b.schema };
     },
     whiteboard_apply({ board_id, actor, op_id, create = [], update = [], del = [] }) {
       const b = board(board_id);
       if (b.ops.has(op_id)) return { seq: b.log.length, deduped: true, created_ids: [] };
+      // validate the whole batch first — an invalid batch changes nothing
+      for (const el of create) { const err = validate(b.schema, el); if (err) throw new Error(err); }
+      for (const u of update) if (!project(b.log).elements.has(u.id)) throw new Error(`update: no element "${u.id}"`);
       b.ops.add(op_id);
       const created_ids = [];
       for (const el of create) {
-        const e = { id: el.id || mint("el"), ...el };
+        const e = { id: el.id || mint("el"), kind: el.kind, data: el.data || {} };
         created_ids.push(e.id);
         append(b, actor, "element.created", { element: e });
       }
@@ -147,31 +171,19 @@ const WB = (() => {
       for (const id of del) append(b, actor, "element.deleted", { id });
       return { seq: b.log.length, deduped: false, created_ids };
     },
-    whiteboard_point({ board_id, actor, op_id, target_ids, effect = "glow", note }) {
-      const b = board(board_id);
-      if (b.ops.has(op_id)) return { seq: b.log.length, deduped: true };
-      b.ops.add(op_id);
-      append(b, actor, "deixis.point", { target_ids, effect, note });
-      return { seq: b.log.length, deduped: false };
-    },
-    // not an agent tool: the render client appends selection on the human's behalf
-    _select({ board_id, actor, target_ids }) {
-      const b = board(board_id);
-      append(b, actor, "deixis.select", { target_ids });
-      return { seq: b.log.length };
-    },
     whiteboard_describe({ board_id, since_seq }) {
       const b = board(board_id);
-      const { elements } = project(b.log);
       if (since_seq !== undefined) {
         const delta = b.log.filter(e => e.seq > since_seq)
           .map(e => `  [${e.seq}] ${e.actor}: ${e.kind} ${summ(e)}`);
         return { seq: b.log.length, text: delta.length ? `Since seq ${since_seq}:\n` + delta.join("\n") : `Since seq ${since_seq}: no changes.` };
       }
-      const lines = [...elements.values()].sort((a, z) => (a.y - z.y) || (a.x - z.x)).map(e =>
-        `  [${e.id}] ${e.type} at (${e.x},${e.y})${e.text ? ` | "${e.text}"` : ""}${e.ref ? ` | ref:${e.ref.kind}#${e.ref.id}` : ""} | by ${e.created_by}`);
-      const threads = [...elements.values()].filter(e => e.type === "thread").map(e => `  ${e.from_id} --> ${e.to_id}`);
-      return { seq: b.log.length, text: `Board "${b.title}" — ${elements.size} elements, seq ${b.log.length}\n${lines.join("\n")}\n### Threads\n${threads.join("\n") || "  none"}` };
+      const { elements } = project(b.log);
+      const byKind = {};
+      for (const e of elements.values()) (byKind[e.kind] ??= []).push(e);
+      const lines = Object.entries(byKind).map(([k, els]) =>
+        `  ${k} (${els.length}):\n` + els.map(e => `    [${e.id}] ${JSON.stringify(e.data)} | by ${e.created_by}`).join("\n"));
+      return { seq: b.log.length, text: `Board "${b.title}" — ${elements.size} elements, seq ${b.log.length}\n${lines.join("\n") || "  empty"}` };
     },
     whiteboard_events({ board_id, since_seq = 0, kinds }) {
       const b = board(board_id);
@@ -180,94 +192,117 @@ const WB = (() => {
       return { seq: b.log.length, events: evs };
     },
     whiteboard_screenshot({ board_id }) {
-      return { seq: board(board_id).log.length, image: "<png bytes — in the real service, a render of the current projection>" };
+      return { seq: board(board_id).log.length, image: "<png — a render of the current projection by whatever renderer the service hosts>" };
     },
   };
   function summ(e) {
     const p = e.payload;
-    if (e.kind === "element.created") return `${p.element.type} "${(p.element.text || "").slice(0, 30)}" (${p.element.id})`;
+    if (e.kind === "element.created") return `${p.element.kind} ${JSON.stringify(p.element.data).slice(0, 40)} (${p.element.id})`;
     if (e.kind === "element.updated") return `${p.id} ← ${JSON.stringify(p.set)}`;
     if (e.kind === "element.deleted") return p.id;
-    if (e.kind.startsWith("deixis")) return (p.target_ids || []).join(",") + (p.note ? ` "${p.note}"` : "");
     return "";
   }
   return { tools, project, boards };
 })();
 /* ================= END PURE MODULE ================= */
 
-const SCHEMAS = {
-  whiteboard_create: { input: { title: "string?", actor: "string" }, output: { board_id: "string (opaque, mint-once; bearer semantics when unauthenticated)", seq: "int" } },
-  whiteboard_apply: { input: { board_id: "string", actor: "string", op_id: "string (client-minted; same op_id twice = deduped, event log unchanged)", create: "Element[]? — {id? (caller-mintable), type: card|note|thread|zone|image, x, y, w?, h?, text?, from_id?/to_id? (threads bind by element id, never pixels), ref? ({kind,id} pointer to an external object, e.g. a Rennet finding), ...passthrough}", update: "[{id, set:{...}}]?", del: "string[]?" }, output: { seq: "int", created_ids: "string[]", deduped: "bool" } },
-  whiteboard_describe: { input: { board_id: "string", since_seq: "int? — omit for full projection, pass your last seq for a delta" }, output: { seq: "int", text: "structured text: elements sorted top-to-bottom, threads as from --> to, every line carries its author" } },
-  whiteboard_screenshot: { input: { board_id: "string", viewport: "rect?" }, output: { seq: "int", image: "png" } },
-  whiteboard_point: { input: { board_id: "string", actor: "string", op_id: "string", target_ids: "string[]", effect: "glow|arrow", note: "string?" }, output: { seq: "int", deduped: "bool" } },
-  whiteboard_events: { input: { board_id: "string", since_seq: "int", kinds: "string[]? — e.g. ['deixis.select'] to ask only: what did the human point at?" }, output: { seq: "int", events: "[{seq, ts, actor, kind, payload}] — attribution is implicit: every event carries its actor, nothing enforces anything" } },
-  "(event kinds)": ["board.created", "element.created", "element.updated", "element.deleted", "deixis.point (agent→human: glow/arrow on targets)", "deixis.select (human→agent: appended by the render client when the human selects)"],
-  "(not in v1)": "no join/session tool (stateless facade: actor rides every call), no locks, no permissions, no per-layer write rules. Presence = who appears in recent events.",
+const RENNET_SCHEMA = {
+  kinds: [
+    { kind: "card", description: "One piece of evidence or prose. Set data.marked=true to direct attention at it; clear it when attention moves on.", required: ["text"], optional: ["marked", "finding", "file"] },
+    { kind: "note", description: "A sticky: short informal commentary. Set data.target to an element id to attach it to that element.", required: ["text"], optional: ["target"] },
+    { kind: "thread", description: "The red string: a relation between two elements. data.from and data.to are element ids.", required: ["from", "to"], optional: ["label"] },
+  ],
 };
 
-const INSTRUCTIONS = `You share a whiteboard with a human. It is a real surface, not a chat:
-both of you can create, move, edit and delete ANY element, whoever made it.
+const SCHEMAS = {
+  whiteboard_create: { input: { actor: "string", title: "string?", schema: "Schema — the host's language for this board: [{kind, description (prose an agent acts on), required[], optional[]}]. Host-supplied at creation; the protocol never defines kinds." }, output: { board_id: "opaque string (bearer semantics when unauthenticated)", seq: "int" } },
+  whiteboard_schema: { input: { board_id: "string" }, output: { seq: "int", schema: "the board's schema — discovery; an agent's first call on an unfamiliar board" } },
+  whiteboard_apply: { input: { board_id: "string", actor: "string", op_id: "string (client-minted; repeat op_id = deduped, log unchanged)", create: "[{id? (caller-mintable, stable), kind, data}]?", update: "[{id, set — shallow-merged into data}]?", del: "string[]?" }, output: { seq: "int", created_ids: "string[]", deduped: "bool" }, errors: "invalid batch changes NOTHING: unknown kind or missing required field rejects with a precise message; extra data fields always pass through" },
+  whiteboard_describe: { input: { board_id: "string", since_seq: "int? — omit for full projection grouped by kind; pass your last seq for a delta" }, output: { seq: "int", text: "structured text; every line carries its author" } },
+  whiteboard_events: { input: { board_id: "string", since_seq: "int", kinds: "string[]? (event kinds)" }, output: { seq: "int", events: "[{seq, ts, actor, kind, payload}] — attribution is a log fact, never an enforcement" } },
+  whiteboard_screenshot: { input: { board_id: "string" }, output: { seq: "int", image: "png" } },
+  "(event kinds)": ["board.created", "element.created", "element.updated", "element.deleted"],
+  "(what the protocol does NOT define)": "kinds, presentation (no x/y), relations, attention, references — all host-schema data. No sessions, no locks, no permissions, no per-actor rules.",
+};
 
-Identity: pass board_id and your actor name on every call. There is no
-session — every call stands alone. Mint an op_id per mutation; if you
-retry, reuse the op_id (the log dedups it).
+const INSTRUCTIONS = `You share a board with a human. It is a data surface you both write;
+a renderer draws it for them, describe/screenshot draw it for you.
 
-Seeing: call whiteboard_describe for cheap structured text (your default
-eyes). Pass since_seq=<your last seq> to read only what changed. Use
-whiteboard_screenshot only when you need actual pixels.
+First call on an unfamiliar board: whiteboard_schema. The schema is the
+board's language — each kind's description tells you what it is FOR.
+Speak only in the schema's kinds; the service rejects anything else
+with a precise error. Extra data fields are allowed and preserved.
 
-Turn loop: before acting, call whiteboard_events since your last seq.
-deixis.select events are the human pointing at things — when they say
-"this" or "these", resolve it against their latest selection.
+Identity: pass board_id and your actor name on every call; there is no
+session. Mint an op_id per mutation; reuse it on retry (the log dedups).
 
-Pointing: use whiteboard_point (glow) instead of describing locations in
-prose. Point, then talk about what you pointed at.
+Seeing: whiteboard_describe = cheap structured text (your default eyes).
+Pass since_seq=<your last seq> to read only what changed. Screenshot
+only when you need pixels.
 
-Laying the board: batch with one whiteboard_apply — mint your own element
-ids so threads can reference them in the same call. Cards for evidence,
-notes for commentary, threads (from_id → to_id) for connections, zones to
-group. Put a ref on any card that presents an external object.
+Turn loop: read events/describe since your last seq before acting —
+the human writes the same board. Whatever attention convention the
+schema defines (e.g. data.marked, data.target), use it instead of
+describing locations in prose; clear it when attention moves on.
 
-The human will rearrange and dismiss your cards. That is them working,
+Batch with one apply — mint your own element ids so relations in data
+can reference them in the same call.
+
+The human will edit and delete your elements. That is them working,
 not an error. Read the log to see what they did; don't undo it.`;
 
 /* ---------------- page shell (throwaway) ---------------- */
-let BID = null, replayAt = null;
+let BID = null, replayAt = null, renderer = "feed";
 const $ = id => document.getElementById(id);
-function call(name, args, viaClient) {
-  const fn = viaClient ? WB.tools._select : WB.tools[name];
+function call(name, args) {
   let res, err = null;
-  try { res = fn(args); } catch (e) { err = e.message; }
-  $("console").innerHTML = `<span class="lbl">→ ${viaClient ? "(render client appends)" : name}</span>\n` +
-    JSON.stringify(args, null, 1) + `\n<span class="lbl">← response</span>\n` + (err ? "ERROR " + err : JSON.stringify(res, null, 1));
+  try { res = WB.tools[name](args); } catch (e) { err = e.message; }
+  $("console").innerHTML = `<span class="lbl">→ ${name}</span>\n` + JSON.stringify(args, null, 1) +
+    `\n<span class="lbl">← response</span>\n` + (err ? `<span class="err">ERROR: ${err}</span>` : JSON.stringify(res, null, 1));
   render();
   return res;
 }
+function hash(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
 function render() {
   if (!BID) return;
   const b = WB.boards.get(BID);
   const upto = replayAt === null ? undefined : replayAt;
-  const { elements, deixis } = WB.project(b.log, upto);
-  const lastPoint = [...deixis].reverse().find(d => d.effect !== "select");
-  const lastSel = [...deixis].reverse().find(d => d.effect === "select");
-  const bd = $("board"); const svg = $("threads");
-  bd.querySelectorAll(".el").forEach(n => n.remove()); svg.innerHTML = "";
-  for (const e of elements.values()) {
-    if (e.type === "thread") {
-      const f = elements.get(e.from_id), t = elements.get(e.to_id);
-      if (f && t) svg.innerHTML += `<line x1="${f.x + 60}" y1="${f.y + 20}" x2="${t.x + 60}" y2="${t.y + 20}"/>`;
-      continue;
-    }
+  const { elements } = WB.project(b.log, upto);
+  const els = [...elements.values()];
+  const hot = new Set();
+  for (const e of els) { if (e.data.marked) hot.add(e.id); if (e.kind === "note" && e.data.target) hot.add(e.data.target); }
+  const stage = $("stage"); stage.innerHTML = ""; stage.className = renderer === "cork" ? "cork" : "";
+  const mk = e => {
     const d = document.createElement("div");
-    d.className = "el " + e.type;
-    if (lastPoint && lastPoint.target_ids.includes(e.id)) d.classList.add("glow");
-    if (lastSel && lastSel.target_ids.includes(e.id)) d.classList.add("sel");
-    d.style.left = e.x + "px"; d.style.top = e.y + "px";
-    if (e.w) { d.style.width = e.w + "px"; } if (e.h) { d.style.height = e.h + "px"; }
-    d.innerHTML = (e.text || "") + `<span class="who">${e.created_by}${e.ref ? " · ref:" + e.ref.kind + "#" + e.ref.id : ""}</span>`;
-    if (e.type !== "zone") d.onclick = () => call("deixis.select", { board_id: BID, actor: "rai", target_ids: [e.id] }, true);
-    bd.appendChild(d);
+    d.className = "fe " + (["card", "note"].includes(e.kind) ? e.kind : "unknown") + (hot.has(e.id) ? " hot" : "");
+    d.innerHTML = `<span class="kindtag">${e.kind}</span>${e.data.text || JSON.stringify(e.data)}<span class="who">${e.created_by}${e.data.finding ? " · " + e.data.finding : ""}</span>`;
+    return d;
+  };
+  if (renderer === "feed") {
+    const feed = document.createElement("div"); feed.className = "feed";
+    for (const e of els.filter(x => x.kind === "card")) {
+      feed.appendChild(mk(e));
+      for (const n of els.filter(x => x.kind === "note" && x.data.target === e.id)) feed.appendChild(mk(n));
+      for (const t of els.filter(x => x.kind === "thread" && (x.data.from === e.id))) {
+        const c = document.createElement("div"); c.className = "threadchip"; c.textContent = `⤳ thread to ${t.data.to}${t.data.label ? " — " + t.data.label : ""}`; feed.appendChild(c);
+      }
+    }
+    for (const n of els.filter(x => x.kind === "note" && !x.data.target)) feed.appendChild(mk(n));
+    stage.appendChild(feed);
+  } else {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.id = "strings"; stage.appendChild(svg);
+    const pos = {};
+    for (const e of els.filter(x => x.kind !== "thread")) {
+      const d = mk(e);
+      const x = 20 + hash(e.id) % 520, y = 16 + hash(e.id + "y") % 330;
+      pos[e.id] = [x + 80, y + 22];
+      d.style.left = x + "px"; d.style.top = y + "px";
+      stage.appendChild(d);
+    }
+    for (const t of els.filter(x => x.kind === "thread")) {
+      const f = pos[t.data.from], to = pos[t.data.to];
+      if (f && to) { const l = document.createElementNS("http://www.w3.org/2000/svg", "line"); l.setAttribute("x1", f[0]); l.setAttribute("y1", f[1]); l.setAttribute("x2", to[0]); l.setAttribute("y2", to[1]); svg.appendChild(l); }
+    }
   }
   $("log").innerHTML = b.log.map(ev =>
     `<div class="ev ${ev.actor}"><span class="k">${ev.seq}. ${ev.kind}</span> <span class="a">by ${ev.actor}</span><br>${JSON.stringify(ev.payload).slice(0, 110)}</div>`
@@ -278,52 +313,62 @@ function render() {
   $("replayLabel").textContent = replayAt === null ? `live (seq ${b.log.length})` : `showing seq 1–${replayAt} of ${b.log.length}`;
 }
 $("replaySlider").oninput = e => { replayAt = +e.target.value >= WB.boards.get(BID).log.length ? null : +e.target.value; render(); };
+$("swFeed").onclick = () => { renderer = "feed"; $("swFeed").className = "on"; $("swCork").className = ""; render(); };
+$("swCork").onclick = () => { renderer = "cork"; $("swCork").className = "on"; $("swFeed").className = ""; render(); };
+function refTab(btn, id) {
+  btn.parentElement.querySelectorAll("button").forEach(b => b.className = "");
+  btn.className = "on";
+  document.querySelectorAll("[id^=ref-]").forEach(p => p.className = "pane");
+  $("ref-" + id).className = "pane on";
+}
 
-/* free-play */
 let opN = 0; const op = () => "op_" + (++opN);
 const FREE = {
-  "navi: add evidence card": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ type: "card", x: 40 + Math.random() * 500 | 0, y: 40 + Math.random() * 300 | 0, text: "Exhibit " + String.fromCharCode(65 + opN % 26), ref: { kind: "finding", id: "F-" + opN } }] }),
-  "rai: add sticky note": () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), create: [{ type: "note", x: 60 + Math.random() * 500 | 0, y: 60 + Math.random() * 300 | 0, text: "hmm, check this" }] }),
-  "navi: thread two newest": () => { const els = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.type === "card"); if (els.length < 2) return; const [a, z] = els.slice(-2); call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ type: "thread", from_id: a.id, to_id: z.id, x: 0, y: 0 }] }); },
-  "navi: point (glow) at newest card": () => { const els = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.type === "card"); if (!els.length) return; call("whiteboard_point", { board_id: BID, actor: "navi", op_id: op(), target_ids: [els.at(-1).id], effect: "glow", note: "look here" }); },
-  "rai: move navi's first card": () => { const el = [...WB.project(WB.boards.get(BID).log).elements.values()].find(e => e.created_by === "navi" && e.type === "card"); if (!el) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), update: [{ id: el.id, set: { x: 30, y: 330 } }] }); },
-  "rai: dismiss newest element": () => { const els = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.type !== "zone"); if (!els.length) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), del: [els.at(-1).id] }); },
+  "navi: discover the schema": () => call("whiteboard_schema", { board_id: BID }),
+  "navi: add evidence card": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { text: "Exhibit " + String.fromCharCode(65 + opN % 26), finding: "F-" + opN } }] }),
+  "rai: sticky note on newest card": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card").at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), create: [{ kind: "note", data: { text: "hmm, check this", target: c.id } }] }); },
+  "navi: mark newest card (attention = data)": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card").at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: c.id, set: { marked: true } }] }); },
+  "navi: unmark it (attention moved on)": () => { const c = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.data.marked).at(-1); if (!c) return; call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: c.id, set: { marked: false } }] }); },
+  "navi: thread two newest cards": () => { const cs = [...WB.project(WB.boards.get(BID).log).elements.values()].filter(e => e.kind === "card"); if (cs.length < 2) return; const [a, z] = cs.slice(-2); call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "thread", data: { from: a.id, to: z.id } }] }); },
+  "rai: delete newest element": () => { const e = [...WB.project(WB.boards.get(BID).log).elements.values()].at(-1); if (!e) return; call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), del: [e.id] }); },
+  "TRY: unknown kind (rejected)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "widget", data: { text: "nope" } }] }),
+  "TRY: card missing text (rejected)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { finding: "F-99" } }] }),
+  "TRY: extra data field (passes)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { text: "extra fields ride along", rennet: { patchset: "ps_7" }, confidence: 0.92 } }] }),
   "navi: describe (full)": () => call("whiteboard_describe", { board_id: BID }),
   "navi: describe since seq 5": () => call("whiteboard_describe", { board_id: BID, since_seq: 5 }),
-  "navi: events — what did rai select?": () => call("whiteboard_events", { board_id: BID, since_seq: 0, kinds: ["deixis.select"] }),
-  "navi: screenshot": () => call("whiteboard_screenshot", { board_id: BID }),
-  "replay same op_id (retry)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "op_" + opN, create: [{ type: "card", x: 200, y: 200, text: "duplicate?" }] }),
+  "replay same op_id (retry)": () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "op_" + opN, create: [{ kind: "card", data: { text: "duplicate?" } }] }),
 };
 for (const [k, f] of Object.entries(FREE)) { const btn = document.createElement("button"); btn.textContent = k; btn.onclick = f; $("freeplay").appendChild(btn); }
 
-/* walkthroughs */
 const WALKS = [
-  { name: "1 · The buffet", desc: "The orchestrator lays the whole murder board in ONE apply call — minting its own element ids so the threads can reference them in the same batch. Then it reads its own work back as text.", steps: [
-    ["navi: one apply — 3 cards + zone + 2 threads", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [
-      { id: "sus1", type: "card", x: 60, y: 60, text: "Auth middleware rewritten", ref: { kind: "finding", id: "F-12" } },
-      { id: "sus2", type: "card", x: 300, y: 50, text: "Token expiry uses < not <=", ref: { kind: "finding", id: "F-13" } },
-      { id: "sus3", type: "card", x: 540, y: 90, text: "Tests deleted in same PR", ref: { kind: "finding", id: "F-14" } },
-      { id: "z1", type: "zone", x: 40, y: 30, w: 700, h: 140, text: "" },
-      { type: "thread", from_id: "sus1", to_id: "sus2", x: 0, y: 0 },
-      { type: "thread", from_id: "sus2", to_id: "sus3", x: 0, y: 0 } ] })],
-    ["navi: describe — read the board back as text", () => call("whiteboard_describe", { board_id: BID })],
+  { name: "1 · Discover, then speak", desc: "An agent lands on an unfamiliar board. First call: whiteboard_schema — the kinds' descriptions ARE its instructions. Then it lays the whole review in one validated apply batch, minting its own ids so the thread can reference them.", steps: [
+    ["navi: whiteboard_schema — learn this board's language", () => call("whiteboard_schema", { board_id: BID })],
+    ["navi: one apply — 3 cards + note + thread", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [
+      { id: "sus1", kind: "card", data: { text: "Auth middleware rewritten", finding: "F-12" } },
+      { id: "sus2", kind: "card", data: { text: "Token expiry uses < not <=", finding: "F-13" } },
+      { id: "sus3", kind: "card", data: { text: "Tests deleted in same PR", finding: "F-14" } },
+      { id: "n1", kind: "note", data: { text: "start here — root cause", target: "sus2" } },
+      { id: "t1", kind: "thread", data: { from: "sus2", to: "sus3", label: "hid the breakage" } } ] })],
+    ["navi: describe — read the board back, grouped by kind", () => call("whiteboard_describe", { board_id: BID })],
   ]},
-  { name: "2 · Deixis, both ways", desc: "Agent points at a card — it glows for the human. Human clicks a different card — that lands in the SAME log, and the agent reads it back. 'This' now means something.", steps: [
-    ["navi: point (glow) at the expiry card", () => call("whiteboard_point", { board_id: BID, actor: "navi", op_id: op(), target_ids: ["sus2"], effect: "glow", note: "this is the root cause" })],
-    ["rai clicks the tests card (render client appends deixis.select)", () => call("deixis.select", { board_id: BID, actor: "rai", target_ids: ["sus3"] }, true)],
-    ["navi: events kinds=[deixis.select] — what does rai mean by 'this'?", () => call("whiteboard_events", { board_id: BID, since_seq: 0, kinds: ["deixis.select"] })],
+  { name: "2 · The schema bites", desc: "Validation is data integrity, not ceremony: an invalid batch changes NOTHING and the error names the fix. Extra data fields always pass through — that's how a host rides its own data.", steps: [
+    ["navi: apply kind 'widget' — rejected, schema lists what exists", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "widget", data: { text: "nope" } }] })],
+    ["navi: card without required text — rejected with the field name", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { finding: "F-99" } }] })],
+    ["navi: card with extra host fields — accepted, preserved verbatim", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), create: [{ kind: "card", data: { text: "extra fields ride along", rennet: { patchset: "ps_7" }, confidence: 0.92 } }] })],
   ]},
-  { name: "3 · Human curates", desc: "Rai rearranges and deletes the agent's cards. Nothing stops him — attribution is implicit in the log, never enforced. Watch the event log: rai acting on elements navi created.", steps: [
-    ["rai: move navi's card down (update)", () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), update: [{ id: "sus1", set: { x: 80, y: 320 } }] })],
-    ["rai: dismiss the middle card (delete)", () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), del: ["sus2"] })],
-    ["navi: describe since seq 9 — sees what rai did, doesn't undo it", () => call("whiteboard_describe", { board_id: BID, since_seq: 9 })],
+  { name: "3 · Attention is data", desc: "No point tool, no marker kind — Rennet's schema says data.marked directs attention. Navi sets it, the renderer glows, navi clears it when the moment passes. Social convention, zero machinery.", steps: [
+    ["navi: mark the expiry card (update data.marked=true)", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: "sus2", set: { marked: true } }] })],
+    ["navi: unmark it — attention moved on", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: op(), update: [{ id: "sus2", set: { marked: false } }] })],
   ]},
-  { name: "4 · Retry safety", desc: "Stateless facade means retries happen. Same op_id sent twice: second call is deduped, the log doesn't grow, no double card.", steps: [
-    ["navi: apply op_id='retry-1' (a card appears)", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", create: [{ type: "card", x: 400, y: 260, text: "flaky network exhibit" }] })],
-    ["navi: EXACT same call again — deduped:true, log unchanged", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", create: [{ type: "card", x: 400, y: 260, text: "flaky network exhibit" }] })],
+  { name: "4 · Human curates", desc: "Rai edits and deletes navi's elements. Nothing stops him — attribution is implicit in the log, never enforced. Then navi reads the delta and moves on; it doesn't undo him.", steps: [
+    ["rai: rewrite navi's card text", () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), update: [{ id: "sus1", set: { text: "Auth middleware rewritten (rai: confirmed intentional)" } }] })],
+    ["rai: delete the tests card", () => call("whiteboard_apply", { board_id: BID, actor: "rai", op_id: op(), del: ["sus3"] })],
+    ["navi: describe since seq 8 — sees rai's curation", () => call("whiteboard_describe", { board_id: BID, since_seq: 8 })],
   ]},
-  { name: "5 · Replay", desc: "State is a projection of the log — drag the slider under the event log to rebuild the board at any past seq. Nothing was stored but events.", steps: [
-    ["drag the Replay slider on the right, then bring it back to live", () => { $("replaySlider").focus(); }],
+  { name: "5 · Retry + replay", desc: "Same op_id twice: deduped, log unchanged, no double card. Then drag the Replay slider — the whole board rebuilds from any log prefix, because nothing was ever stored but events.", steps: [
+    ["navi: apply op_id='retry-1'", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", create: [{ kind: "card", data: { text: "flaky network exhibit" } }] })],
+    ["navi: EXACT same call — deduped:true", () => call("whiteboard_apply", { board_id: BID, actor: "navi", op_id: "retry-1", create: [{ kind: "card", data: { text: "flaky network exhibit" } }] })],
+    ["now drag the Replay slider on the right, then back to live", () => { $("replaySlider").focus(); }],
   ]},
 ];
 let wActive = 0, wStep = 0;
@@ -348,12 +393,13 @@ function drawWalks() {
 }
 function resetBoard() {
   WB.boards.clear(); opN = 0; replayAt = null;
-  const r = WB.tools.whiteboard_create({ title: "PR #123 — auth rework", actor: "navi" });
+  const r = WB.tools.whiteboard_create({ actor: "navi", title: "PR #123 — auth rework", schema: RENNET_SCHEMA });
   BID = r.board_id;
-  if (wActive >= 1) WALKS[0].steps[0][1]();       // walks 2+ start from the buffet
+  if (wActive >= 1) WALKS[0].steps[1][1]();   // later walks start from the laid board
   render();
 }
 $("schemadump").textContent = JSON.stringify(SCHEMAS, null, 2);
+$("hostschemadump").textContent = "// supplied by the host (Rennet) at whiteboard_create — the board's language\n" + JSON.stringify(RENNET_SCHEMA, null, 2);
 $("instrdump").textContent = INSTRUCTIONS;
 resetBoard(); drawWalks();
 </script>
