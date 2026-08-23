@@ -148,7 +148,7 @@ design-ramp test enforces the ramp over the component sources.
 
 ## Layout
 
-The desktop shell has no permanent application navigation rail. The top bar carries history, location, and primary actions. Files, review angles, conversation, and manifest panels belong to the current workspace and can sit beside its main content.
+The desktop shell is being redesigned around a collapsible left sidebar (projects grouped by machine, sessions, search, settings) beside the conversation column and a main surface whose top bar carries the view switcher and the primary handoff action; rbutera/Rennet#458 records the rulings. The earlier no-navigation-rail rule is withdrawn. Until the redesign lands, files, review angles, conversation, and manifest panels belong to the current workspace and can sit beside its main content.
 
 The marketing shell is at most 1440px wide with 40px side gutters. Section spacing ranges from 88px to 168px. Responsive layouts preserve the document order when columns collapse.
 
