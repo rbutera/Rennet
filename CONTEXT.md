@@ -24,8 +24,10 @@ This file defines the terms shared by the product, documentation, and code. It c
   _Avoid_: Monorepo, folder
 - **Project repo**: a single git repository opened on its own.
   _Avoid_: Repository (bare), repo
-- **Source**: the machine whose filesystem a project lives on and whose daemon serves it: the local host, a WSL distro, or a paired remote.
-  _Avoid_: Host, location, target
+- **Source**: the machine whose filesystem a project lives on and whose Rennet host serves it: the local machine, a WSL distro, or a paired remote.
+  _Avoid_: Host (for the machine), location, target
+- **Rennet host**: the serving process a Rennet client talks to, running on a source. The preferred interface-facing name for the process; architecture writing may still say daemon.
+  _Avoid_: Daemon (in interface copy), server
 
 ## GitHub account
 
