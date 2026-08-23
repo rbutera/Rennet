@@ -46,6 +46,33 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **PR worktree**: a checkout of the exact pull-request commit under review.
 - **Setup file**: `.rennet/setup`, a list of shell commands Rennet runs when preparing a PR worktree.
 
+## Review model
+
+- **Lens**: a review of the change from one angle (spec, sequence, decisions, noise, flagged), drafted by a review agent on a fixed prompt. Each lens is its own board.
+  _Avoid_: angle, canvas
+- **Element**: the atomic unit of board content — a block, in the headless-CMS / document-block sense, carrying a kind and typed data. Element-typed attributes give the block tree.
+  _Avoid_: card, node, widget
+- **Kind**: the named, typed shape an element follows, like a document block-type. Rennet's host schema declares a closed set of twelve; the whiteboard protocol only stores and validates them, and never interprets their meaning.
+- **Finding**: a concern the review raises, carrying a severity and cross-model concurrence and bound to cited code. Shown inline in the sequence thread and sorted by severity in the flagged lens; the flagged lens is a view of findings, not a separate kind.
+- **Decision**: a choice the change embodies — its statement, evidence, the alternatives weighed, and why.
+- **Requirement**: a spec obligation (a *shall*) and whether the change covers it.
+- **Noise verdict**: a hunk judged noise or signal, with the reason and whether an LLM or a deterministic rule judged it.
+- **Order step**: a waypoint in the change's reading order; the sequence lens renders these as its left spine.
+- **Section**: an ordered, titled, navigable container of elements.
+- **Prose**: a markdown element — the agent's freeform narration and augmentation surface.
+- **Callout**: an emphasized aside.
+- **Annotation**: a pin fixing a comment to a cited code location.
+- **Message**: a turn in the review discussion — a finding, question, discussion, or request-change — replying to an element.
+- **Code ref**: a citation into the patchset by path, side, and line span. The review cites code; it never copies it.
+- **Review comment**: a comment drafted for the GitHub review, distinct from an internal finding until the human posts it.
+- **Draft board**: the board a lens's review agent drafts.
+- **Composition Board** (the Board): the surface the orchestrator authors from the lens drafts, where the human reviews.
+  _Avoid_: table, canvas
+- **Generation**: the set of boards produced for one review of one patchset.
+- **Successor account**: the comparison of a reviewed patchset with its successor after a coding-agent handoff.
+  _Avoid_: delta re-review
+- **Board-native data**: content a human authors on the board — marks, groupings, arrangement, notes — which the orchestrator composes from.
+
 ## Desktop presence
 
 - **Logo menu**: the menu opened from the top-left Rennet mark. It contains application destinations, version information, and the restart action when an update is ready.
