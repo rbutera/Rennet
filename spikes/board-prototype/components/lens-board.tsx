@@ -325,13 +325,13 @@ function Element({ element }: { element: BoardElement }) {
               <div className="flex items-center gap-1.5 pt-0.5">
                 <button
                   type="button"
-                  className="rounded border border-border px-2 py-0.5 text-[11.5px] text-foreground/90 hover:bg-secondary"
+                  className="rounded border border-border px-2 py-0.5 text-[12px] text-foreground/90 hover:bg-secondary"
                 >
                   Add to work order
                 </button>
                 <button
                   type="button"
-                  className="rounded border border-border px-2 py-0.5 text-[11.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  className="rounded border border-border px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
                   Discuss
                 </button>
