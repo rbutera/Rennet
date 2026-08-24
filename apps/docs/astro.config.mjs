@@ -174,6 +174,10 @@ export default defineConfig({
                     label: "Monorepo map",
                     link: "/developing/reference/monorepo-map/",
                   },
+                  {
+                    label: "Spec formats",
+                    items: [{ autogenerate: { directory: "developing/reference/spec-formats" } }],
+                  },
                 ],
               },
               {

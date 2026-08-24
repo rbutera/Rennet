@@ -54,6 +54,12 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [protocol compatibility](./developing/reference/protocol-compatibility.md),
   [Codex app-server integration](./developing/reference/codex-app-server.md),
   and [reactive streams](./developing/reference/reactive-streams.md)
+- Spec formats (survey for the spec lens):
+  [OpenSpec](./developing/reference/spec-formats/openspec.md),
+  [Kiro](./developing/reference/spec-formats/kiro.md),
+  [BMAD](./developing/reference/spec-formats/bmad.md),
+  [Superpowers](./developing/reference/spec-formats/superpowers.md), and
+  [grill-with-docs](./developing/reference/spec-formats/grill-with-docs.md)
 - Contributing: [docs style guide](./developing/contributing/docs-style-guide.md),
   [good docs standard](./developing/contributing/good-docs-standard.md),
   and [reader personas](./developing/contributing/personas.md)
