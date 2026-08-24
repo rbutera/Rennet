@@ -11,9 +11,19 @@ import * as React from "react"
  */
 export type CodeComments = Record<string, Record<number, string>>
 
+export interface QuoteComment {
+  id: string
+  /** The highlighted prose the comment anchors to. */
+  quote: string
+  text: string
+}
+
 interface CodeCommentsStore {
   comments: CodeComments
+  quoteComments: QuoteComment[]
   setComment: (path: string, line: number, text: string | null) => void
+  addQuoteComment: (quote: string, text: string) => void
+  removeQuoteComment: (id: string) => void
   clear: () => void
 }
 
@@ -21,6 +31,7 @@ const CodeCommentsContext = React.createContext<CodeCommentsStore | null>(null)
 
 export function CodeCommentsProvider({ children }: { children: React.ReactNode }) {
   const [comments, setComments] = React.useState<CodeComments>({})
+  const [quoteComments, setQuoteComments] = React.useState<QuoteComment[]>([])
 
   const setComment = React.useCallback((path: string, line: number, text: string | null) => {
     setComments((previous) => {
@@ -40,9 +51,26 @@ export function CodeCommentsProvider({ children }: { children: React.ReactNode }
     })
   }, [])
 
-  const clear = React.useCallback(() => setComments({}), [])
+  const addQuoteComment = React.useCallback((quote: string, text: string) => {
+    setQuoteComments((previous) => [
+      ...previous,
+      { id: `quote-${previous.length}-${quote.slice(0, 12)}`, quote, text },
+    ])
+  }, [])
 
-  const store = React.useMemo(() => ({ comments, setComment, clear }), [comments, setComment, clear])
+  const removeQuoteComment = React.useCallback((id: string) => {
+    setQuoteComments((previous) => previous.filter((entry) => entry.id !== id))
+  }, [])
+
+  const clear = React.useCallback(() => {
+    setComments({})
+    setQuoteComments([])
+  }, [])
+
+  const store = React.useMemo(
+    () => ({ comments, quoteComments, setComment, addQuoteComment, removeQuoteComment, clear }),
+    [comments, quoteComments, setComment, addQuoteComment, removeQuoteComment, clear],
+  )
 
   return <CodeCommentsContext.Provider value={store}>{children}</CodeCommentsContext.Provider>
 }

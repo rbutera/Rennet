@@ -14,6 +14,7 @@ import type { BoardElement, BoardSection, LensBoard } from "@/lib/lens-data"
 import { CodeBlock } from "@/components/code-block"
 import { AnchorReveal, CodeTabs } from "@/components/code-tabs"
 import { HydratedCode, InlineCode, RichText } from "@/components/rich-text"
+import { ProseSelectionLayer } from "@/components/selection-toolbar"
 
 /**
  * Renders a lens board as a document: sections of typed elements in reading
@@ -28,6 +29,7 @@ export function LensBoardView({
   initiallyFolded?: string[]
 }) {
   return (
+    <ProseSelectionLayer>
     <div
       className={cn(
         "mx-auto flex w-full flex-col gap-6 px-8 py-8",
@@ -42,6 +44,7 @@ export function LensBoardView({
         <Section key={section.id} section={section} initiallyFolded={initiallyFolded.includes(section.id)} />
       ))}
     </div>
+    </ProseSelectionLayer>
   )
 }
 
@@ -85,26 +88,12 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
   )
 }
 
-function HoverBar({ children }: { children?: React.ReactNode }) {
-  return (
-    <div className="absolute -top-2.5 right-2 hidden items-center gap-0.5 rounded-md border border-border bg-background px-1 py-0.5 group-hover/el:flex">
-      {children}
-      <button
-        type="button"
-        className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-      >
-        Explain
-      </button>
-    </div>
-  )
-}
 
 function Element({ element }: { element: BoardElement }) {
   switch (element.kind) {
     case "prose":
       return (
-        <div className="group/el relative">
-          <HoverBar />
+        <div>
           <RichText
             text={element.text}
             className="max-w-[640px]"
@@ -260,8 +249,7 @@ function Element({ element }: { element: BoardElement }) {
 
     case "code-ref":
       return (
-        <div className="group/el relative">
-          <HoverBar />
+        <div>
           <HydratedCode
             path={element.path}
             startLine={element.startLine}
@@ -273,8 +261,7 @@ function Element({ element }: { element: BoardElement }) {
 
     case "code":
       return (
-        <div className="group/el relative">
-          <HoverBar />
+        <div>
           <CodeBlock
             code={element.code}
             path={element.path}
@@ -301,8 +288,7 @@ function Element({ element }: { element: BoardElement }) {
 
     case "finding":
       return (
-        <div className="group/el relative flex flex-col gap-2">
-          <HoverBar />
+        <div className="flex flex-col gap-2">
           <div className="flex items-start gap-2">
             <span
               className={cn(
@@ -388,8 +374,7 @@ function Element({ element }: { element: BoardElement }) {
 
     case "decision":
       return (
-        <div className="group/el relative rounded-md border border-border px-3 py-2.5">
-          <HoverBar />
+        <div className="rounded-md border border-border px-3 py-2.5">
           <div className="flex flex-col gap-1.5">
             <div className="flex items-start gap-2">
               <GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -427,8 +412,7 @@ function Element({ element }: { element: BoardElement }) {
 
     case "requirement":
       return (
-        <div className="group/el relative">
-          <HoverBar />
+        <div>
           <div className="flex flex-col gap-1.5">
             {element.name ? (
               <div className="flex items-center gap-2">

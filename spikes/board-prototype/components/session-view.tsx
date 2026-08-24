@@ -2,8 +2,9 @@
 
 import * as React from "react"
 import { ArrowLeft, ChevronRight, GitBranch, GitPullRequest } from "lucide-react"
-import { Spinner } from "@/components/ui/spinner"
 import { InputBar } from "@/components/input-bar"
+import { MainSurface } from "@/components/main-surface"
+import { RunView } from "@/components/run-view"
 import type { ComposerBadge } from "@/lib/composer-badges"
 
 /**
@@ -25,6 +26,7 @@ export function SessionView({
   onBack: () => void
 }) {
   const [turns, setTurns] = React.useState<string[]>(initialMessage ? [initialMessage] : [])
+  const [boardsReady, setBoardsReady] = React.useState(false)
 
   function handleSend(message: string) {
     setTurns((prev) => [...prev, message])
@@ -73,15 +75,14 @@ export function SessionView({
         />
       </div>
 
-      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-        <header className="h-10 shrink-0 border-b border-border" />
-        <div className="flex flex-1 flex-col items-center justify-center gap-3">
-          <Spinner className="size-4 text-muted-foreground/60" />
-          <span className="text-[12px] text-muted-foreground/50">
-            context loading · lenses view — separate story
-          </span>
+      {boardsReady ? (
+        <MainSurface showLocationTrail={false} onExpandChat={() => {}} />
+      ) : (
+        <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+          <header className="h-10 shrink-0 border-b border-border" />
+          <RunView targetKind={targetKind} targetLabel={targetLabel} onReady={() => setBoardsReady(true)} />
         </div>
-      </div>
+      )}
     </div>
   )
 }

@@ -21,3 +21,10 @@ export type ComposerBadge =
       line: number
       text: string
     }
+  | {
+      id: string
+      kind: "quote"
+      /** The highlighted prose the comment anchors to. */
+      quote: string
+      text: string
+    }

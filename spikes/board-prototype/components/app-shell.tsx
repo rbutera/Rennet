@@ -87,6 +87,13 @@ export function AppShell() {
         onAddRemote={() => setAddRemoteOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onNewChat={(projectId) => setNewChatProjectId(projectId)}
+        onSelectSession={() => {
+          // Only the demo session exists; any session row returns to the demo chat.
+          setSettingsOpen(false)
+          setNewChatProjectId(null)
+          setSession(null)
+          setChatOpen(true)
+        }}
       />
       {/* Settings and New chat take over the whole view, chat included (ruling
           2026-08-24). Chat + board stay mounted underneath so state survives. */}

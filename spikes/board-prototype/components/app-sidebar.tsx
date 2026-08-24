@@ -122,6 +122,7 @@ interface AppSidebarProps {
   onAddRemote: () => void
   onOpenSettings: () => void
   onNewChat: (projectId: string) => void
+  onSelectSession: (sessionId: string) => void
 }
 
 function NewChatPicker({
@@ -178,7 +179,7 @@ function NewChatPicker({
   )
 }
 
-export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, onOpenSettings, onNewChat }: AppSidebarProps) {
+export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, onOpenSettings, onNewChat, onSelectSession }: AppSidebarProps) {
   const projects = React.useMemo(() => hosts.flatMap((host) => host.projects), [hosts])
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {}
@@ -376,6 +377,7 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, o
                           <button
                             key={session.id}
                             type="button"
+                            onClick={() => onSelectSession(session.id)}
                             className={cn(
                               "flex h-8 flex-col justify-center gap-0.5 rounded-md px-2 text-left transition-colors hover:bg-secondary",
                               session.active && "bg-secondary",

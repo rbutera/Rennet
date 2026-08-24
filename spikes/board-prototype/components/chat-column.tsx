@@ -31,7 +31,13 @@ export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
       text,
     })),
   )
-  const badges: ComposerBadge[] = [...commentBadges, ...imageBadges]
+  const quoteBadges: ComposerBadge[] = (store?.quoteComments ?? []).map((entry) => ({
+    id: entry.id,
+    kind: "quote" as const,
+    quote: entry.quote,
+    text: entry.text,
+  }))
+  const badges: ComposerBadge[] = [...commentBadges, ...quoteBadges, ...imageBadges]
 
   function handleSend(message: string) {
     const now = Date.now()
@@ -71,6 +77,8 @@ export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
     if (badge.kind === "image") {
       URL.revokeObjectURL(badge.thumbnailUrl)
       setImageBadges((prev) => prev.filter((b) => b.id !== badge.id))
+    } else if (badge.kind === "quote") {
+      store?.removeQuoteComment(badge.id)
     } else {
       handleCommentChange(badge.path, badge.line, null)
     }

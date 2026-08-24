@@ -26,11 +26,13 @@ function ComposerBadgePill({ badge, onRemove }: { badge: ComposerBadge; onRemove
       ) : (
         <MessageSquare className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       )}
-      <span className="max-w-[160px] truncate">{badge.kind === "image" ? badge.name : "1 comment"}</span>
+      <span className="max-w-[160px] truncate">
+        {badge.kind === "image" ? badge.name : badge.kind === "quote" ? `“${badge.quote}”` : "1 comment"}
+      </span>
       <button
         type="button"
         onClick={onRemove}
-        aria-label={`Remove ${badge.kind === "image" ? badge.name : `comment on line ${badge.line}`} reference`}
+        aria-label={`Remove ${badge.kind === "image" ? badge.name : badge.kind === "quote" ? "quoted-text comment" : `comment on line ${badge.line}`} reference`}
         className="flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
       >
         <X className="size-3" aria-hidden="true" />
@@ -98,7 +100,7 @@ export function InputBar({
             ref={textareaRef}
             value={value}
             onChange={(event) => {
-              if (!hasPrefilled) {
+              if (!hasPrefilled && prefillMessage) {
                 setHasPrefilled(true)
                 setValue(prefillMessage)
                 return
