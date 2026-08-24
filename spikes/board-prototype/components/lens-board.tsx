@@ -66,6 +66,11 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
             {section.counts ? <span className="text-muted-foreground/60"> · {section.counts}</span> : null}
           </span>
         )}
+        {section.source && (
+          <span className="ml-auto shrink-0 rounded border border-border/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
+            {section.source}
+          </span>
+        )}
       </button>
       {!folded && (
         <div className="flex flex-col gap-4 pl-5">
@@ -134,6 +139,19 @@ function Element({ element }: { element: BoardElement }) {
             <span className="font-medium text-foreground">Why: </span>
             {element.why}
           </p>
+          {element.artifacts && element.artifacts.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {element.artifacts.map((artifact) => (
+                <a
+                  key={artifact.sectionId}
+                  href={`#${artifact.sectionId}`}
+                  className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  {artifact.label}
+                </a>
+              ))}
+            </div>
+          )}
         </header>
       )
 
@@ -200,9 +218,11 @@ function Element({ element }: { element: BoardElement }) {
           <SmallLabel>
             Tasks · {element.groups.reduce((sum, group) => sum + group.done, 0)}/
             {element.groups.reduce((sum, group) => sum + group.total, 0)}
-            <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-muted-foreground/70">
-              {element.source}
-            </span>
+            {element.source && (
+              <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-muted-foreground/70">
+                {element.source}
+              </span>
+            )}
           </SmallLabel>
           <div className="flex flex-col divide-y divide-border/60 rounded-md border border-border px-3">
             {element.groups.map((group, index) => (

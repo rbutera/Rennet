@@ -26,6 +26,8 @@ export type BoardElement =
       tasks?: { done: number; total: number }
       /** The distilled why — one paragraph, not the raw proposal. */
       why: string
+      /** The artifact set the discovery found (proposal/design/spec deltas/tasks), each jumping to its section. */
+      artifacts?: { label: string; sectionId: string }[]
     }
   | {
       kind: "what-changes"
@@ -46,7 +48,7 @@ export type BoardElement =
     }
   | {
       kind: "task-progress"
-      source: string
+      source?: string
       groups: { label: string; done: number; total: number }[]
     }
   | {
@@ -109,6 +111,8 @@ export interface BoardSection {
   title: string
   /** Delta badge beside the title (capability sections on the spec board). */
   badge?: "added" | "modified"
+  /** The artifact file this section renders (spec-board provenance chip). */
+  source?: string
   /** One-line rollup shown when the section is folded. */
   gist: string
   /** Small counts shown beside the gist when folded, e.g. "3 blocks · 1 finding". */
