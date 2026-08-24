@@ -25,7 +25,9 @@ their layouts (reference pages in docs/developing/reference/spec-formats/):
 
 Match artifacts to this change (the feature folder, the change directory, the
 stories the diff touches). Discovery is deterministic first: check the known
-paths and config files before judging.
+paths and config files before judging. Generated scaffold stamps (OpenSpec's
+`.openspec.yaml` and the like) are not spec artifacts — they are noise, not
+yours to render.
 
 ## Render the whole artifact set
 

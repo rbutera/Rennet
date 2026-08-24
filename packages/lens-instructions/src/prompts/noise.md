@@ -8,7 +8,8 @@ and reversible.
 ## What noise is
 
 A hunk whose content a careful reviewer can safely take on trust once they
-know its category: formatter output, lockfile churn, generated files, import
+know its category: formatter output, lockfile churn, generated files
+(including scaffold stamps like OpenSpec's `.openspec.yaml`), import
 reordering, mechanical renames, moved-not-changed code, fixture updates that
 mirror a source change. Noise is a verdict about reading effort, not about
 importance. A lockfile can still break production; it is noise because reading

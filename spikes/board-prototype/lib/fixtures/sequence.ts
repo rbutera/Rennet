@@ -11,7 +11,7 @@ export const sequenceBoard: LensBoard = {
   intro:
     "The token's lifetime was not the bug. Renewal was invisible. The refresh exchange emitted zero logs, so on lancelot a failed refresh surfaced as token-invalid and forced a device-flow re-auth. You couldn't tell a decline apart from a network blip or a refresh that never ran. Read the change ground-up: the shape of a single observation, then how it stays secret-free, then where it's emitted and why the network path only observes, then the daemon sink, then the tests.",
   skippedHunks: [
-    { path: "openspec/changes/github-token-refresh-reliability/.openspec.yaml", reason: "spec artifact — Design lens" },
+    { path: "openspec/changes/github-token-refresh-reliability/.openspec.yaml", reason: "generated scaffold stamp — noise" },
     { path: "openspec/changes/github-token-refresh-reliability/proposal.md", reason: "spec artifact — Design lens" },
     { path: "openspec/changes/github-token-refresh-reliability/design.md", reason: "spec artifact — Design lens" },
     {
