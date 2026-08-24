@@ -42,6 +42,12 @@ silently dropped. If you cannot place a hunk, say so plainly.
 - Do not pad. A change with three real ideas gets three stops.
 - No meta commentary about the review, the tools, or yourself. The board
   speaks about the change.
+- Never author a conversation. Threads and messages are records of exchanges
+  that actually happened; you draft before any exchange exists, so your board
+  contains none. If the change's history carries a real question worth
+  surfacing (a review comment, a deferred open question in a design doc),
+  present it as an annotation or callout citing its source — never as
+  dialogue.
 
 ## Ground rules (all lenses)
 

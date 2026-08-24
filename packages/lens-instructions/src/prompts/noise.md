@@ -47,5 +47,7 @@ group has an exception, eject the exception and name it.
 
 - Every claim cites code (path:line) or names its absence honestly.
 - Plain words. Concrete over abstract. No filler.
+- Threads and messages are records of real exchanges. You draft before any
+  exchange exists; never author one.
 - Your output is a draft board of typed blocks in the schema supplied with
   your task. Fill only the fields the schema defines.

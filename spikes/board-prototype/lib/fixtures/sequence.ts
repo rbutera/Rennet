@@ -102,7 +102,7 @@ export function tokenKind(token: string): string {
       id: "emit-and-observe",
       title: "Emit at every outcome, and refuse to retry the network case",
       gist: "refreshAndPersist logs attempt, then declined, network, or persisted; the network branch only observes and propagates, with no retry.",
-      counts: "1 prose · 1 code · 1 callout · 1 thread",
+      counts: "1 prose · 1 code · 1 callout",
       elements: [
         {
           kind: "prose",
@@ -141,25 +141,7 @@ export function tokenKind(token: string): string {
         {
           kind: "callout",
           tone: "warn",
-          text: "Why no retry here is the decision that carries this change. The shared transport (withConnectResilience) already retries a connect-phase blip once, and that retry is replay-safe because no request reached GitHub and nothing could have rotated. A retry at this layer would instead depend on isGitHubNetworkError, which also matches post-send errors, where the refresh POST may have already reached GitHub and rotated the pair. Replaying then spends a token GitHub has already rotated, burning the session. So an earlier draft carried a second retry and this change drops it. The layer now only observes network and propagates, credential byte-untouched.",
-        },
-        {
-          kind: "thread",
-          anchor: { path: "packages/adapters/src/github-auth.ts", line: 261 },
-          messages: [
-            {
-              author: "orchestrator",
-              text: "An earlier wave added a retry inside refreshAndPersist so a transient blip wouldn't drop the session. Review flagged it. isGitHubNetworkError matches post-send failures too, and the shared transport already owns the only safe retry (connect-phase, replay-safe). I removed the adapter retry, and the network branch now just logs `network` and rethrows.",
-            },
-            {
-              author: "user",
-              text: "Then on a post-send loss where GitHub actually rotated, we keep the OLD refresh token and next resolve will decline. Is that acceptable, and can we tell it apart from a real blip?",
-            },
-            {
-              author: "orchestrator",
-              text: "Acceptable and intended. A network throw writes nothing, so we report `network` (never token-invalid) with the pair intact. If GitHub really rotated, the NEXT record settles it. An `attempt` followed by `declined bad_refresh_token` is the tell. We deferred the design.md open question, proactively clearing the credential on a persistent decline; this PR stays observe-only.",
-            },
-          ],
+          text: "Why no retry here is the decision that carries this change. The shared transport (withConnectResilience) already retries a connect-phase blip once, and that retry is replay-safe because no request reached GitHub and nothing could have rotated. A retry at this layer would instead depend on isGitHubNetworkError, which also matches post-send errors, where the refresh POST may have already reached GitHub and rotated the pair. Replaying then spends a token GitHub has already rotated, burning the session. So an earlier draft carried a second retry and this change drops it. The layer now only observes network and propagates, credential byte-untouched. The accepted consequence, per the change's design.md: after a post-send loss where GitHub did rotate, the stored pair is stale and the next resolve declines — an `attempt` followed by `declined bad_refresh_token` is the tell. Proactively clearing the credential on a persistent decline is a deferred open question; this change stays observe-only.",
         },
       ],
     },
@@ -240,18 +222,6 @@ export function tokenKind(token: string): string {
     // The no-adapter-retry guarantee: the transport (not github-auth) owns retry.
     expect(refresh).toHaveBeenCalledTimes(1);
   });`,
-        },
-      ],
-    },
-    {
-      id: "remainder",
-      title: "Remainder: the spec artifacts and the barrel export",
-      gist: "Five OpenSpec files (Design lens) and a one-line index.ts re-export carry no reading-order idea of their own.",
-      counts: "1 prose",
-      elements: [
-        {
-          kind: "prose",
-          text: "Two hunk groups teach nothing about the reading order, and I name them here so nothing drops silently. The OpenSpec change github-token-refresh-reliability adds five files: .openspec.yaml, proposal.md, design.md, specs/github-token-refresh/spec.md, and tasks.md. They are the spec behind this change and belong to the Design lens, not this walk. And packages/adapters/src/index.ts adds a two-symbol re-export, the RefreshLogRecord type and the tokenKind function. It is a mechanical barrel update with no logic, and the record-shape and token-kind stops that introduced those symbols already cover it.",
         },
       ],
     },
