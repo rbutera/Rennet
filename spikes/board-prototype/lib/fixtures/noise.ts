@@ -1,121 +1,92 @@
 import type { LensBoard } from "@/lib/lens-data"
 
 /**
- * Noise lens for PR #438 — "fix(adapters): observe GitHub token refresh, drop the
- * unsafe retry". Groups hunks the diff touched but that carry no code-review
- * judgment: spec artifacts, barrel plumbing, and low-judgment table tests. The
- * actual judgment (the retry removal in github-auth.ts, the logger binding in
- * create-server.ts) is deliberately NOT here — it belongs to the reviewer.
+ * Noise fixture (agent-drafted from PR #438 via packages/lens-instructions,
+ * unslop-edited). PR #438 is "fix(adapters): observe GitHub token refresh, drop
+ * the unsafe retry". A tight 9-file PR with little true noise, so the board is
+ * small on purpose. Set aside here: barrel/import plumbing that mirrors the new
+ * public names, one generated openspec stamp plus its completed task checklist,
+ * and the pure-function tokenKind table tests. Everything that carries a
+ * reviewer's judgment stays off this board: the retry removal and log emits in
+ * github-auth.ts, the logger binding in create-server.ts, the behavioral and
+ * secret-safety tests, and the normative spec prose (proposal/design/spec.md).
  */
 export const noiseBoard: LensBoard = {
   lens: "noise",
   title: "Noise · observe GitHub token refresh (#438)",
   intro:
-    "13 hunks set aside from the reviewer's judgment. Nothing dropped — every group reopens.",
+    "7 hunks set aside from the reviewer's judgment. Nothing dropped. Every group reopens into the full diff.",
   sections: [
     {
       id: "mechanical",
       title: "Mechanical churn",
-      gist: "Spec artifacts and barrel plumbing — settled by a deterministic rule.",
-      counts: "2 groups · 7 hunks · judged by rule",
+      gist: "Barrel and import plumbing that only echoes the new public names.",
+      counts: "1 group · 2 hunks · judged by rule",
       elements: [
         {
           kind: "prose",
-          text: "Noise is what this change touched but that does not need your judgment: a deterministic rule or a labeled noise job sorted it here. Nothing is dropped or hidden — each group names its hunks and reopens into the full diff. The two hunks that do carry judgment — the retry removed in github-auth.ts and the logger bound in create-server.ts — are not in this lens.",
+          text: "Noise is what this change touched but a reviewer can take on trust once they know the category. It does not repay line-by-line reading. Nothing is dropped. Each group names its hunks and reopens into the diff. The judgment stays with the reviewer: the retry removal and records emitted in github-auth.ts, the logger bound in create-server.ts, the behavioral and secret-safety tests, and the spec prose all stay off this board.",
         },
         {
           kind: "noise-group",
-          label: "OpenSpec change artifacts",
+          label: "Barrel re-export & import plumbing",
           judgedBy: "rule",
           reason:
-            "Every file lives under openspec/changes/**, which the rule treats as spec prose rather than shipped runtime code.",
-          hunks: [
-            {
-              path: "openspec/changes/github-token-refresh-reliability/.openspec.yaml",
-              summary: "new schema+created stub",
-            },
-            {
-              path: "openspec/changes/github-token-refresh-reliability/proposal.md",
-              summary: "why/what-changes prose",
-            },
-            {
-              path: "openspec/changes/github-token-refresh-reliability/design.md",
-              summary: "decisions and trade-offs prose",
-            },
-            {
-              path: "openspec/changes/github-token-refresh-reliability/specs/github-token-refresh/spec.md",
-              summary: "ADDED requirements + scenarios",
-            },
-            {
-              path: "openspec/changes/github-token-refresh-reliability/tasks.md",
-              summary: "task checklist, all boxes marked",
-            },
-          ],
-        },
-        {
-          kind: "noise-group",
-          label: "Barrel re-exports & import plumbing",
-          judgedBy: "rule",
-          reason:
-            "Both hunks only add the new public names to existing alphabetized export/import blocks — no logic, matches the surrounding pattern exactly.",
+            "Both hunks add the two new public names, RefreshLogRecord and tokenKind, to export/import blocks that already list their siblings. No logic, and an exact match to the surrounding pattern.",
           hunks: [
             {
               path: "packages/adapters/src/index.ts",
-              summary: "add RefreshLogRecord + tokenKind to the barrel",
+              summary: "add RefreshLogRecord + tokenKind to the adapters barrel",
             },
             {
               path: "packages/adapters/src/github-auth.test.ts",
-              summary: "single import widened to a named block",
+              summary: "widen the single-symbol import to a named block for the two new symbols",
             },
           ],
         },
       ],
     },
     {
-      id: "low-judgment-tests",
-      title: "Low-judgment test scaffolding",
-      gist: "Table tests and repeated sentinel assertions — a noise job read them, nothing to weigh.",
-      counts: "2 groups · 6 hunks · judged by llm",
+      id: "bookkeeping",
+      title: "OpenSpec bookkeeping & pure-function tests",
+      gist: "A generated stamp, a done checklist, and fixed input/output table tests.",
+      counts: "2 groups · 5 hunks · judged by llm",
       elements: [
         {
           kind: "noise-group",
-          label: "tokenKind allowlist table tests",
+          label: "OpenSpec scaffold stamp & completed task checklist",
           judgedBy: "llm",
           reason:
-            "Pure-function cases with fixed inputs and expected outputs; the noise job flagged them as read-and-confirm, with no design decision to review.",
+            "The .openspec.yaml is a two-line schema and created stamp the openspec tool writes. tasks.md is the same change's checklist with every box marked, so it mirrors what shipped and records no behavior. The normative spec (proposal/design/spec.md) is NOT here: it carries the no-retry rationale a reviewer needs.",
           hunks: [
             {
-              path: "packages/adapters/src/github-auth.test.ts",
-              summary: "known prefixes map to their own prefix",
+              path: "openspec/changes/github-token-refresh-reliability/.openspec.yaml",
+              summary: "new 2-line schema + created stamp",
             },
             {
-              path: "packages/adapters/src/github-auth.test.ts",
-              summary: "unknown value maps to 'token', never a slice",
-            },
-            {
-              path: "packages/adapters/src/github-auth.test.ts",
-              summary: "no-underscore value maps to 'token'",
+              path: "openspec/changes/github-token-refresh-reliability/tasks.md",
+              summary: "task checklist, all boxes marked (6.x lancelot proof still open)",
             },
           ],
         },
         {
           kind: "noise-group",
-          label: "Secret-safety sentinel boilerplate",
+          label: "tokenKind allowlist table tests",
           judgedBy: "llm",
           reason:
-            "The same sentinel-token setup and JSON.stringify().not.toContain() sweep repeats across three outcome paths; the noise job clustered the identical structure.",
+            "Pure-function cases with fixed inputs and expected outputs over the tokenKind helper. Known prefixes map to themselves, and an unknown value maps to the fixed 'token', never a slice. Read and confirm, with no design decision to weigh.",
           hunks: [
             {
               path: "packages/adapters/src/github-auth.test.ts",
-              summary: "success path: neither token leaks into a record",
+              summary: "known ghu_/gho_/github_pat_ map to their own prefix",
             },
             {
               path: "packages/adapters/src/github-auth.test.ts",
-              summary: "network path: stored tokens absent from records",
+              summary: "customerSecret_body maps to 'token', asserted never a slice",
             },
             {
               path: "packages/adapters/src/github-auth.test.ts",
-              summary: "declined path: sentinel access/refresh not serialized",
+              summary: "no-underscore 'plainvalue' maps to 'token'",
             },
           ],
         },

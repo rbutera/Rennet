@@ -1,187 +1,168 @@
-/**
- * Decisions lens — built from the real content of rbutera/Rennet PR #438
- * ("fix(adapters): observe GitHub token refresh, drop the unsafe retry").
- *
- * The Decisions lens surfaces the implementer's calls: each choice the change
- * embodies, its why, the alternatives not taken, and evidence anchors into the
- * diff. `inferred` marks a call reconstructed from the code rather than stated
- * in the PR body.
- */
-import type { LensBoard } from "@/lib/lens-data"
+import type { LensBoard } from "../lens-data"
 
+/**
+ * Decisions fixture — agent-drafted from PR #438
+ * "fix(adapters): observe GitHub token refresh, drop the unsafe retry",
+ * via packages/lens-instructions, then unslop-edited.
+ *
+ * Evidence anchors point at the merged tree. `inferred: false` marks decisions
+ * the implementer stated in the PR body, commit messages, or the OpenSpec change
+ * `openspec/changes/github-token-refresh-reliability/` (design.md / proposal.md).
+ * `inferred: true` marks a call visible only in the code.
+ */
 export const decisionsBoard: LensBoard = {
   lens: "decisions",
-  title: "Decisions — observe the token refresh, drop the unsafe retry",
+  title: "Observe the GitHub token refresh, drop the unsafe retry",
   intro:
-    "The token's lifetime was never the bug: renewal was invisible. These are the calls that made the refresh exchange legible without moving the state machine — and the one call review forced, removing a second retry that was redundant and unsafe.",
+    "Seven judgment calls sit behind PR #438. The refresh path was already wired " +
+    "and working, so the change is about what to make visible and, on review, what " +
+    "to pull back out. The implementer stated six of them. The seventh, the log " +
+    "line format, is read off the code.",
   sections: [
     {
-      id: "retry-ownership",
-      title: "Retry ownership and failure propagation",
-      gist: "Retry stays in the shared transport; the refresh layer only observes and propagates.",
-      counts: "2 decisions · 1 code",
+      id: "scope",
+      title: "What counts as the bug",
+      gist: "The reframe that set the scope. The problem was invisible renewal, not a short lifetime.",
+      counts: "1 decision · stated",
       elements: [
         {
           kind: "prose",
-          text: "The headline call, and the one review caught: an earlier draft added a second retry inside refreshAndPersist. The shared GitHub transport (withConnectResilience) already retries a connect-phase blip once, replay-safely — nothing reached GitHub, so nothing rotated. A retry here would be a redundant second layer AND unsafe, because isGitHubNetworkError also matches post-send errors that may have already rotated the pair. So the refresh layer was cut back to observe-and-propagate.",
+          text: "A field failure on lancelot reported the GitHub token expired and forced a device-flow re-auth. The obvious move, extend or disable the token's lifetime, dodges the real defect. The refresh exchange emitted zero logs, so nobody could tell a recoverable blip from a dead token, and the refresh had never once been confirmed to succeed.",
+        },
+        {
+          kind: "decision",
+          statement:
+            "Treat the silent refresh exchange as the bug and add logging, rather than extending or disabling the GitHub App token lifetime.",
+          why: "PR body: \"The token lifetime was never the bug — the bug was that renewal is invisible.\" The PR's \"Not in this PR\" section names \"Disabling token expiry (dodges the fix)\", and the OpenSpec proposal states \"The token's lifetime is not the bug.\" So the whole change ships log records instead of touching expiry.",
+          inferred: false,
+          alternatives: [
+            "Disable or lengthen token expiry in the GitHub App config so refresh runs rarely. Dodges the fix.",
+            "Leave the path silent and add only the retry, treating the failure as a resilience gap.",
+          ],
+          evidence: [
+            { path: "packages/adapters/src/github-auth.ts", line: 244 },
+            { path: "packages/server/src/create-server.ts", line: 626 },
+            {
+              path: "openspec/changes/github-token-refresh-reliability/proposal.md",
+              line: 3,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "secret-safe-observability",
+      title: "Secret-safe observability",
+      gist: "Logging the refresh without ever writing a credential to disk.",
+      counts: "4 decisions · 3 stated, 1 inferred",
+      elements: [
+        {
+          kind: "decision",
+          statement:
+            "Inject an optional `log?: (record) => void` sink into the resolve/refresh deps instead of calling `console.log` inside the adapter.",
+          why: "OpenSpec design Decision 1: keep `adapters` testable and free of side effects, let tests assert on captured records, and format for production where the server is composed. `create-server` binds the concrete sink, which writes to the daemon's stdout and lands in `daemon.log`.",
+          inferred: false,
+          alternatives: [
+            "A bare `console.error`/`console.log` inside `refreshAndPersist`. The design rejected it because it couples the adapter to a sink and makes the secret-safety guarantee untestable.",
+          ],
+          evidence: [
+            { path: "packages/adapters/src/github-auth.ts", line: 102 },
+            { path: "packages/server/src/create-server.ts", line: 626 },
+            {
+              path: "openspec/changes/github-token-refresh-reliability/design.md",
+              line: 37,
+            },
+          ],
+        },
+        {
+          kind: "decision",
+          statement:
+            "Make `RefreshLogRecord` a typed shape with no field that can hold a token, refresh token, or secret. The type guarantees secret-freedom, so no reviewer has to.",
+          why: "OpenSpec design Decision 2: the only fields are `phase`, an optional `githubError` holding a decline's error code, and an optional `tokenKind` holding a non-secret prefix. No field can carry a secret, so a credential cannot be logged even by mistake. The safety is a property of the type.",
+          inferred: false,
+          alternatives: [
+            "Log the full refresh response or a richer record and rely on a redaction pass or reviewer vigilance to strip secrets.",
+          ],
+          evidence: [
+            { path: "packages/adapters/src/github-auth.ts", line: 59 },
+          ],
+        },
+        {
+          kind: "decision",
+          statement:
+            "`tokenKind` returns a prefix from a closed allowlist, or the fixed string `\"token\"`, never a computed slice of the token body.",
+          why: "OpenSpec design Decision 2 and task 5.3: an unrecognized value like `customerSecret_body` must map to `\"token\"`, never to a slice such as `customerSecret_`, so an unexpected credential can never leak bytes into a log. The adversarial unit test `tokenKind(\"customerSecret_body\") === \"token\"` pins this. Seeing the one-liner is the evidence it cannot slice.",
+          inferred: false,
+          alternatives: [
+            "Derive the label from the token itself, e.g. the substring before the first `_`. That emits `customerSecret_` for an unexpected value and leaks part of a secret.",
+          ],
+          evidence: [
+            { path: "packages/adapters/src/github-auth.ts", line: 72 },
+            { path: "packages/adapters/src/github-auth.ts", line: 87 },
+          ],
         },
         {
           kind: "code",
           path: "packages/adapters/src/github-auth.ts",
-          startLine: 244,
+          startLine: 87,
           lang: "ts",
-          highlightLines: [1, 13, 14, 15, 16, 17, 18, 19],
-          code: `    log({ phase: "attempt" });
-    let minted: GitHubCredential;
-    try {
-      minted = await refresh(current.refreshToken);
-    } catch (error) {
-      // A decline is deterministic — name its cause; the surface resolves token-invalid.
-      if (error instanceof GitHubOAuthDeclined) {
-        log({ phase: "declined", githubError: error.code });
-        return null;
-      }
-      // NO retry here. The shared GitHub transport (\`withConnectResilience\`) already
-      // retries a CONNECT-PHASE blip exactly once — provably replay-safe, since no
-      // request reached GitHub — and deliberately never replays a post-send failure,
-      // which could double a rotation. A second retry at this layer would duplicate
-      // connect attempts AND risk burning a rotated refresh token on an ambiguous
-      // post-send error. So observe the network failure and propagate it:
-      // resolveGitHubAuth classifies it \`network\` and leaves the credential untouched.
-      if (isGitHubNetworkError(error)) log({ phase: "network" });
-      throw error;
-    }
-    await deps.secretStore.setGitHubCredential(minted);
-    log({ phase: "persisted", tokenKind: tokenKind(minted.token) });
-    return minted;`,
+          code: 'export function tokenKind(token: string): string {\n  return GITHUB_TOKEN_PREFIXES.find((prefix) => token.startsWith(prefix)) ?? "token";\n}',
+          highlightLines: [88],
         },
         {
           kind: "decision",
           statement:
-            "Remove the adapter-level retry from refreshAndPersist and leave connect-phase retry to the shared transport.",
-          why: "The transport's connect-phase retry is the only replay-safe kind: no request reached GitHub, so nothing could have rotated. A second retry here would double connect attempts and could replay a post-send failure onto an already-rotated pair, burning a live refresh token.",
-          inferred: false,
-          alternatives: [
-            "Keep the second retry inside refreshAndPersist (the rejected earlier draft).",
-            "Retry only when the error is provably connect-phase — duplicating the transport's own classification.",
-          ],
-          evidence: [
-            { path: "packages/adapters/src/github-auth.ts", line: 262 },
-            { path: "openspec/changes/github-token-refresh-reliability/design.md", line: 41 },
-          ],
-        },
-        {
-          kind: "decision",
-          statement:
-            "On a network error, emit a `network` record and re-throw, letting resolveGitHubAuth do the classification.",
-          why: "Keeping classification in one place (resolveGitHubAuth maps the propagated error to reason 'network') means refreshAndPersist never has to decide the surface state, and the credential is left byte-untouched because no write runs before the throw.",
+            "Serialize each record in `create-server` as a flat `key=value` `[github-auth]` line rather than JSON-stringifying the record object.",
+          why: "The binding builds `phase=… githubError=… tokenKind=…` and prints one `[github-auth]` line, omitting absent optional fields. The choice of a grep-friendly flat line over `JSON.stringify(record)` shows up only in the code. No design note or commit gives a reason, so the intent is reconstructed: a scannable single line in `daemon.log`.",
           inferred: true,
           alternatives: [
-            "Catch the network error in refreshAndPersist and return null, collapsing it into the same path as a decline.",
-            "Map the network error to a GitHubAuthState here instead of throwing.",
+            "`console.log(`[github-auth] ${JSON.stringify(record)}`)`. One structured line, machine-parseable but noisier to eyeball.",
           ],
           evidence: [
-            { path: "packages/adapters/src/github-auth.ts", line: 267 },
-            { path: "packages/adapters/src/github-auth.test.ts", line: 296 },
+            { path: "packages/server/src/create-server.ts", line: 626 },
           ],
         },
       ],
     },
     {
-      id: "log-record-shape",
-      title: "The refresh log record: secret-free by construction",
-      gist: "A typed record with no secret-carrying field, written at the composition boundary.",
-      counts: "3 decisions",
+      id: "retry-and-state-machine",
+      title: "Retry ownership and the untouched state machine",
+      gist: "The headline reversal, no retry here, plus what was deliberately left unchanged.",
+      counts: "2 decisions · stated",
       elements: [
         {
-          kind: "prose",
-          text: "Making the refresh observable meant choosing where the logging lives and what the record can hold. The safety here is a type-level property, not a review promise: the record shape has nowhere to put a token, and the only token-derived field is a label drawn from a closed allowlist.",
-        },
-        {
           kind: "decision",
           statement:
-            "Inject an optional `log?: (record: RefreshLogRecord) => void` into ResolveAuthDeps instead of calling console.log inside the adapter.",
-          why: "The adapter stays side-effect-free and testable — tests assert on captured records — while production formatting lives at the composition boundary in create-server. A bare console.error in the adapter would couple it to a sink and make the secret-safety guarantee untestable.",
-          inferred: true,
-          alternatives: [
-            "console.error directly inside refreshAndPersist.",
-            "Return the records from resolveGitHubAuth for the caller to log.",
-          ],
-          evidence: [
-            { path: "packages/adapters/src/github-auth.ts", line: 96 },
-            { path: "packages/server/src/create-server.ts", line: 622 },
-          ],
-        },
-        {
-          kind: "decision",
-          statement:
-            "Give RefreshLogRecord no field that can hold a token, refresh token, or secret.",
-          why: "If the type cannot carry a credential, a credential cannot be logged even by mistake. The fields are phase, an optional verbatim githubError code, and an optional non-secret tokenKind label — nothing else.",
+            "Keep retry ownership in the shared GitHub transport and add none in `refreshAndPersist`. On a network error, log `network` and propagate. An earlier draft added an adapter-level retry; review removed it.",
+          why: "OpenSpec design Decision 3 and the commit `fix(adapters): drop redundant refresh retry, allowlist tokenKind`: `withConnectResilience` already retries a connect-phase blip exactly once, and does so replay-safely because no request reached GitHub. A second retry here would be redundant, up to four connect attempts, and unsafe. `isGitHubNetworkError` also matches post-send errors that may have already rotated the pair, so retrying burns a rotated refresh token. The inline comment at the catch block spells this out.",
           inferred: false,
           alternatives: [
-            "A freeform message string per record (which could accidentally interpolate a token).",
-            "Include the token expiry or a truncated token for debugging.",
+            "Retry the refresh inside `refreshAndPersist`, the earlier draft. Rejected for the double-connect-attempt and rotation-burn risk on an ambiguous post-send failure.",
           ],
           evidence: [
-            { path: "packages/adapters/src/github-auth.ts", line: 57 },
-            { path: "packages/adapters/src/github-auth.test.ts", line: 356 },
+            { path: "packages/adapters/src/github-auth.ts", line: 254 },
+            { path: "packages/adapters/src/github-auth.ts", line: 261 },
+            {
+              path: "openspec/changes/github-token-refresh-reliability/design.md",
+              line: 41,
+            },
           ],
         },
         {
           kind: "decision",
           statement:
-            "tokenKind returns only an allowlisted GitHub prefix or the fixed string `token`, never a slice of the value.",
-          why: "An unrecognized value like customerSecret_body must not leak its own prefix into a log. Matching against a closed prefix allowlist and falling back to a constant means the returned string is always a constant, never credential bytes.",
+            "On a genuine decline, keep the stored credential file and return `token-invalid`, rather than clearing it so `status` reads `not-connected`.",
+          why: "OpenSpec design Open Questions: clearing the credential on a persistent decline was considered and deferred. The current behavior, log the code, keep the file, return `token-invalid`, is acceptable now that the log makes the loop visible. Revisit only if the field shows churn. In code, the declined branch logs and returns null without writing to the store.",
           inferred: false,
           alternatives: [
-            "Return the substring up to the first underscore (would leak customerSecret_).",
-            "Return a fixed-length prefix of every token.",
+            "Clear the credential on a persistent decline so `status` degrades to `not-connected` instead of re-attempting a dead refresh on each resolve.",
           ],
           evidence: [
-            { path: "packages/adapters/src/github-auth.ts", line: 84 },
-            { path: "packages/adapters/src/github-auth.test.ts", line: 218 },
-          ],
-        },
-      ],
-    },
-    {
-      id: "hook-point-and-proof",
-      title: "Where the observation hooks in, and how it is proven",
-      gist: "One attempt record before the exchange; tests pin the exact ordered records and the call count.",
-      counts: "2 decisions",
-      elements: [
-        {
-          kind: "prose",
-          text: "The last calls are about placement and proof: log the attempt before anything can fail, so a mid-exchange crash still leaves a trace, and assert the whole record sequence exactly so a stray extra log — or a sneaked-back retry — fails a test.",
-        },
-        {
-          kind: "decision",
-          statement:
-            "Emit the `attempt` record at the start of the exchange, inside the locked section both the proactive and reactive branches route through.",
-          why: "Both refresh triggers funnel through refreshAndPersist, so logging the attempt there — before the refresh call — covers both with one line and survives a process death mid-exchange, which a record written only on completion would not.",
-          inferred: true,
-          alternatives: [
-            "Log the attempt in each of the proactive and reactive branches separately.",
-            "Log only the outcome (persisted / declined / network) and skip the attempt record.",
-          ],
-          evidence: [
-            { path: "packages/adapters/src/github-auth.ts", line: 244 },
-            { path: "openspec/changes/github-token-refresh-reliability/tasks.md", line: 27 },
-          ],
-        },
-        {
-          kind: "decision",
-          statement:
-            "Verify by asserting the exact ordered record array and that refresh() is called exactly once, rather than checking individual records loosely.",
-          why: "toEqual on the full [attempt, network] / [attempt, declined] sequence catches an extra, missing, or reordered record — and a toHaveBeenCalledTimes(1) on refresh is the regression guard that would fail the instant an adapter-level retry is reintroduced.",
-          inferred: true,
-          alternatives: [
-            "Assert only that a network record appears somewhere (would miss a spurious retry log).",
-            "Spy on console output instead of the injected record sink.",
-          ],
-          evidence: [
-            { path: "packages/adapters/src/github-auth.test.ts", line: 301 },
-            { path: "packages/adapters/src/github-auth.test.ts", line: 259 },
+            { path: "packages/adapters/src/github-auth.ts", line: 250 },
+            {
+              path: "openspec/changes/github-token-refresh-reliability/design.md",
+              line: 57,
+            },
           ],
         },
       ],
