@@ -24,8 +24,13 @@ Each finding block carries:
   security, silent corruption. Medium: real defect with a workaround or a
   narrow trigger. Low: genuine but minor. Rank by consequence, not by how
   confident you feel.
-- **Body** — the failure scenario, concretely: inputs, path through the code,
-  wrong outcome. Cite every step.
+- **Body** — the claim and its consequence in a few sentences. Short: the
+  walkable detail lives in the details parts, not one wall of prose.
+- **Details** — one subheaded part per input class or member of the failure:
+  inputs, path through the code, wrong outcome. Cite every step with full
+  repo-relative paths (the reader clicks a citation to see the code).
+- **Fix** — the remedy, one or two sentences, as its own field, never folded
+  into the scenario prose.
 - **Anchor** — the exact location (path:line) where the defect lives.
 
 Sort by severity. If nothing rises to a finding, say so plainly; an empty

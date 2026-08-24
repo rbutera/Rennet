@@ -76,7 +76,12 @@ export type BoardElement =
       severity: "high" | "medium" | "low"
       /** Cross-model concurrence: which review seats raised or endorsed it. */
       agreement: { claude: boolean; codex: boolean }
+      /** Short claim summary; the members of the failure live in `details`. */
       body: string
+      /** Subheaded parts of the scenario (e.g. one per input class). */
+      details?: { heading: string; body: string }[]
+      /** The proposed remedy, rendered as an actionable callout. */
+      fix?: string
       anchor?: CodeAnchor
     }
   | { kind: "annotation"; anchor: CodeAnchor; text: string }

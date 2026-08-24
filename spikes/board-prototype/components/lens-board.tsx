@@ -12,7 +12,8 @@ import {
 import { cn } from "@/lib/utils"
 import type { BoardElement, BoardSection, LensBoard } from "@/lib/lens-data"
 import { CodeBlock } from "@/components/code-block"
-import { CodeTabs } from "@/components/code-tabs"
+import { AnchorReveal, CodeTabs } from "@/components/code-tabs"
+import { InlineCode, RichText } from "@/components/rich-text"
 
 /**
  * Renders a lens board as a document: sections of typed elements in reading
@@ -104,7 +105,11 @@ function Element({ element }: { element: BoardElement }) {
       return (
         <div className="group/el relative">
           <HoverBar />
-          <p className="max-w-[640px] text-[14.5px] leading-relaxed text-foreground/90">{element.text}</p>
+          <RichText
+            text={element.text}
+            className="max-w-[640px]"
+            paragraphClassName="text-[14.5px] leading-relaxed text-foreground/90"
+          />
         </div>
       )
 
@@ -277,18 +282,18 @@ function Element({ element }: { element: BoardElement }) {
               : "border-border bg-secondary/40 text-foreground/90",
           )}
         >
-          {element.text}
+          <RichText text={element.text} paragraphClassName="leading-relaxed" />
         </div>
       )
 
     case "finding":
       return (
-        <div className="group/el relative rounded-md border border-border">
+        <div className="group/el relative flex flex-col gap-2">
           <HoverBar />
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <div className="flex items-start gap-2">
             <span
               className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
                 element.severity === "high" && "bg-destructive/15 text-destructive",
                 element.severity === "medium" && "bg-primary/15 text-primary",
                 element.severity === "low" && "bg-secondary text-muted-foreground",
@@ -296,15 +301,44 @@ function Element({ element }: { element: BoardElement }) {
             >
               {element.severity}
             </span>
-            <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-foreground">
-              {element.title}
+            <span className="min-w-0 flex-1 text-[14px] font-semibold leading-snug text-foreground">
+              <InlineCode text={element.title} />
             </span>
             <Concurrence agreement={element.agreement} />
           </div>
-          <div className="flex flex-col gap-1.5 px-3 py-2.5">
-            <p className="text-[13.5px] leading-relaxed text-foreground/90">{element.body}</p>
-            {element.anchor && <Anchor anchor={element.anchor} />}
-          </div>
+          <RichText text={element.body} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
+          {element.details?.map((detail) => (
+            <div key={detail.heading} className="flex flex-col gap-1.5">
+              <h4 className="text-[13px] font-semibold text-foreground">
+                <InlineCode text={detail.heading} />
+              </h4>
+              <RichText
+                text={detail.body}
+                paragraphClassName="text-[13.5px] leading-relaxed text-foreground/85"
+              />
+            </div>
+          ))}
+          {element.fix && (
+            <div className="flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fix</span>
+              <RichText text={element.fix} paragraphClassName="text-[13px] leading-relaxed text-foreground/90" />
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <button
+                  type="button"
+                  className="rounded border border-border px-2 py-0.5 text-[11.5px] text-foreground/90 hover:bg-secondary"
+                >
+                  Add to work order
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-border px-2 py-0.5 text-[11.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                >
+                  Discuss
+                </button>
+              </div>
+            </div>
+          )}
+          {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
         </div>
       )
 
@@ -313,8 +347,8 @@ function Element({ element }: { element: BoardElement }) {
         <div className="flex items-start gap-2 pl-1">
           <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <div className="flex min-w-0 flex-col gap-0.5">
-            <Anchor anchor={element.anchor} />
-            <p className="text-[13.5px] leading-relaxed text-foreground/90">{element.text}</p>
+            <AnchorReveal anchors={[element.anchor]} />
+            <RichText text={element.text} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
           </div>
         </div>
       )
@@ -322,7 +356,7 @@ function Element({ element }: { element: BoardElement }) {
     case "thread":
       return (
         <div className="flex flex-col gap-2 border-l-2 border-border pl-3">
-          {element.anchor && <Anchor anchor={element.anchor} />}
+          {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
           {element.messages.map((message, index) =>
             message.author === "user" ? (
               <div key={index} className="flex justify-start">
@@ -346,17 +380,23 @@ function Element({ element }: { element: BoardElement }) {
           <div className="flex flex-col gap-1.5">
             <div className="flex items-start gap-2">
               <GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span className="text-[13.5px] font-medium leading-snug text-foreground">{element.statement}</span>
+              <span className="text-[13.5px] font-medium leading-snug text-foreground">
+                <InlineCode text={element.statement} />
+              </span>
               {element.inferred && (
                 <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
                   inferred
                 </span>
               )}
             </div>
-            <p className="pl-5 text-[13px] leading-relaxed text-foreground/85">{element.why}</p>
+            <RichText
+              text={element.why}
+              className="pl-5"
+              paragraphClassName="text-[13px] leading-relaxed text-foreground/85"
+            />
             {element.alternatives.length > 0 && (
               <p className="pl-5 text-[12.5px] leading-relaxed text-muted-foreground">
-                Not taken: {element.alternatives.join(" · ")}
+                Not taken: <InlineCode text={element.alternatives.join(" · ")} />
               </p>
             )}
             {element.excerpts && element.excerpts.length > 0 ? (
@@ -364,10 +404,8 @@ function Element({ element }: { element: BoardElement }) {
                 <CodeTabs excerpts={element.excerpts} />
               </div>
             ) : (
-              <div className="flex flex-wrap gap-1.5 pl-5">
-                {element.evidence.map((anchor, index) => (
-                  <Anchor key={index} anchor={anchor} />
-                ))}
+              <div className="pl-5">
+                <AnchorReveal anchors={element.evidence} />
               </div>
             )}
           </div>
@@ -554,14 +592,3 @@ function SpecKeywords({ text }: { text: string }) {
   )
 }
 
-function Anchor({ anchor }: { anchor: { path: string; line: number } }) {
-  return (
-    <button
-      type="button"
-      className="w-fit rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-      title="Jump to code"
-    >
-      {anchor.path}:{anchor.line}
-    </button>
-  )
-}
