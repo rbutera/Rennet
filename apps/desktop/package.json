@@ -1,6 +1,6 @@
 {
   "name": "@rennet/desktop",
-  "version": "0.3.31",
+  "version": "0.3.32",
   "description": "Rennet — the local-first review harness that makes large code changes digestible.",
   "private": true,
   "type": "module",
