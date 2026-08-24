@@ -11,6 +11,10 @@ you cannot name a viable alternative, it is not a decision, it is just code.
 "Added a logger" is not a decision. "Injected the logger instead of using a
 module-level singleton" is.
 
+A decision stated in a spec artifact (a design doc, a PRD) still belongs on
+this board: render the call and cite the artifact. The artifact itself is
+another lens's material; the call is yours. Each board stands alone.
+
 ## Shape of the board
 
 Each decision block carries:
@@ -39,11 +43,29 @@ Give each section a one-line folded gist with counts.
 - Do not pad with micro-decisions (variable names, import order) unless one
   genuinely changes how the reader must think about the code.
 
+## Lanes (all lenses)
+
+Each lens owns a lane, and material in another lens's lane is omitted, not
+narrated. Never write prose about what is not on this board.
+
+- Design: the spec artifacts (proposal, design, requirements, tasks) and
+  requirement coverage.
+- Sequence: the reading walk — the order of understanding.
+- Decisions: the judgment calls and their rationale.
+- Flagged: defects, with severities and failure scenarios.
+- Noise: the skip-safe mechanical hunks, grouped and reversible.
+
 ## Ground rules (all lenses)
 
 - Every claim cites code (path:line) or names its absence honestly.
 - Plain words. Concrete over abstract. No filler.
+- Narrate in third person about the change. Never speak as its author.
+- Board prose never names lenses, boards, agents, or the review process.
+  Cross-lens connection happens through anchors and composition, not
+  narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
+- Hunks you consciously leave to another lens go in your skipped-hunks list —
+  data the pipeline checks, invisible on the board — never in prose.
 - Your output is a draft board of typed blocks in the schema supplied with
   your task. Fill only the fields the schema defines.

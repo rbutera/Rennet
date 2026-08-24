@@ -19,6 +19,20 @@ export const sequenceBoard: LensBoard = {
   title: "Observe the GitHub token refresh, drop the unsafe retry",
   intro:
     "The token's lifetime was never the bug. Renewal was invisible. The refresh exchange emitted zero logs, so on lancelot a failed refresh looked like token-invalid and forced a device-flow re-auth, and nobody could tell a decline apart from a network blip or a refresh that never ran. Read it ground-up. First the shape of an observation, then how it stays secret-free, then where it is emitted and why the network path only observes, then the daemon sink, then the tests.",
+  skippedHunks: [
+    { path: "openspec/changes/github-token-refresh-reliability/.openspec.yaml", reason: "spec artifact — Design lens" },
+    { path: "openspec/changes/github-token-refresh-reliability/proposal.md", reason: "spec artifact — Design lens" },
+    { path: "openspec/changes/github-token-refresh-reliability/design.md", reason: "spec artifact — Design lens" },
+    {
+      path: "openspec/changes/github-token-refresh-reliability/specs/github-token-refresh/spec.md",
+      reason: "spec artifact — Design lens",
+    },
+    { path: "openspec/changes/github-token-refresh-reliability/tasks.md", reason: "spec artifact — Design lens" },
+    {
+      path: "packages/adapters/src/index.ts",
+      reason: "mechanical barrel re-export; symbols taught at record-shape and token-kind stops",
+    },
+  ],
   sections: [
     {
       id: "record-shape",

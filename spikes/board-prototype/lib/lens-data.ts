@@ -127,5 +127,11 @@ export interface LensBoard {
   intro?: string
   /** Widens the document column (structured-artifact boards like Design). */
   wide?: boolean
+  /**
+   * Hunks this lens consciously left to other lenses. Pipeline coverage data:
+   * the composition step checks every patchset hunk lands in some lens's
+   * taught-or-skipped set. Never rendered on the board.
+   */
+  skippedHunks?: { path: string; reason: string }[]
   sections: BoardSection[]
 }

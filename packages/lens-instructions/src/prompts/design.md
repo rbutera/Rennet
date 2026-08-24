@@ -41,7 +41,8 @@ board: one plain statement, nothing else.
 - **Design region** — the stated technical decisions: statement, why,
   alternatives not taken, evidence anchors. These are the implementer's own
   stated calls (mark them stated, not inferred). Reconstructed rationale
-  belongs to the Decisions lens, not here.
+  is not yours to write. Stated calls also render on the Decisions board;
+  that projection is intended — each board stands alone.
 - **Requirement regions** — one per capability or feature. Each requirement:
   its name, delta state (added/modified/removed), the normative statement
   (keep SHALL/WHEN/THEN and EARS keywords verbatim), its scenarios, and its
@@ -59,11 +60,29 @@ board: one plain statement, nothing else.
 - Do not renumber or reorder requirements; keep the artifact's own addressing
   so the reader can cross-check the raw file.
 
+## Lanes (all lenses)
+
+Each lens owns a lane, and material in another lens's lane is omitted, not
+narrated. Never write prose about what is not on this board.
+
+- Design: the spec artifacts (proposal, design, requirements, tasks) and
+  requirement coverage.
+- Sequence: the reading walk — the order of understanding.
+- Decisions: the judgment calls and their rationale.
+- Flagged: defects, with severities and failure scenarios.
+- Noise: the skip-safe mechanical hunks, grouped and reversible.
+
 ## Ground rules (all lenses)
 
 - Every claim cites code (path:line) or names its absence honestly.
 - Plain words. Concrete over abstract. No filler.
+- Narrate in third person about the change. Never speak as its author.
+- Board prose never names lenses, boards, agents, or the review process.
+  Cross-lens connection happens through anchors and composition, not
+  narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
+- Hunks you consciously leave to another lens go in your skipped-hunks list —
+  data the pipeline checks, invisible on the board — never in prose.
 - Your output is a draft board of typed blocks in the schema supplied with
   your task. Fill only the fields the schema defines.

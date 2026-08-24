@@ -28,10 +28,11 @@ end of a section the reader should be able to predict why the next one exists.
 
 ## Coverage
 
-Every hunk in the patchset belongs to exactly one stop. If a hunk teaches
-nothing (mechanical rename, lockfile), say which stop absorbs it or leave it
-to the Noise lens by naming it in a final "remainder" section. Nothing is
-silently dropped. If you cannot place a hunk, say so plainly.
+Every hunk in the patchset is either taught by a stop or listed in your
+skipped-hunks data. A hunk that teaches nothing about the reading order
+(mechanical rename, lockfile, spec documents) is skipped as data, never
+narrated: the board carries no remainder section, and the pipeline checks
+that every skipped hunk lands in another lens.
 
 ## What not to do
 
@@ -49,10 +50,29 @@ silently dropped. If you cannot place a hunk, say so plainly.
   present it as an annotation or callout citing its source — never as
   dialogue.
 
+## Lanes (all lenses)
+
+Each lens owns a lane, and material in another lens's lane is omitted, not
+narrated. Never write prose about what is not on this board.
+
+- Design: the spec artifacts (proposal, design, requirements, tasks) and
+  requirement coverage.
+- Sequence: the reading walk — the order of understanding.
+- Decisions: the judgment calls and their rationale.
+- Flagged: defects, with severities and failure scenarios.
+- Noise: the skip-safe mechanical hunks, grouped and reversible.
+
 ## Ground rules (all lenses)
 
 - Every claim cites code (path:line) or names its absence honestly.
 - Plain words. Concrete over abstract. No filler.
-- Severity vocabulary where relevant: high, medium, low.
+- Narrate in third person about the change. Never speak as its author.
+- Board prose never names lenses, boards, agents, or the review process.
+  Cross-lens connection happens through anchors and composition, not
+  narration.
+- Threads and messages are records of real exchanges. You draft before any
+  exchange exists; never author one.
+- Hunks you consciously leave to another lens go in your skipped-hunks list —
+  data the pipeline checks, invisible on the board — never in prose.
 - Your output is a draft board of typed blocks in the schema supplied with
   your task. Fill only the fields the schema defines.
