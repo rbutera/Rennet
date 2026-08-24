@@ -1,13 +1,6 @@
 /**
- * Flagged lens fixture — dual-seat drafted from PR #438 via
- * packages/lens-instructions, reconciled, unslop-edited.
- * "fix(adapters): observe GitHub token refresh, drop the unsafe retry".
- *
- * The Claude seat and the Codex seat drafted independently on the same
- * instructions; this file is the reconciliation. Claude's finding and Codex's
- * third finding share one root cause (a refresh exit path with no terminal
- * record) and merge into f1, concurred 2/2. Codex raised two findings of its
- * own (f2, f3).
+ * flagged fixture, dual-seat drafted from PR #438 via packages/lens-instructions
+ * (post-lanes rubric), reconciled, unslop-edited.
  */
 
 import type { LensBoard } from "@/lib/lens-data"
@@ -16,24 +9,24 @@ export const flaggedBoard: LensBoard = {
   lens: "flagged",
   title: "Flagged",
   intro:
-    "Three medium findings from two independent seats. Both seats land on the same hole. The outcome log this PR exists to add isn't guaranteed on every exit path. Codex also flags the retry allowlist and the post-send failure copy. Cleared concerns sit at the foot, not raised as findings.",
+    "Two medium findings, each raised independently by both seats. The refresh logging this change exists to add does not fire on every exit path, and one network-failure message tells the reader the credential is untouched when it is likely already dead. Cleared concerns sit at the foot, not raised as findings.",
   sections: [
     {
       id: "flagged-medium",
       title: "Medium",
-      gist: "Both seats caught a refresh that logs `attempt` and no outcome. Codex adds two more, on the retry allowlist and the post-send copy.",
-      counts: "3 findings · 1 concurred · 2 Codex-only",
+      gist: "A refresh can log `attempt` and no outcome, and a post-send reset is reported as if the token is definitely untouched.",
+      counts: "2 findings",
       elements: [
         {
           kind: "finding",
           id: "f1",
           title:
-            "A refresh can log `attempt` and no outcome, on unexpected exchange errors and on persistence failure",
+            "A refresh can log `attempt` and never a terminal outcome, on an unexpected exchange error and on a persistence failure",
           severity: "medium",
           agreement: { claude: true, codex: true },
           body:
-            "The catch block emits a terminal record for only two cases. It logs `declined` when the error is `GitHubOAuthDeclined`, and `network` when `isGitHubNetworkError(error)` matches. Every other thrown error re-throws with just the `attempt` record in the log. Here is the trigger. `postLogin` throws a plain `Error` on any non-2xx from GitHub's token endpoint (github-device-flow.ts:112-113), so a GitHub 5xx during a refresh, routine during a GitHub incident, is neither a decline nor a network-coded error. daemon.log then shows `[github-auth] phase=attempt` and nothing after it, which reads the same as the process dying mid-exchange. That is exactly the observed-versus-inferred ambiguity this PR set out to remove. Codex found the same class plus a second member. If GitHub rotates successfully but `setGitHubCredential()` rejects (ENOSPC, EACCES), no terminal record is emitted and the stored pair is dead (github-auth.ts:264). The spec's own scenario 'An attempted refresh is logged with its outcome' enumerates persisted, declined, and network; neither input satisfies any of them. Fix: write a secret-safe terminal record on every exit path, covering the exchange-failure and persistence-failure outcomes.",
-          anchor: { path: "packages/adapters/src/github-auth.ts", line: 261 },
+            "`refreshAndPersist` logs `attempt` at the start of the exchange (github-auth.ts:244) and a terminal record on only three routes: `declined`, `network`, and `persisted`. Two reachable exits emit `attempt` and nothing after it. First, an exchange error that is neither a decline nor a network code. GitHub's token endpoint returns an OAuth decline as a 200-with-`error` body, but a real 5xx, routine during a GitHub incident, makes `postLogin` throw a plain `Error` (github-device-flow.ts:112-113). That error is not `GitHubOAuthDeclined`, and `isGitHubNetworkError` rejects it: no `.code`, name `Error`, message not `fetch failed` (github-fetch.ts:53-73). So control falls to the bare `throw error` at github-auth.ts:262 with only `attempt` in the log. Second, a persistence failure. When GitHub rotates successfully but `setGitHubCredential(minted)` rejects on an ENOSPC or EACCES, the throw at github-auth.ts:264 escapes the catch entirely, so neither `persisted` nor any terminal record is written, and the stored pair is now the old one GitHub just invalidated: a dead session with `attempt` as its only trace. In both cases daemon.log shows `[github-auth] phase=attempt` and stops, which reads identically to the process dying mid-exchange. That is the exact observed-versus-inferred ambiguity this change set out to remove, and the spec scenario 'An attempted refresh is logged with its outcome' (enumerating persisted / declined / network) is satisfied by neither input. Fix: write a secret-free terminal record on every exit, covering the exchange-failure and persistence-failure outcomes.",
+          anchor: { path: "packages/adapters/src/github-auth.ts", line: 262 },
         },
         {
           kind: "code",
@@ -50,39 +43,33 @@ export const flaggedBoard: LensBoard = {
             '        log({ phase: "declined", githubError: error.code });',
             "        return null;",
             "      }",
-            "      // A non-network, non-declined error (e.g. a GitHub 5xx on the token",
-            "      // endpoint → postLogin throws a plain Error) logs NO terminal record:",
+            "      // A GitHub 5xx → postLogin throws a plain Error: not declined, not a",
+            "      // network code, so NO terminal record is written for this class.",
             '      if (isGitHubNetworkError(error)) log({ phase: "network" });',
-            "      throw error; // <- attempt already logged, no outcome for this class",
+            "      throw error;",
             "    }",
+            "    // A reject here (ENOSPC/EACCES) escapes the catch: no `persisted`, no",
+            "    // record at all, and the stored pair is now the invalidated old one.",
             "    await deps.secretStore.setGitHubCredential(minted);",
             '    log({ phase: "persisted", tokenKind: tokenKind(minted.token) });',
+            "    return minted;",
           ].join("\n"),
-          highlightLines: [261, 262],
+          highlightLines: [262, 264],
         },
         {
           kind: "finding",
           id: "f2",
-          title: "Definite pre-send failure codes are missing from the connect-phase retry allowlist",
+          title:
+            "A post-send connection reset is reported as if the credential is definitely untouched",
           severity: "medium",
-          agreement: { claude: false, codex: true },
+          agreement: { claude: true, codex: true },
           body:
-            "A refresh connection rejected with `ECONNREFUSED`, `EHOSTUNREACH`, or `ENETDOWN` cannot have delivered the POST, yet these codes are absent from `CONNECT_PHASE_CODES`. The transport skips the replay-safe retry it promises for pre-send failures, and auth drops to `network` even when a second attempt would succeed. Fix: add the definite pre-send codes and test them through `composeGitHubTransport`.",
-          anchor: { path: "packages/server/src/github-fetch.ts", line: 18 },
-        },
-        {
-          kind: "finding",
-          id: "f3",
-          title: "A post-send reset is reported as if the credential is definitely untouched",
-          severity: "medium",
-          agreement: { claude: false, codex: true },
-          body:
-            "GitHub can accept the refresh and rotate the pair, then the response connection resets (`ECONNRESET`). `isGitHubNetworkError` logs `phase=network` and the resolution copy claims the token is untouched. But GitHub invalidates the old pair after a successful rotation, so the next attempt gets `bad_refresh_token` and forces a fresh sign-in. Not retrying is correct, since a replay could double the rotation. The reporting is what's wrong. Fix: represent post-send failures as an unknown outcome instead of asserting validity.",
-          anchor: { path: "packages/adapters/src/github-auth.ts", line: 294 },
+            "GitHub can accept the refresh POST and rotate the pair, then reset the response connection with `ECONNRESET`. That code is not a connect-phase code (github-fetch.ts:18-23 in server), so the transport does not retry, correctly, since replaying a post-send exchange could double a rotation. But `ECONNRESET` is in `NETWORK_CODES` (github-fetch.ts:34-44 in adapters), so `isGitHubNetworkError` matches, `refreshAndPersist` logs `phase=network` and propagates, and `resolveGitHubAuth` returns `{ reason: \"network\", copy: COPY.network }` (github-auth.ts:294-295). That copy reads 'Your connection and token are untouched' (github-auth.ts:133-135). Here the token is not untouched: GitHub rotates on the successful send, so the stored refresh token is now dead, and the next refresh gets `bad_refresh_token` and forces a fresh device sign-in. The message asserts a definite state the code cannot know after a post-send failure. Not retrying is right; the reporting is what is wrong. Fix: represent a post-send network failure as an unknown outcome rather than asserting the credential survived.",
+          anchor: { path: "packages/adapters/src/github-auth.ts", line: 295 },
         },
         {
           kind: "prose",
-          text: "Checked and cleared, not findings. (1) The `network` failure now throws straight out of `withAccountLock`, but the lock is a promise chain that resets via `accountLock = next.catch(() => undefined)` (create-server.ts:685-689), so it advances even when the section rejects. The lock never jams, and the path predates this PR. (2) The central claim that the transport owns the retry, so the refresh layer needs none, holds. `publishHttp` = `composeGitHubTransport(...)` wraps `withConnectResilience` (server/github-fetch.ts:105-110), and the refresh POST rides `publishHttp` (create-server.ts:620). (3) Secret-safety is sound. `RefreshLogRecord` has no secret-bearing field, `tokenKind` returns only an allowlisted constant, and the daemon's stdout is pinned to the daemon.log file fd (supervise.ts:92-100), not an IPC channel, so the `console.log` line cannot corrupt a protocol stream. (4) The four concerns in the previous demo fixture, correlation id, untested formatter, log injection via `githubError`, and tokenKind drift, have no nameable breaking input, and both seats rejected them.",
+          text: "Checked and cleared, not findings. (1) The connect-phase retry allowlist (`CONNECT_PHASE_CODES`, server github-fetch.ts:18-23) omits definite pre-send codes: `ECONNREFUSED`, `EHOSTUNREACH`, `ENETDOWN`. Their absence only means the one-shot retry does not fire for those blips; the failure still degrades to an honest `network` state with the credential genuinely untouched, since a refused or unreachable connection sent nothing, so there is no wrong result to flag. A missed retry, not a defect. (2) Secret-safety holds. `RefreshLogRecord` has no field that can carry a token, `tokenKind` returns only an allowlisted constant or the fixed `\"token\"` (github-auth.ts:59-89), and the log sink concatenates only `phase`, `githubError`, and `tokenKind` into one `console.log` line (create-server.ts:626-631). No credential reaches it. (3) `githubError` is GitHub's own OAuth error code, a constrained token, so no nameable input injects a forged `[github-auth]` line into the log. (4) The account lock cannot jam. It resets via `accountLock = next.catch(() => undefined)` (create-server.ts:687-688), so a rejected network refresh still advances the chain, and that path predates this change.",
         },
       ],
     },

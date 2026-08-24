@@ -1,15 +1,6 @@
 /**
- * Sequence-lens fixture for PR #438
- * ("fix(adapters): observe GitHub token refresh, drop the unsafe retry").
- *
- * Agent-drafted from PR #438 via packages/lens-instructions, then unslop-edited.
- *
- * Ordered by dependency of understanding, not by file: first the shape every
- * observation takes, then the one non-secret detail it may carry and how that is
- * kept safe, then where the records are emitted in the refresh exchange (and why
- * the network branch refuses to retry), then the daemon sink that turns records
- * into log lines, then the tests that pin the sequences. Code is verbatim from
- * the merged change (63afb689); line numbers are the real file lines.
+ * sequence fixture, agent-drafted from PR #438 via packages/lens-instructions
+ * (post-lanes rubric), unslop-edited.
  */
 
 import type { LensBoard } from "@/lib/lens-data"
@@ -18,7 +9,7 @@ export const sequenceBoard: LensBoard = {
   lens: "sequence",
   title: "Observe the GitHub token refresh, drop the unsafe retry",
   intro:
-    "The token's lifetime was never the bug. Renewal was invisible. The refresh exchange emitted zero logs, so on lancelot a failed refresh looked like token-invalid and forced a device-flow re-auth, and nobody could tell a decline apart from a network blip or a refresh that never ran. Read it ground-up. First the shape of an observation, then how it stays secret-free, then where it is emitted and why the network path only observes, then the daemon sink, then the tests.",
+    "The token's lifetime was not the bug. Renewal was invisible. The refresh exchange emitted zero logs, so on lancelot a failed refresh surfaced as token-invalid and forced a device-flow re-auth. You couldn't tell a decline apart from a network blip or a refresh that never ran. Read the change ground-up: the shape of a single observation, then how it stays secret-free, then where it's emitted and why the network path only observes, then the daemon sink, then the tests.",
   skippedHunks: [
     { path: "openspec/changes/github-token-refresh-reliability/.openspec.yaml", reason: "spec artifact — Design lens" },
     { path: "openspec/changes/github-token-refresh-reliability/proposal.md", reason: "spec artifact — Design lens" },
@@ -30,19 +21,19 @@ export const sequenceBoard: LensBoard = {
     { path: "openspec/changes/github-token-refresh-reliability/tasks.md", reason: "spec artifact — Design lens" },
     {
       path: "packages/adapters/src/index.ts",
-      reason: "mechanical barrel re-export; symbols taught at record-shape and token-kind stops",
+      reason: "mechanical barrel re-export of RefreshLogRecord and tokenKind; both symbols are taught at earlier stops",
     },
   ],
   sections: [
     {
       id: "record-shape",
       title: "The shape of an observation, secret-free by construction",
-      gist: "RefreshLogRecord is the type every refresh observation takes; it has no field that can hold a credential.",
+      gist: "RefreshLogRecord is the type every refresh observation takes; no field on it can hold a credential.",
       counts: "1 prose · 1 code",
       elements: [
         {
           kind: "prose",
-          text: "Everything else in this change produces or consumes one thing, so read it first. That thing is the record. RefreshLogRecord is the shape of a single refresh observation, and its safety is structural. No field on the type can hold a token, a refresh token, or a client secret, so a credential cannot be logged even by mistake. Once you have seen this type, the rest of the change is just the four points that emit such a record and the one place that turns it into a log line.",
+          text: "Everything else in this change either produces or consumes one thing, so read it first. That thing is the record. RefreshLogRecord is the shape of a single refresh observation, and its safety is structural. No field on the type can hold a token, a refresh token, or a client secret, so a credential cannot be logged even by mistake. Once you understand this type, the rest of the change is just the points that emit a record and the one place that turns it into a log line. The phase field is the outcome, an attempt followed by persisted, declined, or network. The two optional fields carry the only non-secret detail an outcome ever needs.",
         },
         {
           kind: "code",
@@ -73,7 +64,7 @@ export interface RefreshLogRecord {
       elements: [
         {
           kind: "prose",
-          text: "The record's tokenKind field is the only place a record touches the credential at all, so it is where the secret-free promise could quietly break. Its job is small. It tells a ghu_ user-to-server token apart from a gho_ OAuth token when you read the log. The obvious way to do that, splitting on the first underscore, would drop a slice of an unexpected credential body straight into the log. tokenKind refuses. It matches against a closed allowlist and returns only one of those constants, or the fixed string \"token\". Now you know why a record can carry a kind without carrying a secret.",
+          text: "The record's tokenKind field is the only place a record touches the credential at all, so it's where the secret-free promise could break. Its job is small. It lets a reader of the log tell a ghu_ user-to-server token apart from a gho_ OAuth token. The obvious implementation, split on the first underscore, would drop a slice of an unexpected credential body straight into the log. tokenKind refuses that. It matches the token against a closed allowlist of GitHub prefixes and returns one of those constants, or the fixed string \"token\" when nothing matches. That is why a record can carry a kind without carrying a secret.",
         },
         {
           kind: "code",
@@ -115,12 +106,12 @@ export function tokenKind(token: string): string {
     {
       id: "emit-and-observe",
       title: "Emit at every outcome, and refuse to retry the network case",
-      gist: "refreshAndPersist logs attempt, then declined, network, or persisted; the network branch only observes and propagates, with no retry.",
+      gist: "refreshAndPersist logs attempt, then declined, network, or persisted; the network branch only observes and propagates, no retry.",
       counts: "1 prose · 1 code · 1 callout",
       elements: [
         {
           kind: "prose",
-          text: "Now that the record and its secret-safety are settled, this is the one place that produces records. Inside the account lock, refreshAndPersist emits an attempt record before calling refresh(), so an attempt shows up in daemon.log even if the process dies mid-exchange, and both the proactive (near-expiry) and reactive (on a 401) branches route through here. The exchange then resolves to exactly one outcome. A GitHubOAuthDeclined is deterministic, so it logs declined with GitHub's verbatim error code and returns null, and the caller resolves token-invalid. A success logs persisted with the rotated token's kind. The third outcome, a network error, is the one this change deliberately does not retry. The optional log dependency defaults to a no-op, so the adapter stays side-effect-free and testable.",
+          text: "With the record and its secret-safety settled, this is the one place that produces records. Inside the account lock, refreshAndPersist emits an attempt record before calling refresh(), so an attempt is visible in daemon.log even if the process dies mid-exchange, and both the proactive (near-expiry) and reactive (on a 401) branches route through here. The exchange then resolves to exactly one outcome. A GitHubOAuthDeclined is deterministic, so it logs declined with GitHub's verbatim error code and returns null, and the caller resolves token-invalid. A success logs persisted with the rotated token's kind. The third outcome, a network error, is the one this change deliberately does not retry. It logs network and rethrows. The log dependency is optional and defaults to a no-op, so the adapter stays side-effect-free and testable.",
         },
         {
           kind: "code",
@@ -155,7 +146,7 @@ export function tokenKind(token: string): string {
         {
           kind: "callout",
           tone: "warn",
-          text: "Why no retry here is the decision that carries this change. The shared transport (withConnectResilience) already retries a connect-phase blip once, and that retry is replay-safe because no request reached GitHub and nothing could have rotated. A retry at this layer would instead depend on isGitHubNetworkError, which also matches post-send errors, where the refresh POST may have already reached GitHub and rotated the pair. Replaying then spends a token GitHub has already rotated, burning the session. So an earlier draft carried a second retry and this change drops it. The layer now only observes network and propagates, credential byte-untouched. The accepted consequence, per the change's design.md: after a post-send loss where GitHub did rotate, the stored pair is stale and the next resolve declines — an `attempt` followed by `declined bad_refresh_token` is the tell. Proactively clearing the credential on a persistent decline is a deferred open question; this change stays observe-only.",
+          text: "The no-retry choice is what carries this change. The shared transport (withConnectResilience) already retries a connect-phase blip once, and that retry is replay-safe because no request reached GitHub, so nothing could have rotated. A retry at this layer would instead key off isGitHubNetworkError, which also matches post-send errors, where the refresh POST may have already reached GitHub and rotated the pair. Replaying then spends a token GitHub has already rotated and burns the session. An earlier draft carried that second retry. This change drops it, so the layer now only observes network and propagates with the credential byte-untouched. The accepted consequence, per design.md: after a post-send loss where GitHub did rotate, the stored pair is stale and the next resolve declines, and an attempt followed by a declined bad_refresh_token is the tell. Clearing the credential on a persistent decline is left as a deferred open question, so this change stays observe-only.",
         },
       ],
     },
@@ -167,7 +158,7 @@ export function tokenKind(token: string): string {
       elements: [
         {
           kind: "prose",
-          text: "The adapter only produces records; something at the edge must turn them into log lines, and that belongs at the composition boundary, not inside the testable adapter. create-server binds the concrete logger next to the refresh and withLock deps, formatting each record as one [github-auth] line on the daemon's stdout, which the daemon captures to daemon.log. Because RefreshLogRecord has no secret field, the formatter reads only phase, githubError, and tokenKind. Nothing here can be a credential, so the seam cannot leak one either.",
+          text: "The adapter only produces records. Something at the edge must turn them into log lines, and that belongs at the composition boundary rather than inside the testable adapter. create-server binds the concrete logger next to the refresh and withLock deps, formatting each record as one [github-auth] line on the daemon's stdout, which the daemon captures to daemon.log. Because RefreshLogRecord has no secret field, the formatter reads only phase, githubError, and tokenKind, none of which can be a credential, so the seam cannot leak one either.",
         },
         {
           kind: "code",
@@ -193,12 +184,12 @@ export function tokenKind(token: string): string {
     {
       id: "tests",
       title: "Tests pin the exact record sequences",
-      gist: "Nine new or tightened tests fix the ordered records; the network test also asserts refresh() is called exactly once, the machine-checkable no-retry guarantee.",
+      gist: "The network test pins the [attempt, network] sequence and asserts refresh() is called exactly once, the machine-checkable no-retry guarantee.",
       counts: "1 prose · 1 code",
       elements: [
         {
           kind: "prose",
-          text: "The injected-logger seam pays off here. Tests capture records directly instead of scraping a log sink. The network case is the one that guards this whole change. It pins the exact [attempt, network] sequence with no retry phase, proves the stored credential is byte-identical afterward, and asserts refresh() was called exactly once. That last assertion is the no-adapter-retry decision from the previous stop, turned into something a test can fail on.",
+          text: "The injected-logger seam pays off here. Tests capture records directly instead of scraping a log sink. The network case is the one that guards this whole change. It pins the exact [attempt, network] sequence with no retry phase, proves the stored credential is byte-identical afterward, and asserts refresh() was called exactly once. That last assertion turns the no-adapter-retry decision from the previous stop into something a test can fail on.",
         },
         {
           kind: "code",
