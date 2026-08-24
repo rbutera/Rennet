@@ -59,12 +59,23 @@ cross-origin dev requests 403 and HMR dies; add new hostnames there).
   foldable sections (fold = gist + counts). View switcher: Design /
   Sequence / Decisions / Flagged / Noise / Diff (Diff is a placeholder — its own
   story).
-- **Fixtures** (`lib/fixtures/*.ts`): generated from the REAL merged PR
-  [#438](https://github.com/rbutera/Rennet/pull/438) — real paths, hunks,
-  line numbers, honest coverage counts, one cross-model disagreement. To
-  regenerate or add a lens fixture, fan out an agent that reads
-  `gh pr diff <n> --repo rbutera/Rennet` and conforms to `lib/lens-data.ts`;
-  never invent APIs the diff doesn't contain.
+- **Rich prose + code reveals** (`components/rich-text.tsx`,
+  `components/code-tabs.tsx`, `app/api/source/route.ts`): board prose renders
+  backticks as monospace and full repo-relative `path:line` citations as
+  click-to-reveal chips — `/api/source` reads the real file from the repo
+  checkout and shows the cited lines inline. Multi-site evidence (decision
+  `excerpts`) renders as one tabbed code viewer with quiet pill tabs.
+- **Fixtures** (`lib/fixtures/*.ts`): drafted from the REAL merged PR
+  [#438](https://github.com/rbutera/Rennet/pull/438) by agents running the
+  ACTUAL lens prompts in `packages/lens-instructions` (Flagged = dual
+  Claude/Codex seats, reconciled), then unslop-edited by editor agents on
+  `prompts/unslop-pass.md`. Real paths, hunks, line numbers, honest coverage.
+  To regenerate, rerun that pipeline — read the prompts, fetch
+  `gh pr diff 438 --repo rbutera/Rennet`, conform to `lib/lens-data.ts`, and
+  funnel every draft through the unslop pass; never invent APIs the diff
+  doesn't contain. Rulings R17–R22 (no authored threads, lanes, coverage as
+  `skippedHunks` data, voice, projection, scaffold stamps are noise) live on
+  the canonical #458 comment.
 
 ## Working agreement for future sessions
 

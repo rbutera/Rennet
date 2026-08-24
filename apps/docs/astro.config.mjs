@@ -85,6 +85,10 @@ export default defineConfig({
                   },
                   { label: "Canvas model", link: "/developing/concepts/canvas-model/" },
                   { label: "Review lenses", link: "/developing/concepts/review-lenses/" },
+                  {
+                    label: "The lens pipeline (planned)",
+                    link: "/developing/concepts/lens-pipeline/",
+                  },
                   { label: "Context assembly", link: "/developing/concepts/context-assembly/" },
                   {
                     label: "Code intelligence",
