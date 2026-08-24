@@ -9,6 +9,8 @@
       "!!**/.nx",
       "!!**/coverage",
       "!!**/test-results",
+      "!!spikes",
+      "!!.claude",
       "!!packages/protocol/public-schema"
     ]
   },

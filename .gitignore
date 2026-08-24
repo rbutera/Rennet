@@ -53,3 +53,9 @@ tmp/
 
 # superpowers working artifacts (plans, worktrees) are not canonical docs
 docs/superpowers/
+.playwright-mcp/
+# The global ~/.gitignore ignores .claude entirely; re-expose only the vendored
+# skills so hooks (lint-staged git add) can stage them without -f.
+!.claude/
+.claude/*
+!.claude/skills/

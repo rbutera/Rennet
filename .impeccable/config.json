@@ -391,6 +391,24 @@
         "files": ["packages/app-ui/src/index.css"],
         "createdAt": "2026-08-19T19:15:56.712Z",
         "reason": "cv-focus-pulse keyframe: transient 700ms deixis flash that animates to transparent, not a resting side-tab border (design law: conversation pointing at code pulses the row)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "20px",
+        "createdAt": "2026-08-23T21:59:18.365Z",
+        "reason": "board-prototype spike: minimal-styling ruling, Rai 2026-08-23 (prototype not app code)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "15px",
+        "createdAt": "2026-08-23T21:59:18.403Z",
+        "reason": "board-prototype spike: minimal-styling ruling, Rai 2026-08-23"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "12.5px",
+        "createdAt": "2026-08-23T21:59:18.445Z",
+        "reason": "board-prototype spike: minimal-styling ruling, Rai 2026-08-23"
       }
     ]
   }
