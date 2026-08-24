@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils"
 import type { BoardElement, BoardSection, LensBoard } from "@/lib/lens-data"
 import { CodeBlock } from "@/components/code-block"
 import { AnchorReveal, CodeTabs } from "@/components/code-tabs"
-import { InlineCode, RichText } from "@/components/rich-text"
+import { HydratedCode, InlineCode, RichText } from "@/components/rich-text"
 
 /**
  * Renders a lens board as a document: sections of typed elements in reading
@@ -255,6 +255,19 @@ function Element({ element }: { element: BoardElement }) {
               </div>
             ))}
           </div>
+        </div>
+      )
+
+    case "code-ref":
+      return (
+        <div className="group/el relative">
+          <HoverBar />
+          <HydratedCode
+            path={element.path}
+            startLine={element.startLine}
+            endLine={element.endLine}
+            highlightLines={element.highlightLines}
+          />
         </div>
       )
 

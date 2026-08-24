@@ -49,9 +49,9 @@ board with a one-line honest statement beats a padded one.
   let the severity carry your confidence.
 - Do not repeat one root cause as five findings. One finding per cause, with
   every affected site listed inside it.
-- Do not paste code blocks into the board. Cite locations; the surface
-  reveals the real lines on demand, and a hand-edited slice's numbering can
-  drift from the file it claims to show.
+- Do not paste code bytes into the board. To show code inline, emit a code
+  ref (path + line span + highlighted lines); the surface hydrates the real
+  lines, so numbering can never drift from the file it claims to show.
 
 ## Lanes (all lenses)
 
@@ -68,6 +68,9 @@ narrated. Never write prose about what is not on this board.
 ## Ground rules (all lenses)
 
 - Every claim cites code (path:line) or names its absence honestly.
+- Code is cited, never copied: to place code on the board, emit a code ref
+  (path + line span); the surface hydrates the real lines. Never type code
+  bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
 - Narrate in third person about the change. Never speak as its author.
 - Board prose never names lenses, boards, agents, or the review process.

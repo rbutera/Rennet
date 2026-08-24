@@ -6,7 +6,9 @@ import { ChatColumn } from "@/components/chat-column"
 import { MainSurface } from "@/components/main-surface"
 import { CodeCommentsProvider } from "@/components/code-comments"
 import { NewChatView } from "@/components/new-chat-view"
+import { SessionView } from "@/components/session-view"
 import { SettingsView } from "@/components/settings-view"
+import type { SmartListItem } from "@/lib/smart-list-data"
 import { AddProjectDialog } from "@/components/add-project-dialog"
 import { AddRemoteDialog } from "@/components/add-remote-dialog"
 import { hosts as initialHosts, type HostItem } from "@/lib/sidebar-data"
@@ -16,6 +18,22 @@ export function AppShell() {
   const [chatOpen, setChatOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [newChatProjectId, setNewChatProjectId] = useState<string | null>(null)
+  const [session, setSession] = useState<{
+    projectName: string
+    targetLabel: string
+    targetKind: "pr" | "branch"
+    initialMessage?: string
+  } | null>(null)
+
+  function startSession(projectName: string, item: SmartListItem | null, message: string) {
+    setNewChatProjectId(null)
+    setSession({
+      projectName,
+      targetLabel: item ? (item.kind === "pr" ? `#${item.number} · ${item.branch}` : item.branch) : "main",
+      targetKind: item?.kind === "pr" ? "pr" : "branch",
+      initialMessage: message || undefined,
+    })
+  }
 
   const [hosts, setHosts] = useState<HostItem[]>(initialHosts)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
@@ -81,9 +99,22 @@ export function AppShell() {
           projectId={newChatProjectId}
           onProjectChange={(projectId) => setNewChatProjectId(projectId)}
           onClose={() => setNewChatProjectId(null)}
+          onStart={(item, message) => {
+            const project = hosts.flatMap((h) => h.projects).find((p) => p.id === newChatProjectId)
+            startSession(project?.name ?? "rennet", item, message)
+          }}
         />
       )}
-      <div className={settingsOpen || newChatProjectId ? "hidden" : "contents"}>
+      {!settingsOpen && !newChatProjectId && session && (
+        <SessionView
+          projectName={session.projectName}
+          targetLabel={session.targetLabel}
+          targetKind={session.targetKind}
+          initialMessage={session.initialMessage}
+          onBack={() => setSession(null)}
+        />
+      )}
+      <div className={settingsOpen || newChatProjectId || session ? "hidden" : "contents"}>
         {chatOpen && <ChatColumn onCollapse={() => setChatOpen(false)} />}
         <MainSurface showLocationTrail={!chatOpen} onExpandChat={() => setChatOpen(true)} />
       </div>

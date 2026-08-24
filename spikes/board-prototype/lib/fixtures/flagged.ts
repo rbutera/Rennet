@@ -40,6 +40,13 @@ export const flaggedBoard: LensBoard = {
           anchor: { path: "packages/adapters/src/github-auth.ts", line: 262 },
         },
         {
+          kind: "code-ref",
+          path: "packages/adapters/src/github-auth.ts",
+          startLine: 244,
+          endLine: 266,
+          highlightLines: [262, 264],
+        },
+        {
           kind: "finding",
           id: "f2",
           title:

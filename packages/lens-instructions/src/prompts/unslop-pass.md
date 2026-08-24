@@ -7,6 +7,11 @@ touch typed data: paths, line numbers, spans, counts, severities, statuses,
 deltas, ids, or code. Preserve meaning exactly; you edit voice, not substance.
 Return the board in the same schema you received.
 
+Beyond the skill rules, enforce the board voice: delete any sentence that
+names lenses, boards, agents, drafts, seats, or the review process itself —
+board prose speaks about the change, never about the machinery that produced
+the board. Third person only; the board never speaks as the change's author.
+
 The rules below are the unslop skill, copied verbatim.
 
 ---

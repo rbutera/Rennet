@@ -38,12 +38,37 @@ separately, so instructions and schema cannot drift apart.
 2. **Reconcile** (Flagged only). Findings that share a root cause merge;
    cross-model concurrence is recorded per finding. Findings a seat rejects
    with reasoning land in a cleared-concerns block, not on the finding list.
-3. **Unslop.** Every draft board passes through an editor agent running the
+3. **Lint.** A deterministic validation pass rejects a draft before any model
+   sees it again. The rules the prompts state are also enforced here, because
+   a prompt is a request and a validator is a guarantee:
+   - kind allowlist per lens — thread and message kinds never come from a
+     drafting agent;
+   - no code bytes — code on a board is a code ref (path plus line span) the
+     surface hydrates, so numbering cannot drift from the file it claims to
+     show;
+   - every citation resolves against the patchset;
+   - a `skippedHunks` list is present, and across all lenses every patchset
+     hunk lands in some lens's taught-or-skipped set;
+   - structured fields where structure is required: a finding carries its fix
+     as a field and its scenario members as subheaded details, never one prose
+     wall;
+   - a process-vocabulary screen flags prose that names lenses, boards,
+     agents, seats, or drafts.
+   A lint failure returns the draft to its agent with the violation named.
+4. **Unslop.** Every draft board passes through an editor agent running the
    unslop pass (`prompts/unslop-pass.md`, the unslop skill verbatim). The
-   editor rewrites prose fields only; typed data — paths, line numbers, counts,
+   editor rewrites prose fields only — and enforces the board voice
+   editorially, deleting sentences about the review machinery that survive
+   the lint's vocabulary screen. Typed data — paths, line numbers, counts,
    severities, concurrence flags — is untouched.
-4. **Compose.** The orchestrator authors the composition Board from the frozen
+5. **Compose.** The orchestrator authors the composition Board from the frozen
    drafts (issue #457's compose-by-authoring model).
+
+Three layers carry every rule: the schema makes good structure the only
+expressible structure (a fix field exists, so a fix sentence buried in prose
+is a lint error, not a style preference); the lint makes the mechanical rules
+guarantees; the prompts and the unslop editor carry what only judgment can
+check. A rule that lives in a prompt alone is a wish.
 
 ## Lane discipline
 

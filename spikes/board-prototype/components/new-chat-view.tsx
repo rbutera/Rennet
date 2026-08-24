@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   ArrowLeft,
   ArrowUp,
+  Check,
   GitBranch,
   GitPullRequest,
   GitMerge,
@@ -67,11 +68,14 @@ export function NewChatView({
   projectId,
   onProjectChange,
   onClose,
+  onStart,
 }: {
   hosts: HostItem[]
   projectId: string
   onProjectChange: (projectId: string) => void
   onClose: () => void
+  /** Start the session: item = null means the current checkout / whole project. */
+  onStart: (item: SmartListItem | null, message: string) => void
 }) {
   const [filter, setFilter] = React.useState("")
   const [tab, setTab] = React.useState<Tab>("All")
@@ -161,6 +165,7 @@ export function NewChatView({
               <button
                 type="button"
                 disabled={!message.trim()}
+                onClick={() => onStart(target.kind === "item" ? target.item : null, message.trim())}
                 aria-label="Send"
                 className={cn(
                   "ml-auto flex size-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed",
@@ -212,18 +217,19 @@ export function NewChatView({
             </label>
           </div>
 
-          <div className="mt-3 flex flex-col gap-1.5">
+          <div className="mt-3 flex flex-col divide-y divide-border/70 overflow-hidden rounded-lg border border-border">
             <CheckoutRow selected={target.kind === "checkout"} onSelect={() => setTarget({ kind: "checkout" })} />
             {visible.map((item) => (
               <ItemRow
                 key={itemKey(item)}
                 item={item}
+                showRepo={new Set(items.map((i) => i.repo)).size > 1}
                 selected={selectedKey === itemKey(item)}
-                onSelect={() => setTarget({ kind: "item", item })}
+                onSelect={() => onStart(item, message.trim())}
               />
             ))}
             {visible.length === 0 && (
-              <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-[12.5px] text-muted-foreground/60">
+              <div className="px-3 py-5 text-center text-[12.5px] text-muted-foreground/60">
                 nothing matches
               </div>
             )}
@@ -241,106 +247,179 @@ function CheckoutRow({ selected, onSelect }: { selected: boolean; onSelect: () =
       onClick={onSelect}
       aria-pressed={selected}
       className={cn(
-        "flex items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors",
-        selected ? "border-ring bg-secondary/60" : "border-border hover:bg-secondary/40",
+        "group flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors",
+        selected ? "bg-secondary/60" : "hover:bg-secondary/30",
       )}
     >
       <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="text-[13px] font-medium text-foreground">Current checkout</span>
       <span className="font-mono text-[12px] text-muted-foreground">main</span>
-      <span className="ml-auto text-[11px] text-muted-foreground/60">no target — talk about the project</span>
+      <span className="ml-auto text-[11px] text-muted-foreground/50">no target — talk about the project</span>
+      <SelectionMark selected={selected} />
     </button>
   )
 }
 
-const CI_CHIP: Record<string, { label: string; className: string }> = {
-  pass: { label: "CI ✓", className: "border-green-700/40 text-green-600 dark:text-green-500" },
-  fail: { label: "CI ✕", className: "border-destructive/40 text-destructive" },
-  running: { label: "CI …", className: "border-border text-muted-foreground" },
+/** The row's one loud fact: a consistent chip vocabulary at the row's right edge. */
+function StateChip({ item }: { item: SmartListItem }) {
+  if (item.kind === "local") {
+    return item.reviewed ? (
+      <span className="rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[10.5px] font-medium text-green-500">
+        Reviewed
+      </span>
+    ) : (
+      <span className="rounded-full border border-border bg-secondary/60 px-2 py-0.5 text-[10.5px] font-medium text-foreground/70">
+        Working tree
+      </span>
+    )
+  }
+  switch (item.state) {
+    case "needs-you":
+      return (
+        <span className="rounded-full bg-primary px-2 py-0.5 text-[10.5px] font-semibold text-primary-foreground">
+          Needs you
+        </span>
+      )
+    case "yours":
+      return (
+        <span className="rounded-full border border-primary/50 px-2 py-0.5 text-[10.5px] font-medium text-primary">
+          Yours
+        </span>
+      )
+    case "team":
+      return (
+        <span className="rounded-full border border-border bg-secondary/60 px-2 py-0.5 text-[10.5px] font-medium text-foreground/70">
+          To review
+        </span>
+      )
+    case "merged":
+      return (
+        <span className="rounded-full border border-border px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground">
+          Merged
+        </span>
+      )
+  }
+}
+
+function CiDot({ ci }: { ci: "pass" | "fail" | "running" }) {
+  if (ci === "fail") {
+    return (
+      <span className="flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[10.5px] font-medium text-destructive">
+        CI failing
+      </span>
+    )
+  }
+  return (
+    <span
+      title={ci === "pass" ? "CI passing" : "CI running"}
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        ci === "pass" ? "bg-green-500" : "animate-pulse bg-muted-foreground/60",
+      )}
+    />
+  )
+}
+
+function AuthorMark({ author }: { author: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-[9px] font-semibold uppercase text-foreground/70">
+        {author === "you" ? "Y" : author[0]}
+      </span>
+      <span>{author}</span>
+    </span>
+  )
+}
+
+function SelectionMark({ selected }: { selected: boolean }) {
+  return (
+    <Check
+      className={cn("size-4 shrink-0 text-primary transition-opacity", selected ? "opacity-100" : "opacity-0")}
+      aria-hidden="true"
+    />
+  )
 }
 
 function ItemRow({
   item,
+  showRepo,
   selected,
   onSelect,
 }: {
   item: SmartListItem
+  showRepo: boolean
   selected: boolean
   onSelect: () => void
 }) {
-  if (item.kind === "local") {
-    return (
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-pressed={selected}
-        className={cn(
-          "flex flex-col gap-0.5 rounded-md border border-l-2 px-3 py-2 text-left transition-colors",
-          selected ? "border-ring bg-secondary/60 border-l-ring" : "border-border border-l-primary/50 bg-secondary/25 hover:bg-secondary/40",
-        )}
-      >
-        <span className="flex items-center gap-2">
-          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="font-mono text-[13px] font-medium text-foreground">{item.branch}</span>
-          <span className="ml-auto flex items-center gap-1.5">
-            {item.dirty && (
-              <span className="rounded border border-primary/40 px-1.5 py-0.5 text-[10px] text-primary">dirty</span>
-            )}
-            <span className="text-[11px] text-muted-foreground">{item.reviewed ? "reviewed" : "local"}</span>
-          </span>
-        </span>
-        <span className="pl-5.5 text-[11.5px] text-muted-foreground">
-          {item.repo} · working tree
-        </span>
-      </button>
-    )
-  }
+  const merged = item.kind === "pr" && item.state === "merged"
 
-  const merged = item.state === "merged"
-  const ci = CI_CHIP[item.ci]
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
       className={cn(
-        "flex flex-col gap-0.5 rounded-md border px-3 py-2 text-left transition-colors",
-        item.state === "yours" && "border-l-2 border-l-primary/50",
-        item.state === "needs-you" && !selected && "border-primary/40 bg-primary/5",
-        selected ? "border-ring bg-secondary/60" : "hover:bg-secondary/40",
-        !selected && item.state !== "needs-you" && "border-border",
-        merged && "opacity-55",
+        "flex flex-col gap-1 px-3.5 py-2.5 text-left transition-colors",
+        selected ? "bg-secondary/60" : "hover:bg-secondary/30",
+        merged && !selected && "opacity-50 hover:opacity-80",
       )}
     >
-      <span className="flex items-center gap-2">
-        {merged ? (
-          <GitMerge className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        ) : (
-          <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        )}
-        <span className="shrink-0 font-mono text-[12px] text-muted-foreground">#{item.number}</span>
-        <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{item.title}</span>
-        <span className="ml-auto flex shrink-0 items-center gap-1.5">
-          <span className={cn("rounded border px-1.5 py-0.5 text-[10px]", ci.className)}>{ci.label}</span>
-          {item.state === "needs-you" && (
-            <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-              needs you
+      {item.kind === "local" ? (
+        <>
+          <span className="flex w-full items-center gap-2">
+            <GitBranch
+              className={cn("size-3.5 shrink-0", item.dirty ? "text-primary" : "text-muted-foreground")}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 truncate font-mono text-[13px] font-medium text-foreground">{item.branch}</span>
+            {item.dirty && (
+              <span className="shrink-0 text-[10.5px] font-medium text-primary" title="uncommitted changes">
+                ● dirty
+              </span>
+            )}
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              <StateChip item={item} />
+              <SelectionMark selected={selected} />
             </span>
-          )}
-          {item.state === "yours" && <span className="text-[11px] text-muted-foreground">your PR</span>}
-          {item.state === "team" && <span className="text-[11px] text-muted-foreground">review</span>}
-          {merged && <span className="text-[11px] text-muted-foreground">merged</span>}
-        </span>
-      </span>
-      <span className="flex items-center gap-2 pl-5.5 text-[11.5px] text-muted-foreground">
-        <span className="font-mono">{item.branch}</span>
-        <span>
-          {item.repo} · {item.author} · +{item.adds} −{item.dels} · {item.files}f
-        </span>
-        {item.checkedOutLocally && (
-          <span className="rounded border border-border px-1.5 py-0.5 text-[10px]">checked out locally</span>
-        )}
-      </span>
+          </span>
+          {showRepo && <span className="pl-5.5 text-[11.5px] text-muted-foreground/70">{item.repo}</span>}
+        </>
+      ) : (
+        <>
+          <span className="flex w-full items-center gap-2">
+            {merged ? (
+              <GitMerge className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <GitPullRequest
+                className={cn("size-3.5 shrink-0", item.state === "needs-you" ? "text-primary" : "text-muted-foreground")}
+                aria-hidden="true"
+              />
+            )}
+            <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{item.title}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              <CiDot ci={item.ci} />
+              <StateChip item={item} />
+              <SelectionMark selected={selected} />
+            </span>
+          </span>
+          <span className="flex w-full items-center gap-2.5 pl-5.5 text-[11.5px] text-muted-foreground/80">
+            <span className="shrink-0 font-mono text-muted-foreground">#{item.number}</span>
+            <span className="min-w-0 truncate font-mono">{item.branch}</span>
+            {showRepo && <span className="shrink-0">{item.repo}</span>}
+            <AuthorMark author={item.author} />
+            <span className="shrink-0">
+              <span className="text-green-500/90">+{item.adds.toLocaleString()}</span>{" "}
+              <span className="text-red-400/90">−{item.dels.toLocaleString()}</span>
+              <span className="text-muted-foreground/60"> · {item.files} files</span>
+            </span>
+            {item.checkedOutLocally && (
+              <span className="shrink-0 rounded border border-border px-1.5 py-px text-[10px] text-muted-foreground">
+                checked out locally
+              </span>
+            )}
+          </span>
+        </>
+      )}
     </button>
   )
 }

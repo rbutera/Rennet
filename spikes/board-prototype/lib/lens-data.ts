@@ -68,6 +68,19 @@ export type BoardElement =
       highlightLines?: number[]
       lang?: string
     }
+  | {
+      /**
+       * The durable form (CONTEXT.md: the review cites code, never copies it):
+       * agents emit a span citation and the surface hydrates the real lines
+       * inline, so numbering can never drift. `code` above survives only as a
+       * fixture convenience; drafts must emit code-ref.
+       */
+      kind: "code-ref"
+      path: string
+      startLine: number
+      endLine: number
+      highlightLines?: number[]
+    }
   | { kind: "callout"; tone: "info" | "warn"; text: string }
   | {
       kind: "finding"

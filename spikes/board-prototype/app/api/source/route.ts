@@ -11,6 +11,9 @@ export async function GET(request: Request) {
   const url = new URL(request.url)
   const path = url.searchParams.get("path") ?? ""
   const line = Number(url.searchParams.get("line") ?? "1")
+  // Explicit span (code-ref hydration) beats the ±context default.
+  const spanStart = url.searchParams.get("start")
+  const spanEnd = url.searchParams.get("end")
 
   const absolute = resolve(REPO_ROOT, path)
   if (!absolute.startsWith(REPO_ROOT + "/")) {
@@ -25,8 +28,10 @@ export async function GET(request: Request) {
   }
 
   const lines = text.split("\n")
-  const startLine = Math.max(1, line - CONTEXT_LINES)
-  const endLine = Math.min(lines.length, line + CONTEXT_LINES)
+  const startLine = spanStart ? Math.max(1, Number(spanStart)) : Math.max(1, line - CONTEXT_LINES)
+  const endLine = spanEnd
+    ? Math.min(lines.length, Number(spanEnd))
+    : Math.min(lines.length, line + CONTEXT_LINES)
   return Response.json({
     path,
     startLine,

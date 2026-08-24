@@ -53,6 +53,50 @@ export function SourcePanel({ anchor }: { anchor: CodeAnchor }) {
 }
 
 /**
+ * Hydrated span citation: fetches the exact cited lines and renders them as a
+ * code block card — the code-ref element's renderer. Numbering comes from the
+ * file itself, so it cannot drift from the citation.
+ */
+export function HydratedCode({
+  path,
+  startLine,
+  endLine,
+  highlightLines,
+}: {
+  path: string
+  startLine: number
+  endLine: number
+  highlightLines?: number[]
+}) {
+  const [slice, setSlice] = React.useState<FetchedSlice | "error" | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    fetch(`/api/source?path=${encodeURIComponent(path)}&start=${startLine}&end=${endLine}`)
+      .then(async (response) => {
+        const body = (await response.json()) as FetchedSlice
+        if (!cancelled) setSlice(response.ok ? body : "error")
+      })
+      .catch(() => {
+        if (!cancelled) setSlice("error")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [path, startLine, endLine])
+
+  if (slice === null)
+    return (
+      <p className="text-[12px] text-muted-foreground">
+        Loading {path}:{startLine}…
+      </p>
+    )
+  if (slice === "error")
+    return <p className="text-[12px] text-muted-foreground">{path} is not readable from this checkout.</p>
+  return <CodeBlock code={slice.code} path={path} startLine={slice.startLine} highlightLines={highlightLines} />
+}
+
+/**
  * Inline formatting only: `backticks` render monospace; file:line citations
  * render as mono text (not clickable — use RichText where reveal is wanted).
  */

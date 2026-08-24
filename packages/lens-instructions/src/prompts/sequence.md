@@ -65,6 +65,9 @@ narrated. Never write prose about what is not on this board.
 ## Ground rules (all lenses)
 
 - Every claim cites code (path:line) or names its absence honestly.
+- Code is cited, never copied: to place code on the board, emit a code ref
+  (path + line span); the surface hydrates the real lines. Never type code
+  bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
 - Narrate in third person about the change. Never speak as its author.
 - Board prose never names lenses, boards, agents, or the review process.
