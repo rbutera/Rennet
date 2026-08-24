@@ -56,8 +56,8 @@ cross-origin dev requests 403 and HMR dies; add new hostnames there).
 - **Lens boards** (`components/lens-board.tsx`, `lib/lens-data.ts`): the five
   lenses as document-flow boards of typed elements (prose, code, callout,
   finding, annotation, thread, decision, requirement, noise-group) with
-  foldable sections (fold = gist + counts). View switcher: Reading order /
-  Spec / Decisions / Flagged / Noise / Diff (Diff is a placeholder — its own
+  foldable sections (fold = gist + counts). View switcher: Design /
+  Sequence / Decisions / Flagged / Noise / Diff (Diff is a placeholder — its own
   story).
 - **Fixtures** (`lib/fixtures/*.ts`): generated from the REAL merged PR
   [#438](https://github.com/rbutera/Rennet/pull/438) — real paths, hunks,

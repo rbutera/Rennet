@@ -11,8 +11,8 @@
 
 import type { LensBoard } from "@/lib/lens-data"
 
-export const readingOrderBoard: LensBoard = {
-  lens: "reading-order",
+export const sequenceBoard: LensBoard = {
+  lens: "sequence",
   title: "Observe the GitHub token refresh, drop the unsafe retry",
   intro:
     "The token lifetime was never the bug. Renewal was invisible: the refresh exchange emitted zero logs, so a field failure could only be inferred and had never once been confirmed to succeed. Read the observation change first, then the retry that review took out, then how both are kept secret-free.",

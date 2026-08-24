@@ -24,6 +24,7 @@ check rejects missing or misnamed rows here.
 | `rennet-theme` | `@rennet/theme` | `packages/theme` | Shared design tokens and generated mobile palette | None |
 | `rennet-protocol` | `@rennet/protocol` | `packages/protocol` | Command, event, and wire schemas | types |
 | `rennet-instructions` | `@rennet/instructions` | `packages/instructions` | Versioned model instructions | types |
+| `rennet-lens-instructions` | `@rennet/lens-instructions` | `packages/lens-instructions` | Lens-agent drafting prompts and the unslop editor pass | None |
 | `rennet-core` | `@rennet/core` | `packages/core` | Review behavior and domain workflows | types, protocol, instructions |
 | `rennet-adapters` | `@rennet/adapters` | `packages/adapters` | Git, GitHub, filesystem, persistence, and harness integrations | types, protocol, instructions, core |
 | `rennet-server` | `@rennet/server` | `packages/server` | Daemon composition, command dispatch, and network transport | types, protocol, instructions, core, adapters |

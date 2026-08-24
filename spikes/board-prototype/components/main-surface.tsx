@@ -6,15 +6,15 @@ import { LocationTrail } from "@/components/location-trail"
 import { ViewSwitcher } from "@/components/view-switcher"
 import { LensBoardView } from "@/components/lens-board"
 import type { LensBoard } from "@/lib/lens-data"
-import { readingOrderBoard } from "@/lib/fixtures/reading-order"
-import { specBoard } from "@/lib/fixtures/spec"
+import { designBoard } from "@/lib/fixtures/design"
+import { sequenceBoard } from "@/lib/fixtures/sequence"
 import { decisionsBoard } from "@/lib/fixtures/decisions"
 import { flaggedBoard } from "@/lib/fixtures/flagged"
 import { noiseBoard } from "@/lib/fixtures/noise"
 
 const VIEWS: { segment: string; board: LensBoard | null }[] = [
-  { segment: "Reading order", board: readingOrderBoard },
-  { segment: "Spec", board: specBoard },
+  { segment: "Design", board: designBoard },
+  { segment: "Sequence", board: sequenceBoard },
   { segment: "Decisions", board: decisionsBoard },
   { segment: "Flagged", board: flaggedBoard },
   { segment: "Noise", board: noiseBoard },

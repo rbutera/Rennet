@@ -50,8 +50,12 @@ This file defines the terms shared by the product, documentation, and code. It c
 
 ## Review model
 
-- **Lens**: a review of the change from one angle (spec, sequence, decisions, noise, flagged), drafted by a review agent on a fixed prompt. Each lens is its own board.
+- **Lens**: a review of the change from one angle (design, sequence, decisions, flagged, noise — in that display order, Design first), drafted by a review agent on a fixed prompt. Each draft passes through the unslop editor before the orchestrator composes from it. Each lens is its own board.
   _Avoid_: angle, canvas
+- **Design lens**: the lens that renders the change's spec artifacts (proposal, design, requirement deltas, tasks) as a structured artifact with coverage against the patchset.
+  _Avoid_: spec lens
+- **Sequence lens**: the lens that orders the change for reading, by dependency of understanding.
+  _Avoid_: reading-order lens
 - **Element**: the atomic unit of board content — a block, in the headless-CMS / document-block sense, carrying a kind and typed data. Element-typed attributes give the block tree.
   _Avoid_: card, node, widget
 - **Kind**: the named, typed shape an element follows, like a document block-type. Rennet's host schema declares a closed set of twelve; the whiteboard protocol only stores and validates them, and never interprets their meaning.

@@ -430,6 +430,8 @@ importers:
         specifier: workspace:*
         version: link:../types
 
+  packages/lens-instructions: {}
+
   packages/protocol:
     dependencies:
       '@rennet/types':

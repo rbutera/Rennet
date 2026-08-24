@@ -5,7 +5,7 @@
  * a fixture fakes the hydration).
  */
 
-export type LensId = "reading-order" | "spec" | "decisions" | "flagged" | "noise"
+export type LensId = "design" | "sequence" | "decisions" | "flagged" | "noise"
 
 export interface CodeAnchor {
   path: string
@@ -125,7 +125,7 @@ export interface LensBoard {
   title: string
   /** Optional short intro prose above the first section. */
   intro?: string
-  /** Widens the document column (structured-artifact boards like Spec). */
+  /** Widens the document column (structured-artifact boards like Design). */
   wide?: boolean
   sections: BoardSection[]
 }

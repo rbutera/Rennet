@@ -9,9 +9,9 @@
 
 import type { LensBoard } from "@/lib/lens-data"
 
-export const specBoard: LensBoard = {
-  lens: "spec",
-  title: "Spec — GitHub token refresh, observed",
+export const designBoard: LensBoard = {
+  lens: "design",
+  title: "Design — GitHub token refresh, observed",
   wide: true,
   sections: [
     {
