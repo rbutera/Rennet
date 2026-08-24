@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { BoardElement, BoardSection, LensBoard } from "@/lib/lens-data"
 import { CodeBlock } from "@/components/code-block"
+import { CodeTabs } from "@/components/code-tabs"
 
 /**
  * Renders a lens board as a document: sections of typed elements in reading
@@ -358,11 +359,17 @@ function Element({ element }: { element: BoardElement }) {
                 Not taken: {element.alternatives.join(" · ")}
               </p>
             )}
-            <div className="flex flex-wrap gap-1.5 pl-5">
-              {element.evidence.map((anchor, index) => (
-                <Anchor key={index} anchor={anchor} />
-              ))}
-            </div>
+            {element.excerpts && element.excerpts.length > 0 ? (
+              <div className="pl-5 pt-1">
+                <CodeTabs excerpts={element.excerpts} />
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5 pl-5">
+                {element.evidence.map((anchor, index) => (
+                  <Anchor key={index} anchor={anchor} />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )

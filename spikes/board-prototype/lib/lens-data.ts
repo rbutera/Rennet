@@ -12,6 +12,15 @@ export interface CodeAnchor {
   line: number
 }
 
+/** A code slice an element carries for its tabbed viewer (one tab per excerpt). */
+export interface CodeExcerpt {
+  path: string
+  startLine: number
+  code: string
+  lang?: string
+  highlightLines?: number[]
+}
+
 export type BoardElement =
   | { kind: "prose"; text: string }
   | {
@@ -84,6 +93,8 @@ export type BoardElement =
       inferred: boolean
       alternatives: string[]
       evidence: CodeAnchor[]
+      /** Evidence rendered as a tabbed code viewer — one tab per excerpt. */
+      excerpts?: CodeExcerpt[]
     }
   | {
       kind: "requirement"
