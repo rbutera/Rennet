@@ -1,7 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { ChevronDown, GitCommitHorizontal, MapPin, Sparkles } from "lucide-react"
+import {
+  ChevronDown,
+  FileText,
+  GitCommitHorizontal,
+  Link2,
+  MapPin,
+  Sparkles,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { BoardElement, BoardSection, LensBoard } from "@/lib/lens-data"
 import { CodeBlock } from "@/components/code-block"
@@ -19,7 +26,12 @@ export function LensBoardView({
   initiallyFolded?: string[]
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-8 py-8">
+    <div
+      className={cn(
+        "mx-auto flex w-full flex-col gap-6 px-8 py-8",
+        board.wide ? "max-w-[960px]" : "max-w-[760px]",
+      )}
+    >
       <h1 className="text-[20px] font-semibold tracking-tight text-foreground">{board.title}</h1>
       {board.intro && (
         <p className="-mt-3 text-[14px] leading-relaxed text-muted-foreground">{board.intro}</p>
@@ -35,7 +47,7 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
   const [folded, setFolded] = React.useState(initiallyFolded)
 
   return (
-    <section className="flex flex-col gap-3">
+    <section id={section.id} className="flex flex-col gap-3 scroll-mt-6">
       <button
         type="button"
         onClick={() => setFolded((f) => !f)}
@@ -47,6 +59,7 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
           aria-hidden="true"
         />
         <span className="text-[15px] font-medium text-foreground">{section.title}</span>
+        {section.badge && <DeltaBadge delta={section.badge} />}
         {folded && (
           <span className="min-w-0 truncate text-[13px] text-muted-foreground">
             {section.gist}
@@ -86,6 +99,136 @@ function Element({ element }: { element: BoardElement }) {
         <div className="group/el relative">
           <HoverBar />
           <p className="max-w-[640px] text-[14.5px] leading-relaxed text-foreground/90">{element.text}</p>
+        </div>
+      )
+
+    case "spec-header":
+      return (
+        <header className="flex flex-col gap-3 rounded-md border border-border bg-secondary/30 px-4 py-3.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="text-[15px] font-semibold text-foreground">{element.change}</span>
+            <span className="text-[12.5px] text-muted-foreground">
+              {element.counts.added} new {element.counts.added === 1 ? "capability" : "capabilities"} ·{" "}
+              {element.counts.modified} modified
+              {element.tasks ? (
+                <>
+                  {" "}
+                  · tasks {element.tasks.done}/{element.tasks.total}
+                </>
+              ) : null}
+            </span>
+            <span className="ml-auto flex items-center gap-1.5">
+              <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                {element.format} · {element.source}
+              </span>
+              <button
+                type="button"
+                className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
+                raw ⌘R
+              </button>
+            </span>
+          </div>
+          <p className="text-[13.5px] leading-relaxed text-foreground/90">
+            <span className="font-medium text-foreground">Why: </span>
+            {element.why}
+          </p>
+        </header>
+      )
+
+    case "what-changes":
+      return (
+        <div className={cn("grid gap-4", element.impact && "md:grid-cols-[3fr_2fr]")}>
+          <div className="flex flex-col">
+            <SmallLabel>What changes</SmallLabel>
+            <div className="flex flex-col divide-y divide-border/60">
+              {element.rows.map((row, index) => (
+                <div key={index} className="flex items-baseline gap-2.5 py-1.5">
+                  <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                    {row.tag}
+                  </span>
+                  <span className="text-[13px] leading-relaxed text-foreground/90">{row.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {element.impact && (
+            <div className="flex flex-col">
+              <SmallLabel>Impact</SmallLabel>
+              <p className="rounded-md border border-border px-3 py-2 text-[12.5px] leading-relaxed text-foreground/85">
+                {element.impact}
+              </p>
+            </div>
+          )}
+        </div>
+      )
+
+    case "capability-grid":
+      return (
+        <div className="flex flex-col">
+          <SmallLabel>Capabilities</SmallLabel>
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {element.capabilities.map((capability) => (
+              <a
+                key={capability.slug}
+                href={`#${capability.sectionId}`}
+                className={cn(
+                  "flex flex-col gap-1 rounded-md border border-border px-3 py-2.5 transition-colors hover:bg-secondary/50",
+                  capability.state === "added" && "border-l-2 border-l-emerald-600/70",
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="min-w-0 truncate text-[13.5px] font-medium text-foreground">
+                    {capability.slug}
+                  </span>
+                  <DeltaBadge delta={capability.state} />
+                </span>
+                <span className="text-[12px] text-muted-foreground">
+                  {capability.requirements} {capability.requirements === 1 ? "requirement" : "requirements"} ·{" "}
+                  {capability.scenarios} {capability.scenarios === 1 ? "scenario" : "scenarios"}
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )
+
+    case "task-progress":
+      return (
+        <div className="flex flex-col">
+          <SmallLabel>
+            Tasks · {element.groups.reduce((sum, group) => sum + group.done, 0)}/
+            {element.groups.reduce((sum, group) => sum + group.total, 0)}
+            <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-muted-foreground/70">
+              {element.source}
+            </span>
+          </SmallLabel>
+          <div className="flex flex-col divide-y divide-border/60 rounded-md border border-border px-3">
+            {element.groups.map((group, index) => (
+              <div key={index} className="flex items-center gap-3 py-2">
+                <span className="min-w-0 flex-1 truncate text-[13px] text-foreground/90">{group.label}</span>
+                <span
+                  className="h-1 w-28 shrink-0 overflow-hidden rounded-full bg-secondary"
+                  role="progressbar"
+                  aria-valuenow={group.done}
+                  aria-valuemin={0}
+                  aria-valuemax={group.total}
+                >
+                  <span
+                    className={cn(
+                      "block h-full rounded-full",
+                      group.done === group.total ? "bg-emerald-600/80" : "bg-foreground/40",
+                    )}
+                    style={{ width: `${group.total === 0 ? 0 : (group.done / group.total) * 100}%` }}
+                  />
+                </span>
+                <span className="w-10 shrink-0 text-right text-[12px] tabular-nums text-muted-foreground">
+                  {group.done}/{group.total}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )
 
@@ -206,35 +349,43 @@ function Element({ element }: { element: BoardElement }) {
 
     case "requirement":
       return (
-        <div className="group/el relative rounded-md border border-border px-3 py-2.5">
+        <div className="group/el relative">
           <HoverBar />
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-start gap-2">
-              <span
-                className={cn(
-                  "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                  element.status === "covered" && "bg-secondary text-foreground/80",
-                  element.status === "partial" && "bg-primary/15 text-primary",
-                  element.status === "unimplemented" && "bg-destructive/15 text-destructive",
-                )}
-              >
-                {element.status}
-              </span>
-              <span className="text-[13.5px] leading-snug text-foreground">{element.text}</span>
-            </div>
-            <p className="pl-1 text-[12px] text-muted-foreground">
-              {element.coverage.hunks} {element.coverage.hunks === 1 ? "hunk" : "hunks"} ·{" "}
-              {element.coverage.tests} {element.coverage.tests === 1 ? "test" : "tests"}
+            {element.name ? (
+              <div className="flex items-center gap-2">
+                <span className="text-[14px] font-semibold text-foreground">{element.name}</span>
+                {element.delta && <DeltaBadge delta={element.delta} />}
+              </div>
+            ) : null}
+            <p className="text-[13.5px] leading-relaxed text-foreground/90">
+              <SpecKeywords text={element.text} />
             </p>
             {element.scenarios && element.scenarios.length > 0 && (
-              <ul className="flex flex-col gap-1 pl-1">
+              <ul className="flex flex-col gap-1">
                 {element.scenarios.map((scenario, index) => (
-                  <li key={index} className="text-[13px] leading-relaxed text-foreground/80">
-                    {scenario}
+                  <li key={index} className="flex gap-1.5 text-[13px] leading-relaxed text-foreground/75">
+                    <span aria-hidden="true" className="select-none text-muted-foreground/60">
+                      ‣
+                    </span>
+                    <span>
+                      <SpecKeywords text={scenario} />
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <CoverageChip status={element.status} coverage={element.coverage} />
+              {element.refs?.map((ref) => (
+                <span
+                  key={ref}
+                  className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                >
+                  {ref}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       )
@@ -293,6 +444,86 @@ function Concurrence({ agreement }: { agreement: { claude: boolean; codex: boole
     >
       {concur ? "concur 2/2" : agreement.claude ? "Claude only" : "Codex only"}
     </span>
+  )
+}
+
+function SmallLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      {children}
+    </span>
+  )
+}
+
+function DeltaBadge({ delta }: { delta: "added" | "modified" | "removed" }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        delta === "added" && "bg-emerald-600/15 text-emerald-600 dark:text-emerald-400",
+        delta === "modified" && "bg-secondary text-muted-foreground",
+        delta === "removed" && "bg-destructive/15 text-destructive",
+      )}
+    >
+      {delta}
+    </span>
+  )
+}
+
+/**
+ * The coverage chip wires a requirement to the diff: covered links to its
+ * claiming hunks; zero hunks renders an honest "unimplemented".
+ */
+function CoverageChip({
+  status,
+  coverage,
+}: {
+  status: "covered" | "partial" | "unimplemented"
+  coverage: { hunks: number; tests: number }
+}) {
+  const label =
+    status === "unimplemented"
+      ? `unimplemented · ${coverage.hunks} hunks`
+      : `covered by ${coverage.hunks} ${coverage.hunks === 1 ? "hunk" : "hunks"} · ${coverage.tests} ${
+          coverage.tests === 1 ? "test" : "tests"
+        }${status === "partial" ? " · partial" : ""}`
+
+  return (
+    <button
+      type="button"
+      title={status === "unimplemented" ? "No hunk claims this requirement" : "Jump to the claiming hunk"}
+      className={cn(
+        "flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors",
+        status === "covered" &&
+          "border-emerald-600/40 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400",
+        status === "partial" && "border-amber-600/40 text-amber-700 hover:bg-amber-600/10 dark:text-amber-400",
+        status === "unimplemented" &&
+          "border-amber-600/40 text-amber-700 hover:bg-amber-600/10 dark:text-amber-400",
+      )}
+    >
+      <Link2 className="size-3" aria-hidden="true" />
+      {label}
+    </button>
+  )
+}
+
+const SPEC_KEYWORD = /\b(WHEN|THEN|AND|IF|WHILE|WHERE|SHALL NOT|SHALL|MUST NOT|MUST)\b/g
+
+/** Emphasizes the normative grammar (SHALL, WHEN/THEN, EARS keywords) inside spec prose. */
+function SpecKeywords({ text }: { text: string }) {
+  const parts = text.split(SPEC_KEYWORD)
+  return (
+    <>
+      {parts.map((part, index) =>
+        index % 2 === 1 ? (
+          <span key={index} className="font-semibold tracking-tight text-foreground">
+            {part}
+          </span>
+        ) : (
+          <React.Fragment key={index}>{part}</React.Fragment>
+        ),
+      )}
+    </>
   )
 }
 
