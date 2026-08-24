@@ -5,6 +5,7 @@ import type { CSSProperties } from "react"
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getHighlightedLines } from "@/lib/code-highlighter"
+import { useCodeComments } from "@/components/code-comments"
 import type { ThemedToken } from "shiki"
 
 export interface CodeBlockProps {
@@ -74,10 +75,16 @@ export function CodeBlock({
   lang,
   startLine = 1,
   highlightLines,
-  comments,
-  onCommentChange,
+  comments: commentsProp,
+  onCommentChange: onCommentChangeProp,
   className,
 }: CodeBlockProps) {
+  // Explicit props win; otherwise the shared store makes every code block
+  // commentable with the same hover-+ affordance as the chat blocks.
+  const store = useCodeComments()
+  const comments = commentsProp ?? store?.comments[path]
+  const onCommentChange =
+    onCommentChangeProp ?? (store ? (line: number, text: string | null) => store.setComment(path, line, text) : undefined)
   const resolvedLang = lang ?? inferLang(path)
   const [lines, setLines] = useState<ThemedToken[][] | null>(null)
   const [copied, setCopied] = useState(false)

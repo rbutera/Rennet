@@ -7,6 +7,7 @@ import { ConversationPane } from "@/components/conversation-pane"
 import { InputBar } from "@/components/input-bar"
 import { turns as initialTurns, followUpExchanges, type TurnData } from "@/lib/conversation-data"
 import type { ComposerBadge } from "@/lib/composer-badges"
+import { useCodeComments } from "@/components/code-comments"
 
 function commentBadgeId(path: string, line: number) {
   return `comment-${path}-${line}`
@@ -16,7 +17,8 @@ export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
   const [turns, setTurns] = useState<TurnData[]>(initialTurns)
   const [exchangeIndex, setExchangeIndex] = useState(0)
   const [imageBadges, setImageBadges] = useState<ComposerBadge[]>([])
-  const [comments, setComments] = useState<Record<string, Record<number, string>>>({})
+  const store = useCodeComments()
+  const comments = store?.comments ?? {}
 
   const nextExchange = followUpExchanges[exchangeIndex] ?? followUpExchanges[followUpExchanges.length - 1]
 
@@ -41,7 +43,7 @@ export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
     setTurns((prev) => [...prev, userTurn])
     setExchangeIndex((i) => Math.min(i + 1, followUpExchanges.length - 1))
     setImageBadges([])
-    setComments({})
+    store?.clear()
 
     setTimeout(() => {
       setTurns((prev) => [...prev, { ...nextExchange.orchestrator, id: `orchestrator-${now}` }])
@@ -49,21 +51,7 @@ export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
   }
 
   function handleCommentChange(path: string, line: number, text: string | null) {
-    setComments((prev) => {
-      const next = { ...prev }
-      const lineMap = { ...(next[path] ?? {}) }
-      if (text === null) {
-        delete lineMap[line]
-      } else {
-        lineMap[line] = text
-      }
-      if (Object.keys(lineMap).length > 0) {
-        next[path] = lineMap
-      } else {
-        delete next[path]
-      }
-      return next
-    })
+    store?.setComment(path, line, text)
   }
 
   function handleAddImage(file: File) {
