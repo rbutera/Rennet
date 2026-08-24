@@ -236,7 +236,7 @@ export function CodeBlock({
                       </span>
                     </div>
                     {isOpen && (
-                      <div className="sticky left-0 w-[100cqw] border-y border-border bg-secondary/40 px-3 py-2.5">
+                      <div className="sticky left-0 w-[100cqw] border-y border-border bg-secondary/40 px-3 py-2.5 font-sans">
                         <div className="mb-1.5 flex items-center justify-between gap-3">
                           <span className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
                             <MessageSquare className="size-3 text-muted-foreground" aria-hidden="true" />
