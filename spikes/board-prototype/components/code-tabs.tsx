@@ -130,7 +130,7 @@ export function AnchorReveal({ anchors }: { anchors: CodeAnchor[] }) {
                 : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground",
             )}
           >
-            {anchor.path}:{anchor.line}
+            {tabLabel(anchor.path, anchor.line)}
           </button>
         ))}
       </div>

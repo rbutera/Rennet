@@ -46,7 +46,7 @@ export function LensBoardView({
 }
 
 function Section({ section, initiallyFolded }: { section: BoardSection; initiallyFolded: boolean }) {
-  const [folded, setFolded] = React.useState(initiallyFolded)
+  const [folded, setFolded] = React.useState(initiallyFolded || Boolean(section.startFolded))
 
   return (
     <section id={section.id} className="flex flex-col gap-3 scroll-mt-6">

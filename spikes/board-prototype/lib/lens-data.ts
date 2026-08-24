@@ -125,6 +125,8 @@ export type BoardElement =
 export interface BoardSection {
   id: string
   title: string
+  /** Renders folded on first paint (secondary material like cleared concerns). */
+  startFolded?: boolean
   /** Delta badge beside the title (capability sections on the spec board). */
   badge?: "added" | "modified"
   /** The artifact file this section renders (spec-board provenance chip). */

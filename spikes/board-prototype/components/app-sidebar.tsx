@@ -46,7 +46,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command"
 
-const HELP_ITEMS = ["Documentation", "Keyboard shortcuts", "Report an issue", "Contact support"]
+const HELP_ITEMS = ["Documentation", "Keyboard shortcuts", "Report an issue"]
 
 function UpdateDialog({ trigger }: { trigger: React.ReactElement }) {
   return (
@@ -73,9 +73,19 @@ function UpdateDialog({ trigger }: { trigger: React.ReactElement }) {
   )
 }
 
-function HelpPopover({ trigger, align = "start" }: { trigger: React.ReactElement; align?: "start" | "end" }) {
+function HelpPopover({
+  trigger,
+  align = "start",
+  onOpenSettings,
+}: {
+  trigger: React.ReactElement
+  align?: "start" | "end"
+  onOpenSettings: () => void
+}) {
+  const [open, setOpen] = React.useState(false)
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={trigger} />
       <PopoverContent align={align} className="w-52 p-1">
         <PopoverHeader className="px-2 pt-1.5">
@@ -86,6 +96,13 @@ function HelpPopover({ trigger, align = "start" }: { trigger: React.ReactElement
             <button
               key={label}
               type="button"
+              onClick={() => {
+                // Keyboard shortcuts live in the settings keybindings section (#476).
+                if (label === "Keyboard shortcuts") {
+                  setOpen(false)
+                  onOpenSettings()
+                }
+              }}
               className="flex h-8 items-center rounded-md px-2 text-left text-[13px] text-foreground/90 transition-colors hover:bg-secondary"
             >
               {label}
@@ -103,16 +120,20 @@ interface AppSidebarProps {
   hosts: HostItem[]
   onAddProject: () => void
   onAddRemote: () => void
+  onOpenSettings: () => void
+  onNewChat: (projectId: string) => void
 }
 
 function NewChatPicker({
   trigger,
   projects,
   onNewProject,
+  onPick,
 }: {
   trigger: React.ReactNode
   projects: ProjectItem[]
   onNewProject: () => void
+  onPick: (projectId: string) => void
 }) {
   const [openPicker, setOpenPicker] = React.useState(false)
 
@@ -126,7 +147,13 @@ function NewChatPicker({
             <CommandEmpty>No projects found.</CommandEmpty>
             <CommandGroup heading="Projects">
               {projects.map((project) => (
-                <CommandItem key={project.id} onSelect={() => setOpenPicker(false)}>
+                <CommandItem
+                  key={project.id}
+                  onSelect={() => {
+                    setOpenPicker(false)
+                    onPick(project.id)
+                  }}
+                >
                   <Layers className="size-3.5 text-muted-foreground" aria-hidden="true" />
                   <span>{project.name}</span>
                 </CommandItem>
@@ -151,7 +178,7 @@ function NewChatPicker({
   )
 }
 
-export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote }: AppSidebarProps) {
+export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, onOpenSettings, onNewChat }: AppSidebarProps) {
   const projects = React.useMemo(() => hosts.flatMap((host) => host.projects), [hosts])
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {}
@@ -182,6 +209,7 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote }:
           <NewChatPicker
             projects={projects}
             onNewProject={onAddProject}
+            onPick={onNewChat}
             trigger={
               <button
                 type="button"
@@ -217,6 +245,7 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote }:
           />
           <HelpPopover
             align="start"
+            onOpenSettings={onOpenSettings}
             trigger={
               <button
                 type="button"
@@ -232,6 +261,7 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote }:
             type="button"
             aria-label="Settings"
             title="Settings"
+            onClick={onOpenSettings}
             className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <Settings className="size-4" aria-hidden="true" />
@@ -259,6 +289,7 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote }:
         <NewChatPicker
           projects={projects}
           onNewProject={onAddProject}
+          onPick={onNewChat}
           trigger={
             <button
               type="button"
@@ -391,12 +422,14 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote }:
             type="button"
             aria-label="Settings"
             title="Settings"
+            onClick={onOpenSettings}
             className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <Settings className="size-3.5" aria-hidden="true" />
           </button>
           <HelpPopover
             align="start"
+            onOpenSettings={onOpenSettings}
             trigger={
               <button
                 type="button"

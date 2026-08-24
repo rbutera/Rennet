@@ -9,7 +9,7 @@ export const flaggedBoard: LensBoard = {
   lens: "flagged",
   title: "Flagged",
   intro:
-    "Two medium findings, each raised independently by both seats. The refresh logging this change exists to add does not fire on every exit path, and one network-failure message tells the reader the credential is untouched when it is likely already dead. Cleared concerns sit at the foot, not raised as findings.",
+    "Two medium findings, each raised independently by both seats. The refresh logging this change exists to add does not fire on every exit path, and one network-failure message claims the credential is untouched when it is likely already dead.",
   sections: [
     {
       id: "flagged-medium",
@@ -40,34 +40,6 @@ export const flaggedBoard: LensBoard = {
           anchor: { path: "packages/adapters/src/github-auth.ts", line: 262 },
         },
         {
-          kind: "code",
-          path: "packages/adapters/src/github-auth.ts",
-          startLine: 244,
-          lang: "ts",
-          code: [
-            '    log({ phase: "attempt" });',
-            "    let minted: GitHubCredential;",
-            "    try {",
-            "      minted = await refresh(current.refreshToken);",
-            "    } catch (error) {",
-            "      if (error instanceof GitHubOAuthDeclined) {",
-            '        log({ phase: "declined", githubError: error.code });',
-            "        return null;",
-            "      }",
-            "      // A GitHub 5xx → postLogin throws a plain Error: not declined, not a",
-            "      // network code, so NO terminal record is written for this class.",
-            '      if (isGitHubNetworkError(error)) log({ phase: "network" });',
-            "      throw error;",
-            "    }",
-            "    // A reject here (ENOSPC/EACCES) escapes the catch: no `persisted`, no",
-            "    // record at all, and the stored pair is now the invalidated old one.",
-            "    await deps.secretStore.setGitHubCredential(minted);",
-            '    log({ phase: "persisted", tokenKind: tokenKind(minted.token) });',
-            "    return minted;",
-          ].join("\n"),
-          highlightLines: [262, 264],
-        },
-        {
           kind: "finding",
           id: "f2",
           title:
@@ -79,9 +51,18 @@ export const flaggedBoard: LensBoard = {
           fix: "Represent a post-send network failure as an unknown outcome rather than asserting the credential survived.",
           anchor: { path: "packages/adapters/src/github-auth.ts", line: 295 },
         },
+      ],
+    },
+    {
+      id: "flagged-cleared",
+      title: "Checked and cleared",
+      startFolded: true,
+      gist: "Four concerns verified safe: the retry allowlist gap, secret-safety, log injection, the account lock.",
+      counts: "4 checks",
+      elements: [
         {
           kind: "prose",
-          text: "Checked and cleared, not findings. (1) The connect-phase retry allowlist (`CONNECT_PHASE_CODES`, packages/server/src/github-fetch.ts:18) omits definite pre-send codes: `ECONNREFUSED`, `EHOSTUNREACH`, `ENETDOWN`. Their absence only means the one-shot retry does not fire for those blips; the failure still degrades to an honest `network` state with the credential genuinely untouched, since a refused or unreachable connection sent nothing, so there is no wrong result to flag. A missed retry, not a defect. (2) Secret-safety holds. `RefreshLogRecord` has no field that can carry a token, `tokenKind` returns only an allowlisted constant or the fixed `\"token\"` (packages/adapters/src/github-auth.ts:59), and the log sink concatenates only `phase`, `githubError`, and `tokenKind` into one `console.log` line (packages/server/src/create-server.ts:626). No credential reaches it. (3) `githubError` is GitHub's own OAuth error code, a constrained token, so no nameable input injects a forged `[github-auth]` line into the log. (4) The account lock cannot jam. It resets via `accountLock = next.catch(() => undefined)` (packages/server/src/create-server.ts:687), so a rejected network refresh still advances the chain, and that path predates this change.",
+          text: "The connect-phase retry allowlist (`CONNECT_PHASE_CODES`, packages/server/src/github-fetch.ts:18) omits definite pre-send codes: `ECONNREFUSED`, `EHOSTUNREACH`, `ENETDOWN`. Their absence only means the one-shot retry does not fire for those blips. The failure still degrades to an honest `network` state with the credential genuinely untouched, since a refused or unreachable connection sent nothing. A missed retry, not a defect.\n\nSecret-safety holds. `RefreshLogRecord` has no field that can carry a token, `tokenKind` returns only an allowlisted constant or the fixed `\"token\"` (packages/adapters/src/github-auth.ts:59), and the log sink concatenates only `phase`, `githubError`, and `tokenKind` into one line (packages/server/src/create-server.ts:626). No credential reaches it.\n\n`githubError` is GitHub's own OAuth error code, a constrained token, so no nameable input injects a forged `[github-auth]` line into the log.\n\nThe account lock cannot jam. It resets via `accountLock = next.catch(() => undefined)` (packages/server/src/create-server.ts:687), so a rejected network refresh still advances the chain, and that path predates this change.",
         },
       ],
     },

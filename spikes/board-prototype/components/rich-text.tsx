@@ -62,7 +62,7 @@ export function InlineCode({ text }: { text: string }) {
     <>
       {parts.map((part, index) =>
         part.startsWith("`") && part.endsWith("`") ? (
-          <code key={index} className="rounded bg-secondary/60 px-1 py-px font-mono text-[0.86em]">
+          <code key={index} className="font-mono text-[0.9em] text-foreground">
             {part.slice(1, -1)}
           </code>
         ) : (
@@ -102,23 +102,24 @@ export function RichText({
       const isRef = FILE_REF.test(inner)
       if (isRef) {
         const refKey = `${paragraphIndex}:${inner}`
+        const shortLabel = inner.includes("/") ? (inner.split("/").pop() ?? inner) : inner
         nodes.push(
           <button
             key={refKey + match.index}
             type="button"
             onClick={() => setActiveRef((current) => (current === refKey ? null : refKey))}
-            title={activeRef === refKey ? "Hide code" : "Show code"}
+            title={inner}
             className={cn(
               "rounded bg-secondary/60 px-1 py-px font-mono text-[0.86em] underline decoration-dotted underline-offset-2 transition-colors",
               activeRef === refKey ? "text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {inner}
+            {shortLabel}
           </button>,
         )
       } else if (token.startsWith("`")) {
         nodes.push(
-          <code key={match.index} className="rounded bg-secondary/60 px-1 py-px font-mono text-[0.86em]">
+          <code key={match.index} className="font-mono text-[0.9em] text-foreground">
             {inner}
           </code>,
         )

@@ -5,6 +5,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { ChatColumn } from "@/components/chat-column"
 import { MainSurface } from "@/components/main-surface"
 import { CodeCommentsProvider } from "@/components/code-comments"
+import { NewChatView } from "@/components/new-chat-view"
 import { SettingsView } from "@/components/settings-view"
 import { AddProjectDialog } from "@/components/add-project-dialog"
 import { AddRemoteDialog } from "@/components/add-remote-dialog"
@@ -14,6 +15,7 @@ export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [chatOpen, setChatOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [newChatProjectId, setNewChatProjectId] = useState<string | null>(null)
 
   const [hosts, setHosts] = useState<HostItem[]>(initialHosts)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
@@ -66,13 +68,22 @@ export function AppShell() {
         onAddProject={() => openAddProject()}
         onAddRemote={() => setAddRemoteOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onNewChat={(projectId) => setNewChatProjectId(projectId)}
       />
-      {/* Settings takes over the whole view, chat included (ruling 2026-08-24).
-          Chat + board stay mounted underneath so their state survives the visit. */}
+      {/* Settings and New chat take over the whole view, chat included (ruling
+          2026-08-24). Chat + board stay mounted underneath so state survives. */}
       {settingsOpen && (
         <SettingsView hosts={hosts} activeProjectId="p1" onClose={() => setSettingsOpen(false)} />
       )}
-      <div className={settingsOpen ? "hidden" : "contents"}>
+      {!settingsOpen && newChatProjectId && (
+        <NewChatView
+          hosts={hosts}
+          projectId={newChatProjectId}
+          onProjectChange={(projectId) => setNewChatProjectId(projectId)}
+          onClose={() => setNewChatProjectId(null)}
+        />
+      )}
+      <div className={settingsOpen || newChatProjectId ? "hidden" : "contents"}>
         {chatOpen && <ChatColumn onCollapse={() => setChatOpen(false)} />}
         <MainSurface showLocationTrail={!chatOpen} onExpandChat={() => setChatOpen(true)} />
       </div>

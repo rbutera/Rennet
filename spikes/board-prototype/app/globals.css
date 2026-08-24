@@ -232,3 +232,21 @@
 .animate-word-in {
   animation: word-in 260ms ease-out forwards;
 }
+
+/* Thin themed scrollbars — the default chrome scrollbar reads as a foreign
+   element inside code block cards. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
