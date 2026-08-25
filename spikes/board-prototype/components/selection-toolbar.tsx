@@ -45,26 +45,24 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
         return
       }
       const rect = range.getBoundingClientRect()
+      const wrapRect = containerRef.current.getBoundingClientRect()
       setMode("toolbar")
-      setAnchor({ top: rect.top, left: rect.left + rect.width / 2, quote: text })
+      setAnchor({
+        top: rect.top - wrapRect.top,
+        left: rect.left - wrapRect.left + rect.width / 2,
+        quote: text,
+      })
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") dismiss()
     }
 
-    // Any scroll invalidates the fixed-position anchor; hide rather than track.
-    function handleScroll() {
-      dismiss()
-    }
-
     document.addEventListener("mouseup", handleMouseUp)
     document.addEventListener("keydown", handleKeyDown)
-    document.addEventListener("scroll", handleScroll, true)
     return () => {
       document.removeEventListener("mouseup", handleMouseUp)
       document.removeEventListener("keydown", handleKeyDown)
-      document.removeEventListener("scroll", handleScroll, true)
     }
   }, [dismiss])
 
@@ -78,12 +76,14 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div ref={containerRef} className="contents">
+    // Positioned wrapper: the panel is absolute inside the board, so it
+    // scrolls with the text it anchors to instead of dying on scroll.
+    <div ref={containerRef} className="relative">
       {children}
       {anchor && (
         <div
           ref={panelRef}
-          className="fixed z-50 -translate-x-1/2 -translate-y-full"
+          className="absolute z-50 -translate-x-1/2 -translate-y-full"
           style={{ top: anchor.top - 8, left: anchor.left }}
         >
           {mode === "toolbar" ? (
