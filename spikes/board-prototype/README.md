@@ -5,9 +5,15 @@ The living UX prototype for the board/harness-shell redesign — ticket
 [#452](https://github.com/rbutera/Rennet/issues/452)). It began as a v0.dev
 export (the prompt-0 harness shell) and continues locally with Claude as the
 generator after v0 credits ran out. **This is a prototype, not app code**:
-styling stays minimal and neutral; UX structure, density, and interaction
-states are the deliverable. It is deliberately excluded from the pnpm
-workspace and every repo gate.
+UX structure, density, and interaction states are the deliverable. It is
+deliberately excluded from the pnpm workspace and every repo gate.
+
+Styling runs the real Affineur's Bench theme: `app/globals.css` carries a
+copied `--rn-*` palette block (source of truth stays
+`packages/theme/src/palette.css` — re-copy on palette changes; the spike sits
+outside the workspace so it cannot import the package) with the shadcn
+vocabulary aliased over it per `packages/theme/src/theme.css`, and
+`app/layout.tsx` loads DM Sans / Source Serif 4 / Fraunces via `next/font`.
 
 ## Demo scenarios
 

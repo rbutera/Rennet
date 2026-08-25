@@ -1,9 +1,10 @@
 import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { DM_Sans, Fraunces, Source_Serif_4 } from 'next/font/google'
 import './globals.css'
 
-const _geistSans = Geist({ subsets: ['latin'] })
-const _geistMono = Geist_Mono({ subsets: ['latin'] })
+const dmSans = DM_Sans({ subsets: ['latin'], variable: '--font-dm-sans' })
+const fraunces = Fraunces({ subsets: ['latin'], variable: '--font-fraunces' })
+const sourceSerif = Source_Serif_4({ subsets: ['latin'], variable: '--font-source-serif' })
 
 export const metadata: Metadata = {
   title: 'Rennet',
@@ -16,7 +17,7 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   colorScheme: 'dark',
-  themeColor: '#15171b',
+  themeColor: '#0e0d0c',
 }
 
 export default function RootLayout({
@@ -25,10 +26,11 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark bg-background">
-      <body className="antialiased">
-        {children}
-      </body>
+    <html
+      lang="en"
+      className={`dark bg-background ${dmSans.variable} ${fraunces.variable} ${sourceSerif.variable}`}
+    >
+      <body className="antialiased font-sans">{children}</body>
     </html>
   )
 }
