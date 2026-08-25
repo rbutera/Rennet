@@ -1,3 +1,4 @@
+import type { ProjectIconName } from "@/components/project-icon"
 import type { TargetKind } from "./target-language"
 
 export interface SessionItem {
@@ -12,7 +13,12 @@ export interface SessionItem {
 
 export interface ProjectItem {
   id: string
+  /** Display name; defaults to the repo slug until the user renames it. */
   name: string
+  /** org-name/repo-name — the identity the name falls back to. */
+  repo: string
+  /** Sidebar glyph; undefined renders the default. */
+  icon?: ProjectIconName
   sessions: SessionItem[]
   /** True while the project is still being processed after being added. */
   indexing?: boolean
@@ -34,21 +40,19 @@ export const hosts: HostItem[] = [
       {
         id: "p1",
         name: "rennet",
+        repo: "rbutera/rennet",
+        // Session rows derive from the scenario registry (SCENARIOS.md):
+        // each row lands with its scenario's build step, never before.
         sessions: [
           { id: "s1", title: "Review Priya's auth refactor", time: "now", active: true, target: "teammate-pr", targetState: "needs-you" },
-          { id: "s2", title: "Trace session-scoping regression", time: "1h", target: "your-branch" },
-          { id: "s5", title: "Rewrite lens board schema", time: "2d", target: "your-branch", targetState: "reviewed" },
         ],
       },
       {
         id: "p0",
         name: "orbital",
+        repo: "rbutera/orbital",
+        icon: "rocket",
         sessions: [],
-      },
-      {
-        id: "p3",
-        name: "docs-site",
-        sessions: [{ id: "s6", title: "Migrate search index", time: "4d", target: "your-pr" }],
       },
     ],
   },
@@ -58,12 +62,12 @@ export const hosts: HostItem[] = [
     kind: "remote",
     projects: [
       {
+        // Never renamed — the name still carries its org/repo default.
         id: "p2",
-        name: "billing-service",
-        sessions: [
-          { id: "s3", title: "Audit webhook retry backoff", time: "yesterday", target: "teammate-pr" },
-          { id: "s4", title: "Reconcile invoice line items", time: "yesterday", target: "your-pr" },
-        ],
+        name: "meridian/billing-service",
+        repo: "meridian/billing-service",
+        icon: "credit-card",
+        sessions: [],
       },
     ],
   },
@@ -75,7 +79,9 @@ export const hosts: HostItem[] = [
       {
         id: "p4",
         name: "ranking-model",
-        sessions: [{ id: "s7", title: "Profile inference latency", time: "3d", target: "your-branch" }],
+        repo: "meridian/ranking-model",
+        icon: "cpu",
+        sessions: [],
       },
     ],
   },

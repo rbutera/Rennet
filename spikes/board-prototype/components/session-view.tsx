@@ -4,6 +4,7 @@ import * as React from "react"
 import { ArrowLeft, ChevronRight, GitBranch, GitPullRequest } from "lucide-react"
 import { InputBar } from "@/components/input-bar"
 import { MainSurface } from "@/components/main-surface"
+import { DEFAULT_SCENARIO, scenarios } from "@/lib/scenarios"
 import { ResizeHandle } from "@/components/resize-handle"
 import { RunView } from "@/components/run-view"
 import { TargetBadge, type TargetState } from "@/components/target-badge"
@@ -72,14 +73,16 @@ export function SessionView({
             <TargetBadge kind={badge.kind} state={badge.state} size="sm" />
           </span>
         </header>
-        <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-4 py-4">
-          {turns.map((turn, index) => (
-            <div key={index} className="flex justify-end">
-              <div className="max-w-[320px] rounded-lg bg-secondary px-3 py-2 text-[13.5px] leading-relaxed text-foreground/95">
-                {turn}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex h-full w-full max-w-[720px] flex-col justify-end gap-3 px-5 py-4">
+            {turns.map((turn, index) => (
+              <div key={index} className="flex justify-end">
+                <div className="max-w-[85%] rounded-lg bg-secondary px-3.5 py-2.5 text-[15px] leading-relaxed text-foreground/95">
+                  {turn}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
         <InputBar
           onSend={handleSend}
@@ -93,7 +96,7 @@ export function SessionView({
       <ResizeHandle value={chatWidth} onChange={onChatWidthChange} />
 
       {boardsReady ? (
-        <MainSurface showLocationTrail={false} onExpandChat={() => {}} />
+        <MainSurface showLocationTrail={false} onExpandChat={() => {}} scenario={scenarios[DEFAULT_SCENARIO]} />
       ) : (
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
           <header className="h-10 shrink-0 border-b border-border" />

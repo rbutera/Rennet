@@ -17,9 +17,18 @@ import type { SmartListItem } from "@/lib/smart-list-data"
 import { AddProjectDialog } from "@/components/add-project-dialog"
 import { AddRemoteDialog } from "@/components/add-remote-dialog"
 import { hosts as initialHosts, type HostItem } from "@/lib/sidebar-data"
+import { DEFAULT_SCENARIO, scenarioForSession, scenarios, type Scenario } from "@/lib/scenarios"
 
 export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [activeScenarioId, setActiveScenarioId] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const requested = new URLSearchParams(window.location.search).get("scenario")
+      if (requested && scenarios[requested]) return requested
+    }
+    return DEFAULT_SCENARIO
+  })
+  const activeScenario: Scenario = scenarios[activeScenarioId] ?? scenarios[DEFAULT_SCENARIO]
   const [chatOpen, setChatOpen] = useState(true)
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -61,7 +70,7 @@ export function AppShell() {
     setHosts((prev) =>
       prev.map((h) =>
         h.id === hostId
-          ? { ...h, projects: [...h.projects, { id: projectId, name, sessions: [], indexing: true }] }
+          ? { ...h, projects: [...h.projects, { id: projectId, name, repo: name, sessions: [], indexing: true }] }
           : h,
       ),
     )
@@ -99,8 +108,30 @@ export function AppShell() {
         onAddRemote={() => setAddRemoteOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onNewChat={(projectId) => setNewChatProjectId(projectId)}
-        onSelectSession={() => {
-          // Only the demo session exists; any session row returns to the demo chat.
+        onOpenProjectSettings={() => setSettingsOpen(true)}
+        onOpenMap={(projectId) => {
+          const project = hosts.flatMap((h) => h.projects).find((p) => p.id === projectId)
+          if (project) setContextMapProject({ id: project.id, name: project.name })
+        }}
+        onRenameProject={(projectId, name) =>
+          setHosts((prev) =>
+            prev.map((h) => ({
+              ...h,
+              projects: h.projects.map((p) => (p.id === projectId ? { ...p, name } : p)),
+            })),
+          )
+        }
+        onRemoveProject={(projectId) =>
+          setHosts((prev) =>
+            prev.map((h) => ({ ...h, projects: h.projects.filter((p) => p.id !== projectId) })),
+          )
+        }
+        onSelectSession={(sessionId) => {
+          // A session row maps 1:1 to a scenario (SCENARIOS.md); clicking it
+          // IS the scenario switch. Rows without a scenario return to the
+          // active one unchanged.
+          const scenario = scenarioForSession(sessionId)
+          if (scenario) setActiveScenarioId(scenario.id)
           setSettingsOpen(false)
           setNewChatProjectId(null)
           setIndexingProject(null)
@@ -169,11 +200,15 @@ export function AppShell() {
       <div className={settingsOpen || contextMapProject || newChatProjectId || indexingProject || session ? "hidden" : "contents"}>
         {chatOpen && (
           <>
-            <ChatColumn onCollapse={() => setChatOpen(false)} width={chatWidth} />
+            <ChatColumn onCollapse={() => setChatOpen(false)} width={chatWidth} transcript={activeScenario.transcript} />
             <ResizeHandle value={chatWidth} onChange={setChatWidth} />
           </>
         )}
-        <MainSurface showLocationTrail={!chatOpen} onExpandChat={() => setChatOpen(true)} />
+        <MainSurface
+          showLocationTrail={!chatOpen}
+          onExpandChat={() => setChatOpen(true)}
+          scenario={activeScenario}
+        />
       </div>
 
       <AddProjectDialog

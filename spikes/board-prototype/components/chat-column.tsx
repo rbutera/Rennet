@@ -1,11 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { PanelRight } from "lucide-react"
 import { LocationTrail } from "@/components/location-trail"
 import { ConversationPane } from "@/components/conversation-pane"
 import { InputBar } from "@/components/input-bar"
-import { turns as initialTurns, followUpExchanges, type TurnData } from "@/lib/conversation-data"
+import { followUpExchanges, type TurnData } from "@/lib/conversation-data"
 import type { ComposerBadge } from "@/lib/composer-badges"
 import { useCodeComments } from "@/components/code-comments"
 
@@ -13,8 +13,19 @@ function commentBadgeId(path: string, line: number) {
   return `comment-${path}-${line}`
 }
 
-export function ChatColumn({ onCollapse, width = 420 }: { onCollapse: () => void; width?: number }) {
-  const [turns, setTurns] = useState<TurnData[]>(initialTurns)
+export function ChatColumn({
+  onCollapse,
+  width = 420,
+  transcript,
+}: {
+  onCollapse: () => void
+  width?: number
+  transcript: TurnData[]
+}) {
+  const [turns, setTurns] = useState<TurnData[]>(transcript)
+
+  // A scenario switch replaces the whole conversation record.
+  useEffect(() => setTurns(transcript), [transcript])
   const [exchangeIndex, setExchangeIndex] = useState(0)
   const [imageBadges, setImageBadges] = useState<ComposerBadge[]>([])
   const store = useCodeComments()

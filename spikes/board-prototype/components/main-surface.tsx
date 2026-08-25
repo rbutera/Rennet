@@ -21,38 +21,43 @@ import { HandoffView } from "@/components/handoff-view"
 import { useCodeComments } from "@/components/code-comments"
 import { LensBoardView } from "@/components/lens-board"
 import type { LensBoard } from "@/lib/lens-data"
-import { designBoard } from "@/lib/fixtures/design"
-import { sequenceBoard } from "@/lib/fixtures/sequence"
-import { decisionsBoard } from "@/lib/fixtures/decisions"
-import { flaggedBoard } from "@/lib/fixtures/flagged"
-import { noiseBoard } from "@/lib/fixtures/noise"
+import type { LensId } from "@/lib/lens-data"
+import type { Scenario } from "@/lib/scenarios"
 
-const VIEWS: { segment: string; icon: LucideIcon; board: LensBoard | null }[] = [
-  { segment: "Design", icon: DraftingCompass, board: designBoard },
-  { segment: "Sequence", icon: ListOrdered, board: sequenceBoard },
-  { segment: "Decisions", icon: GitCommitHorizontal, board: decisionsBoard },
-  { segment: "Flagged", icon: Flag, board: flaggedBoard },
-  { segment: "Noise", icon: VolumeX, board: noiseBoard },
-  { segment: "Diff", icon: FileDiff, board: null },
+const LENS_SEGMENTS: { lens: LensId; segment: string; icon: LucideIcon }[] = [
+  { lens: "design", segment: "Design", icon: DraftingCompass },
+  { lens: "sequence", segment: "Sequence", icon: ListOrdered },
+  { lens: "decisions", segment: "Decisions", icon: GitCommitHorizontal },
+  { lens: "flagged", segment: "Flagged", icon: Flag },
+  { lens: "noise", segment: "Noise", icon: VolumeX },
 ]
 
 export function MainSurface({
   showLocationTrail,
   onExpandChat,
+  scenario,
 }: {
   showLocationTrail: boolean
   onExpandChat: () => void
+  scenario: Scenario
 }) {
-  const [active, setActive] = useState(VIEWS[0].segment)
+  // Absent lens = absent segment (never disabled); Diff always exists.
+  const views: { segment: string; icon: LucideIcon; board: LensBoard | null }[] = [
+    ...LENS_SEGMENTS.filter(({ lens }) => scenario.boards[lens]).map(({ lens, segment, icon }) => ({
+      segment,
+      icon,
+      board: scenario.boards[lens] ?? null,
+    })),
+    { segment: "Diff", icon: FileDiff, board: null },
+  ]
+  const [active, setActive] = useState(views[0].segment)
   const [mapOpen, setMapOpen] = useState(false)
   const [handoffOpen, setHandoffOpen] = useState(false)
   const store = useCodeComments()
   const askCount = store?.asks.length ?? 0
-  // The CTA names the job per review target (R35): a teammate PR concludes in
-  // a review written under your name; your own branch/PR continues in rounds.
-  // This demo session reviews a teammate PR.
-  const ctaLabel = "Write Review"
-  const view = VIEWS.find((v) => v.segment === active) ?? VIEWS[0]
+  // The CTA names the job per review target (R35).
+  const ctaLabel = scenario.cta
+  const view = views.find((v) => v.segment === active) ?? views[0]
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -86,7 +91,7 @@ export function MainSurface({
             <span className="hidden @[46rem]:inline">Map</span>
           </button>
           <ViewSwitcher
-            segments={VIEWS.map((v) => ({ label: v.segment, icon: v.icon }))}
+            segments={views.map((v) => ({ label: v.segment, icon: v.icon }))}
             active={mapOpen || handoffOpen ? "" : active}
             onChange={(segment) => {
               setMapOpen(false)
@@ -119,7 +124,9 @@ export function MainSurface({
         </div>
       </header>
       {handoffOpen ? (
-        <HandoffView />
+        <HandoffView
+          prLabel={scenario.handoff.mode === "post-review" ? scenario.handoff.prLabel : undefined}
+        />
       ) : mapOpen ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <MapBaseLine />
