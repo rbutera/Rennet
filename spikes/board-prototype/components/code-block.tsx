@@ -193,6 +193,17 @@ export function CodeBlock({
 
   const lineCount = useMemo(() => code.split("\n").length, [code])
   const highlightSet = useMemo(() => new Set(highlightLines ?? []), [highlightLines])
+  // Lines with a staged request-change ask read danger red; plain comments and
+  // cited lines read evidence green.
+  const askLines = useMemo(
+    () =>
+      new Set(
+        (store?.asks ?? [])
+          .filter((ask) => ask.intent === "request-change" && ask.codeAnchor?.path === path)
+          .map((ask) => ask.codeAnchor?.line),
+      ),
+    [store?.asks, path],
+  )
   const endLine = startLine + lineCount - 1
   const gutterChars = String(endLine).length + 1
 
@@ -256,22 +267,26 @@ export function CodeBlock({
                 const lineNumber = startLine + i
                 const isHighlighted = highlightSet.has(lineNumber)
                 const hasComment = comments?.[lineNumber] != null
+                const hasAsk = askLines.has(lineNumber)
                 const isOpen = openLine === lineNumber
                 return (
                   <div key={i}>
                     <div
                       className={cn(
                         "group flex min-h-[1.7em]",
-                        isHighlighted && "bg-green/15",
-                        (hasComment || isOpen) && "bg-primary/10",
+                        hasAsk
+                          ? "bg-destructive/25"
+                          : (isHighlighted || hasComment || isOpen) && "bg-green/15",
                       )}
                     >
                       <span
                         className={cn(
                           "sticky left-0 flex shrink-0 select-none items-center justify-end gap-1 border-r px-2.5 text-muted-foreground/50",
-                          isHighlighted || hasComment || isOpen
-                            ? "border-primary/50 bg-primary/10"
-                            : "border-transparent bg-card",
+                          hasAsk
+                            ? "border-destructive/60 bg-destructive/25"
+                            : isHighlighted || hasComment || isOpen
+                              ? "border-green/50 bg-green/15"
+                              : "border-transparent bg-card",
                         )}
                         style={{ minWidth: `${gutterChars}ch` }}
                       >
@@ -285,9 +300,11 @@ export function CodeBlock({
                             title={hasComment ? `Edit comment on line ${lineNumber}` : `Comment on line ${lineNumber}`}
                             className={cn(
                               "size-4 shrink-0 items-center justify-center rounded transition-colors",
-                              hasComment || isOpen
-                                ? "flex bg-primary text-primary-foreground hover:bg-primary/90"
-                                : "hidden bg-primary text-primary-foreground hover:bg-primary/90 group-hover:flex",
+                              hasAsk
+                                ? "flex bg-destructive text-white hover:bg-destructive/90"
+                                : hasComment || isOpen
+                                  ? "flex bg-primary text-primary-foreground hover:bg-primary/90"
+                                  : "hidden bg-primary text-primary-foreground hover:bg-primary/90 group-hover:flex",
                             )}
                           >
                             {hasComment ? (

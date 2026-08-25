@@ -325,6 +325,17 @@ function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
   const [openLine, setOpenLine] = React.useState<number | null>(null)
   const [tokens, setTokens] = React.useState<ThemedToken[][] | null>(null)
   const lines = React.useMemo(() => numberLines(hunk), [hunk])
+  // Same contract as CodeBlock: staged request-change asks read danger red,
+  // plain comments read evidence green.
+  const askLines = React.useMemo(
+    () =>
+      new Set(
+        (store?.asks ?? [])
+          .filter((ask) => ask.intent === "request-change" && ask.codeAnchor?.path === path)
+          .map((ask) => ask.codeAnchor?.line),
+      ),
+    [store?.asks, path],
+  )
   const shikiTheme = useShikiTheme()
 
   // Highlight the hunk as one slab; shiki tokenizes line-by-line, so mixed
@@ -348,6 +359,7 @@ function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
       {lines.map((line, i) => {
         const commentLine = line.newLine
         const hasComment = commentLine !== null && comments?.[commentLine] != null
+        const hasAsk = commentLine !== null && askLines.has(commentLine)
         const isOpen = commentLine !== null && openLine === commentLine
         return (
           <React.Fragment key={i}>
@@ -356,7 +368,7 @@ function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
                 "group flex min-h-[1.7em]",
                 line.type === "add" && "bg-green-600/10",
                 line.type === "del" && "bg-red-600/10",
-                (hasComment || isOpen) && "bg-primary/10",
+                hasAsk ? "bg-destructive/25" : (hasComment || isOpen) && "bg-green/15",
               )}
             >
               <span
@@ -385,7 +397,10 @@ function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
                         : `Comment on line ${commentLine}`
                     }
                     className={cn(
-                      "size-4 shrink-0 items-center justify-center rounded bg-primary text-primary-foreground transition-colors hover:bg-primary/90",
+                      "size-4 shrink-0 items-center justify-center rounded transition-colors",
+                      hasAsk
+                        ? "bg-destructive text-white hover:bg-destructive/90"
+                        : "bg-primary text-primary-foreground hover:bg-primary/90",
                       hasComment || isOpen ? "flex" : "hidden group-hover:flex",
                     )}
                   >
