@@ -131,10 +131,10 @@ function Element({ element }: { element: BoardElement }) {
               </button>
             </span>
           </div>
-          <p className="text-[13.5px] leading-relaxed text-foreground/90">
-            <span className="font-medium text-foreground">Why: </span>
-            {element.why}
-          </p>
+          <RichText
+            text={`Why: ${element.why}`}
+            paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90"
+          />
           {element.artifacts && element.artifacts.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
               {element.artifacts.map((artifact) => (
@@ -162,7 +162,10 @@ function Element({ element }: { element: BoardElement }) {
                   <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
                     {row.tag}
                   </span>
-                  <span className="text-[13px] leading-relaxed text-foreground/90">{row.text}</span>
+                  <RichText
+                    text={row.text}
+                    paragraphClassName="text-[13px] leading-relaxed text-foreground/90"
+                  />
                 </div>
               ))}
             </div>
@@ -170,9 +173,12 @@ function Element({ element }: { element: BoardElement }) {
           {element.impact && (
             <div className="flex flex-col">
               <SmallLabel>Impact</SmallLabel>
-              <p className="rounded-md border border-border px-3 py-2 text-[12.5px] leading-relaxed text-foreground/85">
-                {element.impact}
-              </p>
+              <div className="rounded-md border border-border px-3 py-2">
+                <RichText
+                  text={element.impact}
+                  paragraphClassName="text-[12.5px] leading-relaxed text-foreground/85"
+                />
+              </div>
             </div>
           )}
         </div>
@@ -402,9 +408,11 @@ function Element({ element }: { element: BoardElement }) {
                 {element.delta && <DeltaBadge delta={element.delta} />}
               </div>
             ) : null}
-            <p className="text-[13.5px] leading-relaxed text-foreground/90">
-              <SpecKeywords text={element.text} />
-            </p>
+            <RichText
+              text={element.text}
+              keywords
+              paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90"
+            />
             {element.scenarios && element.scenarios.length > 0 && (
               <ul className="flex flex-col gap-1">
                 {element.scenarios.map((scenario, index) => (
@@ -412,9 +420,7 @@ function Element({ element }: { element: BoardElement }) {
                     <span aria-hidden="true" className="select-none text-muted-foreground/60">
                       ‣
                     </span>
-                    <span>
-                      <SpecKeywords text={scenario} />
-                    </span>
+                    <RichText text={scenario} keywords paragraphClassName="leading-relaxed" />
                   </li>
                 ))}
               </ul>
@@ -598,23 +604,5 @@ function CoverageChip({
   )
 }
 
-const SPEC_KEYWORD = /\b(WHEN|THEN|AND|IF|WHILE|WHERE|SHALL NOT|SHALL|MUST NOT|MUST)\b/g
 
-/** Emphasizes the normative grammar (SHALL, WHEN/THEN, EARS keywords) inside spec prose. */
-function SpecKeywords({ text }: { text: string }) {
-  const parts = text.split(SPEC_KEYWORD)
-  return (
-    <>
-      {parts.map((part, index) =>
-        index % 2 === 1 ? (
-          <span key={index} className="font-semibold tracking-tight text-foreground">
-            {part}
-          </span>
-        ) : (
-          <React.Fragment key={index}>{part}</React.Fragment>
-        ),
-      )}
-    </>
-  )
-}
 

@@ -11,6 +11,8 @@ import { nextCannedReply } from "@/lib/quote-thread-demo"
 const FILE_REF = /^[\w@./-]+\.[a-z]+:\d+(?:-\d+)?$/
 /** One tokenizer pass: backtick spans, or bare file:line(-line) citations. */
 const TOKEN = /`[^`]+`|[\w@./-]+\.[a-z]+:\d+(?:-\d+)?/g
+/** Normative grammar (SHALL, WHEN/THEN, EARS keywords) for spec prose. */
+const SPEC_KEYWORD = /\b(WHEN|THEN|AND|IF|WHILE|WHERE|SHALL NOT|SHALL|MUST NOT|MUST)\b/g
 
 type FetchedSlice = { code: string; startLine: number }
 
@@ -231,14 +233,31 @@ export function RichText({
   text,
   className,
   paragraphClassName,
+  keywords = false,
 }: {
   text: string
   className?: string
   paragraphClassName?: string
+  /** Bold the normative spec grammar (SHALL, WHEN/THEN, EARS keywords). */
+  keywords?: boolean
 }) {
   const [activeRef, setActiveRef] = React.useState<string | null>(null)
   const store = useCodeComments()
   const paragraphs = text.split(/\n\n+/)
+
+  function plainNodes(chunk: string, keyBase: string): React.ReactNode[] {
+    if (!keywords) return [chunk]
+    const parts = chunk.split(SPEC_KEYWORD)
+    return parts.map((part, index) =>
+      index % 2 === 1 ? (
+        <span key={`${keyBase}-kw-${index}`} className="font-semibold tracking-tight text-foreground">
+          {part}
+        </span>
+      ) : (
+        <React.Fragment key={`${keyBase}-kw-${index}`}>{part}</React.Fragment>
+      ),
+    )
+  }
 
   function renderTokens(segment: string, paragraphIndex: number, keyOffset: number): React.ReactNode[] {
     const nodes: React.ReactNode[] = []
@@ -246,7 +265,7 @@ export function RichText({
     let match: RegExpExecArray | null
     TOKEN.lastIndex = 0
     while ((match = TOKEN.exec(segment)) !== null) {
-      if (match.index > last) nodes.push(segment.slice(last, match.index))
+      if (match.index > last) nodes.push(...plainNodes(segment.slice(last, match.index), `${keyOffset}-${last}`))
       const token = match[0]
       const inner = token.startsWith("`") ? token.slice(1, -1) : token
       const isRef = FILE_REF.test(inner)
@@ -279,7 +298,7 @@ export function RichText({
       }
       last = match.index + token.length
     }
-    if (last < segment.length) nodes.push(segment.slice(last))
+    if (last < segment.length) nodes.push(...plainNodes(segment.slice(last), `${keyOffset}-${last}`))
     return nodes
   }
 
