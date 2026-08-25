@@ -118,6 +118,20 @@ export function CodeBlock({
     closeEditor()
   }
 
+  function handleRequestChanges() {
+    if (openLine === null) return
+    const trimmed = draftText.trim()
+    if (trimmed.length === 0) return
+    // The comment saves locally AND stages a line-comment ask: a code line is
+    // a real diff position, so this ask posts as a GitHub line comment (R36).
+    onCommentChange?.(openLine, trimmed)
+    store?.stageAsk(trimmed, "request-change", `${path.split("/").pop()}:${openLine}`, {
+      path,
+      line: openLine,
+    })
+    closeEditor()
+  }
+
   function handleDelete() {
     if (openLine === null) return
     onCommentChange?.(openLine, null)
@@ -279,6 +293,13 @@ export function CodeBlock({
                               className="rounded-md px-2.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                             >
                               Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleRequestChanges}
+                              className="rounded-md border border-primary/50 px-2.5 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10"
+                            >
+                              Request Changes
                             </button>
                             <button
                               type="button"
