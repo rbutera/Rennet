@@ -263,110 +263,484 @@
 *::-webkit-scrollbar-track {
   background: transparent;
 }
-
 /* ── Theme packs (issue #481) ────────────────────────────────────────────────
- * A pack scoped-rebinds the --rn-* tokens under [data-rn-theme="<id>"] (light)
- * and [data-rn-theme="<id>"].dark (dark). Semantic roles preserved: accent,
- * evidence green, danger red, diff add/del, ground ramp (canvas < surface <
- * raised). The dark block carries .dark so it out-specifies the light block when
- * both match. "affineur" is the default (no attribute → base blocks above).
- *
- * ponytail: hand-rolled approximations of the upstream palettes (prototype, zero
- * rigor) — load-bearing tokens only, the rest inherit base. REPLACE with copies
- * of the real packs from packages/theme/src/themes/ once that agent lands them. */
+ * Copied verbatim from packages/theme/src/themes/*.css (the source of truth —
+ * re-copy on pack changes; the spike sits outside the workspace so it cannot
+ * import the package). Each pack scoped-rebinds all --rn-* colour tokens under
+ * [data-rn-theme="<id>"], dark via [data-rn-theme][data-scheme="dark"] — both
+ * attributes stamped on <html> by AppearanceSync. "affineur" = no attribute →
+ * base palette above. */
 
-/* GitHub */
+/* GitHub theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="github"]; the client stamps that attribute when
+ * the viewer picks this pack (absence of the attribute = the default Affineur's
+ * Bench, palette.css). This file rebinds ONLY colour tokens — type, spacing,
+ * radius, and the depth shadow stay the Rennet defaults from palette.css (a pack
+ * is colour only, issue #481). Both scheme blocks are complete: no fallback
+ * chains, so a missing token reddens palette-sync.test.ts.
+ *
+ * Palette source: GitHub Primer primitives (github/primer, MIT) — Light Default
+ * and Dark Default. Muted greys are lifted toward AA where Primer's own values
+ * fall short of Rennet's 4.5:1 ink contract; the accent register is Primer blue.
+ */
+
 [data-rn-theme="github"] {
-  --rn-canvas: #ffffff; --rn-surface: #ffffff; --rn-raised: #f6f8fa; --rn-overlay: #ffffff; --rn-code: #f6f8fa;
-  --rn-ink: #1f2328; --rn-ink-soft: #656d76; --rn-ink-faint: #8c959f;
-  --rn-line: rgb(31 35 40 / 0.15); --rn-line-strong: rgb(31 35 40 / 0.25);
-  --rn-accent: #0969da; --rn-accent-fill: #0969da; --rn-accent-ink: #ffffff;
-  --rn-accent-soft: rgb(9 105 218 / 0.1); --rn-accent-line: rgb(9 105 218 / 0.3); --rn-accent-surface: #ddf4ff;
-  --rn-green: #1a7f37; --rn-green-soft: rgb(26 127 55 / 0.12); --rn-green-line: rgb(26 127 55 / 0.3);
-  --rn-danger: #cf222e; --rn-danger-soft: rgb(207 34 46 / 0.1);
-  --rn-add: #e6ffec; --rn-add-ink: #1a7f37; --rn-del: #ffebe9; --rn-del-ink: #cf222e; --rn-code-ln: #8c959f;
+  /* ground — Light Default */
+  --rn-canvas: #f6f8fa;
+  --rn-surface: #ffffff;
+  --rn-raised: #eaeef2;
+  --rn-overlay: #ffffff;
+  --rn-code: #f6f8fa;
+  /* ink */
+  --rn-ink: #1f2328;
+  --rn-ink-soft: #4b535b;
+  --rn-ink-faint: #616a74;
+  /* structure */
+  --rn-line: rgb(31 35 40 / 0.15);
+  --rn-line-strong: rgb(31 35 40 / 0.25);
+  /* accent — Primer blue */
+  --rn-accent: #0969da;
+  --rn-accent-fill: #0969da;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(9 105 218 / 0.1);
+  --rn-accent-line: rgb(9 105 218 / 0.32);
+  --rn-accent-surface: #ddf4ff;
+  /* evidence green */
+  --rn-green: #1a7f37;
+  --rn-green-soft: rgb(26 127 55 / 0.12);
+  --rn-green-line: rgb(26 127 55 / 0.3);
+  /* danger */
+  --rn-danger: #cf222e;
+  --rn-danger-soft: rgb(207 34 46 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #1f2328;
+  --rn-sheet-soft: #656d76;
+  --rn-sheet-line: #d1d9e0;
+  /* diff */
+  --rn-add: #dafbe1;
+  --rn-add-ink: #116329;
+  --rn-del: #ffebe9;
+  --rn-del-ink: #cf222e;
+  --rn-code-ln: #8c959f;
+  /* syntax */
+  --rn-syn-kw: #cf222e;
+  --rn-syn-str: #0a3069;
+  --rn-syn-cmt: #6e7781;
+  --rn-syn-num: #0550ae;
+  --rn-syn-type: #953800;
+  --rn-syn-fn: #6639ba;
+  --rn-syn-prop: #0550ae;
+  --rn-syn-var: #953800;
+  /* mark + scrim */
+  --rn-mark-ink: #1f2328;
   --rn-scrim: #1f2328;
 }
-[data-rn-theme="github"].dark {
-  --rn-canvas: #0d1117; --rn-surface: #161b22; --rn-raised: #21262d; --rn-overlay: #161b22; --rn-code: #161b22;
-  --rn-ink: #e6edf3; --rn-ink-soft: #7d8590; --rn-ink-faint: #6e7681;
-  --rn-line: rgb(240 246 252 / 0.1); --rn-line-strong: rgb(240 246 252 / 0.2);
-  --rn-accent: #2f81f7; --rn-accent-fill: #2f81f7; --rn-accent-ink: #ffffff;
-  --rn-accent-soft: rgb(47 129 247 / 0.15); --rn-accent-line: rgb(47 129 247 / 0.4); --rn-accent-surface: #132e52;
-  --rn-green: #3fb950; --rn-green-soft: rgb(63 185 80 / 0.15); --rn-green-line: rgb(63 185 80 / 0.4);
-  --rn-danger: #f85149; --rn-danger-soft: rgb(248 81 73 / 0.15);
-  --rn-add: #12261e; --rn-add-ink: #3fb950; --rn-del: #25171c; --rn-del-ink: #f85149; --rn-code-ln: #6e7681;
+
+[data-rn-theme="github"][data-scheme="dark"] {
+  /* ground — Dark Default */
+  --rn-canvas: #0d1117;
+  --rn-surface: #161b22;
+  --rn-raised: #21262d;
+  --rn-overlay: #161b22;
+  --rn-code: #0d1117;
+  /* ink */
+  --rn-ink: #e6edf3;
+  --rn-ink-soft: #adbac7;
+  --rn-ink-faint: #909dab;
+  /* structure */
+  --rn-line: rgb(240 246 252 / 0.1);
+  --rn-line-strong: rgb(240 246 252 / 0.16);
+  /* accent — Primer blue (lightened to clear AA on the dark grounds) */
+  --rn-accent: #58a6ff;
+  --rn-accent-fill: #58a6ff;
+  --rn-accent-ink: #0d1117;
+  --rn-accent-soft: rgb(56 139 253 / 0.15);
+  --rn-accent-line: rgb(56 139 253 / 0.4);
+  --rn-accent-surface: #121d2f;
+  /* evidence green */
+  --rn-green: #3fb950;
+  --rn-green-soft: rgb(63 185 80 / 0.15);
+  --rn-green-line: rgb(63 185 80 / 0.4);
+  /* danger */
+  --rn-danger: #f85149;
+  --rn-danger-soft: rgb(248 81 73 / 0.15);
+  /* paper */
+  --rn-sheet: #161b22;
+  --rn-sheet-ink: #e6edf3;
+  --rn-sheet-soft: #adbac7;
+  --rn-sheet-line: #30363d;
+  /* diff */
+  --rn-add: #12261e;
+  --rn-add-ink: #3fb950;
+  --rn-del: #25171c;
+  --rn-del-ink: #f85149;
+  --rn-code-ln: #6e7681;
+  /* syntax */
+  --rn-syn-kw: #ff7b72;
+  --rn-syn-str: #a5d6ff;
+  --rn-syn-cmt: #8b949e;
+  --rn-syn-num: #79c0ff;
+  --rn-syn-type: #ffa657;
+  --rn-syn-fn: #d2a8ff;
+  --rn-syn-prop: #79c0ff;
+  --rn-syn-var: #ffa657;
+  /* mark + scrim */
+  --rn-mark-ink: #e6edf3;
   --rn-scrim: #010409;
 }
 
-/* One Dark Pro (light = One Light approximation) */
+/* One Dark Pro theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="one-dark-pro"]; colour tokens only (type,
+ * spacing, radius, depth stay palette.css defaults). Both scheme blocks complete.
+ *
+ * Palette source: Binaryify/OneDark-Pro themes/*.json (MIT). One Dark Pro is a
+ * dark-first family; the light scheme pairs with Atom's One Light (its
+ * conventional daylight flavour). Foreground greys are lifted toward AA where
+ * the low-contrast originals fall short of Rennet's 4.5:1 ink contract.
+ */
+
 [data-rn-theme="one-dark-pro"] {
-  --rn-canvas: #fafafa; --rn-surface: #ffffff; --rn-raised: #f0f0f0; --rn-overlay: #ffffff; --rn-code: #f5f5f5;
-  --rn-ink: #383a42; --rn-ink-soft: #696c77; --rn-ink-faint: #a0a1a7;
-  --rn-line: rgb(56 58 66 / 0.12); --rn-line-strong: rgb(56 58 66 / 0.2);
-  --rn-accent: #4078f2; --rn-accent-fill: #4078f2; --rn-accent-ink: #ffffff;
-  --rn-accent-soft: rgb(64 120 242 / 0.1); --rn-accent-line: rgb(64 120 242 / 0.3); --rn-accent-surface: #e1e9fb;
-  --rn-green: #50a14f; --rn-green-soft: rgb(80 161 79 / 0.12); --rn-green-line: rgb(80 161 79 / 0.3);
-  --rn-danger: #e45649; --rn-danger-soft: rgb(228 86 73 / 0.1);
-  --rn-add: #e6f3e6; --rn-add-ink: #50a14f; --rn-del: #fbe9e7; --rn-del-ink: #e45649; --rn-code-ln: #a0a1a7;
+  /* ground — One Light */
+  --rn-canvas: #fafafa;
+  --rn-surface: #ffffff;
+  --rn-raised: #eaeaeb;
+  --rn-overlay: #ffffff;
+  --rn-code: #fafafa;
+  /* ink */
+  --rn-ink: #383a42;
+  --rn-ink-soft: #55585f;
+  --rn-ink-faint: #61646e;
+  /* structure */
+  --rn-line: rgb(56 58 66 / 0.14);
+  --rn-line-strong: rgb(56 58 66 / 0.22);
+  /* accent — Atom blue (text form darkened for AA) */
+  --rn-accent: #2c5fd0;
+  --rn-accent-fill: #3268e0;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(64 120 242 / 0.1);
+  --rn-accent-line: rgb(64 120 242 / 0.32);
+  --rn-accent-surface: #dbe6ff;
+  /* evidence green */
+  --rn-green: #50a14f;
+  --rn-green-soft: rgb(80 161 79 / 0.14);
+  --rn-green-line: rgb(80 161 79 / 0.32);
+  /* danger */
+  --rn-danger: #e45649;
+  --rn-danger-soft: rgb(228 86 73 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #383a42;
+  --rn-sheet-soft: #696c77;
+  --rn-sheet-line: #dcdcdd;
+  /* diff */
+  --rn-add: #e6f4e6;
+  --rn-add-ink: #1f6d23;
+  --rn-del: #fbe9e7;
+  --rn-del-ink: #c1352b;
+  --rn-code-ln: #b0b0b5;
+  /* syntax — One Light */
+  --rn-syn-kw: #a626a4;
+  --rn-syn-str: #50a14f;
+  --rn-syn-cmt: #8a8b91;
+  --rn-syn-num: #986801;
+  --rn-syn-type: #b26800;
+  --rn-syn-fn: #4078f2;
+  --rn-syn-prop: #e45649;
+  --rn-syn-var: #986801;
+  /* mark + scrim */
+  --rn-mark-ink: #383a42;
   --rn-scrim: #383a42;
 }
-[data-rn-theme="one-dark-pro"].dark {
-  --rn-canvas: #282c34; --rn-surface: #2c313a; --rn-raised: #21252b; --rn-overlay: #21252b; --rn-code: #21252b;
-  --rn-ink: #abb2bf; --rn-ink-soft: #828997; --rn-ink-faint: #5c6370;
-  --rn-line: rgb(171 178 191 / 0.12); --rn-line-strong: rgb(171 178 191 / 0.2);
-  --rn-accent: #61afef; --rn-accent-fill: #61afef; --rn-accent-ink: #282c34;
-  --rn-accent-soft: rgb(97 175 239 / 0.15); --rn-accent-line: rgb(97 175 239 / 0.4); --rn-accent-surface: #2b3a4a;
-  --rn-green: #98c379; --rn-green-soft: rgb(152 195 121 / 0.15); --rn-green-line: rgb(152 195 121 / 0.4);
-  --rn-danger: #e06c75; --rn-danger-soft: rgb(224 108 117 / 0.15);
-  --rn-add: #22311d; --rn-add-ink: #98c379; --rn-del: #31211d; --rn-del-ink: #e06c75; --rn-code-ln: #5c6370;
+
+[data-rn-theme="one-dark-pro"][data-scheme="dark"] {
+  /* ground — One Dark Pro (canvas = sidebar, surface = editor bg, so the ramp
+     stays dark enough for the greys to clear AA) */
+  --rn-canvas: #21252b;
+  --rn-surface: #282c34;
+  --rn-raised: #2f333d;
+  --rn-overlay: #1b1e24;
+  --rn-code: #21252b;
+  /* ink (brightened above One Dark's #abb2bf so the hierarchy clears AA) */
+  --rn-ink: #c8cdd6;
+  --rn-ink-soft: #abb2bf;
+  --rn-ink-faint: #9ba3b4;
+  /* structure */
+  --rn-line: rgb(171 178 191 / 0.12);
+  --rn-line-strong: rgb(171 178 191 / 0.2);
+  /* accent — One Dark blue */
+  --rn-accent: #61afef;
+  --rn-accent-fill: #61afef;
+  --rn-accent-ink: #21252b;
+  --rn-accent-soft: rgb(97 175 239 / 0.15);
+  --rn-accent-line: rgb(97 175 239 / 0.4);
+  --rn-accent-surface: #1c3049;
+  /* evidence green */
+  --rn-green: #98c379;
+  --rn-green-soft: rgb(152 195 121 / 0.15);
+  --rn-green-line: rgb(152 195 121 / 0.4);
+  /* danger */
+  --rn-danger: #e06c75;
+  --rn-danger-soft: rgb(224 108 117 / 0.15);
+  /* paper */
+  --rn-sheet: #2f333d;
+  --rn-sheet-ink: #c8cdd6;
+  --rn-sheet-soft: #9ba3b4;
+  --rn-sheet-line: #3a3f4b;
+  /* diff */
+  --rn-add: #22311f;
+  --rn-add-ink: #98c379;
+  --rn-del: #3a2226;
+  --rn-del-ink: #e06c75;
+  --rn-code-ln: #636b78;
+  /* syntax — One Dark Pro */
+  --rn-syn-kw: #c678dd;
+  --rn-syn-str: #98c379;
+  --rn-syn-cmt: #7f848e;
+  --rn-syn-num: #d19a66;
+  --rn-syn-type: #e5c07b;
+  --rn-syn-fn: #61afef;
+  --rn-syn-prop: #e06c75;
+  --rn-syn-var: #e06c75;
+  /* mark + scrim */
+  --rn-mark-ink: #abb2bf;
   --rn-scrim: #1b1e24;
 }
 
-/* Dracula (light = Alucard approximation) */
+/* Dracula theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="dracula"]; colour tokens only. Both scheme blocks
+ * complete.
+ *
+ * Dracula upstream is dark-only (draculatheme.com/contribute, MIT). Per issue
+ * #481's open question we take option (a): the light scheme is built from
+ * Dracula's official light variant, Alucard — so the pack themes both schemes
+ * and the scheme toggle stays live under it. Foreground greys are lifted toward
+ * AA where the originals fall short of Rennet's 4.5:1 ink contract.
+ */
+
 [data-rn-theme="dracula"] {
-  --rn-canvas: #fffbeb; --rn-surface: #ffffff; --rn-raised: #f5f0dc; --rn-overlay: #ffffff; --rn-code: #f7f2e0;
-  --rn-ink: #1f1f1f; --rn-ink-soft: #635d47; --rn-ink-faint: #8c866b;
-  --rn-line: rgb(31 31 31 / 0.12); --rn-line-strong: rgb(31 31 31 / 0.2);
-  --rn-accent: #644ac9; --rn-accent-fill: #644ac9; --rn-accent-ink: #ffffff;
-  --rn-accent-soft: rgb(100 74 201 / 0.1); --rn-accent-line: rgb(100 74 201 / 0.3); --rn-accent-surface: #e7e1fb;
-  --rn-green: #14710a; --rn-green-soft: rgb(20 113 10 / 0.12); --rn-green-line: rgb(20 113 10 / 0.3);
-  --rn-danger: #cb3a2a; --rn-danger-soft: rgb(203 58 42 / 0.1);
-  --rn-add: #e4f3df; --rn-add-ink: #14710a; --rn-del: #fbe6e2; --rn-del-ink: #cb3a2a; --rn-code-ln: #8c866b;
+  /* ground — Alucard (Dracula light) */
+  --rn-canvas: #fffbeb;
+  --rn-surface: #ffffff;
+  --rn-raised: #f4efd9;
+  --rn-overlay: #ffffff;
+  --rn-code: #fffbeb;
+  /* ink */
+  --rn-ink: #1f1f1f;
+  --rn-ink-soft: #565241;
+  --rn-ink-faint: #6c664b;
+  /* structure */
+  --rn-line: rgb(31 31 31 / 0.14);
+  --rn-line-strong: rgb(31 31 31 / 0.22);
+  /* accent — Alucard purple */
+  --rn-accent: #644ac9;
+  --rn-accent-fill: #644ac9;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(100 74 201 / 0.1);
+  --rn-accent-line: rgb(100 74 201 / 0.32);
+  --rn-accent-surface: #e7e1fa;
+  /* evidence green */
+  --rn-green: #14710a;
+  --rn-green-soft: rgb(20 113 10 / 0.12);
+  --rn-green-line: rgb(20 113 10 / 0.3);
+  /* danger */
+  --rn-danger: #cb3a2a;
+  --rn-danger-soft: rgb(203 58 42 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #1f1f1f;
+  --rn-sheet-soft: #6c664b;
+  --rn-sheet-line: #e6e1cf;
+  /* diff */
+  --rn-add: #e2f3df;
+  --rn-add-ink: #14710a;
+  --rn-del: #fbe6e3;
+  --rn-del-ink: #b8321f;
+  --rn-code-ln: #b3ad93;
+  /* syntax — Alucard */
+  --rn-syn-kw: #a3144d;
+  --rn-syn-str: #846e15;
+  --rn-syn-cmt: #6c664b;
+  --rn-syn-num: #644ac9;
+  --rn-syn-type: #036a96;
+  --rn-syn-fn: #14710a;
+  --rn-syn-prop: #a34d14;
+  --rn-syn-var: #1f1f1f;
+  /* mark + scrim */
+  --rn-mark-ink: #1f1f1f;
   --rn-scrim: #1f1f1f;
 }
-[data-rn-theme="dracula"].dark {
-  --rn-canvas: #282a36; --rn-surface: #2d2f3b; --rn-raised: #343746; --rn-overlay: #21222c; --rn-code: #21222c;
-  --rn-ink: #f8f8f2; --rn-ink-soft: #bfc7d5; --rn-ink-faint: #6272a4;
-  --rn-line: rgb(248 248 242 / 0.1); --rn-line-strong: rgb(248 248 242 / 0.18);
-  --rn-accent: #bd93f9; --rn-accent-fill: #bd93f9; --rn-accent-ink: #282a36;
-  --rn-accent-soft: rgb(189 147 249 / 0.15); --rn-accent-line: rgb(189 147 249 / 0.4); --rn-accent-surface: #3a2f52;
-  --rn-green: #50fa7b; --rn-green-soft: rgb(80 250 123 / 0.13); --rn-green-line: rgb(80 250 123 / 0.35);
-  --rn-danger: #ff5555; --rn-danger-soft: rgb(255 85 85 / 0.13);
-  --rn-add: #1e3a2a; --rn-add-ink: #50fa7b; --rn-del: #3a1f28; --rn-del-ink: #ff5555; --rn-code-ln: #6272a4;
+
+[data-rn-theme="dracula"][data-scheme="dark"] {
+  /* ground — Dracula */
+  --rn-canvas: #282a36;
+  --rn-surface: #313342;
+  --rn-raised: #3b3d4d;
+  --rn-overlay: #21222c;
+  --rn-code: #282a36;
+  /* ink */
+  --rn-ink: #f8f8f2;
+  --rn-ink-soft: #cbcdd8;
+  --rn-ink-faint: #a5a8bc;
+  /* structure */
+  --rn-line: rgb(248 248 242 / 0.1);
+  --rn-line-strong: rgb(248 248 242 / 0.18);
+  /* accent — Dracula purple */
+  --rn-accent: #bd93f9;
+  --rn-accent-fill: #bd93f9;
+  --rn-accent-ink: #282a36;
+  --rn-accent-soft: rgb(189 147 249 / 0.15);
+  --rn-accent-line: rgb(189 147 249 / 0.4);
+  --rn-accent-surface: #2f2a45;
+  /* evidence green */
+  --rn-green: #50fa7b;
+  --rn-green-soft: rgb(80 250 123 / 0.15);
+  --rn-green-line: rgb(80 250 123 / 0.4);
+  /* danger */
+  --rn-danger: #ff5555;
+  --rn-danger-soft: rgb(255 85 85 / 0.15);
+  /* paper */
+  --rn-sheet: #313342;
+  --rn-sheet-ink: #f8f8f2;
+  --rn-sheet-soft: #a5a8bc;
+  --rn-sheet-line: #44475a;
+  /* diff */
+  --rn-add: #1e3226;
+  --rn-add-ink: #50fa7b;
+  --rn-del: #3a2230;
+  --rn-del-ink: #ff6e6e;
+  --rn-code-ln: #6272a4;
+  /* syntax — Dracula */
+  --rn-syn-kw: #ff79c6;
+  --rn-syn-str: #f1fa8c;
+  --rn-syn-cmt: #6272a4;
+  --rn-syn-num: #bd93f9;
+  --rn-syn-type: #8be9fd;
+  --rn-syn-fn: #50fa7b;
+  --rn-syn-prop: #ffb86c;
+  --rn-syn-var: #f8f8f2;
+  /* mark + scrim */
+  --rn-mark-ink: #f8f8f2;
   --rn-scrim: #191a21;
 }
 
-/* Catppuccin (light = Latte, dark = Mocha) */
+/* Catppuccin theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="catppuccin-mocha"]; colour tokens only. Both
+ * scheme blocks complete.
+ *
+ * Palette source: catppuccin/catppuccin palette.json (MIT). Mocha is the dark
+ * flavour; the light scheme uses Latte (the family's daylight flavour). Mauve is
+ * the accent register. The elevation ramp is chosen so the greys clear Rennet's
+ * 4.5:1 ink contract (mantle/base/surface0 dark; the accent stays mauve).
+ */
+
 [data-rn-theme="catppuccin-mocha"] {
-  --rn-canvas: #eff1f5; --rn-surface: #ffffff; --rn-raised: #e6e9ef; --rn-overlay: #dce0e8; --rn-code: #e6e9ef;
-  --rn-ink: #4c4f69; --rn-ink-soft: #6c6f85; --rn-ink-faint: #8c8fa1;
-  --rn-line: rgb(76 79 105 / 0.12); --rn-line-strong: rgb(76 79 105 / 0.2);
-  --rn-accent: #8839ef; --rn-accent-fill: #8839ef; --rn-accent-ink: #ffffff;
-  --rn-accent-soft: rgb(136 57 239 / 0.1); --rn-accent-line: rgb(136 57 239 / 0.3); --rn-accent-surface: #e9def8;
-  --rn-green: #40a02b; --rn-green-soft: rgb(64 160 43 / 0.12); --rn-green-line: rgb(64 160 43 / 0.3);
-  --rn-danger: #d20f39; --rn-danger-soft: rgb(210 15 57 / 0.1);
-  --rn-add: #e3f0e0; --rn-add-ink: #40a02b; --rn-del: #f9e0e5; --rn-del-ink: #d20f39; --rn-code-ln: #8c8fa1;
+  /* ground — Latte */
+  --rn-canvas: #e6e9ef;
+  --rn-surface: #eff1f5;
+  --rn-raised: #ffffff;
+  --rn-overlay: #ffffff;
+  --rn-code: #e6e9ef;
+  /* ink */
+  --rn-ink: #3a3c52;
+  --rn-ink-soft: #4c4f69;
+  --rn-ink-faint: #5c5f77;
+  /* structure */
+  --rn-line: rgb(76 79 105 / 0.14);
+  --rn-line-strong: rgb(76 79 105 / 0.22);
+  /* accent — Latte mauve (text form darkened a step for AA on the canvas) */
+  --rn-accent: #8028e0;
+  --rn-accent-fill: #8839ef;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(136 57 239 / 0.1);
+  --rn-accent-line: rgb(136 57 239 / 0.32);
+  --rn-accent-surface: #ecdcff;
+  /* evidence green */
+  --rn-green: #40a02b;
+  --rn-green-soft: rgb(64 160 43 / 0.12);
+  --rn-green-line: rgb(64 160 43 / 0.3);
+  /* danger */
+  --rn-danger: #d20f39;
+  --rn-danger-soft: rgb(210 15 57 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #4c4f69;
+  --rn-sheet-soft: #6c6f85;
+  --rn-sheet-line: #ccd0da;
+  /* diff */
+  --rn-add: #e3f2df;
+  --rn-add-ink: #2c701d;
+  --rn-del: #fbe2e6;
+  --rn-del-ink: #c00d34;
+  --rn-code-ln: #9ca0b0;
+  /* syntax — Latte */
+  --rn-syn-kw: #8839ef;
+  --rn-syn-str: #40a02b;
+  --rn-syn-cmt: #8c8fa1;
+  --rn-syn-num: #fe640b;
+  --rn-syn-type: #df8e1d;
+  --rn-syn-fn: #1e66f5;
+  --rn-syn-prop: #04a5e5;
+  --rn-syn-var: #4c4f69;
+  /* mark + scrim */
+  --rn-mark-ink: #4c4f69;
   --rn-scrim: #4c4f69;
 }
-[data-rn-theme="catppuccin-mocha"].dark {
-  --rn-canvas: #1e1e2e; --rn-surface: #313244; --rn-raised: #45475a; --rn-overlay: #181825; --rn-code: #181825;
-  --rn-ink: #cdd6f4; --rn-ink-soft: #a6adc8; --rn-ink-faint: #7f849c;
-  --rn-line: rgb(205 214 244 / 0.1); --rn-line-strong: rgb(205 214 244 / 0.18);
-  --rn-accent: #cba6f7; --rn-accent-fill: #cba6f7; --rn-accent-ink: #1e1e2e;
-  --rn-accent-soft: rgb(203 166 247 / 0.15); --rn-accent-line: rgb(203 166 247 / 0.4); --rn-accent-surface: #35304a;
-  --rn-green: #a6e3a1; --rn-green-soft: rgb(166 227 161 / 0.15); --rn-green-line: rgb(166 227 161 / 0.4);
-  --rn-danger: #f38ba8; --rn-danger-soft: rgb(243 139 168 / 0.15);
-  --rn-add: #26332a; --rn-add-ink: #a6e3a1; --rn-del: #38222c; --rn-del-ink: #f38ba8; --rn-code-ln: #7f849c;
+
+[data-rn-theme="catppuccin-mocha"][data-scheme="dark"] {
+  /* ground — Mocha (mantle < base < surface0 so faint greys clear AA) */
+  --rn-canvas: #181825;
+  --rn-surface: #1e1e2e;
+  --rn-raised: #313244;
+  --rn-overlay: #11111b;
+  --rn-code: #11111b;
+  /* ink */
+  --rn-ink: #cdd6f4;
+  --rn-ink-soft: #bac2de;
+  --rn-ink-faint: #a6adc8;
+  /* structure */
+  --rn-line: rgb(205 214 244 / 0.1);
+  --rn-line-strong: rgb(205 214 244 / 0.16);
+  /* accent — Mocha mauve */
+  --rn-accent: #cba6f7;
+  --rn-accent-fill: #cba6f7;
+  --rn-accent-ink: #181825;
+  --rn-accent-soft: rgb(203 166 247 / 0.15);
+  --rn-accent-line: rgb(203 166 247 / 0.4);
+  --rn-accent-surface: #2a2140;
+  /* evidence green */
+  --rn-green: #a6e3a1;
+  --rn-green-soft: rgb(166 227 161 / 0.15);
+  --rn-green-line: rgb(166 227 161 / 0.4);
+  /* danger */
+  --rn-danger: #f38ba8;
+  --rn-danger-soft: rgb(243 139 168 / 0.15);
+  /* paper */
+  --rn-sheet: #1e1e2e;
+  --rn-sheet-ink: #cdd6f4;
+  --rn-sheet-soft: #a6adc8;
+  --rn-sheet-line: #313244;
+  /* diff */
+  --rn-add: #1c2b22;
+  --rn-add-ink: #a6e3a1;
+  --rn-del: #37212c;
+  --rn-del-ink: #f38ba8;
+  --rn-code-ln: #6c7086;
+  /* syntax — Mocha */
+  --rn-syn-kw: #cba6f7;
+  --rn-syn-str: #a6e3a1;
+  --rn-syn-cmt: #7f849c;
+  --rn-syn-num: #fab387;
+  --rn-syn-type: #f9e2af;
+  --rn-syn-fn: #89b4fa;
+  --rn-syn-prop: #89dceb;
+  --rn-syn-var: #cdd6f4;
+  /* mark + scrim */
+  --rn-mark-ink: #cdd6f4;
   --rn-scrim: #11111b;
 }
+
