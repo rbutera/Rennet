@@ -262,7 +262,8 @@ export function CodeBlock({
                     <div
                       className={cn(
                         "group flex min-h-[1.7em]",
-                        (isHighlighted || hasComment || isOpen) && "bg-primary/10",
+                        isHighlighted && "bg-green/15",
+                        (hasComment || isOpen) && "bg-primary/10",
                       )}
                     >
                       <span

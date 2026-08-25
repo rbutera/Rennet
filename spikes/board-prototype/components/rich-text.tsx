@@ -181,8 +181,8 @@ function QuoteHighlight({ thread, children }: { thread: QuoteComment; children: 
         }}
         title="View thread"
         className={cn(
-          "cursor-pointer rounded-sm bg-primary/10 px-0.5 shadow-[inset_0_-1.5px_0_0] shadow-primary/50 transition-colors [box-decoration-break:clone]",
-          open ? "bg-primary/25" : "hover:bg-primary/20",
+          "cursor-pointer rounded-sm bg-green/20 px-0.5 shadow-[inset_0_-1.5px_0_0] shadow-green/70 transition-colors [box-decoration-break:clone]",
+          open ? "bg-green/35" : "hover:bg-green/30",
         )}
       >
         {children}
