@@ -155,7 +155,16 @@ export function AppShell() {
       <AppSidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((value) => !value)}
-        hosts={hosts}
+        hosts={hosts.map((host) => ({
+          ...host,
+          projects: host.projects.map((project) => ({
+            ...project,
+            sessions: project.sessions.map((session) => ({
+              ...session,
+              active: session.id === activeScenario.session.id,
+            })),
+          })),
+        }))}
         onAddProject={() => openAddProject()}
         onAddRemote={() => setAddRemoteOpen(true)}
         onOpenSettings={(page) => setSettings({ page: page ?? "machine" })}

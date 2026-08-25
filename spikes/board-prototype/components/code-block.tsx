@@ -51,12 +51,111 @@ function inferLang(path: string): string {
   return EXTENSION_LANG[ext] ?? "text"
 }
 
-function tokenStyle(token: ThemedToken): CSSProperties {
+export function tokenStyle(token: ThemedToken): CSSProperties {
   return {
     color: token.color,
     fontStyle: token.fontStyle && token.fontStyle & 1 ? "italic" : undefined,
     fontWeight: token.fontStyle && token.fontStyle & 2 ? 600 : undefined,
   }
+}
+
+/**
+ * The line-comment editor panel — one component so every code surface
+ * (chat blocks, board excerpts, the Diff view) carries identical Save /
+ * Request Changes / Delete behavior. Callers own the container styling.
+ */
+export function LineCommentEditor({
+  lineLabel,
+  initialText,
+  hasComment,
+  onCancel,
+  onSave,
+  onRequestChanges,
+}: {
+  /** Shown top-right, e.g. "L42". */
+  lineLabel: string
+  initialText: string
+  hasComment: boolean
+  onCancel: () => void
+  /** null clears the comment (Delete or emptied text). */
+  onSave: (text: string | null) => void
+  /** Saves the comment AND stages a request-change ask (caller wires the store). */
+  onRequestChanges: (text: string) => void
+}) {
+  const [draft, setDraft] = useState(initialText)
+  const draftRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    draftRef.current?.focus()
+  }, [])
+
+  return (
+    <>
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <span className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
+          <MessageSquare className="size-3 text-muted-foreground" aria-hidden="true" />
+          Local comment
+        </span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">Comment on line {lineLabel}</span>
+      </div>
+      <textarea
+        ref={draftRef}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault()
+            onCancel()
+          }
+        }}
+        placeholder="Leave a comment on this line…"
+        rows={2}
+        className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 font-sans text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+      />
+      <div className="mt-2 flex items-center justify-between">
+        {hasComment ? (
+          <button
+            type="button"
+            onClick={() => onSave(null)}
+            className="rounded-md px-2 py-1 text-[12px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+          >
+            Delete
+          </button>
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md px-2.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const trimmed = draft.trim()
+              if (trimmed.length > 0) onRequestChanges(trimmed)
+            }}
+            className="rounded-md border border-primary/50 px-2.5 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10"
+          >
+            Request Changes
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const trimmed = draft.trim()
+              onSave(trimmed.length > 0 ? trimmed : null)
+            }}
+            className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </>
+  )
 }
 
 /**
@@ -89,53 +188,18 @@ export function CodeBlock({
   const [lines, setLines] = useState<ThemedToken[][] | null>(null)
   const [copied, setCopied] = useState(false)
   const [openLine, setOpenLine] = useState<number | null>(null)
-  const [draftText, setDraftText] = useState("")
-  const draftRef = useRef<HTMLTextAreaElement>(null)
 
   const lineCount = useMemo(() => code.split("\n").length, [code])
   const highlightSet = useMemo(() => new Set(highlightLines ?? []), [highlightLines])
   const endLine = startLine + lineCount - 1
   const gutterChars = String(endLine).length + 1
 
-  useEffect(() => {
-    if (openLine !== null) draftRef.current?.focus()
-  }, [openLine])
-
   function openEditor(line: number) {
-    setDraftText(comments?.[line] ?? "")
     setOpenLine(line)
   }
 
   function closeEditor() {
     setOpenLine(null)
-    setDraftText("")
-  }
-
-  function handleSave() {
-    if (openLine === null) return
-    const trimmed = draftText.trim()
-    onCommentChange?.(openLine, trimmed.length > 0 ? trimmed : null)
-    closeEditor()
-  }
-
-  function handleRequestChanges() {
-    if (openLine === null) return
-    const trimmed = draftText.trim()
-    if (trimmed.length === 0) return
-    // The comment saves locally AND stages a line-comment ask: a code line is
-    // a real diff position, so this ask posts as a GitHub line comment (R36).
-    onCommentChange?.(openLine, trimmed)
-    store?.stageAsk(trimmed, "request-change", `${path.split("/").pop()}:${openLine}`, {
-      path,
-      line: openLine,
-    })
-    closeEditor()
-  }
-
-  function handleDelete() {
-    if (openLine === null) return
-    onCommentChange?.(openLine, null)
-    closeEditor()
   }
 
   useEffect(() => {
@@ -251,65 +315,27 @@ export function CodeBlock({
                     </div>
                     {isOpen && (
                       <div className="sticky left-0 w-[100cqw] border-y border-border bg-secondary/40 px-3 py-2.5 font-sans">
-                        <div className="mb-1.5 flex items-center justify-between gap-3">
-                          <span className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
-                            <MessageSquare className="size-3 text-muted-foreground" aria-hidden="true" />
-                            Local comment
-                          </span>
-                          <span className="shrink-0 text-[11px] text-muted-foreground">
-                            Comment on line L{lineNumber}
-                          </span>
-                        </div>
-                        <textarea
-                          ref={draftRef}
-                          value={draftText}
-                          onChange={(event) => setDraftText(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              event.preventDefault()
-                              closeEditor()
-                            }
+                        <LineCommentEditor
+                          lineLabel={`L${lineNumber}`}
+                          initialText={comments?.[lineNumber] ?? ""}
+                          hasComment={hasComment}
+                          onCancel={closeEditor}
+                          onSave={(text) => {
+                            onCommentChange?.(lineNumber, text)
+                            closeEditor()
                           }}
-                          placeholder="Leave a comment on this line…"
-                          rows={2}
-                          className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 font-sans text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+                          onRequestChanges={(text) => {
+                            // The comment saves locally AND stages a line-comment
+                            // ask: a code line is a real diff position, so this
+                            // ask posts as a GitHub line comment (R36).
+                            onCommentChange?.(lineNumber, text)
+                            store?.stageAsk(text, "request-change", `${path.split("/").pop()}:${lineNumber}`, {
+                              path,
+                              line: lineNumber,
+                            })
+                            closeEditor()
+                          }}
                         />
-                        <div className="mt-2 flex items-center justify-between">
-                          {hasComment ? (
-                            <button
-                              type="button"
-                              onClick={handleDelete}
-                              className="rounded-md px-2 py-1 text-[12px] font-medium text-destructive transition-colors hover:bg-destructive/10"
-                            >
-                              Delete
-                            </button>
-                          ) : (
-                            <span />
-                          )}
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={closeEditor}
-                              className="rounded-md px-2.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleRequestChanges}
-                              className="rounded-md border border-primary/50 px-2.5 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10"
-                            >
-                              Request Changes
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleSave}
-                              className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
                       </div>
                     )}
                   </div>

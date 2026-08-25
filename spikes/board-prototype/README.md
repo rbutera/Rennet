@@ -9,6 +9,14 @@ styling stays minimal and neutral; UX structure, density, and interaction
 states are the deliverable. It is deliberately excluded from the pnpm
 workspace and every repo gate.
 
+## Demo scenarios
+
+`SCENARIOS.md` is the shared roster of named workflows (`teammate`, `rounds`,
+`returned`, `propose`) — one demo world over two real merged changes (#438 and
+#439). A sidebar session row maps 1:1 to a scenario; `?scenario=<id>`
+deep-links. Read it before adding demo content; the scenario registry lives in
+`lib/scenarios/`.
+
 ## Authority and history
 
 - The canonical prompt set, every ruling (R1–R16 plus later ones), and the
@@ -56,9 +64,24 @@ cross-origin dev requests 403 and HMR dies; add new hostnames there).
 - **Lens boards** (`components/lens-board.tsx`, `lib/lens-data.ts`): the five
   lenses as document-flow boards of typed elements (prose, code, callout,
   finding, annotation, thread, decision, requirement, noise-group) with
-  foldable sections (fold = gist + counts). View switcher: Design /
-  Sequence / Decisions / Flagged / Noise / Diff (Diff is a placeholder — its own
-  story).
+  foldable sections (fold = gist + counts). View switcher: lenses only
+  (Design / Sequence / Decisions / Flagged / Noise) — Diff is not a lens.
+- **Diff view** (`components/diff-view.tsx`, `lib/diff-data.ts`): the raw
+  patchset in GitHub's Files-changed shape, toggled from a `Diff` chip beside
+  `Map` (left of the lens switcher — 2026-08-25 ruling, supersedes the
+  switcher-segment placement). Left rail: filter + changed-file tree grouped
+  by directory with per-file +/− counts; clicking scrolls to that file's card.
+  Cards: collapse chevron, mono path (renames render `old → new`),
+  ADDED/RENAMED chip, copy path, +A/−D with GitHub's five-square chip, and a
+  Viewed checkbox that collapses the card and feeds the "n / N viewed"
+  summary. Hunks render unified with dual old/new line-number gutters, +/−
+  marker column, green/red row tints, `@@` header rows, and shiki-highlighted
+  content. Line comments reuse the shared `LineCommentEditor` (extracted from
+  `code-block.tsx`): Save keeps a local comment; Request Changes also stages
+  an ask with a real diff position (posts as a GitHub line comment, R36).
+  Comments key on NEW-side line numbers; deletion rows carry no affordance.
+  Span selection gets Comment / Explain via `ProseSelectionLayer`, same as
+  board prose.
 - **Rich prose + code reveals** (`components/rich-text.tsx`,
   `components/code-tabs.tsx`, `app/api/source/route.ts`): board prose renders
   backticks as monospace and full repo-relative `path:line` citations as

@@ -11,10 +11,13 @@ and root `CONTEXT.md` (Session targets, Review model).
 
 | id | flow | project · target | entry | lenses | hand-off lanes | CTA (R35) | starts in |
 |---|---|---|---|---|---|---|---|
-| `teammate` | W3 | rennet · **Teammate PR** (Priya, Needs you) | sidebar session (default active) or smart-list PR row | all five + Diff | Post Review (one lane) | **Write Review** | boards ready, mid-review, 0 asks |
-| `rounds` | W1a | rennet · **Your branch** `fix/token-refresh-observability` | sidebar session or smart-list local row | all five + Diff (generation 1) | This Round + The Pull Request | **Continue · 2** | mid-review, 2 asks staged from real findings, round not yet dispatched |
+| `teammate` | W3 | rennet · **Teammate PR** (Priya, Needs you) | sidebar session (default active) or smart-list PR row | all five | Post Review (one lane) | **Write Review** | boards ready, mid-review, 0 asks |
+| `rounds` | W1a | rennet · **Your branch** `fix/token-refresh-observability` | sidebar session or smart-list local row | all five (generation 1) | This Round + The Pull Request | **Continue · 2** | mid-review, 2 asks staged from real findings, round not yet dispatched |
 | `returned` | W1b | same branch, after round 1 | drive `rounds` through its round, or `?scenario=returned` deep link | generation 2 (delta-marked) + generation 1 frozen | This Round (empty, gathering) + The Pull Request (ripe) | **Continue** | successor summary greeting on screen |
-| `propose` | W2 | rennet · **Your branch**, spec only (2d-old session, same change pre-implementation) | sidebar session | **Design only** + Diff | This Round + The Pull Request | **Continue** | Design board ready, proposal untouched |
+| `propose` | W2 | rennet · **Your branch**, spec only (2d-old session, same change pre-implementation) | sidebar session | **Design only** | This Round + The Pull Request | **Continue** | Design board ready, proposal untouched |
+
+Diff is no segment in this table: it is the always-present raw-source toggle
+beside Map (2026-08-25 ruling, issue #475; `components/diff-view.tsx`).
 
 Explicitly out of scope: a Retrospective scenario (merged target, no exits —
 R31). The smart list keeps one Merged row as chip-vocabulary texture; clicking
@@ -145,10 +148,11 @@ carried-forward blocks hydrate.
     content: "packages/adapters only… out of scope: Wave 6 field proof").
   - Requirement rows keep names, delta badges, verbatim SHALL/WHEN/THEN, and
     scenarios — all artifact content. Task-progress renders 0/N bars.
-- **View switcher**: **Design + Diff only.** Absent lenses are absent
-  segments, not disabled ones (a disabled segment is a fake affordance; law
-  10 — structure states it, chrome never explains it). The spec files ARE a
-  diff, so Diff stays (placeholder as today). The `.openspec.yaml` scaffold
+- **View switcher**: **Design only.** Absent lenses are absent segments, not
+  disabled ones (a disabled segment is a fake affordance; law 10 — structure
+  states it, chrome never explains it). Diff is not a segment: it sits beside
+  Map as an always-present raw-source toggle (2026-08-25 ruling, issue #475).
+  The `.openspec.yaml` scaffold
   stamp is Noise's lane (R22) but with no Noise board it lives in Design's
   `skippedHunks` — coverage as data, nothing rendered.
 - **Run view**: branch prep lines, then a one-row lens table (Design only —

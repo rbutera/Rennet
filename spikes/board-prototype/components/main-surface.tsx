@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils"
 import { LocationTrail } from "@/components/location-trail"
 import { ViewSwitcher } from "@/components/view-switcher"
 import { ContextMapPanel, MapBaseLine } from "@/components/context-map"
+import { DiffView } from "@/components/diff-view"
 import { HandoffView } from "@/components/handoff-view"
 import { useCodeComments } from "@/components/code-comments"
 import { LensBoardView } from "@/components/lens-board"
@@ -49,17 +50,18 @@ export function MainSurface({
   onDispatchRound?: () => void
   onOpenPullRequest?: () => void
 }) {
-  // Absent lens = absent segment (never disabled); Diff always exists.
-  const views: { segment: string; icon: LucideIcon; board: LensBoard | null }[] = [
-    ...LENS_SEGMENTS.filter(({ lens }) => scenario.boards[lens]).map(({ lens, segment, icon }) => ({
-      segment,
-      icon,
-      board: scenario.boards[lens] ?? null,
-    })),
-    { segment: "Diff", icon: FileDiff, board: null },
-  ]
+  // Absent lens = absent segment (never disabled). Diff is not a lens: it
+  // lives beside Map as a raw-source toggle, not in the switcher.
+  const views: { segment: string; icon: LucideIcon; board: LensBoard | null }[] = LENS_SEGMENTS.filter(
+    ({ lens }) => scenario.boards[lens],
+  ).map(({ lens, segment, icon }) => ({
+    segment,
+    icon,
+    board: scenario.boards[lens] ?? null,
+  }))
   const [active, setActive] = useState(views[0].segment)
   const [mapOpen, setMapOpen] = useState(false)
+  const [diffOpen, setDiffOpen] = useState(false)
   const [handoffOpen, setHandoffOpen] = useState(false)
   const store = useCodeComments()
   const askCount = store?.asks.length ?? 0
@@ -91,7 +93,10 @@ export function MainSurface({
         <div className="flex min-w-0 items-center gap-1.5 justify-self-center">
           <button
             type="button"
-            onClick={() => setMapOpen((open) => !open)}
+            onClick={() => {
+              setMapOpen((open) => !open)
+              setDiffOpen(false)
+            }}
             aria-pressed={mapOpen}
             className={cn(
               "flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium transition-colors",
@@ -101,11 +106,27 @@ export function MainSurface({
             <Map className="size-3.5" aria-hidden="true" />
             <span className="hidden @[46rem]:inline">Map</span>
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDiffOpen((open) => !open)
+              setMapOpen(false)
+            }}
+            aria-pressed={diffOpen}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium transition-colors",
+              diffOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <FileDiff className="size-3.5" aria-hidden="true" />
+            <span className="hidden @[46rem]:inline">Diff</span>
+          </button>
           <ViewSwitcher
             segments={views.map((v) => ({ label: v.segment, icon: v.icon }))}
-            active={mapOpen || handoffOpen ? "" : active}
+            active={mapOpen || diffOpen || handoffOpen ? "" : active}
             onChange={(segment) => {
               setMapOpen(false)
+              setDiffOpen(false)
               setHandoffOpen(false)
               setActive(segment)
             }}
@@ -145,15 +166,13 @@ export function MainSurface({
           <MapBaseLine />
           <ContextMapPanel />
         </div>
-      ) : view.board ? (
+      ) : diffOpen ? (
+        <DiffView />
+      ) : view?.board ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <LensBoardView board={view.board} />
         </div>
-      ) : (
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-[12px] text-muted-foreground/50">raw diff view — separate story</span>
-        </div>
-      )}
+      ) : null}
     </div>
   )
 }
