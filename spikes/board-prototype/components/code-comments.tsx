@@ -11,18 +11,25 @@ import * as React from "react"
  */
 export type CodeComments = Record<string, Record<number, string>>
 
+export interface QuoteMessage {
+  author: "user" | "orchestrator"
+  text: string
+}
+
 export interface QuoteComment {
   id: string
-  /** The highlighted prose the comment anchors to. */
+  /** The highlighted prose the thread anchors to. */
   quote: string
-  text: string
+  /** The exchange: the opening comment/question and every reply. */
+  messages: QuoteMessage[]
 }
 
 interface CodeCommentsStore {
   comments: CodeComments
   quoteComments: QuoteComment[]
   setComment: (path: string, line: number, text: string | null) => void
-  addQuoteComment: (quote: string, text: string) => void
+  addQuoteComment: (quote: string, text: string) => string
+  addQuoteReply: (id: string, author: "user" | "orchestrator", text: string) => void
   removeQuoteComment: (id: string) => void
   clear: () => void
 }
@@ -51,11 +58,23 @@ export function CodeCommentsProvider({ children }: { children: React.ReactNode }
     })
   }, [])
 
+  const quoteSeq = React.useRef(0)
+
   const addQuoteComment = React.useCallback((quote: string, text: string) => {
+    const id = `quote-${quoteSeq.current++}`
     setQuoteComments((previous) => [
       ...previous,
-      { id: `quote-${previous.length}-${quote.slice(0, 12)}`, quote, text },
+      { id, quote, messages: [{ author: "user" as const, text }] },
     ])
+    return id
+  }, [])
+
+  const addQuoteReply = React.useCallback((id: string, author: "user" | "orchestrator", text: string) => {
+    setQuoteComments((previous) =>
+      previous.map((entry) =>
+        entry.id === id ? { ...entry, messages: [...entry.messages, { author, text }] } : entry,
+      ),
+    )
   }, [])
 
   const removeQuoteComment = React.useCallback((id: string) => {
@@ -68,8 +87,8 @@ export function CodeCommentsProvider({ children }: { children: React.ReactNode }
   }, [])
 
   const store = React.useMemo(
-    () => ({ comments, quoteComments, setComment, addQuoteComment, removeQuoteComment, clear }),
-    [comments, quoteComments, setComment, addQuoteComment, removeQuoteComment, clear],
+    () => ({ comments, quoteComments, setComment, addQuoteComment, addQuoteReply, removeQuoteComment, clear }),
+    [comments, quoteComments, setComment, addQuoteComment, addQuoteReply, removeQuoteComment, clear],
   )
 
   return <CodeCommentsContext.Provider value={store}>{children}</CodeCommentsContext.Provider>

@@ -35,7 +35,7 @@ export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
     id: entry.id,
     kind: "quote" as const,
     quote: entry.quote,
-    text: entry.text,
+    text: entry.messages[0]?.text ?? "",
   }))
   const badges: ComposerBadge[] = [...commentBadges, ...quoteBadges, ...imageBadges]
 

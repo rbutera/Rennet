@@ -5,7 +5,9 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { ChatColumn } from "@/components/chat-column"
 import { MainSurface } from "@/components/main-surface"
 import { CodeCommentsProvider } from "@/components/code-comments"
+import { ContextMapFullView } from "@/components/context-map"
 import { NewChatView } from "@/components/new-chat-view"
+import { ProjectIndexingView } from "@/components/project-indexing-view"
 import { SessionView } from "@/components/session-view"
 import { SettingsView } from "@/components/settings-view"
 import type { SmartListItem } from "@/lib/smart-list-data"
@@ -18,6 +20,8 @@ export function AppShell() {
   const [chatOpen, setChatOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [newChatProjectId, setNewChatProjectId] = useState<string | null>(null)
+  const [indexingProject, setIndexingProject] = useState<{ id: string; name: string } | null>(null)
+  const [contextMapProject, setContextMapProject] = useState<{ id: string; name: string } | null>(null)
   const [session, setSession] = useState<{
     projectName: string
     targetLabel: string
@@ -55,6 +59,8 @@ export function AppShell() {
           : h,
       ),
     )
+    // Adding a project opens the live indexing view (the map filling in).
+    setIndexingProject({ id: projectId, name })
     // Processing settles after a few seconds; the sidebar row carries the state.
     setTimeout(() => {
       setHosts((prev) =>
@@ -67,7 +73,7 @@ export function AppShell() {
             : h,
         ),
       )
-    }, 5500)
+    }, 10500)
   }
 
   function handleRemoteConnected(label: string): string {
@@ -91,6 +97,8 @@ export function AppShell() {
           // Only the demo session exists; any session row returns to the demo chat.
           setSettingsOpen(false)
           setNewChatProjectId(null)
+          setIndexingProject(null)
+          setContextMapProject(null)
           setSession(null)
           setChatOpen(true)
         }}
@@ -100,7 +108,17 @@ export function AppShell() {
       {settingsOpen && (
         <SettingsView hosts={hosts} activeProjectId="p1" onClose={() => setSettingsOpen(false)} />
       )}
-      {!settingsOpen && newChatProjectId && (
+      {!settingsOpen && contextMapProject && (
+        <ContextMapFullView
+          projectName={contextMapProject.name}
+          onBack={() => {
+            // The map always returns to the New chat of its project.
+            setNewChatProjectId(contextMapProject.id)
+            setContextMapProject(null)
+          }}
+        />
+      )}
+      {!settingsOpen && !contextMapProject && newChatProjectId && (
         <NewChatView
           hosts={hosts}
           projectId={newChatProjectId}
@@ -110,9 +128,27 @@ export function AppShell() {
             const project = hosts.flatMap((h) => h.projects).find((p) => p.id === newChatProjectId)
             startSession(project?.name ?? "rennet", item, message)
           }}
+          onOpenMap={() => {
+            const project = hosts.flatMap((h) => h.projects).find((p) => p.id === newChatProjectId)
+            setContextMapProject({ id: newChatProjectId, name: project?.name ?? "rennet" })
+          }}
         />
       )}
-      {!settingsOpen && !newChatProjectId && session && (
+      {!settingsOpen && !contextMapProject && !newChatProjectId && indexingProject && (
+        <ProjectIndexingView
+          projectName={indexingProject.name}
+          onBack={() => setIndexingProject(null)}
+          onNewChat={() => {
+            setNewChatProjectId(indexingProject.id)
+            setIndexingProject(null)
+          }}
+          onViewMap={() => {
+            setContextMapProject(indexingProject)
+            setIndexingProject(null)
+          }}
+        />
+      )}
+      {!settingsOpen && !contextMapProject && !newChatProjectId && !indexingProject && session && (
         <SessionView
           projectName={session.projectName}
           targetLabel={session.targetLabel}
@@ -121,7 +157,7 @@ export function AppShell() {
           onBack={() => setSession(null)}
         />
       )}
-      <div className={settingsOpen || newChatProjectId || session ? "hidden" : "contents"}>
+      <div className={settingsOpen || contextMapProject || newChatProjectId || indexingProject || session ? "hidden" : "contents"}>
         {chatOpen && <ChatColumn onCollapse={() => setChatOpen(false)} />}
         <MainSurface showLocationTrail={!chatOpen} onExpandChat={() => setChatOpen(true)} />
       </div>

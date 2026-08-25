@@ -3,6 +3,7 @@
 import * as React from "react"
 import { MessageSquare, Sparkles } from "lucide-react"
 import { useCodeComments } from "@/components/code-comments"
+import { EXPLAIN_OPENER, nextCannedReply } from "@/lib/quote-thread-demo"
 
 /**
  * Text-selection controls for board prose: highlighting text shows a small
@@ -66,12 +67,17 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
     }
   }, [dismiss])
 
+  function startThread(opener: string) {
+    if (!anchor || !store) return
+    const id = store.addQuoteComment(anchor.quote, opener)
+    const reply = nextCannedReply()
+    window.setTimeout(() => store.addQuoteReply(id, "orchestrator", reply), 1100)
+    window.getSelection()?.removeAllRanges()
+  }
+
   function handleSave() {
     const text = draft.trim()
-    if (anchor && text.length > 0) {
-      store?.addQuoteComment(anchor.quote, text)
-      window.getSelection()?.removeAllRanges()
-    }
+    if (text.length > 0) startThread(text)
     dismiss()
   }
 
@@ -98,6 +104,10 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  startThread(EXPLAIN_OPENER)
+                  dismiss()
+                }}
                 className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
               >
                 <Sparkles className="size-3" aria-hidden="true" />

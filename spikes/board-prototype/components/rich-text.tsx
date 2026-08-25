@@ -4,6 +4,8 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import type { CodeAnchor } from "@/lib/lens-data"
 import { CodeBlock } from "@/components/code-block"
+import { type QuoteComment, useCodeComments } from "@/components/code-comments"
+import { nextCannedReply } from "@/lib/quote-thread-demo"
 
 /** Matches a repo file citation like `packages/x/y.ts:244` or `y.ts:112-113`. */
 const FILE_REF = /^[\w@./-]+\.[a-z]+:\d+(?:-\d+)?$/
@@ -118,9 +120,95 @@ export function InlineCode({ text }: { text: string }) {
 }
 
 /**
+ * A durable highlight over commented prose. Clicking it opens the thread —
+ * the opening comment, every reply, and a follow-up input — in a tooltip
+ * anchored above the highlighted text.
+ */
+function QuoteHighlight({ thread, children }: { thread: QuoteComment; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(false)
+  const [draft, setDraft] = React.useState("")
+  const wrapperRef = React.useRef<HTMLSpanElement>(null)
+  const store = useCodeComments()
+
+  React.useEffect(() => {
+    if (!open) return
+    function handleMouseDown(event: MouseEvent) {
+      if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("mousedown", handleMouseDown)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown)
+      document.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [open])
+
+  function handleFollowUp() {
+    const text = draft.trim()
+    if (text.length === 0) return
+    store?.addQuoteReply(thread.id, "user", text)
+    setDraft("")
+    const reply = nextCannedReply()
+    window.setTimeout(() => store?.addQuoteReply(thread.id, "orchestrator", reply), 900)
+  }
+
+  return (
+    <span ref={wrapperRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        title="View thread"
+        className={cn(
+          "rounded-sm bg-primary/10 px-0.5 text-left text-inherit shadow-[inset_0_-1.5px_0_0] shadow-primary/50 transition-colors [box-decoration-break:clone]",
+          open ? "bg-primary/25" : "hover:bg-primary/20",
+        )}
+      >
+        {children}
+      </button>
+      {open && (
+        <span className="absolute bottom-full left-0 z-50 mb-1.5 block w-[360px] cursor-auto rounded-md border border-border bg-popover p-2.5 font-sans not-italic shadow-lg">
+          <span className="mb-1.5 flex flex-col gap-1.5">
+            {thread.messages.map((message, index) =>
+              message.author === "user" ? (
+                <span key={index} className="flex justify-end">
+                  <span className="max-w-[280px] rounded-lg bg-secondary px-2.5 py-1.5 text-[12.5px] leading-relaxed text-foreground/95">
+                    {message.text}
+                  </span>
+                </span>
+              ) : (
+                <span key={index} className="block text-[12.5px] leading-relaxed text-foreground/85">
+                  {message.text}
+                </span>
+              ),
+            )}
+          </span>
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault()
+                handleFollowUp()
+              }
+            }}
+            placeholder="Ask a follow-up…"
+            rows={1}
+            className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+          />
+        </span>
+      )}
+    </span>
+  )
+}
+
+/**
  * Block prose with the board's reading affordances: paragraphs split on blank
- * lines, `backticks` in monospace, and file:line citations as chips that
- * reveal the real code below the paragraph when clicked.
+ * lines, `backticks` in monospace, file:line citations as chips that reveal
+ * the real code below the paragraph, and durable highlights over prose that
+ * carries a comment thread.
  */
 export function RichText({
   text,
@@ -132,24 +220,26 @@ export function RichText({
   paragraphClassName?: string
 }) {
   const [activeRef, setActiveRef] = React.useState<string | null>(null)
+  const store = useCodeComments()
   const paragraphs = text.split(/\n\n+/)
 
-  function renderParagraph(paragraph: string, paragraphIndex: number) {
+  function renderTokens(segment: string, paragraphIndex: number, keyOffset: number): React.ReactNode[] {
     const nodes: React.ReactNode[] = []
     let last = 0
     let match: RegExpExecArray | null
     TOKEN.lastIndex = 0
-    while ((match = TOKEN.exec(paragraph)) !== null) {
-      if (match.index > last) nodes.push(paragraph.slice(last, match.index))
+    while ((match = TOKEN.exec(segment)) !== null) {
+      if (match.index > last) nodes.push(segment.slice(last, match.index))
       const token = match[0]
       const inner = token.startsWith("`") ? token.slice(1, -1) : token
       const isRef = FILE_REF.test(inner)
+      const key = `${keyOffset}-${match.index}`
       if (isRef) {
         const refKey = `${paragraphIndex}:${inner}`
         const shortLabel = inner.includes("/") ? (inner.split("/").pop() ?? inner) : inner
         nodes.push(
           <button
-            key={refKey + match.index}
+            key={key}
             type="button"
             onClick={() => setActiveRef((current) => (current === refKey ? null : refKey))}
             title={inner}
@@ -163,7 +253,7 @@ export function RichText({
         )
       } else if (token.startsWith("`")) {
         nodes.push(
-          <code key={match.index} className="font-mono text-[0.9em] text-foreground">
+          <code key={key} className="font-mono text-[0.9em] text-foreground">
             {inner}
           </code>,
         )
@@ -172,7 +262,76 @@ export function RichText({
       }
       last = match.index + token.length
     }
-    if (last < paragraph.length) nodes.push(paragraph.slice(last))
+    if (last < segment.length) nodes.push(segment.slice(last))
+    return nodes
+  }
+
+  /**
+   * The reader selects DISPLAY text (backticks stripped, citation chips show
+   * short labels), but highlighting slices the RAW source string. This maps a
+   * display-text quote back to a raw range, snapping to token boundaries.
+   */
+  function findRawRange(paragraph: string, quote: string): { start: number; end: number } | null {
+    type Segment = { rawStart: number; rawEnd: number; normStart: number; normEnd: number; token: boolean }
+    const segments: Segment[] = []
+    let norm = ""
+    let last = 0
+    let match: RegExpExecArray | null
+    TOKEN.lastIndex = 0
+    const push = (rawStart: number, rawEnd: number, display: string, token: boolean) => {
+      segments.push({ rawStart, rawEnd, normStart: norm.length, normEnd: norm.length + display.length, token })
+      norm += display
+    }
+    while ((match = TOKEN.exec(paragraph)) !== null) {
+      if (match.index > last) push(last, match.index, paragraph.slice(last, match.index), false)
+      const token = match[0]
+      const inner = token.startsWith("`") ? token.slice(1, -1) : token
+      const display =
+        FILE_REF.test(inner) && inner.includes("/") ? (inner.split("/").pop() ?? inner) : inner
+      push(match.index, match.index + token.length, display, true)
+      last = match.index + token.length
+    }
+    if (last < paragraph.length) push(last, paragraph.length, paragraph.slice(last), false)
+
+    const normIndex = norm.indexOf(quote)
+    if (normIndex === -1) return null
+    const normEnd = normIndex + quote.length
+    const startSegment = segments.find((s) => normIndex >= s.normStart && normIndex < s.normEnd)
+    const endSegment = segments.find((s) => normEnd > s.normStart && normEnd <= s.normEnd)
+    if (!startSegment || !endSegment) return null
+    const start = startSegment.token
+      ? startSegment.rawStart
+      : startSegment.rawStart + (normIndex - startSegment.normStart)
+    const end = endSegment.token ? endSegment.rawEnd : endSegment.rawStart + (normEnd - endSegment.normStart)
+    return { start, end }
+  }
+
+  function renderParagraph(paragraph: string, paragraphIndex: number) {
+    // Durable highlights: wrap any span of this paragraph that a quote thread
+    // anchors to. A multi-paragraph quote keeps its composer chip but gets no
+    // inline highlight (its text no longer matches one paragraph).
+    const threads = (store?.quoteComments ?? [])
+      .filter((thread) => thread.quote.length > 0)
+      .map((thread) => ({ thread, range: findRawRange(paragraph, thread.quote) }))
+      .filter((entry): entry is { thread: QuoteComment; range: { start: number; end: number } } =>
+        entry.range !== null,
+      )
+      .sort((a, b) => a.range.start - b.range.start)
+
+    const nodes: React.ReactNode[] = []
+    let cursor = 0
+    for (const { thread, range } of threads) {
+      if (range.start < cursor) continue
+      if (range.start > cursor)
+        nodes.push(...renderTokens(paragraph.slice(cursor, range.start), paragraphIndex, cursor))
+      nodes.push(
+        <QuoteHighlight key={thread.id} thread={thread}>
+          {renderTokens(paragraph.slice(range.start, range.end), paragraphIndex, range.start)}
+        </QuoteHighlight>,
+      )
+      cursor = range.end
+    }
+    if (cursor < paragraph.length) nodes.push(...renderTokens(paragraph.slice(cursor), paragraphIndex, cursor))
 
     const activeInParagraph =
       activeRef && activeRef.startsWith(`${paragraphIndex}:`) ? activeRef.slice(activeRef.indexOf(":") + 1) : null

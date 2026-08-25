@@ -1,9 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { PanelLeft } from "lucide-react"
+import { Map, PanelLeft } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { LocationTrail } from "@/components/location-trail"
 import { ViewSwitcher } from "@/components/view-switcher"
+import { ContextMapPanel, MapBaseLine } from "@/components/context-map"
 import { LensBoardView } from "@/components/lens-board"
 import type { LensBoard } from "@/lib/lens-data"
 import { designBoard } from "@/lib/fixtures/design"
@@ -29,6 +31,7 @@ export function MainSurface({
   onExpandChat: () => void
 }) {
   const [active, setActive] = useState(VIEWS[0].segment)
+  const [mapOpen, setMapOpen] = useState(false)
   const view = VIEWS.find((v) => v.segment === active) ?? VIEWS[0]
 
   return (
@@ -49,8 +52,27 @@ export function MainSurface({
             </>
           )}
         </div>
-        <div className="min-w-0 justify-self-center">
-          <ViewSwitcher segments={VIEWS.map((v) => v.segment)} active={active} onChange={setActive} />
+        <div className="flex min-w-0 items-center gap-1.5 justify-self-center">
+          <button
+            type="button"
+            onClick={() => setMapOpen((open) => !open)}
+            aria-pressed={mapOpen}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium transition-colors",
+              mapOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Map className="size-3.5" aria-hidden="true" />
+            Map
+          </button>
+          <ViewSwitcher
+            segments={VIEWS.map((v) => v.segment)}
+            active={mapOpen ? "" : active}
+            onChange={(segment) => {
+              setMapOpen(false)
+              setActive(segment)
+            }}
+          />
         </div>
         <div className="flex items-center gap-1 justify-self-end">
           <button
@@ -61,7 +83,12 @@ export function MainSurface({
           </button>
         </div>
       </header>
-      {view.board ? (
+      {mapOpen ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <MapBaseLine />
+          <ContextMapPanel />
+        </div>
+      ) : view.board ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <LensBoardView board={view.board} />
         </div>

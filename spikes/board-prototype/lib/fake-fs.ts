@@ -32,14 +32,26 @@ const LOCAL_TREE: Record<string, DirNode> = {
         children: {
           dev: {
             children: {
+              rennet: { repo: true, children: { packages: {}, apps: {}, docs: {} } },
               orbital: { repo: true, children: { packages: {}, docs: {} } },
               meridian: { repo: true, children: { apps: {}, infra: {} } },
+              "helio-cms": { repo: true, children: { src: {} } },
+              dotfiles: { repo: true, children: {} },
+              "t3-lander": { repo: true, children: { public: {} } },
+              clients: {
+                children: {
+                  "acme-storefront": { repo: true, children: { src: {} } },
+                  "acme-admin": { repo: true, children: { src: {} } },
+                },
+              },
               scratch: { children: {} },
             },
           },
           work: {
             children: {
               atlas: { repo: true, children: { services: {}, tools: {} } },
+              "atlas-docs": { repo: true, children: {} },
+              navcore: { repo: true, children: { src: {} } },
               archive: { children: {} },
             },
           },

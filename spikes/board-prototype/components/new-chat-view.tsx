@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitPullRequest,
   GitMerge,
+  Map,
   Search,
   X,
 } from "lucide-react"
@@ -69,6 +70,7 @@ export function NewChatView({
   onProjectChange,
   onClose,
   onStart,
+  onOpenMap,
 }: {
   hosts: HostItem[]
   projectId: string
@@ -76,6 +78,7 @@ export function NewChatView({
   onClose: () => void
   /** Start the session: item = null means the current checkout / whole project. */
   onStart: (item: SmartListItem | null, message: string) => void
+  onOpenMap: () => void
 }) {
   const [filter, setFilter] = React.useState("")
   const [tab, setTab] = React.useState<Tab>("All")
@@ -114,9 +117,17 @@ export function NewChatView({
         <span className="text-[13px] text-muted-foreground">{project.name}</span>
         <span className="text-[13px] text-muted-foreground/50">›</span>
         <span className="text-[13px] font-medium text-foreground">New chat</span>
-        <kbd className="ml-auto rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">
-          esc
-        </kbd>
+        <span className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenMap}
+            className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            <Map className="size-3.5" aria-hidden="true" />
+            Map
+          </button>
+          <kbd className="rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">esc</kbd>
+        </span>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -230,7 +241,7 @@ export function NewChatView({
             ))}
             {visible.length === 0 && (
               <div className="px-3 py-5 text-center text-[12.5px] text-muted-foreground/60">
-                nothing matches
+                {items.length === 0 ? "no open branches or pull requests yet" : "nothing matches"}
               </div>
             )}
           </div>
