@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
+import { Shell } from '@/components/shell'
 
 const _geistSans = Geist({ subsets: ['latin'] })
 const _geistMono = Geist_Mono({ subsets: ['latin'] })
@@ -27,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark bg-background">
       <body className="antialiased">
-        {children}
+        <Shell>{children}</Shell>
       </body>
     </html>
   )

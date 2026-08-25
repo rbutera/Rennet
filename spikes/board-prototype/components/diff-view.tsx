@@ -87,23 +87,12 @@ export function DiffView({ files = diffFiles }: { files?: DiffFile[] }) {
   }
 
   return (
-    <ProseSelectionLayer>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="flex w-60 shrink-0 flex-col gap-2 overflow-y-auto border-r border-border p-3">
-          <div className="flex h-7 items-center gap-1.5 rounded-md border border-border bg-card px-2 focus-within:border-ring">
-            <Search className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <input
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              placeholder="Filter files…"
-              aria-label="Filter changed files"
-              className="min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60"
-            />
-          </div>
-          <FileTree files={shown} viewed={viewed} onJump={jumpTo} />
-        </aside>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* Scroll frame 1: the diff cards. The selection layer sits INSIDE the
+          frame (its plain container div would otherwise break the flex height
+          chain — the lens boards wrap the same way). */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <ProseSelectionLayer>
           <div className="mx-auto flex w-full max-w-[980px] flex-col gap-4 px-6 py-4">
             <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
               <span className="font-medium text-foreground">
@@ -133,9 +122,24 @@ export function DiffView({ files = diffFiles }: { files?: DiffFile[] }) {
               </span>
             )}
           </div>
-        </div>
+        </ProseSelectionLayer>
       </div>
-    </ProseSelectionLayer>
+
+      {/* Scroll frame 2: the file list, on the right. */}
+      <aside className="flex w-60 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border p-3">
+        <div className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-2 focus-within:border-ring">
+          <Search className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Filter files…"
+            aria-label="Filter changed files"
+            className="min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60"
+          />
+        </div>
+        <FileTree files={shown} viewed={viewed} onJump={jumpTo} />
+      </aside>
+    </div>
   )
 }
 

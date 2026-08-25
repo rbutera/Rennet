@@ -69,8 +69,9 @@ cross-origin dev requests 403 and HMR dies; add new hostnames there).
 - **Diff view** (`components/diff-view.tsx`, `lib/diff-data.ts`): the raw
   patchset in GitHub's Files-changed shape, toggled from a `Diff` chip beside
   `Map` (left of the lens switcher — 2026-08-25 ruling, supersedes the
-  switcher-segment placement). Left rail: filter + changed-file tree grouped
-  by directory with per-file +/− counts; clicking scrolls to that file's card.
+  switcher-segment placement). Right rail (own scroll frame): filter +
+  changed-file tree grouped by directory with per-file +/− counts; clicking
+  scrolls to that file's card in the cards' scroll frame.
   Cards: collapse chevron, mono path (renames render `old → new`),
   ADDED/RENAMED chip, copy path, +A/−D with GitHub's five-square chip, and a
   Viewed checkbox that collapses the card and feeds the "n / N viewed"

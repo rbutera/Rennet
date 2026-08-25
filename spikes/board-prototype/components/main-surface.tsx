@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   DraftingCompass,
   FileDiff,
@@ -34,6 +34,9 @@ const LENS_SEGMENTS: { lens: LensId; segment: string; icon: LucideIcon }[] = [
   { lens: "noise", segment: "Noise", icon: VolumeX },
 ]
 
+/** The non-lens board views; board (the active lens) is the omitted default. */
+type ViewParam = "board" | "diff" | "map" | "handoff"
+
 export function MainSurface({
   showLocationTrail,
   onExpandChat,
@@ -52,22 +55,44 @@ export function MainSurface({
 }) {
   // Absent lens = absent segment (never disabled). Diff is not a lens: it
   // lives beside Map as a raw-source toggle, not in the switcher.
-  const views: { segment: string; icon: LucideIcon; board: LensBoard | null }[] = LENS_SEGMENTS.filter(
+  const views: { lens: LensId; segment: string; icon: LucideIcon; board: LensBoard | null }[] = LENS_SEGMENTS.filter(
     ({ lens }) => scenario.boards[lens],
   ).map(({ lens, segment, icon }) => ({
+    lens,
     segment,
     icon,
     board: scenario.boards[lens] ?? null,
   }))
-  const [active, setActive] = useState(views[0].segment)
-  const [mapOpen, setMapOpen] = useState(false)
-  const [diffOpen, setDiffOpen] = useState(false)
-  const [handoffOpen, setHandoffOpen] = useState(false)
+
+  // View state lives in the URL: ?view=board|diff|map|handoff (board omitted)
+  // and ?lens=<lensId>. Unknown values fall back to board / first lens.
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  const viewParam = searchParams.get("view")
+  const currentView: ViewParam =
+    viewParam === "diff" || viewParam === "map" || viewParam === "handoff" ? viewParam : "board"
+  const mapOpen = currentView === "map"
+  const diffOpen = currentView === "diff"
+  const handoffOpen = currentView === "handoff"
+
+  const lensParam = searchParams.get("lens")
+  const view = views.find((v) => v.lens === lensParam) ?? views[0]
+  const active = view.segment
+
+  // Replace (never push) so toggling views doesn't spam back history.
+  const go = (nextView: ViewParam, lens: LensId) => {
+    const params = new URLSearchParams()
+    if (nextView !== "board") params.set("view", nextView)
+    params.set("lens", lens)
+    router.replace(`${pathname}?${params.toString()}`)
+  }
+
   const store = useCodeComments()
   const askCount = store?.asks.length ?? 0
   // The CTA names the job per review target (R35).
   const ctaLabel = scenario.cta
-  const view = views.find((v) => v.segment === active) ?? views[0]
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -93,10 +118,7 @@ export function MainSurface({
         <div className="flex min-w-0 items-center gap-1.5 justify-self-center">
           <button
             type="button"
-            onClick={() => {
-              setMapOpen((open) => !open)
-              setDiffOpen(false)
-            }}
+            onClick={() => go(mapOpen ? "board" : "map", view.lens)}
             aria-pressed={mapOpen}
             className={cn(
               "flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium transition-colors",
@@ -108,10 +130,7 @@ export function MainSurface({
           </button>
           <button
             type="button"
-            onClick={() => {
-              setDiffOpen((open) => !open)
-              setMapOpen(false)
-            }}
+            onClick={() => go(diffOpen ? "board" : "diff", view.lens)}
             aria-pressed={diffOpen}
             className={cn(
               "flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium transition-colors",
@@ -125,20 +144,15 @@ export function MainSurface({
             segments={views.map((v) => ({ label: v.segment, icon: v.icon }))}
             active={mapOpen || diffOpen || handoffOpen ? "" : active}
             onChange={(segment) => {
-              setMapOpen(false)
-              setDiffOpen(false)
-              setHandoffOpen(false)
-              setActive(segment)
+              const picked = views.find((v) => v.segment === segment) ?? views[0]
+              go("board", picked.lens)
             }}
           />
         </div>
         <div className="flex items-center gap-1 justify-self-end">
           <button
             type="button"
-            onClick={() => {
-              setHandoffOpen((open) => !open)
-              setMapOpen(false)
-            }}
+            onClick={() => go(handoffOpen ? "board" : "handoff", view.lens)}
             aria-pressed={handoffOpen}
             aria-label={ctaLabel}
             title={ctaLabel}

@@ -361,6 +361,15 @@ export function AppSidebar({
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
   }
 
+  // Keep the project holding the active session open so navigation (a minted
+  // new-chat row, a picked session) always lands on a visible, highlighted row.
+  React.useEffect(() => {
+    const activeProject = projects.find((p) => p.sessions.some((s) => s.active))
+    if (activeProject) {
+      setExpanded((prev) => (prev[activeProject.id] ? prev : { ...prev, [activeProject.id]: true }))
+    }
+  }, [projects])
+
   function beginRename(project: ProjectItem) {
     setRenameDraft(project.name)
     setRenamingId(project.id)
