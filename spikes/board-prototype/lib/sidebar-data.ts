@@ -48,7 +48,7 @@ export const hosts: HostItem[] = [
         // Session rows derive from the scenario registry (SCENARIOS.md):
         // each row lands with its scenario's build step, never before.
         sessions: [
-          { id: "s1", title: "Review Priya's auth refactor", time: "now", active: true, target: "teammate-pr", targetState: "needs-you" },
+          { id: "s1", title: "Review Priya's #439", time: "now", active: true, target: "teammate-pr", targetState: "needs-you" },
           { id: "s2", title: "Token refresh before the PR", time: "1h", target: "your-branch" },
           { id: "s3", title: "Token refresh proposal", time: "2d", target: "your-branch", pinned: true },
           { id: "s8", title: "Lens board palette spike", time: "3w", target: "your-branch", targetState: "reviewed", archived: true },

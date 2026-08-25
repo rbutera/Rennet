@@ -1,37 +1,37 @@
 /**
- * `teammate` (W3) — write the review on a teammate PR. Currently wraps the
- * pre-scenario demo content (Priya's auth refactor transcript + the change-A
- * lens fixtures); build step 5 replaces both with a real change-B pipeline
- * run and a grounded transcript (see SCENARIOS.md).
+ * `teammate` (W3) — write the review on a teammate PR. Change B: the REAL
+ * merged PR #439 (daemon-in-distro runtime), boards drafted by the actual
+ * lens pipeline (dual Flagged seats, adversarial verification, unslop pass),
+ * framed as authored by Priya (SCENARIOS.md: the one staged element).
  */
 
 import type { Scenario } from "./index"
-import { turns } from "@/lib/conversation-data"
-import { designBoard } from "@/lib/fixtures/design"
-import { sequenceBoard } from "@/lib/fixtures/sequence"
-import { decisionsBoard } from "@/lib/fixtures/decisions"
-import { flaggedBoard } from "@/lib/fixtures/flagged"
-import { noiseBoard } from "@/lib/fixtures/noise"
+import { teammateTranscript } from "./teammate-transcript"
+import { designBoardB } from "@/lib/fixtures/b/design"
+import { sequenceBoardB } from "@/lib/fixtures/b/sequence"
+import { decisionsBoardB } from "@/lib/fixtures/b/decisions"
+import { flaggedBoardB } from "@/lib/fixtures/b/flagged"
+import { noiseBoardB } from "@/lib/fixtures/b/noise"
 
 export const teammateScenario: Scenario = {
   id: "teammate",
   projectId: "p1",
   session: {
     id: "s1",
-    title: "Review Priya's auth refactor",
+    title: "Review Priya's #439",
     time: "now",
     active: true,
     target: "teammate-pr",
     targetState: "needs-you",
   },
   cta: "Write Review",
-  transcript: turns,
+  transcript: teammateTranscript,
   boards: {
-    design: designBoard,
-    sequence: sequenceBoard,
-    decisions: decisionsBoard,
-    flagged: flaggedBoard,
-    noise: noiseBoard,
+    design: designBoardB,
+    sequence: sequenceBoardB,
+    decisions: decisionsBoardB,
+    flagged: flaggedBoardB,
+    noise: noiseBoardB,
   },
-  handoff: { mode: "post-review", prLabel: "PR #434" },
+  handoff: { mode: "post-review", prLabel: "PR #439" },
 }
