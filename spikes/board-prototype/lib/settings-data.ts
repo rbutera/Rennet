@@ -1,5 +1,8 @@
 export type SettingsLayer = "builtin" | "detected" | "global" | "repo"
 
+/** Settings splits into pages; per-project and shortcuts grow large (#476). */
+export type SettingsPage = "machine" | "shortcuts" | "projects"
+
 export interface KeyCommand {
   id: string
   label: string
@@ -66,6 +69,42 @@ export const projectSettings: Record<string, ProjectSettings> = {
     locus: { value: "gpu-01", layer: "detected" },
     guidance: [],
   },
+}
+
+export interface WorktreeSettings {
+  /** Directory new worktrees are created under. */
+  root: string
+  /** Directory-name pattern; tokens resolve per session. */
+  pattern: string
+}
+
+export const defaultWorktrees: WorktreeSettings = {
+  root: "~/.rennet/worktrees",
+  pattern: "{project}-{branch}",
+}
+
+export interface WorktreeToken {
+  token: string
+  label: string
+  sample: string
+}
+
+/** Tokens the naming pattern understands, with sample values for the preview. */
+export const worktreeTokens: WorktreeToken[] = [
+  { token: "{project}", label: "project", sample: "" }, // sample = the project's name
+  { token: "{branch}", label: "branch", sample: "fix/session-scope" },
+  { token: "{pr}", label: "PR number", sample: "482" },
+  { token: "{user}", label: "user", sample: "rai" },
+  { token: "{date}", label: "date", sample: "2026-08-25" },
+]
+
+/** Resolve a pattern against sample values; slashes become dashes in dir names. */
+export function previewWorktreeName(pattern: string, projectName: string): string {
+  let out = pattern
+  for (const t of worktreeTokens) {
+    out = out.replaceAll(t.token, t.token === "{project}" ? projectName : t.sample)
+  }
+  return out.replaceAll("/", "-")
 }
 
 export interface HostSettings {

@@ -34,9 +34,15 @@ export interface Scenario {
 }
 
 import { teammateScenario } from "./teammate"
+import { proposeScenario } from "./propose"
+import { roundsScenario } from "./rounds"
+import { returnedScenario } from "./returned"
 
 export const scenarios: Record<string, Scenario> = {
   teammate: teammateScenario,
+  propose: proposeScenario,
+  rounds: roundsScenario,
+  returned: returnedScenario,
 }
 
 export const DEFAULT_SCENARIO: ScenarioId = "teammate"

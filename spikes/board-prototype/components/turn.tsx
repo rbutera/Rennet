@@ -23,7 +23,7 @@ export function Turn({
   if (isUser) {
     return (
       <div className="flex flex-col items-end gap-1">
-        <div className="max-w-[520px] rounded-lg bg-secondary px-3 py-2 font-prose text-[15px] leading-relaxed text-foreground/95">
+        <div className="max-w-[85%] rounded-lg bg-secondary px-3.5 py-2.5 font-prose text-[15px] leading-relaxed text-foreground/95">
           {turn.paragraphs.map((paragraph, index) => (
             <p key={index} className={index > 0 ? "mt-2" : undefined}>
               {paragraph}

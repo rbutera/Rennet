@@ -6,6 +6,7 @@ import { LocationTrail } from "@/components/location-trail"
 import { ConversationPane } from "@/components/conversation-pane"
 import { InputBar } from "@/components/input-bar"
 import { followUpExchanges, type TurnData } from "@/lib/conversation-data"
+import type { SessionItem } from "@/lib/sidebar-data"
 import type { ComposerBadge } from "@/lib/composer-badges"
 import { useCodeComments } from "@/components/code-comments"
 
@@ -17,10 +18,14 @@ export function ChatColumn({
   onCollapse,
   width = 420,
   transcript,
+  projectName,
+  session,
 }: {
   onCollapse: () => void
   width?: number
   transcript: TurnData[]
+  projectName: string
+  session: SessionItem
 }) {
   const [turns, setTurns] = useState<TurnData[]>(transcript)
 
@@ -101,7 +106,7 @@ export function ChatColumn({
       style={{ width }}
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
-        <LocationTrail />
+        <LocationTrail projectName={projectName} session={session} />
         <button
           type="button"
           onClick={onCollapse}

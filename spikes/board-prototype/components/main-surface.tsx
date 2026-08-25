@@ -23,6 +23,7 @@ import { LensBoardView } from "@/components/lens-board"
 import type { LensBoard } from "@/lib/lens-data"
 import type { LensId } from "@/lib/lens-data"
 import type { Scenario } from "@/lib/scenarios"
+import type { SessionItem } from "@/lib/sidebar-data"
 
 const LENS_SEGMENTS: { lens: LensId; segment: string; icon: LucideIcon }[] = [
   { lens: "design", segment: "Design", icon: DraftingCompass },
@@ -36,12 +37,15 @@ export function MainSurface({
   showLocationTrail,
   onExpandChat,
   scenario,
+  trail,
   onDispatchRound,
   onOpenPullRequest,
 }: {
   showLocationTrail: boolean
   onExpandChat: () => void
   scenario: Scenario
+  /** project + session behind the trail; falls back to the scenario fixture. */
+  trail?: { projectName: string; session: SessionItem }
   onDispatchRound?: () => void
   onOpenPullRequest?: () => void
 }) {
@@ -77,7 +81,10 @@ export function MainSurface({
               >
                 <PanelLeft className="size-3.5" aria-hidden="true" />
               </button>
-              <LocationTrail />
+              <LocationTrail
+                projectName={trail?.projectName ?? "rennet"}
+                session={trail?.session ?? scenario.session}
+              />
             </>
           )}
         </div>

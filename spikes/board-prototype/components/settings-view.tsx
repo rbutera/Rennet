@@ -1,15 +1,31 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, ChevronDown, Layers, Monitor, Plus, Server } from "lucide-react"
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  Keyboard,
+  Layers,
+  Monitor,
+  Plus,
+  RotateCcw,
+  Server,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { HostItem, ProjectItem } from "@/lib/sidebar-data"
+import { PROJECT_ICONS, ProjectIcon, type ProjectIconName } from "@/components/project-icon"
 import {
+  defaultWorktrees,
   type GuidanceRule,
   hostSettings,
   keyCommands,
+  previewWorktreeName,
   projectSettings,
   type SettingsLayer,
+  type SettingsPage,
+  worktreeTokens,
+  type WorktreeSettings,
 } from "@/lib/settings-data"
 import {
   Command,
@@ -23,24 +39,27 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 /**
  * Settings as a main-surface location (ticket #476): the chat column stays
- * alive beside it; view switcher + Hand off are hidden; back arrow / Esc
- * leave. Three scopes: client (this machine), project (repo ladder rows with
- * provenance), host (the daemon serving the selected project's source).
+ * alive beneath it; view switcher + Hand off are hidden; back arrow / Esc
+ * leave. Split into pages — This machine (client + hosts), Keyboard
+ * shortcuts, and Projects — because the per-project surface grows large.
  */
 export function SettingsView({
   hosts,
+  initialPage = "machine",
   activeProjectId,
   onClose,
+  onRenameProject,
+  onSetProjectIcon,
 }: {
   hosts: HostItem[]
+  initialPage?: SettingsPage
   activeProjectId: string
   onClose: () => void
+  onRenameProject: (projectId: string, name: string) => void
+  onSetProjectIcon: (projectId: string, icon: ProjectIconName) => void
 }) {
+  const [page, setPage] = React.useState<SettingsPage>(initialPage)
   const [projectId, setProjectId] = React.useState(activeProjectId)
-  const [scheme, setScheme] = React.useState<"system" | "dark" | "light">("system")
-  const [guidanceByProject, setGuidanceByProject] = React.useState<Record<string, GuidanceRule[]>>(
-    () => Object.fromEntries(Object.entries(projectSettings).map(([id, s]) => [id, s.guidance])),
-  )
 
   React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -52,8 +71,12 @@ export function SettingsView({
 
   const host = hosts.find((h) => h.projects.some((p) => p.id === projectId)) ?? hosts[0]
   const project = host.projects.find((p) => p.id === projectId) ?? host.projects[0]
-  const repo = projectSettings[project.id]
-  const guidance = guidanceByProject[project.id] ?? []
+
+  const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode }[] = [
+    { id: "machine", label: "This machine", icon: <Monitor className="size-3.5" aria-hidden="true" /> },
+    { id: "shortcuts", label: "Keyboard shortcuts", icon: <Keyboard className="size-3.5" aria-hidden="true" /> },
+    { id: "projects", label: "Projects", icon: <Layers className="size-3.5" aria-hidden="true" /> },
+  ]
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -72,130 +95,374 @@ export function SettingsView({
         </kbd>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 py-8">
-          <Section title="This machine" caption="~/.rennet/client-settings.json">
-            <Row label="Appearance">
-              <Segmented
-                options={["system", "dark", "light"]}
-                value={scheme}
-                onChange={(v) => setScheme(v as typeof scheme)}
-              />
-            </Row>
-            <Row label="Keyboard shortcuts" stacked>
-              <div className="flex flex-col">
-                {keyCommands.map((command) => (
-                  <div
-                    key={command.id}
-                    className="group flex h-8 items-center justify-between rounded-md px-2 hover:bg-secondary/50"
-                  >
-                    <span className="text-[13px] text-foreground/90">{command.label}</span>
-                    <span className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="hidden rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground group-hover:block"
-                      >
-                        Change
-                      </button>
-                      <kbd className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                        {command.keys}
-                      </kbd>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </Row>
-          </Section>
+      <div className="flex min-h-0 flex-1">
+        <nav className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-border px-2 py-4" aria-label="Settings pages">
+          {PAGES.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setPage(p.id)}
+              aria-current={page === p.id ? "page" : undefined}
+              className={cn(
+                "flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] transition-colors",
+                page === p.id
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+              )}
+            >
+              <span className={cn(page === p.id ? "text-foreground" : "text-muted-foreground")}>{p.icon}</span>
+              {p.label}
+            </button>
+          ))}
+        </nav>
 
-          <Section
-            title="Project"
-            titleExtra={
-              <ProjectPicker hosts={hosts} value={project} onChange={(p) => setProjectId(p.id)} />
-            }
-            caption={`.rennet/ in ${project.name}`}
-          >
-            <Row label="Review context" hint="whether .rennet is visible to git">
-              <LayerChip layer={repo.visibility.layer} />
-              <Segmented options={["local", "git-visible"]} value={repo.visibility.value} onChange={() => {}} />
-            </Row>
-            <Row label="Promotion" hint="review context committed and shared via the repo">
-              <span className="text-[12px] text-muted-foreground">
-                {repo.promoted ? "promoted" : "not promoted"}
-              </span>
-            </Row>
-            <Row label="Runs on" hint="where this project's commands run">
-              <LayerChip layer={repo.locus.layer} />
-              <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] text-foreground/90">
-                {host.kind === "local" ? (
-                  <Monitor className="size-3 text-muted-foreground" aria-hidden="true" />
-                ) : (
-                  <Server className="size-3 text-muted-foreground" aria-hidden="true" />
-                )}
-                {repo.locus.value}
-              </span>
-            </Row>
-            <Row label="Guidance" hint="repo rules the review agents read" stacked>
-              <GuidanceList
-                rules={guidance}
-                onChange={(rules) =>
-                  setGuidanceByProject((prev) => ({ ...prev, [project.id]: rules }))
-                }
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 py-8">
+            {page === "machine" && <MachinePage hosts={hosts} />}
+            {page === "shortcuts" && <ShortcutsPage />}
+            {page === "projects" && (
+              <ProjectsPage
+                hosts={hosts}
+                host={host}
+                project={project}
+                onProjectChange={(p) => setProjectId(p.id)}
+                onRenameProject={onRenameProject}
+                onSetProjectIcon={onSetProjectIcon}
               />
-            </Row>
-          </Section>
-
-          <Section title="Rennet hosts" caption="~/.rennet/daemon-settings.json on each host">
-            {hosts.map((h) => {
-              const daemon = hostSettings[h.id]
-              return (
-                <div key={h.id} className="flex flex-col gap-1 py-2.5">
-                  <div className="flex items-center gap-1.5">
-                    {h.kind === "local" ? (
-                      <Monitor className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                    ) : (
-                      <Server className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                    )}
-                    <span className="text-[13px] font-medium text-foreground">{h.label}</span>
-                  </div>
-                  <div className="flex min-h-8 items-center gap-3 pl-5">
-                    <span className="text-[13px] text-foreground/90">GitHub</span>
-                    <span className="ml-auto flex shrink-0 items-center gap-2">
-                      {daemon.github.connected ? (
-                        <>
-                          <span className="text-[13px] text-foreground/90">{daemon.github.account}</span>
-                          <button
-                            type="button"
-                            className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-                          >
-                            Disconnect
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-[12px] text-muted-foreground">not connected</span>
-                          <button
-                            type="button"
-                            className="rounded-md border border-border px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
-                          >
-                            Connect GitHub
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-                          >
-                            Use a token instead
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
-          </Section>
+            )}
+          </div>
         </div>
       </div>
     </div>
+  )
+}
+
+function MachinePage({ hosts }: { hosts: HostItem[] }) {
+  const [scheme, setScheme] = React.useState<"system" | "dark" | "light">("system")
+
+  return (
+    <>
+      <Section title="This machine" caption="~/.rennet/client-settings.json">
+        <Row label="Appearance">
+          <Segmented
+            options={["system", "dark", "light"]}
+            value={scheme}
+            onChange={(v) => setScheme(v as typeof scheme)}
+          />
+        </Row>
+      </Section>
+
+      <Section title="Rennet hosts" caption="~/.rennet/daemon-settings.json on each host">
+        {hosts.map((h) => {
+          const daemon = hostSettings[h.id] ?? { github: { connected: false as const } }
+          return (
+            <div key={h.id} className="flex flex-col gap-1 py-2.5">
+              <div className="flex items-center gap-1.5">
+                {h.kind === "local" ? (
+                  <Monitor className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                ) : (
+                  <Server className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                )}
+                <span className="text-[13px] font-medium text-foreground">{h.label}</span>
+              </div>
+              <div className="flex min-h-8 items-center gap-3 pl-5">
+                <span className="text-[13px] text-foreground/90">GitHub</span>
+                <span className="ml-auto flex shrink-0 items-center gap-2">
+                  {daemon.github.connected ? (
+                    <>
+                      <span className="text-[13px] text-foreground/90">{daemon.github.account}</span>
+                      <button
+                        type="button"
+                        className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      >
+                        Disconnect
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[12px] text-muted-foreground">not connected</span>
+                      <button
+                        type="button"
+                        className="rounded-md border border-border px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
+                      >
+                        Connect GitHub
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      >
+                        Use a token instead
+                      </button>
+                    </>
+                  )}
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </Section>
+    </>
+  )
+}
+
+function ShortcutsPage() {
+  const [filter, setFilter] = React.useState("")
+  const shown = keyCommands.filter((c) => c.label.toLowerCase().includes(filter.trim().toLowerCase()))
+
+  return (
+    <Section title="Keyboard shortcuts" caption="~/.rennet/client-settings.json">
+      <div className="py-2.5">
+        <input
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          onKeyDown={(event) => {
+            // Esc clears the filter before it can close settings.
+            if (event.key === "Escape" && filter) {
+              event.stopPropagation()
+              setFilter("")
+            }
+          }}
+          placeholder="Filter commands…"
+          className="w-full rounded-md border border-border bg-card px-2 py-1.5 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+        />
+      </div>
+      <div className="flex flex-col py-1.5">
+        {shown.map((command) => (
+          <div
+            key={command.id}
+            className="group flex h-8 items-center justify-between rounded-md px-2 hover:bg-secondary/50"
+          >
+            <span className="text-[13px] text-foreground/90">{command.label}</span>
+            <span className="flex items-center gap-2">
+              <button
+                type="button"
+                className="hidden rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground group-hover:block"
+              >
+                Change
+              </button>
+              <kbd className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                {command.keys}
+              </kbd>
+            </span>
+          </div>
+        ))}
+        {shown.length === 0 && (
+          <span className="px-2 py-2 text-[13px] text-muted-foreground">
+            No commands match “{filter.trim()}”.
+          </span>
+        )}
+      </div>
+    </Section>
+  )
+}
+
+function ProjectsPage({
+  hosts,
+  host,
+  project,
+  onProjectChange,
+  onRenameProject,
+  onSetProjectIcon,
+}: {
+  hosts: HostItem[]
+  host: HostItem
+  project: ProjectItem
+  onProjectChange: (project: ProjectItem) => void
+  onRenameProject: (projectId: string, name: string) => void
+  onSetProjectIcon: (projectId: string, icon: ProjectIconName) => void
+}) {
+  const repo = projectSettings[project.id] ?? {
+    visibility: { value: "local" as const, layer: "builtin" as const },
+    promoted: false,
+    locus: { value: host.label, layer: "detected" as const },
+    guidance: [],
+  }
+  const [guidanceByProject, setGuidanceByProject] = React.useState<Record<string, GuidanceRule[]>>(
+    () => Object.fromEntries(Object.entries(projectSettings).map(([id, s]) => [id, s.guidance])),
+  )
+  const guidance = guidanceByProject[project.id] ?? []
+
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <span className="text-[15px] font-medium text-foreground">Project</span>
+        <ProjectPicker hosts={hosts} value={project} onChange={onProjectChange} />
+      </div>
+
+      <IdentitySection
+        project={project}
+        onRenameProject={onRenameProject}
+        onSetProjectIcon={onSetProjectIcon}
+      />
+
+      <WorktreeSection project={project} />
+
+      <Section title="Repository" caption={`.rennet/ in ${project.name}`}>
+        <Row label="Review context" hint="whether .rennet is visible to git">
+          <LayerChip layer={repo.visibility.layer} />
+          <Segmented options={["local", "git-visible"]} value={repo.visibility.value} onChange={() => {}} />
+        </Row>
+        <Row label="Promotion" hint="review context committed and shared via the repo">
+          <span className="text-[12px] text-muted-foreground">
+            {repo.promoted ? "promoted" : "not promoted"}
+          </span>
+        </Row>
+        <Row label="Runs on" hint="where this project's commands run">
+          <LayerChip layer={repo.locus.layer} />
+          <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] text-foreground/90">
+            {host.kind === "local" ? (
+              <Monitor className="size-3 text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <Server className="size-3 text-muted-foreground" aria-hidden="true" />
+            )}
+            {repo.locus.value}
+          </span>
+        </Row>
+      </Section>
+
+      <Section title="Guidance" caption={`.rennet/ in ${project.name}`}>
+        <Row label="Rules" hint="repo rules the review agents read" stacked>
+          <GuidanceList
+            rules={guidance}
+            onChange={(rules) =>
+              setGuidanceByProject((prev) => ({ ...prev, [project.id]: rules }))
+            }
+          />
+        </Row>
+      </Section>
+    </>
+  )
+}
+
+function IdentitySection({
+  project,
+  onRenameProject,
+  onSetProjectIcon,
+}: {
+  project: ProjectItem
+  onRenameProject: (projectId: string, name: string) => void
+  onSetProjectIcon: (projectId: string, icon: ProjectIconName) => void
+}) {
+  const selectedIcon = project.icon ?? "layers"
+  const renamed = project.name !== project.repo
+
+  return (
+    <Section title="Identity" caption="~/.rennet/client-settings.json">
+      <Row label="Name" hint={`defaults to ${project.repo}`}>
+        {renamed && (
+          <button
+            type="button"
+            onClick={() => onRenameProject(project.id, project.repo)}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+          >
+            <RotateCcw className="size-3" aria-hidden="true" />
+            Reset
+          </button>
+        )}
+        <input
+          value={project.name}
+          onChange={(event) => onRenameProject(project.id, event.target.value)}
+          onBlur={(event) => {
+            if (!event.target.value.trim()) onRenameProject(project.id, project.repo)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation()
+              event.currentTarget.blur()
+            }
+          }}
+          aria-label="Project name"
+          placeholder={project.repo}
+          className="w-56 rounded-md border border-border bg-card px-2 py-1.5 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+        />
+      </Row>
+      <Row label="Icon" hint="shown next to the project in the sidebar" stacked>
+        <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Project icon">
+          {(Object.keys(PROJECT_ICONS) as ProjectIconName[]).map((name) => (
+            <button
+              key={name}
+              type="button"
+              role="radio"
+              aria-checked={name === selectedIcon}
+              aria-label={name}
+              title={name}
+              onClick={() => onSetProjectIcon(project.id, name)}
+              className={cn(
+                "flex size-8 items-center justify-center rounded-md border transition-colors",
+                name === selectedIcon
+                  ? "border-ring bg-secondary text-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+              )}
+            >
+              <ProjectIcon icon={name} className="size-4" />
+            </button>
+          ))}
+        </div>
+      </Row>
+    </Section>
+  )
+}
+
+function WorktreeSection({ project }: { project: ProjectItem }) {
+  // Prototype-local state; per-project overrides over the client defaults.
+  const [byProject, setByProject] = React.useState<Record<string, WorktreeSettings>>({})
+  const settings = byProject[project.id] ?? defaultWorktrees
+  const patch = (next: Partial<WorktreeSettings>) =>
+    setByProject((prev) => ({ ...prev, [project.id]: { ...settings, ...next } }))
+
+  const root = settings.root.replace(/\/+$/, "")
+  const preview = `${root}/${previewWorktreeName(settings.pattern, project.name)}`
+
+  const stopEscape = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.stopPropagation()
+      ;(event.currentTarget as HTMLElement).blur()
+    }
+  }
+
+  return (
+    <Section title="Worktrees" caption="~/.rennet/client-settings.json">
+      <Row label="Location" hint="new worktrees for this project are created here" stacked>
+        <input
+          value={settings.root}
+          onChange={(event) => patch({ root: event.target.value })}
+          onKeyDown={stopEscape}
+          aria-label="Worktree location"
+          spellCheck={false}
+          className="w-full rounded-md border border-border bg-card px-2 py-1.5 font-mono text-[12px] text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+        />
+      </Row>
+      <Row label="Naming" hint="how each worktree folder is named" stacked>
+        <input
+          value={settings.pattern}
+          onChange={(event) => patch({ pattern: event.target.value })}
+          onKeyDown={stopEscape}
+          aria-label="Worktree naming pattern"
+          spellCheck={false}
+          className="w-full rounded-md border border-border bg-card px-2 py-1.5 font-mono text-[12px] text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+        />
+        <div className="flex flex-wrap items-center gap-1">
+          {worktreeTokens.map((t) => (
+            <button
+              key={t.token}
+              type="button"
+              onClick={() => patch({ pattern: settings.pattern + t.token })}
+              title={`Insert ${t.token}`}
+              className="flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <span className="font-mono">{t.token}</span>
+              <span className="text-muted-foreground/60">{t.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex items-baseline gap-2 rounded-md bg-secondary/40 px-2 py-1.5">
+          <span className="shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground/70">
+            Preview
+          </span>
+          <span className="truncate font-mono text-[12px] text-foreground/90">{preview}</span>
+        </div>
+      </Row>
+    </Section>
   )
 }
 
@@ -460,7 +727,7 @@ export function ProjectPicker({
             type="button"
             className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[13px] font-normal text-foreground/90 hover:bg-secondary"
           >
-            <Layers className="size-3.5 text-muted-foreground" aria-hidden="true" />
+            <ProjectIcon icon={value.icon} className="size-3.5 text-muted-foreground" />
             {value.name}
             <ChevronDown className="size-3 text-muted-foreground" aria-hidden="true" />
           </button>
@@ -481,7 +748,7 @@ export function ProjectPicker({
                       setOpen(false)
                     }}
                   >
-                    <Layers className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    <ProjectIcon icon={project.icon} className="size-3.5 text-muted-foreground" />
                     <span className="flex-1">{project.name}</span>
                     {project.id === value.id && <Check className="size-3.5" aria-hidden="true" />}
                   </CommandItem>

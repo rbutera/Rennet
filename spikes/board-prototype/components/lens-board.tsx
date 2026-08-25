@@ -425,17 +425,19 @@ function Element({ element }: { element: BoardElement }) {
                 ))}
               </ul>
             )}
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-              <CoverageChip status={element.status} coverage={element.coverage} />
-              {element.refs?.map((ref) => (
-                <span
-                  key={ref}
-                  className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
-                >
-                  {ref}
-                </span>
-              ))}
-            </div>
+            {(element.coverage || (element.refs && element.refs.length > 0)) && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <CoverageChip status={element.status} coverage={element.coverage} />
+                {element.refs?.map((ref) => (
+                  <span
+                    key={ref}
+                    className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                  >
+                    {ref}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )
@@ -583,9 +585,12 @@ function CoverageChip({
   status,
   coverage,
 }: {
-  status: "covered" | "partial" | "unimplemented"
-  coverage: { hunks: number; tests: number }
+  status?: "covered" | "partial" | "unimplemented"
+  coverage?: { hunks: number; tests: number }
 }) {
+  // No coverage = no relation to render (proposal-stage board: coverage is a
+  // relation to an implementation patchset, and none exists).
+  if (!coverage) return null
   const label =
     status === "unimplemented"
       ? `unimplemented · ${coverage.hunks} hunks`

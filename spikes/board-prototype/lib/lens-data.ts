@@ -121,8 +121,9 @@ export type BoardElement =
       /** Delta state from the change spec (ADDED/MODIFIED/REMOVED headers). */
       delta?: "added" | "modified" | "removed"
       text: string
-      status: "covered" | "partial" | "unimplemented"
-      coverage: { hunks: number; tests: number }
+      /** Coverage relates a requirement to an implementation patchset; a proposal-stage board has none, so both are optional. */
+      status?: "covered" | "partial" | "unimplemented"
+      coverage?: { hunks: number; tests: number }
       scenarios?: string[]
       /** Related file chips beside the coverage chip (e.g. the claiming test file). */
       refs?: string[]

@@ -131,7 +131,7 @@ export function DirectoryBrowser({
       <div
         role="listbox"
         aria-label="Directories"
-        className="flex max-h-64 flex-col gap-0.5 overflow-y-auto rounded-md border border-border p-1"
+        className="flex max-h-[min(45dvh,24rem)] min-h-32 flex-col gap-0.5 overflow-y-auto rounded-md border border-border p-1"
       >
         {showEmpty ? (
           <div className="px-3 py-6 text-center text-[13px] text-muted-foreground">No folders here</div>
@@ -147,7 +147,7 @@ export function DirectoryBrowser({
                 rowRefs.current[index] = node
               }}
               className={cn(
-                "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "flex items-center gap-2 rounded-md px-2 py-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring sm:py-1.5",
                 entry.unreadable
                   ? "cursor-not-allowed text-muted-foreground/50"
                   : "cursor-pointer text-foreground/90 hover:bg-secondary/60",

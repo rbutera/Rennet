@@ -87,7 +87,7 @@ export function InputBar({
 
   return (
     <div className="shrink-0 border-t border-border bg-background px-4 py-3">
-      <div className="mx-auto flex max-w-3xl flex-col gap-2">
+      <div className="mx-auto flex max-w-[720px] flex-col gap-2 px-1">
         {badges.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
             {badges.map((badge) => (
