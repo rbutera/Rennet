@@ -71,7 +71,8 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
       for (const ask of fresh) next.add(ask.id)
       return next
     })
-    setWorking(`reworking — staged ${fresh[fresh.length - 1].intent.replace("-", " ")}: ${fresh[fresh.length - 1].source}`)
+    const latest = fresh[fresh.length - 1]
+    setWorking(`Reworking the draft — ${latest.intent === "request-change" ? "request change" : "comment"} from ${latest.source}`)
     const timer = window.setTimeout(() => {
       setWorking(null)
       setStreamingIds(new Set())
@@ -98,7 +99,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
     const ask = findAskByQuote(quote)
     if (!ask) return
     setStreamingIds(new Set([ask.id]))
-    setWorking(`reworking — your note: ${instruction}`)
+    setWorking(`Reworking the draft — your note: “${instruction}”`)
     window.setTimeout(() => {
       setRevisions((previous) => ({ ...previous, [ask.id]: applyRevision(blockText(ask), instruction) }))
       setStreamingIds(new Set())
@@ -239,7 +240,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
         </div>
 
         {/* Drafting activity feed */}
-        {!preview && (
+        {!preview && (working !== null || activity.length > 0) && (
           <div className="flex flex-col rounded-md border border-border">
             <button
               type="button"

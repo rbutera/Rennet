@@ -118,7 +118,8 @@ export function ProseSelectionLayer({
     if (text.length === 0) return
     const id = store.addQuoteComment(anchor.quote, text)
     store.addQuoteReply(id, "orchestrator", "Staged as a request-change; it will appear in the review draft.")
-    store.stageAsk(text, "request-change", `"${anchor.quote.slice(0, 48)}…"`)
+    const quoteWords = anchor.quote.split(/\s+/).slice(0, 6).join(" ")
+    store.stageAsk(text, "request-change", `your highlight “${quoteWords}…”`)
     store.focusThread(id)
     window.getSelection()?.removeAllRanges()
     dismiss()
