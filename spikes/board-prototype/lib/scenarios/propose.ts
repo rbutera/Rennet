@@ -101,6 +101,7 @@ export const proposeScenario: Scenario = {
     title: "Token refresh proposal",
     time: "2d",
     target: "your-branch",
+    pinned: true,
   },
   cta: "Continue",
   transcript,

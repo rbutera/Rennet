@@ -1,6 +1,5 @@
 "use client"
 
-import * as React from "react"
 import { ArrowLeft, ChevronRight, GitBranch, GitPullRequest } from "lucide-react"
 import { InputBar } from "@/components/input-bar"
 import { MainSurface } from "@/components/main-surface"
@@ -10,36 +9,36 @@ import { RunView } from "@/components/run-view"
 import { TargetBadge, type TargetState } from "@/components/target-badge"
 import type { ComposerBadge } from "@/lib/composer-badges"
 import type { TargetKind } from "@/lib/target-language"
+import { useAppStore } from "@/lib/store"
 
 /**
  * A just-started review session: blank chat shell on the left, and the right
  * pane is a placeholder for the loading-context / lenses view (its own story,
- * designed next). Entered from the New chat page by picking a target.
+ * designed next). Entered from the New chat page by picking a target. Turns,
+ * boardsReady, and chat width live in the store so they survive navigation.
  */
 export function SessionView({
   projectName,
   targetLabel,
   targetKind,
   badge,
-  initialMessage,
   onBack,
-  chatWidth,
-  onChatWidthChange,
 }: {
   projectName: string
   targetLabel: string
   targetKind: "pr" | "branch"
   badge: { kind: TargetKind; state?: TargetState }
-  initialMessage?: string
   onBack: () => void
-  chatWidth: number
-  onChatWidthChange: (width: number) => void
 }) {
-  const [turns, setTurns] = React.useState<string[]>(initialMessage ? [initialMessage] : [])
-  const [boardsReady, setBoardsReady] = React.useState(false)
+  const turns = useAppStore((s) => s.sessionTurns)
+  const boardsReady = useAppStore((s) => s.boardsReady)
+  const chatWidth = useAppStore((s) => s.chatWidth)
+  const appendSessionTurn = useAppStore((s) => s.appendSessionTurn)
+  const setBoardsReady = useAppStore((s) => s.setBoardsReady)
+  const onChatWidthChange = useAppStore((s) => s.setChatWidth)
 
   function handleSend(message: string) {
-    setTurns((prev) => [...prev, message])
+    appendSessionTurn(message)
   }
 
   const noBadges: ComposerBadge[] = []

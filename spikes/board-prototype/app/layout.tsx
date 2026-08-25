@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { DM_Sans, Fraunces, Source_Serif_4 } from 'next/font/google'
 import './globals.css'
+import { Shell } from '@/components/shell'
 
 const dmSans = DM_Sans({ subsets: ['latin'], variable: '--font-dm-sans' })
 const fraunces = Fraunces({ subsets: ['latin'], variable: '--font-fraunces' })
@@ -30,7 +31,9 @@ export default function RootLayout({
       lang="en"
       className={`dark bg-background ${dmSans.variable} ${fraunces.variable} ${sourceSerif.variable}`}
     >
-      <body className="antialiased font-sans">{children}</body>
+      <body className="antialiased font-sans">
+        <Shell>{children}</Shell>
+      </body>
     </html>
   )
 }
