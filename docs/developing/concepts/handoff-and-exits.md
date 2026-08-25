@@ -48,9 +48,12 @@ own branch or PR it reads **Continue** (the rounds loop keeps going). Its
 lanes depend on the entry mode:
 
 - **Teammate PR** — one lane: *Post review*. Work orders are own-branch only.
-- **Own branch** — two lanes: *This round* (the work order now gathering) and
-  *The pull request* (the destination, always visible, its description
-  ripening across rounds).
+- **Own branch** — one goal with two states, and the page's shape states
+  which one holds: while asks remain the surface is **Changes** (one card per
+  ask, Dispatch Round) and the pull request is a single muted destination
+  line; when nothing is left to ask, the surface IS the pull request — title,
+  drafted description, Open Pull Request. Primacy flips with the state;
+  nothing explains the flip.
 - **Retrospective** — no exits.
 
 ## Living drafts
@@ -92,7 +95,7 @@ and one direct Post — no holds, no consent ceremony.
 
 ## Rounds: the own-branch loop
 
-1. Gather asks into *This round*.
+1. Gather asks into *Changes*.
 2. Dispatch — one round at a time, one worker in a detached worktree; asks
    gathered mid-run queue for the next round.
 3. Watch the run live.

@@ -12,9 +12,9 @@ and root `CONTEXT.md` (Session targets, Review model).
 | id | flow | project · target | entry | lenses | hand-off lanes | CTA (R35) | starts in |
 |---|---|---|---|---|---|---|---|
 | `teammate` | W3 | rennet · **Teammate PR** (Priya, Needs you) | sidebar session (default active) or smart-list PR row | all five | Post Review (one lane) | **Write Review** | boards ready, mid-review, 0 asks |
-| `rounds` | W1a | rennet · **Your branch** `fix/token-refresh-observability` | sidebar session or smart-list local row | all five (generation 1) | This Round + The Pull Request | **Continue · 2** | mid-review, 2 asks staged from real findings, round not yet dispatched |
+| `rounds` | W1a | rennet · **Your branch** `fix/token-refresh-observability` | sidebar session or smart-list local row | all five (generation 1) | Changes → the Pull Request | **Continue · 2** | mid-review, 2 asks staged from real findings, round not yet dispatched |
 | `returned` | W1b | same branch, after round 1 | drive `rounds` through its round, or `?scenario=returned` deep link | generation 2 (delta-marked) + generation 1 frozen | This Round (empty, gathering) + The Pull Request (ripe) | **Continue** | successor summary greeting on screen |
-| `propose` | W2 | rennet · **Your branch**, spec only (2d-old session, same change pre-implementation) | sidebar session | **Design only** | This Round + The Pull Request | **Continue** | Design board ready, proposal untouched |
+| `propose` | W2 | rennet · **Your branch**, spec only (2d-old session, same change pre-implementation) | sidebar session | **Design only** | Changes → the Pull Request | **Continue** | Design board ready, proposal untouched |
 
 Diff is no segment in this table: it is the always-present raw-source toggle
 beside Map (2026-08-25 ruling, issue #475; `components/diff-view.tsx`).
@@ -97,10 +97,10 @@ carried-forward blocks hydrate.
   (real content) → two staging receipt lines ("Staged · request change · …" —
   receipt is the undo, R29).
 - **Hand-off (new build — the R34 rounds lane)**: own-branch mode with two
-  lanes. **This Round**: the gathering work order (living draft composed from
-  the two asks, same steering verbs — Revise / Drop / Explain). **The Pull
-  Request**: always visible, ripening — its drafted title/body converge on the
-  real #438 PR description. Primary action in This Round: **Dispatch Round**.
+  lanes. **Changes**: one card per staged ask (same steering verbs — Revise / Drop /
+  Explain), primary action **Dispatch Round**; the pull request is one muted
+  destination line until the asks are gone, at which point the surface IS the
+  PR (R37).
 
 ### `returned` (W1b) — round 1 came back
 
