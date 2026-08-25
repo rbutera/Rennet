@@ -158,19 +158,20 @@
   --rn-shadow-overlay: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
   --rn-scrim: #0e0d0c;
 
-  --shiki-foreground: var(--rn-ink);
-  --shiki-token-comment: var(--rn-syn-cmt);
-  --shiki-token-keyword: var(--rn-syn-kw);
-  --shiki-token-string: var(--rn-syn-str);
-  --shiki-token-string-expression: var(--rn-syn-str);
-  --shiki-token-function: var(--rn-syn-fn);
-  --shiki-token-constant: var(--rn-syn-num);
-  --shiki-token-parameter: var(--rn-syn-var);
-  --shiki-token-punctuation: var(--rn-ink-faint);
-  --shiki-token-link: var(--rn-accent);
-  --shiki-token-inserted: var(--rn-add-ink);
-  --shiki-token-deleted: var(--rn-del-ink);
-  --shiki-token-changed: var(--rn-syn-num);
+  /* code syntax keeps the prototype's original neutral set, not --rn-syn-* */
+  --shiki-foreground: oklch(0.32 0.006 250);
+  --shiki-token-comment: oklch(0.56 0 0);
+  --shiki-token-keyword: oklch(0.45 0.14 195);
+  --shiki-token-string: oklch(0.42 0.1 150);
+  --shiki-token-string-expression: oklch(0.42 0.1 150);
+  --shiki-token-function: oklch(0.42 0.12 260);
+  --shiki-token-constant: oklch(0.5 0.13 55);
+  --shiki-token-parameter: oklch(0.32 0.006 250);
+  --shiki-token-punctuation: oklch(0.5 0 0);
+  --shiki-token-link: oklch(0.45 0.14 195);
+  --shiki-token-inserted: oklch(0.42 0.1 150);
+  --shiki-token-deleted: oklch(0.577 0.245 27.325);
+  --shiki-token-changed: oklch(0.5 0.13 55);
 }
 
 .dark {
@@ -215,6 +216,20 @@
   --rn-syn-var: #d9a77a;
   --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
   --rn-scrim: #0e0d0c;
+
+  --shiki-foreground: oklch(0.88 0.004 250);
+  --shiki-token-comment: oklch(0.5 0.01 250);
+  --shiki-token-keyword: oklch(0.74 0.12 195);
+  --shiki-token-string: oklch(0.78 0.09 150);
+  --shiki-token-string-expression: oklch(0.78 0.09 150);
+  --shiki-token-function: oklch(0.8 0.09 250);
+  --shiki-token-constant: oklch(0.82 0.11 70);
+  --shiki-token-parameter: oklch(0.82 0.02 250);
+  --shiki-token-punctuation: oklch(0.6 0.01 250);
+  --shiki-token-link: oklch(0.74 0.12 195);
+  --shiki-token-inserted: oklch(0.78 0.09 150);
+  --shiki-token-deleted: oklch(0.65 0.19 25);
+  --shiki-token-changed: oklch(0.82 0.11 70);
 }
 
 @layer base {
