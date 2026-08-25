@@ -70,6 +70,7 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
   function startThread(opener: string) {
     if (!anchor || !store) return
     const id = store.addQuoteComment(anchor.quote, opener)
+    store.focusThread(id)
     const reply = nextCannedReply()
     window.setTimeout(() => store.addQuoteReply(id, "orchestrator", reply), 1100)
     window.getSelection()?.removeAllRanges()

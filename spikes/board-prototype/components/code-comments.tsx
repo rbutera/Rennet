@@ -31,6 +31,9 @@ interface CodeCommentsStore {
   addQuoteComment: (quote: string, text: string) => string
   addQuoteReply: (id: string, author: "user" | "orchestrator", text: string) => void
   removeQuoteComment: (id: string) => void
+  /** Thread to auto-open (set on creation so the tooltip shows immediately). */
+  focusedThreadId: string | null
+  focusThread: (id: string | null) => void
   clear: () => void
 }
 
@@ -39,6 +42,7 @@ const CodeCommentsContext = React.createContext<CodeCommentsStore | null>(null)
 export function CodeCommentsProvider({ children }: { children: React.ReactNode }) {
   const [comments, setComments] = React.useState<CodeComments>({})
   const [quoteComments, setQuoteComments] = React.useState<QuoteComment[]>([])
+  const [focusedThreadId, setFocusedThreadId] = React.useState<string | null>(null)
 
   const setComment = React.useCallback((path: string, line: number, text: string | null) => {
     setComments((previous) => {
@@ -81,14 +85,27 @@ export function CodeCommentsProvider({ children }: { children: React.ReactNode }
     setQuoteComments((previous) => previous.filter((entry) => entry.id !== id))
   }, [])
 
+  const focusThread = React.useCallback((id: string | null) => setFocusedThreadId(id), [])
+
   const clear = React.useCallback(() => {
     setComments({})
     setQuoteComments([])
+    setFocusedThreadId(null)
   }, [])
 
   const store = React.useMemo(
-    () => ({ comments, quoteComments, setComment, addQuoteComment, addQuoteReply, removeQuoteComment, clear }),
-    [comments, quoteComments, setComment, addQuoteComment, addQuoteReply, removeQuoteComment, clear],
+    () => ({
+      comments,
+      quoteComments,
+      setComment,
+      addQuoteComment,
+      addQuoteReply,
+      removeQuoteComment,
+      focusedThreadId,
+      focusThread,
+      clear,
+    }),
+    [comments, quoteComments, setComment, addQuoteComment, addQuoteReply, removeQuoteComment, focusedThreadId, focusThread, clear],
   )
 
   return <CodeCommentsContext.Provider value={store}>{children}</CodeCommentsContext.Provider>

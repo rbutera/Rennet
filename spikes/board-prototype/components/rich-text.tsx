@@ -131,6 +131,13 @@ function QuoteHighlight({ thread, children }: { thread: QuoteComment; children: 
   const store = useCodeComments()
 
   React.useEffect(() => {
+    if (store?.focusedThreadId === thread.id) {
+      setOpen(true)
+      store.focusThread(null)
+    }
+  }, [store, thread.id])
+
+  React.useEffect(() => {
     if (!open) return
     function handleMouseDown(event: MouseEvent) {
       if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false)
@@ -157,17 +164,27 @@ function QuoteHighlight({ thread, children }: { thread: QuoteComment; children: 
 
   return (
     <span ref={wrapperRef} className="relative">
-      <button
-        type="button"
+      {/* role=button span, not <button>: the highlighted prose can itself
+          contain citation-chip buttons, and nested buttons are invalid HTML
+          (hydration errors, flaky clicks). */}
+      <span
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault()
+            setOpen((value) => !value)
+          }
+        }}
         title="View thread"
         className={cn(
-          "rounded-sm bg-primary/10 px-0.5 text-left text-inherit shadow-[inset_0_-1.5px_0_0] shadow-primary/50 transition-colors [box-decoration-break:clone]",
+          "cursor-pointer rounded-sm bg-primary/10 px-0.5 shadow-[inset_0_-1.5px_0_0] shadow-primary/50 transition-colors [box-decoration-break:clone]",
           open ? "bg-primary/25" : "hover:bg-primary/20",
         )}
       >
         {children}
-      </button>
+      </span>
       {open && (
         <span className="absolute bottom-full left-0 z-50 mb-1.5 block w-[360px] cursor-auto rounded-md border border-border bg-popover p-2.5 font-sans not-italic shadow-lg">
           <span className="mb-1.5 flex flex-col gap-1.5">
