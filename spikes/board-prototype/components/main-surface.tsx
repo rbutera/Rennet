@@ -95,7 +95,7 @@ export function MainSurface({
                 : "bg-primary text-primary-foreground hover:bg-primary/90",
             )}
           >
-            Hand off{askCount > 0 ? ` · ${askCount}` : ""}
+            Post review{askCount > 0 ? ` · ${askCount}` : ""}
           </button>
         </div>
       </header>

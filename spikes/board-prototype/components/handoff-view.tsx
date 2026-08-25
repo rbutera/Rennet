@@ -241,29 +241,51 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
         )}
 
         {/* Verdict */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Verdict</span>
-          {(["Approve", "Request changes", "Comment"] as Verdict[]).map((option) => (
-            <button
-              key={option}
-              type="button"
-              disabled={preview}
-              onClick={() => setOverride(option === derived ? null : option)}
-              className={cn(
-                "rounded-md px-2 py-1 text-[12px] transition-colors",
-                option === verdict
-                  ? "bg-secondary font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-                preview && option !== verdict && "opacity-40",
-              )}
-            >
-              {option}
-            </button>
-          ))}
-          <span className="text-[11.5px] text-muted-foreground/80">
-            {override
-              ? "overridden by you"
-              : `proposed · ${requestChangeCount} request-change · ${commentCount} comment`}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[12px] text-muted-foreground">Verdict</span>
+          <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
+            {(["Approve", "Request changes", "Comment"] as Verdict[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                disabled={preview}
+                onClick={() => setOverride(option === derived ? null : option)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] transition-colors",
+                  option === verdict
+                    ? "bg-secondary font-medium text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                  preview && option !== verdict && "opacity-40",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    option === "Approve" && "bg-emerald-500",
+                    option === "Request changes" && "bg-amber-500",
+                    option === "Comment" && "bg-muted-foreground/50",
+                    option !== verdict && "opacity-40",
+                  )}
+                />
+                {option}
+              </button>
+            ))}
+          </div>
+          <span className="text-[12px] text-muted-foreground/80">
+            {override ? (
+              <>
+                overridden — proposed {derived.toLowerCase()}{" "}
+                <button
+                  type="button"
+                  onClick={() => setOverride(null)}
+                  className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                >
+                  use proposal
+                </button>
+              </>
+            ) : (
+              `proposed from your review · ${requestChangeCount} request change${requestChangeCount === 1 ? "" : "s"} · ${commentCount} comment${commentCount === 1 ? "" : "s"}`
+            )}
           </span>
         </div>
 
