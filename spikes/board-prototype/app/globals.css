@@ -15,7 +15,8 @@
   --font-serif: var(--rn-font-serif);
   --font-display: var(--rn-font-display);
   --font-mono: var(--rn-font-mono);
-  --font-prose: var(--rn-font-serif);
+  /* chat + prose runs sans; flip back to --rn-font-serif to try serif body */
+  --font-prose: var(--rn-font-sans);
 
   /* Rennet vocabulary */
   --color-canvas: var(--rn-canvas);
@@ -156,31 +157,21 @@
   --rn-syn-prop: #6e5a2f;
   --rn-syn-var: #8a5a1e;
   --rn-shadow-overlay: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
-  --rn-scrim: #0e0d0c;
+  --rn-scrim: #0a0a0a;
 
-  /* code syntax keeps the prototype's original neutral set, not --rn-syn-* */
-  --shiki-foreground: oklch(0.32 0.006 250);
-  --shiki-token-comment: oklch(0.56 0 0);
-  --shiki-token-keyword: oklch(0.45 0.14 195);
-  --shiki-token-string: oklch(0.42 0.1 150);
-  --shiki-token-string-expression: oklch(0.42 0.1 150);
-  --shiki-token-function: oklch(0.42 0.12 260);
-  --shiki-token-constant: oklch(0.5 0.13 55);
-  --shiki-token-parameter: oklch(0.32 0.006 250);
-  --shiki-token-punctuation: oklch(0.5 0 0);
-  --shiki-token-link: oklch(0.45 0.14 195);
-  --shiki-token-inserted: oklch(0.42 0.1 150);
-  --shiki-token-deleted: oklch(0.577 0.245 27.325);
-  --shiki-token-changed: oklch(0.5 0.13 55);
 }
 
 .dark {
   color-scheme: dark;
-  --rn-canvas: #0e0d0c;
-  --rn-surface: #151413;
-  --rn-raised: #1b1a18;
-  --rn-overlay: #090807;
-  --rn-code: #0a0909;
+  /* grounds: conventional neutral near-black (canvas = Tailwind neutral-950),
+   * desaturated from the warm palette.css originals after in-practice review —
+   * the warm cast read as too saturated and too bright at canvas size. Ink,
+   * lines, and accents keep the warm cast. */
+  --rn-canvas: #0a0a0a;
+  --rn-surface: #131313;
+  --rn-raised: #1a1a1a;
+  --rn-overlay: #060606;
+  --rn-code: #070707;
   --rn-ink: #f2ede4;
   --rn-ink-soft: #a9a196;
   --rn-ink-faint: #948d80;
@@ -215,21 +206,7 @@
   --rn-syn-prop: #cbb98f;
   --rn-syn-var: #d9a77a;
   --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
-  --rn-scrim: #0e0d0c;
-
-  --shiki-foreground: oklch(0.88 0.004 250);
-  --shiki-token-comment: oklch(0.5 0.01 250);
-  --shiki-token-keyword: oklch(0.74 0.12 195);
-  --shiki-token-string: oklch(0.78 0.09 150);
-  --shiki-token-string-expression: oklch(0.78 0.09 150);
-  --shiki-token-function: oklch(0.8 0.09 250);
-  --shiki-token-constant: oklch(0.82 0.11 70);
-  --shiki-token-parameter: oklch(0.82 0.02 250);
-  --shiki-token-punctuation: oklch(0.6 0.01 250);
-  --shiki-token-link: oklch(0.74 0.12 195);
-  --shiki-token-inserted: oklch(0.78 0.09 150);
-  --shiki-token-deleted: oklch(0.65 0.19 25);
-  --shiki-token-changed: oklch(0.82 0.11 70);
+  --rn-scrim: #0a0a0a;
 }
 
 @layer base {
@@ -239,6 +216,16 @@
   html,
   body {
     @apply h-full overflow-hidden bg-background text-foreground;
+  }
+  /* Lens/board headings take the display serif. A base rule (not per-component
+   * classes) keeps component files untouched while main is under refactor;
+   * chat markdown renders no h1–h3, and h4+ label-size headings stay sans. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--rn-font-display);
+    font-weight: 500;
+    letter-spacing: -0.015em;
   }
 }
 
