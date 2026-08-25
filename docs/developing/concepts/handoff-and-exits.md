@@ -107,7 +107,7 @@ and one direct Post — no holds, no consent ceremony.
    and changes are marked natively. The prior generation freezes as
    drill-down. Asks, threads, and highlights re-anchor by quote match;
    casualties land in the Detached list.
-6. Repeat until nothing is left to ask. The PR lane has ripened the whole
-   time — one action pushes the branch and opens the pull request,
-   idempotently. After the PR exists, rounds continue identically; there is
-   no self-review lane on one's own pull request.
+6. Repeat until nothing is left to ask. The surface becomes the pull
+   request — one action pushes the branch and opens it, idempotently. After
+   the PR exists, rounds continue identically; there is no self-review lane
+   on one's own pull request.
