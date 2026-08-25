@@ -37,6 +37,10 @@ export function MainSurface({
   const [handoffOpen, setHandoffOpen] = useState(false)
   const store = useCodeComments()
   const askCount = store?.asks.length ?? 0
+  // The CTA names the job per review target (R35): a teammate PR concludes in
+  // a review written under your name; your own branch/PR continues in rounds.
+  // This demo session reviews a teammate PR.
+  const ctaLabel = "Write Review"
   const view = VIEWS.find((v) => v.segment === active) ?? VIEWS[0]
 
   return (
@@ -95,7 +99,7 @@ export function MainSurface({
                 : "bg-primary text-primary-foreground hover:bg-primary/90",
             )}
           >
-            Continue{askCount > 0 ? ` · ${askCount}` : ""}
+            {ctaLabel}{askCount > 0 ? ` · ${askCount}` : ""}
           </button>
         </div>
       </header>
