@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronDown, GitPullRequest, RotateCcw } from "lucide-react"
+import { Check, GitPullRequest, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { type Ask, useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
@@ -10,11 +10,6 @@ import { RichText } from "@/components/rich-text"
 import { StreamingProse } from "@/components/streaming-prose"
 
 type Verdict = "Approve" | "Request Changes" | "Comment"
-
-interface ActivityEntry {
-  id: number
-  label: string
-}
 
 /** Deterministic demo stand-in for the orchestrator's rework of a span. */
 function applyRevision(text: string, instruction: string): string {
@@ -44,12 +39,8 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
   const [override, setOverride] = React.useState<Verdict | null>(null)
   const [stage, setStage] = React.useState<"edit" | "preview" | "posted">("edit")
   const [revisions, setRevisions] = React.useState<Record<string, string>>({})
-  const [activity, setActivity] = React.useState<ActivityEntry[]>([])
-  const [working, setWorking] = React.useState<string | null>(null)
   const [streamingIds, setStreamingIds] = React.useState<Set<string>>(new Set())
-  const [feedOpen, setFeedOpen] = React.useState(false)
   const seenAskIds = React.useRef<Set<string>>(new Set())
-  const activitySeq = React.useRef(0)
 
   const derived: Verdict = asks.some((ask) => ask.intent === "request-change")
     ? "Request Changes"
@@ -71,19 +62,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
       for (const ask of fresh) next.add(ask.id)
       return next
     })
-    const latest = fresh[fresh.length - 1]
-    setWorking(`Reworking the draft — ${latest.intent === "request-change" ? "request change" : "comment"} from ${latest.source}`)
-    const timer = window.setTimeout(() => {
-      setWorking(null)
-      setStreamingIds(new Set())
-      setActivity((previous) => [
-        ...fresh.map((ask) => ({
-          id: activitySeq.current++,
-          label: `Reworked draft — staged ${ask.intent.replace("-", " ")} from ${ask.source}`,
-        })),
-        ...previous,
-      ])
-    }, 1400)
+    const timer = window.setTimeout(() => setStreamingIds(new Set()), 1400)
     return () => window.clearTimeout(timer)
   }, [asks])
 
@@ -99,15 +78,9 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
     const ask = findAskByQuote(quote)
     if (!ask) return
     setStreamingIds(new Set([ask.id]))
-    setWorking(`Reworking the draft — your note: “${instruction}”`)
     window.setTimeout(() => {
       setRevisions((previous) => ({ ...previous, [ask.id]: applyRevision(blockText(ask), instruction) }))
       setStreamingIds(new Set())
-      setWorking(null)
-      setActivity((previous) => [
-        { id: activitySeq.current++, label: `Revised a block — "${instruction}"` },
-        ...previous,
-      ])
     }, 1200)
   }
 
@@ -116,10 +89,6 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
     if (!ask || !store) return
     store.retireBlock(blockText(ask), "dropped by you")
     store.unstageAsk(ask.id)
-    setActivity((previous) => [
-      { id: activitySeq.current++, label: `Retired a block — dropped by you` },
-      ...previous,
-    ])
   }
 
   function handleExplain(quote: string): string {
@@ -238,41 +207,6 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
             </span>
           )}
         </div>
-
-        {/* Drafting activity feed */}
-        {!preview && (working !== null || activity.length > 0) && (
-          <div className="flex flex-col rounded-md border border-border">
-            <button
-              type="button"
-              onClick={() => setFeedOpen((value) => !value)}
-              className="flex items-center gap-2 px-3 py-2 text-left"
-            >
-              <ChevronDown
-                className={cn("size-3.5 text-muted-foreground transition-transform", !feedOpen && "-rotate-90")}
-                aria-hidden="true"
-              />
-              {working ? (
-                <span className="flex items-center gap-2 text-[12.5px] text-foreground/90">
-                  <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-                  {working}
-                </span>
-              ) : (
-                <span className="text-[12.5px] text-muted-foreground">
-                  Drafting · idle · {activity.length} rework{activity.length === 1 ? "" : "s"} this session
-                </span>
-              )}
-            </button>
-            {feedOpen && activity.length > 0 && (
-              <div className="flex flex-col gap-1 border-t border-border px-3 py-2">
-                {activity.slice(0, 6).map((entry) => (
-                  <span key={entry.id} className="text-[12px] text-muted-foreground">
-                    {entry.label}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Verdict */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
