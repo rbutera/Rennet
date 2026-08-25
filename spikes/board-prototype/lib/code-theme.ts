@@ -1,16 +1,8 @@
-import { createCssVariablesTheme } from "shiki"
-
-/** Shared name for the CSS-variables theme, referenced wherever `codeToTokens` is called. */
-export const CODE_THEME_NAME = "rennet-code"
-
 /**
- * A Shiki theme whose token colors are CSS custom properties instead of
- * hardcoded hex values. This lets one highlighter output work for both the
- * light and dark themes (and follow future theme changes) by defining the
- * `--shiki-*` variables in globals.css instead of baking in a fixed palette.
+ * Shared theme name, referenced wherever `codeToTokens` is called.
+ *
+ * Code highlighting stays a neutral bundled theme rather than the interface
+ * palette. The prototype renders dark-only (layout hardcodes `.dark`), so one
+ * dark theme suffices; add a light/dark pair if a scheme toggle ever lands.
  */
-export const codeTheme = createCssVariablesTheme({
-  name: CODE_THEME_NAME,
-  variablePrefix: "--shiki-",
-  fontStyle: true,
-})
+export const CODE_THEME_NAME = "github-dark"

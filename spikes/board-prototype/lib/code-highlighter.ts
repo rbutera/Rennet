@@ -1,5 +1,5 @@
 import { createHighlighter, type Highlighter, type ThemedToken, type BundledLanguage } from "shiki"
-import { codeTheme, CODE_THEME_NAME } from "./code-theme"
+import { CODE_THEME_NAME } from "./code-theme"
 
 let highlighterPromise: Promise<Highlighter> | null = null
 
@@ -7,7 +7,7 @@ let highlighterPromise: Promise<Highlighter> | null = null
 function getHighlighter() {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      themes: [codeTheme],
+      themes: [CODE_THEME_NAME],
       langs: ["typescript", "tsx", "javascript", "jsx", "json", "bash", "css", "sql"],
     })
   }
