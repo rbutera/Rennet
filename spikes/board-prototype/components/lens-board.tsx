@@ -54,12 +54,14 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
 
   return (
     <section id={section.id} className="flex flex-col gap-3 scroll-mt-6">
-      <button
-        type="button"
-        onClick={() => setFolded((f) => !f)}
-        aria-expanded={!folded}
-        className="group flex items-center gap-2 text-left"
-      >
+      {/* disclosure pattern: the heading wraps the toggle button, never the reverse */}
+      <h2 className="contents">
+        <button
+          type="button"
+          onClick={() => setFolded((f) => !f)}
+          aria-expanded={!folded}
+          className="group flex items-center gap-2 text-left"
+        >
         <ChevronDown
           className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", folded && "-rotate-90")}
           aria-hidden="true"
@@ -77,7 +79,8 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
             {section.source}
           </span>
         )}
-      </button>
+        </button>
+      </h2>
       {!folded && (
         <div className="flex flex-col gap-4 pl-5">
           {section.elements.map((element, index) => (
@@ -108,7 +111,7 @@ function Element({ element }: { element: BoardElement }) {
         <header className="flex flex-col gap-3 rounded-md border border-border bg-secondary/30 px-4 py-3.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="text-[15px] font-semibold text-foreground">{element.change}</span>
+            <h3 className="text-[15px] font-semibold text-foreground">{element.change}</h3>
             <span className="text-[12.5px] text-muted-foreground">
               {element.counts.added} new {element.counts.added === 1 ? "capability" : "capabilities"} ·{" "}
               {element.counts.modified} modified
@@ -307,9 +310,9 @@ function Element({ element }: { element: BoardElement }) {
             >
               {element.severity}
             </span>
-            <span className="min-w-0 flex-1 text-[14px] font-semibold leading-snug text-foreground">
+            <h3 className="min-w-0 flex-1 text-[14px] font-semibold leading-snug text-foreground">
               <InlineCode text={element.title} />
-            </span>
+            </h3>
             <Concurrence agreement={element.agreement} />
           </div>
           <RichText text={element.body} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
@@ -404,7 +407,7 @@ function Element({ element }: { element: BoardElement }) {
           <div className="flex flex-col gap-1.5">
             {element.name ? (
               <div className="flex items-center gap-2">
-                <span className="text-[14px] font-semibold text-foreground">{element.name}</span>
+                <h3 className="text-[14px] font-semibold text-foreground">{element.name}</h3>
                 {element.delta && <DeltaBadge delta={element.delta} />}
               </div>
             ) : null}
@@ -456,7 +459,7 @@ function NoiseGroup({ element }: { element: Extract<BoardElement, { kind: "noise
   return (
     <div className={cn("rounded-md border border-border", dismissed && "opacity-50")}>
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <span className="text-[13.5px] font-medium text-foreground">{element.label}</span>
+        <h3 className="text-[13.5px] font-medium text-foreground">{element.label}</h3>
         <span className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
           {element.judgedBy === "llm" && <Sparkles className="size-2.5" aria-hidden="true" />}
           {element.judgedBy === "llm" ? "model judged" : "rule"}
@@ -556,9 +559,9 @@ function FixCallout({
 
 function SmallLabel({ children }: { children: React.ReactNode }) {
   return (
-    <span className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
       {children}
-    </span>
+    </h3>
   )
 }
 
