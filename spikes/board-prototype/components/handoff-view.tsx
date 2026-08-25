@@ -146,9 +146,6 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
           {asks.filter((a) => a.codeAnchor).length === 1 ? "" : "s"} · body —
           github.com/acme/orbital/pull/434#pullrequestreview
         </p>
-        <p className="text-[13px] text-muted-foreground/80">
-          The draft is frozen with this post. New review acts start the next draft.
-        </p>
       </div>
     )
   }
@@ -172,9 +169,6 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
             {ask.intent === "request-change" ? "request change" : "comment"}
           </span>
           <span className="text-[11px] text-muted-foreground/80">{ask.source}</span>
-          {!ask.codeAnchor && (
-            <span className="text-[11px] text-muted-foreground/60">no diff line — travels in the body</span>
-          )}
         </span>
         {streamingIds.has(ask.id) ? (
           <StreamingProse
@@ -225,7 +219,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
         </div>
       )}
       {asks.length === 0 && verdict !== "Approve" && (
-        <p className="text-[13px] text-muted-foreground">Nothing staged yet — asks land here as they arise.</p>
+        <p className="text-[13px] text-muted-foreground">Nothing staged yet.</p>
       )}
     </div>
   )
@@ -345,8 +339,8 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
         {!preview && (
           <>
             <p className="text-[12px] text-muted-foreground/80">
-              {threadsStaying} thread{threadsStaying === 1 ? "" : "s"} and {commentsStaying} code comment
-              {commentsStaying === 1 ? "" : "s"} stay here — only the draft above posts.
+              {threadsStaying} thread{threadsStaying === 1 ? "" : "s"} · {commentsStaying} code comment
+              {commentsStaying === 1 ? "" : "s"} stay local
             </p>
             {retired.length > 0 && (
               <div className="flex flex-col gap-1.5 rounded-md border border-border/60 px-3 py-2.5">
