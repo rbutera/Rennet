@@ -36,10 +36,14 @@ export function MainSurface({
   showLocationTrail,
   onExpandChat,
   scenario,
+  onDispatchRound,
+  onOpenPullRequest,
 }: {
   showLocationTrail: boolean
   onExpandChat: () => void
   scenario: Scenario
+  onDispatchRound?: () => void
+  onOpenPullRequest?: () => void
 }) {
   // Absent lens = absent segment (never disabled); Diff always exists.
   const views: { segment: string; icon: LucideIcon; board: LensBoard | null }[] = [
@@ -125,7 +129,9 @@ export function MainSurface({
       </header>
       {handoffOpen ? (
         <HandoffView
-          prLabel={scenario.handoff.mode === "post-review" ? scenario.handoff.prLabel : undefined}
+          handoff={scenario.handoff}
+          onDispatchRound={onDispatchRound}
+          onOpenPullRequest={onOpenPullRequest}
         />
       ) : mapOpen ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

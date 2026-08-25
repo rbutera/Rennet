@@ -8,8 +8,30 @@ import { ProseSelectionLayer } from "@/components/selection-toolbar"
 import { AnchorReveal } from "@/components/code-tabs"
 import { RichText } from "@/components/rich-text"
 import { StreamingProse } from "@/components/streaming-prose"
+import { RoundsLanes } from "@/components/rounds-lanes"
+import type { Scenario } from "@/lib/scenarios"
 
 type Verdict = "Approve" | "Request Changes" | "Comment"
+
+/**
+ * The Hand off view dispatches by the scenario's entry mode (R31): a teammate
+ * PR gets the single Post Review lane below; an own branch gets the R34 rounds
+ * lanes (This Round + The Pull Request).
+ */
+export function HandoffView({
+  handoff,
+  onDispatchRound,
+  onOpenPullRequest,
+}: {
+  handoff: Scenario["handoff"]
+  onDispatchRound?: () => void
+  onOpenPullRequest?: () => void
+}) {
+  if (handoff.mode === "rounds") {
+    return <RoundsLanes pr={handoff.pr} onDispatch={onDispatchRound} onOpenPullRequest={onOpenPullRequest} />
+  }
+  return <PostReviewLane prLabel={handoff.prLabel} />
+}
 
 /** Deterministic demo stand-in for the orchestrator's rework of a span. */
 function applyRevision(text: string, instruction: string): string {
@@ -31,7 +53,7 @@ function openerFor(verdict: Verdict, askCount: number): string {
  * draft the orchestrator keeps current from staged asks; steering happens by
  * selection (Revise / Drop / Explain), never by typing into the draft (R32).
  */
-export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
+function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
   const store = useCodeComments()
   const asks = React.useMemo(() => store?.asks ?? [], [store?.asks])
   const retired = store?.retired ?? []

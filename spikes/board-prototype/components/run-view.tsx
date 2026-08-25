@@ -159,3 +159,97 @@ export function RunView({
     </div>
   )
 }
+
+/**
+ * A work-order round watched live (R34): one worker in a detached worktree
+ * applies the staged asks, an activity block streams its turns, the full gate
+ * runs, and the round commits — then the reviewer is greeted by the successor
+ * summary. Every label derives from Rennet's own round pipeline (R4).
+ */
+const ROUND_PREP: TimedStep[] = [
+  { label: "Created detached worktree", doneDetail: "fix/token-refresh-observability @ round-1", start: 0, done: 900 },
+  { label: "Applied the round's asks", doneDetail: "2 asks", start: 800, done: 1600 },
+]
+
+const ROUND_WORK_START = 1800
+const ROUND_WORK: { name: string; detail: string; start: number; done: number }[] = [
+  { name: "Read the refresh path", detail: "github-auth.ts", start: ROUND_WORK_START, done: 3200 },
+  { name: "Wrote a terminal record on every exit", detail: "exchange-error + persistence-failure", start: 3000, done: 5000 },
+  { name: "Reported the post-send failure as unknown", detail: "network copy", start: 4600, done: 6400 },
+  { name: "Tightened the tests", detail: "github-auth.test.ts", start: 6200, done: 7600 },
+]
+
+const ROUND_FINISH: TimedStep[] = [
+  { label: "Ran the gate", detail: "pnpm check", doneDetail: "pnpm check · 14 projects green", start: 7800, done: 9000 },
+  { label: "Committed the round", doneDetail: "2 commits", start: 9100, done: 9900 },
+]
+
+const ROUND_READY_AT = 10400
+
+export function RoundRunView({ onComplete }: { onComplete: () => void }) {
+  const [elapsed, setElapsed] = React.useState(0)
+
+  React.useEffect(() => {
+    const interval = setInterval(() => setElapsed((value) => value + 100), 100)
+    return () => clearInterval(interval)
+  }, [])
+
+  const doneFired = React.useRef(false)
+  React.useEffect(() => {
+    if (elapsed >= ROUND_READY_AT && !doneFired.current) {
+      doneFired.current = true
+      onComplete()
+    }
+  }, [elapsed, onComplete])
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6 px-8 pt-[11vh]">
+        <span className="text-[13px] font-medium text-foreground">Round 1 · fix/token-refresh-observability</span>
+
+        <div className="flex flex-col gap-1.5">
+          {ROUND_PREP.map((step) => (
+            <StepLine key={step.label} step={step} elapsed={elapsed} />
+          ))}
+        </div>
+
+        {elapsed >= ROUND_WORK_START - 300 && (
+          <div className="flex flex-col gap-1">
+            <span className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              Round worker
+            </span>
+            <div className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
+              {ROUND_WORK.map((step) => {
+                const queued = elapsed < step.start
+                const running = !queued && elapsed < step.done
+                return (
+                  <div key={step.name} className="flex items-center gap-2.5 px-3.5 py-2.5">
+                    {running ? (
+                      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-primary" aria-hidden="true" />
+                    ) : queued ? (
+                      <span className="size-3.5 shrink-0 rounded-full border border-border" aria-hidden="true" />
+                    ) : (
+                      <Check className="size-3.5 shrink-0 text-green-500" aria-hidden="true" />
+                    )}
+                    <span className={cn("text-[13px] font-medium", queued ? "text-muted-foreground/50" : "text-foreground")}>
+                      {step.name}
+                    </span>
+                    <span className="ml-auto text-[11.5px] text-muted-foreground">
+                      {queued ? "queued" : step.detail}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-1.5">
+          {ROUND_FINISH.map((step) => (
+            <StepLine key={step.label} step={step} elapsed={elapsed} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}

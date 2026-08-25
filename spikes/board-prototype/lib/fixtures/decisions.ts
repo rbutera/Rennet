@@ -158,7 +158,7 @@ export interface RefreshLogRecord {
           kind: "decision",
           statement:
             "`tokenKind` returns only a member of a closed prefix allowlist (`ghu_`, `gho_`, …) or the fixed `\"token\"`, never a substring of the token body.",
-          why: "Stated (PR body + commit dc35701 review finding, tasks.md 1.3): an earlier draft returned everything before the first underscore, which for an unexpected value could log real credential bytes. The closed allowlist makes the label secret-safe by construction. `customerSecret_body` maps to `\"token\"`, not `customerSecret_`.",
+          why: "Stated (commit dc35701 review finding, tasks.md 1.3): an earlier draft returned everything before the first underscore, which for an unexpected value could log real credential bytes. The closed allowlist makes the label secret-safe by construction. `customerSecret_body` maps to `\"token\"`, not `customerSecret_`.",
           inferred: false,
           alternatives: [
             "Return the substring before the first `_` (the earlier draft), rejected because an unexpected value like `customerSecret_body` would leak a slice of the credential into a log.",
@@ -209,7 +209,7 @@ export function tokenKind(token: string): string {
           kind: "decision",
           statement:
             "`refreshAndPersist` emits an `attempt` record before the refresh call, inside the single branch both proactive and reactive refreshes route through.",
-          why: "Stated (tasks.md 4.2 + PR body): logging the attempt before the exchange keeps it visible in daemon.log even if the process dies mid-refresh. An outcome-only log would leave a crashed attempt with no trace.",
+          why: "Stated (tasks.md 4.2): logging the attempt before the exchange keeps it visible in daemon.log even if the process dies mid-refresh. An outcome-only log would leave a crashed attempt with no trace.",
           inferred: false,
           alternatives: [
             "Log only the outcome (persisted/declined/network). A mid-refresh crash then leaves no record that a refresh was even attempted.",

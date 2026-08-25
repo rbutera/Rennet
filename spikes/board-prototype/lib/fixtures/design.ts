@@ -298,7 +298,7 @@ expect(refresh).toHaveBeenCalledTimes(1);`,
         {
           kind: "callout",
           tone: "warn",
-          text: 'Listed in the PR body under "Not in this PR": the Wave 6 field proof needs the real lancelot account, so the diff carries no code or test for it — tasks 6.1 and 6.2 remain unchecked.',
+          text: 'Listed in the proposal under "Not in this PR": the Wave 6 field proof needs the real lancelot account, so the diff carries no code or test for it — tasks 6.1 and 6.2 remain unchecked.',
         },
         {
           kind: "requirement",
