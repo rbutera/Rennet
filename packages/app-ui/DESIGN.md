@@ -6,13 +6,13 @@ typography:
     fontFamily: "Fraunces Variable, Georgia, serif"
     fontSize: "clamp(34px, 5vw, 56px)"
   serif:
-    fontFamily: "Source Serif 4 Variable, Georgia, serif"
+    fontFamily: "Newsreader Variable, Georgia, serif"
     fontSize: "18px"
   body:
-    fontFamily: "DM Sans Variable, system-ui, sans-serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "18px"
   label:
-    fontFamily: "DM Sans Variable, system-ui, sans-serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "14px"
   scale:
     micro: "11px"

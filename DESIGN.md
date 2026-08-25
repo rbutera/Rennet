@@ -30,17 +30,17 @@ typography:
     lineHeight: 1.02
     letterSpacing: "-0.015em"
   serif:
-    fontFamily: "Source Serif 4 Variable, Georgia, serif"
+    fontFamily: "Newsreader Variable, Georgia, serif"
     fontSize: "17px"
     fontWeight: 400
     lineHeight: 1.55
   body:
-    fontFamily: "DM Sans Variable, system-ui, sans-serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "16px"
     fontWeight: 400
     lineHeight: 1.5
   label:
-    fontFamily: "DM Sans Variable, system-ui, sans-serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "14px"
     fontWeight: 600
 rounded:
@@ -117,9 +117,9 @@ Beyond it, a viewer may select a bundled **theme pack** (GitHub, One Dark Pro, D
 ## Typography
 
 - **Fraunces** is for brand moments, display headings, screen titles, and empty states. Use the self-hosted variable font with Georgia as the fallback.
-- **Source Serif 4** is for annotations, conversations, review prose, and post previews. Use the self-hosted variable font with Georgia as the fallback.
-- **DM Sans** is for controls, labels, inputs, navigation, and metadata. Use the self-hosted variable font with the system sans-serif stack as the fallback.
-- **Monospace** is for source code, diffs, and exact technical values.
+- **Newsreader** is for annotations, conversations, review prose, and post previews. Use the self-hosted variable font with Georgia as the fallback.
+- **Geist** is for controls, labels, inputs, navigation, and metadata. Use the self-hosted variable font with the system sans-serif stack as the fallback.
+- **Geist Mono** is for source code, diffs, and exact technical values, falling back to the platform monospace stack.
 
 The wordmark is vector artwork. Do not recreate it with a font.
 

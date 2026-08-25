@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from 'next'
-import { DM_Sans, Fraunces, Source_Serif_4 } from 'next/font/google'
+import { Fraunces, Geist, Geist_Mono, Newsreader } from 'next/font/google'
 import './globals.css'
 import { Shell } from '@/components/shell'
 
-const dmSans = DM_Sans({ subsets: ['latin'], variable: '--font-dm-sans' })
+const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' })
+const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 const fraunces = Fraunces({ subsets: ['latin'], variable: '--font-fraunces' })
-const sourceSerif = Source_Serif_4({ subsets: ['latin'], variable: '--font-source-serif' })
+const newsreader = Newsreader({ subsets: ['latin'], variable: '--font-newsreader' })
 
 export const metadata: Metadata = {
   title: 'Rennet',
@@ -30,7 +31,7 @@ export default function RootLayout({
     <html
       lang="en"
       data-scheme="dark"
-      className={`dark bg-background ${dmSans.variable} ${fraunces.variable} ${sourceSerif.variable}`}
+      className={`dark bg-background ${geist.variable} ${geistMono.variable} ${fraunces.variable} ${newsreader.variable}`}
     >
       <body className="antialiased font-sans">
         <Shell>{children}</Shell>

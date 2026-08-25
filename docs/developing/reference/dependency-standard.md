@@ -45,8 +45,8 @@ Rennet packages are MIT licensed. Distributed dependencies may use the
 compatible licences allowlisted in `scripts/check-licenses.mjs`; attribution and
 notice obligations travel with the packaged artifact.
 
-Self-hosted DM Sans, Fraunces, and Source Serif 4 assets use OFL-1.1. The font
-licence applies to the font files, not Rennet's MIT source.
+Self-hosted Geist, Geist Mono, Fraunces, and Newsreader assets use OFL-1.1. The
+font licence applies to the font files, not Rennet's MIT source.
 
 The Anthropic Agent SDK and its platform packages are named exceptions because
 pnpm reports their commercial licence as `Unknown`. The gate does not allow the

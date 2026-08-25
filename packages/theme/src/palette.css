@@ -79,10 +79,10 @@
   /* the brand mark's single ink (paper on dark, ink on light) */
   --rn-mark-ink: #0b0d10;
   /* type — three voices plus code (root DESIGN.md §Typography) */
-  --rn-font-sans: "DM Sans Variable", system-ui, -apple-system, sans-serif;
-  --rn-font-serif: "Source Serif 4 Variable", Georgia, serif;
+  --rn-font-sans: "Geist Variable", system-ui, -apple-system, sans-serif;
+  --rn-font-serif: "Newsreader Variable", Georgia, serif;
   --rn-font-display: "Fraunces Variable", Georgia, serif;
-  --rn-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --rn-font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* depth — true overlays only */
   --rn-shadow-overlay: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);
   /* scrim — the modal backdrop dim. A warm near-black; its VALUE is constant

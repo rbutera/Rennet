@@ -80,9 +80,10 @@ then the preview renders the resulting destination object.
 Rennet uses four type roles:
 
 - Fraunces for product titles and display moments.
-- Source Serif 4 for review prose and model annotations.
-- DM Sans for navigation, controls, labels, inputs, and metadata.
-- The platform monospace stack for source code and exact technical values.
+- Newsreader for review prose and model annotations.
+- Geist for navigation, controls, labels, inputs, and metadata.
+- Geist Mono for source code and exact technical values, over the platform
+  monospace stack as fallback.
 
 The desktop component ramp is `11, 12, 14, 16, 18, 20, 24` pixels at a 16-pixel
 root, plus the front-door display size. Components express these through

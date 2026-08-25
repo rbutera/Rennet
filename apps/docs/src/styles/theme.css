@@ -28,11 +28,12 @@
  *     decision register (accent and decision merged 2026-08-19; the old review
  *     blue and separate decision amber are retired). Evidence green and danger
  *     red are the only other functional hues.
- *   - Self-hosted variable fonts: DM Sans (interface/body), Fraunces (display
- *     headings). Monospace is code only.
+ *   - Self-hosted variable fonts: Geist (interface/body), Fraunces (display
+ *     headings), Geist Mono (code only).
  */
 
-@import "@fontsource-variable/dm-sans";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @import "@fontsource-variable/fraunces";
 @import "@rennet/theme/palette.css";
 
@@ -186,7 +187,7 @@
 }
 
 /* ============================================================ *
- *  Type — Fraunces display voice on h1/h2, DM Sans body        *
+ *  Type — Fraunces display voice on h1/h2, Geist body          *
  * ============================================================ */
 
 /* The header identity is the traced lockup SVG (replacesTitle in
@@ -202,7 +203,7 @@
   --sl-content-width: 40rem; /* 640px: keeps body measure near 75ch */
 }
 
-/* Fraunces carries the brand voice at h1/h2; h3+ stays in DM Sans (heavier),
+/* Fraunces carries the brand voice at h1/h2; h3+ stays in Geist (heavier),
    per DESIGN.md — display serif never carries dense chrome. */
 .sl-markdown-content :is(h1, h2) {
   font-family: var(--rennet-display);

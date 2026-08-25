@@ -10,7 +10,7 @@
 // warm near-white light, ONE accent (gold) that is also the decision register
 // (review blue and decision amber are retired — both fold into `accent`), plus
 // evidence green and danger red. Serif is the review's voice on the desktop;
-// here the interface is DM Sans and display titles are Fraunces.
+// here the interface is Geist and display titles are Fraunces.
 //
 // Pure and framework-free so it unit-tests without React Native: `resolveTheme(scheme)`
 // returns the palette for a colour scheme; a thin RN hook (theme/use-theme) wraps it
@@ -109,13 +109,13 @@ export const type = {
   weightSemibold: "600",
 } as const;
 
-/** Loaded font families (see app/_layout.tsx `useFonts`). Interface text is DM Sans;
+/** Loaded font families (see app/_layout.tsx `useFonts`). Interface text is Geist;
  *  display titles are Fraunces; code stays platform monospace (handled at the call site).
  *  RN bakes weight into the family name, so pick the family, not a `fontWeight`. */
 export const fontFamily = {
-  sans: "DMSans_400Regular",
-  sansMedium: "DMSans_500Medium",
-  sansSemibold: "DMSans_600SemiBold",
+  sans: "Geist_400Regular",
+  sansMedium: "Geist_500Medium",
+  sansSemibold: "Geist_600SemiBold",
   display: "Fraunces_600SemiBold",
 } as const;
 

@@ -10,8 +10,9 @@
     "./code-themes/*.css": "./src/code-themes/*.css"
   },
   "dependencies": {
-    "@fontsource-variable/dm-sans": "5.3.0",
     "@fontsource-variable/fraunces": "5.3.0",
-    "@fontsource-variable/source-serif-4": "5.3.0"
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
+    "@fontsource-variable/newsreader": "5.3.0"
   }
 }
