@@ -66,7 +66,7 @@ export const mapStatements: MapStatement[] = [
     subject: "@rennet/server",
     claim: "dispatch.ts is the single RPC entry point; every bridge method routes through it, so auditing the surface means reading one file.",
     confidence: "medium",
-    status: "proposed",
+    status: "confirmed",
     evidence: ["packages/server/src/dispatch.ts"],
   },
   {
@@ -74,7 +74,7 @@ export const mapStatements: MapStatement[] = [
     subject: "@rennet/adapters",
     claim: "GitHub egress is bounded to a single module; a network failure is kept distinct from an authentication failure everywhere it surfaces.",
     confidence: "medium",
-    status: "proposed",
+    status: "confirmed",
     evidence: ["packages/adapters/src/github-auth.ts"],
   },
   {
@@ -90,7 +90,7 @@ export const mapStatements: MapStatement[] = [
     subject: "apps/desktop",
     claim: "The desktop app owns the daemon lifecycle; tray-resident mode keeps the daemon and streams alive with no open window.",
     confidence: "low",
-    status: "proposed",
+    status: "rejected",
     evidence: ["apps/desktop/src/index.ts"],
   },
 ]

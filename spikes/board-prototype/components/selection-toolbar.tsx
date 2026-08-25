@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { MessageSquare, Sparkles } from "lucide-react"
+import { GitPullRequestArrow, MessageSquare, Pencil, Sparkles, Trash2 } from "lucide-react"
 import { useCodeComments } from "@/components/code-comments"
 import { EXPLAIN_OPENER, nextCannedReply } from "@/lib/quote-thread-demo"
 
@@ -12,12 +12,27 @@ import { EXPLAIN_OPENER, nextCannedReply } from "@/lib/quote-thread-demo"
  * which mints a composer chip exactly like a code-line comment. Replaces the
  * old per-block hover Explain button, which covered content.
  */
-export function ProseSelectionLayer({ children }: { children: React.ReactNode }) {
+export interface DraftHandlers {
+  onRevise: (quote: string, instruction: string) => void
+  onDrop: (quote: string) => void
+  /** Returns the provenance answer for a span (shown inline in the panel). */
+  explain: (quote: string) => string
+}
+
+export function ProseSelectionLayer({
+  children,
+  draftHandlers,
+}: {
+  children: React.ReactNode
+  /** When set, the toolbar carries draft verbs (Revise / Drop / Explain) instead of board verbs. */
+  draftHandlers?: DraftHandlers
+}) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const panelRef = React.useRef<HTMLDivElement>(null)
   const [anchor, setAnchor] = React.useState<{ top: number; left: number; quote: string } | null>(null)
-  const [mode, setMode] = React.useState<"toolbar" | "comment">("toolbar")
+  const [mode, setMode] = React.useState<"toolbar" | "comment" | "comment-rc" | "revise" | "explain">("toolbar")
   const [draft, setDraft] = React.useState("")
+  const [explanation, setExplanation] = React.useState("")
   const store = useCodeComments()
 
   const dismiss = React.useCallback(() => {
@@ -82,6 +97,33 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
     dismiss()
   }
 
+  function handleEditorSave() {
+    if (mode === "revise") {
+      const instruction = draft.trim()
+      if (anchor && draftHandlers && instruction.length > 0) draftHandlers.onRevise(anchor.quote, instruction)
+      window.getSelection()?.removeAllRanges()
+      dismiss()
+      return
+    }
+    if (mode === "comment-rc") {
+      stageRequestChange()
+      return
+    }
+    handleSave()
+  }
+
+  function stageRequestChange() {
+    if (!anchor || !store) return
+    const text = draft.trim()
+    if (text.length === 0) return
+    const id = store.addQuoteComment(anchor.quote, text)
+    store.addQuoteReply(id, "orchestrator", "Staged as a request-change; it will appear in the review draft.")
+    store.stageAsk(text, "request-change", `"${anchor.quote.slice(0, 48)}…"`)
+    store.focusThread(id)
+    window.getSelection()?.removeAllRanges()
+    dismiss()
+  }
+
   return (
     // Positioned wrapper: the panel is absolute inside the board, so it
     // scrolls with the text it anchors to instead of dying on scroll.
@@ -95,25 +137,75 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
         >
           {mode === "toolbar" ? (
             <div className="flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-md">
-              <button
-                type="button"
-                onClick={() => setMode("comment")}
-                className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
-              >
-                <MessageSquare className="size-3" aria-hidden="true" />
-                Comment
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  startThread(EXPLAIN_OPENER)
-                  dismiss()
-                }}
-                className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                <Sparkles className="size-3" aria-hidden="true" />
-                Explain
-              </button>
+              {draftHandlers ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setMode("revise")}
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
+                  >
+                    <Pencil className="size-3" aria-hidden="true" />
+                    Revise
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (anchor) draftHandlers.onDrop(anchor.quote)
+                      window.getSelection()?.removeAllRanges()
+                      dismiss()
+                    }}
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  >
+                    <Trash2 className="size-3" aria-hidden="true" />
+                    Drop
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (anchor) setExplanation(draftHandlers.explain(anchor.quote))
+                      setMode("explain")
+                    }}
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  >
+                    <Sparkles className="size-3" aria-hidden="true" />
+                    Explain
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setMode("comment")}
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
+                  >
+                    <MessageSquare className="size-3" aria-hidden="true" />
+                    Comment
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("comment-rc")}
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
+                  >
+                    <GitPullRequestArrow className="size-3" aria-hidden="true" />
+                    Request changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startThread(EXPLAIN_OPENER)
+                      dismiss()
+                    }}
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  >
+                    <Sparkles className="size-3" aria-hidden="true" />
+                    Explain
+                  </button>
+                </>
+              )}
+            </div>
+          ) : mode === "explain" ? (
+            <div className="w-[340px] rounded-md border border-border bg-popover p-2.5 shadow-lg">
+              <p className="text-[12.5px] leading-relaxed text-foreground/85">{explanation}</p>
             </div>
           ) : (
             <div className="w-[340px] rounded-md border border-border bg-popover p-2.5 shadow-lg">
@@ -127,10 +219,16 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault()
-                    handleSave()
+                    handleEditorSave()
                   }
                 }}
-                placeholder="Ask a question or leave a comment…"
+                placeholder={
+                  mode === "revise"
+                    ? "Tell the orchestrator how to rework this…"
+                    : mode === "comment-rc"
+                      ? "What change are you requesting?"
+                      : "Ask a question or leave a comment…"
+                }
                 rows={2}
                 className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
               />
@@ -144,10 +242,10 @@ export function ProseSelectionLayer({ children }: { children: React.ReactNode })
                 </button>
                 <button
                   type="button"
-                  onClick={handleSave}
+                  onClick={handleEditorSave}
                   className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground hover:bg-primary/90"
                 >
-                  Save
+                  {mode === "revise" ? "Rework" : mode === "comment-rc" ? "Stage" : "Save"}
                 </button>
               </div>
             </div>

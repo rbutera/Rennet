@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils"
 import { LocationTrail } from "@/components/location-trail"
 import { ViewSwitcher } from "@/components/view-switcher"
 import { ContextMapPanel, MapBaseLine } from "@/components/context-map"
+import { HandoffView } from "@/components/handoff-view"
+import { useCodeComments } from "@/components/code-comments"
 import { LensBoardView } from "@/components/lens-board"
 import type { LensBoard } from "@/lib/lens-data"
 import { designBoard } from "@/lib/fixtures/design"
@@ -32,6 +34,9 @@ export function MainSurface({
 }) {
   const [active, setActive] = useState(VIEWS[0].segment)
   const [mapOpen, setMapOpen] = useState(false)
+  const [handoffOpen, setHandoffOpen] = useState(false)
+  const store = useCodeComments()
+  const askCount = store?.asks.length ?? 0
   const view = VIEWS.find((v) => v.segment === active) ?? VIEWS[0]
 
   return (
@@ -67,9 +72,10 @@ export function MainSurface({
           </button>
           <ViewSwitcher
             segments={VIEWS.map((v) => v.segment)}
-            active={mapOpen ? "" : active}
+            active={mapOpen || handoffOpen ? "" : active}
             onChange={(segment) => {
               setMapOpen(false)
+              setHandoffOpen(false)
               setActive(segment)
             }}
           />
@@ -77,13 +83,25 @@ export function MainSurface({
         <div className="flex items-center gap-1 justify-self-end">
           <button
             type="button"
-            className="rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            onClick={() => {
+              setHandoffOpen((open) => !open)
+              setMapOpen(false)
+            }}
+            aria-pressed={handoffOpen}
+            className={cn(
+              "rounded-md px-3 py-1 text-[12px] font-medium transition-colors",
+              handoffOpen
+                ? "bg-secondary text-foreground"
+                : "bg-primary text-primary-foreground hover:bg-primary/90",
+            )}
           >
-            Hand off
+            Hand off{askCount > 0 ? ` · ${askCount}` : ""}
           </button>
         </div>
       </header>
-      {mapOpen ? (
+      {handoffOpen ? (
+        <HandoffView />
+      ) : mapOpen ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <MapBaseLine />
           <ContextMapPanel />

@@ -24,6 +24,22 @@ export interface QuoteComment {
   messages: QuoteMessage[]
 }
 
+/** The staged unit of the hand-off (R29): anchor + text + intent + provenance. */
+export interface Ask {
+  id: string
+  text: string
+  intent: "comment" | "request-change"
+  /** Where it came from, e.g. a finding title or a quoted span. */
+  source: string
+}
+
+/** A draft block retired by rework or Drop — ledgered, restorable (R32). */
+export interface RetiredBlock {
+  id: string
+  text: string
+  reason: string
+}
+
 interface CodeCommentsStore {
   comments: CodeComments
   quoteComments: QuoteComment[]
@@ -34,6 +50,13 @@ interface CodeCommentsStore {
   /** Thread to auto-open (set on creation so the tooltip shows immediately). */
   focusedThreadId: string | null
   focusThread: (id: string | null) => void
+  /** Hand-off state: staged asks, the retired ledger, and rework triggers. */
+  asks: Ask[]
+  stageAsk: (text: string, intent: Ask["intent"], source: string) => string
+  unstageAsk: (id: string) => void
+  retired: RetiredBlock[]
+  retireBlock: (text: string, reason: string) => void
+  restoreRetired: (id: string) => void
   clear: () => void
 }
 
@@ -87,6 +110,28 @@ export function CodeCommentsProvider({ children }: { children: React.ReactNode }
 
   const focusThread = React.useCallback((id: string | null) => setFocusedThreadId(id), [])
 
+  const [asks, setAsks] = React.useState<Ask[]>([])
+  const [retired, setRetired] = React.useState<RetiredBlock[]>([])
+  const askSeq = React.useRef(0)
+
+  const stageAsk = React.useCallback((text: string, intent: Ask["intent"], source: string) => {
+    const id = `ask-${askSeq.current++}`
+    setAsks((previous) => [...previous, { id, text, intent, source }])
+    return id
+  }, [])
+
+  const unstageAsk = React.useCallback((id: string) => {
+    setAsks((previous) => previous.filter((ask) => ask.id !== id))
+  }, [])
+
+  const retireBlock = React.useCallback((text: string, reason: string) => {
+    setRetired((previous) => [...previous, { id: `retired-${previous.length}`, text, reason }])
+  }, [])
+
+  const restoreRetired = React.useCallback((id: string) => {
+    setRetired((previous) => previous.filter((entry) => entry.id !== id))
+  }, [])
+
   const clear = React.useCallback(() => {
     setComments({})
     setQuoteComments([])
@@ -103,9 +148,15 @@ export function CodeCommentsProvider({ children }: { children: React.ReactNode }
       removeQuoteComment,
       focusedThreadId,
       focusThread,
+      asks,
+      stageAsk,
+      unstageAsk,
+      retired,
+      retireBlock,
+      restoreRetired,
       clear,
     }),
-    [comments, quoteComments, setComment, addQuoteComment, addQuoteReply, removeQuoteComment, focusedThreadId, focusThread, clear],
+    [comments, quoteComments, setComment, addQuoteComment, addQuoteReply, removeQuoteComment, focusedThreadId, focusThread, asks, stageAsk, unstageAsk, retired, retireBlock, restoreRetired, clear],
   )
 
   return <CodeCommentsContext.Provider value={store}>{children}</CodeCommentsContext.Provider>

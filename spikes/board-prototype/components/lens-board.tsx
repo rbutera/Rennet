@@ -15,6 +15,7 @@ import { CodeBlock } from "@/components/code-block"
 import { AnchorReveal, CodeTabs } from "@/components/code-tabs"
 import { HydratedCode, InlineCode, RichText } from "@/components/rich-text"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
+import { useCodeComments } from "@/components/code-comments"
 
 /**
  * Renders a lens board as a document: sections of typed elements in reading
@@ -317,26 +318,7 @@ function Element({ element }: { element: BoardElement }) {
               />
             </div>
           ))}
-          {element.fix && (
-            <div className="flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fix</span>
-              <RichText text={element.fix} paragraphClassName="text-[13px] leading-relaxed text-foreground/90" />
-              <div className="flex items-center gap-1.5 pt-0.5">
-                <button
-                  type="button"
-                  className="rounded border border-border px-2 py-0.5 text-[12px] text-foreground/90 hover:bg-secondary"
-                >
-                  Add to work order
-                </button>
-                <button
-                  type="button"
-                  className="rounded border border-border px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-                >
-                  Discuss
-                </button>
-              </div>
-            </div>
-          )}
+          {element.fix && <FixCallout fix={element.fix} findingTitle={element.title} />}
           {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
         </div>
       )
@@ -506,6 +488,53 @@ function Concurrence({ agreement }: { agreement: { claude: boolean; codex: boole
     >
       {concur ? "concur 2/2" : agreement.claude ? "Claude only" : "Codex only"}
     </span>
+  )
+}
+
+/**
+ * A finding's fix as an actionable callout. On a teammate PR the action stages
+ * a request-change ask (R29); the button is its own receipt and undo.
+ */
+function FixCallout({ fix, findingTitle }: { fix: string; findingTitle: string }) {
+  const store = useCodeComments()
+  const [askId, setAskId] = React.useState<string | null>(null)
+  const staged = askId !== null && (store?.asks ?? []).some((ask) => ask.id === askId)
+
+  function toggle() {
+    if (!store) return
+    if (staged && askId) {
+      store.unstageAsk(askId)
+      setAskId(null)
+      return
+    }
+    setAskId(store.stageAsk(fix, "request-change", `finding: ${findingTitle.slice(0, 56)}`))
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fix</span>
+      <RichText text={fix} paragraphClassName="text-[13px] leading-relaxed text-foreground/90" />
+      <div className="flex items-center gap-1.5 pt-0.5">
+        <button
+          type="button"
+          onClick={toggle}
+          className={cn(
+            "rounded border px-2 py-0.5 text-[11.5px] transition-colors",
+            staged
+              ? "border-primary/40 bg-primary/10 text-primary"
+              : "border-border text-foreground/90 hover:bg-secondary",
+          )}
+        >
+          {staged ? "Staged · request change ✓" : "Request this change"}
+        </button>
+        <button
+          type="button"
+          className="rounded border border-border px-2 py-0.5 text-[11.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+        >
+          Discuss
+        </button>
+      </div>
+    </div>
   )
 }
 

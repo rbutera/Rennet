@@ -63,21 +63,30 @@ export function ProjectIndexingView({
   )
   const ready = elapsed >= READY_AT
 
+  // Timeline mirrors the #460 swarm architecture: scope-partitioned light-tier
+  // workers, then the medium verify/synthesis seat confirming hypotheses itself.
+  const confirmed = mapStatements.filter((s) => s.status === "confirmed").length
+  const rejected = mapStatements.filter((s) => s.status === "rejected").length
   const steps: IndexStep[] = [
     ...STEPS,
     {
-      label: "Building the context map",
-      detail: `${scopesBuilt}/${SCOPE_TOTAL} scopes`,
-      doneDetail: `${SCOPE_TOTAL} scopes`,
+      label: "Knowledge workers reading scopes",
+      detail: `${scopesBuilt}/${SCOPE_TOTAL} scopes · ${mapStatements.length} hypotheses`,
+      doneDetail: `${SCOPE_TOTAL} scopes · ${mapStatements.length} hypotheses`,
       start: MAP_START,
       done: MAP_DONE,
     },
     {
-      label: "Deriving knowledge",
-      detail: "reading evidence",
-      doneDetail: `${mapStatements.length} statements proposed`,
+      label: "Verifying hypotheses against cited evidence",
+      detail: "re-reading anchors",
+      doneDetail: `${confirmed} confirmed · ${rejected} rejected`,
       start: MAP_DONE + 100,
       done: KNOWLEDGE_DONE,
+    },
+    {
+      label: "Connected the dots across scopes",
+      start: KNOWLEDGE_DONE + 100,
+      done: READY_AT - 100,
     },
   ]
 
@@ -133,7 +142,7 @@ export function ProjectIndexingView({
                 <span className="text-[13.5px] font-medium text-foreground">Context map ready</span>
                 <span className="text-[12px] text-muted-foreground">
                   {SCOPE_TOTAL} scopes · {mapScopes.reduce((n, s) => n + s.files, 0)} files ·{" "}
-                  {mapStatements.length} statements proposed
+                  {confirmed} statements confirmed · {rejected} rejected
                 </span>
               </div>
               <div className="flex items-center gap-2">
