@@ -1,0 +1,34 @@
+/* Catppuccin code theme — the SYNTAX axis only (issue #481 §4).
+ *
+ * Scoped under [data-rn-code-theme="catppuccin-mocha"]; rebinds --rn-syn-* (plus
+ * the code ground) to Catppuccin's shiki token colours (catppuccin-latte /
+ * catppuccin-mocha, MIT), light/dark swapping with data-scheme. Independent of
+ * the UI pack; loaded after packs so it wins by source order. Colour tokens only.
+ * See github.css for the axis contract.
+ */
+
+[data-rn-code-theme="catppuccin-mocha"] {
+  --rn-code: #e6e9ef;
+  --rn-code-ln: #9ca0b0;
+  --rn-syn-kw: #8839ef;
+  --rn-syn-str: #40a02b;
+  --rn-syn-cmt: #8c8fa1;
+  --rn-syn-num: #fe640b;
+  --rn-syn-type: #df8e1d;
+  --rn-syn-fn: #1e66f5;
+  --rn-syn-prop: #04a5e5;
+  --rn-syn-var: #4c4f69;
+}
+
+[data-rn-code-theme="catppuccin-mocha"][data-scheme="dark"] {
+  --rn-code: #11111b;
+  --rn-code-ln: #6c7086;
+  --rn-syn-kw: #cba6f7;
+  --rn-syn-str: #a6e3a1;
+  --rn-syn-cmt: #7f849c;
+  --rn-syn-num: #fab387;
+  --rn-syn-type: #f9e2af;
+  --rn-syn-fn: #89b4fa;
+  --rn-syn-prop: #89dceb;
+  --rn-syn-var: #cdd6f4;
+}

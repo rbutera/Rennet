@@ -108,6 +108,12 @@ Do not add a decorative interface hue. Never use color as the only statement of 
 
 The canonical values live in [`packages/theme/src/palette.css`](packages/theme/src/palette.css). DOM applications consume the CSS variables. The mobile application consumes the generated React Native palette.
 
+### Themeability
+
+The Affineur's Bench doctrine above — one gold accent, warm neutrals, no decorative interface hue — governs the **default** theme and everything Rennet ships screenshots of. The default is the absence of any theme attribute.
+
+Beyond it, a viewer may select a bundled **theme pack** (GitHub, One Dark Pro, Dracula, Catppuccin Mocha), each a complete re-binding of every `--rn-*` colour token under `[data-rn-theme="<id>"]` in `packages/theme/src/themes/`. A pack is the user's room: it owes only the semantic-role mapping and the same AA contrast contract as the default. Packs are colour only — no pack alters type, spacing, or radius. Syntax highlighting is an independent axis (`packages/theme/src/code-themes/`, `[data-rn-code-theme="<id>"]`); by default code follows the active pack.
+
 ## Typography
 
 - **Fraunces** is for brand moments, display headings, screen titles, and empty states. Use the self-hosted variable font with Georgia as the fallback.

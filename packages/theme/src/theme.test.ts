@@ -166,3 +166,88 @@ describe("ratified anchors (root DESIGN.md reconciliation)", () => {
     expect(hex(LIGHT, "--rn-green")).toBe("#41745b");
   });
 });
+
+// A bundled theme pack (issue #481) meets the SAME contrast contract as the
+// default or it doesn't ship. Each themes/<id>.css scopes light + dark blocks;
+// we run the identical AA assertions the default does, per pack per scheme. A
+// pack that lifts a muted grey too far, or picks an accent that fails on its
+// grounds, reddens here.
+describe("theme packs meet the same AA contrast contract", () => {
+  const packBlock = (css: string, selector: string): string => {
+    const start = css.indexOf(selector);
+    expect(start, `selector present: ${selector}`).toBeGreaterThanOrEqual(0);
+    const open = css.indexOf("{", start);
+    return css.slice(open, css.indexOf("}", open));
+  };
+
+  for (const id of ["catppuccin-mocha", "dracula", "github", "one-dark-pro"]) {
+    const packCss = readFileSync(
+      fileURLToPath(new URL(`./themes/${id}.css`, import.meta.url)),
+      "utf8",
+    );
+    const scopes = [
+      ["light", packBlock(packCss, `[data-rn-theme="${id}"] {`)],
+      ["dark", packBlock(packCss, `[data-rn-theme="${id}"][data-scheme="dark"]`)],
+    ] as const;
+
+    for (const [label, scope] of scopes) {
+      const canvas = hex(scope, "--rn-canvas");
+      const surface = hex(scope, "--rn-surface");
+      const raised = hex(scope, "--rn-raised");
+
+      it(`${id} ${label}: ink-faint clears AA on canvas, surface, raised`, () => {
+        const faint = hex(scope, "--rn-ink-faint");
+        for (const [bg, value] of [
+          ["canvas", canvas],
+          ["surface", surface],
+          ["raised", raised],
+        ] as const) {
+          expect(contrast(faint, value), `${id} ${label} faint on ${bg}`).toBeGreaterThanOrEqual(
+            4.5,
+          );
+        }
+      });
+
+      it(`${id} ${label}: ink hierarchy holds faint < soft < ink`, () => {
+        const [ink, soft, faint] = [
+          contrast(hex(scope, "--rn-ink"), surface),
+          contrast(hex(scope, "--rn-ink-soft"), surface),
+          contrast(hex(scope, "--rn-ink-faint"), surface),
+        ];
+        expect(faint).toBeLessThan(soft);
+        expect(soft).toBeLessThan(ink);
+      });
+
+      it(`${id} ${label}: accent TEXT and its foreground pair clear AA`, () => {
+        // accent as type on canvas/surface, AND surface painted on bg-accent
+        // (the kit's menu/select focus row) — contrast is symmetric, so the
+        // accent-on-surface and surface-on-accent checks share one inequality.
+        const accent = hex(scope, "--rn-accent");
+        expect(contrast(accent, canvas)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(accent, surface)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(surface, accent)).toBeGreaterThanOrEqual(4.5);
+      });
+
+      it(`${id} ${label}: accent-ink clears AA on the accent fill`, () => {
+        expect(
+          contrast(hex(scope, "--rn-accent-ink"), hex(scope, "--rn-accent-fill")),
+        ).toBeGreaterThanOrEqual(4.5);
+      });
+
+      it(`${id} ${label}: diff glyphs clear AA on their rows`, () => {
+        expect(contrast(hex(scope, "--rn-add-ink"), hex(scope, "--rn-add"))).toBeGreaterThanOrEqual(
+          4.5,
+        );
+        expect(contrast(hex(scope, "--rn-del-ink"), hex(scope, "--rn-del"))).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      });
+
+      it(`${id} ${label}: paper ink clears AA on the sheet`, () => {
+        expect(
+          contrast(hex(scope, "--rn-sheet-ink"), hex(scope, "--rn-sheet")),
+        ).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+});

@@ -1,0 +1,119 @@
+/* GitHub theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="github"]; the client stamps that attribute when
+ * the viewer picks this pack (absence of the attribute = the default Affineur's
+ * Bench, palette.css). This file rebinds ONLY colour tokens — type, spacing,
+ * radius, and the depth shadow stay the Rennet defaults from palette.css (a pack
+ * is colour only, issue #481). Both scheme blocks are complete: no fallback
+ * chains, so a missing token reddens palette-sync.test.ts.
+ *
+ * Palette source: GitHub Primer primitives (github/primer, MIT) — Light Default
+ * and Dark Default. Muted greys are lifted toward AA where Primer's own values
+ * fall short of Rennet's 4.5:1 ink contract; the accent register is Primer blue.
+ */
+
+[data-rn-theme="github"] {
+  /* ground — Light Default */
+  --rn-canvas: #f6f8fa;
+  --rn-surface: #ffffff;
+  --rn-raised: #eaeef2;
+  --rn-overlay: #ffffff;
+  --rn-code: #f6f8fa;
+  /* ink */
+  --rn-ink: #1f2328;
+  --rn-ink-soft: #4b535b;
+  --rn-ink-faint: #616a74;
+  /* structure */
+  --rn-line: rgb(31 35 40 / 0.15);
+  --rn-line-strong: rgb(31 35 40 / 0.25);
+  /* accent — Primer blue */
+  --rn-accent: #0969da;
+  --rn-accent-fill: #0969da;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(9 105 218 / 0.1);
+  --rn-accent-line: rgb(9 105 218 / 0.32);
+  --rn-accent-surface: #ddf4ff;
+  /* evidence green */
+  --rn-green: #1a7f37;
+  --rn-green-soft: rgb(26 127 55 / 0.12);
+  --rn-green-line: rgb(26 127 55 / 0.3);
+  /* danger */
+  --rn-danger: #cf222e;
+  --rn-danger-soft: rgb(207 34 46 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #1f2328;
+  --rn-sheet-soft: #656d76;
+  --rn-sheet-line: #d1d9e0;
+  /* diff */
+  --rn-add: #dafbe1;
+  --rn-add-ink: #116329;
+  --rn-del: #ffebe9;
+  --rn-del-ink: #cf222e;
+  --rn-code-ln: #8c959f;
+  /* syntax */
+  --rn-syn-kw: #cf222e;
+  --rn-syn-str: #0a3069;
+  --rn-syn-cmt: #6e7781;
+  --rn-syn-num: #0550ae;
+  --rn-syn-type: #953800;
+  --rn-syn-fn: #6639ba;
+  --rn-syn-prop: #0550ae;
+  --rn-syn-var: #953800;
+  /* mark + scrim */
+  --rn-mark-ink: #1f2328;
+  --rn-scrim: #1f2328;
+}
+
+[data-rn-theme="github"][data-scheme="dark"] {
+  /* ground — Dark Default */
+  --rn-canvas: #0d1117;
+  --rn-surface: #161b22;
+  --rn-raised: #21262d;
+  --rn-overlay: #161b22;
+  --rn-code: #0d1117;
+  /* ink */
+  --rn-ink: #e6edf3;
+  --rn-ink-soft: #adbac7;
+  --rn-ink-faint: #909dab;
+  /* structure */
+  --rn-line: rgb(240 246 252 / 0.1);
+  --rn-line-strong: rgb(240 246 252 / 0.16);
+  /* accent — Primer blue (lightened to clear AA on the dark grounds) */
+  --rn-accent: #58a6ff;
+  --rn-accent-fill: #58a6ff;
+  --rn-accent-ink: #0d1117;
+  --rn-accent-soft: rgb(56 139 253 / 0.15);
+  --rn-accent-line: rgb(56 139 253 / 0.4);
+  --rn-accent-surface: #121d2f;
+  /* evidence green */
+  --rn-green: #3fb950;
+  --rn-green-soft: rgb(63 185 80 / 0.15);
+  --rn-green-line: rgb(63 185 80 / 0.4);
+  /* danger */
+  --rn-danger: #f85149;
+  --rn-danger-soft: rgb(248 81 73 / 0.15);
+  /* paper */
+  --rn-sheet: #161b22;
+  --rn-sheet-ink: #e6edf3;
+  --rn-sheet-soft: #adbac7;
+  --rn-sheet-line: #30363d;
+  /* diff */
+  --rn-add: #12261e;
+  --rn-add-ink: #3fb950;
+  --rn-del: #25171c;
+  --rn-del-ink: #f85149;
+  --rn-code-ln: #6e7681;
+  /* syntax */
+  --rn-syn-kw: #ff7b72;
+  --rn-syn-str: #a5d6ff;
+  --rn-syn-cmt: #8b949e;
+  --rn-syn-num: #79c0ff;
+  --rn-syn-type: #ffa657;
+  --rn-syn-fn: #d2a8ff;
+  --rn-syn-prop: #79c0ff;
+  --rn-syn-var: #ffa657;
+  /* mark + scrim */
+  --rn-mark-ink: #e6edf3;
+  --rn-scrim: #010409;
+}

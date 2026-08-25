@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     "./theme.css": "./src/theme.css",
-    "./palette.css": "./src/palette.css"
+    "./palette.css": "./src/palette.css",
+    "./themes/*.css": "./src/themes/*.css",
+    "./code-themes/*.css": "./src/code-themes/*.css"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "5.3.0",

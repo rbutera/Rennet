@@ -1,0 +1,34 @@
+/* One Dark Pro code theme — the SYNTAX axis only (issue #481 §4).
+ *
+ * Scoped under [data-rn-code-theme="one-dark-pro"]; rebinds --rn-syn-* (plus the
+ * code ground) to the One Dark Pro / One Light shiki token colours (MIT),
+ * light/dark swapping with data-scheme. Independent of the UI pack; loaded after
+ * packs so it wins by source order. Colour tokens only. See github.css for the
+ * axis contract.
+ */
+
+[data-rn-code-theme="one-dark-pro"] {
+  --rn-code: #fafafa;
+  --rn-code-ln: #b0b0b5;
+  --rn-syn-kw: #a626a4;
+  --rn-syn-str: #50a14f;
+  --rn-syn-cmt: #8a8b91;
+  --rn-syn-num: #986801;
+  --rn-syn-type: #b26800;
+  --rn-syn-fn: #4078f2;
+  --rn-syn-prop: #e45649;
+  --rn-syn-var: #986801;
+}
+
+[data-rn-code-theme="one-dark-pro"][data-scheme="dark"] {
+  --rn-code: #21252b;
+  --rn-code-ln: #636b78;
+  --rn-syn-kw: #c678dd;
+  --rn-syn-str: #98c379;
+  --rn-syn-cmt: #7f848e;
+  --rn-syn-num: #d19a66;
+  --rn-syn-type: #e5c07b;
+  --rn-syn-fn: #61afef;
+  --rn-syn-prop: #e06c75;
+  --rn-syn-var: #e06c75;
+}
