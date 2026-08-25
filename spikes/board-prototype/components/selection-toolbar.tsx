@@ -187,7 +187,7 @@ export function ProseSelectionLayer({
                     className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
                   >
                     <GitPullRequestArrow className="size-3" aria-hidden="true" />
-                    Request changes
+                    Request Changes
                   </button>
                   <button
                     type="button"

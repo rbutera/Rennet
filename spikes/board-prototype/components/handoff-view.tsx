@@ -8,7 +8,7 @@ import { ProseSelectionLayer } from "@/components/selection-toolbar"
 import { RichText } from "@/components/rich-text"
 import { StreamingProse } from "@/components/streaming-prose"
 
-type Verdict = "Approve" | "Request changes" | "Comment"
+type Verdict = "Approve" | "Request Changes" | "Comment"
 
 interface ActivityEntry {
   id: number
@@ -25,7 +25,7 @@ function applyRevision(text: string, instruction: string): string {
 function openerFor(verdict: Verdict, askCount: number): string {
   if (verdict === "Approve")
     return "This holds up. The retry removal is the right call — the shared transport owns the only replay-safe retry — and the secret-free record shape delivers what the PR promises. The threads raised during the read resolved cleanly; nothing rises to a request."
-  if (verdict === "Request changes")
+  if (verdict === "Request Changes")
     return `Solid direction, with ${askCount === 1 ? "one thing" : `${askCount} things`} to settle before merge. The refresh observability this PR adds is the point of the change, so the gaps below are worth closing now rather than in a follow-up.`
   return "A few notes from the read — nothing blocking."
 }
@@ -51,7 +51,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
   const activitySeq = React.useRef(0)
 
   const derived: Verdict = asks.some((ask) => ask.intent === "request-change")
-    ? "Request changes"
+    ? "Request Changes"
     : asks.length > 0
       ? "Comment"
       : "Approve"
@@ -197,7 +197,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
         {/* Lane header */}
         <div className="flex items-center gap-2.5">
           <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
-          <h1 className="text-[20px] font-semibold tracking-tight text-foreground">Post review · {prLabel}</h1>
+          <h1 className="text-[20px] font-semibold tracking-tight text-foreground">Post Review · {prLabel}</h1>
           {preview && (
             <span className="rounded border border-primary/40 px-1.5 py-0.5 text-[11px] text-primary">
               exactly what will post
@@ -244,7 +244,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="text-[12px] text-muted-foreground">Verdict</span>
           <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
-            {(["Approve", "Request changes", "Comment"] as Verdict[]).map((option) => (
+            {(["Approve", "Request Changes", "Comment"] as Verdict[]).map((option) => (
               <button
                 key={option}
                 type="button"
@@ -262,7 +262,7 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
                   className={cn(
                     "size-1.5 rounded-full",
                     option === "Approve" && "bg-emerald-500",
-                    option === "Request changes" && "bg-amber-500",
+                    option === "Request Changes" && "bg-amber-500",
                     option === "Comment" && "bg-muted-foreground/50",
                     option !== verdict && "opacity-40",
                   )}
@@ -347,14 +347,14 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
                 onClick={() => setStage("posted")}
                 className="rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
               >
-                Post review
+                Post Review
               </button>
               <button
                 type="button"
                 onClick={() => setStage("edit")}
                 className="rounded-md px-2.5 py-1.5 text-[12.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
               >
-                Back to draft
+                Back to Draft
               </button>
             </>
           ) : (

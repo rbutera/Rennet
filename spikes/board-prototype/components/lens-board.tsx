@@ -525,7 +525,7 @@ function FixCallout({ fix, findingTitle }: { fix: string; findingTitle: string }
               : "border-border text-foreground/90 hover:bg-secondary",
           )}
         >
-          {staged ? "Staged · request change ✓" : "Request this change"}
+          {staged ? "Staged · Request Change ✓" : "Request This Change"}
         </button>
         <button
           type="button"
