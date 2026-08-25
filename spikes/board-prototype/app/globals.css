@@ -37,6 +37,12 @@
   --color-green: var(--rn-green);
   --color-green-soft: var(--rn-green-soft);
   --color-green-line: var(--rn-green-line);
+  --color-warn: var(--rn-warn);
+  --color-warn-soft: var(--rn-warn-soft);
+  --color-warn-line: var(--rn-warn-line);
+  --color-model: var(--rn-model);
+  --color-model-soft: var(--rn-model-soft);
+  --color-model-line: var(--rn-model-line);
   --color-danger-soft: var(--rn-danger-soft);
   --color-sheet: var(--rn-sheet);
   --color-sheet-ink: var(--rn-sheet-ink);
@@ -122,6 +128,13 @@
   /* structure */
   --rn-line: rgb(60 50 30 / 0.12);
   --rn-line-strong: rgb(60 50 30 / 0.2);
+  /* Color roles — each hue owns one register, none stands in for another:
+   *   gold      the reviewer's decision: CTAs, staging, needs-you, their marks
+   *   green     proof: evidence, citations, concurrence, approvals, additions
+   *   copper    caution: medium severity, requested changes, partial states
+   *   verdigris the machine's voice: spinners, streaming, model attribution
+   *   red       blocking: high severity, deletions, destructive acts
+   * Warm hues belong to the human, cool hues to the machine. */
   /* gold — accent AND decision register */
   --rn-accent: #8a5d0b;
   --rn-accent-fill: #e0a52e;
@@ -133,6 +146,14 @@
   --rn-green: #41745b;
   --rn-green-soft: rgb(65 116 91 / 0.12);
   --rn-green-line: rgb(65 116 91 / 0.3);
+  /* copper — caution register */
+  --rn-warn: #8a5a1e;
+  --rn-warn-soft: rgb(138 90 30 / 0.12);
+  --rn-warn-line: rgb(138 90 30 / 0.32);
+  /* verdigris — the machine's voice */
+  --rn-model: #2b7d6e;
+  --rn-model-soft: rgb(43 125 110 / 0.1);
+  --rn-model-line: rgb(43 125 110 / 0.3);
   /* danger */
   --rn-danger: #b23b2b;
   --rn-danger-soft: rgb(178 59 43 / 0.1);
@@ -186,6 +207,12 @@
   --rn-green: #88bc9b;
   --rn-green-soft: rgb(136 188 155 / 0.14);
   --rn-green-line: rgb(136 188 155 / 0.36);
+  --rn-warn: #d0a978;
+  --rn-warn-soft: rgb(208 169 120 / 0.14);
+  --rn-warn-line: rgb(208 169 120 / 0.38);
+  --rn-model: #9fd0c0;
+  --rn-model-soft: rgb(159 208 192 / 0.12);
+  --rn-model-line: rgb(159 208 192 / 0.36);
   --rn-danger: #db7a6a;
   --rn-danger-soft: rgb(219 122 106 / 0.14);
   --rn-sheet: #1c1712;

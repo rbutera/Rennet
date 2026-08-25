@@ -195,7 +195,7 @@ function Element({ element }: { element: BoardElement }) {
                 href={`#${capability.sectionId}`}
                 className={cn(
                   "flex flex-col gap-1 rounded-md border border-border px-3 py-2.5 transition-colors hover:bg-secondary/50",
-                  capability.state === "added" && "border-l-2 border-l-emerald-600/70",
+                  capability.state === "added" && "border-l-2 border-l-green/70",
                 )}
               >
                 <span className="flex items-center gap-2">
@@ -240,7 +240,7 @@ function Element({ element }: { element: BoardElement }) {
                   <span
                     className={cn(
                       "block h-full rounded-full",
-                      group.done === group.total ? "bg-emerald-600/80" : "bg-foreground/40",
+                      group.done === group.total ? "bg-green/80" : "bg-foreground/40",
                     )}
                     style={{ width: `${group.total === 0 ? 0 : (group.done / group.total) * 100}%` }}
                   />
@@ -301,7 +301,7 @@ function Element({ element }: { element: BoardElement }) {
               className={cn(
                 "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
                 element.severity === "high" && "bg-destructive/15 text-destructive",
-                element.severity === "medium" && "bg-primary/15 text-primary",
+                element.severity === "medium" && "bg-warn-soft text-warn",
                 element.severity === "low" && "bg-secondary text-muted-foreground",
               )}
             >
@@ -490,7 +490,7 @@ function Concurrence({ agreement }: { agreement: { claude: boolean; codex: boole
     <span
       className={cn(
         "shrink-0 rounded border px-1.5 py-0.5 text-[10px]",
-        concur ? "border-border text-muted-foreground" : "border-primary/40 text-primary",
+        concur ? "border-green-line text-green" : "border-model-line text-model",
       )}
       title={concur ? "Both models raised this" : "Models disagree"}
     >
@@ -535,10 +535,10 @@ function FixCallout({
           type="button"
           onClick={toggle}
           className={cn(
-            "rounded border px-2 py-0.5 text-[11.5px] transition-colors",
+            "rounded px-2.5 py-1 text-[12px] transition-colors",
             staged
-              ? "border-primary/40 bg-primary/10 text-primary"
-              : "border-border text-foreground/90 hover:bg-secondary",
+              ? "border border-border bg-secondary/60 text-muted-foreground"
+              : "bg-foreground font-medium text-background hover:bg-foreground/90",
           )}
         >
           {staged ? "Staged · Request Change ✓" : "Request This Change"}
@@ -567,7 +567,7 @@ function DeltaBadge({ delta }: { delta: "added" | "modified" | "removed" }) {
     <span
       className={cn(
         "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        delta === "added" && "bg-emerald-600/15 text-emerald-600 dark:text-emerald-400",
+        delta === "added" && "bg-green-soft text-green",
         delta === "modified" && "bg-secondary text-muted-foreground",
         delta === "removed" && "bg-destructive/15 text-destructive",
       )}
@@ -604,11 +604,9 @@ function CoverageChip({
       title={status === "unimplemented" ? "No hunk claims this requirement" : "Jump to the claiming hunk"}
       className={cn(
         "flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors",
-        status === "covered" &&
-          "border-emerald-600/40 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400",
-        status === "partial" && "border-amber-600/40 text-amber-700 hover:bg-amber-600/10 dark:text-amber-400",
-        status === "unimplemented" &&
-          "border-amber-600/40 text-amber-700 hover:bg-amber-600/10 dark:text-amber-400",
+        status === "covered" && "border-green-line text-green hover:bg-green-soft",
+        status === "partial" && "border-warn-line text-warn hover:bg-warn-soft",
+        status === "unimplemented" && "border-warn-line text-warn hover:bg-warn-soft",
       )}
     >
       <Link2 className="size-3" aria-hidden="true" />

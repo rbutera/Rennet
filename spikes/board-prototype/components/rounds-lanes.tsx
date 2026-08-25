@@ -107,7 +107,7 @@ export function RoundsLanes({
           {submitted ? (
             <div className="flex flex-col gap-1 pt-1">
               <span className="flex items-center gap-2 text-[13px] font-medium text-foreground">
-                <Check className="size-4 text-emerald-500" aria-hidden="true" />
+                <Check className="size-4 text-green" aria-hidden="true" />
                 Pull request opened · #438
               </span>
               <span className="text-[12px] text-muted-foreground">github.com/rbutera/rennet/pull/438</span>
@@ -151,7 +151,7 @@ export function RoundsLanes({
                       className={cn(
                         "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
                         ask.intent === "request-change"
-                          ? "bg-primary/15 text-primary"
+                          ? "bg-warn-soft text-warn"
                           : "bg-secondary text-muted-foreground",
                       )}
                     >

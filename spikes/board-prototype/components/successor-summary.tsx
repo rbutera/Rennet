@@ -8,10 +8,10 @@ import { RichText } from "@/components/rich-text"
 import { returnedRound, type SummaryItem } from "@/lib/scenarios/returned"
 
 const STATUS: Record<SummaryItem["status"], { label: string; icon: typeof Check; tint: string }> = {
-  addressed: { label: "Addressed", icon: Check, tint: "text-emerald-600 dark:text-emerald-400" },
-  partial: { label: "Partial", icon: CircleDashed, tint: "text-amber-600 dark:text-amber-400" },
+  addressed: { label: "Addressed", icon: Check, tint: "text-green" },
+  partial: { label: "Partial", icon: CircleDashed, tint: "text-warn" },
   untouched: { label: "Untouched", icon: Minus, tint: "text-muted-foreground" },
-  beyond: { label: "Beyond the asks", icon: Sparkles, tint: "text-primary" },
+  beyond: { label: "Beyond the asks", icon: Sparkles, tint: "text-model" },
 }
 
 /**

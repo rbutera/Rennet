@@ -49,7 +49,7 @@ export function ThoughtBlock({ step, onResolve }: { step: ThoughtStep; onResolve
         aria-expanded={isExpanded}
       >
         <Loader2
-          className={cn("size-3 shrink-0", stillRevealing ? "animate-spin text-primary" : "text-muted-foreground/70")}
+          className={cn("size-3 shrink-0", stillRevealing ? "animate-spin text-model" : "text-muted-foreground/70")}
           aria-hidden="true"
         />
         <span>{collapsed ? `Thought for ${step.seconds ?? 1}s` : "Thinking"}</span>

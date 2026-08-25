@@ -122,7 +122,7 @@ export function ProjectIndexingView({
                 return (
                   <div key={step.label} className="flex items-center gap-1.5 text-[12.5px]">
                     {running ? (
-                      <LoaderCircle className="size-3 shrink-0 animate-spin text-primary" aria-hidden="true" />
+                      <LoaderCircle className="size-3 shrink-0 animate-spin text-model" aria-hidden="true" />
                     ) : (
                       <Check className="size-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
                     )}

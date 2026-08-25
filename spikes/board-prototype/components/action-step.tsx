@@ -28,7 +28,7 @@ export function ActionStep({ step, onResolve }: { step: ActionStepData; onResolv
   return (
     <div className="flex max-w-[640px] items-center gap-1.5 text-[12.5px]">
       <Icon
-        className={cn("size-3 shrink-0", isRunning ? "animate-spin text-primary" : "text-muted-foreground/70")}
+        className={cn("size-3 shrink-0", isRunning ? "animate-spin text-model" : "text-muted-foreground/70")}
         aria-hidden="true"
       />
       <span

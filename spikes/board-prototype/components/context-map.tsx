@@ -363,9 +363,9 @@ function DetailTabs({
                   <span
                     className={cn(
                       "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-                      statement.status === "confirmed" && "bg-green-500/10 text-green-500",
+                      statement.status === "confirmed" && "bg-green-soft text-green",
                       statement.status === "rejected" && "bg-secondary text-muted-foreground",
-                      statement.status === "proposed" && "bg-primary/10 text-primary",
+                      statement.status === "proposed" && "bg-model-soft text-model",
                     )}
                   >
                     {statement.status}

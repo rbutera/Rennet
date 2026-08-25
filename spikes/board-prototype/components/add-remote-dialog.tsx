@@ -92,7 +92,7 @@ export function AddRemoteDialog({
           </FieldGroup>
         ) : (
           <div className="flex items-center gap-2 text-[13px] text-foreground/90">
-            <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <Check className="size-4 shrink-0 text-green" aria-hidden="true" />
             <span>
               Connected to <span className="font-medium">{name}</span>.
             </span>

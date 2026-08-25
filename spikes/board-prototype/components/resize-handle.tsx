@@ -58,7 +58,7 @@ export function ResizeHandle({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onDoubleClick={() => onChange(DEFAULT_CHAT_WIDTH)}
-      className="-mx-[3px] z-10 w-[6px] shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40 active:bg-primary/60"
+      className="-mx-[3px] z-10 w-[6px] shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-foreground/20 active:bg-foreground/30"
     />
   )
 }

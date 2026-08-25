@@ -623,7 +623,7 @@ function Segmented({
 
 const SEVERITY_CHIP: Record<GuidanceRule["severity"], string> = {
   high: "bg-destructive/15 text-destructive",
-  medium: "bg-primary/15 text-primary",
+  medium: "bg-warn-soft text-warn",
   low: "bg-secondary text-muted-foreground",
 }
 

@@ -265,6 +265,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   clear: () => set({ comments: {}, quoteComments: [], focusedThreadId: null }),
 }))
 
+// Spike-only debug handle so browser automation can seed store state.
+if (typeof window !== "undefined") {
+  ;(window as unknown as Record<string, unknown>).__appStore = useAppStore
+}
+
 /** The concrete shiki theme name for the current picker + resolved scheme. */
 export function useShikiTheme(): string {
   const codeTheme = useAppStore((s) => s.codeTheme)

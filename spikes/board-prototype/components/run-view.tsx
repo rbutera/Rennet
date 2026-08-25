@@ -66,7 +66,7 @@ function StepLine({ step, elapsed }: { step: TimedStep; elapsed: number }) {
   return (
     <div className="flex items-center gap-1.5 text-[12.5px]">
       {running ? (
-        <LoaderCircle className="size-3 shrink-0 animate-spin text-primary" aria-hidden="true" />
+        <LoaderCircle className="size-3 shrink-0 animate-spin text-model" aria-hidden="true" />
       ) : (
         <Check className="size-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
       )}
@@ -126,7 +126,7 @@ export function RunView({
                 return (
                   <div key={lens.name} className="flex items-center gap-2.5 px-3.5 py-2.5">
                     {drafting ? (
-                      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-primary" aria-hidden="true" />
+                      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-model" aria-hidden="true" />
                     ) : queued ? (
                       <span className="size-3.5 shrink-0 rounded-full border border-border" aria-hidden="true" />
                     ) : (
@@ -225,7 +225,7 @@ export function RoundRunView({ onComplete }: { onComplete: () => void }) {
                 return (
                   <div key={step.name} className="flex items-center gap-2.5 px-3.5 py-2.5">
                     {running ? (
-                      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-primary" aria-hidden="true" />
+                      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-model" aria-hidden="true" />
                     ) : queued ? (
                       <span className="size-3.5 shrink-0 rounded-full border border-border" aria-hidden="true" />
                     ) : (

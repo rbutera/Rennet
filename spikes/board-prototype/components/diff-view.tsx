@@ -352,7 +352,7 @@ function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
 
   return (
     <div className="[container-type:inline-size]">
-      <div className="flex items-center gap-2 bg-primary/5 px-2 py-1 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2 bg-secondary/40 px-2 py-1 text-[11px] text-muted-foreground">
         <UnfoldVertical className="size-3 shrink-0" aria-hidden="true" />
         <span>{hunkHeader(hunk)}</span>
       </div>

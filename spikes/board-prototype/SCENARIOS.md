@@ -77,8 +77,9 @@ carried-forward blocks hydrate.
 - **Boards**: change B's five lenses from a real pipeline run (drafting agents
   on `packages/lens-instructions` prompts, dual Flagged seats, unslop pass —
   the README documents the recipe).
-- **Hand-off**: the existing `HandoffView` post-review lane, unchanged (R36
-  two strata, verdict proposal, preview, Post Review).
+- **Hand-off**: the existing `HandoffView` post-review lane (R36 two strata,
+  verdict proposal, Post Review — the draft is the preview; no separate
+  preview stage).
 
 ### `rounds` (W1a) — your branch, mid-review, pre-round
 

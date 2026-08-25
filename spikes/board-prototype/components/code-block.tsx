@@ -139,7 +139,7 @@ export function LineCommentEditor({
               const trimmed = draft.trim()
               if (trimmed.length > 0) onRequestChanges(trimmed)
             }}
-            className="rounded-md border border-primary/50 px-2.5 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10"
+            className="rounded-md border border-warn-line px-2.5 py-1 text-[12px] font-medium text-warn transition-colors hover:bg-warn-soft"
           >
             Request Changes
           </button>
