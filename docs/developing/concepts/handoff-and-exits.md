@@ -41,8 +41,11 @@ span's inspectable history.
 
 ## The Hand off view
 
-Hand off toggles a view over the main surface. Its lanes depend on the entry
-mode:
+Hand off toggles a view over the main surface. The toggle itself is
+target-aware and carries the staged-ask count: on a teammate PR it reads
+**Write Review** (the review concludes, under the reviewer's name); on one's
+own branch or PR it reads **Continue** (the rounds loop keeps going). Its
+lanes depend on the entry mode:
 
 - **Teammate PR** — one lane: *Post review*. Work orders are own-branch only.
 - **Own branch** — two lanes: *This round* (the work order now gathering) and
@@ -57,12 +60,11 @@ text, the work order, the PR description — as the review progresses. Each
 comment, dismissal, or thread conclusion queues a rework. The reviewer never
 types into a draft; steering happens by talking or by highlighting a span.
 
-- Reworks stream in place: the affected block dims to a ghost with a line
-  naming its trigger, and the replacement streams in where it stands. The
-  surface never locks.
-- A collapsed **drafting activity feed** at the top of the view expands into
-  full turn anatomy — trigger queue, thinking, tool lines — the run-watched-
-  live pattern on a smaller stage.
+- Folding a staged ask into a draft is near-instant assembly; its only
+  visibility is the affected block streaming in place. The **drafting
+  activity feed** — a collapsed line expanding into full turn anatomy with
+  the trigger queue — belongs to the long-running regeneration after a
+  work-order round returns, and appears only there. The surface never locks.
 - Stale content is removed and ledgered, never left and never silently
   dropped: a **Retired** drawer holds every retired block with its reason and
   round receipt, restorable with a click; a **Detached** list holds threads
