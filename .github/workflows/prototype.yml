@@ -1,0 +1,56 @@
+# Board-UX prototype build check (spikes/board-prototype).
+#
+# The prototype is a standalone Next.js app, deliberately OUTSIDE the pnpm
+# workspace and outside `pnpm check` (see spikes/board-prototype/README.md).
+# This workflow only proves `next build` still compiles, and only when the
+# prototype itself changes — no deploy (the prototype is dev-run via
+# `next dev` + tailscale, it has no hosted target).
+#
+# Security: read-only token, no secrets.
+name: Prototype
+
+on:
+  pull_request:
+    paths:
+      - "spikes/board-prototype/**"
+      - ".github/workflows/prototype.yml"
+  push:
+    branches: [main]
+    paths:
+      - "spikes/board-prototype/**"
+      - ".github/workflows/prototype.yml"
+
+concurrency:
+  group: prototype-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build board-prototype
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: spikes/board-prototype
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # The spike has its own lockfile; plain `pnpm install` would resolve the
+      # workspace root and fail (per its README).
+      - name: Install dependencies
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      - name: Build
+        run: node_modules/.bin/next build

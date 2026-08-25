@@ -14,15 +14,26 @@
 # PRs cannot read secrets, so the deploy step simply skips for them.
 name: Marketing
 
+# Paths must mirror the build's real inputs: apps/marketing plus its workspace
+# dependency @rennet/theme (see apps/marketing/package.json) and the shared
+# install inputs. If marketing gains a workspace dep, add its path here.
 on:
   pull_request:
     paths:
       - "apps/marketing/**"
+      - "packages/theme/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/marketing.yml"
   push:
     branches: [main]
     paths:
       - "apps/marketing/**"
+      - "packages/theme/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/marketing.yml"
 
 concurrency:

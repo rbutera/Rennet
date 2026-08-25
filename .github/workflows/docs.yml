@@ -39,6 +39,8 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
+      # fetch-depth 0 is load-bearing: Starlight `lastUpdated: true`
+      # (astro.config.mjs) reads each page's git history at build time.
       - name: Checkout
         uses: actions/checkout@v4
         with:

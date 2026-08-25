@@ -17,10 +17,11 @@ function applyRevision(text: string, instruction: string): string {
 }
 
 /**
- * The Hand off view, own-branch mode (R34): two lanes. **This Round** is the
- * living work order composed from the staged asks — steered by span selection
- * (Revise / Drop / Explain), dispatched as one round. **The Pull Request** is
- * always visible, its description ripening across rounds toward the real PR.
+ * The Hand off view, own-branch mode (R34/R37). One goal, two states, and the
+ * page's shape states which one you're in: while asks remain, the page is
+ * **Changes** — one card per ask, Dispatch Round — and the pull request is a
+ * single muted destination line. When nothing is left to ask, the page IS the
+ * pull request: title, body, Open Pull Request.
  */
 export function RoundsLanes({
   pr,
@@ -29,7 +30,7 @@ export function RoundsLanes({
 }: {
   pr: { title: string; body: string; ready: boolean }
   onDispatch?: () => void
-  /** Present only once the PR lane is ripe (the `returned` state). */
+  /** Present only once the PR is the page (the `returned` state). */
   onOpenPullRequest?: () => void
 }) {
   const store = useCodeComments()
@@ -67,121 +68,51 @@ export function RoundsLanes({
   function handleExplain(quote: string): string {
     const ask = findAskByQuote(quote)
     return ask
-      ? `This instruction comes from ${ask.source}${ask.codeAnchor ? ` (${ask.codeAnchor.path.split("/").pop()}:${ask.codeAnchor.line})` : ""}.`
-      : "This is the round's opening — it frames the asks for the coding agent."
+      ? `This change comes from ${ask.source}${ask.codeAnchor ? ` (${ask.codeAnchor.path.split("/").pop()}:${ask.codeAnchor.line})` : ""}.`
+      : "This is drafted from the staged asks."
   }
 
   const prBodyParagraphs = pr.body.split(/\n{2,}/).filter((block) => block.trim().length > 0)
+  const gathering = asks.length > 0
 
-  const workOrder = (
-    <div className="flex flex-col gap-3">
+  /** Minimal markdown for the PR body: ## headings and **bold** spans. */
+  function prBlock(block: string, index: number) {
+    if (block.startsWith("## ")) {
+      return (
+        <h3 key={index} className={cn("text-[14px] font-semibold text-foreground", index > 0 && "mt-4")}>
+          {block.slice(3)}
+        </h3>
+      )
+    }
+    const clean = block.replace(/\*\*([^*]+)\*\*/g, "$1")
+    return (
       <RichText
-        text={
-          asks.length === 0
-            ? "Nothing staged for this round yet — raise a change on the boards and it lands here."
-            : `Apply the ${asks.length === 1 ? "change" : `${asks.length} changes`} below on a detached worktree of fix/token-refresh-observability, run the full gate, and report what each one did.`
-        }
-        paragraphClassName="text-[14px] leading-relaxed text-foreground/90"
+        key={index}
+        text={clean}
+        paragraphClassName={cn("text-[13.5px] leading-relaxed text-foreground/85", index > 0 && "mt-2")}
       />
-      {asks.map((ask, index) => (
-        <div key={ask.id} className="flex flex-col gap-1.5 border-l-2 border-border/60 pl-3">
-          <span className="flex items-center gap-1.5">
-            <span className="text-[12px] font-semibold tabular-nums text-muted-foreground">{index + 1}.</span>
-            <span
-              className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                ask.intent === "request-change" ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground",
-              )}
-            >
-              {ask.intent === "request-change" ? "request change" : "comment"}
-            </span>
-            <span className="text-[11px] text-muted-foreground/80">{ask.source}</span>
-          </span>
-          {streamingIds.has(ask.id) ? (
-            <StreamingProse paragraphs={[orderText(ask)]} className="text-[14px] leading-relaxed text-foreground/90" />
-          ) : (
-            <RichText text={orderText(ask)} paragraphClassName="text-[14px] leading-relaxed text-foreground/90" />
-          )}
-          {ask.codeAnchor && <AnchorReveal anchors={[ask.codeAnchor]} />}
-        </div>
-      ))}
-    </div>
-  )
+    )
+  }
 
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-8 py-8">
-        {/* This Round */}
-        <section className="flex flex-col gap-4">
-          <div className="flex items-center gap-2.5">
-            <GitBranch className="size-4 text-muted-foreground" aria-hidden="true" />
-            <h1 className="text-[20px] font-semibold tracking-tight text-foreground">This Round</h1>
-            <span className="text-[12px] text-muted-foreground">
-              {asks.length} {asks.length === 1 ? "ask" : "asks"}
-            </span>
-          </div>
-          <div className="rounded-md border border-border px-4 py-3.5">
-            <ProseSelectionLayer draftHandlers={{ onRevise: handleRevise, onDrop: handleDrop, explain: handleExplain }}>
-              {workOrder}
-            </ProseSelectionLayer>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={asks.length === 0}
-              onClick={onDispatch}
-              className="rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
-            >
-              Dispatch Round
-            </button>
-            <span className="text-[12px] text-muted-foreground/80">
-              one worker, detached worktree · asks raised mid-run queue for the next round
-            </span>
-          </div>
-        </section>
-
-        {/* The Pull Request */}
-        <section className="flex flex-col gap-3 border-t border-border/60 pt-6">
+  // ── State: the pull request is the page ────────────────────────────────
+  if (!gathering && pr.ready) {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
           <div className="flex items-center gap-2.5">
             <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
-            <h2 className="text-[17px] font-semibold tracking-tight text-foreground">The Pull Request</h2>
-            <span
-              className={cn(
-                "rounded border px-1.5 py-0.5 text-[11px]",
-                pr.ready ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400" : "border-border text-muted-foreground",
-              )}
-            >
-              {pr.ready ? "ripe" : "ripening"}
-            </span>
+            <h1 className="text-[20px] font-semibold tracking-tight text-foreground">{pr.title}</h1>
           </div>
-          <div className="rounded-md border border-border">
-            <div className="border-b border-border px-4 py-2.5">
-              <span className="text-[14px] font-medium text-foreground">{pr.title}</span>
-            </div>
-            <div className="max-h-[320px] overflow-y-auto px-4 py-3">
-              {prBodyParagraphs.map((block, index) => (
-                <RichText
-                  key={index}
-                  text={block}
-                  paragraphClassName={cn(
-                    "text-[13px] leading-relaxed text-foreground/85",
-                    index > 0 && "mt-2.5",
-                  )}
-                />
-              ))}
-            </div>
-          </div>
+          <div className="flex flex-col">{prBodyParagraphs.map(prBlock)}</div>
           {submitted ? (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 pt-1">
               <span className="flex items-center gap-2 text-[13px] font-medium text-foreground">
                 <Check className="size-4 text-emerald-500" aria-hidden="true" />
                 Pull request opened · #438
               </span>
-              <span className="text-[12px] text-muted-foreground">
-                github.com/rbutera/rennet/pull/438 — push and open are idempotent; rounds continue on the open PR.
-              </span>
+              <span className="text-[12px] text-muted-foreground">github.com/rbutera/rennet/pull/438</span>
             </div>
-          ) : pr.ready ? (
+          ) : (
             <button
               type="button"
               onClick={() => {
@@ -192,12 +123,76 @@ export function RoundsLanes({
             >
               Open Pull Request
             </button>
-          ) : (
-            <span className="text-[12px] text-muted-foreground/80">
-              Opens after the round closes the asks — the description keeps ripening until then.
-            </span>
           )}
-        </section>
+        </div>
+      </div>
+    )
+  }
+
+  // ── State: changes remain ──────────────────────────────────────────────
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
+        <div className="flex items-center gap-2.5">
+          <GitBranch className="size-4 text-muted-foreground" aria-hidden="true" />
+          <h1 className="text-[20px] font-semibold tracking-tight text-foreground">Changes</h1>
+          {gathering && (
+            <span className="text-[12px] text-muted-foreground">{asks.length}</span>
+          )}
+        </div>
+
+        {gathering ? (
+          <ProseSelectionLayer draftHandlers={{ onRevise: handleRevise, onDrop: handleDrop, explain: handleExplain }}>
+            <div className="flex flex-col gap-3">
+              {asks.map((ask) => (
+                <div key={ask.id} className="flex flex-col gap-1.5 rounded-md border border-border px-4 py-3">
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                        ask.intent === "request-change"
+                          ? "bg-primary/15 text-primary"
+                          : "bg-secondary text-muted-foreground",
+                      )}
+                    >
+                      {ask.intent === "request-change" ? "request change" : "comment"}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground/80">{ask.source}</span>
+                  </span>
+                  {streamingIds.has(ask.id) ? (
+                    <StreamingProse
+                      paragraphs={[orderText(ask)]}
+                      className="text-[14px] leading-relaxed text-foreground/90"
+                    />
+                  ) : (
+                    <RichText
+                      text={orderText(ask)}
+                      paragraphClassName="text-[14px] leading-relaxed text-foreground/90"
+                    />
+                  )}
+                  {ask.codeAnchor && <AnchorReveal anchors={[ask.codeAnchor]} />}
+                </div>
+              ))}
+            </div>
+          </ProseSelectionLayer>
+        ) : (
+          <p className="text-[13px] text-muted-foreground">Nothing staged yet.</p>
+        )}
+
+        <button
+          type="button"
+          disabled={!gathering}
+          onClick={onDispatch}
+          className="w-fit rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+        >
+          Dispatch Round
+        </button>
+
+        {/* The destination, held quietly until the changes are gone. */}
+        <div className="mt-2 flex items-center gap-2 border-t border-border/60 pt-4">
+          <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground/50" aria-hidden="true" />
+          <span className="min-w-0 truncate text-[12.5px] text-muted-foreground/60">{pr.title}</span>
+        </div>
       </div>
     </div>
   )

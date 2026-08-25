@@ -48,6 +48,19 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **PR worktree**: a checkout of the exact pull-request commit under review.
 - **Setup file**: `.rennet/setup`, a list of shell commands Rennet runs when preparing a PR worktree.
 
+## Session targets
+
+- **Review target**: the thing a session reviews — your branch, your PR, or a teammate PR. Every surface names a target with these three terms and no synonyms.
+  _Avoid_: own diff, local work (as a target name)
+- **Your branch**: a working branch of yours with no pull request yet.
+  _Avoid_: own branch, working tree (as a target label), local branch
+- **Your PR**: a pull request you authored.
+  _Avoid_: own PR, my PR
+- **Teammate PR**: a pull request someone else authored.
+  _Avoid_: their PR, team PR
+- **Needs you**: the state of a teammate PR whose review is requested of you.
+- **Reviewed**: the state of your branch after a Rennet review, before a PR exists.
+
 ## Review model
 
 - **Lens**: a review of the change from one angle (design, sequence, decisions, flagged, noise — in that display order, Design first), drafted by a review agent on a fixed prompt. Each draft passes through the unslop editor before the orchestrator composes from it. Each lens is its own board.
@@ -72,6 +85,7 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Code ref**: a citation into the patchset by path, side, and line span. The review cites code; it never copies it.
 - **Reference chip**: a chip in the message composer that cites code. Created from a line of a code block card and carried by the message as a code ref.
 - **Code block card**: the reusable interface component that renders a code ref — highlighted code with its file path and line span, framed by surrounding commentary. The one way code appears in review surfaces; it renders a citation, so the never-copied rule holds. Distinct from the retired "card" sense of a board element.
+- **Diff view**: the raw patchset in GitHub's Files-changed shape — changed-file tree with filter, per-file cards with unified dual-gutter hunks, and viewed tracking. Not a lens: it toggles from a chip beside Map, outside the view switcher. Its line comments use the same local-comment → ask flow as code block cards, keyed to new-side line numbers so a request-change ask carries a real diff position.
 - **Review comment**: a comment drafted for the GitHub review, distinct from an internal finding until the human posts it.
 - **Draft board**: the board a lens's review agent drafts.
 - **Composition Board** (the Board): the surface the orchestrator authors from the lens drafts, where the human reviews.

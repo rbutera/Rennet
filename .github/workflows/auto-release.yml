@@ -1,28 +1,33 @@
 # Auto-release workflow — the live, UNSIGNED release path.
 #
-# Every merge to `main` that touches app source (apps/desktop, packages, or the
-# lockfile) auto-bumps the patch version across all 10 workspace package.json
-# files, tags the bump commit `vX.Y.Z`, builds installers on macOS + Windows, and
-# publishes a GitHub Release with those assets. update.electronjs.org serves
-# auto-updates straight from the release assets, so a green run = shipped.
+# Runs NIGHTLY (not per-merge): one release per day batching everything merged
+# since the last tag, and only when app source (apps/desktop, packages, or the
+# lockfile) actually changed since that tag. Each release auto-bumps the patch
+# version across all 10 workspace package.json files, tags the bump commit
+# `vX.Y.Z`, builds installers on macOS + Windows, and publishes a GitHub
+# Release with those assets. update.electronjs.org serves auto-updates straight
+# from the release assets, so a green run = shipped.
+#
+# Why nightly: per-merge releasing burned a macOS (10x billing) + Windows (2x)
+# build on every app-source merge — six releases in one evening. Batching cuts
+# that to at most one per day; `workflow_dispatch` remains the "ship now" lever.
 #
 # This is deliberately the UNSIGNED path. Code signing + notarization is the
 # future SIGNED path in release.yml (issue #42, blocked on RAI-ONLY Apple
 # enrolment). This file owns tag creation now; release.yml no longer builds on a
 # `v*` tag push (it would double-build).
 #
-# Loop guard: the version job pushes a `chore(release):` commit that itself
-# touches package.json files under the trigger paths. Without a guard that push
-# would retrigger this workflow forever. The job-level `if` on the message prefix
-# is the belt; the fact that a bump commit only rewrites version fields is the
-# braces.
+# No release loop is possible: nothing here triggers on push, and the bump
+# commit carries `[skip ci]` so it triggers no other workflow either.
 name: Auto Release
 
 on:
-  # Manual escape hatch: cut a release from current main without an app-source
-  # push (e.g. after a build-infra fix that sits outside the trigger paths).
-  # `bump` selects the version step (patch default; minor/major for milestone
-  # releases like the app-server wave).
+  # Nightly batch release. 03:00 UTC — quiet hours for the repo.
+  schedule:
+    - cron: "0 3 * * *"
+  # Manual "ship now" lever. `bump` selects the version step (patch default;
+  # minor/major for milestone releases like the app-server wave). Dispatch
+  # always releases, even if nothing under the app-source paths changed.
   workflow_dispatch:
     inputs:
       bump:
@@ -30,14 +35,6 @@ on:
         type: choice
         default: patch
         options: [patch, minor, major]
-  push:
-    branches: [main]
-    # App source only — root package.json, docs/, and marketing are NOT triggers.
-    # apps/desktop/** covers desktop config (forge, vite) as well as src.
-    paths:
-      - "apps/desktop/**"
-      - "packages/**"
-      - "pnpm-lock.yaml"
 
 # One release at a time, end to end. Never cancel a release mid-flight.
 concurrency:
@@ -48,13 +45,47 @@ permissions:
   contents: read
 
 jobs:
-  # 0. Loop guard + full gate. Skipping this cascades to every downstream job
-  #    (each `needs` it, transitively), so the bot's own bump commit runs nothing.
+  # 0. Skip the nightly run when nothing releasable changed since the last tag.
+  #    App source only — root package.json, docs/, and marketing do NOT count.
+  decide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.diff.outputs.release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Any app-source change since the last tag?
+        id: diff
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "manual dispatch — releasing unconditionally"
+            exit 0
+          fi
+          latest=$(git describe --tags --match "v*" --abbrev=0)
+          changed=$(git diff --name-only "${latest}..HEAD" -- \
+            apps/desktop packages pnpm-lock.yaml | head -1)
+          if [ -n "$changed" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "app source changed since ${latest} — releasing"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "no app-source change since ${latest} — skipping"
+          fi
+
+  # 1. Full gate on the release commit. Skipping cascades to every downstream
+  #    job (each `needs` it, transitively).
   check:
-    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    needs: decide
+    if: ${{ needs.decide.outputs.release == 'true' }}
     uses: ./.github/workflows/ci.yml
 
-  # 1. Compute next patch, rewrite versions, commit + annotated tag, push.
+  # 2. Compute next patch, rewrite versions, commit + annotated tag, push.
   version:
     needs: check
     runs-on: ubuntu-latest
@@ -96,7 +127,9 @@ jobs:
 
             node scripts/set-version.mjs "${next}"
             git add -A
-            git commit -m "chore(release): ${tag}"
+            # [skip ci]: the bump only rewrites version fields, but it touches
+            # package.json files that would otherwise trigger CI + Docs runs.
+            git commit -m "chore(release): ${tag} [skip ci]"
             git tag -a "${tag}" -m "${tag}"
 
             # --atomic: main + tag land together or not at all.
@@ -117,12 +150,14 @@ jobs:
           echo "::error title=Release push failed::main kept moving under the release; giving up after retries"
           exit 1
 
-  # 2. Build the macOS installers from the TAGGED commit (dmg + darwin zip) and
+  # 3. Build the macOS installers from the TAGGED commit (dmg + darwin zip) and
   #    smoke the packaged app before it can ship.
+  #    Timeout: normal runs take ~7 min; 20 caps a hung run at 200 billed
+  #    minutes (10x macOS multiplier) instead of 400.
   build-macos:
     needs: version
     runs-on: macos-14 # arm64 — matches Rennet-darwin-arm64
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
@@ -155,13 +190,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # 3. Build the Windows installers from the TAGGED commit. MakerSquirrel only
+  # 4. Build the Windows installers from the TAGGED commit. MakerSquirrel only
   #    runs on Windows, so this must be a native windows runner. Produces the
   #    Squirrel feed (Setup.exe, *-full.nupkg, RELEASES) plus the win32 zip.
   build-windows:
     needs: version
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
@@ -191,7 +226,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # 4. Publish the GitHub Release with every installer attached. RELEASES and the
+  # 5. Publish the GitHub Release with every installer attached. RELEASES and the
   #    *-full.nupkg keep their exact filenames — the Squirrel.Windows auto-update
   #    feed resolves them by name.
   publish:

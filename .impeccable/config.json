@@ -409,6 +409,43 @@
         "value": "12.5px",
         "createdAt": "2026-08-23T21:59:18.445Z",
         "reason": "board-prototype spike: minimal-styling ruling, Rai 2026-08-23"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "26px",
+        "createdAt": "2026-08-24T22:35:40.220Z",
+        "reason": "board-prototype spike: minimal neutral prototype styling is explicitly outside DESIGN.md (README + #458 styling rule)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "11.5px",
+        "createdAt": "2026-08-24T22:35:40.263Z",
+        "reason": "board-prototype spike: minimal neutral prototype styling is explicitly outside DESIGN.md (README + #458 styling rule)"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": ["spikes/board-prototype/components/new-chat-view.tsx"],
+        "createdAt": "2026-08-24T22:37:50.093Z",
+        "reason": "wireframe 05 smart-list design language: 'my-PR accent stripe, local backlight' — row state as appearance, Rai-steered wireframe set; user asked to build from existing wireframes"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "10.5px",
+        "createdAt": "2026-08-24T22:46:52.287Z",
+        "reason": "board-prototype spike: minimal neutral prototype styling explicitly outside DESIGN.md (README + #458 styling rule)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "9px",
+        "createdAt": "2026-08-24T22:47:50.096Z",
+        "reason": "board-prototype spike: minimal neutral prototype styling explicitly outside DESIGN.md (README + #458 styling rule)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "9.5px",
+        "createdAt": "2026-08-25T16:52:25.820Z",
+        "reason": "board-prototype spike: minimal neutral prototype styling explicitly outside DESIGN.md (README + #458 styling rule)"
       }
     ]
   }

@@ -57,7 +57,8 @@ jobs:
     name: build + unsigned package smoke (macOS)
     needs: check
     runs-on: macos-14 # arm64 — matches the electron-forge out dir Rennet-darwin-arm64
-    timeout-minutes: 40
+    # Normal runs take well under 20 min; a hung macOS run bills at 10x.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
