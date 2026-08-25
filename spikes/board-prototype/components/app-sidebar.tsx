@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Spinner } from "@/components/ui/spinner"
+import { TargetBadge } from "@/components/target-badge"
 import type { HostItem, ProjectItem } from "@/lib/sidebar-data"
 import { Button } from "@/components/ui/button"
 import {
@@ -207,6 +208,14 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, o
           <PanelLeft className="size-3.5" aria-hidden="true" />
         </button>
         <nav className="flex flex-col items-center gap-1" aria-label="App">
+          <button
+            type="button"
+            aria-label="Search"
+            title="Search"
+            className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            <Search className="size-4" aria-hidden="true" />
+          </button>
           <NewChatPicker
             projects={projects}
             onNewProject={onAddProject}
@@ -222,14 +231,6 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, o
               </button>
             }
           />
-          <button
-            type="button"
-            aria-label="Search"
-            title="Search"
-            className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <Search className="size-4" aria-hidden="true" />
-          </button>
         </nav>
         <div className="mt-auto flex flex-col items-center gap-1">
           <UpdateDialog
@@ -287,6 +288,16 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, o
       </div>
 
       <div className="flex flex-col gap-0.5 px-2">
+        <button
+          type="button"
+          className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <Search className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="flex-1">Search</span>
+          <kbd className="rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">
+            ⌘P
+          </kbd>
+        </button>
         <NewChatPicker
           projects={projects}
           onNewProject={onAddProject}
@@ -303,32 +314,16 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, o
         />
         <button
           type="button"
+          onClick={onAddProject}
           className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
-          <Search className="size-3.5 shrink-0" aria-hidden="true" />
-          <span className="flex-1">Search</span>
-          <kbd className="rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">
-            ⌘P
-          </kbd>
+          <FolderPlus className="size-3.5 shrink-0" aria-hidden="true" />
+          <span>Add project</span>
         </button>
       </div>
 
-      <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
-        <div className="flex h-6 items-center px-2">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Projects
-          </span>
-        </div>
+      <div className="mt-5 flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5 pb-2">
-          <button
-            type="button"
-            onClick={onAddProject}
-            className="flex h-7 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <Plus className="size-3.5 shrink-0" aria-hidden="true" />
-            <span>Add project</span>
-          </button>
-
           {hosts.map((host) => (
             <div key={host.id} className="flex flex-col pt-5 first:pt-0">
               <div className="flex h-6 items-center gap-1.5 px-2">
@@ -379,7 +374,7 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, o
                             type="button"
                             onClick={() => onSelectSession(session.id)}
                             className={cn(
-                              "flex h-8 flex-col justify-center gap-0.5 rounded-md px-2 text-left transition-colors hover:bg-secondary",
+                              "flex min-h-8 flex-col justify-center gap-0.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-secondary",
                               session.active && "bg-secondary",
                             )}
                           >
@@ -396,7 +391,10 @@ export function AppSidebar({ open, onToggle, hosts, onAddProject, onAddRemote, o
                                 {session.title}
                               </span>
                             </span>
-                            <span className="pl-3 text-[11px] text-muted-foreground">{session.time}</span>
+                            <span className="flex items-center gap-1.5 pl-3">
+                              <TargetBadge kind={session.target} state={session.targetState} size="sm" />
+                              <span className="text-[11px] text-muted-foreground">{session.time}</span>
+                            </span>
                           </button>
                         ))}
                       </div>

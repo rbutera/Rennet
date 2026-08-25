@@ -5,6 +5,7 @@ import { Check, ChevronDown, GitPullRequest, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { type Ask, useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
+import { AnchorReveal } from "@/components/code-tabs"
 import { RichText } from "@/components/rich-text"
 import { StreamingProse } from "@/components/streaming-prose"
 
@@ -141,8 +142,9 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
           Review posted to {prLabel}
         </span>
         <p className="text-[13.5px] text-muted-foreground">
-          {verdict} · {requestChangeCount} request-change{requestChangeCount === 1 ? "" : "s"} ·{" "}
-          {commentCount} comment{commentCount === 1 ? "" : "s"} — github.com/acme/orbital/pull/434#pullrequestreview
+          {verdict} · {asks.filter((a) => a.codeAnchor).length} line comment
+          {asks.filter((a) => a.codeAnchor).length === 1 ? "" : "s"} · body —
+          github.com/acme/orbital/pull/434#pullrequestreview
         </p>
         <p className="text-[13px] text-muted-foreground/80">
           The draft is frozen with this post. New review acts start the next draft.
@@ -152,39 +154,76 @@ export function HandoffView({ prLabel = "PR #434" }: { prLabel?: string }) {
   }
 
   const preview = stage === "preview"
+  const inlineAsks = asks.filter((ask) => ask.codeAnchor)
+  const bodyAsks = asks.filter((ask) => !ask.codeAnchor)
+
+  function askBlock(ask: Ask) {
+    return (
+      <div key={ask.id} className="flex flex-col gap-1">
+        <span className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              ask.intent === "request-change"
+                ? "bg-primary/15 text-primary"
+                : "bg-secondary text-muted-foreground",
+            )}
+          >
+            {ask.intent === "request-change" ? "request change" : "comment"}
+          </span>
+          <span className="text-[11px] text-muted-foreground/80">{ask.source}</span>
+          {!ask.codeAnchor && (
+            <span className="text-[11px] text-muted-foreground/60">no diff line — travels in the body</span>
+          )}
+        </span>
+        {streamingIds.has(ask.id) ? (
+          <StreamingProse
+            paragraphs={[blockText(ask)]}
+            className="text-[14px] leading-relaxed text-foreground/90"
+          />
+        ) : (
+          <RichText text={blockText(ask)} paragraphClassName="text-[14px] leading-relaxed text-foreground/90" />
+        )}
+      </div>
+    )
+  }
+
+  // Rendered in GitHub's own shape: one review body, then line comments
+  // pinned to diff positions, grouped by file.
+  const inlineByFile = new Map<string, Ask[]>()
+  for (const ask of inlineAsks) {
+    const path = ask.codeAnchor?.path ?? ""
+    inlineByFile.set(path, [...(inlineByFile.get(path) ?? []), ask])
+  }
 
   const draftBody = (
     <div className="flex flex-col gap-4">
-      {/* Opener */}
+      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Review body
+      </span>
       <RichText
         text={openerFor(verdict, asks.length)}
         paragraphClassName="text-[14px] leading-relaxed text-foreground/90"
       />
-      {asks.map((ask) => (
-        <div key={ask.id} className="flex flex-col gap-1">
-          <span className="flex items-center gap-1.5">
-            <span
-              className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                ask.intent === "request-change"
-                  ? "bg-primary/15 text-primary"
-                  : "bg-secondary text-muted-foreground",
-              )}
-            >
-              {ask.intent === "request-change" ? "request change" : "comment"}
-            </span>
-            <span className="text-[11px] text-muted-foreground/80">{ask.source}</span>
+      {bodyAsks.map(askBlock)}
+      {inlineAsks.length > 0 && (
+        <div className="mt-1 flex flex-col gap-3 border-t border-border/60 pt-3">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Line comments · {inlineAsks.length}
           </span>
-          {streamingIds.has(ask.id) ? (
-            <StreamingProse
-              paragraphs={[blockText(ask)]}
-              className="text-[14px] leading-relaxed text-foreground/90"
-            />
-          ) : (
-            <RichText text={blockText(ask)} paragraphClassName="text-[14px] leading-relaxed text-foreground/90" />
-          )}
+          {[...inlineByFile.entries()].map(([path, fileAsks]) => (
+            <div key={path} className="flex flex-col gap-2.5">
+              <span className="font-mono text-[11.5px] text-muted-foreground">{path}</span>
+              {fileAsks.map((ask) => (
+                <div key={ask.id} className="flex flex-col gap-1.5 border-l-2 border-border/60 pl-3">
+                  {ask.codeAnchor && <AnchorReveal anchors={[ask.codeAnchor]} />}
+                  {askBlock(ask)}
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
-      ))}
+      )}
       {asks.length === 0 && verdict !== "Approve" && (
         <p className="text-[13px] text-muted-foreground">Nothing staged yet — asks land here as they arise.</p>
       )}

@@ -6,7 +6,10 @@ import { ChatColumn } from "@/components/chat-column"
 import { MainSurface } from "@/components/main-surface"
 import { CodeCommentsProvider } from "@/components/code-comments"
 import { ContextMapFullView } from "@/components/context-map"
-import { NewChatView } from "@/components/new-chat-view"
+import { NewChatView, targetOf } from "@/components/new-chat-view"
+import { DEFAULT_CHAT_WIDTH, ResizeHandle } from "@/components/resize-handle"
+import type { TargetState } from "@/components/target-badge"
+import type { TargetKind } from "@/lib/target-language"
 import { ProjectIndexingView } from "@/components/project-indexing-view"
 import { SessionView } from "@/components/session-view"
 import { SettingsView } from "@/components/settings-view"
@@ -18,6 +21,7 @@ import { hosts as initialHosts, type HostItem } from "@/lib/sidebar-data"
 export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [chatOpen, setChatOpen] = useState(true)
+  const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [newChatProjectId, setNewChatProjectId] = useState<string | null>(null)
   const [indexingProject, setIndexingProject] = useState<{ id: string; name: string } | null>(null)
@@ -26,6 +30,7 @@ export function AppShell() {
     projectName: string
     targetLabel: string
     targetKind: "pr" | "branch"
+    badge: { kind: TargetKind; state?: TargetState }
     initialMessage?: string
   } | null>(null)
 
@@ -35,6 +40,7 @@ export function AppShell() {
       projectName,
       targetLabel: item ? (item.kind === "pr" ? `#${item.number} · ${item.branch}` : item.branch) : "main",
       targetKind: item?.kind === "pr" ? "pr" : "branch",
+      badge: item ? targetOf(item) : { kind: "your-branch" },
       initialMessage: message || undefined,
     })
   }
@@ -153,12 +159,20 @@ export function AppShell() {
           projectName={session.projectName}
           targetLabel={session.targetLabel}
           targetKind={session.targetKind}
+          badge={session.badge}
           initialMessage={session.initialMessage}
           onBack={() => setSession(null)}
+          chatWidth={chatWidth}
+          onChatWidthChange={setChatWidth}
         />
       )}
       <div className={settingsOpen || contextMapProject || newChatProjectId || indexingProject || session ? "hidden" : "contents"}>
-        {chatOpen && <ChatColumn onCollapse={() => setChatOpen(false)} />}
+        {chatOpen && (
+          <>
+            <ChatColumn onCollapse={() => setChatOpen(false)} width={chatWidth} />
+            <ResizeHandle value={chatWidth} onChange={setChatWidth} />
+          </>
+        )}
         <MainSurface showLocationTrail={!chatOpen} onExpandChat={() => setChatOpen(true)} />
       </div>
 

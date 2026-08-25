@@ -1,7 +1,18 @@
 "use client"
 
 import { useState } from "react"
-import { Map, PanelLeft } from "lucide-react"
+import {
+  DraftingCompass,
+  FileDiff,
+  Flag,
+  GitCommitHorizontal,
+  ListOrdered,
+  Map,
+  PanelLeft,
+  PenLine,
+  VolumeX,
+  type LucideIcon,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { LocationTrail } from "@/components/location-trail"
 import { ViewSwitcher } from "@/components/view-switcher"
@@ -16,13 +27,13 @@ import { decisionsBoard } from "@/lib/fixtures/decisions"
 import { flaggedBoard } from "@/lib/fixtures/flagged"
 import { noiseBoard } from "@/lib/fixtures/noise"
 
-const VIEWS: { segment: string; board: LensBoard | null }[] = [
-  { segment: "Design", board: designBoard },
-  { segment: "Sequence", board: sequenceBoard },
-  { segment: "Decisions", board: decisionsBoard },
-  { segment: "Flagged", board: flaggedBoard },
-  { segment: "Noise", board: noiseBoard },
-  { segment: "Diff", board: null },
+const VIEWS: { segment: string; icon: LucideIcon; board: LensBoard | null }[] = [
+  { segment: "Design", icon: DraftingCompass, board: designBoard },
+  { segment: "Sequence", icon: ListOrdered, board: sequenceBoard },
+  { segment: "Decisions", icon: GitCommitHorizontal, board: decisionsBoard },
+  { segment: "Flagged", icon: Flag, board: flaggedBoard },
+  { segment: "Noise", icon: VolumeX, board: noiseBoard },
+  { segment: "Diff", icon: FileDiff, board: null },
 ]
 
 export function MainSurface({
@@ -45,7 +56,7 @@ export function MainSurface({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="grid h-10 shrink-0 grid-cols-3 items-center border-b border-border px-3">
+      <header className="grid h-10 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border px-3 @container">
         <div className="flex items-center gap-2 justify-self-start">
           {showLocationTrail && (
             <>
@@ -72,10 +83,10 @@ export function MainSurface({
             )}
           >
             <Map className="size-3.5" aria-hidden="true" />
-            Map
+            <span className="hidden @[46rem]:inline">Map</span>
           </button>
           <ViewSwitcher
-            segments={VIEWS.map((v) => v.segment)}
+            segments={VIEWS.map((v) => ({ label: v.segment, icon: v.icon }))}
             active={mapOpen || handoffOpen ? "" : active}
             onChange={(segment) => {
               setMapOpen(false)
@@ -92,14 +103,18 @@ export function MainSurface({
               setMapOpen(false)
             }}
             aria-pressed={handoffOpen}
+            aria-label={ctaLabel}
+            title={ctaLabel}
             className={cn(
-              "rounded-md px-3 py-1 text-[12px] font-medium transition-colors",
+              "flex items-center gap-1.5 rounded-md px-3 py-1 text-[12px] font-medium transition-colors",
               handoffOpen
                 ? "bg-secondary text-foreground"
                 : "bg-primary text-primary-foreground hover:bg-primary/90",
             )}
           >
-            {ctaLabel}{askCount > 0 ? ` · ${askCount}` : ""}
+            <PenLine className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="hidden @[46rem]:inline">{ctaLabel}</span>
+            {askCount > 0 && <span>· {askCount}</span>}
           </button>
         </div>
       </header>

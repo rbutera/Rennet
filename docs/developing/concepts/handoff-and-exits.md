@@ -68,6 +68,16 @@ types into a draft; steering happens by talking or by highlighting a span.
   round receipt, restorable with a click; a **Detached** list holds threads
   whose anchoring prose no longer exists.
 
+## The review's two strata
+
+A GitHub review is one **review body** plus **line comments** pinned to diff
+positions, and the draft mirrors that shape rather than flattening it. An ask
+whose provenance carries a diff position — a finding's anchor, a code-line
+comment — becomes a line comment, grouped by file with its citation. An ask
+without one (a quote of board prose has no diff line to pin to) travels in
+the review body, woven in by the orchestrator and honestly marked. The
+preview renders exactly this structure, because it is exactly what posts.
+
 ## Verdict and the approving review
 
 The orchestrator proposes the verdict from the reviewer's acts and asks in

@@ -31,6 +31,12 @@ export interface Ask {
   intent: "comment" | "request-change"
   /** Where it came from, e.g. a finding title or a quoted span. */
   source: string
+  /**
+   * Diff position, when the provenance carries one. With it the ask posts as
+   * a GitHub line comment; without it the ask travels in the review body
+   * (board prose has no diff position to pin to).
+   */
+  codeAnchor?: { path: string; line: number }
 }
 
 /** A draft block retired by rework or Drop — ledgered, restorable (R32). */
@@ -52,7 +58,7 @@ interface CodeCommentsStore {
   focusThread: (id: string | null) => void
   /** Hand-off state: staged asks, the retired ledger, and rework triggers. */
   asks: Ask[]
-  stageAsk: (text: string, intent: Ask["intent"], source: string) => string
+  stageAsk: (text: string, intent: Ask["intent"], source: string, codeAnchor?: Ask["codeAnchor"]) => string
   unstageAsk: (id: string) => void
   retired: RetiredBlock[]
   retireBlock: (text: string, reason: string) => void
@@ -114,11 +120,14 @@ export function CodeCommentsProvider({ children }: { children: React.ReactNode }
   const [retired, setRetired] = React.useState<RetiredBlock[]>([])
   const askSeq = React.useRef(0)
 
-  const stageAsk = React.useCallback((text: string, intent: Ask["intent"], source: string) => {
-    const id = `ask-${askSeq.current++}`
-    setAsks((previous) => [...previous, { id, text, intent, source }])
-    return id
-  }, [])
+  const stageAsk = React.useCallback(
+    (text: string, intent: Ask["intent"], source: string, codeAnchor?: Ask["codeAnchor"]) => {
+      const id = `ask-${askSeq.current++}`
+      setAsks((previous) => [...previous, { id, text, intent, source, codeAnchor }])
+      return id
+    },
+    [],
+  )
 
   const unstageAsk = React.useCallback((id: string) => {
     setAsks((previous) => previous.filter((ask) => ask.id !== id))

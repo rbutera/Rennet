@@ -13,7 +13,7 @@ function commentBadgeId(path: string, line: number) {
   return `comment-${path}-${line}`
 }
 
-export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
+export function ChatColumn({ onCollapse, width = 420 }: { onCollapse: () => void; width?: number }) {
   const [turns, setTurns] = useState<TurnData[]>(initialTurns)
   const [exchangeIndex, setExchangeIndex] = useState(0)
   const [imageBadges, setImageBadges] = useState<ComposerBadge[]>([])
@@ -85,7 +85,10 @@ export function ChatColumn({ onCollapse }: { onCollapse: () => void }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-[420px] shrink-0 flex-col overflow-hidden border-r border-border">
+    <div
+      className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border"
+      style={{ width }}
+    >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
         <LocationTrail />
         <button

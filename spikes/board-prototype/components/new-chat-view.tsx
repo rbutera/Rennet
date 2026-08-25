@@ -15,7 +15,9 @@ import {
 import { cn } from "@/lib/utils"
 import type { HostItem } from "@/lib/sidebar-data"
 import { smartList, type SmartListItem } from "@/lib/smart-list-data"
+import type { TargetKind } from "@/lib/target-language"
 import { ProjectPicker } from "@/components/settings-view"
+import { TargetBadge, type TargetState } from "@/components/target-badge"
 
 /**
  * The New chat page: full-view takeover (no session yet, so no chat column).
@@ -271,45 +273,26 @@ function CheckoutRow({ selected, onSelect }: { selected: boolean; onSelect: () =
   )
 }
 
-/** The row's one loud fact: a consistent chip vocabulary at the row's right edge. */
-function StateChip({ item }: { item: SmartListItem }) {
+/** Map a smart-list item onto the unified target vocabulary (CONTEXT.md). */
+export function targetOf(item: SmartListItem): { kind: TargetKind; state?: TargetState } {
   if (item.kind === "local") {
-    return item.reviewed ? (
-      <span className="rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[10.5px] font-medium text-green-500">
-        Reviewed
-      </span>
-    ) : (
-      <span className="rounded-full border border-border bg-secondary/60 px-2 py-0.5 text-[10.5px] font-medium text-foreground/70">
-        Working tree
-      </span>
-    )
+    return { kind: "your-branch", state: item.reviewed ? "reviewed" : undefined }
   }
   switch (item.state) {
     case "needs-you":
-      return (
-        <span className="rounded-full bg-primary px-2 py-0.5 text-[10.5px] font-semibold text-primary-foreground">
-          Needs you
-        </span>
-      )
+      return { kind: "teammate-pr", state: "needs-you" }
     case "yours":
-      return (
-        <span className="rounded-full border border-primary/50 px-2 py-0.5 text-[10.5px] font-medium text-primary">
-          Yours
-        </span>
-      )
+      return { kind: "your-pr" }
     case "team":
-      return (
-        <span className="rounded-full border border-border bg-secondary/60 px-2 py-0.5 text-[10.5px] font-medium text-foreground/70">
-          To review
-        </span>
-      )
+      return { kind: "teammate-pr" }
     case "merged":
-      return (
-        <span className="rounded-full border border-border px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground">
-          Merged
-        </span>
-      )
+      return { kind: "your-pr", state: "merged" }
   }
+}
+
+function StateChip({ item }: { item: SmartListItem }) {
+  const target = targetOf(item)
+  return <TargetBadge kind={target.kind} state={target.state} />
 }
 
 function CiDot({ ci }: { ci: "pass" | "fail" | "running" }) {

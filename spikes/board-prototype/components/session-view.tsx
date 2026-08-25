@@ -4,8 +4,11 @@ import * as React from "react"
 import { ArrowLeft, ChevronRight, GitBranch, GitPullRequest } from "lucide-react"
 import { InputBar } from "@/components/input-bar"
 import { MainSurface } from "@/components/main-surface"
+import { ResizeHandle } from "@/components/resize-handle"
 import { RunView } from "@/components/run-view"
+import { TargetBadge, type TargetState } from "@/components/target-badge"
 import type { ComposerBadge } from "@/lib/composer-badges"
+import type { TargetKind } from "@/lib/target-language"
 
 /**
  * A just-started review session: blank chat shell on the left, and the right
@@ -16,14 +19,20 @@ export function SessionView({
   projectName,
   targetLabel,
   targetKind,
+  badge,
   initialMessage,
   onBack,
+  chatWidth,
+  onChatWidthChange,
 }: {
   projectName: string
   targetLabel: string
   targetKind: "pr" | "branch"
+  badge: { kind: TargetKind; state?: TargetState }
   initialMessage?: string
   onBack: () => void
+  chatWidth: number
+  onChatWidthChange: (width: number) => void
 }) {
   const [turns, setTurns] = React.useState<string[]>(initialMessage ? [initialMessage] : [])
   const [boardsReady, setBoardsReady] = React.useState(false)
@@ -36,7 +45,10 @@ export function SessionView({
 
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden">
-      <div className="flex h-full min-h-0 w-[420px] shrink-0 flex-col overflow-hidden border-r border-border">
+      <div
+        className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border"
+        style={{ width: chatWidth }}
+      >
         <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-3">
           <button
             type="button"
@@ -56,6 +68,9 @@ export function SessionView({
             <ChevronRight className="size-3 shrink-0 text-muted-foreground/50" aria-hidden="true" />
             <span className="min-w-0 truncate font-mono text-[12px] text-muted-foreground">{targetLabel}</span>
           </span>
+          <span className="ml-auto">
+            <TargetBadge kind={badge.kind} state={badge.state} size="sm" />
+          </span>
         </header>
         <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-4 py-4">
           {turns.map((turn, index) => (
@@ -74,6 +89,8 @@ export function SessionView({
           onAddImage={() => {}}
         />
       </div>
+
+      <ResizeHandle value={chatWidth} onChange={onChatWidthChange} />
 
       {boardsReady ? (
         <MainSurface showLocationTrail={false} onExpandChat={() => {}} />

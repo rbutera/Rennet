@@ -324,7 +324,7 @@ function Element({ element }: { element: BoardElement }) {
               />
             </div>
           ))}
-          {element.fix && <FixCallout fix={element.fix} findingTitle={element.title} />}
+          {element.fix && <FixCallout fix={element.fix} findingTitle={element.title} anchor={element.anchor} />}
           {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
         </div>
       )
@@ -501,7 +501,15 @@ function Concurrence({ agreement }: { agreement: { claude: boolean; codex: boole
  * A finding's fix as an actionable callout. On a teammate PR the action stages
  * a request-change ask (R29); the button is its own receipt and undo.
  */
-function FixCallout({ fix, findingTitle }: { fix: string; findingTitle: string }) {
+function FixCallout({
+  fix,
+  findingTitle,
+  anchor,
+}: {
+  fix: string
+  findingTitle: string
+  anchor?: { path: string; line: number }
+}) {
   const store = useCodeComments()
   const [askId, setAskId] = React.useState<string | null>(null)
   const staged = askId !== null && (store?.asks ?? []).some((ask) => ask.id === askId)
@@ -513,7 +521,7 @@ function FixCallout({ fix, findingTitle }: { fix: string; findingTitle: string }
       setAskId(null)
       return
     }
-    setAskId(store.stageAsk(fix, "request-change", `finding: ${findingTitle.slice(0, 56)}`))
+    setAskId(store.stageAsk(fix, "request-change", `finding: ${findingTitle.slice(0, 56)}`, anchor))
   }
 
   return (
