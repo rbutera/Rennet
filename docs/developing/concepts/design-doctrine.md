@@ -40,6 +40,30 @@ Keep ordinary screens on the warm neutral ramp. Accent color points to something
 the reviewer can act on or inspect. Color never carries meaning without text,
 shape, or position.
 
+## Theme packs
+
+The Affineur's Bench palette in `palette.css` is the **default** theme, and it is
+the one Rennet ships screenshots of. A viewer can select a bundled **theme pack**
+instead: GitHub, One Dark Pro, Dracula, or Catppuccin Mocha. Each pack is one file,
+`packages/theme/src/themes/<id>.css`, that re-binds every `--rn-*` colour token
+under `[data-rn-theme="<id>"]` with complete light and dark scheme blocks. The
+default stamps no attribute — absence of `data-rn-theme` is the Affineur's Bench.
+
+A pack changes colour only; it never touches type, spacing, or radius, and it owes
+the same contract as the default: every semantic role survives the mapping (accent,
+evidence green, danger, diff add and delete, sheet, and the ground ramp), and every
+ink and diff pair clears WCAG AA. `packages/theme/src/palette-sync.test.ts` fails on
+a pack that drops a token (no partial packs), and `packages/theme/src/theme.test.ts`
+runs the AA contract per pack per scheme. A pack translates an upstream palette's
+spirit into Rennet's roles; where an upstream muted grey or accent falls short of
+AA, the pack lifts it rather than copying the hex.
+
+Syntax colour is a **separate axis**. By default code follows the active pack's own
+`--rn-syn-*`; a viewer can instead pick a bundled **code theme**
+(`packages/theme/src/code-themes/<id>.css`) that re-binds the syntax tokens
+independently under `[data-rn-code-theme="<id>"]`. The marketing and docs sites stay
+on the default theme — packs are an app-client feature.
+
 ## Surfaces stay opaque
 
 The window uses one continuous canvas. Panels separate through small background
@@ -171,6 +195,7 @@ Before a UI change is done, check:
 | --- | --- |
 | Visual authority | `DESIGN.md` |
 | Shared palette and Tailwind mappings | `packages/theme/src/palette.css`, `packages/theme/src/theme.css` |
+| Theme packs and code themes | `packages/theme/src/themes/`, `packages/theme/src/code-themes/` |
 | Desktop type and radius ramp | `packages/app-ui/DESIGN.md` |
 | Vendored component kit | `packages/ui/src/components` |
 | Rennet product components | `packages/app-ui/src/components` |

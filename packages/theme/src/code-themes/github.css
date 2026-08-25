@@ -1,0 +1,38 @@
+/* GitHub code theme — the SYNTAX axis only (issue #481 §4).
+ *
+ * Scoped under [data-rn-code-theme="github"]; rebinds --rn-syn-* (plus the code
+ * ground) to GitHub's shiki token colours (github-light-default /
+ * github-dark-default, MIT), light/dark swapping with data-scheme. It is
+ * independent of the UI theme pack: the reviewer can run any --rn-theme with any
+ * --rn-code-theme. The default `rennet` code theme is the absence of this
+ * attribute — code then follows the active pack's own --rn-syn-*.
+ *
+ * Loaded AFTER the theme pack so its syntax tokens win by source order (equal
+ * specificity). Colour tokens only.
+ */
+
+[data-rn-code-theme="github"] {
+  --rn-code: #f6f8fa;
+  --rn-code-ln: #8c959f;
+  --rn-syn-kw: #cf222e;
+  --rn-syn-str: #0a3069;
+  --rn-syn-cmt: #6e7781;
+  --rn-syn-num: #0550ae;
+  --rn-syn-type: #953800;
+  --rn-syn-fn: #6639ba;
+  --rn-syn-prop: #0550ae;
+  --rn-syn-var: #953800;
+}
+
+[data-rn-code-theme="github"][data-scheme="dark"] {
+  --rn-code: #0d1117;
+  --rn-code-ln: #6e7681;
+  --rn-syn-kw: #ff7b72;
+  --rn-syn-str: #a5d6ff;
+  --rn-syn-cmt: #8b949e;
+  --rn-syn-num: #79c0ff;
+  --rn-syn-type: #ffa657;
+  --rn-syn-fn: #d2a8ff;
+  --rn-syn-prop: #79c0ff;
+  --rn-syn-var: #ffa657;
+}

@@ -1,0 +1,117 @@
+/* Dracula theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="dracula"]; colour tokens only. Both scheme blocks
+ * complete.
+ *
+ * Dracula upstream is dark-only (draculatheme.com/contribute, MIT). Per issue
+ * #481's open question we take option (a): the light scheme is built from
+ * Dracula's official light variant, Alucard — so the pack themes both schemes
+ * and the scheme toggle stays live under it. Foreground greys are lifted toward
+ * AA where the originals fall short of Rennet's 4.5:1 ink contract.
+ */
+
+[data-rn-theme="dracula"] {
+  /* ground — Alucard (Dracula light) */
+  --rn-canvas: #fffbeb;
+  --rn-surface: #ffffff;
+  --rn-raised: #f4efd9;
+  --rn-overlay: #ffffff;
+  --rn-code: #fffbeb;
+  /* ink */
+  --rn-ink: #1f1f1f;
+  --rn-ink-soft: #565241;
+  --rn-ink-faint: #6c664b;
+  /* structure */
+  --rn-line: rgb(31 31 31 / 0.14);
+  --rn-line-strong: rgb(31 31 31 / 0.22);
+  /* accent — Alucard purple */
+  --rn-accent: #644ac9;
+  --rn-accent-fill: #644ac9;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(100 74 201 / 0.1);
+  --rn-accent-line: rgb(100 74 201 / 0.32);
+  --rn-accent-surface: #e7e1fa;
+  /* evidence green */
+  --rn-green: #14710a;
+  --rn-green-soft: rgb(20 113 10 / 0.12);
+  --rn-green-line: rgb(20 113 10 / 0.3);
+  /* danger */
+  --rn-danger: #cb3a2a;
+  --rn-danger-soft: rgb(203 58 42 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #1f1f1f;
+  --rn-sheet-soft: #6c664b;
+  --rn-sheet-line: #e6e1cf;
+  /* diff */
+  --rn-add: #e2f3df;
+  --rn-add-ink: #14710a;
+  --rn-del: #fbe6e3;
+  --rn-del-ink: #b8321f;
+  --rn-code-ln: #b3ad93;
+  /* syntax — Alucard */
+  --rn-syn-kw: #a3144d;
+  --rn-syn-str: #846e15;
+  --rn-syn-cmt: #6c664b;
+  --rn-syn-num: #644ac9;
+  --rn-syn-type: #036a96;
+  --rn-syn-fn: #14710a;
+  --rn-syn-prop: #a34d14;
+  --rn-syn-var: #1f1f1f;
+  /* mark + scrim */
+  --rn-mark-ink: #1f1f1f;
+  --rn-scrim: #1f1f1f;
+}
+
+[data-rn-theme="dracula"][data-scheme="dark"] {
+  /* ground — Dracula */
+  --rn-canvas: #282a36;
+  --rn-surface: #313342;
+  --rn-raised: #3b3d4d;
+  --rn-overlay: #21222c;
+  --rn-code: #282a36;
+  /* ink */
+  --rn-ink: #f8f8f2;
+  --rn-ink-soft: #cbcdd8;
+  --rn-ink-faint: #a5a8bc;
+  /* structure */
+  --rn-line: rgb(248 248 242 / 0.1);
+  --rn-line-strong: rgb(248 248 242 / 0.18);
+  /* accent — Dracula purple */
+  --rn-accent: #bd93f9;
+  --rn-accent-fill: #bd93f9;
+  --rn-accent-ink: #282a36;
+  --rn-accent-soft: rgb(189 147 249 / 0.15);
+  --rn-accent-line: rgb(189 147 249 / 0.4);
+  --rn-accent-surface: #2f2a45;
+  /* evidence green */
+  --rn-green: #50fa7b;
+  --rn-green-soft: rgb(80 250 123 / 0.15);
+  --rn-green-line: rgb(80 250 123 / 0.4);
+  /* danger */
+  --rn-danger: #ff5555;
+  --rn-danger-soft: rgb(255 85 85 / 0.15);
+  /* paper */
+  --rn-sheet: #313342;
+  --rn-sheet-ink: #f8f8f2;
+  --rn-sheet-soft: #a5a8bc;
+  --rn-sheet-line: #44475a;
+  /* diff */
+  --rn-add: #1e3226;
+  --rn-add-ink: #50fa7b;
+  --rn-del: #3a2230;
+  --rn-del-ink: #ff6e6e;
+  --rn-code-ln: #6272a4;
+  /* syntax — Dracula */
+  --rn-syn-kw: #ff79c6;
+  --rn-syn-str: #f1fa8c;
+  --rn-syn-cmt: #6272a4;
+  --rn-syn-num: #bd93f9;
+  --rn-syn-type: #8be9fd;
+  --rn-syn-fn: #50fa7b;
+  --rn-syn-prop: #ffb86c;
+  --rn-syn-var: #f8f8f2;
+  /* mark + scrim */
+  --rn-mark-ink: #f8f8f2;
+  --rn-scrim: #191a21;
+}

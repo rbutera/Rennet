@@ -3,12 +3,13 @@
 // and palette-sync.test.ts, so the committed generated file can never drift from
 // palette.css without reddening the gate.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const PALETTE_CSS_PATH = join(here, "..", "src", "palette.css");
+export const THEMES_DIR = join(here, "..", "src", "themes");
 
 /** Vars that only make sense on the web (font stacks, box-shadow) — excluded
  *  from the mobile transpose. */
@@ -74,27 +75,81 @@ export function parsePalette(cssPath = PALETTE_CSS_PATH) {
   return result;
 }
 
+/** A theme pack (themes/<id>.css) transposed like parsePalette. Packs rebind the
+ *  colour tokens only (no font/shadow), scoped under [data-rn-theme="<id>"]. Each
+ *  must carry the SAME key set as the default (rennet) palette — a missing token
+ *  is a partial pack and throws here. */
+export function parseTheme(id, dir = THEMES_DIR) {
+  const css = readFileSync(join(dir, `${id}.css`), "utf8");
+  const schemes = {
+    light: declarations(sliceBlock(css, `[data-rn-theme="${id}"] {`)),
+    dark: declarations(sliceBlock(css, `[data-rn-theme="${id}"][data-scheme="dark"]`)),
+  };
+  const result = { light: {}, dark: {} };
+  for (const [scheme, vars] of Object.entries(schemes)) {
+    for (const [name, value] of vars) {
+      if (WEB_ONLY.has(name)) continue;
+      result[scheme][camel(name)] = toReactNativeColor(value);
+    }
+  }
+  return result;
+}
+
+/** The full theme map: rennet (from palette.css) first, then every themes/*.css,
+ *  alphabetical. Every theme carries an identical key set in both schemes — the
+ *  contract that forbids partial packs, checked here so a gap reddens the gate. */
+export function parseThemes() {
+  const rennet = parsePalette();
+  const referenceKeys = Object.keys(rennet.light).sort().join(",");
+  const themes = { rennet };
+  const ids = readdirSync(THEMES_DIR)
+    .filter((f) => f.endsWith(".css"))
+    .map((f) => f.replace(/\.css$/, ""))
+    .sort();
+  for (const id of ids) {
+    const theme = parseTheme(id);
+    for (const scheme of ["light", "dark"]) {
+      const keys = Object.keys(theme[scheme]).sort().join(",");
+      if (keys !== referenceKeys) {
+        throw new Error(
+          `themes/${id}.css: ${scheme} token set does not match the default palette:\n${keys}\nvs\n${referenceKeys}`,
+        );
+      }
+    }
+    themes[id] = theme;
+  }
+  return themes;
+}
+
 /** The exact content of apps/mobile/src/theme/palette.generated.ts. */
-export function emitMobilePalette(cssPath = PALETTE_CSS_PATH) {
-  const palette = parsePalette(cssPath);
-  const scheme = (name) =>
-    Object.entries(palette[name])
-      .map(([key, value]) => `    ${key}: "${value}",`)
+export function emitMobilePalette() {
+  const themes = parseThemes();
+  const scheme = (vars) =>
+    Object.entries(vars)
+      .map(([key, value]) => `      ${key}: "${value}",`)
       .join("\n");
+  const theme = (id, value) =>
+    `  ${/^[a-z][\w]*$/.test(id) ? id : JSON.stringify(id)}: {\n` +
+    `    light: {\n${scheme(value.light)}\n    },\n` +
+    `    dark: {\n${scheme(value.dark)}\n    },\n` +
+    `  },`;
+  const body = Object.entries(themes)
+    .map(([id, value]) => theme(id, value))
+    .join("\n");
   return `// GENERATED FILE — do not edit by hand.
-// Source: packages/theme/src/palette.css (the one palette source of truth).
+// Source: packages/theme/src/palette.css + packages/theme/src/themes/*.css.
 // Regenerate: pnpm nx run rennet-theme:generate
 // Staleness reddens packages/theme/src/palette-sync.test.ts in the gate.
 
-export const palette = {
-  light: {
-${scheme("light")}
-  },
-  dark: {
-${scheme("dark")}
-  },
+export const themes = {
+${body}
 } as const;
 
+// The default theme (Affineur's Bench). Mobile follows the theme pack once it
+// wires selection; until then it reads this alias, unchanged from before packs.
+export const palette = themes.rennet;
+
+export type ThemeId = keyof typeof themes;
 export type GeneratedScheme = keyof typeof palette;
 export type GeneratedPalette = (typeof palette)["light"];
 `;

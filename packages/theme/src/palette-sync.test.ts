@@ -1,8 +1,13 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — plain .mjs module shared with the generator CLI.
-import { emitMobilePalette, parsePalette } from "../scripts/palette-data.mjs";
+import {
+  emitMobilePalette,
+  parsePalette,
+  parseTheme,
+  parseThemes,
+} from "../scripts/palette-data.mjs";
 
 // The palette has ONE source: src/palette.css. Web surfaces import it and
 // consume var(--rn-*); mobile consumes a GENERATED transpose. These tests make
@@ -65,4 +70,110 @@ describe("no palette copies outside palette.css", () => {
       );
     }
   });
+});
+
+// Theme packs (issue #481): each themes/<id>.css scopes a COMPLETE re-binding of
+// every colour token under [data-rn-theme="<id>"], both scheme blocks. No
+// fallback chains — a pack that drops a token is a partial theme and must red the
+// gate. parseThemes() throws on any mismatch, so the sweep is structural.
+describe("theme packs are complete re-bindings", () => {
+  // The default (rennet) palette defines the reference colour-token set that
+  // every pack must restate. (Fonts + the depth shadow are theme-invariant and
+  // stay on palette.css :root — packs are colour only, so they are excluded from
+  // the mobile transpose and from this set already.)
+  const referenceTokens = Object.keys(parsePalette().light).sort() as string[];
+  const themes = parseThemes() as Record<string, Record<"light" | "dark", Record<string, string>>>;
+
+  it("bundles exactly the expected packs plus the default", () => {
+    expect(Object.keys(themes).sort()).toEqual([
+      "catppuccin-mocha",
+      "dracula",
+      "github",
+      "one-dark-pro",
+      "rennet",
+    ]);
+  });
+
+  // The set is real (40 semantic roles), so the equality checks below cannot pass
+  // vacuously, and the roles the design contract names all survive the mapping.
+  it("the reference token set carries every semantic role", () => {
+    expect(referenceTokens.length).toBe(40);
+    for (const role of [
+      "accent",
+      "green",
+      "danger",
+      "add",
+      "del",
+      "sheet",
+      "canvas",
+      "surface",
+      "raised",
+    ]) {
+      expect(referenceTokens, `role ${role} present`).toContain(role);
+    }
+  });
+
+  for (const id of ["catppuccin-mocha", "dracula", "github", "one-dark-pro", "rennet"]) {
+    it(`${id} rebinds every colour token in both schemes`, () => {
+      expect(Object.keys(themes[id].light).sort()).toEqual(referenceTokens);
+      expect(Object.keys(themes[id].dark).sort()).toEqual(referenceTokens);
+    });
+  }
+
+  it("the completeness check actually bites (positive control)", () => {
+    // Drop one token from a real pack: the same equality the sweep runs must now
+    // fail. Proves the sweep distinguishes a complete pack from a partial one.
+    const broken = { ...parseTheme("github").light } as Record<string, string>;
+    delete broken.accent;
+    expect(Object.keys(broken).sort()).not.toEqual(referenceTokens);
+  });
+});
+
+// Code themes (issue #481 §4) are the independent syntax axis: each
+// code-themes/<id>.css rebinds --rn-syn-* (plus the code ground) under
+// [data-rn-code-theme="<id>"], both scheme blocks, so code colour can be chosen
+// separately from the UI pack.
+describe("code themes rebind the full syntax token set", () => {
+  const codeDir = fileURLToPath(new URL("./code-themes", import.meta.url));
+  const files = readdirSync(codeDir)
+    .filter((f) => f.endsWith(".css"))
+    .sort();
+  const SYNTAX = [
+    "--rn-syn-kw",
+    "--rn-syn-str",
+    "--rn-syn-cmt",
+    "--rn-syn-num",
+    "--rn-syn-type",
+    "--rn-syn-fn",
+    "--rn-syn-prop",
+    "--rn-syn-var",
+  ].sort();
+
+  const block = (css: string, selector: string): string => {
+    const start = css.indexOf(selector);
+    const open = css.indexOf("{", start);
+    return css.slice(open, css.indexOf("}", open));
+  };
+  const synNames = (scope: string): string[] =>
+    [...scope.matchAll(/(--rn-syn-[\w-]+)\s*:/g)].map((m) => m[1] as string).sort();
+
+  it("bundles the expected code themes", () => {
+    expect(files.map((f) => f.replace(/\.css$/, ""))).toEqual([
+      "catppuccin-mocha",
+      "dracula",
+      "github",
+      "one-dark-pro",
+    ]);
+  });
+
+  for (const file of files) {
+    const id = file.replace(/\.css$/, "");
+    it(`${id} binds every syntax token in both schemes`, () => {
+      const css = readFileSync(`${codeDir}/${file}`, "utf8");
+      expect(synNames(block(css, `[data-rn-code-theme="${id}"] {`))).toEqual(SYNTAX);
+      expect(synNames(block(css, `[data-rn-code-theme="${id}"][data-scheme="dark"]`))).toEqual(
+        SYNTAX,
+      );
+    });
+  }
 });

@@ -1,0 +1,35 @@
+/* Dracula code theme — the SYNTAX axis only (issue #481 §4).
+ *
+ * Scoped under [data-rn-code-theme="dracula"]; rebinds --rn-syn-* (plus the code
+ * ground) to Dracula's shiki token colours (MIT), light/dark swapping with
+ * data-scheme. Dracula ships no light shiki theme, so the light scheme uses the
+ * Alucard light variant's token colours (matching the dracula UI pack's choice).
+ * Independent of the UI pack; loaded after packs so it wins by source order.
+ * Colour tokens only. See github.css for the axis contract.
+ */
+
+[data-rn-code-theme="dracula"] {
+  --rn-code: #fffbeb;
+  --rn-code-ln: #b3ad93;
+  --rn-syn-kw: #a3144d;
+  --rn-syn-str: #846e15;
+  --rn-syn-cmt: #6c664b;
+  --rn-syn-num: #644ac9;
+  --rn-syn-type: #036a96;
+  --rn-syn-fn: #14710a;
+  --rn-syn-prop: #a34d14;
+  --rn-syn-var: #1f1f1f;
+}
+
+[data-rn-code-theme="dracula"][data-scheme="dark"] {
+  --rn-code: #282a36;
+  --rn-code-ln: #6272a4;
+  --rn-syn-kw: #ff79c6;
+  --rn-syn-str: #f1fa8c;
+  --rn-syn-cmt: #6272a4;
+  --rn-syn-num: #bd93f9;
+  --rn-syn-type: #8be9fd;
+  --rn-syn-fn: #50fa7b;
+  --rn-syn-prop: #ffb86c;
+  --rn-syn-var: #f8f8f2;
+}

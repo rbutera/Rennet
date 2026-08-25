@@ -1,0 +1,117 @@
+/* One Dark Pro theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="one-dark-pro"]; colour tokens only (type,
+ * spacing, radius, depth stay palette.css defaults). Both scheme blocks complete.
+ *
+ * Palette source: Binaryify/OneDark-Pro themes/*.json (MIT). One Dark Pro is a
+ * dark-first family; the light scheme pairs with Atom's One Light (its
+ * conventional daylight flavour). Foreground greys are lifted toward AA where
+ * the low-contrast originals fall short of Rennet's 4.5:1 ink contract.
+ */
+
+[data-rn-theme="one-dark-pro"] {
+  /* ground — One Light */
+  --rn-canvas: #fafafa;
+  --rn-surface: #ffffff;
+  --rn-raised: #eaeaeb;
+  --rn-overlay: #ffffff;
+  --rn-code: #fafafa;
+  /* ink */
+  --rn-ink: #383a42;
+  --rn-ink-soft: #55585f;
+  --rn-ink-faint: #61646e;
+  /* structure */
+  --rn-line: rgb(56 58 66 / 0.14);
+  --rn-line-strong: rgb(56 58 66 / 0.22);
+  /* accent — Atom blue (text form darkened for AA) */
+  --rn-accent: #2c5fd0;
+  --rn-accent-fill: #3268e0;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(64 120 242 / 0.1);
+  --rn-accent-line: rgb(64 120 242 / 0.32);
+  --rn-accent-surface: #dbe6ff;
+  /* evidence green */
+  --rn-green: #50a14f;
+  --rn-green-soft: rgb(80 161 79 / 0.14);
+  --rn-green-line: rgb(80 161 79 / 0.32);
+  /* danger */
+  --rn-danger: #e45649;
+  --rn-danger-soft: rgb(228 86 73 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #383a42;
+  --rn-sheet-soft: #696c77;
+  --rn-sheet-line: #dcdcdd;
+  /* diff */
+  --rn-add: #e6f4e6;
+  --rn-add-ink: #1f6d23;
+  --rn-del: #fbe9e7;
+  --rn-del-ink: #c1352b;
+  --rn-code-ln: #b0b0b5;
+  /* syntax — One Light */
+  --rn-syn-kw: #a626a4;
+  --rn-syn-str: #50a14f;
+  --rn-syn-cmt: #8a8b91;
+  --rn-syn-num: #986801;
+  --rn-syn-type: #b26800;
+  --rn-syn-fn: #4078f2;
+  --rn-syn-prop: #e45649;
+  --rn-syn-var: #986801;
+  /* mark + scrim */
+  --rn-mark-ink: #383a42;
+  --rn-scrim: #383a42;
+}
+
+[data-rn-theme="one-dark-pro"][data-scheme="dark"] {
+  /* ground — One Dark Pro (canvas = sidebar, surface = editor bg, so the ramp
+     stays dark enough for the greys to clear AA) */
+  --rn-canvas: #21252b;
+  --rn-surface: #282c34;
+  --rn-raised: #2f333d;
+  --rn-overlay: #1b1e24;
+  --rn-code: #21252b;
+  /* ink (brightened above One Dark's #abb2bf so the hierarchy clears AA) */
+  --rn-ink: #c8cdd6;
+  --rn-ink-soft: #abb2bf;
+  --rn-ink-faint: #9ba3b4;
+  /* structure */
+  --rn-line: rgb(171 178 191 / 0.12);
+  --rn-line-strong: rgb(171 178 191 / 0.2);
+  /* accent — One Dark blue */
+  --rn-accent: #61afef;
+  --rn-accent-fill: #61afef;
+  --rn-accent-ink: #21252b;
+  --rn-accent-soft: rgb(97 175 239 / 0.15);
+  --rn-accent-line: rgb(97 175 239 / 0.4);
+  --rn-accent-surface: #1c3049;
+  /* evidence green */
+  --rn-green: #98c379;
+  --rn-green-soft: rgb(152 195 121 / 0.15);
+  --rn-green-line: rgb(152 195 121 / 0.4);
+  /* danger */
+  --rn-danger: #e06c75;
+  --rn-danger-soft: rgb(224 108 117 / 0.15);
+  /* paper */
+  --rn-sheet: #2f333d;
+  --rn-sheet-ink: #c8cdd6;
+  --rn-sheet-soft: #9ba3b4;
+  --rn-sheet-line: #3a3f4b;
+  /* diff */
+  --rn-add: #22311f;
+  --rn-add-ink: #98c379;
+  --rn-del: #3a2226;
+  --rn-del-ink: #e06c75;
+  --rn-code-ln: #636b78;
+  /* syntax — One Dark Pro */
+  --rn-syn-kw: #c678dd;
+  --rn-syn-str: #98c379;
+  --rn-syn-cmt: #7f848e;
+  --rn-syn-num: #d19a66;
+  --rn-syn-type: #e5c07b;
+  --rn-syn-fn: #61afef;
+  --rn-syn-prop: #e06c75;
+  --rn-syn-var: #e06c75;
+  /* mark + scrim */
+  --rn-mark-ink: #abb2bf;
+  --rn-scrim: #1b1e24;
+}

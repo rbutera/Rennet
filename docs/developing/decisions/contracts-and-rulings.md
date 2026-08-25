@@ -58,7 +58,7 @@ Apply the sources by scope:
 | **R7** | Review of another person's pull request and review of the user's own branch are first-class modes. |
 | **R11** | The five canvases are Spec, Sequence, Decisions, Noise, and Flagged. Blast radius is an overlay. |
 | **R23** | `omp` means `@oh-my-pi/pi-coding-agent`. |
-| **R26** | Rennet uses one opaque Affineur's Bench interface. Code and diff regions remain opaque. |
+| **R26** | Rennet's default interface is the opaque Affineur's Bench, and it is the theme Rennet ships screenshots of. Code and diff regions remain opaque. A viewer may select a bundled theme pack, which re-colours the same opaque interface under the same AA contract; packs never restore glass or alter type, spacing, or radius. |
 
 ## Review engine and data
 

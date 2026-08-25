@@ -1,0 +1,116 @@
+/* Catppuccin theme pack — a user-selectable re-binding of the --rn-* palette.
+ *
+ * Scoped under [data-rn-theme="catppuccin-mocha"]; colour tokens only. Both
+ * scheme blocks complete.
+ *
+ * Palette source: catppuccin/catppuccin palette.json (MIT). Mocha is the dark
+ * flavour; the light scheme uses Latte (the family's daylight flavour). Mauve is
+ * the accent register. The elevation ramp is chosen so the greys clear Rennet's
+ * 4.5:1 ink contract (mantle/base/surface0 dark; the accent stays mauve).
+ */
+
+[data-rn-theme="catppuccin-mocha"] {
+  /* ground — Latte */
+  --rn-canvas: #e6e9ef;
+  --rn-surface: #eff1f5;
+  --rn-raised: #ffffff;
+  --rn-overlay: #ffffff;
+  --rn-code: #e6e9ef;
+  /* ink */
+  --rn-ink: #3a3c52;
+  --rn-ink-soft: #4c4f69;
+  --rn-ink-faint: #5c5f77;
+  /* structure */
+  --rn-line: rgb(76 79 105 / 0.14);
+  --rn-line-strong: rgb(76 79 105 / 0.22);
+  /* accent — Latte mauve (text form darkened a step for AA on the canvas) */
+  --rn-accent: #8028e0;
+  --rn-accent-fill: #8839ef;
+  --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(136 57 239 / 0.1);
+  --rn-accent-line: rgb(136 57 239 / 0.32);
+  --rn-accent-surface: #ecdcff;
+  /* evidence green */
+  --rn-green: #40a02b;
+  --rn-green-soft: rgb(64 160 43 / 0.12);
+  --rn-green-line: rgb(64 160 43 / 0.3);
+  /* danger */
+  --rn-danger: #d20f39;
+  --rn-danger-soft: rgb(210 15 57 / 0.1);
+  /* paper */
+  --rn-sheet: #ffffff;
+  --rn-sheet-ink: #4c4f69;
+  --rn-sheet-soft: #6c6f85;
+  --rn-sheet-line: #ccd0da;
+  /* diff */
+  --rn-add: #e3f2df;
+  --rn-add-ink: #2c701d;
+  --rn-del: #fbe2e6;
+  --rn-del-ink: #c00d34;
+  --rn-code-ln: #9ca0b0;
+  /* syntax — Latte */
+  --rn-syn-kw: #8839ef;
+  --rn-syn-str: #40a02b;
+  --rn-syn-cmt: #8c8fa1;
+  --rn-syn-num: #fe640b;
+  --rn-syn-type: #df8e1d;
+  --rn-syn-fn: #1e66f5;
+  --rn-syn-prop: #04a5e5;
+  --rn-syn-var: #4c4f69;
+  /* mark + scrim */
+  --rn-mark-ink: #4c4f69;
+  --rn-scrim: #4c4f69;
+}
+
+[data-rn-theme="catppuccin-mocha"][data-scheme="dark"] {
+  /* ground — Mocha (mantle < base < surface0 so faint greys clear AA) */
+  --rn-canvas: #181825;
+  --rn-surface: #1e1e2e;
+  --rn-raised: #313244;
+  --rn-overlay: #11111b;
+  --rn-code: #11111b;
+  /* ink */
+  --rn-ink: #cdd6f4;
+  --rn-ink-soft: #bac2de;
+  --rn-ink-faint: #a6adc8;
+  /* structure */
+  --rn-line: rgb(205 214 244 / 0.1);
+  --rn-line-strong: rgb(205 214 244 / 0.16);
+  /* accent — Mocha mauve */
+  --rn-accent: #cba6f7;
+  --rn-accent-fill: #cba6f7;
+  --rn-accent-ink: #181825;
+  --rn-accent-soft: rgb(203 166 247 / 0.15);
+  --rn-accent-line: rgb(203 166 247 / 0.4);
+  --rn-accent-surface: #2a2140;
+  /* evidence green */
+  --rn-green: #a6e3a1;
+  --rn-green-soft: rgb(166 227 161 / 0.15);
+  --rn-green-line: rgb(166 227 161 / 0.4);
+  /* danger */
+  --rn-danger: #f38ba8;
+  --rn-danger-soft: rgb(243 139 168 / 0.15);
+  /* paper */
+  --rn-sheet: #1e1e2e;
+  --rn-sheet-ink: #cdd6f4;
+  --rn-sheet-soft: #a6adc8;
+  --rn-sheet-line: #313244;
+  /* diff */
+  --rn-add: #1c2b22;
+  --rn-add-ink: #a6e3a1;
+  --rn-del: #37212c;
+  --rn-del-ink: #f38ba8;
+  --rn-code-ln: #6c7086;
+  /* syntax — Mocha */
+  --rn-syn-kw: #cba6f7;
+  --rn-syn-str: #a6e3a1;
+  --rn-syn-cmt: #7f849c;
+  --rn-syn-num: #fab387;
+  --rn-syn-type: #f9e2af;
+  --rn-syn-fn: #89b4fa;
+  --rn-syn-prop: #89dceb;
+  --rn-syn-var: #cdd6f4;
+  /* mark + scrim */
+  --rn-mark-ink: #cdd6f4;
+  --rn-scrim: #11111b;
+}
