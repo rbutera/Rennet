@@ -8,11 +8,15 @@ import {
   Keyboard,
   Layers,
   Monitor,
+  Palette,
   Plus,
   RotateCcw,
   Server,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useAppStore } from "@/lib/store"
+import { THEME_PACKS } from "@/lib/theme-packs"
+import { CODE_THEMES } from "@/lib/code-theme"
 import type { HostItem, ProjectItem } from "@/lib/sidebar-data"
 import { PROJECT_ICONS, ProjectIcon, type ProjectIconName } from "@/components/project-icon"
 import {
@@ -74,6 +78,7 @@ export function SettingsView({
 
   const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode }[] = [
     { id: "machine", label: "This machine", icon: <Monitor className="size-3.5" aria-hidden="true" /> },
+    { id: "appearance", label: "Appearance", icon: <Palette className="size-3.5" aria-hidden="true" /> },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: <Keyboard className="size-3.5" aria-hidden="true" /> },
     { id: "projects", label: "Projects", icon: <Layers className="size-3.5" aria-hidden="true" /> },
   ]
@@ -119,6 +124,7 @@ export function SettingsView({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 py-8">
             {page === "machine" && <MachinePage hosts={hosts} />}
+            {page === "appearance" && <AppearancePage />}
             {page === "shortcuts" && <ShortcutsPage />}
             {page === "projects" && (
               <ProjectsPage
@@ -137,21 +143,82 @@ export function SettingsView({
   )
 }
 
-function MachinePage({ hosts }: { hosts: HostItem[] }) {
-  const [scheme, setScheme] = React.useState<"system" | "dark" | "light">("system")
+function AppearancePage() {
+  const scheme = useAppStore((s) => s.scheme)
+  const themePack = useAppStore((s) => s.themePack)
+  const codeTheme = useAppStore((s) => s.codeTheme)
 
   return (
     <>
-      <Section title="This machine" caption="~/.rennet/client-settings.json">
-        <Row label="Appearance">
+      <Section title="Appearance" caption="~/.rennet/client-settings.json">
+        <Row label="Scheme" hint="light, dark, or follow the system">
           <Segmented
-            options={["system", "dark", "light"]}
+            options={["light", "dark", "system"]}
             value={scheme}
-            onChange={(v) => setScheme(v as typeof scheme)}
+            onChange={(v) => useAppStore.getState().setScheme(v as typeof scheme)}
           />
         </Row>
       </Section>
 
+      <Section title="Theme pack" caption="the interface palette">
+        <Row label="Theme" stacked>
+          <Choice
+            options={THEME_PACKS}
+            value={themePack}
+            onChange={(id) => useAppStore.getState().setThemePack(id)}
+          />
+        </Row>
+      </Section>
+
+      <Section title="Code theme" caption="syntax highlighting in code and diffs">
+        <Row label="Theme" stacked>
+          <Choice
+            options={CODE_THEMES}
+            value={codeTheme}
+            onChange={(id) => useAppStore.getState().setCodeTheme(id)}
+          />
+        </Row>
+      </Section>
+    </>
+  )
+}
+
+/** A wrapping row of pill options — live-apply on click. */
+function Choice<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: readonly { id: T; label: string }[]
+  value: T
+  onChange: (id: T) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="radiogroup">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          role="radio"
+          aria-checked={option.id === value}
+          onClick={() => onChange(option.id)}
+          className={cn(
+            "rounded-md border px-2.5 py-1 text-[12px] transition-colors",
+            option.id === value
+              ? "border-ring bg-secondary text-foreground"
+              : "border-border text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function MachinePage({ hosts }: { hosts: HostItem[] }) {
+  return (
+    <>
       <Section title="Rennet hosts" caption="~/.rennet/daemon-settings.json on each host">
         {hosts.map((h) => {
           const daemon = hostSettings[h.id] ?? { github: { connected: false as const } }

@@ -17,6 +17,7 @@ import {
 import type { ThemedToken } from "shiki"
 import { cn } from "@/lib/utils"
 import { getHighlightedLines } from "@/lib/code-highlighter"
+import { useShikiTheme } from "@/lib/store"
 import { LineCommentEditor, tokenStyle } from "@/components/code-block"
 import { useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
@@ -324,18 +325,19 @@ function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
   const [openLine, setOpenLine] = React.useState<number | null>(null)
   const [tokens, setTokens] = React.useState<ThemedToken[][] | null>(null)
   const lines = React.useMemo(() => numberLines(hunk), [hunk])
+  const shikiTheme = useShikiTheme()
 
   // Highlight the hunk as one slab; shiki tokenizes line-by-line, so mixed
   // old/new lines come back aligned with the input order.
   React.useEffect(() => {
     let cancelled = false
-    getHighlightedLines(hunk.lines.map((l) => l.text).join("\n"), inferLang(path)).then((result) => {
+    getHighlightedLines(hunk.lines.map((l) => l.text).join("\n"), inferLang(path), shikiTheme).then((result) => {
       if (!cancelled) setTokens(result)
     })
     return () => {
       cancelled = true
     }
-  }, [hunk, path])
+  }, [hunk, path, shikiTheme])
 
   return (
     <div className="[container-type:inline-size]">

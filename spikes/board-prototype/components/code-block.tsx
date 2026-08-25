@@ -5,6 +5,7 @@ import type { CSSProperties } from "react"
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getHighlightedLines } from "@/lib/code-highlighter"
+import { useShikiTheme } from "@/lib/store"
 import { useCodeComments } from "@/components/code-comments"
 import type { ThemedToken } from "shiki"
 
@@ -188,6 +189,7 @@ export function CodeBlock({
   const [lines, setLines] = useState<ThemedToken[][] | null>(null)
   const [copied, setCopied] = useState(false)
   const [openLine, setOpenLine] = useState<number | null>(null)
+  const shikiTheme = useShikiTheme()
 
   const lineCount = useMemo(() => code.split("\n").length, [code])
   const highlightSet = useMemo(() => new Set(highlightLines ?? []), [highlightLines])
@@ -204,13 +206,13 @@ export function CodeBlock({
 
   useEffect(() => {
     let cancelled = false
-    getHighlightedLines(code, resolvedLang).then((tokens) => {
+    getHighlightedLines(code, resolvedLang, shikiTheme).then((tokens) => {
       if (!cancelled) setLines(tokens)
     })
     return () => {
       cancelled = true
     }
-  }, [code, resolvedLang])
+  }, [code, resolvedLang, shikiTheme])
 
   async function handleCopy() {
     try {

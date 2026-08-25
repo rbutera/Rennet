@@ -4,6 +4,10 @@ import { DEFAULT_CHAT_WIDTH } from "@/components/resize-handle"
 import type { TargetState } from "@/components/target-badge"
 import type { TargetKind } from "@/lib/target-language"
 import type { Ask, CodeComments, QuoteComment, RetiredBlock } from "@/components/code-comments"
+import type { ThemePackId } from "@/lib/theme-packs"
+import { type CodeThemeId, resolveCodeTheme } from "@/lib/code-theme"
+
+export type Scheme = "light" | "dark" | "system"
 
 /**
  * The one prototype store. Slices are spread inline in a single create() call
@@ -32,6 +36,12 @@ interface AppState {
   addProjectOpen: boolean
   addProjectHostId?: string
   addRemoteOpen: boolean
+  commandOpen: boolean
+  // Appearance — no persist (throwaway prototype state, per #480).
+  scheme: Scheme
+  resolvedScheme: "light" | "dark" // system resolved to a concrete value by AppearanceSync
+  themePack: ThemePackId
+  codeTheme: CodeThemeId
   setSidebarOpen: (open: boolean) => void
   toggleSidebar: () => void
   setChatOpen: (open: boolean) => void
@@ -39,6 +49,11 @@ interface AppState {
   openAddProject: (hostId?: string) => void
   setAddProjectOpen: (open: boolean) => void
   setAddRemoteOpen: (open: boolean) => void
+  setCommandOpen: (open: boolean) => void
+  setScheme: (scheme: Scheme) => void
+  setResolvedScheme: (scheme: "light" | "dark") => void
+  setThemePack: (pack: ThemePackId) => void
+  setCodeTheme: (theme: CodeThemeId) => void
 
   // ── sidebar slice ─────────────────────────────────────────────────────
   hosts: HostItem[]
@@ -106,6 +121,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   addProjectOpen: false,
   addProjectHostId: undefined,
   addRemoteOpen: false,
+  commandOpen: false,
+  scheme: "dark",
+  resolvedScheme: "dark",
+  themePack: "affineur",
+  codeTheme: "auto",
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setChatOpen: (open) => set({ chatOpen: open }),
@@ -113,6 +133,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   openAddProject: (hostId) => set({ addProjectOpen: true, addProjectHostId: hostId }),
   setAddProjectOpen: (open) => set({ addProjectOpen: open }),
   setAddRemoteOpen: (open) => set({ addRemoteOpen: open }),
+  setCommandOpen: (open) => set({ commandOpen: open }),
+  setScheme: (scheme) => set({ scheme }),
+  setResolvedScheme: (resolvedScheme) => set({ resolvedScheme }),
+  setThemePack: (themePack) => set({ themePack }),
+  setCodeTheme: (codeTheme) => set({ codeTheme }),
 
   // ── sidebar slice ──
   hosts: buildInitialHosts(),
@@ -239,3 +264,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   restoreRetired: (id) => set((s) => ({ retired: s.retired.filter((entry) => entry.id !== id) })),
   clear: () => set({ comments: {}, quoteComments: [], focusedThreadId: null }),
 }))
+
+/** The concrete shiki theme name for the current picker + resolved scheme. */
+export function useShikiTheme(): string {
+  const codeTheme = useAppStore((s) => s.codeTheme)
+  const resolvedScheme = useAppStore((s) => s.resolvedScheme)
+  return resolveCodeTheme(codeTheme, resolvedScheme)
+}

@@ -3,6 +3,8 @@
 import * as React from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
+import { AppearanceSync } from "@/components/appearance-sync"
+import { CommandMenu } from "@/components/command-menu"
 import { ChatColumn } from "@/components/chat-column"
 import { ResizeHandle } from "@/components/resize-handle"
 import { ScenarioSeeder } from "@/components/scenario-seeder"
@@ -63,6 +65,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <AppearanceSync />
+      <CommandMenu />
       <ScenarioSeeder scenario={chatScenario} />
       <div className="fixed inset-0 flex overflow-hidden bg-background text-foreground">
         <AppSidebar

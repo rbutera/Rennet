@@ -23,6 +23,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useAppStore } from "@/lib/store"
 import { Spinner } from "@/components/ui/spinner"
 import { TargetIcon } from "@/components/target-badge"
 import { ProjectIcon } from "@/components/project-icon"
@@ -397,6 +398,7 @@ export function AppSidebar({
             type="button"
             aria-label="Search"
             title="Search"
+            onClick={() => useAppStore.getState().setCommandOpen(true)}
             className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <Search className="size-4" aria-hidden="true" />
@@ -475,6 +477,7 @@ export function AppSidebar({
       <div className="flex flex-col gap-0.5 px-2">
         <button
           type="button"
+          onClick={() => useAppStore.getState().setCommandOpen(true)}
           className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <Search className="size-3.5 shrink-0" aria-hidden="true" />

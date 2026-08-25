@@ -49,10 +49,6 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
       <DialogContent
         className={cn(
           "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0",
@@ -60,7 +56,15 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
-        {children}
+        {/* Header inside the (portalled) content so a closed dialog renders no
+            stray heading, and DialogTitle sits within the Base UI dialog context. */}
+        <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {/* The cmdk root — CommandInput/List/Item read its context; without it
+            cmdk's store subscription throws. Matches packages/app-ui. */}
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   )

@@ -1,5 +1,5 @@
 import { createHighlighter, type Highlighter, type ThemedToken, type BundledLanguage } from "shiki"
-import { CODE_THEME_NAME } from "./code-theme"
+import { SHIKI_THEMES } from "./code-theme"
 
 let highlighterPromise: Promise<Highlighter> | null = null
 
@@ -7,7 +7,7 @@ let highlighterPromise: Promise<Highlighter> | null = null
 function getHighlighter() {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      themes: [CODE_THEME_NAME],
+      themes: [...SHIKI_THEMES],
       langs: ["typescript", "tsx", "javascript", "jsx", "json", "bash", "css", "sql"],
     })
   }
@@ -15,10 +15,15 @@ function getHighlighter() {
 }
 
 /**
- * Tokenizes `code` into per-line, per-token color info using the shared
- * CSS-variable theme. Loads additional languages on demand.
+ * Tokenizes `code` into per-line, per-token color info under the given shiki
+ * `theme` (a concrete theme name — resolve "auto" via resolveCodeTheme first).
+ * Loads additional languages on demand.
  */
-export async function getHighlightedLines(code: string, lang: string): Promise<ThemedToken[][]> {
+export async function getHighlightedLines(
+  code: string,
+  lang: string,
+  theme: string,
+): Promise<ThemedToken[][]> {
   const highlighter = await getHighlighter()
 
   if (!highlighter.getLoadedLanguages().includes(lang)) {
@@ -30,6 +35,6 @@ export async function getHighlightedLines(code: string, lang: string): Promise<T
   }
 
   const knownLang = highlighter.getLoadedLanguages().includes(lang) ? lang : "text"
-  const { tokens } = highlighter.codeToTokens(code, { lang: knownLang as BundledLanguage, theme: CODE_THEME_NAME })
+  const { tokens } = highlighter.codeToTokens(code, { lang: knownLang as BundledLanguage, theme })
   return tokens
 }

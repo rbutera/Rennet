@@ -263,3 +263,110 @@
 *::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ── Theme packs (issue #481) ────────────────────────────────────────────────
+ * A pack scoped-rebinds the --rn-* tokens under [data-rn-theme="<id>"] (light)
+ * and [data-rn-theme="<id>"].dark (dark). Semantic roles preserved: accent,
+ * evidence green, danger red, diff add/del, ground ramp (canvas < surface <
+ * raised). The dark block carries .dark so it out-specifies the light block when
+ * both match. "affineur" is the default (no attribute → base blocks above).
+ *
+ * ponytail: hand-rolled approximations of the upstream palettes (prototype, zero
+ * rigor) — load-bearing tokens only, the rest inherit base. REPLACE with copies
+ * of the real packs from packages/theme/src/themes/ once that agent lands them. */
+
+/* GitHub */
+[data-rn-theme="github"] {
+  --rn-canvas: #ffffff; --rn-surface: #ffffff; --rn-raised: #f6f8fa; --rn-overlay: #ffffff; --rn-code: #f6f8fa;
+  --rn-ink: #1f2328; --rn-ink-soft: #656d76; --rn-ink-faint: #8c959f;
+  --rn-line: rgb(31 35 40 / 0.15); --rn-line-strong: rgb(31 35 40 / 0.25);
+  --rn-accent: #0969da; --rn-accent-fill: #0969da; --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(9 105 218 / 0.1); --rn-accent-line: rgb(9 105 218 / 0.3); --rn-accent-surface: #ddf4ff;
+  --rn-green: #1a7f37; --rn-green-soft: rgb(26 127 55 / 0.12); --rn-green-line: rgb(26 127 55 / 0.3);
+  --rn-danger: #cf222e; --rn-danger-soft: rgb(207 34 46 / 0.1);
+  --rn-add: #e6ffec; --rn-add-ink: #1a7f37; --rn-del: #ffebe9; --rn-del-ink: #cf222e; --rn-code-ln: #8c959f;
+  --rn-scrim: #1f2328;
+}
+[data-rn-theme="github"].dark {
+  --rn-canvas: #0d1117; --rn-surface: #161b22; --rn-raised: #21262d; --rn-overlay: #161b22; --rn-code: #161b22;
+  --rn-ink: #e6edf3; --rn-ink-soft: #7d8590; --rn-ink-faint: #6e7681;
+  --rn-line: rgb(240 246 252 / 0.1); --rn-line-strong: rgb(240 246 252 / 0.2);
+  --rn-accent: #2f81f7; --rn-accent-fill: #2f81f7; --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(47 129 247 / 0.15); --rn-accent-line: rgb(47 129 247 / 0.4); --rn-accent-surface: #132e52;
+  --rn-green: #3fb950; --rn-green-soft: rgb(63 185 80 / 0.15); --rn-green-line: rgb(63 185 80 / 0.4);
+  --rn-danger: #f85149; --rn-danger-soft: rgb(248 81 73 / 0.15);
+  --rn-add: #12261e; --rn-add-ink: #3fb950; --rn-del: #25171c; --rn-del-ink: #f85149; --rn-code-ln: #6e7681;
+  --rn-scrim: #010409;
+}
+
+/* One Dark Pro (light = One Light approximation) */
+[data-rn-theme="one-dark-pro"] {
+  --rn-canvas: #fafafa; --rn-surface: #ffffff; --rn-raised: #f0f0f0; --rn-overlay: #ffffff; --rn-code: #f5f5f5;
+  --rn-ink: #383a42; --rn-ink-soft: #696c77; --rn-ink-faint: #a0a1a7;
+  --rn-line: rgb(56 58 66 / 0.12); --rn-line-strong: rgb(56 58 66 / 0.2);
+  --rn-accent: #4078f2; --rn-accent-fill: #4078f2; --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(64 120 242 / 0.1); --rn-accent-line: rgb(64 120 242 / 0.3); --rn-accent-surface: #e1e9fb;
+  --rn-green: #50a14f; --rn-green-soft: rgb(80 161 79 / 0.12); --rn-green-line: rgb(80 161 79 / 0.3);
+  --rn-danger: #e45649; --rn-danger-soft: rgb(228 86 73 / 0.1);
+  --rn-add: #e6f3e6; --rn-add-ink: #50a14f; --rn-del: #fbe9e7; --rn-del-ink: #e45649; --rn-code-ln: #a0a1a7;
+  --rn-scrim: #383a42;
+}
+[data-rn-theme="one-dark-pro"].dark {
+  --rn-canvas: #282c34; --rn-surface: #2c313a; --rn-raised: #21252b; --rn-overlay: #21252b; --rn-code: #21252b;
+  --rn-ink: #abb2bf; --rn-ink-soft: #828997; --rn-ink-faint: #5c6370;
+  --rn-line: rgb(171 178 191 / 0.12); --rn-line-strong: rgb(171 178 191 / 0.2);
+  --rn-accent: #61afef; --rn-accent-fill: #61afef; --rn-accent-ink: #282c34;
+  --rn-accent-soft: rgb(97 175 239 / 0.15); --rn-accent-line: rgb(97 175 239 / 0.4); --rn-accent-surface: #2b3a4a;
+  --rn-green: #98c379; --rn-green-soft: rgb(152 195 121 / 0.15); --rn-green-line: rgb(152 195 121 / 0.4);
+  --rn-danger: #e06c75; --rn-danger-soft: rgb(224 108 117 / 0.15);
+  --rn-add: #22311d; --rn-add-ink: #98c379; --rn-del: #31211d; --rn-del-ink: #e06c75; --rn-code-ln: #5c6370;
+  --rn-scrim: #1b1e24;
+}
+
+/* Dracula (light = Alucard approximation) */
+[data-rn-theme="dracula"] {
+  --rn-canvas: #fffbeb; --rn-surface: #ffffff; --rn-raised: #f5f0dc; --rn-overlay: #ffffff; --rn-code: #f7f2e0;
+  --rn-ink: #1f1f1f; --rn-ink-soft: #635d47; --rn-ink-faint: #8c866b;
+  --rn-line: rgb(31 31 31 / 0.12); --rn-line-strong: rgb(31 31 31 / 0.2);
+  --rn-accent: #644ac9; --rn-accent-fill: #644ac9; --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(100 74 201 / 0.1); --rn-accent-line: rgb(100 74 201 / 0.3); --rn-accent-surface: #e7e1fb;
+  --rn-green: #14710a; --rn-green-soft: rgb(20 113 10 / 0.12); --rn-green-line: rgb(20 113 10 / 0.3);
+  --rn-danger: #cb3a2a; --rn-danger-soft: rgb(203 58 42 / 0.1);
+  --rn-add: #e4f3df; --rn-add-ink: #14710a; --rn-del: #fbe6e2; --rn-del-ink: #cb3a2a; --rn-code-ln: #8c866b;
+  --rn-scrim: #1f1f1f;
+}
+[data-rn-theme="dracula"].dark {
+  --rn-canvas: #282a36; --rn-surface: #2d2f3b; --rn-raised: #343746; --rn-overlay: #21222c; --rn-code: #21222c;
+  --rn-ink: #f8f8f2; --rn-ink-soft: #bfc7d5; --rn-ink-faint: #6272a4;
+  --rn-line: rgb(248 248 242 / 0.1); --rn-line-strong: rgb(248 248 242 / 0.18);
+  --rn-accent: #bd93f9; --rn-accent-fill: #bd93f9; --rn-accent-ink: #282a36;
+  --rn-accent-soft: rgb(189 147 249 / 0.15); --rn-accent-line: rgb(189 147 249 / 0.4); --rn-accent-surface: #3a2f52;
+  --rn-green: #50fa7b; --rn-green-soft: rgb(80 250 123 / 0.13); --rn-green-line: rgb(80 250 123 / 0.35);
+  --rn-danger: #ff5555; --rn-danger-soft: rgb(255 85 85 / 0.13);
+  --rn-add: #1e3a2a; --rn-add-ink: #50fa7b; --rn-del: #3a1f28; --rn-del-ink: #ff5555; --rn-code-ln: #6272a4;
+  --rn-scrim: #191a21;
+}
+
+/* Catppuccin (light = Latte, dark = Mocha) */
+[data-rn-theme="catppuccin-mocha"] {
+  --rn-canvas: #eff1f5; --rn-surface: #ffffff; --rn-raised: #e6e9ef; --rn-overlay: #dce0e8; --rn-code: #e6e9ef;
+  --rn-ink: #4c4f69; --rn-ink-soft: #6c6f85; --rn-ink-faint: #8c8fa1;
+  --rn-line: rgb(76 79 105 / 0.12); --rn-line-strong: rgb(76 79 105 / 0.2);
+  --rn-accent: #8839ef; --rn-accent-fill: #8839ef; --rn-accent-ink: #ffffff;
+  --rn-accent-soft: rgb(136 57 239 / 0.1); --rn-accent-line: rgb(136 57 239 / 0.3); --rn-accent-surface: #e9def8;
+  --rn-green: #40a02b; --rn-green-soft: rgb(64 160 43 / 0.12); --rn-green-line: rgb(64 160 43 / 0.3);
+  --rn-danger: #d20f39; --rn-danger-soft: rgb(210 15 57 / 0.1);
+  --rn-add: #e3f0e0; --rn-add-ink: #40a02b; --rn-del: #f9e0e5; --rn-del-ink: #d20f39; --rn-code-ln: #8c8fa1;
+  --rn-scrim: #4c4f69;
+}
+[data-rn-theme="catppuccin-mocha"].dark {
+  --rn-canvas: #1e1e2e; --rn-surface: #313244; --rn-raised: #45475a; --rn-overlay: #181825; --rn-code: #181825;
+  --rn-ink: #cdd6f4; --rn-ink-soft: #a6adc8; --rn-ink-faint: #7f849c;
+  --rn-line: rgb(205 214 244 / 0.1); --rn-line-strong: rgb(205 214 244 / 0.18);
+  --rn-accent: #cba6f7; --rn-accent-fill: #cba6f7; --rn-accent-ink: #1e1e2e;
+  --rn-accent-soft: rgb(203 166 247 / 0.15); --rn-accent-line: rgb(203 166 247 / 0.4); --rn-accent-surface: #35304a;
+  --rn-green: #a6e3a1; --rn-green-soft: rgb(166 227 161 / 0.15); --rn-green-line: rgb(166 227 161 / 0.4);
+  --rn-danger: #f38ba8; --rn-danger-soft: rgb(243 139 168 / 0.15);
+  --rn-add: #26332a; --rn-add-ink: #a6e3a1; --rn-del: #38222c; --rn-del-ink: #f38ba8; --rn-code-ln: #7f849c;
+  --rn-scrim: #11111b;
+}

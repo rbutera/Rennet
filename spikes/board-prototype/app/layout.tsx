@@ -29,6 +29,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      data-scheme="dark"
       className={`dark bg-background ${dmSans.variable} ${fraunces.variable} ${sourceSerif.variable}`}
     >
       <body className="antialiased font-sans">

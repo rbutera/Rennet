@@ -1,7 +1,7 @@
 export type SettingsLayer = "builtin" | "detected" | "global" | "repo"
 
 /** Settings splits into pages; per-project and shortcuts grow large (#476). */
-export type SettingsPage = "machine" | "shortcuts" | "projects"
+export type SettingsPage = "machine" | "appearance" | "shortcuts" | "projects"
 
 export interface KeyCommand {
   id: string
