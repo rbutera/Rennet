@@ -80,6 +80,17 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Successor account**: the comparison of a reviewed patchset with its successor after a coding-agent handoff.
   _Avoid_: delta re-review
 - **Board-native data**: content a human authors on the board — marks, groupings, arrangement, notes — which the orchestrator composes from.
+- **Ask**: the staged unit of the hand-off: a typed message carrying an anchor, text, intent, and exit lane, minted from a finding, comment, thread, or conversation, with provenance to its source. Staged by the orchestrator; the receipt is the undo.
+  _Avoid_: disposition, staged item
+- **Exit**: one of the review's terminal actions — post the GitHub review, dispatch a work-order round, or push and open the pull request. Work orders exist only on one's own branch.
+- **Round**: one dispatched work order and its returned successor patchset. Rounds serialize; each mints a new generation of boards, drafted delta-aware.
+- **Living draft**: an outbound document (review text, work order, PR description) the orchestrator alone authors and continuously reworks as the review progresses. Steered by conversation or span selection, never typed into; retired content is ledgered and restorable.
+
+## Settings
+
+- **Settings ladder**: the precedence order a setting resolves through — builtin, detected, global, repo. The highest layer offering a value is effective, and every contribution stays visible as provenance.
+- **Client settings**: preferences of the machine a person views Rennet on — appearance and keybindings. They follow the viewer, apply to whatever it views, and sit outside the settings ladder.
+- **Daemon settings**: a source's machine-local settings, read by that source's Rennet host. They form the global rung of the settings ladder for projects on that source.
 
 ## Desktop presence
 

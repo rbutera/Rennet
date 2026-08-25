@@ -30,6 +30,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [canvas model](./developing/concepts/canvas-model.md),
   [review lenses](./developing/concepts/review-lenses.md),
   [the lens pipeline (planned)](./developing/concepts/lens-pipeline.md),
+  [hand off and the exits (planned)](./developing/concepts/handoff-and-exits.md),
   [context assembly](./developing/concepts/context-assembly.md),
   [code intelligence](./developing/concepts/code-intelligence.md),
   [Model Council](./developing/concepts/model-council.md),

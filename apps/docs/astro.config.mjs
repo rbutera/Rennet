@@ -89,6 +89,10 @@ export default defineConfig({
                     label: "The lens pipeline (planned)",
                     link: "/developing/concepts/lens-pipeline/",
                   },
+                  {
+                    label: "Hand off and the exits (planned)",
+                    link: "/developing/concepts/handoff-and-exits/",
+                  },
                   { label: "Context assembly", link: "/developing/concepts/context-assembly/" },
                   {
                     label: "Code intelligence",
