@@ -77,8 +77,9 @@ positions, and the draft mirrors that shape rather than flattening it. An ask
 whose provenance carries a diff position — a finding's anchor, a code-line
 comment — becomes a line comment, grouped by file with its citation. An ask
 without one (a quote of board prose has no diff line to pin to) travels in
-the review body, woven in by the orchestrator and honestly marked. The
-preview renders exactly this structure, because it is exactly what posts.
+the review body, woven in by the orchestrator — its placement under the body
+header is the whole statement, never an explanatory label. The preview
+renders exactly this structure, because it is exactly what posts.
 
 ## Verdict and the approving review
 

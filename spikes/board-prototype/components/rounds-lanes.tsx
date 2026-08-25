@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { GitBranch, GitPullRequest } from "lucide-react"
+import { Check, GitBranch, GitPullRequest } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { type Ask, useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
@@ -35,6 +35,7 @@ export function RoundsLanes({
   const store = useCodeComments()
   const asks = React.useMemo(() => store?.asks ?? [], [store?.asks])
 
+  const [submitted, setSubmitted] = React.useState(false)
   const [revisions, setRevisions] = React.useState<Record<string, string>>({})
   const [streamingIds, setStreamingIds] = React.useState<Set<string>>(new Set())
 
@@ -170,10 +171,23 @@ export function RoundsLanes({
               ))}
             </div>
           </div>
-          {pr.ready ? (
+          {submitted ? (
+            <div className="flex flex-col gap-1">
+              <span className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+                <Check className="size-4 text-emerald-500" aria-hidden="true" />
+                Pull request opened · #438
+              </span>
+              <span className="text-[12px] text-muted-foreground">
+                github.com/rbutera/rennet/pull/438 — push and open are idempotent; rounds continue on the open PR.
+              </span>
+            </div>
+          ) : pr.ready ? (
             <button
               type="button"
-              onClick={onOpenPullRequest}
+              onClick={() => {
+                setSubmitted(true)
+                onOpenPullRequest?.()
+              }}
               className="w-fit rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
             >
               Open Pull Request
