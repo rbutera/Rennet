@@ -117,7 +117,7 @@ Beyond it, a viewer may select a bundled **theme pack** (GitHub, One Dark Pro, D
 ## Typography
 
 - **Fraunces** is for brand moments, display headings, screen titles, and empty states. Use the self-hosted variable font with Georgia as the fallback.
-- **Newsreader** is for annotations, conversations, review prose, and post previews. Use the self-hosted variable font with Georgia as the fallback.
+- **Newsreader** is for annotations and quoted prose excerpts. Use the self-hosted variable font with Georgia as the fallback. Conversations and the review body run Geist (amended 2026-08-26; the serif voice narrowed as prose surfaces moved to sans).
 - **Geist** is for controls, labels, inputs, navigation, and metadata. Use the self-hosted variable font with the system sans-serif stack as the fallback.
 - **Geist Mono** is for source code, diffs, and exact technical values, falling back to the platform monospace stack.
 

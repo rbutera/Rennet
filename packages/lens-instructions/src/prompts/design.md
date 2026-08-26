@@ -81,6 +81,9 @@ narrated. Never write prose about what is not on this board.
   (path + line span); the surface hydrates the real lines. Never type code
   bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
+- Every code token in prose wears backticks: function and type names,
+  paths, commands, flags, env vars, literal values. A bare identifier in
+  prose is a defect; an ordinary English word in backticks is too.
 - Narrate in third person about the change. Never speak as its author.
 - Board prose never names lenses, boards, agents, or the review process.
   Cross-lens connection happens through anchors and composition, not

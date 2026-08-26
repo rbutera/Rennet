@@ -253,10 +253,10 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
         {streamingIds.has(ask.id) ? (
           <StreamingProse
             paragraphs={[blockText(ask)]}
-            className="font-serif text-[15px] leading-[1.7] text-foreground/90"
+            className="text-[15px] leading-[1.7] text-foreground/90"
           />
         ) : (
-          <RichText text={blockText(ask)} paragraphClassName="font-serif text-[15px] leading-[1.7] text-foreground/90" />
+          <RichText text={blockText(ask)} paragraphClassName="text-[15px] leading-[1.7] text-foreground/90" />
         )}
       </div>
     )
@@ -356,10 +356,10 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
         (openerStreaming ? (
           <StreamingProse
             paragraphs={[opener]}
-            className="font-serif text-[15px] leading-[1.7] text-foreground/90"
+            className="text-[15px] leading-[1.7] text-foreground/90"
           />
         ) : (
-          <RichText text={opener} paragraphClassName="font-serif text-[15px] leading-[1.7] text-foreground/90" />
+          <RichText text={opener} paragraphClassName="text-[15px] leading-[1.7] text-foreground/90" />
         ))}
       {bodyAsks.map(bodyAskBlock)}
     </div>

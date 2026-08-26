@@ -38,6 +38,14 @@ scan works:
 - A long prose field earns a one-line lead: state the point first, then the
   detail under it.
 
+Alongside the reshaping, normalize code tokens: every function name, type,
+path, command, flag, env var, or literal value named in prose wears
+backticks, and no ordinary English word does. Drafts owe this already (it is
+a ground rule); the editor makes it uniform, because chip density that
+differs board to board reads as two different products. Minting a missing
+backtick around an identifier the draft already names is in scope; changing
+which identifiers the draft names is not.
+
 ## Step 2 — unslop
 
 The rules below are the unslop skill, copied verbatim.
