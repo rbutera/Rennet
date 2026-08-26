@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { cn } from "@/lib/utils"
 import { onFabSignal } from "@/lib/fab-signal"
 
 /**
@@ -43,12 +44,28 @@ export function FabPips({
     })
   }, [fabRef])
 
+  // Animate only a fresh addition while mounted — a remount (view switch)
+  // renders the pip statically, it is not news.
+  const prevCount = React.useRef(count)
+  const [pop, setPop] = React.useState(false)
+  React.useEffect(() => {
+    if (count > prevCount.current) {
+      setPop(true)
+      const timer = setTimeout(() => setPop(false), 280)
+      prevCount.current = count
+      return () => clearTimeout(timer)
+    }
+    prevCount.current = count
+  }, [count])
+
   if (count === 0) return null
 
   return (
     <span
-      key={count}
-      className="absolute -right-1 -top-1.5 flex h-5.5 min-w-5.5 animate-pip-in items-center justify-center rounded-full bg-red-600 px-1.5 text-[11.5px] font-semibold leading-none text-white shadow-sm"
+      className={cn(
+        "absolute -right-1 -top-1.5 flex h-5.5 min-w-5.5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11.5px] font-semibold leading-none text-white shadow-sm",
+        pop && "animate-pip-in",
+      )}
       aria-hidden="true"
     >
       {count}
