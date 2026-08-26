@@ -14,7 +14,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 - [x] 2.1 Re-point every `@rennet/types` import to `@rennet/protocol` in `packages/core` (119 files), `packages/instructions` (3 files), `packages/adapters` (66 files), `packages/server` (38 files). Purely mechanical — no shape edits.
 - [x] 2.2 Swap the `package.json` edges: drop `@rennet/types`, ensure `@rennet/protocol workspace:*` is present, in all four packages. `instructions` gains the `protocol` dep it did not have.
 - [x] 2.3 Grant the new `instructions → protocol` edge in both enforcers so the gate passes mid-wave: `scripts/check-boundaries.mjs` allowed-map and `eslint.config.mjs` (`layer:instructions` gains `layer:protocol`).
-- [ ] 2.4 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
+- [x] 2.4 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
 
 ## 3. Re-point the client side (app-ui, ui, client, apps)
 
