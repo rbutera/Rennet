@@ -15,7 +15,7 @@ export const noiseBoard: LensBoard = {
   lens: "noise",
   title: "Noise · observe GitHub token refresh (#438)",
   intro:
-    "3 hunks set aside. Nothing dropped. Every group reopens into the full diff.",
+    "3 hunks set aside, nothing dropped. Every group reopens into the full diff.",
   skippedHunks: [
     {
       path: "openspec/changes/github-token-refresh-reliability/proposal.md",
@@ -57,19 +57,19 @@ export const noiseBoard: LensBoard = {
     {
       id: "mechanical",
       title: "Mechanical & generated churn",
-      gist: "A barrel/import that echoes the two new symbols, and the generated scaffold stamp.",
+      gist: "A barrel and an import that echo the two new symbols, plus the generated scaffold stamp.",
       counts: "2 groups · 3 hunks · judged by rule",
       elements: [
         {
           kind: "prose",
-          text: "This change is almost all behavior and its specification. The mechanical remainder is an export and an import that grow to carry the two symbols the change introduced, plus the two-line scaffold stamp written when the change directory was created.",
+          text: "This change is almost all behavior and its specification. What is left over:\n\n- An export list grows to carry the two symbols the change introduced.\n- An import list grows the same way.\n- A two-line scaffold stamp, written when the change directory was created.",
         },
         {
           kind: "noise-group",
-          label: "New public names added to the adapters barrel and test import",
+          label: "The adapters barrel and test import gain two new public names",
           judgedBy: "rule",
           reason:
-            "Both hunks only add the two symbols github-auth.ts introduces in this change, the RefreshLogRecord type and the tokenKind function, to a specifier list that already carries their siblings. No statement changed; the export and import lists grew to match the new source.",
+            "Both hunks add the two symbols github-auth.ts introduces in this change, the RefreshLogRecord type and the tokenKind function. Each name joins a specifier list that already carries its siblings. No statement changed; the export and import lists grew to match the new source.",
           hunks: [
             {
               path: "packages/adapters/src/index.ts",
@@ -87,7 +87,7 @@ export const noiseBoard: LensBoard = {
           label: "Generated openspec scaffold stamp",
           judgedBy: "rule",
           reason:
-            "A two-line file the openspec tool writes when a change directory is created: a schema tag and a creation date. No requirement text, no behavior. The substantive spec files sit alongside it in the same directory.",
+            "The openspec tool writes this two-line file when it creates a change directory: a schema tag and a creation date. No requirement text, no behavior. The substantive spec files sit alongside it in the same directory.",
           hunks: [
             {
               path: "openspec/changes/github-token-refresh-reliability/.openspec.yaml",

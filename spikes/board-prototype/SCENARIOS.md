@@ -75,7 +75,7 @@ carried-forward blocks hydrate.
      staged demo transcripts are prior art, but they must read as records a
      real session would produce).
 - **Boards**: change B's five lenses from a real pipeline run (drafting agents
-  on `packages/lens-instructions` prompts, dual Flagged seats, unslop pass —
+  on `packages/lens-instructions` prompts, dual Flagged seats, post-process pass —
   the README documents the recipe).
 - **Hand-off**: the existing `HandoffView` post-review lane (R36 two strata,
   verdict proposal, Post Review — the draft is the preview; no separate
@@ -158,7 +158,7 @@ carried-forward blocks hydrate.
   `skippedHunks` — coverage as data, nothing rendered.
 - **Run view**: branch prep lines, then a one-row lens table (Design only —
   the other lanes have nothing; an empty row per lens would be narration),
-  then unslop + composed.
+  then post-process + composed.
 - **Transcript**: "I've drafted the token-refresh proposal — review the spec
   before anything gets built." → prep reads the spec artifacts → board ready →
   one exchange interrogating a requirement's scenario coverage.
@@ -295,7 +295,7 @@ lands on the honest empty New chat state and never claims a scenario.
    view, transcript, sidebar row; proposal-iteration round flavor + the
    scripted implement-hand-off transition into `rounds`.
 5. **`teammate` rebuild.** Choose change B (`gh pr view 439` vs `433`), run
-   the real lens pipeline (drafters + dual Flagged seats + unslop, per the
+   the real lens pipeline (drafters + dual Flagged seats + post-process, per the
    README recipe), write the grounded transcript, retire the auth-refactor
    fiction and the "#434" number. Mostly an agent content job — independent
    of steps 2–4 and parallelizable any time after step 1.

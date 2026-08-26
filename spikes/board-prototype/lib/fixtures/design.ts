@@ -11,7 +11,7 @@ import type { LensBoard } from "@/lib/lens-data"
 
 export const designBoard: LensBoard = {
   lens: "design",
-  title: "Design — GitHub token refresh, observed",
+  title: "Design · GitHub token refresh, observed",
   wide: true,
   sections: [
     {
@@ -26,7 +26,7 @@ export const designBoard: LensBoard = {
           format: "OpenSpec",
           counts: { added: 2, modified: 1 },
           tasks: { done: 11, total: 13 },
-          why: "The token's lifetime was never the bug: renewal was silent. A failed refresh looked identical to a missing credential, and the refresh layer's own retry could double a rotation. This change makes every refresh observable through a secret-free log record and moves retry ownership to the shared transport.",
+          why: "The token's lifetime was never the bug. Renewal was silent, so a failed refresh looked identical to a missing credential, and the refresh layer's own retry could double a rotation. Every refresh now writes a secret-free log record, and the shared transport owns retry.",
           artifacts: [
             { label: "proposal.md", sectionId: "proposal" },
             { label: "design.md", sectionId: "design" },
@@ -70,7 +70,7 @@ export const designBoard: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "Support traffic could not distinguish an expired credential from a failed rotation from GitHub being unreachable — all three surfaced as the same re-auth prompt. The proposal: make the refresh exchange observable (a log record per attempt and outcome), classify failures precisely (decline vs network), and remove the refresh layer's own retry, whose replay of a post-send failure could double a rotation.",
+          text: "Support traffic could not tell an expired credential from a failed rotation from an unreachable GitHub. All three surfaced as the same re-auth prompt.\n\n- Make the refresh exchange observable, one log record per attempt and outcome.\n- Classify failures precisely, decline against network.\n- Remove the refresh layer's own retry, whose replay of a post-send failure could double a rotation.",
         },
         {
           kind: "what-changes",
@@ -89,7 +89,7 @@ export const designBoard: LensBoard = {
             },
           ],
           impact:
-            "packages/adapters only. No new package, no dependency change. The logger is injected, so the daemon owns where records land (daemon.log). Out of scope: the Wave 6 field proof on lancelot.",
+            "- packages/adapters only. No new package, no dependency change.\n- The logger is injected, so the daemon owns where records land, which is daemon.log.\n- The Wave 6 field proof on lancelot stays out of scope.",
         },
       ],
     },
@@ -103,15 +103,15 @@ export const designBoard: LensBoard = {
         {
           kind: "decision",
           statement: "Records flow through an injected logger, not a global sink",
-          why: "The daemon decides where records land (daemon.log today), and tests capture records as plain values instead of scraping log output.",
+          why: "The daemon decides where records land, daemon.log today. Tests capture records as plain values instead of scraping log output.",
           inferred: false,
           alternatives: ["module-level logger singleton", "event-emitter the daemon subscribes to"],
           evidence: [{ path: "packages/adapters/src/github-auth.ts", line: 431 }],
         },
         {
           kind: "decision",
-          statement: "Secret-safety is a type-level property: the record has no field that can hold a token",
-          why: "A serialize-time redaction pass can miss a newly added field; a type with no secret-shaped field makes the leak unrepresentable, and the sentinel-token test proves it end to end.",
+          statement: "The record type has no field that can hold a token, so secret-safety is a property of the type",
+          why: "A serialize-time redaction pass can miss a newly added field. A type with no secret-shaped field makes the leak unrepresentable, and the sentinel-token test proves it end to end.",
           inferred: false,
           alternatives: ["redaction allowlist at serialization", "log-scrubbing middleware"],
           evidence: [{ path: "packages/adapters/src/github-auth.ts", line: 407 }],
@@ -119,7 +119,7 @@ export const designBoard: LensBoard = {
         {
           kind: "decision",
           statement: "Retry ownership moves to the shared connect-resilient transport",
-          why: "The transport can tell a connect-phase blip (safe to replay) from a post-send failure (replay could double a rotation); the refresh path cannot, so it calls the exchange exactly once.",
+          why: "The transport can tell a connect-phase blip, which is safe to replay, from a post-send failure, whose replay could double a rotation. The refresh path cannot, so it calls the exchange exactly once.",
           inferred: false,
           alternatives: ["adapter-level retry with an idempotency key"],
           evidence: [{ path: "packages/adapters/src/github-auth.test.ts", line: 288 }],
@@ -136,13 +136,13 @@ export const designBoard: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "Before this change the refresh exchange emitted zero logs, so a field failure could only be inferred and a success had never been confirmed once. The change obligates the daemon to record each attempt and its outcome through an injected logger, using a record type that has no field able to hold a credential.",
+          text: "The refresh exchange emitted zero logs before this change, so a field failure could only be inferred and no success had ever been confirmed. The daemon now records each attempt and its outcome through an injected logger, using a record type with no field able to hold a credential.",
         },
         {
           kind: "requirement",
           name: "Every refresh is recorded",
           delta: "added",
-          text: "The daemon SHALL record every credential refresh attempt and its outcome — persisted, declined, or network — to daemon.log through an injected logger, so a field failure is observed rather than inferred.",
+          text: "The daemon SHALL record every credential refresh attempt and its outcome, whether persisted, declined, or network, to daemon.log through an injected logger, so a field failure is observed rather than inferred.",
           status: "covered",
           coverage: { hunks: 3, tests: 4 },
           refs: ["github-auth.test.ts"],
@@ -155,7 +155,7 @@ export const designBoard: LensBoard = {
           kind: "requirement",
           name: "The record cannot hold a secret",
           delta: "added",
-          text: "A RefreshLogRecord SHALL carry no token, refresh token, or secret field, so a credential cannot be logged even by mistake — the safety is a type-level property, not a review promise.",
+          text: "A RefreshLogRecord SHALL carry no token, refresh token, or secret field, so a credential cannot be logged even by mistake. The type enforces this, not a review promise.",
           status: "covered",
           coverage: { hunks: 1, tests: 3 },
           refs: ["github-auth.test.ts"],
@@ -186,7 +186,7 @@ export function tokenKind(token: string): string {
           kind: "requirement",
           name: "Token kind is an allowlisted prefix",
           delta: "added",
-          text: 'The token-kind label in a record SHALL be only an allowlisted GitHub prefix (ghu_/gho_/…) or the fixed string "token" — never a slice of the token body.',
+          text: 'The token-kind label in a record SHALL be only an allowlisted GitHub prefix (ghu_/gho_/…) or the fixed string "token", never a slice of the token body.',
           status: "covered",
           coverage: { hunks: 1, tests: 3 },
           scenarios: [
@@ -203,7 +203,7 @@ export function tokenKind(token: string): string {
           coverage: { hunks: 1, tests: 1 },
           scenarios: [
             "WHEN a refresh begins (proactive or reactive branch) THEN `attempt` is the first record emitted.",
-            "WHEN the process dies after `attempt` but before an outcome THEN daemon.log still shows the attempt — asserted only by ordering; no crash-survival test proves the line flushed.",
+            "WHEN the process dies after `attempt` but before an outcome THEN daemon.log still shows the attempt. Asserted only by ordering; no crash-survival test proves the line flushed.",
           ],
         },
       ],
@@ -220,7 +220,7 @@ export function tokenKind(token: string): string {
           kind: "requirement",
           name: "A decline is never a network failure",
           delta: "added",
-          text: "When GitHub answers the refresh grant with HTTP 200 and an `error` field, the daemon SHALL log that error code verbatim, leave the stored credential untouched, and resolve to `token-invalid` — never classify a decline as network.",
+          text: "When GitHub answers the refresh grant with HTTP 200 and an `error` field, the daemon SHALL log that error code verbatim, leave the stored credential untouched, and resolve to `token-invalid`, never classifying a decline as network.",
           status: "covered",
           coverage: { hunks: 1, tests: 1 },
           scenarios: [
@@ -231,7 +231,7 @@ export function tokenKind(token: string): string {
           kind: "requirement",
           name: "The refresh path owns no retry",
           delta: "added",
-          text: "The refresh path SHALL NOT add a retry of its own; on a network error it SHALL emit a `network` record and propagate, calling the refresh exchange exactly once — retry ownership lives in the shared connect-resilient transport.",
+          text: "The refresh path SHALL NOT add a retry of its own; on a network error it SHALL emit a `network` record and propagate, calling the refresh exchange exactly once. Retry ownership lives in the shared connect-resilient transport.",
           status: "covered",
           coverage: { hunks: 1, tests: 1 },
           refs: ["github-auth.test.ts"],
@@ -292,19 +292,19 @@ expect(refresh).toHaveBeenCalledTimes(1);`,
       title: "github-auth · field proof (lancelot)",
       badge: "modified",
       source: "specs/github-auth/spec.md",
-      gist: "Observe a refresh succeed-and-rotate live — deferred to a manual run against the real account.",
+      gist: "Watch a live refresh succeed and rotate, deferred to a manual run against the real account.",
       counts: "1 requirement · 0 covered · 1 open",
       elements: [
         {
           kind: "callout",
           tone: "warn",
-          text: 'Listed in the proposal under "Not in this PR": the Wave 6 field proof needs the real lancelot account, so the diff carries no code or test for it — tasks 6.1 and 6.2 remain unchecked.',
+          text: 'The proposal lists this under "Not in this PR". The Wave 6 field proof needs the real lancelot account, so the diff carries no code or test for it, and tasks 6.1 and 6.2 remain unchecked.',
         },
         {
           kind: "requirement",
           name: "One real refresh observed in the field",
           delta: "modified",
-          text: "The daemon SHALL be observed to refresh a real credential successfully at least once on lancelot — reading a `persisted` record from daemon.log (or capturing the verbatim decline code) as the first field confirmation the mechanism works.",
+          text: "The daemon SHALL be observed to refresh a real credential successfully at least once on lancelot. A `persisted` record read from daemon.log, or a captured verbatim decline code, is the first field confirmation that the mechanism works.",
           status: "unimplemented",
           coverage: { hunks: 0, tests: 0 },
           scenarios: [
@@ -317,7 +317,7 @@ expect(refresh).toHaveBeenCalledTimes(1);`,
       id: "tasks",
       title: "Tasks",
       source: "tasks.md",
-      gist: "11 of 13 done — the two open tasks are the lancelot field proof.",
+      gist: "11 of 13 done. The two open tasks are the lancelot field proof.",
       elements: [
         {
           kind: "task-progress",

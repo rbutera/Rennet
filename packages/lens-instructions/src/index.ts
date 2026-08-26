@@ -24,7 +24,15 @@ export const LENS_PROMPT_FILES: Record<LensKind, string> = {
 };
 
 /**
- * Prompt file for the editor agent every draft board funnels through: the
- * unslop skill applied to prose fields only, typed data untouched.
+ * Prompt file for the post-processing editor agent every draft board funnels
+ * through: break-it-down structure rules, the unslop skill verbatim, and the
+ * humanizer additions — prose fields only, typed data untouched.
  */
-export const UNSLOP_PASS_FILE = "prompts/unslop-pass.md";
+export const POST_PROCESS_FILE = "prompts/post-process.md";
+
+/**
+ * Writing rules the orchestrator applies write-through when authoring or
+ * reworking the living review draft: the post-process steps in the
+ * reviewer's first-person GitHub register.
+ */
+export const REVIEW_DRAFT_VOICE_FILE = "prompts/review-draft-voice.md";

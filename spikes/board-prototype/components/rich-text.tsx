@@ -342,7 +342,7 @@ export function RichText({
     return { start, end }
   }
 
-  function renderParagraph(paragraph: string, paragraphIndex: number) {
+  function buildNodes(paragraph: string, paragraphIndex: number): React.ReactNode[] {
     // Durable highlights: wrap any span of this paragraph that a quote thread
     // anchors to. A multi-paragraph quote keeps its composer chip but gets no
     // inline highlight (its text no longer matches one paragraph).
@@ -368,13 +368,34 @@ export function RichText({
       cursor = range.end
     }
     if (cursor < paragraph.length) nodes.push(...renderTokens(paragraph.slice(cursor), paragraphIndex, cursor))
+    return nodes
+  }
 
+  function renderParagraph(paragraph: string, paragraphIndex: number) {
     const activeInParagraph =
       activeRef && activeRef.startsWith(`${paragraphIndex}:`) ? activeRef.slice(activeRef.indexOf(":") + 1) : null
 
+    // A block whose lines all start with "- " is a bulleted list; each line
+    // keeps the full token pipeline (citations, code, highlights).
+    const lines = paragraph.split("\n")
+    if (lines.length > 1 && lines.every((line) => line.startsWith("- "))) {
+      return (
+        <React.Fragment key={paragraphIndex}>
+          <ul className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60">
+            {lines.map((line, lineIndex) => (
+              <li key={lineIndex} className={paragraphClassName}>
+                {buildNodes(line.slice(2), paragraphIndex)}
+              </li>
+            ))}
+          </ul>
+          {activeInParagraph && <SourcePanel anchor={parseRef(activeInParagraph)} />}
+        </React.Fragment>
+      )
+    }
+
     return (
       <React.Fragment key={paragraphIndex}>
-        <p className={paragraphClassName}>{nodes}</p>
+        <p className={paragraphClassName}>{buildNodes(paragraph, paragraphIndex)}</p>
         {activeInParagraph && <SourcePanel anchor={parseRef(activeInParagraph)} />}
       </React.Fragment>
     )

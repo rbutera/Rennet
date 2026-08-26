@@ -98,11 +98,11 @@ cross-origin dev requests 403 and HMR dies; add new hostnames there).
 - **Fixtures** (`lib/fixtures/*.ts`): drafted from the REAL merged PR
   [#438](https://github.com/rbutera/Rennet/pull/438) by agents running the
   ACTUAL lens prompts in `packages/lens-instructions` (Flagged = dual
-  Claude/Codex seats, reconciled), then unslop-edited by editor agents on
-  `prompts/unslop-pass.md`. Real paths, hunks, line numbers, honest coverage.
+  Claude/Codex seats, reconciled), then post-processed by editor agents on
+  `prompts/post-process.md`. Real paths, hunks, line numbers, honest coverage.
   To regenerate, rerun that pipeline — read the prompts, fetch
   `gh pr diff 438 --repo rbutera/Rennet`, conform to `lib/lens-data.ts`, and
-  funnel every draft through the unslop pass; never invent APIs the diff
+  funnel every draft through the post-process pass; never invent APIs the diff
   doesn't contain. Rulings R17–R22 (no authored threads, lanes, coverage as
   `skippedHunks` data, voice, projection, scaffold stamps are noise) live on
   the canonical #458 comment.

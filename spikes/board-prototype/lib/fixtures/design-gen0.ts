@@ -23,7 +23,7 @@ const CHANGE = "openspec/changes/github-token-refresh-reliability"
 
 export const designGen0Board: LensBoard = {
   lens: "design",
-  title: "Design — GitHub token refresh, observed",
+  title: "Design · GitHub token refresh, observed",
   wide: true,
   // R22: the scaffold stamp is Noise's lane; with no Noise board at propose
   // stage it rides here as coverage data. Never rendered.
@@ -46,7 +46,7 @@ export const designGen0Board: LensBoard = {
           format: "OpenSpec",
           counts: { added: 2, modified: 1 },
           tasks: { done: 0, total: 13 },
-          why: "The token's lifetime was never the bug: renewal was silent. A failed refresh looked identical to a missing credential, and the refresh layer's own retry could double a rotation. This change makes every refresh observable through a secret-free log record and moves retry ownership to the shared transport.",
+          why: "The token's lifetime was never the bug. Renewal was silent, so a failed refresh looked identical to a missing credential, and the refresh layer's own retry could double a rotation. This change makes every refresh observable through a secret-free log record, and moves retry ownership to the shared transport.",
           artifacts: [
             { label: "proposal.md", sectionId: "proposal" },
             { label: "design.md", sectionId: "design" },
@@ -90,7 +90,7 @@ export const designGen0Board: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "Support traffic could not distinguish an expired credential from a failed rotation from GitHub being unreachable — all three surfaced as the same re-auth prompt. The proposal: make the refresh exchange observable (a log record per attempt and outcome), classify failures precisely (decline vs network), and remove the refresh layer's own retry, whose replay of a post-send failure could double a rotation.",
+          text: "Support traffic could not tell an expired credential from a failed rotation, or either one from GitHub being unreachable. All three surfaced as the same re-auth prompt. The proposal answers with three changes.\n\n- Make the refresh exchange observable, one log record per attempt and outcome.\n- Classify each failure as a decline or a network error.\n- Remove the refresh layer's own retry, whose replay of a post-send failure could double a rotation.",
         },
         {
           kind: "what-changes",
@@ -109,7 +109,7 @@ export const designGen0Board: LensBoard = {
             },
           ],
           impact:
-            "packages/adapters only. No new package, no dependency change. The logger is injected, so the daemon owns where records land (daemon.log). Out of scope: the Wave 6 field proof on lancelot.",
+            "- packages/adapters only. No new package, no dependency change.\n- The logger is injected, so the daemon owns where records land (daemon.log).\n- Out of scope: the Wave 6 field proof on lancelot.",
         },
       ],
     },
@@ -130,8 +130,8 @@ export const designGen0Board: LensBoard = {
         },
         {
           kind: "decision",
-          statement: "Secret-safety is a type-level property: the record has no field that can hold a token",
-          why: "A serialize-time redaction pass can miss a newly added field; a type with no secret-shaped field makes the leak unrepresentable, and the sentinel-token test proves it end to end.",
+          statement: "The record type carries no field that can hold a token, so secret-safety is type-level",
+          why: "A serialize-time redaction pass can miss a newly added field. A type with no secret-shaped field makes the leak unrepresentable, and the sentinel-token test proves it end to end.",
           inferred: false,
           alternatives: ["redaction allowlist at serialization", "log-scrubbing middleware"],
           evidence: [{ path: `${CHANGE}/design.md`, line: 25 }],
@@ -139,7 +139,7 @@ export const designGen0Board: LensBoard = {
         {
           kind: "decision",
           statement: "Retry ownership moves to the shared connect-resilient transport",
-          why: "The transport can tell a connect-phase blip (safe to replay) from a post-send failure (replay could double a rotation); the refresh path cannot, so it calls the exchange exactly once.",
+          why: "The transport can tell a connect-phase blip, safe to replay, from a post-send failure whose replay could double a rotation. The refresh path cannot, so it calls the exchange exactly once.",
           inferred: false,
           alternatives: ["adapter-level retry with an idempotency key"],
           evidence: [{ path: `${CHANGE}/design.md`, line: 27 }],
@@ -156,7 +156,7 @@ export const designGen0Board: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "Before this change the refresh exchange emitted zero logs, so a field failure could only be inferred and a success had never been confirmed once. The change obligates the daemon to record each attempt and its outcome through an injected logger, using a record type that has no field able to hold a credential.",
+          text: "The refresh exchange emitted zero logs before this change, so a field failure could only be inferred and no one had ever confirmed a success. The change requires the daemon to record each attempt and its outcome through an injected logger, using a record type that has no field able to hold a credential.",
         },
         {
           kind: "requirement",
@@ -252,13 +252,13 @@ export const designGen0Board: LensBoard = {
       title: "github-auth · field proof (lancelot)",
       badge: "modified",
       source: "specs/github-auth/spec.md",
-      gist: "Observe a refresh succeed-and-rotate live — deferred to a manual run against the real account.",
+      gist: "Observe a refresh succeed and rotate live, deferred to a manual run against the real account.",
       counts: "1 requirement",
       elements: [
         {
           kind: "callout",
           tone: "warn",
-          text: 'Deferred in the proposal under "Not in this change": the Wave 6 field proof needs the real lancelot account, so no code or test lands for it here — tasks 6.1 and 6.2 stay open for a manual run.',
+          text: 'The proposal defers this under "Not in this change". The Wave 6 field proof needs the real lancelot account, so no code or test lands for it here, and tasks 6.1 and 6.2 stay open for a manual run.',
         },
         {
           kind: "requirement",
@@ -275,7 +275,7 @@ export const designGen0Board: LensBoard = {
       id: "tasks",
       title: "Tasks",
       source: "tasks.md",
-      gist: "0 of 13 done — nothing implemented yet; this is the proposal.",
+      gist: "0 of 13 done. Nothing is implemented yet; the change is still a proposal.",
       elements: [
         {
           kind: "task-progress",

@@ -53,7 +53,7 @@ const LENSES: { name: string; doneDetail: string; start: number; done: number }[
 ]
 
 const FINISH: TimedStep[] = [
-  { label: "Unslop pass over drafts", start: 7500, done: 8600 },
+  { label: "Cleaning up drafts · post-process pass", start: 7500, done: 8600 },
   { label: "Composed the board", start: 8700, done: 9600 },
 ]
 

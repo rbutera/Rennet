@@ -26,7 +26,7 @@ called reading order. Each lens is a board of typed blocks drafted by a review
 agent on a fixed prompt.
 
 The prompts live in `packages/lens-instructions` (`@rennet/lens-instructions`),
-one markdown file per lens plus the unslop editor pass. The package exports a
+one markdown file per lens plus the post-process editor pass. The package exports a
 typed manifest; the pipeline reads the files and supplies the board schema
 separately, so instructions and schema cannot drift apart.
 
@@ -55,19 +55,25 @@ separately, so instructions and schema cannot drift apart.
    - a process-vocabulary screen flags prose that names lenses, boards,
      agents, seats, or drafts.
    A lint failure returns the draft to its agent with the violation named.
-4. **Unslop.** Every draft board passes through an editor agent running the
-   unslop pass (`prompts/unslop-pass.md`, the unslop skill verbatim). The
-   editor rewrites prose fields only — and enforces the board voice
-   editorially, deleting sentences about the review machinery that survive
-   the lint's vocabulary screen. Typed data — paths, line numbers, counts,
-   severities, concurrence flags — is untouched.
+4. **Post-process.** Every draft board passes through an editor agent running
+   the post-process pass (`prompts/post-process.md`): a break-it-down step
+   that reshapes dense prose into terse, scannable chunks — bullets for
+   enumerable facts, prose kept for genuine narrative — then the unslop
+   skill verbatim, then the humanizer additions (patterns from the MIT
+   humanizer skill the unslop body does not cover). The editor rewrites
+   prose fields only — and enforces the board voice editorially, deleting
+   sentences about the review machinery that survive the lint's vocabulary
+   screen. Typed data — paths, line numbers, counts, severities, concurrence
+   flags — is untouched. The orchestrator applies the same steps
+   write-through when authoring the review draft, in the reviewer's
+   first-person register (`prompts/review-draft-voice.md`).
 5. **Compose.** The orchestrator authors the composition Board from the frozen
    drafts (issue #457's compose-by-authoring model).
 
 Three layers carry every rule: the schema makes good structure the only
 expressible structure (a fix field exists, so a fix sentence buried in prose
 is a lint error, not a style preference); the lint makes the mechanical rules
-guarantees; the prompts and the unslop editor carry what only judgment can
+guarantees; the prompts and the post-process editor carry what only judgment can
 check. A rule that lives in a prompt alone is a wish.
 
 ## Lane discipline

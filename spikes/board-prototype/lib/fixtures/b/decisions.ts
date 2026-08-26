@@ -5,7 +5,7 @@ export const decisionsBoardB: LensBoard = {
   lens: "decisions",
   title: "Decisions",
   intro:
-    "Judgment calls inside the daemon-in-distro WSL runtime: how the bundle is delivered into the distro, how the daemon's health is decided, how it is spawned, and how a project is routed to its distro daemon.",
+    "Judgment calls inside the daemon-in-distro WSL runtime: how the bundle reaches the distro, how the runtime decides a daemon is healthy, how it spawns the daemon, and how a project routes to its distro daemon.",
   skippedHunks: [
     {
       path: "openspec/changes/wsl-daemon-runtime/proposal.md",
@@ -62,14 +62,14 @@ export const decisionsBoardB: LensBoard = {
       id: "delivery",
       title: "Delivery & path discipline",
       badge: "added",
-      gist: "Where the bundle lives inside the distro, how it gets there, and how noisy shell output is parsed.",
+      gist: "Where the bundle lives inside the distro, how it gets there, and how the runtime parses noisy shell output.",
       counts: "3 decisions · 2 with code tabs",
       elements: [
         {
           kind: "decision",
           statement:
-            "The daemon bundle is delivered copy-once-per-version into the distro's native fs (`~/.rennet/server/<version>/`), copied only when the versioned entry is absent. The whole server directory is copied, never a single file, and it never runs over 9P.",
-          why: "Stated (design.md Decision 1; wsl-bundle.ts header): running the bundle across `\\\\wsl.localhost\\…` would reintroduce the 9P tax the change exists to delete, so it must run from native fs. The versioned path mirrors `~/.vscode-server` and lets a version bump land in a new dir, so old daemons keep their bundle. The whole-directory copy (`cp -r <dir>/.`) is code because the bundle is code-split. A single-file copy crashes the daemon at startup with a missing-module error.",
+            "The daemon bundle lands in the distro's native fs at `~/.rennet/server/<version>/`. It is copied once per version, only when the versioned entry is absent, always the whole server directory, and never run over 9P.",
+          why: "Stated (design.md Decision 1; wsl-bundle.ts header): running the bundle across `\\\\wsl.localhost\\…` would bring back the 9P tax this change exists to delete, so it must run from native fs. The versioned path mirrors `~/.vscode-server`, and a version bump lands in a new dir, so old daemons keep their bundle. The whole-directory copy, `cp -r <dir>/.`, is a code-level call because the bundle is code-split. A single-file copy crashes the daemon at startup with a missing-module error.",
           inferred: false,
           alternatives: [
             "Run the bundle from its `\\\\wsl.localhost\\<distro>\\…` UNC path with no copy, rejected in design.md Decision 1 because it defeats the architecture and reintroduces the tax.",
@@ -132,8 +132,8 @@ export function wslServerBundlePath(distroHome: string, version: string): string
         {
           kind: "decision",
           statement:
-            "Reading a value out of noisy WSL shell output strips ANSI/control characters but preserves line breaks before splitting, and this parser lives in one shared `wsl-shell` module used by both the node resolver and the bundle deliverer.",
-          why: "Stated (wsl-shell.ts header; the harden commit): a prior copy stripped `\\n` before splitting on it, collapsing multi-line probe output (e.g. a $HOME line plus a trailing warning) into a single invalid line. Extracting the corrected `stripShellControl`/`shellLines`/`lastAbsolutePathLine` into one module fixed the same latent bug in the already-merged `wsl-node.ts` parser and removed the copy-paste.",
+            "The parser that reads a value out of noisy WSL shell output strips ANSI and control characters but keeps line breaks before splitting. It lives in one shared `wsl-shell` module, used by both the node resolver and the bundle deliverer.",
+          why: "Stated (wsl-shell.ts header; the harden commit): a prior copy stripped `\\n` before splitting on it, collapsing multi-line probe output, say a $HOME line plus a trailing warning, into a single invalid line. Moving the corrected `stripShellControl`, `shellLines` and `lastAbsolutePathLine` into one module fixed the same latent bug in the already-merged `wsl-node.ts` parser, and removed the copy-paste.",
           inferred: false,
           alternatives: [
             "Keep the control-stripping inlined per file, which is the copy-pasted form that carried the newline-collapse bug.",
@@ -172,7 +172,7 @@ export function lastAbsolutePathLine(raw: string): string | null {
         {
           kind: "decision",
           statement:
-            "The WSL daemon's data dir (its GitHub token, daemon.json, and log) is a distro-native path (`~/.local/share/rennet`); the existing secret store points at it rather than a new store or a host-side token.",
+            "The WSL daemon's data dir holds its GitHub token, daemon.json and log at a distro-native path, `~/.local/share/rennet`. The existing secret store points at it, rather than a new store or a host-side token.",
           why: "Stated (design.md Decision 5; ADR 0003): the daemon already runs in-distro, so pointing its `--data-dir` at a native path keeps both egress and the token off 9P as a free win. No new store is written.",
           inferred: false,
           alternatives: [
@@ -193,8 +193,8 @@ export function lastAbsolutePathLine(raw: string): string | null {
         {
           kind: "decision",
           statement:
-            "Steady-state health is decided on the port, a GET to `http://localhost:<port>/healthz` whose 200 identity must claim the very port probed. It is not decided by reading the daemon's claim file across 9P; the claim file is read once to learn the port.",
-          why: "Stated (design.md Decisions 2 & 3; wsl-daemon.ts header): a WSL daemon's data dir is distro-native, so reading `daemon.json` from Windows every tick means 9P; the port path is 9P-free and is what the spike used, so the claim file is read once and health thereafter goes to the loopback port.",
+            "Steady-state health is decided on the port. A GET to `http://localhost:<port>/healthz` must come back 200 with an identity claiming the very port probed. Health never reads the daemon's claim file across 9P; the claim file is read once, to learn the port.",
+          why: "Stated (design.md Decisions 2 & 3; wsl-daemon.ts header): a WSL daemon's data dir is distro-native, so reading `daemon.json` from Windows every tick means 9P. The port path costs no 9P, and it is what the spike used. So the claim file is read once, and health thereafter goes to the loopback port.",
           inferred: false,
           alternatives: [
             "Health-check by reading `daemon.json` from the distro data dir each tick, rejected in design.md Decision 2 because it is a per-tick 9P read.",
@@ -251,8 +251,8 @@ export async function readWslDaemonPort(
         {
           kind: "decision",
           statement:
-            "The daemon is spawned as the shell's managed child with `windowsHide` and `unref`, deliberately not `detached`. This reverses the design/proposal's stated 'detached run'.",
-          why: "Stated (wsl-daemon.ts spawn comment): a WSL daemon cannot outlive its launcher anyway. Lancelot proved WSL reaps a distro's processes when the launching interop instance ends, so the daemon is app-lifetime by nature. Node's `windowsHide` is a no-op when `detached` is set (a known Node bug), which is why the earlier detached spawn flashed an empty `wsl.exe` console window; dropping `detached` lets `windowsHide` hide the console. The design doc's Risks section still frames the spawn as 'detached'/`unref`'d, so this is a call the implementation made against the written plan.",
+            "The shell spawns the daemon as its managed child with `windowsHide` and `unref`, deliberately not `detached`. That reverses the design and proposal's stated 'detached run'.",
+          why: "Stated (wsl-daemon.ts spawn comment): a WSL daemon cannot outlive its launcher anyway. Lancelot proved WSL reaps a distro's processes when the launching interop instance ends, so the daemon is app-lifetime by nature. Node's `windowsHide` is a no-op when `detached` is set, a known Node bug, and that is why the earlier detached spawn flashed an empty `wsl.exe` console window. Dropping `detached` lets `windowsHide` hide the console. The design doc's Risks section still frames the spawn as 'detached' and `unref`'d, so the implementation made this call against the written plan.",
           inferred: false,
           alternatives: [
             "Spawn `detached` + `unref`, as design.md's Risks section frames it. Rejected in code because `windowsHide` is ignored under `detached`, flashing a console window, and detachment buys nothing WSL will honor.",
@@ -312,8 +312,8 @@ export async function readWslDaemonPort(
         {
           kind: "decision",
           statement:
-            "A version-skew daemon (healthy but a different version) is stopped by the pid its identity carries. The shell then waits, with a bound, for that identity to disappear before respawning, then confirms the fresh daemon reports the shipped version.",
-          why: "Stated (wsl-supervisor.ts comments): this mirrors the host supervisor's `waitForClaimGone` so the fresh daemon's claim never races the dying one's, and the post-restart version check guards against the lancelot field bug where a stale claim handed the old daemon back and re-served the wrong version.",
+            "A version-skew daemon, healthy but on a different version, is stopped by the pid its identity carries. The shell then waits, with a bound, for that identity to disappear before respawning, and confirms the fresh daemon reports the shipped version.",
+          why: "Stated (wsl-supervisor.ts comments): the wait mirrors the host supervisor's `waitForClaimGone`, so the fresh daemon's claim never races the dying one's. The post-restart version check guards against the lancelot field bug, where a stale claim handed the old daemon back and re-served the wrong version.",
           inferred: false,
           alternatives: [
             "Respawn immediately after signalling the old pid, without waiting for it to exit, risking the fresh claim racing the dying daemon's.",
@@ -360,7 +360,7 @@ export async function readWslDaemonPort(
           kind: "decision",
           statement:
             "The startup acquisition loop re-reads `daemon.json` for the port on every poll, even though steady-state health learns the port only once.",
-          why: "Stated (waitForWslDaemon comment): the 'learn the port once' discipline is for steady state; during acquisition a version-skew restart brings the daemon back on a NEW ephemeral port, so a port cached from the dying daemon would be polled fruitlessly until the deadline. One 9P read per interval is cheap, and only while starting up.",
+          why: "Stated (waitForWslDaemon comment): the 'learn the port once' discipline is for steady state. During acquisition a version-skew restart brings the daemon back on a new ephemeral port, so a port cached from the dying daemon gets polled to no effect until the deadline. One 9P read per interval is cheap, and it only happens while starting up.",
           inferred: false,
           alternatives: [
             "Read the port once and reuse it across the whole acquisition poll, which strands the loop on the dead daemon's port after a skew restart.",
@@ -379,8 +379,8 @@ export async function readWslDaemonPort(
         {
           kind: "decision",
           statement:
-            "The WSL runtime composes the existing supervisor parts behind an effect-injected orchestrator (`ensureWslDaemon`), and the desktop main is a thin locus-select over it, so the host-locus path stays byte-identical and no WSL code runs for a host project.",
-          why: "Stated (design.md Decision 3; wsl-supervisor.ts header; PR body 'add a WSL variant, don't fork the world'): reusing the supervisor's verify/restart/stop shape keeps the new code minimal, and injecting every effect (spawn, run, fetch, clock) makes the whole path unit-testable off-box while the live wiring is deferred to the lancelot field proof.",
+            "The WSL runtime composes the existing supervisor parts behind an effect-injected orchestrator, `ensureWslDaemon`. The desktop main is a thin locus-select over it, so the host-locus path stays byte-identical and no WSL code runs for a host project.",
+          why: "Stated (design.md Decision 3; wsl-supervisor.ts header; PR body 'add a WSL variant, don't fork the world'): reusing the supervisor's verify/restart/stop shape keeps the new code minimal. Injecting every effect (spawn, run, fetch, clock) makes the whole path unit-testable off-box, while the live wiring waits on the lancelot field proof.",
           inferred: false,
           alternatives: [
             "Special-case WSL inside the host supervisor, which would put WSL branches on the host path and break its byte-identical guarantee.",
@@ -433,11 +433,11 @@ export async function readWslDaemonPort(
         {
           kind: "decision",
           statement:
-            "One daemon runs per distro, spawned lazily on the first project for it and routed by execution locus; concurrent opens on the same distro fold into one in-flight ensure, and the map entry is dropped once settled so there is no persisted port cache.",
-          why: "Stated (design.md Decision 4; the in-flight map docstring): the locus routing key already exists and lazy spawn avoids starting daemons for distros never used. Dropping the entry on settle, rather than caching the port, means a later open re-ensures against `ensureWslDaemon`'s own healthy-same-version short-circuit, so there is no stale port cache to go wrong (self-healing).",
+            "One daemon runs per distro, spawned lazily on the first project for that distro and routed by execution locus. Concurrent opens on the same distro fold into one in-flight ensure, and the map entry is dropped once settled, so no port cache persists.",
+          why: "Stated (design.md Decision 4; the in-flight map docstring): the locus routing key already exists, and lazy spawn avoids starting daemons for distros never used. Dropping the entry on settle, rather than caching the port, means a later open re-ensures against `ensureWslDaemon`'s own healthy-same-version short-circuit. There is no stale port cache to go wrong, and the path heals itself.",
           inferred: false,
           alternatives: [
-            "Cache the resolved port per distro across opens, a stale-port class when a version-skew restart moves the daemon to a new port.",
+            "Cache the resolved port per distro across opens, which goes stale when a version-skew restart moves the daemon to a new port.",
             "Run one global daemon for all distros, rejected because a distro daemon must run where its files are.",
           ],
           evidence: [
@@ -480,7 +480,7 @@ const wslInFlight = new Map<string, Promise<number>>();`,
         {
           kind: "decision",
           statement:
-            "The orchestrator trusts a runner's stdout only on a clean (exit 0) run, mapping any nonzero/timeout run to an empty string before parsing a $HOME or Node path.",
+            "The orchestrator trusts a runner's stdout only on a clean run, exit 0. Any nonzero or timed-out run maps to an empty string before anything parses a $HOME or Node path.",
           why: "Stated (ensureWslDaemon `runString` comment): a nonzero or timed-out run may have flushed partial stdout that must never be parsed as a valid path and fed to a spawn. An empty string parses to null and a clear error, never a half-read path.",
           inferred: false,
           alternatives: [
@@ -491,8 +491,8 @@ const wslInFlight = new Map<string, Promise<number>>();`,
         {
           kind: "decision",
           statement:
-            "The desktop's WSL runner is built on the built-in `child_process.execFile` with its own per-call timeout, not on the `execa` dependency the codebase already carries elsewhere.",
-          why: "Stated (createWslRunner docstring): the built-in with a `timeout` is enough, and the runner must carry its own timeout so a wedged distro call can never stall the health-wait loop, which only bounds the interval between polls. A non-zero/failed exec resolves a non-zero `code` rather than throwing, matching how delivery and health branch on the code.",
+            "The desktop's WSL runner uses the built-in `child_process.execFile` with its own per-call timeout, not the `execa` dependency the codebase already carries elsewhere.",
+          why: "Stated (createWslRunner docstring): the built-in with a `timeout` is enough. The runner must carry its own timeout, because the health-wait loop only bounds the interval between polls, so a wedged distro call could otherwise stall it. A failed or non-zero exec resolves a non-zero `code` rather than throwing, matching how delivery and health branch on the code.",
           inferred: false,
           alternatives: [
             "Wrap `execa` for the runner, rejected in the docstring as an unnecessary dependency when the built-in with a timeout suffices.",

@@ -32,7 +32,7 @@ export const designBoardB: LensBoard = {
           format: "OpenSpec",
           counts: { added: 1, modified: 0 },
           tasks: { done: 13, total: 15 },
-          why: "PR #437 built the launch descriptor but never invoked it. Nothing delivered the daemon bundle into a WSL distro, managed its lifecycle over wsl.exe, or routed a WSL-locus project away from the host daemon reaching across 9P. This change delivers the bundle once per version, spawns, health-checks, and stops the daemon inside the distro, and runs one daemon per distro routed by locus, so the whole EISDIR/poll/threadpool-starvation class disappears where the files actually live. The runtime lands behind an injectable seam with unit tests; the live renderer wiring and the lancelot field proof are deferred.",
+          why: "PR #437 built the launch descriptor but never invoked it. Nothing delivered the daemon bundle into a WSL distro, managed its lifecycle over wsl.exe, or routed a WSL-locus project away from the host daemon reaching across 9P.\n\nThis change closes all three, so the EISDIR, poll and threadpool-starvation failures disappear where the files actually live:\n\n- Delivers the bundle into the distro once per version.\n- Spawns, health-checks and stops the daemon inside the distro.\n- Runs one daemon per distro, routed by locus.\n\nThe runtime lands behind an injectable seam with unit tests. The live renderer wiring and the lancelot field proof are deferred.",
           artifacts: [
             { label: "proposal.md", sectionId: "proposal" },
             { label: "design.md · 5 decisions", sectionId: "design" },
@@ -67,7 +67,7 @@ export const designBoardB: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "The WSL-daemon spike proved the architecture end to end, and PR #437 landed the load-bearing piece. It resolved the distro's Node and built the byte-verbatim `wsl.exe … -e <node> <bundle> serve` descriptor. Nothing invoked that descriptor yet. Until this change lands, a WSL project still runs on the Windows daemon over `\\\\wsl.localhost\\…`, paying the 9P tax the spike showed vanishes when the daemon runs inside the distro.",
+          text: "The WSL-daemon spike proved the architecture end to end, and PR #437 landed the load-bearing piece. It resolved the distro's Node and built the byte-verbatim `wsl.exe … -e <node> <bundle> serve` descriptor. Nothing invoked that descriptor yet. Until this change lands, a WSL project still runs on the Windows daemon over `\\\\wsl.localhost\\…`. It pays the 9P tax that the spike showed vanishes once the daemon runs inside the distro.",
         },
         {
           kind: "what-changes",
@@ -78,11 +78,11 @@ export const designBoardB: LensBoard = {
             },
             {
               tag: "lifecycle",
-              text: "Spawn via wsl.exe using the distro's Node; health polled on the port's /healthz over localhost, not the claim file across 9P; version-skew restart; stop by pid inside the distro.",
+              text: "- Spawn via wsl.exe using the distro's Node.\n- Poll health on the port's /healthz over localhost, not the claim file across 9P.\n- Restart on version skew.\n- Stop by pid inside the distro.",
             },
             {
               tag: "routing",
-              text: "The shell runs the host daemon plus one daemon per WSL distro and routes each project to the daemon for its execution locus; boundary paths cross via toDistroPath / toWindowsView.",
+              text: "The shell runs the host daemon plus one daemon per WSL distro, and routes each project to the daemon for its execution locus. Boundary paths cross via toDistroPath / toWindowsView.",
             },
             {
               tag: "secret-store",
@@ -90,7 +90,7 @@ export const designBoardB: LensBoard = {
             },
           ],
           impact:
-            "packages/core (pure path/argv helpers + delivery), packages/server (spawn/health/stop + orchestrator), apps/desktop (locus-selected routing seam). No consent gate, no read-only posture. The daemon writes and pushes exactly as the host daemon does (Rule Zero). Depends on #437. Deferred: wiring the seam into the renderer (index.ts still dials one host port) and the lancelot field proof.",
+            "- packages/core: pure path/argv helpers and delivery.\n- packages/server: spawn/health/stop and the orchestrator.\n- apps/desktop: the locus-selected routing seam.\n\nNo consent gate, no read-only posture. The daemon writes and pushes exactly as the host daemon does (Rule Zero). Depends on #437.\n\nDeferred: wiring the seam into the renderer (index.ts still dials one host port) and the lancelot field proof.",
         },
       ],
     },
@@ -104,15 +104,15 @@ export const designBoardB: LensBoard = {
         {
           kind: "decision",
           statement: "Delivery is copy-once-per-version into the distro's native fs",
-          why: "Running the bundle over 9P would reintroduce exactly the tax the change exists to delete; a versioned dir (~/.rennet/server/<version>/) mirrors ~/.vscode-server and lets old daemons keep their bundle across a version bump.",
+          why: "Running the bundle over 9P would reintroduce exactly the tax this change exists to delete. A versioned dir (~/.rennet/server/<version>/) mirrors ~/.vscode-server, and lets old daemons keep their bundle across a version bump.",
           inferred: false,
-          alternatives: ["Run the bundle from its \\\\wsl.localhost path (rejected — defeats the architecture)"],
+          alternatives: ["Run the bundle from its \\\\wsl.localhost path (rejected, defeats the architecture)"],
           evidence: [{ path: "packages/core/src/wsl-bundle.ts", line: 90 }],
         },
         {
           kind: "decision",
           statement: "Health is port-first, not claim-file-first",
-          why: "Reading a WSL daemon's daemon.json from Windows means 9P; instead the shell learns the port once and thereafter checks http://localhost:<port>/healthz, the 9P-free path the spike used. The claim file stays the daemon's own liveness record inside the distro.",
+          why: "Reading a WSL daemon's daemon.json from Windows means 9P. The shell instead learns the port once, then checks http://localhost:<port>/healthz, the 9P-free path the spike used. The claim file stays the daemon's own liveness record inside the distro.",
           inferred: false,
           alternatives: ["Read daemon.json across 9P on every health tick"],
           evidence: [{ path: "packages/server/src/wsl-daemon.ts", line: 119 }],
@@ -120,7 +120,7 @@ export const designBoardB: LensBoard = {
         {
           kind: "decision",
           statement: "Reuse ensureDaemon's shape with a locus-selected launch",
-          why: "This reuses the supervisor's verify/restart/stop logic; only the launch (execPath becomes wsl.exe, args from buildWslDaemonLaunch) and the health transport differ. The desktop main stays thin, and the composed logic lives in an injectable-effect orchestrator.",
+          why: "The supervisor's verify/restart/stop logic carries over unchanged. Only the launch (execPath becomes wsl.exe, args from buildWslDaemonLaunch) and the health transport differ. The desktop main stays thin, and the composed logic lives in an injectable-effect orchestrator.",
           inferred: false,
           alternatives: ["Fork a separate WSL supervisor duplicating the host lifecycle"],
           evidence: [{ path: "packages/server/src/wsl-supervisor.ts", line: 83 }],
@@ -128,7 +128,7 @@ export const designBoardB: LensBoard = {
         {
           kind: "decision",
           statement: "One daemon per distro, routed by locus; the shell holds a map",
-          why: "detectLocus already yields {kind:'wsl',distro}; the shell keeps a distro → in-flight-ensure map and lazily spawns a distro's daemon on the first project for it, so distros never used never start a daemon. Concurrent opens on the same distro fold into one ensure.",
+          why: "detectLocus already yields {kind:'wsl',distro}. The shell keeps a distro → in-flight-ensure map and spawns a distro's daemon lazily, on the first project for it, so a distro nobody opens never starts a daemon. Concurrent opens on the same distro fold into one ensure.",
           inferred: false,
           alternatives: ["Eagerly spawn a daemon for every installed distro at startup"],
           evidence: [{ path: "apps/desktop/src/main/daemon-supervisor.ts", line: 309 }],
@@ -212,7 +212,7 @@ export const designBoardB: LensBoard = {
         {
           kind: "annotation",
           anchor: { path: "packages/server/src/wsl-daemon.ts", line: 76 },
-          text: "The spawn diverged from the spec's stated 'detached'. The current child is a windowsHide-managed, unref'd child with `stdio: 'ignore'`. WSL reaps a distro's processes when the launcher exits, so the daemon is app-lifetime by nature, and `detached` only reintroduced a flashing console window (a Node bug where windowsHide is ignored under detached). The obligation is met. The daemon owns its own log, with no host-side log fd.",
+          text: "The spawn diverged from the spec's stated 'detached'. What ships is a windowsHide-managed, unref'd child with `stdio: 'ignore'`. WSL reaps a distro's processes when the launcher exits, so the daemon already lasts exactly as long as the app, and `detached` only brought back a flashing console window (a Node bug where windowsHide is ignored under detached). The obligation is still met, and the daemon owns its own log, with no host-side log fd.",
         },
         {
           kind: "code-ref",
@@ -343,7 +343,7 @@ export const designBoardB: LensBoard = {
         {
           kind: "annotation",
           anchor: { path: "packages/server/src/wsl-supervisor.ts", line: 117 },
-          text: "wslDaemonDataDir(distroHome) feeds the launch descriptor's --data-dir, so the daemon's own createGitHubTokenStore writes github-token inside the distro; the Group-4 test asserts the argument is distro-native and carries no wsl.localhost / wsl$ 9P marker.",
+          text: "wslDaemonDataDir(distroHome) feeds the launch descriptor's --data-dir, so the daemon's own createGitHubTokenStore writes github-token inside the distro. The Group-4 test asserts the argument is distro-native and carries no wsl.localhost / wsl$ 9P marker.",
         },
       ],
     },

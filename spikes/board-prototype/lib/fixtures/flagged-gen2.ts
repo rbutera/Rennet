@@ -19,12 +19,12 @@ export const flaggedGen2Board: LensBoard = {
     {
       id: "g2-addressed",
       title: "Addressed this round",
-      gist: "Every refresh exit now writes a terminal record — the missing-outcome finding is closed.",
+      gist: "Every refresh exit now writes a terminal record. The missing-outcome finding is closed.",
       counts: "1 finding",
       elements: [
         {
           kind: "prose",
-          text: "`refreshAndPersist` now writes a secret-free terminal record on the two exits that previously left only `attempt`: the non-decline exchange error and the post-rotation persistence failure. daemon.log no longer stops at `phase=attempt`, so a crash and a real outcome are finally distinguishable — the exact ambiguity this change set out to remove. Raised as issue #478; the round applied the fix on the branch.",
+          text: "`refreshAndPersist` now writes a secret-free terminal record on the two exits that previously left only `attempt`.\n\n- The non-decline exchange error.\n- The post-rotation persistence failure.\n\ndaemon.log no longer stops at `phase=attempt`, so a crash and a real outcome are now distinguishable. That ambiguity is what this change set out to remove. Raised as issue #478, and the fix landed on the branch this round.",
         },
         {
           kind: "code",
@@ -46,7 +46,7 @@ export const flaggedGen2Board: LensBoard = {
         {
           kind: "callout",
           tone: "info",
-          text: "The persistence-failure exit gets the same treatment: a `failed` record is written before the throw escapes, so a rotation the store dropped is no longer a silent dead session.",
+          text: "The persistence-failure exit gets the same treatment. It writes a `failed` record before the throw escapes, so a rotation the store dropped is no longer a silent dead session.",
         },
       ],
     },
@@ -59,10 +59,10 @@ export const flaggedGen2Board: LensBoard = {
         {
           kind: "finding",
           id: "f2",
-          title: "A post-send connection reset is reported as if the credential is definitely untouched",
+          title: "After a post-send connection reset, the copy still tells the user the credential is untouched",
           severity: "medium",
           agreement: { claude: true, codex: true },
-          body: "The round stopped `resolveGitHubAuth` from asserting the credential survived a post-send reset — it now classifies that case as an unknown outcome rather than `network`-with-untouched-copy. What is not done: the user-facing copy string still reads as reassurance. Partial — the classification is fixed, the wording is not.",
+          body: "This round stopped `resolveGitHubAuth` from asserting that the credential survived a post-send reset. It now classifies that case as an unknown outcome rather than `network`-with-untouched-copy. The user-facing copy string still reads as reassurance, so the classification is fixed and the wording is not.",
           fix: "Replace the 'connection and token are untouched' copy with an unknown-state message on the post-send path.",
           anchor: { path: "packages/adapters/src/github-auth.ts", line: 295 },
         },
@@ -77,7 +77,7 @@ export const flaggedGen2Board: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "`github-auth.test.ts` gained a case for the neither-decline-nor-network exchange error, asserting the new `[attempt, failed]` sequence and no credential write. Not in the asks — the worker added it while closing the first finding, and it is the test that would have caught the gap.",
+          text: "`github-auth.test.ts` gained a case for the neither-decline-nor-network exchange error. It asserts the new `[attempt, failed]` sequence and no credential write. Not in the asks. The worker added it while closing the first finding, and it is the test that would have caught the gap.",
         },
       ],
     },
@@ -85,16 +85,16 @@ export const flaggedGen2Board: LensBoard = {
       id: "g2-gen1",
       title: "Generation 1 · round 1 · frozen",
       startFolded: true,
-      gist: "The first read, before the round — kept as a drill-down.",
+      gist: "The first read, before the round.",
       counts: "2 findings",
       elements: [
         {
           kind: "prose",
-          text: "**A refresh can log `attempt` and never a terminal outcome** — on a non-decline exchange error and on a persistence failure after a successful rotation, two reachable exits left daemon.log stopped at `phase=attempt`. Closed this round (above).",
+          text: "**A refresh can log `attempt` and never a terminal outcome.** Two reachable exits left daemon.log stopped at `phase=attempt`.\n\n- A non-decline exchange error.\n- A persistence failure after a successful rotation.\n\nClosed this round (above).",
         },
         {
           kind: "prose",
-          text: "**A post-send connection reset is reported as if the credential is untouched** — `ECONNRESET` matches `isGitHubNetworkError`, so the copy asserted the token survived when a successful send had already rotated it. Partly addressed this round; copy pass still open.",
+          text: "**A post-send connection reset reads as if the credential is untouched.** `ECONNRESET` matches `isGitHubNetworkError`, so the copy asserted the token survived when a successful send had already rotated it. Partly addressed this round, copy pass still open.",
         },
       ],
     },

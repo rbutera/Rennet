@@ -7,7 +7,7 @@ import type { LensBoard } from "@/lib/lens-data"
 export const noiseBoardB: LensBoard = {
   lens: "noise",
   title: "Noise · daemon-in-distro runtime (#439)",
-  intro: "3 hunks set aside. Nothing dropped. Every group reopens into the full diff.",
+  intro: "3 hunks set aside, nothing dropped. Every group reopens into the full diff.",
   skippedHunks: [
     {
       path: "apps/desktop/src/main/daemon-supervisor.ts",
@@ -99,14 +99,14 @@ export const noiseBoardB: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "This change is almost all new runtime, its tests, and its specification. The mechanical remainder is two barrels that grow to expose the WSL modules the change adds, and the two-line scaffold stamp written when the change directory was created. The change adds no dependency, so there is no lockfile churn, and there is no formatter-only reflow.",
+          text: "This change is almost all new runtime, its tests, and its specification. What is left over:\n\n- Two barrels grow to expose the WSL modules the change adds.\n- A two-line scaffold stamp, written when the change directory was created.\n- No dependency added, so no lockfile churn.\n- No formatter-only reflow.",
         },
         {
           kind: "noise-group",
-          label: "New WSL modules added to the package barrels",
+          label: "The core and server barrels gain the new WSL modules",
           judgedBy: "rule",
           reason:
-            "Both hunks only re-export modules this change introduces. core/index.ts adds two `export *` lines for the new wsl-bundle and wsl-shell files; server/index.ts adds a named block re-exporting the new wsl-daemon and wsl-supervisor symbols. No statement changed. The public exports grew to match the new source.",
+            "Both hunks only re-export modules this change introduces. core/index.ts adds two `export *` lines for the new wsl-bundle and wsl-shell files. server/index.ts adds a named block re-exporting the new wsl-daemon and wsl-supervisor symbols. No statement changed; the public exports grew to match the new source.",
           hunks: [
             {
               path: "packages/core/src/index.ts",
@@ -125,7 +125,7 @@ export const noiseBoardB: LensBoard = {
           label: "Generated openspec scaffold stamp",
           judgedBy: "rule",
           reason:
-            "A two-line file the openspec tool writes when a change directory is created: a schema tag and a creation date. No requirement text, no behavior. The substantive spec files sit alongside it in the same directory.",
+            "The openspec tool writes this two-line file when it creates a change directory: a schema tag and a creation date. No requirement text, no behavior. The substantive spec files sit alongside it in the same directory.",
           hunks: [
             {
               path: "openspec/changes/wsl-daemon-runtime/.openspec.yaml",

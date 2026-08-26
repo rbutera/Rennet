@@ -9,7 +9,7 @@ export const sequenceBoardB: LensBoard = {
   lens: "sequence",
   title: "Run the daemon inside the distro, off 9P",
   intro:
-    "A Windows daemon reaching across \\\\wsl.localhost\\… pays the 9P tax on every file touch, and its watcher has no inotify, so it polls, storms, hits EISDIR, and starves the thread pool until GitHub connections time out. This change moves the daemon to where the files are, inside the distro. The order runs bottom-up. First the one operation everything else needs, lifting a value out of a noisy WSL shell. Then getting the daemon's code into the distro's native filesystem. Then its lifecycle, decided on a loopback port instead of a claim file across 9P. Then the orchestrator that composes those into one ensure-a-healthy-daemon call. Then the layer that picks host or distro by where the project lives. Each earlier piece exists for a reason the next one makes plain.",
+    "A Windows daemon reaching across \\\\wsl.localhost\\… pays the 9P tax on every file touch, and its watcher has no inotify, so it polls, storms, hits EISDIR, and starves the thread pool until GitHub connections time out. This change moves the daemon to where the files are, inside the distro. The order runs bottom-up, starting with the one operation everything else needs, lifting a value out of a noisy WSL shell. Getting the daemon's code into the distro's native filesystem comes next, then its lifecycle, decided on a loopback port instead of a claim file across 9P. Those pieces feed the orchestrator that composes them into one ensure-a-healthy-daemon call, and above that sits the layer that picks host or distro by where the project lives. Each earlier piece exists for a reason the next one makes plain.",
   skippedHunks: [
     { path: "openspec/changes/wsl-daemon-runtime/.openspec.yaml", reason: "generated scaffold stamp — noise" },
     { path: "openspec/changes/wsl-daemon-runtime/proposal.md", reason: "spec artifact — Design lens" },
@@ -41,7 +41,7 @@ export const sequenceBoardB: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "Everything downstream talks to the distro by running a command over wsl.exe and reading text back, so this text-reading step comes first. An interactive or login shell prepends prompt and cursor escapes and can interleave warning lines, so a value like a path has to be lifted out of noisy multi-line output. stripShellControl removes ANSI escapes and control characters but keeps newlines, so a later split still sees line boundaries. shellLines returns the cleaned, trimmed, non-empty lines in order, and lastAbsolutePathLine walks them from the end and returns the last line that looks like an absolute path. This is the one operation the rest of the change builds on: read one command's output, get one trustworthy value.",
+          text: "Everything downstream talks to the distro by running a command over wsl.exe and reading text back, so this text-reading step comes first. An interactive or login shell prepends prompt and cursor escapes and can interleave warning lines, so a value like a path has to be lifted out of noisy multi-line output. Three functions do the lifting:\n\n- stripShellControl removes ANSI escapes and control characters but keeps newlines, so a later split still sees line boundaries.\n- shellLines returns the cleaned, trimmed, non-empty lines in order.\n- lastAbsolutePathLine walks those lines from the end and returns the last one that looks like an absolute path.\n\nThis is the one operation the rest of the change builds on: read one command's output, get one trustworthy value.",
         },
         {
           kind: "code-ref",
@@ -57,7 +57,7 @@ export const sequenceBoardB: LensBoard = {
         },
         {
           kind: "prose",
-          text: "This is a shared module and not a local helper because of the second file. wsl-node.ts already resolved the distro's login shell and Node binary from probe output, and it carried its own control-stripping regex, the buggy one. It now imports shellLines and stripShellControl instead, so parseLoginShell and parseWslNodePath read through the corrected parser. The migration is why the extraction exists: one correct parser, two callers, no drift.",
+          text: "The parser lives in a shared module rather than a local helper because of the second file. wsl-node.ts already resolved the distro's login shell and Node binary from probe output, and it carried its own control-stripping regex, the buggy one. It now imports shellLines and stripShellControl instead, so parseLoginShell and parseWslNodePath read through the corrected parser. That migration is the reason for the extraction: one correct parser with two callers cannot drift.",
         },
         {
           kind: "code-ref",
@@ -83,7 +83,7 @@ export const sequenceBoardB: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "Now that a distro value can be read safely, the first real job is getting the daemon's code where it must run. The whole point of the change is that the daemon runs from the distro's native filesystem, never over the 9P view. Executing the bundle across \\\\wsl.localhost\\… would bring back the exact tax this change deletes. So the paths are distro-native and absolute: wslServerDir and wslServerBundlePath place the versioned bundle under ~/.rennet/server/<version>/, wslDaemonDataDir names the data dir the daemon owns, and buildWslHomeProbe with parseWslHome resolves $HOME so those paths sit in the real home, not a guess.",
+          text: "Now that a distro value can be read safely, the first real job is getting the daemon's code where it must run. The daemon runs from the distro's native filesystem, never over the 9P view, because executing the bundle across \\\\wsl.localhost\\… would bring back the exact tax this change deletes. So the paths are distro-native and absolute:\n\n- wslServerDir and wslServerBundlePath place the versioned bundle under ~/.rennet/server/<version>/.\n- wslDaemonDataDir names the data dir the daemon owns.\n- buildWslHomeProbe with parseWslHome resolves $HOME, so those paths sit in the real home and not a guess.",
         },
         {
           kind: "code-ref",
@@ -113,12 +113,12 @@ export const sequenceBoardB: LensBoard = {
     {
       id: "port-first-lifecycle",
       title: "Decide lifecycle on the port, never across 9P",
-      gist: "Spawn as a managed hidden child, learn the port from one claim-file read, then health-check localhost/healthz; stop by signalling the pid inside the distro.",
+      gist: "The daemon spawns as a managed hidden child, one claim-file read learns its port, health comes from localhost/healthz, and stopping signals the pid inside the distro.",
       counts: "1 prose · 3 code · 1 annotation",
       elements: [
         {
           kind: "prose",
-          text: "With the bundle deliverable, this is the daemon's lifecycle over wsl.exe, and it is where avoiding 9P becomes concrete. spawnWslDaemon launches the daemon as the shell's managed child with stdio ignored, so the daemon writes its own log inside the distro, and it owns the async spawn error so a failed launch logs instead of crashing the host. readWslDaemonPort performs the single 9P read this design permits: one cat of the claim file to learn the port. From then on the port decides health. probeWslDaemonHealth reaches localhost/healthz and accepts only an exactly-200 whose identity claims the very port probed, so it rejects a stale forward or the wrong process. stopWslDaemon signals the pid inside the distro and throws on a nonzero kill, so a failed stop is never mistaken for success.",
+          text: "With the bundle deliverable, the daemon's lifecycle runs over wsl.exe, and this is where avoiding 9P becomes concrete. Four functions carry it:\n\n- spawnWslDaemon launches the daemon as the shell's managed child with stdio ignored, so the daemon writes its own log inside the distro, and it owns the async spawn error so a failed launch logs instead of crashing the host.\n- readWslDaemonPort performs the single 9P read this design permits, one cat of the claim file to learn the port. From then on the port decides health.\n- probeWslDaemonHealth reaches localhost/healthz and accepts only an exactly-200 whose identity claims the very port probed, so it rejects a stale forward or the wrong process.\n- stopWslDaemon signals the pid inside the distro and throws on a nonzero kill, so a failed stop is never mistaken for success.",
         },
         {
           kind: "code-ref",
@@ -158,7 +158,7 @@ export const sequenceBoardB: LensBoard = {
     {
       id: "ensure-orchestrator",
       title: "Compose the pieces into one ensure-a-healthy-daemon call",
-      gist: "ensureWslDaemon resolves $HOME, short-circuits a healthy same-version daemon, else resolves Node, delivers, and launches; version skew stops the old daemon, waits it gone, respawns, and confirms the new version.",
+      gist: "ensureWslDaemon resolves $HOME, returns a healthy same-version daemon as-is, and otherwise resolves Node, delivers, and launches; on version skew it stops the old daemon, waits for it to exit, respawns, and confirms the new version.",
       counts: "1 prose · 1 code · 1 callout",
       elements: [
         {
@@ -182,12 +182,12 @@ export const sequenceBoardB: LensBoard = {
     {
       id: "locus-seam",
       title: "Select host or distro by where the project lives",
-      gist: "ensureDaemonForProject routes host-locus projects through today's path byte-identically and WSL-locus projects to ensureWslDaemon, single-flighting concurrent opens on the same distro.",
+      gist: "ensureDaemonForProject routes host-locus projects through today's path byte-identically and WSL-locus projects to ensureWslDaemon, folding concurrent opens on the same distro into one ensure.",
       counts: "1 prose · 2 code · 1 annotation",
       elements: [
         {
           kind: "prose",
-          text: "This is the top of the change, the layer that plugs the whole runtime into the existing shell. ensureDaemonForProject resolves the port that serves a project, chosen by detectLocus. A host-locus project takes exactly today's ensureDaemon path, unchanged. A WSL-locus project routes to ensureWslDaemon for its distro. Concurrent opens on the same distro fold into one in-flight ensure through a distro-keyed map, and the entry drops once settled, so a later open re-ensures against the orchestrator's own short-circuit rather than trusting a cached port. The bounded runner the whole path depends on is createWslRunner: one execFile over wsl.exe with its own timeout, so a hung distro call can never stall the health-wait loop, resolving a nonzero code instead of throwing on a spawn failure.",
+          text: "This is the top of the change, the layer that plugs the whole runtime into the existing shell. ensureDaemonForProject resolves the port that serves a project, and detectLocus picks the branch:\n\n- A host-locus project takes exactly today's ensureDaemon path, unchanged.\n- A WSL-locus project routes to ensureWslDaemon for its distro.\n\nConcurrent opens on the same distro fold into one in-flight ensure through a distro-keyed map, and the entry drops once settled, so a later open re-ensures against the orchestrator's own short-circuit rather than trusting a cached port. The bounded runner the whole path depends on is createWslRunner, one execFile over wsl.exe with its own timeout, so a hung distro call can never stall the health-wait loop. A spawn failure resolves a nonzero code instead of throwing.",
         },
         {
           kind: "code-ref",
@@ -213,12 +213,12 @@ export const sequenceBoardB: LensBoard = {
     {
       id: "guarantees-pinned",
       title: "The guarantees the tests make machine-checkable",
-      gist: "Tests pin the load-bearing promises: copy-once with a verify, the exactly-200 identity-matched health, skew stop-strictly-before-spawn, and host routing folded concurrently yet byte-identical.",
+      gist: "Tests pin the promises that carry the change: copy once and verify, an exactly-200 health check with a matching identity, a skew restart that stops before it spawns, and host routing that folds concurrent opens yet stays byte-identical.",
       counts: "1 prose · 3 code",
       elements: [
         {
           kind: "prose",
-          text: "The injected-effect shape across the change pays off here: each promise from an earlier step has a test that fails if the promise breaks. A recorder pins delivery by asserting the exact command sequence: a no-op when the entry exists, and test, mkdir, wslpath, recursive copy, then a verify when absent. The recorder throws on any unscripted call, so a dropped guard runs one command too many and fails. The supervisor test proves a version-skew restart issues the stop strictly before the spawn, so the fresh daemon never races the dying one. The routing tests prove a host project delegates untouched, a Windows drive path stays host, and two concurrent opens on one distro fold into a single ensure whose in-flight entry clears once settled.",
+          text: "Because every step takes its effects as injected arguments, each promise from an earlier step has a test that fails when the promise breaks.\n\n- A recorder pins delivery by asserting the exact command sequence: a no-op when the entry exists, and test, mkdir, wslpath, recursive copy, then a verify when absent. It throws on any unscripted call, so a dropped guard runs one command too many and fails.\n- The supervisor test proves a version-skew restart issues the stop strictly before the spawn, so the fresh daemon never races the dying one.\n- The routing tests prove a host project delegates untouched, a Windows drive path stays host, and two concurrent opens on one distro fold into a single ensure whose in-flight entry clears once settled.",
         },
         {
           kind: "code-ref",

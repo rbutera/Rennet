@@ -35,14 +35,14 @@ export const decisionsBoard: LensBoard = {
     {
       id: "secret-safe-observability",
       title: "Secret-safe observability",
-      gist: "How each refresh is logged without ever putting a credential in daemon.log.",
+      gist: "What each refresh writes to daemon.log, and why no credential can land there.",
       counts: "5 decisions · 3 with code tabs",
       elements: [
         {
           kind: "decision",
           statement:
             "The refresh layer emits observations through an injected `log?` callback on `ResolveAuthDeps`, and `create-server` binds the concrete sink that writes to daemon.log.",
-          why: "Stated (design.md Decision 1): the adapter stays side-effect-free and testable, tests assert on captured records, and production formatting lives at the composition boundary in create-server. A bare console call in the adapter would make the secret-safety guarantee untestable.",
+          why: "Stated in design.md Decision 1.\n\n- The adapter stays side-effect-free and testable.\n- Tests assert on captured records.\n- Production formatting lives at the composition boundary in create-server.\n\nA bare console call in the adapter would make the secret-safety guarantee untestable.",
           inferred: false,
           alternatives: [
             "A bare `console.error`/`console.log` inside the adapter, rejected in design.md Decision 1 because it couples the adapter to a sink and makes the secret-safety guarantee untestable.",
@@ -110,7 +110,7 @@ export const decisionsBoard: LensBoard = {
           kind: "decision",
           statement:
             "The log payload is a typed `RefreshLogRecord` carrying only `phase`, an optional `githubError`, and an optional `tokenKind`. No field can hold a token or secret.",
-          why: "Stated (design.md Decision 2): make secret-safety a type-level property, not a review promise. With no token/refresh/secret field on the type, a credential cannot be logged by construction, and the create-server serializer can only ever read those three non-secret fields.",
+          why: "Stated in design.md Decision 2. Secret-safety is a property of the type here, not a promise made in review. With no token, refresh, or secret field to write to, a credential cannot be logged by construction. The create-server serializer can only ever read those three non-secret fields.",
           inferred: false,
           alternatives: [
             "A freeform log line or a record that carries the credential object.",
@@ -158,7 +158,7 @@ export interface RefreshLogRecord {
           kind: "decision",
           statement:
             "`tokenKind` returns only a member of a closed prefix allowlist (`ghu_`, `gho_`, …) or the fixed `\"token\"`, never a substring of the token body.",
-          why: "Stated (commit dc35701 review finding, tasks.md 1.3): an earlier draft returned everything before the first underscore, which for an unexpected value could log real credential bytes. The closed allowlist makes the label secret-safe by construction. `customerSecret_body` maps to `\"token\"`, not `customerSecret_`.",
+          why: "Stated in the commit dc35701 review finding and tasks.md 1.3. An earlier draft returned everything before the first underscore, so an unexpected value could log real credential bytes. The closed allowlist makes the label secret-safe by construction. `customerSecret_body` maps to `\"token\"`, not `customerSecret_`.",
           inferred: false,
           alternatives: [
             "Return the substring before the first `_` (the earlier draft), rejected because an unexpected value like `customerSecret_body` would leak a slice of the credential into a log.",
@@ -209,7 +209,7 @@ export function tokenKind(token: string): string {
           kind: "decision",
           statement:
             "`refreshAndPersist` emits an `attempt` record before the refresh call, inside the single branch both proactive and reactive refreshes route through.",
-          why: "Stated (tasks.md 4.2): logging the attempt before the exchange keeps it visible in daemon.log even if the process dies mid-refresh. An outcome-only log would leave a crashed attempt with no trace.",
+          why: "Stated in tasks.md 4.2. Logging the attempt before the exchange keeps it visible in daemon.log even if the process dies mid-refresh. An outcome-only log would leave a crashed attempt with no trace.",
           inferred: false,
           alternatives: [
             "Log only the outcome (persisted/declined/network). A mid-refresh crash then leaves no record that a refresh was even attempted.",
@@ -220,7 +220,7 @@ export function tokenKind(token: string): string {
           kind: "decision",
           statement:
             "The daemon serializes each record as one space-joined `key=value` `[github-auth]` line rather than JSON.",
-          why: "Inferred from create-server.ts: the sink builds a flat `phase=… githubError=… tokenKind=…` line, grep-friendly in a mixed daemon.log. design.md Decision 1 specifies only a `single-line record`, not the encoding, so the key=value choice is the code's, not the spec's.",
+          why: "Inferred from create-server.ts. The sink builds a flat `phase=… githubError=… tokenKind=…` line, which greps cleanly out of a mixed daemon.log. design.md Decision 1 specifies only a `single-line record` and says nothing about the encoding, so the key=value choice belongs to the code, not the spec.",
           inferred: true,
           alternatives: [
             "`JSON.stringify(record)` per line, structured for machine parsing but noisier to eyeball in a mixed daemon.log.",
@@ -239,7 +239,7 @@ export function tokenKind(token: string): string {
           kind: "decision",
           statement:
             "`refreshAndPersist` adds no retry of its own. A network failure emits a `network` record and propagates, leaving retry to the shared connect-phase transport.",
-          why: "Stated (design.md Decision 3 + commit dc35701 review finding): the shared transport `withConnectResilience` already retries a connect-phase blip once, replay-safely, and deliberately never replays a post-send failure. A second retry here would be redundant (up to four connect attempts) and less safe. `isGitHubNetworkError` also matches post-send errors that may have already rotated the pair, so retrying could burn a rotated refresh token.",
+          why: "Stated in design.md Decision 3 and the commit dc35701 review finding. The shared transport `withConnectResilience` already retries a connect-phase blip once, replay-safely, and it deliberately never replays a post-send failure. A second retry here would be redundant, up to four connect attempts, and less safe. `isGitHubNetworkError` also matches post-send errors that may have already rotated the pair, so retrying could burn a rotated refresh token.",
           inferred: false,
           alternatives: [
             "Retry inside `refreshAndPersist` on `isGitHubNetworkError` (the earlier draft, commit 8b40985), removed as redundant and unsafe because it risks burning a rotated token on an ambiguous post-send error.",
@@ -287,7 +287,7 @@ export function tokenKind(token: string): string {
           kind: "decision",
           statement:
             "A declined refresh returns null (surfacing `token-invalid`) but leaves the stored credential file untouched. Clearing it on a persistent decline is deferred.",
-          why: "Stated (design.md Decision 4 + Open Questions): the change leaves persistence and classification unchanged to keep it small. Whether a persistent decline should clear the credential so `status` reads `not-connected` is deferred. The current behavior is acceptable and the new log makes the dead-refresh loop visible, so revisit only if the field shows churn.",
+          why: "Stated in design.md Decision 4 and its Open Questions. The change leaves persistence and classification unchanged to keep it small. Whether a persistent decline should clear the credential, so `status` reads `not-connected`, stays open. The current behavior is acceptable and the new log makes the dead-refresh loop visible, so revisit only if the field shows churn.",
           inferred: false,
           alternatives: [
             "Clear the credential on a persistent decline so `status` reads `not-connected` instead of re-attempting a dead refresh each resolve (design.md Open Questions, deferred).",
