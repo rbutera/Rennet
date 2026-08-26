@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { BoardElement, BoardSection, LensBoard } from "@/lib/lens-data"
 import { CodeBlock } from "@/components/code-block"
+import { Collapse } from "@/components/collapse"
 import { AnchorReveal, CodeTabs } from "@/components/code-tabs"
 import { HydratedCode, InlineCode, RichText } from "@/components/rich-text"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
@@ -86,9 +87,10 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
         )}
         </button>
       </h2>
-      {folded ? (
-        // The gist stands in for the content: full width, sans, readable.
-        // Clicking it (or the header) expands to the real elements.
+      {/* Both states stay mounted so fold/unfold animates (Collapse, R47). */}
+      <Collapse open={folded}>
+        {/* The gist stands in for the content: full width, sans, readable.
+            Clicking it (or the header) expands to the real elements. */}
         <button
           type="button"
           onClick={() => setFolded(false)}
@@ -101,13 +103,14 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
             <span className="text-[12px] text-muted-foreground/60">{section.counts}</span>
           ) : null}
         </button>
-      ) : (
+      </Collapse>
+      <Collapse open={!folded}>
         <div className="flex flex-col gap-6 pl-5">
           {section.elements.map((element, index) => (
             <Element key={index} element={element} />
           ))}
         </div>
-      )}
+      </Collapse>
     </section>
   )
 }

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Collapse } from "@/components/collapse"
 import { Loader2, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ThoughtStep } from "@/lib/conversation-data"
@@ -60,13 +61,13 @@ export function ThoughtBlock({ step, onResolve }: { step: ThoughtStep; onResolve
           />
         )}
       </button>
-      {isExpanded && shownCount > 0 && (
+      <Collapse open={isExpanded && shownCount > 0}>
         <div className="mt-1 flex flex-col gap-2 border-l border-border pl-3 font-prose text-[13px] italic leading-relaxed text-muted-foreground">
           {step.text.slice(0, shownCount).map((paragraph, i) => (
             <p key={i}>{paragraph}</p>
           ))}
         </div>
-      )}
+      </Collapse>
     </div>
   )
 }

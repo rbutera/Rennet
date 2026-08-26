@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import type { ThemedToken } from "shiki"
 import { cn } from "@/lib/utils"
+import { Collapse } from "@/components/collapse"
 import { getHighlightedLines } from "@/lib/code-highlighter"
 import { useShikiTheme } from "@/lib/store"
 import { LineCommentEditor, tokenStyle } from "@/components/code-block"
@@ -300,7 +301,7 @@ function DiffFileCard({
         </label>
       </div>
 
-      {open && (
+      <Collapse open={open}>
         <div className="overflow-x-auto">
           <div className="min-w-max font-mono text-[12.5px] leading-[1.7]">
             {file.hunks.map((hunk, i) => (
@@ -308,7 +309,7 @@ function DiffFileCard({
             ))}
           </div>
         </div>
-      )}
+      </Collapse>
     </section>
   )
 }

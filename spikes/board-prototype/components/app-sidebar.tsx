@@ -23,6 +23,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Collapse } from "@/components/collapse"
 import { useAppStore } from "@/lib/store"
 import { Spinner } from "@/components/ui/spinner"
 import { TargetIcon } from "@/components/target-badge"
@@ -617,7 +618,7 @@ export function AppSidebar({
                     </button>
                     )}
 
-                    {isExpanded && (
+                    <Collapse open={isExpanded}>
                       <div
                         className="ml-3 flex flex-col gap-0.5 border-l border-border pb-1 pl-2"
                         onContextMenu={(event) => event.stopPropagation()}
@@ -647,7 +648,7 @@ export function AppSidebar({
                           <span>New chat</span>
                         </button>
                       </div>
-                    )}
+                    </Collapse>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
                     <ContextMenuItem onClick={() => onOpenMap(project.id)}>
