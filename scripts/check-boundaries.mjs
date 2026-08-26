@@ -9,7 +9,7 @@ const allowed = new Map([
   ["@rennet/types", new Set()],
   ["@rennet/theme", new Set()],
   ["@rennet/protocol", new Set(["@rennet/types"])],
-  ["@rennet/instructions", new Set(["@rennet/types"])],
+  ["@rennet/instructions", new Set(["@rennet/types", "@rennet/protocol"])],
   ["@rennet/core", new Set(["@rennet/types", "@rennet/protocol", "@rennet/instructions"])],
   [
     "@rennet/adapters",

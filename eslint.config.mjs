@@ -21,7 +21,7 @@ export default [
             },
             {
               sourceTag: "layer:instructions",
-              onlyDependOnLibsWithTags: ["layer:types", "layer:instructions"],
+              onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:instructions"],
             },
             {
               sourceTag: "layer:core",
