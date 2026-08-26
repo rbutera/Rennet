@@ -21,6 +21,8 @@ export type SmartListItem =
       ci: CiState
       state: "needs-you" | "yours" | "team" | "merged"
       checkedOutLocally?: boolean
+      /** Starting this row opens the named scenario session (SCENARIOS.md 1:1). */
+      scenarioId?: string
     }
   | {
       kind: "local"
@@ -28,74 +30,54 @@ export type SmartListItem =
       repo: string
       dirty: boolean
       reviewed: boolean
+      /** Extra context line, e.g. the spec-only proposal state. */
+      note?: string
+      scenarioId?: string
     }
 
 export const smartList: Record<string, SmartListItem[]> = {
   p1: [
     {
       kind: "pr",
-      number: 434,
-      title: "Auth refactor: session scoping",
-      branch: "auth-refactor-session-scoping",
+      number: 439,
+      title: "feat(wsl): daemon-in-distro runtime",
+      branch: "wsl-daemon-runtime",
       repo: "rennet",
       author: "priya",
-      adds: 1412,
-      dels: 435,
-      files: 23,
+      adds: 1724,
+      dels: 31,
+      files: 19,
       ci: "pass",
       state: "needs-you",
-    },
-    {
-      kind: "pr",
-      number: 441,
-      title: "Streamed tool-call rendering in the transcript",
-      branch: "feat/stream-tool-calls",
-      repo: "rennet",
-      author: "you",
-      adds: 680,
-      dels: 74,
-      files: 18,
-      ci: "fail",
-      state: "yours",
-      checkedOutLocally: true,
+      scenarioId: "teammate",
     },
     {
       kind: "local",
-      branch: "feat/lens-rethink",
+      branch: "fix/token-refresh-observability",
       repo: "rennet",
       dirty: true,
       reviewed: false,
-    },
-    {
-      kind: "pr",
-      number: 439,
-      title: "Sidebar session ordering by recency",
-      branch: "fix/session-order",
-      repo: "rennet",
-      author: "marco",
-      adds: 96,
-      dels: 12,
-      files: 4,
-      ci: "running",
-      state: "team",
+      scenarioId: "rounds",
     },
     {
       kind: "local",
-      branch: "fix/wsl-watcher",
+      branch: "fix/token-refresh-observability",
       repo: "rennet",
       dirty: false,
-      reviewed: true,
+      reviewed: false,
+      note: "openspec proposal · spec only, nothing implemented",
+      scenarioId: "propose",
     },
     {
       kind: "pr",
-      number: 438,
-      title: "fix(adapters): observe GitHub token refresh, drop the unsafe retry",
-      branch: "fix/token-refresh-observability",
+      number: 437,
+      title: "feat(wsl): build the daemon launch descriptor",
+      branch: "wsl-launch-descriptor",
       repo: "rennet",
       author: "you",
-      adds: 423,
-      dels: 188,
-      files: 9,
+      adds: 361,
+      dels: 42,
+      files: 8,
       ci: "pass",
       state: "merged",
     },

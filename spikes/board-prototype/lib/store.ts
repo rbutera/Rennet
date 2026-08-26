@@ -1,6 +1,7 @@
 import { signalFab } from "@/lib/fab-signal"
 import { create } from "zustand"
 import { buildInitialHosts, type HostItem } from "@/lib/sidebar-data"
+import { scenarios } from "@/lib/scenarios"
 import { DEFAULT_CHAT_WIDTH } from "@/components/resize-handle"
 import type { TargetState } from "@/components/target-badge"
 import type { TargetKind } from "@/lib/target-language"
@@ -67,6 +68,8 @@ interface AppState {
   togglePinSession: (id: string) => void
   toggleArchiveSession: (id: string) => void
   mintSession: (projectId: string, title: string) => string
+  /** Starting a scenario from New Chat adds its session row to the sidebar (idempotent). */
+  addScenarioSession: (scenarioId: string) => void
   stampSession: (id: string, subtitle: string) => void
 
   // ── run slice ─────────────────────────────────────────────────────────
@@ -197,6 +200,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ hosts: mapSessions(s.hosts, (x) => (x.id === id ? { ...x, pinned: !x.pinned } : x)) })),
   toggleArchiveSession: (id) =>
     set((s) => ({ hosts: mapSessions(s.hosts, (x) => (x.id === id ? { ...x, archived: !x.archived } : x)) })),
+  addScenarioSession: (scenarioId) =>
+    set((s) => {
+      const session = scenarios[scenarioId]?.session
+      if (!session) return {}
+      const exists = s.hosts.some((h) => h.projects.some((p) => p.sessions.some((x) => x.id === session.id)))
+      if (exists) return {}
+      return {
+        hosts: s.hosts.map((h) => ({
+          ...h,
+          projects: h.projects.map((p) =>
+            p.id === "p1" ? { ...p, sessions: [session, ...p.sessions] } : p,
+          ),
+        })),
+      }
+    }),
   mintSession: (projectId, title) => {
     const id = mintId("sess")
     set((s) => ({

@@ -178,6 +178,16 @@ carried-forward blocks hydrate.
 
 ---
 
+## First run starts empty (R54, 2026-08-26)
+
+The prototype opens with ZERO sessions everywhere (no pinned, no archived):
+the reviewer experiences the first-run state and earns sidebar rows by
+starting sessions. Each scenario is tied 1:1 to a New Chat smart-list row
+(`scenarioId` on the row); starting the row — or deep-linking to the
+scenario route — adds the scenario's session to the sidebar idempotently.
+`returned` is still reached by driving `rounds` (or `?scenario=` deep link).
+The roster below describes the sessions AFTER they have been started.
+
 ## Sidebar roster (1:1 with scenarios)
 
 Sessions removed: "Trace session-scoping regression", "Rewrite lens board
@@ -207,12 +217,15 @@ reason to re-add fake projects.
 Session titles stay harness-derivable (from the session's first ask); if
 change B's PR changes, the title follows it.
 
-**Smart list (p1)** trimmed to cohere with the world: Priya's PR (Needs you →
-starts `teammate`), local `fix/token-refresh-observability` (→ starts
-`rounds`), one real Merged row (#437) as chip texture (generic run on click),
-and the pinned "Current checkout · main" default. The fictional #441/#439
-rows and the "#438 merged" row go — #438 cannot be both merged in the list
-and pre-PR in the rounds arc. `p2` stays as-is (furniture; generic run).
+**Smart list (p1)** trimmed to cohere with the world (landed 2026-08-26 with
+the first-run change): Priya's PR #439 daemon-in-distro (Needs you → starts
+`teammate`), local `fix/token-refresh-observability` · dirty (→ starts
+`rounds`), the same branch's spec-only proposal row (note "openspec proposal
+· spec only" → starts `propose`), one real Merged row (#437) as chip texture
+(generic run on click), and the pinned "Current checkout · main" default.
+The fictional #434/#441/#439 rows and the "#438 merged" row are gone — #438
+cannot be both merged in the list and pre-PR in the rounds arc. `p2` stays
+as-is (furniture; generic run).
 
 ---
 

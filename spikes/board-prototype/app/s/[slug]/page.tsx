@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { Suspense } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { MainSurface } from "@/components/main-surface"
@@ -19,6 +20,13 @@ export default function BoardPage() {
   const sessionView = useAppStore((s) => s.sessionView)
 
   const resolution = resolveSlug(slug, hosts)
+
+  // Visiting a scenario route IS starting that session — the sidebar row
+  // appears on first visit (first run opens with zero sessions, R54).
+  const scenarioId = resolution.kind === "scenario" ? resolution.scenario.id : null
+  React.useEffect(() => {
+    if (scenarioId) useAppStore.getState().addScenarioSession(scenarioId)
+  }, [scenarioId])
 
   // A minted new-chat session renders the full SessionView (its own chat + run).
   if (resolution.kind === "session" && sessionView?.id === resolution.sessionId) {

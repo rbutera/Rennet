@@ -30,6 +30,13 @@ function NewChatInner() {
     "p1"
 
   function start(item: SmartListItem | null, message: string) {
+    // A row tied to a demo scenario opens that scenario's session (1:1).
+    if (item?.scenarioId) {
+      useAppStore.getState().addScenarioSession(item.scenarioId)
+      useAppStore.getState().setChatOpen(true)
+      router.push(`/s/${item.scenarioId}`)
+      return
+    }
     const project = hosts.flatMap((h) => h.projects).find((p) => p.id === projectId)
     const targetLabel = item
       ? item.kind === "pr"

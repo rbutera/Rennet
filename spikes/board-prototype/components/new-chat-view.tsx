@@ -33,7 +33,10 @@ const TABS = ["All", "Needs you", "Mine", "Local", "PRs"] as const
 type Tab = (typeof TABS)[number]
 
 function itemKey(item: SmartListItem): string {
-  return item.kind === "pr" ? `pr-${item.number}` : `local-${item.repo}-${item.branch}`
+  // scenarioId disambiguates two states of the same branch (rounds vs propose).
+  return item.kind === "pr"
+    ? `pr-${item.number}`
+    : `local-${item.repo}-${item.branch}-${item.scenarioId ?? "plain"}`
 }
 
 function matchesTab(item: SmartListItem, tab: Tab): boolean {
@@ -370,6 +373,9 @@ function ItemRow({
               <span className="shrink-0 text-[10.5px] font-medium text-primary" title="uncommitted changes">
                 ● dirty
               </span>
+            )}
+            {item.note && (
+              <span className="min-w-0 truncate text-[11px] text-muted-foreground/70">{item.note}</span>
             )}
             <span className="ml-auto flex shrink-0 items-center gap-2">
               <StateChip item={item} />
