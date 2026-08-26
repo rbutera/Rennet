@@ -24,6 +24,10 @@ import { CODE_THEMES } from "@/lib/code-theme"
 import type { HostItem, ProjectItem } from "@/lib/sidebar-data"
 import { PROJECT_ICONS, ProjectIcon, type ProjectIconName } from "@/components/project-icon"
 import {
+  type AgentTool,
+  agentTools,
+  CLAUDE_MODELS,
+  CODEX_MODELS,
   defaultWorktrees,
   type EnvironmentInfo,
   environments,
@@ -32,6 +36,11 @@ import {
   LATEST_DAEMON,
   previewWorktreeName,
   projectSettings,
+  REVIEW_MODES,
+  type ReviewMode,
+  type ReviewRole,
+  reviewRoles,
+  type RoleAssignment,
   type SettingsLayer,
   type SettingsPage,
   sourceControl,
@@ -256,7 +265,199 @@ function MachinePage({ hosts }: { hosts: HostItem[] }) {
           <EnvironmentCard key={h.id} host={h} />
         ))}
       </Section>
+
+      <ReviewAgentsSection />
     </>
+  )
+}
+
+/**
+ * How reviews use the agents above. Dual model runs an independent second
+ * seat where both agents are available; a single-agent review carries a
+ * "single provider — no second opinion" note instead of blocking. Mappings
+ * are the Model Council's per-role defaults; an edit becomes a
+ * `routing.task.*` override — model and effort only, the harness always
+ * follows the model's provider (#89).
+ */
+function ReviewAgentsSection() {
+  const [mode, setMode] = React.useState<ReviewMode>("dual")
+  const [mappingsOpen, setMappingsOpen] = React.useState(false)
+
+  return (
+    <Section title="Review Agents" caption="routing.* in ~/.rennet/daemon-settings.json">
+      <Row
+        label="Review Mode"
+        hint="dual runs an independent second seat and reconciles — concur or disagree, never a merged answer"
+      >
+        <Segmented
+          options={REVIEW_MODES.map((m) => m.label)}
+          value={REVIEW_MODES.find((m) => m.id === mode)?.label ?? "Dual Model"}
+          onChange={(label) => {
+            const next = REVIEW_MODES.find((m) => m.label === label)
+            if (next) setMode(next.id)
+          }}
+        />
+      </Row>
+      <Row label="Model Mappings" hint="which model carries each role, per availability">
+        <Button variant="outline" size="xs" onClick={() => setMappingsOpen(true)}>
+          Edit Mappings
+        </Button>
+      </Row>
+      <MappingsDialog mode={mode} open={mappingsOpen} onOpenChange={setMappingsOpen} />
+    </Section>
+  )
+}
+
+const MODE_COLUMNS: { id: ReviewMode; key: "dual" | "claudeOnly" | "codexOnly"; label: string }[] = [
+  { id: "dual", key: "dual", label: "Dual Model" },
+  { id: "claude-only", key: "claudeOnly", label: "Claude Only" },
+  { id: "codex-only", key: "codexOnly", label: "Codex Only" },
+]
+
+/** Candidate models for a cell: the column's provider set; dual sees both. */
+function candidateModels(column: ReviewMode): string[] {
+  if (column === "claude-only") return CLAUDE_MODELS
+  if (column === "codex-only") return CODEX_MODELS
+  return [...CLAUDE_MODELS, ...CODEX_MODELS]
+}
+
+/**
+ * The council's table, one row per role, the active availability column
+ * highlighted. Cosmetic in the prototype: picks change local state, nothing
+ * writes an override.
+ */
+function MappingsDialog({
+  mode,
+  open,
+  onOpenChange,
+}: {
+  mode: ReviewMode
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [roles, setRoles] = React.useState<ReviewRole[]>(reviewRoles)
+
+  function setModel(roleId: string, key: "dual" | "claudeOnly" | "codexOnly", model: string) {
+    setRoles((prev) =>
+      prev.map((role) => {
+        const current = role[key]
+        if (role.id !== roleId || !current) return role
+        return { ...role, [key]: { ...current, model } }
+      }),
+    )
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[600px]">
+        <DialogHeader>
+          <DialogTitle>Model Mappings</DialogTitle>
+          <DialogDescription>
+            The Model Council’s defaults per role. Availability picks the column; changing a cell
+            sets an override for that role — the harness follows the model.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr] items-center gap-x-3 gap-y-0 text-[12px]">
+          <span />
+          {MODE_COLUMNS.map((column) => (
+            <span
+              key={column.id}
+              className={cn(
+                "pb-1.5 font-medium",
+                column.id === mode ? "text-foreground" : "text-muted-foreground/60",
+              )}
+            >
+              {column.label}
+            </span>
+          ))}
+          {roles.map((role) => (
+            <React.Fragment key={role.id}>
+              <span
+                className="border-t border-border py-2 pr-2 text-[13px] font-medium text-foreground"
+                title={role.hint}
+              >
+                {role.label}
+              </span>
+              {MODE_COLUMNS.map((column) => {
+                const assignment = role[column.key]
+                return (
+                  <span key={column.id} className="border-t border-border py-2">
+                    {assignment ? (
+                      <ModelCell
+                        assignment={assignment}
+                        active={column.id === mode}
+                        models={candidateModels(column.id)}
+                        onChange={(model) => setModel(role.id, column.key, model)}
+                      />
+                    ) : (
+                      <span className="text-muted-foreground/50">—</span>
+                    )}
+                  </span>
+                )
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ModelCell({
+  assignment,
+  active,
+  models,
+  onChange,
+}: {
+  assignment: RoleAssignment
+  active: boolean
+  models: string[]
+  onChange: (model: string) => void
+}) {
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className={cn(
+              "flex flex-col items-start rounded-md px-1.5 py-1 text-left font-mono text-[11px] transition-colors hover:bg-secondary",
+              active ? "text-foreground" : "text-muted-foreground/70",
+            )}
+          />
+        }
+      >
+        <span>{assignment.model}</span>
+        <span className="text-[10px] text-muted-foreground/60">{assignment.effort}</span>
+      </PopoverTrigger>
+      <PopoverContent className="w-44 p-1" align="start">
+        <Command>
+          <CommandList>
+            <CommandGroup>
+              {models.map((model) => (
+                <CommandItem
+                  key={model}
+                  value={model}
+                  onSelect={() => {
+                    onChange(model)
+                    setOpen(false)
+                  }}
+                  className="font-mono text-[12px]"
+                >
+                  <Check
+                    className={cn("size-3", model === assignment.model ? "opacity-100" : "opacity-0")}
+                    aria-hidden="true"
+                  />
+                  {model}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -384,6 +585,8 @@ function EnvironmentCard({ host }: { host: HostItem }) {
           Rennet rides gh — the OAuth-shaped Connect flow is gone). */}
       <SourceControlList host={host} />
 
+      <AgentsList host={host} />
+
       <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
         <DialogContent>
           <DialogHeader>
@@ -487,6 +690,84 @@ function SourceControlList({ host }: { host: HostItem }) {
             label={
               <span className="flex items-center gap-2">
                 <ToolMark id={tool.id} />
+                {tool.label}
+                {tool.version && (
+                  <span className="font-mono text-[11px] font-normal text-muted-foreground/70">
+                    {tool.version}
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide",
+                    SOURCE_CONTROL_STATUS[tool.status].chip,
+                  )}
+                >
+                  {SOURCE_CONTROL_STATUS[tool.status].label}
+                </span>
+              </span>
+            }
+            hint={<CommandCopy text={tool.detail} />}
+          >
+            <Switch
+              checked={enabled[tool.id] ?? tool.enabled}
+              onChange={(next) => setEnabled((prev) => ({ ...prev, [tool.id]: next }))}
+              label={`Use ${tool.label} on ${host.label}`}
+            />
+          </Row>
+        ))
+      )}
+    </div>
+  )
+}
+
+/**
+ * The agent marks are official too: OpenAI's blossom has no sanctioned colour
+ * form, so it scheme-swaps like the Invertocat; Anthropic's Claude spark ships
+ * in its own coral and reads on both schemes. Both from svgl.app, which
+ * sources the owners' brand assets; each remains its owner's trademark.
+ */
+function AgentMark({ id }: { id: AgentTool["id"] }) {
+  if (id === "codex") {
+    return (
+      <>
+        {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
+        <img src="/brand/openai-white.svg" alt="" aria-hidden="true" className="hidden size-4 dark:block" />
+        {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
+        <img src="/brand/openai-black.svg" alt="" aria-hidden="true" className="size-4 dark:hidden" />
+      </>
+    )
+  }
+  // biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed
+  return <img src="/brand/claude.svg" alt="" aria-hidden="true" className="size-4" />
+}
+
+/**
+ * The coding agents this host can run, detected the same way the forge CLIs
+ * are: the harness's own version line, honest state, and the one command that
+ * fixes it. The toggle rules an agent out of reviews on this host without
+ * uninstalling anything.
+ */
+function AgentsList({ host }: { host: HostItem }) {
+  const tools = agentTools[host.id] ?? []
+  // Cosmetic in the prototype: the toggle flips fixture state, nothing detects.
+  const [enabled, setEnabled] = React.useState<Record<string, boolean>>(() =>
+    Object.fromEntries(tools.map((t) => [t.id, t.enabled])),
+  )
+
+  return (
+    <div className="flex flex-col border-t border-border pt-1">
+      <span className="pt-1 text-[12px] font-medium text-foreground">Agents</span>
+      {tools.length === 0 ? (
+        <span className="py-2 text-[12px] text-muted-foreground">
+          Connect {host.label} to detect its agents.
+        </span>
+      ) : (
+        tools.map((tool) => (
+          <Row
+            key={tool.id}
+            label={
+              <span className="flex items-center gap-2">
+                <AgentMark id={tool.id} />
                 {tool.label}
                 {tool.version && (
                   <span className="font-mono text-[11px] font-normal text-muted-foreground/70">

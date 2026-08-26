@@ -197,6 +197,168 @@ export const sourceControl: Record<string, SourceControlTool[]> = {
 }
 
 /**
+ * A coding agent as detected on one host. Rennet drives the harnesses the
+ * host already has: the `claude` CLI (through the Claude Agent SDK, on the
+ * user's subscription) and OpenAI's `codex-app-server`. Same honest-state
+ * shape as the forge CLIs above.
+ */
+export interface AgentTool {
+  id: "claude" | "codex"
+  label: string
+  version?: string
+  status: "available" | "not-authenticated" | "not-installed" | "unreachable"
+  detail: string
+  enabled: boolean
+}
+
+export const agentTools: Record<string, AgentTool[]> = {
+  h1: [
+    {
+      id: "claude",
+      label: "Claude",
+      version: "claude 2.14.3",
+      status: "available",
+      detail: "Reviews run through the `claude` CLI on your Claude subscription.",
+      enabled: true,
+    },
+    {
+      id: "codex",
+      label: "Codex",
+      version: "codex-app-server 0.42.0",
+      status: "available",
+      detail: "The second seat rides `codex-app-server`, signed in with ChatGPT.",
+      enabled: true,
+    },
+  ],
+  h2: [
+    {
+      id: "claude",
+      label: "Claude",
+      version: "claude 2.12.0",
+      status: "available",
+      detail: "Reviews run through the `claude` CLI on your Claude subscription.",
+      enabled: true,
+    },
+    {
+      id: "codex",
+      label: "Codex",
+      status: "not-installed",
+      detail: "Install the Codex CLI (`npm i -g @openai/codex`) and sign in with `codex login`.",
+      enabled: false,
+    },
+  ],
+  // gpu-01 is not connected, so nothing can be detected on it.
+  h3: [],
+}
+
+/** ——— Review agents: mode + Model Council mappings ——— */
+
+export type ReviewMode = "dual" | "claude-only" | "codex-only"
+
+export const REVIEW_MODES: { id: ReviewMode; label: string }[] = [
+  { id: "dual", label: "Dual Model" },
+  { id: "claude-only", label: "Claude Only" },
+  { id: "codex-only", label: "Codex Only" },
+]
+
+/** The council's model set — bare ids, as the tables use them. */
+export const CLAUDE_MODELS = ["haiku", "sonnet-5", "opus-4.8"]
+export const CODEX_MODELS = ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]
+
+export interface RoleAssignment {
+  model: string
+  effort: "low" | "medium" | "high" | "xhigh"
+}
+
+/**
+ * A user-legible role over the Model Council's job catalogue
+ * (`packages/core/src/model-council.ts`). One assignment per availability
+ * scenario; null means the role does not run in that scenario at all.
+ */
+export interface ReviewRole {
+  id: string
+  label: string
+  hint: string
+  dual: RoleAssignment | null
+  claudeOnly: RoleAssignment | null
+  codexOnly: RoleAssignment | null
+}
+
+/**
+ * Fixtures from the council tables where rows exist (orchestrator seat,
+ * finding seats, adjudication, light tier) and from the #460/#464 prose where
+ * the redesign roles have no job ids yet (map workers, confirmation worker,
+ * lens drafters, post-process). Those picks are placeholders the council
+ * tables will overrule when their rows land.
+ */
+export const reviewRoles: ReviewRole[] = [
+  {
+    id: "orchestrator",
+    label: "Orchestrator",
+    hint: "The review seat — decomposition, the living draft, and chat.",
+    dual: { model: "opus-4.8", effort: "high" },
+    claudeOnly: { model: "opus-4.8", effort: "high" },
+    codexOnly: { model: "gpt-5.6-sol", effort: "high" },
+  },
+  {
+    id: "map-workers",
+    label: "Context-Map Workers",
+    hint: "Cheap partition workers, one per scope of the structural map.",
+    dual: { model: "gpt-5.6-luna", effort: "low" },
+    claudeOnly: { model: "haiku", effort: "low" },
+    codexOnly: { model: "gpt-5.6-luna", effort: "low" },
+  },
+  {
+    id: "confirmation",
+    label: "Confirmation Worker",
+    hint: "The verify/synthesis seat — re-reads cited evidence, settles hypotheses.",
+    dual: { model: "sonnet-5", effort: "medium" },
+    claudeOnly: { model: "sonnet-5", effort: "medium" },
+    codexOnly: { model: "gpt-5.6-terra", effort: "medium" },
+  },
+  {
+    id: "lens-workers",
+    label: "Lens Drafters",
+    hint: "One drafting agent per lens — Design, Sequence, Decisions, Flagged, Noise.",
+    dual: { model: "opus-4.8", effort: "high" },
+    claudeOnly: { model: "opus-4.8", effort: "high" },
+    codexOnly: { model: "gpt-5.6-sol", effort: "high" },
+  },
+  {
+    id: "second-seat",
+    label: "Flagged Second Seat",
+    hint: "The independent second opinion on Flagged — reconciled, never merged.",
+    dual: { model: "gpt-5.5", effort: "medium" },
+    claudeOnly: null,
+    codexOnly: null,
+  },
+  {
+    id: "adjudication",
+    label: "Adjudication",
+    hint: "One fresh-session turn per disagreement, capped per review.",
+    dual: { model: "opus-4.8", effort: "high" },
+    claudeOnly: { model: "opus-4.8", effort: "high" },
+    codexOnly: { model: "gpt-5.6-sol", effort: "high" },
+  },
+  {
+    id: "post-process",
+    label: "Post-Process Pass",
+    hint: "The editor pass every draft board takes before it shows.",
+    dual: { model: "gpt-5.6-terra", effort: "medium" },
+    claudeOnly: { model: "sonnet-5", effort: "medium" },
+    codexOnly: { model: "gpt-5.6-terra", effort: "medium" },
+  },
+  {
+    id: "utility",
+    label: "Utility",
+    hint: "The light tier — titles, narration, dedupe, everything with enumerable input.",
+    dual: { model: "gpt-5.6-luna", effort: "low" },
+    claudeOnly: { model: "haiku", effort: "low" },
+    codexOnly: { model: "gpt-5.6-luna", effort: "low" },
+  },
+]
+
+/**
  * What an environment IS, as opposed to what it can talk to: the machine, its
  * address, and the Rennet daemon running on it. Unknown fields stay absent —
  * an unreachable host has nothing to report, and says so.
