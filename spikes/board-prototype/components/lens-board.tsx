@@ -72,12 +72,6 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
         />
         <span className="text-[18px] font-medium text-foreground">{section.title}</span>
         {section.badge && <DeltaBadge delta={section.badge} />}
-        {folded && (
-          <span className="min-w-0 truncate text-[13px] text-muted-foreground">
-            {section.gist}
-            {section.counts ? <span className="text-muted-foreground/60"> · {section.counts}</span> : null}
-          </span>
-        )}
         {section.source && (
           <span className="ml-auto shrink-0 rounded border border-border/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
             {section.source}
@@ -85,7 +79,18 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
         )}
         </button>
       </h2>
-      {!folded && (
+      {folded ? (
+        // The gist stands in for the content: full width, sans, readable.
+        // Clicking it (or the header) expands to the real elements.
+        <button
+          type="button"
+          onClick={() => setFolded(false)}
+          className="-mt-1 pl-5 text-left text-[14px] leading-relaxed text-muted-foreground transition-colors hover:text-foreground/80"
+        >
+          <InlineCode text={section.gist} />
+          {section.counts ? <span className="text-muted-foreground/60"> · {section.counts}</span> : null}
+        </button>
+      ) : (
         <div className="flex flex-col gap-5 pl-5">
           {section.elements.map((element, index) => (
             <Element key={index} element={element} />
