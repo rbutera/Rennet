@@ -105,7 +105,7 @@ export function AddProjectDialog({
               className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-secondary sm:py-1.5"
             >
               <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              Add Remote
+              Add Environment
             </button>
           </PopoverContent>
         </Popover>

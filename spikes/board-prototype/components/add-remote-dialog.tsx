@@ -57,7 +57,7 @@ export function AddRemoteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Add Remote</DialogTitle>
+          <DialogTitle>Add Environment</DialogTitle>
           <DialogDescription>
             Pair a machine so its projects show up here.
           </DialogDescription>

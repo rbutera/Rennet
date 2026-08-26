@@ -79,7 +79,7 @@ export function SettingsView({
   const project = host.projects.find((p) => p.id === projectId) ?? host.projects[0]
 
   const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode }[] = [
-    { id: "machine", label: "This Machine", icon: <Monitor className="size-3.5" aria-hidden="true" /> },
+    { id: "machine", label: "Environments", icon: <Monitor className="size-3.5" aria-hidden="true" /> },
     { id: "appearance", label: "Appearance", icon: <Palette className="size-3.5" aria-hidden="true" /> },
     { id: "shortcuts", label: "Keyboard Shortcuts", icon: <Keyboard className="size-3.5" aria-hidden="true" /> },
     { id: "projects", label: "Projects", icon: <Layers className="size-3.5" aria-hidden="true" /> },
@@ -221,7 +221,20 @@ function Choice<T extends string>({
 function MachinePage({ hosts }: { hosts: HostItem[] }) {
   return (
     <>
-      <Section title="Rennet Hosts" caption="~/.rennet/daemon-settings.json on each host">
+      <Section
+        title="Environments"
+        titleExtra={
+          <button
+            type="button"
+            onClick={() => useAppStore.getState().setAddRemoteOpen(true)}
+            className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] font-medium text-foreground/90 transition-colors hover:bg-secondary"
+          >
+            <Plus className="size-3" aria-hidden="true" />
+            Add Environment
+          </button>
+        }
+        caption="~/.rennet/daemon-settings.json on each host"
+      >
         {hosts.map((h) => {
           const daemon = hostSettings[h.id] ?? { github: { connected: false as const } }
           return (

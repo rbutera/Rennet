@@ -86,7 +86,7 @@ export function CommandMenu() {
       }
     }
     for (const [id, title] of [
-      ["machine", "This Machine"],
+      ["machine", "Environments"],
       ["appearance", "Appearance"],
       ["shortcuts", "Keyboard Shortcuts"],
       ["projects", "Projects"],
@@ -109,7 +109,7 @@ export function CommandMenu() {
     list.push({
       id: "action:add-remote",
       group: "Actions",
-      title: "Add Remote",
+      title: "Add Environment",
       keywords: ["add", "remote", "host"],
       run: () => useAppStore.getState().setAddRemoteOpen(true),
     })

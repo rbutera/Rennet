@@ -542,7 +542,7 @@ export function AppSidebar({
           className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <Plus className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>Add Remote</span>
+          <span>Add Environment</span>
         </button>
       </div>
 
