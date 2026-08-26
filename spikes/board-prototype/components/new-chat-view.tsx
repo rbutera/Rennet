@@ -137,10 +137,11 @@ export function NewChatView({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[720px] flex-col px-8 pb-16 pt-[9vh]">
+        <div className="mx-auto flex w-full max-w-[720px] flex-col px-8 pb-6 pt-[7vh]">
           <h1 className="flex items-baseline justify-center gap-2.5 text-center text-[26px] font-semibold tracking-tight text-foreground">
             What should we review in
             <ProjectPicker
+              large
               hosts={hosts}
               value={project}
               onChange={(p) => {
@@ -151,52 +152,7 @@ export function NewChatView({
             ?
           </h1>
 
-          <div className="mt-7 flex flex-col rounded-xl border border-border bg-card/60 shadow-sm focus-within:border-ring">
-            <textarea
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="message the orchestrator"
-              rows={3}
-              aria-label="Message the orchestrator"
-              className="w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none"
-            />
-            <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
-              <span className="flex items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 py-1 text-[12px] text-foreground/90">
-                {target.kind === "item" && target.item.kind === "pr" ? (
-                  <GitPullRequest className="size-3 text-muted-foreground" aria-hidden="true" />
-                ) : (
-                  <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
-                )}
-                {targetLabel(target)}
-                {target.kind === "item" && (
-                  <button
-                    type="button"
-                    onClick={() => setTarget({ kind: "checkout" })}
-                    aria-label="Reset target to current checkout"
-                    className="flex size-3.5 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                  >
-                    <X className="size-3" aria-hidden="true" />
-                  </button>
-                )}
-              </span>
-              <button
-                type="button"
-                disabled={!message.trim()}
-                onClick={() => onStart(target.kind === "item" ? target.item : null, message.trim())}
-                aria-label="Send"
-                className={cn(
-                  "ml-auto flex size-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed",
-                  message.trim()
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "bg-muted text-muted-foreground",
-                )}
-              >
-                <ArrowUp className="size-4" aria-hidden="true" />
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-8 flex items-center gap-2">
+          <div className="mt-7 flex items-center gap-2">
             <div className="flex items-center gap-0.5 rounded-md border border-border bg-card/40 p-0.5">
               {TABS.map((t) => (
                 <button
@@ -254,6 +210,54 @@ export function NewChatView({
                 {items.length === 0 ? "no open branches or pull requests yet" : "nothing matches"}
               </div>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* Composer pinned to the bottom — the smart list keeps center stage. */}
+      <div className="shrink-0 px-8 pb-5 pt-2">
+        <div className="mx-auto flex w-full max-w-[720px] flex-col rounded-xl border border-border bg-card/60 shadow-sm focus-within:border-ring">
+          <textarea
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            placeholder="message the orchestrator"
+            rows={3}
+            aria-label="Message the orchestrator"
+            className="w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none"
+          />
+          <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
+            <span className="flex items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 py-1 text-[12px] text-foreground/90">
+              {target.kind === "item" && target.item.kind === "pr" ? (
+                <GitPullRequest className="size-3 text-muted-foreground" aria-hidden="true" />
+              ) : (
+                <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+              )}
+              {targetLabel(target)}
+              {target.kind === "item" && (
+                <button
+                  type="button"
+                  onClick={() => setTarget({ kind: "checkout" })}
+                  aria-label="Reset target to current checkout"
+                  className="flex size-3.5 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                >
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              )}
+            </span>
+            <button
+              type="button"
+              disabled={!message.trim()}
+              onClick={() => onStart(target.kind === "item" ? target.item : null, message.trim())}
+              aria-label="Send"
+              className={cn(
+                "ml-auto flex size-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed",
+                message.trim()
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
+              <ArrowUp className="size-4" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </div>

@@ -1624,10 +1624,13 @@ export function ProjectPicker({
   hosts,
   value,
   onChange,
+  large,
 }: {
   hosts: HostItem[]
   value: ProjectItem
   onChange: (project: ProjectItem) => void
+  /** Headline-sized trigger — matches the New Chat ask's text. */
+  large?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
 
@@ -1637,11 +1640,20 @@ export function ProjectPicker({
         render={
           <button
             type="button"
-            className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[13px] font-normal text-foreground/90 hover:bg-secondary"
+            className={cn(
+              "flex items-center rounded-md border border-border font-normal text-foreground/90 hover:bg-secondary",
+              large ? "gap-1.5 px-2.5 py-1 text-[22px]" : "gap-1 px-2 py-0.5 text-[13px]",
+            )}
           >
-            <ProjectIcon icon={value.icon} className="size-3.5 text-muted-foreground" />
+            <ProjectIcon
+              icon={value.icon}
+              className={cn("text-muted-foreground", large ? "size-5" : "size-3.5")}
+            />
             {value.name}
-            <ChevronDown className="size-3 text-muted-foreground" aria-hidden="true" />
+            <ChevronDown
+              className={cn("text-muted-foreground", large ? "size-4" : "size-3")}
+              aria-hidden="true"
+            />
           </button>
         }
       />
