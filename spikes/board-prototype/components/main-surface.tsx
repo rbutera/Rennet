@@ -7,6 +7,7 @@ import {
   FileDiff,
   Flag,
   GitCommitHorizontal,
+  History,
   ListOrdered,
   Map,
   PanelLeft,
@@ -24,6 +25,8 @@ import { HandoffView } from "@/components/handoff-view"
 import { useCodeComments } from "@/components/code-comments"
 import { FabPips } from "@/components/fab-pips"
 import { LensBoardView } from "@/components/lens-board"
+import { RoundsLedger } from "@/components/round-report"
+import { useAppStore } from "@/lib/store"
 import type { LensBoard } from "@/lib/lens-data"
 import type { LensId } from "@/lib/lens-data"
 import type { Scenario } from "@/lib/scenarios"
@@ -38,7 +41,7 @@ const LENS_SEGMENTS: { lens: LensId; segment: string; icon: LucideIcon }[] = [
 ]
 
 /** The non-lens board views; board (the active lens) is the omitted default. */
-type ViewParam = "board" | "diff" | "map" | "handoff"
+type ViewParam = "board" | "diff" | "map" | "handoff" | "rounds"
 
 export function MainSurface({
   showLocationTrail,
@@ -73,12 +76,18 @@ export function MainSurface({
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
+  // The rounds ledger exists exactly when a round has completed (absent
+  // control otherwise, never a disabled one).
+  const rounds = scenario.rounds ?? []
   const viewParam = searchParams.get("view")
   const currentView: ViewParam =
-    viewParam === "diff" || viewParam === "map" || viewParam === "handoff" ? viewParam : "board"
+    viewParam === "diff" || viewParam === "map" || viewParam === "handoff" || (viewParam === "rounds" && rounds.length > 0)
+      ? (viewParam as ViewParam)
+      : "board"
   const mapOpen = currentView === "map"
   const diffOpen = currentView === "diff"
   const handoffOpen = currentView === "handoff"
+  const roundsOpen = currentView === "rounds"
 
   const lensParam = searchParams.get("lens")
   const view = views.find((v) => v.lens === lensParam) ?? views[0]
@@ -92,6 +101,7 @@ export function MainSurface({
     router.replace(`${pathname}?${params.toString()}`)
   }
 
+  const viewedDeltaSections = useAppStore((s) => s.viewedDeltaSections)
   const store = useCodeComments()
   const askCount = store?.asks.length ?? 0
   // The CTA names the job per review target (R35).
@@ -138,16 +148,40 @@ export function MainSurface({
         <div data-tour="lenses" className="flex min-w-0 items-center gap-1.5 justify-self-center">
           <Coachmark id="lenses" />
           <ViewSwitcher
-            segments={views.map((v) => ({ label: v.segment, icon: v.icon }))}
-            active={mapOpen || diffOpen || handoffOpen ? "" : active}
+            segments={views.map((v) => ({
+              label: v.segment,
+              icon: v.icon,
+              // Unread round-delta rollup (dot decays as sections are opened).
+              dot: v.board?.sections.some((s) => s.delta && !viewedDeltaSections[s.id]) ?? false,
+            }))}
+            active={mapOpen || diffOpen || handoffOpen || roundsOpen ? "" : active}
             onChange={(segment) => {
               const picked = views.find((v) => v.segment === segment) ?? views[0]
               go("board", picked.lens)
             }}
           />
         </div>
+        {/* Rounds · Map · Diff — the ledger control joins the pill row only
+            once a round has completed. */}
+        <div className="flex items-center gap-1.5 justify-self-end">
+        {rounds.length > 0 && (
+          <button
+            type="button"
+            onClick={() => go(roundsOpen ? "board" : "rounds", view.lens)}
+            aria-pressed={roundsOpen}
+            aria-label="Rounds"
+            title="Rounds"
+            className={cn(
+              "flex items-center gap-1.5 rounded-full border border-border bg-card py-1 px-2.5 text-[12px] font-medium transition-colors",
+              roundsOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <History className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="hidden @[54rem]:inline">Rounds</span>
+          </button>
+        )}
         {/* Map · Diff — one pill, two halves (R49 shape, header home). */}
-        <div className="flex overflow-hidden rounded-full border border-border bg-card justify-self-end">
+        <div className="flex overflow-hidden rounded-full border border-border bg-card">
           <button
             type="button"
             onClick={() => go(mapOpen ? "board" : "map", view.lens)}
@@ -178,6 +212,7 @@ export function MainSurface({
             <span className="hidden @[54rem]:inline">Diff</span>
           </button>
         </div>
+        </div>
       </header>
       {/* The view region owns the floating controls: they live in the margin
           beside the centered content column (R49). */}
@@ -195,6 +230,8 @@ export function MainSurface({
           </div>
         ) : diffOpen ? (
           <DiffView />
+        ) : roundsOpen ? (
+          <RoundsLedger rounds={rounds} />
         ) : view?.board ? (
           <div data-tour="highlight" className="min-h-0 flex-1 overflow-y-auto">
             <Coachmark id="highlight" />

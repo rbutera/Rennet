@@ -17,6 +17,7 @@ import { AnchorReveal, CodeTabs } from "@/components/code-tabs"
 import { HydratedCode, InlineCode, RichText } from "@/components/rich-text"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
 import { useCodeComments } from "@/components/code-comments"
+import { useAppStore } from "@/lib/store"
 
 /**
  * Renders a lens board as a document: sections of typed elements in reading
@@ -62,7 +63,17 @@ export function LensBoardView({
 }
 
 function Section({ section, initiallyFolded }: { section: BoardSection; initiallyFolded: boolean }) {
-  const [folded, setFolded] = React.useState(initiallyFolded || Boolean(section.startFolded))
+  // Round-delta sections open expanded — the board's fold shape IS the delta
+  // view: what stands unfolded is what the round touched; carried sections
+  // fold to their gists.
+  const [folded, setFolded] = React.useState(
+    section.delta ? false : initiallyFolded || Boolean(section.startFolded),
+  )
+  // The dot reads as unread: cleared by interacting with the section, replaced
+  // wholesale at the next regeneration.
+  const viewed = useAppStore((s) => s.viewedDeltaSections[section.id])
+  const showDot = Boolean(section.delta) && !viewed
+  const touch = () => useAppStore.getState().markDeltaViewed(section.id)
 
   return (
     <section id={section.id} className="flex flex-col gap-3 scroll-mt-6">
@@ -70,7 +81,10 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
       <h2 className="contents">
         <button
           type="button"
-          onClick={() => setFolded((f) => !f)}
+          onClick={() => {
+            setFolded((f) => !f)
+            touch()
+          }}
           aria-expanded={!folded}
           className="group flex items-center gap-2 text-left"
         >
@@ -78,7 +92,13 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
           className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", folded && "-rotate-90")}
           aria-hidden="true"
         />
-        <span className="text-[18px] font-medium text-foreground">{section.title}</span>
+        {showDot && <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" />}
+        <span className="text-[18px] font-medium text-foreground">
+          {section.title}
+          {section.delta && (
+            <span className="sr-only">{section.delta === "new" ? ", new this round" : ", reworked this round"}</span>
+          )}
+        </span>
         {section.badge && <DeltaBadge delta={section.badge} />}
         {section.source && (
           <span className="ml-auto shrink-0 rounded border border-border/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
@@ -93,7 +113,10 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
             Clicking it (or the header) expands to the real elements. */}
         <button
           type="button"
-          onClick={() => setFolded(false)}
+          onClick={() => {
+            setFolded(false)
+            touch()
+          }}
           className="-mt-1 flex flex-col items-start gap-0.5 pl-5 text-left transition-colors hover:text-foreground/80"
         >
           <span className="text-[14px] leading-relaxed text-muted-foreground">

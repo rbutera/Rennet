@@ -136,11 +136,23 @@ export type BoardElement =
       hunks: { path: string; summary: string }[]
     }
 
+/**
+ * What the last round did to a section — unread state, not diff state. Set by
+ * the composition step at regeneration (it decides carry-vs-redraft anyway);
+ * absence = carried forward verbatim. Replaced wholesale next round; the round
+ * report stays the durable record. Orthogonal to the spec-delta axis
+ * (`added`/`modified`/`removed`), which describes the change spec, not rounds.
+ */
+export type RoundDelta = "new" | "reworked"
+
 export interface BoardSection {
   id: string
   title: string
   /** Renders folded on first paint (secondary material like cleared concerns). */
   startFolded?: boolean
+  /** Round-delta mark: touched sections open expanded and wear the transient
+   * dot; carried sections fold to their gists. Absent on generation 1. */
+  delta?: RoundDelta
   /** Delta badge beside the title (capability sections on the spec board). */
   badge?: "added" | "modified"
   /** The artifact file this section renders (spec-board provenance chip). */

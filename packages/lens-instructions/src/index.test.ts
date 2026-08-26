@@ -7,6 +7,7 @@ import {
   LENS_PROMPT_FILES,
   POST_PROCESS_FILE,
   REVIEW_DRAFT_VOICE_FILE,
+  ROUND_REPORT_FILE,
 } from "./index.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,16 @@ describe("lens prompt manifest", () => {
     // The two steps wrapped around it.
     expect(text).toContain("break it down");
     expect(text).toContain("humanizer additions");
+  });
+
+  it("carries the round-report drafter with verification duty and the shared ground rules", () => {
+    const text = readFileSync(join(srcDir, ROUND_REPORT_FILE), "utf8");
+    expect(text.length).toBeGreaterThan(500);
+    expect(text).toMatch(/^# /);
+    expect(text).toContain("Ground rules");
+    // The seat's defining duties: verify against the diff, never launder.
+    expect(text).toContain("Investigate before you report");
+    expect(text).toMatch(/[Nn]ever launder/);
   });
 
   it("carries the review-draft voice rules", () => {

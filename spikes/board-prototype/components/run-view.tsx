@@ -182,9 +182,13 @@ const ROUND_WORK: { name: string; detail: string; start: number; done: number }[
 const ROUND_FINISH: TimedStep[] = [
   { label: "Ran the gate", detail: "pnpm check", doneDetail: "pnpm check · 14 projects green", start: 7800, done: 9000 },
   { label: "Committed the round", doneDetail: "2 commits", start: 9100, done: 9900 },
+  // The report drafts first — it is both the greeting and the lens drafters'
+  // input (R34: drafters receive the successor account), so it gates the
+  // regeneration, not the reviewer's read.
+  { label: "Drafting the round report", doneDetail: "verified against the round's diff", start: 10000, done: 11100 },
 ]
 
-const ROUND_READY_AT = 10400
+const ROUND_READY_AT = 11500
 
 export function RoundRunView({ onComplete }: { onComplete: () => void }) {
   const [elapsed, setElapsed] = React.useState(0)

@@ -4,7 +4,7 @@ import * as React from "react"
 import { Suspense } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { MainSurface } from "@/components/main-surface"
-import { SuccessorSummary } from "@/components/successor-summary"
+import { RoundReportGreeting } from "@/components/round-report"
 import { SessionView } from "@/components/session-view"
 import { resolveSlug } from "@/lib/resolve-slug"
 import { useAppStore } from "@/lib/store"
@@ -66,11 +66,17 @@ export default function BoardPage() {
     session: trailProject?.sessions.find((s) => s.id === scenario.session.id) ?? scenario.session,
   }
 
-  if (scenario.id === "returned" && greetingOpen) {
+  // The greeting: the round report fills the surface while the lens drafters
+  // regenerate live; the way to the new generation appears when it composes.
+  const latestRound = scenario.rounds?.at(-1)
+  if (scenario.id === "returned" && greetingOpen && latestRound) {
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-        <header className="h-10 shrink-0 border-b border-border" />
-        <SuccessorSummary onDismiss={() => useAppStore.getState().setGreetingOpen(false)} />
+        <header className="h-14 shrink-0 border-b border-border" />
+        <RoundReportGreeting
+          round={latestRound}
+          onViewBoards={() => useAppStore.getState().setGreetingOpen(false)}
+        />
       </div>
     )
   }

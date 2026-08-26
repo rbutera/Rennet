@@ -108,19 +108,31 @@ carried-forward blocks hydrate.
 - **Entry**: drive `rounds` live (Dispatch Round → the round watched live,
   ~10s simulated: created detached worktree · applying asks · agent activity
   lines · gate run · commits), or jump with `?scenario=returned`.
-- **Greeting**: the successor summary fills the main surface on return (R34):
+- **Greeting (R57)**: the **round report** fills the main surface on return —
   addressed / partial / untouched / beyond-the-asks, each item tracing to its
-  ask, one action back to the lenses and Hand off. Ask 1 addressed, ask 2
-  partial or a beyond-the-asks test tightening — final content set by what the
-  staged round can honestly claim (see the chronology note above).
-- **Boards**: **generation 2**, delta-aware — changed sections marked
-  natively, unchanged sections carried forward (they keep hydrating),
-  generation 1 frozen and reachable as drill-down (a quiet "Generation 2 ·
-  round 1" line, not chrome prose). Asks/threads/highlights re-anchor by quote
-  match; a casualty may land in the Detached list to prove the state exists.
-- **Drafting activity feed**: returns here (R32 amendment — the feed belongs
-  to the rounds regeneration, not the Write Review lane): collapsed line over
-  the surface, expanding to trigger queue + turn anatomy.
+  ask and verified against the round's diff (the run view's last line is
+  "Drafting the round report"). The reviewer reads it while the lens drafters
+  regenerate live beneath it (carried lenses complete as carry-forwards,
+  Flagged re-drafts); **View the New Boards** appears when generation 2
+  composes — never a disabled button. Ask 1 addressed, ask 2 partial plus a
+  beyond-the-asks test tightening (see the chronology note above).
+- **Boards (R58)**: **generation 2**, delta-aware as unread state — the
+  composition stamps `delta: "new" | "reworked"` per touched section (absence
+  = carried). Touched sections open expanded, carried sections fold to gists;
+  a small gold dot (sr-only ", reworked this round") marks touched sections
+  and rolls up to the lens segment, clears on interaction, and is replaced
+  wholesale next round. Generation 1 stays frozen as drill-down (a quiet
+  "Generation 2 · round 1" line, not chrome prose). Asks/threads/highlights
+  re-anchor by quote match; a casualty may land in the Detached list.
+- **Rounds ledger (R57)**: a Rounds control joins the header beside the
+  Map·Diff pill exactly when the session has a completed round; `?view=rounds`
+  lists one row per round (tally derived) with the selected report beneath, so
+  earlier reports stay readable.
+- **Drafting activity feed**: the live regeneration block under the greeting
+  is its live form (R32 amendment — the feed belongs to the rounds
+  regeneration, not the Write Review lane); the settled report in the ledger
+  wears the collapsed retrospective line, expanding to trigger queue + turn
+  anatomy.
 - **Exit**: The Pull Request lane is ripe — one **Open Pull Request** action;
   submitted state names the real #438. Rounds continue identically after (no
   self-review lane).
@@ -258,10 +270,8 @@ export interface Scenario {
     | { mode: "post-review" }
     | { mode: "rounds"; pr: { title: string; body: string; ready: boolean } }
   seedAsks?: AskSeed[]                      // pre-staged into the comment store
-  round?: {                                 // `returned` only
-    summary: SuccessorSummary               // addressed / partial / untouched / beyond
-    gen1: Partial<Record<LensId, LensBoard>> // frozen drill-down
-  }
+  rounds?: RoundReturn[]                    // completed rounds, oldest first —
+                                            // the ledger; present = Rounds control exists
 }
 ```
 

@@ -78,6 +78,10 @@ interface AppState {
   // ── run slice ─────────────────────────────────────────────────────────
   greetingOpen: boolean
   setGreetingOpen: (open: boolean) => void
+  /** Delta marks read as unread: a section id lands here when the reviewer
+   * unfolds it, clearing its round-delta dot. Replaced wholesale next round. */
+  viewedDeltaSections: Record<string, true>
+  markDeltaViewed: (sectionId: string) => void
   sessionTurns: string[]
   boardsReady: boolean
   appendSessionTurn: (turn: string) => void
@@ -241,6 +245,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ── run slice ──
   greetingOpen: true,
   setGreetingOpen: (open) => set({ greetingOpen: open }),
+  viewedDeltaSections: {},
+  markDeltaViewed: (sectionId) =>
+    set((s) => (s.viewedDeltaSections[sectionId] ? s : { viewedDeltaSections: { ...s.viewedDeltaSections, [sectionId]: true } })),
   sessionTurns: [],
   boardsReady: false,
   appendSessionTurn: (turn) => set((s) => ({ sessionTurns: [...s.sessionTurns, turn] })),

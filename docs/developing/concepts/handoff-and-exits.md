@@ -99,15 +99,34 @@ and one direct Post — no holds, no consent ceremony.
 2. Dispatch — one round at a time, one worker in a detached worktree; asks
    gathered mid-run queue for the next round.
 3. Watch the run live.
-4. On completion the reviewer is greeted by the **summary of what changed**
-   (the successor account: addressed / partial / untouched / beyond the
-   asks), with one action back to the lenses and Hand off.
-5. Each round mints a **new generation** of lens boards, drafted delta-aware:
-   drafters receive the successor account, unchanged sections carry forward,
-   and changes are marked natively. The prior generation freezes as
-   drill-down. Asks, threads, and highlights re-anchor by quote match;
-   casualties land in the Detached list.
-6. Repeat until nothing is left to ask. The surface becomes the pull
+4. On completion the **round report** drafts first — its own seat on its own
+   prompt (`packages/lens-instructions`, `prompts/report.md`), through the
+   same post-process pass as every draft. It verifies each ask against the
+   round's diff rather than taking the worker's word, and classifies the
+   outcome: addressed / partial / untouched / beyond the asks, each item
+   anchored. The report is one artifact with two consumers: the reviewer's
+   greeting, and the successor account the lens drafters receive — which is
+   why it must draft before they start.
+5. The reviewer reads the report while the lens drafters regenerate in the
+   background, their progress live beneath it (carried lenses complete as
+   carry-forwards; touched lenses re-draft). The surface never locks. When
+   the new generation composes, the way to it appears — a control that
+   exists only once it is ready, never a disabled button.
+6. Each round mints a **new generation** of lens boards, drafted delta-aware:
+   unchanged sections carry forward, and the composition step stamps what it
+   touched (`new` / `reworked`; absence = carried). The marks read as unread
+   state: touched sections open expanded while carried sections fold to
+   their gists — the board's own shape states the change — with a small
+   transient accent dot per touched section that rolls up to the lens
+   segment, clears on interaction, and is replaced wholesale next round.
+   The prior generation freezes as drill-down. Asks, threads, and highlights
+   re-anchor by quote match; casualties land in the Detached list.
+7. Every completed round stays readable in the **rounds ledger** — a header
+   control beside Map · Diff that exists exactly when a round has completed.
+   One row per round; each opens that round's report, and each round pins
+   its asks, worker commits, frozen board generation, and the patchset
+   generation it minted, so earlier reports and diffs never vanish.
+8. Repeat until nothing is left to ask. The surface becomes the pull
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane
    on one's own pull request.

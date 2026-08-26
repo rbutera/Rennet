@@ -1,15 +1,11 @@
 /**
  * `returned` (W1b) — round 1 came back. Reached by dispatching the round from
- * `rounds` (watched live, then greeted by the successor summary) or by the
+ * `rounds` (watched live, then greeted by the round report) or by the
  * `?scenario=returned` deep link. The boards are generation 2 (delta-aware,
  * generation 1 frozen as a drill-down); the PR lane is ripe. See SCENARIOS.md.
- *
- * The round data lives beside the scenario (not on it) so the shared Scenario
- * type needs no new field — only `returned` has a round return, and the
- * greeting reads it directly.
  */
 
-import type { Scenario } from "./index"
+import type { Scenario, RoundReturn } from "./index"
 import type { TurnData } from "@/lib/conversation-data"
 import { roundsScenario, PR_438_TITLE, PR_438_BODY } from "./rounds"
 import { designBoard } from "@/lib/fixtures/design"
@@ -18,23 +14,9 @@ import { decisionsBoard } from "@/lib/fixtures/decisions"
 import { noiseBoard } from "@/lib/fixtures/noise"
 import { flaggedGen2Board } from "@/lib/fixtures/flagged-gen2"
 
-/** The successor account the reviewer is greeted by on return (R34). */
-export interface SummaryItem {
-  status: "addressed" | "partial" | "untouched" | "beyond"
-  /** The ask this traces back to (or the change, for a beyond-the-asks item). */
-  ask: string
-  note: string
-  anchor?: { path: string; line: number }
-}
-
-export interface RoundReturn {
-  greeting: string
-  items: SummaryItem[]
-  /** The regeneration's rework triggers, surfaced in the drafting activity feed. */
-  triggers: string[]
-}
-
 export const returnedRound: RoundReturn = {
+  number: 1,
+  when: "09:47",
   greeting: "Round 1 is back. I applied both asks on a detached worktree, the gate came back green (14 projects), and re-drafted the boards against what changed. Here is what the round did.",
   items: [
     {
@@ -101,4 +83,5 @@ export const returnedScenario: Scenario = {
     mode: "rounds",
     pr: { title: PR_438_TITLE, body: PR_438_BODY, ready: true },
   },
+  rounds: [returnedRound],
 }

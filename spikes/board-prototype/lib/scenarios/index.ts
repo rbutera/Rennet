@@ -17,6 +17,31 @@ export interface AskSeed {
   codeAnchor?: { path: string; line: number }
 }
 
+/** One line of the round report (the successor account, R34): what the round
+ * did with one ask — or did beyond them — verified against the round's diff. */
+export interface SummaryItem {
+  status: "addressed" | "partial" | "untouched" | "beyond"
+  /** The ask this traces back to (or the change, for a beyond-the-asks item). */
+  ask: string
+  note: string
+  anchor?: { path: string; line: number }
+}
+
+/**
+ * A completed round's record: the report the reviewer is greeted by, kept in
+ * the session's rounds ledger so every earlier report stays readable. In the
+ * product this pins the round's asks, worker commits, the frozen board
+ * generation, and the patchset generation it minted (#457 append-then-freeze).
+ */
+export interface RoundReturn {
+  number: number
+  when: string
+  greeting: string
+  items: SummaryItem[]
+  /** The regeneration's rework triggers, surfaced in the drafting activity feed. */
+  triggers: string[]
+}
+
 export interface Scenario {
   id: ScenarioId
   projectId: string
@@ -31,6 +56,9 @@ export interface Scenario {
     | { mode: "rounds"; pr: { title: string; body: string; ready: boolean } }
   /** Pre-staged asks seeded into the comment store on scenario entry. */
   seedAsks?: AskSeed[]
+  /** Completed rounds, oldest first — the rounds ledger. Present only once a
+   * round has returned; the header's Rounds control exists exactly then. */
+  rounds?: RoundReturn[]
 }
 
 import { teammateScenario } from "./teammate"

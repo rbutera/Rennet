@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils"
 export interface ViewSegment {
   label: string
   icon: LucideIcon
+  /** Unread round-delta rollup: the board behind this segment has sections the
+   * last round touched that the reviewer has not opened yet. */
+  dot?: boolean
 }
 
 /**
@@ -45,8 +48,17 @@ export function ViewSwitcher({
               isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="size-4 shrink-0" aria-hidden="true" />
+            <span className="relative flex shrink-0">
+              <Icon className="size-4 shrink-0" aria-hidden="true" />
+              {segment.dot && (
+                <span
+                  className="absolute -right-1 -top-1 size-1.5 rounded-full bg-primary"
+                  aria-hidden="true"
+                />
+              )}
+            </span>
             <span className="hidden @[46rem]:inline">{segment.label}</span>
+            {segment.dot && <span className="sr-only">, changed this round</span>}
           </button>
         )
       })}

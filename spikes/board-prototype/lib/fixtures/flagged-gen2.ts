@@ -19,6 +19,7 @@ export const flaggedGen2Board: LensBoard = {
     {
       id: "g2-addressed",
       title: "Addressed This Round",
+      delta: "reworked",
       gist: "Every refresh exit now writes a terminal record. The missing-outcome finding is closed.",
       counts: "1 finding",
       elements: [
@@ -53,6 +54,7 @@ export const flaggedGen2Board: LensBoard = {
     {
       id: "g2-open",
       title: "Still Open",
+      delta: "reworked",
       gist: "The post-send network copy is now honest about uncertainty, but the message still needs a wording pass.",
       counts: "1 finding · partial",
       elements: [
@@ -71,7 +73,7 @@ export const flaggedGen2Board: LensBoard = {
     {
       id: "g2-beyond",
       title: "Beyond the Asks",
-      startFolded: true,
+      delta: "new",
       gist: "The round tightened the exchange-error tests without being asked.",
       counts: "1 change",
       elements: [

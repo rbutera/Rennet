@@ -98,6 +98,8 @@ This file defines the terms shared by the product, documentation, and code. It c
   _Avoid_: disposition, staged item
 - **Exit**: one of the review's terminal actions — post the GitHub review, dispatch a work-order round, or push and open the pull request. Work orders exist only on one's own branch.
 - **Round**: one dispatched work order and its returned successor patchset. Rounds serialize; each mints a new generation of boards, drafted delta-aware.
+- **Round report**: the board accounting for what a round did with the asks — addressed, partial, untouched, or beyond the asks, each item verified against the round's diff and anchored. Drafted first when a round returns (its own prompt, the shared post-process pass): it is the greeting the reviewer reads while the lens drafters regenerate, and the successor account those drafters receive.
+- **Rounds ledger**: the header control beside Map · Diff, present exactly when the session has a completed round. It lists every round's report; each round pins its asks, worker commits, frozen board generation, and the patchset generation it minted, so earlier reports and diffs stay readable.
 - **Living draft**: an outbound document (review text, work order, PR description) the orchestrator alone authors and continuously reworks as the review progresses. Steered by conversation or span selection, never typed into; retired content is ledgered and restorable.
 
 ## Settings

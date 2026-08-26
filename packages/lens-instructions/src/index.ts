@@ -24,6 +24,16 @@ export const LENS_PROMPT_FILES: Record<LensKind, string> = {
 };
 
 /**
+ * Prompt file for the round-report drafter — the per-round seat that accounts
+ * for what a work-order round did with the reviewer's asks (the successor
+ * account, R34). It drafts FIRST when a round returns: the report is both the
+ * reviewer's greeting and the lens drafters' input, so it gates the
+ * regeneration. Not a lens (LENS_KINDS is the five boards); it funnels through
+ * the same post-process pass.
+ */
+export const ROUND_REPORT_FILE = "prompts/report.md";
+
+/**
  * Prompt file for the post-processing editor agent every draft board funnels
  * through: break-it-down structure rules, the unslop skill verbatim, and the
  * humanizer additions — prose fields only, typed data untouched.
