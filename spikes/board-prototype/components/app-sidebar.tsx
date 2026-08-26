@@ -471,7 +471,13 @@ export function AppSidebar({
       {open && (
       <div className="flex h-full min-h-0 w-64 flex-col">
       <div className="flex h-10 shrink-0 items-center justify-between px-3">
-        <span className="text-[13px] font-medium tracking-tight text-foreground">Rennet</span>
+        {/* The real lockup (mark + wordmark), scheme-swapped; vector artwork, never a font. */}
+        <span className="flex items-center">
+          {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
+          <img src="/brand/lockup-horizontal-white.svg" alt="Rennet" className="hidden h-4 w-auto dark:block" />
+          {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
+          <img src="/brand/lockup-horizontal-black.svg" alt="Rennet" className="h-4 w-auto dark:hidden" />
+        </span>
         <button
           type="button"
           onClick={onToggle}
