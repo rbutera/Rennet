@@ -1,6 +1,6 @@
 # Board-prototype feature inventory
 
-Swept at 101e0745.
+Swept at 45a98307.
 
 **Purpose.** This checklist is the exhaustive record of what the board prototype
 actually does. It is used twice:
@@ -19,10 +19,15 @@ names the prototype code that establishes it. Paths are relative to
 `spikes/board-prototype/`. Ruling references (`R1`–`R58`) point at the canonical
 comment on [#458](https://github.com/rbutera/Rennet/issues/458#issuecomment-5387762167); scenario references point at `SCENARIOS.md`.
 
-Two sections at the end are exclusions, not requirements: **Prototype-only / not
+Two sections at the end are not requirements-as-built: **Prototype-only / not
 for import** lists demo scaffolding the real client must not inherit, and
-**Undocumented surfaces** lists behavior found in the code that no ruling or
-scenario covers — the drift this inventory exists to catch.
+**Open build items** lists what is unbuilt or built wrong, tracked on [#492](https://github.com/rbutera/rennet/issues/492).
+
+The sweep originally raised a third list — surfaces the prototype carried that
+no ruling covered. Rai ruled on all of it: nearly every line was asked-for
+behavior the ruling log had simply never caught up with, and it was promoted to
+rulings **R59–R68** ([the drift-blessing batch](https://github.com/rbutera/Rennet/issues/458#issuecomment-5430439010)). Those R-numbers are annotated
+onto the checklist lines they govern.
 
 ---
 
@@ -66,8 +71,9 @@ scenario covers — the drift this inventory exists to catch.
 - [ ] The project holding the active session is force-expanded, so navigation always lands on a visible highlighted row — `components/app-sidebar.tsx`
 - [ ] A project's session list ends with a ghost "New Chat" row whose plus glyph rotates on hover — `components/app-sidebar.tsx`
 - [ ] Right-clicking a project opens a context menu with View Context Map, Rename, Project Settings, and a destructive Remove project… — `components/app-sidebar.tsx`
-- [ ] Renaming a project happens inline in the row; Enter commits, Escape cancels, and an emptied name falls back to the `org/repo` default — `components/app-sidebar.tsx`
-- [ ] Remove project opens a confirmation naming the project, the number of sessions it will take with it (archived included), and stating the repository on disk is untouched — `components/app-sidebar.tsx`
+- [ ] Renaming a project happens inline in the row; Enter commits, Escape cancels, and an emptied name falls back to the `org/repo` default — `components/app-sidebar.tsx` (R67)
+- [ ] Remove project opens a confirmation naming the project, the number of sessions it will take with it (archived included), and stating the repository on disk is untouched — `components/app-sidebar.tsx` (R66)
+- [ ] Remove-project and remove-environment are the only two destructive confirmations in the product — `components/app-sidebar.tsx`, `components/settings-view.tsx` (R66)
 - [ ] Removing the project you are currently standing inside (its map, indexing, or one of its sessions) navigates away instead of stranding you on a dead route — `components/shell.tsx`
 
 ### Sessions in the sidebar
@@ -75,16 +81,16 @@ scenario covers — the drift this inventory exists to catch.
 - [ ] Every session row leads with its review-target icon: branch glyph for your branch, pull-request for your PR, incoming pull-request for a teammate PR — `components/target-badge.tsx`, `components/app-sidebar.tsx` (R36 icon language)
 - [ ] A session needing you renders its own target icon in the accent color rather than a badge or pill — `components/target-badge.tsx` (R36 icon language)
 - [ ] A reviewed session shows a green tick beside its title, not a row beneath it — `components/app-sidebar.tsx` (R36 icon language)
-- [ ] A pinned session shows a small pin glyph beside its title — `components/app-sidebar.tsx`
+- [ ] A pinned session shows a small pin glyph beside its title — `components/app-sidebar.tsx` (R67)
 - [ ] Unread orchestrator activity shows as a verdigris dot beside the title, and the active session never shows it — `components/app-sidebar.tsx`, `lib/sidebar-data.ts` (R53)
 - [ ] The active session is marked by row highlight alone; there is no gold active dot — `components/app-sidebar.tsx` (R53)
 - [ ] Each session row shows a second, muted line with its relative time — `components/app-sidebar.tsx`
-- [ ] Right-clicking a session opens Pin/Unpin, Rename, Archive — `components/app-sidebar.tsx`
-- [ ] Renaming a session happens inline with the target icon still showing; Enter commits, Escape cancels, an emptied title keeps the old one, and the field auto-selects on focus — `components/app-sidebar.tsx`
-- [ ] Pinned sessions surface in a dedicated Pinned section at the top of the tree, labelled with the project name and time — `components/app-sidebar.tsx`
-- [ ] The Pinned section is absent entirely when nothing is pinned — `components/app-sidebar.tsx`
-- [ ] Archiving the session you are currently viewing navigates away from it — `components/shell.tsx`
-- [ ] An Archived entry appears at the sidebar's foot with a count exactly when at least one session is archived — `components/app-sidebar.tsx`
+- [ ] Right-clicking a session opens Pin/Unpin, Rename, Archive — `components/app-sidebar.tsx` (R67)
+- [ ] Renaming a session happens inline with the target icon still showing; Enter commits, Escape cancels, an emptied title keeps the old one, and the field auto-selects on focus — `components/app-sidebar.tsx` (R67)
+- [ ] Pinned sessions surface in a dedicated Pinned section at the top of the tree, labelled with the project name and time — `components/app-sidebar.tsx` (R67)
+- [ ] The Pinned section is absent entirely when nothing is pinned — `components/app-sidebar.tsx` (R67)
+- [ ] Archiving the session you are currently viewing navigates away from it — `components/shell.tsx` (R67)
+- [ ] An Archived entry appears at the sidebar's foot with a count exactly when at least one session is archived — `components/app-sidebar.tsx` (R67)
 
 ### Update, Help, Settings
 
@@ -99,6 +105,7 @@ scenario covers — the drift this inventory exists to catch.
 ### Top bar (main surface header)
 
 - [ ] The main-surface header is 56px tall — `components/main-surface.tsx` (R51)
+- [ ] Header height is two deliberate tiers: session surfaces (the board bar, the chat-pane header, the run route) run 56px, and takeover surfaces (New Chat, Settings, Archived, Context Map, Indexing) run 40px — `components/main-surface.tsx`, `components/chat-column.tsx`, `components/settings-view.tsx` (R51, R60)
 - [ ] The header is a three-column grid: left slot (back arrow, chat-expand, trail), centered lens switcher, right slot (History · Map · Diff) — `components/main-surface.tsx` (R49 amendment, R51)
 - [ ] When the chat column is collapsed, the header's left slot shows an expand-chat control followed by the two-line session trail — `components/main-surface.tsx` (R52 amendment)
 - [ ] The session trail is two lines: session title over target-icon + `project › target` words, with "· needs you" as words beside the accent icon, never a pill — `components/location-trail.tsx` (R51, R52 amendment)
@@ -299,15 +306,16 @@ scenario covers — the drift this inventory exists to catch.
 - [ ] A finding is document flow, not a boxed card: severity chip, claim as the title, concurrence badge, then body, subheaded details, fix callout, and anchor — `components/lens-board.tsx` (R23)
 - [ ] Severity renders as a chip reading high (danger), medium (warn), or low (neutral) — `components/lens-board.tsx`
 - [ ] Cross-model agreement renders as "concur 2/2" in green when both seats raised it, or "Claude only"/"Codex only" in the machine's register when they disagree — `components/lens-board.tsx`
-- [ ] Each finding folds to its claim row on its own, independently of its section — `components/lens-board.tsx`
+- [ ] Each finding folds to its claim row on its own, independently of its section — `components/lens-board.tsx` (R61)
 - [ ] A finding's fix renders as an actionable callout under a "Fix" kicker — `components/lens-board.tsx` (R23)
-- [ ] The fix callout carries Dismiss, Discuss, and Request This Change — `components/lens-board.tsx` (R29)
+- [ ] The fix callout carries Dismiss, Discuss, and Request This Change — `components/lens-board.tsx` (R29, R61)
+- [ ] Discuss creates a local comment citing the fix and moves focus to the orchestrator chat to discuss it — `components/lens-board.tsx` (R68, R24; **unbuilt — see #492**)
 - [ ] Request This Change stages a request-change ask carrying the fix text, a `finding: <claim>` provenance, and the finding's code anchor — `components/lens-board.tsx` (R29, R36)
 - [ ] Once staged, the control becomes its own receipt reading "Staged · Request Change ✓", and clicking it again unstages — `components/lens-board.tsx` (R29)
-- [ ] Dismissing a finding dims it in place, folds it, and offers "Dismissed · Undo"; it never disappears — `components/lens-board.tsx`
-- [ ] A dismissed finding can still be peeked open — `components/lens-board.tsx`
-- [ ] Dismiss is hidden while an ask is staged from the finding, so the reviewer must unstage first — `components/lens-board.tsx`
-- [ ] Both exits — requesting the fix and dismissing — clear the finding from the Flagged count — `components/lens-board.tsx`, `components/main-surface.tsx`
+- [ ] Dismissing a finding dims it in place, folds it, and offers "Dismissed · Undo"; it never disappears — `components/lens-board.tsx` (R61)
+- [ ] A dismissed finding can still be peeked open — `components/lens-board.tsx` (R61)
+- [ ] Dismiss is hidden while an ask is staged from the finding, so the reviewer must unstage first — `components/lens-board.tsx` (R61)
+- [ ] Both exits — requesting the fix and dismissing — clear the finding from the Flagged count — `components/lens-board.tsx`, `components/main-surface.tsx` (R61)
 - [ ] A dismissed finding announces ", dismissed" to a screen reader without adding visible chrome — `components/lens-board.tsx`
 
 ### Lens switcher
@@ -318,10 +326,10 @@ scenario covers — the drift this inventory exists to catch.
 - [ ] Diff is not a lens segment; it sits beside Map as a raw-source toggle — `components/main-surface.tsx` (issue #475)
 - [ ] Segment labels drop below 46rem of header width, leaving an icon rail with the names kept in title and aria-label — `components/view-switcher.tsx` (R35 responsive)
 - [ ] Lens segments are 13px with size-4 icons and grow to fill the 56px bar's height — `components/view-switcher.tsx` (R51)
-- [ ] The Flagged segment carries a red count badge of findings not yet dismissed or requested — `components/main-surface.tsx`, `components/view-switcher.tsx`
-- [ ] The Flagged count badge announces ", N open" to a screen reader — `components/view-switcher.tsx`
+- [ ] The Flagged segment carries a red count badge of findings not yet dismissed or requested, in the same red as the exit FAB's pip — `components/main-surface.tsx`, `components/view-switcher.tsx` (R61)
+- [ ] The Flagged count badge announces ", N open" to a screen reader — `components/view-switcher.tsx` (R61)
 - [ ] A lens whose board has round-touched sections the reviewer has not opened carries a small gold dot on its segment — `components/main-surface.tsx`, `components/view-switcher.tsx` (R58)
-- [ ] The open-findings count outranks the delta dot when both would apply on the same segment — `components/view-switcher.tsx`
+- [ ] The open-findings count outranks the delta dot when both would apply on the same segment — `components/view-switcher.tsx` (R61)
 - [ ] The delta dot announces ", changed this round" to a screen reader — `components/view-switcher.tsx` (R58)
 - [ ] The lens switcher shows no segment as active while a non-lens view (Map, Diff, hand-off, History) is open — `components/main-surface.tsx`
 
@@ -600,31 +608,31 @@ scenario covers — the drift this inventory exists to catch.
 
 ### Agents and review roles
 
-- [ ] Each environment card carries an Agents section listing the coding harnesses detected on that host — `components/settings-view.tsx`
-- [ ] Agent rows use the same shape as source-control rows: official mark, label, version line, status chip, honest helper, enable toggle — `components/settings-view.tsx`
-- [ ] Disabling an agent rules it out of reviews on that host without uninstalling anything — `components/settings-view.tsx`
-- [ ] A Review section on the card exposes Model Mappings, and is absent entirely when no agents were detected — `components/settings-view.tsx`
-- [ ] Edit Mappings is inert until at least one agent is enabled, and says so in its hint — `components/settings-view.tsx`
-- [ ] The mappings dialog is a table of review roles against two columns, Dual Harness and Single Harness — `components/settings-view.tsx`
-- [ ] The column headers ARE the review-mode switch; the selected header carries the tick and the other column dims and locks — `components/settings-view.tsx`
-- [ ] There is no separate Review Mode row — `components/settings-view.tsx`
-- [ ] The Dual column is unavailable until both agents are enabled, and hovering anywhere in it says which agent would unlock it — `components/settings-view.tsx`
-- [ ] Losing the second agent settles the mode as Single regardless of what was clicked — `components/settings-view.tsx`
-- [ ] Single Harness auto-detects its provider, preferring Claude, and its subheading names it — `components/settings-view.tsx`
-- [ ] Each role names the models it may take and its effort level; an editable cell opens a searchable model picker — `components/settings-view.tsx`
-- [ ] A role that does not run in a given mode renders an em dash, not a fake assignment — `components/settings-view.tsx`
-- [ ] A role changed from its default gains a "Reset to default" control — `components/settings-view.tsx`
-- [ ] The role list covers Orchestrator, Context-Map Workers, Confirmation Worker, Lens Drafters, Flagged Second Seat, Adjudication, Post-Process Pass, and Utility — `lib/settings-data.ts` (#460, #464)
+- [ ] Each environment card carries an Agents section listing the coding harnesses detected on that host — `components/settings-view.tsx` (R62)
+- [ ] Agent rows use the same shape as source-control rows: official mark, label, version line, status chip, honest helper, enable toggle — `components/settings-view.tsx` (R62)
+- [ ] Disabling an agent rules it out of reviews on that host without uninstalling anything — `components/settings-view.tsx` (R62)
+- [ ] A Review section on the card exposes Model Mappings, and is absent entirely when no agents were detected — `components/settings-view.tsx` (R62)
+- [ ] Edit Mappings is inert until at least one agent is enabled, and says so in its hint — `components/settings-view.tsx` (R62)
+- [ ] The mappings dialog is a table of review roles against two columns, Dual Harness and Single Harness — `components/settings-view.tsx` (R62)
+- [ ] The column headers ARE the review-mode switch; the selected header carries the tick and the other column dims and locks — `components/settings-view.tsx` (R62)
+- [ ] There is no separate Review Mode row — `components/settings-view.tsx` (R62)
+- [ ] The Dual column is unavailable until both agents are enabled, and hovering anywhere in it says which agent would unlock it — `components/settings-view.tsx` (R62)
+- [ ] Losing the second agent settles the mode as Single regardless of what was clicked — `components/settings-view.tsx` (R62)
+- [ ] Single Harness auto-detects its provider, preferring Claude, and its subheading names it — `components/settings-view.tsx` (R62)
+- [ ] Each role names the models it may take and its effort level; an editable cell opens a searchable model picker — `components/settings-view.tsx` (R62)
+- [ ] A role that does not run in a given mode renders an em dash, not a fake assignment — `components/settings-view.tsx` (R62)
+- [ ] A role changed from its default gains a "Reset to default" control — `components/settings-view.tsx` (R62)
+- [ ] The role list covers Orchestrator, Context-Map Workers, Confirmation Worker, Lens Drafters, Flagged Second Seat, Adjudication, Post-Process Pass, and Utility — `lib/settings-data.ts` (#460, #464, R62)
 
 ### Appearance page
 
 - [ ] Scheme is a light / dark / system segmented control — `components/settings-view.tsx`
 - [ ] "system" resolves through `matchMedia` and re-applies when the OS scheme changes — `components/appearance-sync.tsx`
-- [ ] The theme pack is a row of live-applying pill options — `components/settings-view.tsx`, `lib/theme-packs.ts` (#481)
-- [ ] The code theme is a separate row of live-applying pill options, independent of the interface theme — `components/settings-view.tsx`, `lib/code-theme.ts`
-- [ ] "Follow scheme" resolves the code theme to the light or dark variant of the current scheme — `lib/code-theme.ts`
-- [ ] Changing the code theme re-highlights every code surface, including the diff — `components/code-block.tsx`, `components/diff-view.tsx`
-- [ ] The resolved scheme stamps `data-scheme` and the `dark` class on the document root; the theme pack stamps `data-rn-theme`, with the default pack clearing the attribute — `components/appearance-sync.tsx`
+- [ ] The theme pack is a row of live-applying pill options — `components/settings-view.tsx`, `lib/theme-packs.ts` (#481, R64)
+- [ ] The code theme is a separate row of live-applying pill options, independent of the interface theme — `components/settings-view.tsx`, `lib/code-theme.ts` (R64)
+- [ ] "Follow scheme" resolves the code theme to the light or dark variant of the current scheme — `lib/code-theme.ts` (R64)
+- [ ] Changing the code theme re-highlights every code surface, including the diff — `components/code-block.tsx`, `components/diff-view.tsx` (R64)
+- [ ] The resolved scheme stamps `data-scheme` and the `dark` class on the document root; the theme pack stamps `data-rn-theme`, with the default pack clearing the attribute — `components/appearance-sync.tsx` (R64)
 
 ### Keyboard shortcuts page
 
@@ -641,10 +649,10 @@ scenario covers — the drift this inventory exists to catch.
 - [ ] Identity exposes the project's display name with the `org/repo` default as its placeholder — `components/settings-view.tsx`
 - [ ] A renamed project gains a Reset control that restores the `org/repo` default — `components/settings-view.tsx`
 - [ ] Clearing the name on blur restores the default rather than leaving it empty — `components/settings-view.tsx`
-- [ ] Identity exposes a grid of project glyphs as a radio group, applying live to the sidebar — `components/settings-view.tsx`, `components/project-icon.tsx`
-- [ ] Worktrees exposes the location directory and the naming pattern — `components/settings-view.tsx` (#476)
-- [ ] The naming pattern offers insertable tokens: `{project}`, `{branch}`, `{pr}`, `{user}`, `{date}` — `components/settings-view.tsx`, `lib/settings-data.ts`
-- [ ] A live preview shows the resolved worktree path, with slashes in a branch name flattened to dashes — `components/settings-view.tsx`, `lib/settings-data.ts`
+- [ ] Identity exposes a grid of project glyphs as a radio group, applying live to the sidebar — `components/settings-view.tsx`, `components/project-icon.tsx` (R65)
+- [ ] Worktrees exposes the location directory and the naming pattern — `components/settings-view.tsx` (#476, R63)
+- [ ] The naming pattern offers insertable tokens: `{project}`, `{branch}`, `{pr}`, `{user}`, `{date}` — `components/settings-view.tsx`, `lib/settings-data.ts` (R63)
+- [ ] A live preview shows the resolved worktree path, with slashes in a branch name flattened to dashes — `components/settings-view.tsx`, `lib/settings-data.ts` (R63)
 - [ ] Repository exposes Review Context (local vs git-visible) with its provenance chip — `components/settings-view.tsx` (#476)
 - [ ] Repository states whether the review context is promoted — `components/settings-view.tsx`
 - [ ] "Runs on" is a displayed detected fact with its provenance chip and host glyph, with no editable override on the surface — `components/settings-view.tsx` (R22 amendment, #476)
@@ -761,7 +769,11 @@ scenario covers — the drift this inventory exists to catch.
 - [ ] An answer with a fixed option set renders as a segmented pick; the rest render as editable monospace inputs — `components/project-indexing-view.tsx` (#487)
 - [ ] Escape inside a questionnaire field blurs the field rather than leaving the view — `components/project-indexing-view.tsx`
 - [ ] The questionnaire's one action is "Looks right", which collapses it to a confirmation line stating the setup is saved and editable in Settings → Projects — `components/project-indexing-view.tsx` (#487)
-- [ ] The logo is a cosmetic answer and never enters agent context — `components/project-indexing-view.tsx` (#461)
+- [ ] The project's own mark is one of the scout's prefilled answers, detected from the repo and shown with its provenance chip — `components/project-indexing-view.tsx` (R65, #487)
+- [ ] The mark's hint states where it was found and that it is what shows in the sidebar — `components/project-indexing-view.tsx` (R65)
+- [ ] The mark stays editable after the flow, in Settings → Projects → Identity — `components/settings-view.tsx`, `components/project-icon.tsx` (R65)
+- [ ] The mark the scout detects and the mark Identity offers are the same product concern: the scout answers with a repo logo path while Identity offers a fixed glyph vocabulary, and the two are to be reconciled when this lands for real — `components/project-indexing-view.tsx`, `components/settings-view.tsx` (R65)
+- [ ] The logo is a cosmetic answer and never enters agent context — `components/project-indexing-view.tsx` (R65, #461)
 
 ### Project processing: map generation and the exits
 
@@ -841,9 +853,9 @@ scenario covers — the drift this inventory exists to catch.
 - [ ] Onboarding is contextual coach marks, never a linear N-of-M tour — `lib/tour.ts`, `components/coachmark.tsx` (R55)
 - [ ] Exactly one mark is on screen at any time — `lib/tour.ts` (R55)
 - [ ] Marks are chained per surface: dismissing one opens a short gap before the next on the same surface fires — `lib/tour.ts` (R55)
-- [ ] The system carries nine marks: start-review, new-chat, smart-list, lenses, highlight, fab, verdict, draft, dispatch — `lib/tour.ts` (R55 + #487's ninth)
-- [ ] The start-review mark sits first in system order, so it outranks the sidebar's Start Here while the indexing CTA is on screen — `lib/tour.ts` (#487)
-- [ ] The start-review mark anchors the full-width Start a Review CTA and points at it from above — `lib/tour.ts`, `components/project-indexing-view.tsx` (#487)
+- [ ] The system carries nine marks: start-review, new-chat, smart-list, lenses, highlight, fab, verdict, draft, dispatch — `lib/tour.ts` (R55 + #487's ninth, R59)
+- [ ] The start-review mark sits first in system order, so it outranks the sidebar's Start Here while the indexing CTA is on screen — `lib/tour.ts` (#487, R59)
+- [ ] The start-review mark anchors the full-width Start a Review CTA and points at it from above — `lib/tour.ts`, `components/project-indexing-view.tsx` (#487, R59)
 - [ ] The new-chat mark is the single first-run spotlight, armed only when there are no sessions anywhere — `components/app-sidebar.tsx` (R55)
 - [ ] Marks anchor to chrome only — buttons, switchers, containers — never to board content — `lib/tour.ts`, `components/coachmark.tsx` (R55)
 - [ ] A mark renders a spotlight cutout over its anchor plus an anchored card — `components/coachmark.tsx` (R55)
@@ -931,31 +943,26 @@ here is a thing to delete, replace with a real source, or refuse to build.
 
 ---
 
-## 14. Undocumented surfaces — drift to resolve in the plan
+## 14. Open build items
 
-Behavior found in the prototype that no ruling, scenario, or map decision
-covers. Each needs a decision in the plan: promote it to a ruling, or drop it.
+Every other line in this file records behavior the prototype already has. This
+section is the residue: work that is **not built**, or built wrong. It is not a
+list of undocumented surfaces — that list existed, Rai ruled on all of it, and
+the blessed behaviors were promoted to rulings R59–R68 and annotated into their
+home sections above.
 
-- [ ] The Archived surface in full — its search, its three sort modes, its fuzzy-time parsing, its per-row Unarchive, and its empty state. No ruling mentions archiving at all — `components/archived-view.tsx`, `app/archived/page.tsx`
-- [ ] Session pinning and the sidebar's Pinned section — no ruling covers it — `components/app-sidebar.tsx`
-- [ ] Session and project renaming from the sidebar context menus — no ruling covers it — `components/app-sidebar.tsx`
-- [ ] Remove-project as a sidebar act with its own confirmation dialog — the only sanctioned destructive confirm named in a ruling is remove-environment (R56 second amendment) — `components/app-sidebar.tsx`
-- [ ] The per-project glyph vocabulary and its picker — no ruling covers project icons — `components/project-icon.tsx`, `components/settings-view.tsx`
-- [ ] The theme-pack and code-theme pickers — issue #481 is referenced in a code comment but appears in no ruling and in no map decision — `lib/theme-packs.ts`, `lib/code-theme.ts`, `components/settings-view.tsx`
-- [ ] The Worktrees settings section: location, naming pattern, insertable tokens, and live preview — #476 names "worktree location" only — `components/settings-view.tsx`, `lib/settings-data.ts`
-- [ ] The Agents section on environment cards and the whole Model Mappings dialog, including the header-is-the-mode-switch design — recorded only in commit messages, not on #458 — `components/settings-view.tsx`
-- [ ] The Flagged segment's red open-findings count and the finding Dismiss/Undo exit — landed after R58 with no ruling entry — `components/main-surface.tsx`, `components/lens-board.tsx`
-- [ ] Per-finding folding independent of its section — landed after R58 with no ruling entry — `components/lens-board.tsx`
-- [ ] The finding fix callout's "Discuss" control, which is inert — `components/lens-board.tsx`
-- [ ] The spec-header's "raw ⌘R" control, which is inert and whose chord is in no keybinding registry — `components/lens-board.tsx`, `lib/settings-data.ts`
-- [ ] The keybinding registry advertises ⌘K, ⌘N, ⌘B, ⌘J and ⌘, but only ⌘P is actually wired — `lib/settings-data.ts`, `components/command-menu.tsx` (R7 gives ⌘K to the command menu)
-- [ ] The named "composition Board" of #457 Topology A has no surface: the prototype has lens boards and nothing that presents as the orchestrator-authored composition — `components/main-surface.tsx`
-- [ ] The impl↔test flip toggle recorded as living in the code-block header (R41, #32) is not built — `components/code-block.tsx`
-- [ ] The ninth coach mark takes the R55 system past its stated cap of eight; #487 parked the cap question on its own ticket rather than amending R55 — `lib/tour.ts` (R55)
-- [ ] `ProjectPicker large` — the map records the New Chat headline picker growing to headline size, but the component takes no size prop — `components/settings-view.tsx`, `components/new-chat-view.tsx`
-- [ ] `SCENARIOS.md` states gpu-01 has no projects, but the seed tree gives it `ranking-model` — `lib/sidebar-data.ts` vs `SCENARIOS.md`
-- [ ] `SCENARIOS.md` and several fixture headers still describe `?scenario=<id>` deep links, which the route redesign replaced with `/s/<slug>` — `lib/scenarios/returned.ts`, `SCENARIOS.md` vs `app/s/[slug]/page.tsx` (#480)
-- [ ] The New Chat, Archived, Settings, Context Map and Indexing headers are 40px while the session headers are 56px (R51) — no ruling reconciles the two heights — `components/new-chat-view.tsx`, `components/settings-view.tsx`, `components/archived-view.tsx`, `components/context-map.tsx`, `components/project-indexing-view.tsx`
-- [ ] The run route's own header spacer is 40px while the pre-boards run-view spacer in a minted session is 56px (R52 amendment) — `app/s/[slug]/run/page.tsx` vs `components/session-view.tsx`
-- [ ] The New Chat page has a back arrow in its header, which R52's "no back button in a session" does not cover but sits adjacent to — `components/new-chat-view.tsx`
-- [ ] The teammate hand-off's `prLabel` defaults to "PR #434", the retired fictional number — `components/handoff-view.tsx` (SCENARIOS.md retires #434)
+These four are tracked on **[#492](https://github.com/rbutera/rennet/issues/492)** and feed the [#489](https://github.com/rbutera/rennet/issues/489) plan's spike-polish lane.
+
+- [ ] **Keybindings are advertised but unwired.** The registry lists ⌘P, ⌘K, ⌘N, ⌘B, ⌘J and ⌘, ; only ⌘P is bound, and R7 explicitly assigns ⌘K to the command menu. A settings page that lists a binding is a promise — wire them or cut the rows — `lib/settings-data.ts`, `components/command-menu.tsx` (R7, #492)
+- [ ] **The impl↔test flip is unbuilt.** R41 records it living in the code-block header, right side beside Copy, with placement settled on #32 — `components/code-block.tsx` (R41, #32, #492)
+- [ ] **`Discuss` on a finding's fix is inert.** R68 specifies it: create a local comment citing the fix, then move focus to the orchestrator chat — `components/lens-board.tsx` (R68, R24, #492)
+- [ ] **The run route's header spacer is 40px.** R60 makes the run route a session surface, so it takes 56px; the minted session's own pre-boards spacer is already 56px, so the two disagree — `app/s/[slug]/run/page.tsx` vs `components/session-view.tsx` (R60, #492)
+
+Two inert controls Rai did not rule on. They need a ruling before they need code, and are deliberately left open rather than guessed at:
+
+- [ ] The spec-header's "raw ⌘R" control is inert, and its chord is in no keybinding registry — `components/lens-board.tsx`, `lib/settings-data.ts`
+- [ ] The keyboard-shortcuts page's per-row "Change" control is inert — `components/settings-view.tsx`
+
+One open architectural question, unchanged by this batch:
+
+- [ ] The named "composition Board" of #457 Topology A has no surface: the prototype has lens boards and nothing that presents as the orchestrator-authored composition. The plan must decide whether it is a surface or whether the lens boards are it — `components/main-surface.tsx` (#457)
