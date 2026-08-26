@@ -3,7 +3,7 @@
  * (post-lanes rubric), unslop-edited.
  */
 
-import type { LensBoard } from "@/lib/lens-data"
+import type { BoardSection, LensBoard } from "@/lib/lens-data"
 
 export const sequenceBoard: LensBoard = {
   lens: "sequence",
@@ -226,4 +226,58 @@ export function tokenKind(token: string): string {
       ],
     },
   ],
+}
+
+/**
+ * Round 1's addressed account, told as the newest chapter of the walk. It
+ * lives here, not in Flagged — Flagged is exclusively what is currently
+ * flagged. Each returned round appends one of these at the bottom of
+ * Sequence, so repeated rounds read chronologically, newest last, and the
+ * section's delta lights the Sequence tab dot until it is opened.
+ *
+ * Chronology (SCENARIOS.md): issue #478's fix has NOT landed on real rennet
+ * (checked at build — #478 is open), so this section carries a literal
+ * `code` element (the fixture-convenience kind) rather than hydrating real
+ * lines.
+ */
+export const round1AddressedSection: BoardSection = {
+  id: "g2-addressed",
+  title: "Round 1 · Addressed",
+  delta: "new",
+  gist: "Every refresh exit now writes a terminal record. The missing-outcome finding is closed.",
+  counts: "1 finding",
+  elements: [
+    {
+      kind: "prose",
+      text: "`refreshAndPersist` now writes a secret-free terminal record on the two exits that previously left only `attempt`.\n\n- The non-decline exchange error.\n- The post-rotation persistence failure.\n\ndaemon.log no longer stops at `phase=attempt`, so a crash and a real outcome are now distinguishable. That ambiguity is what this change set out to remove. Raised as issue #478, and the fix landed on the branch this round.",
+    },
+    {
+      kind: "code",
+      path: "packages/adapters/src/github-auth.ts",
+      startLine: 258,
+      lang: "ts",
+      highlightLines: [260, 261, 265, 266],
+      code: `  } catch (error) {
+    if (error instanceof GitHubOAuthDeclined) { /* declined — already logged */ throw error }
+    if (isGitHubNetworkError(error)) {
+      log({ phase: "network", tokenKind: tokenKind(current) })
+    } else {
+      // exchange error that is neither decline nor network
+      log({ phase: "failed", tokenKind: tokenKind(current) })
+    }
+    throw error
+  }`,
+    },
+    {
+      kind: "callout",
+      tone: "info",
+      text: "The persistence-failure exit gets the same treatment. It writes a `failed` record before the throw escapes, so a rotation the store dropped is no longer a silent dead session.",
+    },
+  ],
+}
+
+/** Sequence, generation 2 (after round 1): the walk plus round 1's chapter. */
+export const sequenceGen2Board: LensBoard = {
+  ...sequenceBoard,
+  sections: [...sequenceBoard.sections, round1AddressedSection],
 }

@@ -9,7 +9,7 @@ import type { Scenario, RoundReturn } from "./index"
 import type { TurnData } from "@/lib/conversation-data"
 import { roundsScenario, PR_438_TITLE, PR_438_BODY } from "./rounds"
 import { designBoard } from "@/lib/fixtures/design"
-import { sequenceBoard } from "@/lib/fixtures/sequence"
+import { sequenceGen2Board } from "@/lib/fixtures/sequence"
 import { decisionsBoard } from "@/lib/fixtures/decisions"
 import { noiseBoard } from "@/lib/fixtures/noise"
 import { flaggedGen2Board } from "@/lib/fixtures/flagged-gen2"
@@ -74,7 +74,7 @@ export const returnedScenario: Scenario = {
   transcript: [...roundsScenario.transcript, ...returnTurns],
   boards: {
     design: designBoard,
-    sequence: sequenceBoard,
+    sequence: sequenceGen2Board,
     decisions: decisionsBoard,
     flagged: flaggedGen2Board,
     noise: noiseBoard,

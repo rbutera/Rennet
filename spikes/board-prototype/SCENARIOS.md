@@ -124,10 +124,17 @@ carried-forward blocks hydrate.
   wholesale next round. Generation 1 stays frozen as drill-down (a quiet
   "Generation 2 · round 1" line, not chrome prose). Asks/threads/highlights
   re-anchor by quote match; a casualty may land in the Detached list.
-- **Rounds ledger (R57)**: a Rounds control joins the header beside the
-  Map·Diff pill exactly when the session has a completed round; `?view=rounds`
-  lists one row per round (tally derived) with the selected report beneath, so
-  earlier reports stay readable.
+- **Rounds ledger (R57, renamed History)**: a History control joins the header
+  beside the Map·Diff pill exactly when the session has a completed round; its
+  label folds to the bare icon well before Map·Diff's labels do, so it never
+  touches the centered lens pill; `?view=rounds` lists one row per round
+  (tally derived) with the selected report beneath, so earlier reports stay
+  readable.
+- **Round chapters in Sequence**: a returned round's addressed account is NOT
+  a Flagged section — Flagged is exclusively what is currently flagged. It
+  appends to the bottom of Sequence as "Round N · Addressed", one chapter per
+  round, newest last, so repeated rounds grow the walk chronologically; the
+  chapter's delta dot rolls up to the Sequence segment until it is opened.
 - **Drafting activity feed**: the live regeneration block under the greeting
   is its live form (R32 amendment — the feed belongs to the rounds
   regeneration, not the Write Review lane); the settled report in the ledger

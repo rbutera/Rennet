@@ -1,12 +1,9 @@
 /**
- * Flagged, generation 2 (after round 1). Delta-aware: the missing-outcome
- * finding is marked addressed, the post-send copy finding carries forward as
- * still-open, and generation 1 freezes as a folded drill-down.
- *
- * Chronology (SCENARIOS.md): issue #478's fix has NOT landed on real rennet
- * (checked at build — #478 is open), so the addressed block carries a literal
- * `code` element (the fixture-convenience kind) rather than hydrating real
- * lines. Still-open and carried-forward blocks hydrate as before.
+ * Flagged, generation 2 (after round 1). Delta-aware: the post-send copy
+ * finding carries forward as still-open, generation 1 freezes as a folded
+ * drill-down. What the round ADDRESSED is not here — Flagged is exclusively
+ * what is currently flagged; the round's addressed account lives at the end
+ * of Sequence (`round1AddressedSection` in fixtures/sequence.ts).
  */
 
 import type { LensBoard } from "@/lib/lens-data"
@@ -16,41 +13,6 @@ export const flaggedGen2Board: LensBoard = {
   title: "Flagged",
   intro: "Generation 2 · round 1",
   sections: [
-    {
-      id: "g2-addressed",
-      title: "Addressed This Round",
-      delta: "reworked",
-      gist: "Every refresh exit now writes a terminal record. The missing-outcome finding is closed.",
-      counts: "1 finding",
-      elements: [
-        {
-          kind: "prose",
-          text: "`refreshAndPersist` now writes a secret-free terminal record on the two exits that previously left only `attempt`.\n\n- The non-decline exchange error.\n- The post-rotation persistence failure.\n\ndaemon.log no longer stops at `phase=attempt`, so a crash and a real outcome are now distinguishable. That ambiguity is what this change set out to remove. Raised as issue #478, and the fix landed on the branch this round.",
-        },
-        {
-          kind: "code",
-          path: "packages/adapters/src/github-auth.ts",
-          startLine: 258,
-          lang: "ts",
-          highlightLines: [260, 261, 265, 266],
-          code: `  } catch (error) {
-    if (error instanceof GitHubOAuthDeclined) { /* declined — already logged */ throw error }
-    if (isGitHubNetworkError(error)) {
-      log({ phase: "network", tokenKind: tokenKind(current) })
-    } else {
-      // exchange error that is neither decline nor network
-      log({ phase: "failed", tokenKind: tokenKind(current) })
-    }
-    throw error
-  }`,
-        },
-        {
-          kind: "callout",
-          tone: "info",
-          text: "The persistence-failure exit gets the same treatment. It writes a `failed` record before the throw escapes, so a rotation the store dropped is no longer a silent dead session.",
-        },
-      ],
-    },
     {
       id: "g2-open",
       title: "Still Open",
@@ -92,7 +54,7 @@ export const flaggedGen2Board: LensBoard = {
       elements: [
         {
           kind: "prose",
-          text: "**A refresh can log `attempt` and never a terminal outcome.** Two reachable exits left daemon.log stopped at `phase=attempt`.\n\n- A non-decline exchange error.\n- A persistence failure after a successful rotation.\n\nClosed this round (above).",
+          text: "**A refresh can log `attempt` and never a terminal outcome.** Two reachable exits left daemon.log stopped at `phase=attempt`.\n\n- A non-decline exchange error.\n- A persistence failure after a successful rotation.\n\nClosed this round — the account is at the end of Sequence.",
         },
         {
           kind: "prose",

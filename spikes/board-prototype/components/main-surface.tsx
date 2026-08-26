@@ -161,23 +161,25 @@ export function MainSurface({
             }}
           />
         </div>
-        {/* Rounds · Map · Diff — the ledger control joins the pill row only
-            once a round has completed. */}
+        {/* History · Map · Diff — the ledger control joins the pill row only
+            once a round has completed. Its label folds away earlier than
+            Map/Diff's (66rem vs 54rem): it sits nearest the centered lens
+            pill and looks janky when the two touch. */}
         <div className="flex items-center gap-1.5 justify-self-end">
         {rounds.length > 0 && (
           <button
             type="button"
             onClick={() => go(roundsOpen ? "board" : "rounds", view.lens)}
             aria-pressed={roundsOpen}
-            aria-label="Rounds"
-            title="Rounds"
+            aria-label="History"
+            title="History"
             className={cn(
               "flex items-center gap-1.5 rounded-full border border-border bg-card py-1 px-2.5 text-[12px] font-medium transition-colors",
               roundsOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
             <History className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="hidden @[54rem]:inline">Rounds</span>
+            <span className="hidden @[66rem]:inline">History</span>
           </button>
         )}
         {/* Map · Diff — one pill, two halves (R49 shape, header home). */}
