@@ -38,8 +38,8 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 ## 6. Verification (packet)
 
-- [ ] 6.1 `sh -c 'pnpm check'` green (exit 0, real target success — not a masked pipe status).
-- [ ] 6.2 `packages/types` gone from the workspace: absent from disk, `sh -c 'pnpm nx show projects'` lists no `rennet-types`.
-- [ ] 6.3 Zero `@rennet/types` grep hits in workspace source (`packages/ apps/ scripts/ eslint.config.mjs CLAUDE.md docs/` excluding `docs/dist`). Show the grep output.
-- [ ] 6.4 Positive control: temporarily add `import type { RepositoryProvenance } from "@rennet/types"` to one `packages/core` file — architecture and/or typecheck MUST fail. Show the failure, revert, re-run green.
-- [ ] 6.5 Flip B1 in `BUILD-STATUS.json` and output the completion sigil `<promise>B01-COMPLETE</promise>`.
+- [x] 6.1 `sh -c 'pnpm check'` green (exit 0, real target success — not a masked pipe status).
+- [x] 6.2 `packages/types` gone from the workspace: absent from disk, `sh -c 'pnpm nx show projects'` lists no `rennet-types`.
+- [x] 6.3 Zero `@rennet/types` grep hits in workspace source (`packages/ apps/ scripts/ eslint.config.mjs CLAUDE.md docs/` excluding `docs/dist`). Show the grep output.
+- [x] 6.4 Positive control: temporarily add `import type { RepositoryProvenance } from "@rennet/types"` to one `packages/core` file — architecture and/or typecheck MUST fail. Show the failure, revert, re-run green.
+- [x] 6.5 Flip B1 in `BUILD-STATUS.json` and output the completion sigil `<promise>B01-COMPLETE</promise>`.
