@@ -125,7 +125,38 @@ export function MainSurface({
             }}
           />
         </div>
-        <div className="justify-self-end" />
+        {/* Map · Diff — one pill, two halves (R49 shape, header home). */}
+        <div className="flex overflow-hidden rounded-full border border-border bg-card justify-self-end">
+          <button
+            type="button"
+            onClick={() => go(mapOpen ? "board" : "map", view.lens)}
+            aria-pressed={mapOpen}
+            aria-label="Map"
+            title="Map"
+            className={cn(
+              "flex items-center gap-1.5 py-1 pl-2.5 pr-2 text-[12px] font-medium transition-colors",
+              mapOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Map className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="hidden @[54rem]:inline">Map</span>
+          </button>
+          <span className="w-px self-stretch bg-border" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={() => go(diffOpen ? "board" : "diff", view.lens)}
+            aria-pressed={diffOpen}
+            aria-label="Diff"
+            title="Diff"
+            className={cn(
+              "flex items-center gap-1.5 py-1 pl-2 pr-2.5 text-[12px] font-medium transition-colors",
+              diffOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <FileDiff className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="hidden @[54rem]:inline">Diff</span>
+          </button>
+        </div>
       </header>
       {/* The view region owns the floating controls: they live in the margin
           beside the centered content column (R49). */}
@@ -148,41 +179,6 @@ export function MainSurface({
             <LensBoardView board={view.board} foldAll={view.lens !== "flagged"} />
           </div>
         ) : null}
-
-        {/* Map · Diff — one pill, two halves, floating top-right. */}
-        {!handoffOpen && (
-          <div className="absolute right-4 top-3 z-20 flex overflow-hidden rounded-full border border-border bg-card shadow-md">
-            <button
-              type="button"
-              onClick={() => go(mapOpen ? "board" : "map", view.lens)}
-              aria-pressed={mapOpen}
-              aria-label="Map"
-              title="Map"
-              className={cn(
-                "flex items-center gap-1.5 py-1.5 pl-3 pr-2.5 text-[12px] font-medium transition-colors",
-                mapOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Map className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="hidden @[54rem]:inline">Map</span>
-            </button>
-            <span className="w-px self-stretch bg-border" aria-hidden="true" />
-            <button
-              type="button"
-              onClick={() => go(diffOpen ? "board" : "diff", view.lens)}
-              aria-pressed={diffOpen}
-              aria-label="Diff"
-              title="Diff"
-              className={cn(
-                "flex items-center gap-1.5 py-1.5 pl-2.5 pr-3 text-[12px] font-medium transition-colors",
-                diffOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <FileDiff className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="hidden @[54rem]:inline">Diff</span>
-            </button>
-          </div>
-        )}
 
         {/* The exit CTA — a real floating action button, bottom-right. */}
         <button
