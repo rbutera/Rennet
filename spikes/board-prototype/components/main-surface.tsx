@@ -116,30 +116,6 @@ export function MainSurface({
           )}
         </div>
         <div className="flex min-w-0 items-center gap-1.5 justify-self-center">
-          <button
-            type="button"
-            onClick={() => go(mapOpen ? "board" : "map", view.lens)}
-            aria-pressed={mapOpen}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium transition-colors",
-              mapOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Map className="size-3.5" aria-hidden="true" />
-            <span className="hidden @[46rem]:inline">Map</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => go(diffOpen ? "board" : "diff", view.lens)}
-            aria-pressed={diffOpen}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[12px] font-medium transition-colors",
-              diffOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <FileDiff className="size-3.5" aria-hidden="true" />
-            <span className="hidden @[46rem]:inline">Diff</span>
-          </button>
           <ViewSwitcher
             segments={views.map((v) => ({ label: v.segment, icon: v.icon }))}
             active={mapOpen || diffOpen || handoffOpen ? "" : active}
@@ -149,44 +125,84 @@ export function MainSurface({
             }}
           />
         </div>
-        <div className="flex items-center gap-1 justify-self-end">
-          <button
-            type="button"
-            onClick={() => go(handoffOpen ? "board" : "handoff", view.lens)}
-            aria-pressed={handoffOpen}
-            aria-label={ctaLabel}
-            title={ctaLabel}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md px-3 py-1 text-[12px] font-medium transition-colors",
-              handoffOpen
-                ? "bg-secondary text-foreground"
-                : "bg-primary text-primary-foreground hover:bg-primary/90",
-            )}
-          >
-            <PenLine className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="hidden @[46rem]:inline">{ctaLabel}</span>
-            {askCount > 0 && <span>· {askCount}</span>}
-          </button>
-        </div>
+        <div className="justify-self-end" />
       </header>
-      {handoffOpen ? (
-        <HandoffView
-          handoff={scenario.handoff}
-          onDispatchRound={onDispatchRound}
-          onOpenPullRequest={onOpenPullRequest}
-        />
-      ) : mapOpen ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <MapBaseLine />
-          <ContextMapPanel />
-        </div>
-      ) : diffOpen ? (
-        <DiffView />
-      ) : view?.board ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <LensBoardView board={view.board} foldAll={view.lens !== "flagged"} />
-        </div>
-      ) : null}
+      {/* The view region owns the floating controls: they live in the margin
+          beside the centered content column (R49). */}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden @container">
+        {handoffOpen ? (
+          <HandoffView
+            handoff={scenario.handoff}
+            onDispatchRound={onDispatchRound}
+            onOpenPullRequest={onOpenPullRequest}
+          />
+        ) : mapOpen ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <MapBaseLine />
+            <ContextMapPanel />
+          </div>
+        ) : diffOpen ? (
+          <DiffView />
+        ) : view?.board ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <LensBoardView board={view.board} foldAll={view.lens !== "flagged"} />
+          </div>
+        ) : null}
+
+        {/* Map · Diff — one pill, two halves, floating top-right. */}
+        {!handoffOpen && (
+          <div className="absolute right-4 top-3 z-20 flex overflow-hidden rounded-full border border-border bg-card shadow-md">
+            <button
+              type="button"
+              onClick={() => go(mapOpen ? "board" : "map", view.lens)}
+              aria-pressed={mapOpen}
+              aria-label="Map"
+              title="Map"
+              className={cn(
+                "flex items-center gap-1.5 py-1.5 pl-3 pr-2.5 text-[12px] font-medium transition-colors",
+                mapOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Map className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="hidden @[54rem]:inline">Map</span>
+            </button>
+            <span className="w-px self-stretch bg-border" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => go(diffOpen ? "board" : "diff", view.lens)}
+              aria-pressed={diffOpen}
+              aria-label="Diff"
+              title="Diff"
+              className={cn(
+                "flex items-center gap-1.5 py-1.5 pl-2.5 pr-3 text-[12px] font-medium transition-colors",
+                diffOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <FileDiff className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="hidden @[54rem]:inline">Diff</span>
+            </button>
+          </div>
+        )}
+
+        {/* The exit CTA — a real floating action button, bottom-right. */}
+        <button
+          type="button"
+          onClick={() => go(handoffOpen ? "board" : "handoff", view.lens)}
+          aria-pressed={handoffOpen}
+          aria-label={ctaLabel}
+          title={ctaLabel}
+          className={cn(
+            "absolute bottom-6 right-5 z-20 flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-semibold shadow-lg transition-colors",
+            handoffOpen
+              ? "border border-border bg-secondary text-foreground"
+              : "bg-primary text-primary-foreground hover:bg-primary/90",
+          )}
+        >
+          <PenLine className="size-4.5 shrink-0" aria-hidden="true" />
+          <span className="hidden @[54rem]:inline">{ctaLabel}</span>
+          {askCount > 0 && <span>· {askCount}</span>}
+        </button>
+      </div>
     </div>
   )
 }
