@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Check, GitBranch, GitPullRequest } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Coachmark } from "@/components/coachmark"
 import { type Ask, useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
 import { AnchorReveal } from "@/components/code-tabs"
@@ -179,8 +180,10 @@ export function RoundsLanes({
           <p className="text-[13px] text-muted-foreground">Nothing staged yet.</p>
         )}
 
+        <Coachmark id="dispatch" />
         <button
           type="button"
+          data-tour="dispatch"
           disabled={!gathering}
           onClick={onDispatch}
           className="w-fit rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"

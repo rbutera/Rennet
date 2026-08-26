@@ -23,8 +23,10 @@ import {
   Trash2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Coachmark } from "@/components/coachmark"
 import { Collapse } from "@/components/collapse"
 import { useAppStore } from "@/lib/store"
+import { useTourStore } from "@/lib/tour"
 import { Spinner } from "@/components/ui/spinner"
 import { TargetIcon } from "@/components/target-badge"
 import { ProjectIcon } from "@/components/project-icon"
@@ -65,7 +67,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 
-const HELP_ITEMS = ["Documentation", "Keyboard Shortcuts", "Report an Issue"]
+const HELP_ITEMS = ["Documentation", "Keyboard Shortcuts", "Replay Tour", "Report an Issue"]
 
 function UpdateDialog({ trigger }: { trigger: React.ReactElement }) {
   return (
@@ -120,6 +122,10 @@ function HelpPopover({
                 if (label === "Keyboard Shortcuts") {
                   setOpen(false)
                   onOpenSettings()
+                }
+                if (label === "Replay Tour") {
+                  setOpen(false)
+                  useTourStore.getState().replay()
                 }
               }}
               className="flex h-8 items-center rounded-md px-2 text-left text-[13px] text-foreground/90 transition-colors hover:bg-secondary"
@@ -342,6 +348,8 @@ export function AppSidebar({
   onOpenArchived,
 }: AppSidebarProps) {
   const projects = React.useMemo(() => hosts.flatMap((host) => host.projects), [hosts])
+  // The one first-run spotlight: a truly empty install has nowhere else to go.
+  const noSessions = projects.every((project) => project.sessions.length === 0)
   const pinnedSessions = projects.flatMap((project) =>
     project.sessions.filter((s) => s.pinned && !s.archived).map((session) => ({ session, project })),
   )
@@ -413,6 +421,7 @@ export function AppSidebar({
             trigger={
               <button
                 type="button"
+                data-tour="new-chat"
                 aria-label="New Chat"
                 title="New Chat"
                 className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
@@ -470,6 +479,7 @@ export function AppSidebar({
         open ? "w-64" : "w-12",
       )}
     >
+      <Coachmark id="new-chat" enabled={noSessions} />
       {!open && rail}
       {open && (
       <div className="flex h-full min-h-0 w-64 flex-col">
@@ -510,6 +520,7 @@ export function AppSidebar({
           trigger={
             <button
               type="button"
+              data-tour="new-chat"
               className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-foreground/90 transition-colors hover:bg-secondary"
             >
               <MessageSquarePlus className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />

@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Check, GitPullRequest, Pencil, RotateCcw, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Coachmark } from "@/components/coachmark"
 import { type Ask, useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
 import { AnchorReveal } from "@/components/code-tabs"
@@ -377,7 +378,8 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
         {/* Verdict */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="text-[12px] text-muted-foreground">Verdict</span>
-          <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
+          <Coachmark id="verdict" />
+          <div data-tour="verdict" className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
             {(["Approve", "Request Changes", "Comment"] as Verdict[]).map((option) => (
               <button
                 key={option}
@@ -422,11 +424,14 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
         </div>
 
         {/* The living draft: open prose, no wrapper — the page is the review. */}
-        <ProseSelectionLayer
-          draftHandlers={{ onRevise: handleRevise, onDrop: handleDrop, explain: handleExplain }}
-        >
-          {reviewBody}
-        </ProseSelectionLayer>
+        <div data-tour="draft">
+          <Coachmark id="draft" />
+          <ProseSelectionLayer
+            draftHandlers={{ onRevise: handleRevise, onDrop: handleDrop, explain: handleExplain }}
+          >
+            {reviewBody}
+          </ProseSelectionLayer>
+        </div>
 
         {/* Line comments: the discrete objects get the cards. */}
         {inlineAsks.length > 0 && (

@@ -178,6 +178,15 @@ carried-forward blocks hydrate.
 
 ---
 
+## Coach marks (R55, 2026-08-26)
+
+Eight contextual coach marks teach the first run (`lib/tour.ts` registry,
+`components/coachmark.tsx`): new-chat spotlight on the empty sidebar, then
+smart-list, lenses, highlight, FAB, verdict, draft, dispatch — one at a
+time, chained per surface, learned on interaction, "Skip all tips" on every
+card, Help → Replay Tour and `?tour=reset` to refine. The root route lands
+on New Chat so the empty first run is actually the front door.
+
 ## First run starts empty (R54, 2026-08-26)
 
 The prototype opens with ZERO sessions everywhere (no pinned, no archived):

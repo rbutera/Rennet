@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Coachmark } from "@/components/coachmark"
 import type { HostItem } from "@/lib/sidebar-data"
 import { smartList, type SmartListItem } from "@/lib/smart-list-data"
 import type { TargetKind } from "@/lib/target-language"
@@ -233,7 +234,11 @@ export function NewChatView({
             </label>
           </div>
 
-          <div className="mt-3 flex flex-col divide-y divide-border/70 overflow-hidden rounded-lg border border-border">
+          <Coachmark id="smart-list" />
+          <div
+            data-tour="smart-list"
+            className="mt-3 flex flex-col divide-y divide-border/70 overflow-hidden rounded-lg border border-border"
+          >
             <CheckoutRow selected={target.kind === "checkout"} onSelect={() => setTarget({ kind: "checkout" })} />
             {visible.map((item) => (
               <ItemRow
