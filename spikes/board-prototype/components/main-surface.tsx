@@ -96,12 +96,20 @@ export function MainSurface({
   // The CTA names the job per review target (R35).
   const ctaLabel = scenario.cta
   const fabRef = React.useRef<HTMLButtonElement>(null)
-  // One durable pip: everything currently staged into the review.
-  const commentCount = Object.values(store?.comments ?? {}).reduce(
-    (sum, lines) => sum + Object.keys(lines).length,
+  // One durable pip: everything currently staged into the review. A comment
+  // or thread an ask was born from is the SAME item — the ask claims it.
+  const asks = store?.asks ?? []
+  const claimedLines = new Set(
+    asks.filter((a) => a.codeAnchor).map((a) => `${a.codeAnchor?.path}:${a.codeAnchor?.line}`),
+  )
+  const claimedThreads = new Set(asks.map((a) => a.threadId).filter(Boolean))
+  const commentCount = Object.entries(store?.comments ?? {}).reduce(
+    (sum, [path, lines]) =>
+      sum + Object.keys(lines).filter((line) => !claimedLines.has(`${path}:${line}`)).length,
     0,
   )
-  const pipCount = askCount + commentCount + (store?.quoteComments.length ?? 0)
+  const threadCount = (store?.quoteComments ?? []).filter((t) => !claimedThreads.has(t.id)).length
+  const pipCount = askCount + commentCount + threadCount
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">

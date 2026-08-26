@@ -48,7 +48,7 @@ export function FabPips({
   return (
     <span
       key={count}
-      className="absolute -right-1 -top-1.5 flex h-4.5 min-w-4.5 animate-pip-in items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold leading-none text-white shadow-sm"
+      className="absolute -right-1 -top-1.5 flex h-5.5 min-w-5.5 animate-pip-in items-center justify-center rounded-full bg-red-600 px-1.5 text-[11.5px] font-semibold leading-none text-white shadow-sm"
       aria-hidden="true"
     >
       {count}

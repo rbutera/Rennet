@@ -92,7 +92,13 @@ interface AppState {
   focusedThreadId: string | null
   focusThread: (id: string | null) => void
   asks: Ask[]
-  stageAsk: (text: string, intent: Ask["intent"], source: string, codeAnchor?: Ask["codeAnchor"]) => string
+  stageAsk: (
+    text: string,
+    intent: Ask["intent"],
+    source: string,
+    codeAnchor?: Ask["codeAnchor"],
+    threadId?: string,
+  ) => string
   unstageAsk: (id: string) => void
   retired: RetiredBlock[]
   retireBlock: (text: string, reason: string) => void
@@ -259,10 +265,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   focusedThreadId: null,
   focusThread: (id) => set({ focusedThreadId: id }),
   asks: [],
-  stageAsk: (text, intent, source, codeAnchor) => {
+  stageAsk: (text, intent, source, codeAnchor, threadId) => {
     const id = `ask-${askSeq++}`
     signalFab(intent === "request-change" ? "change" : "comment")
-    set((s) => ({ asks: [...s.asks, { id, text, intent, source, codeAnchor }] }))
+    set((s) => ({ asks: [...s.asks, { id, text, intent, source, codeAnchor, threadId }] }))
     return id
   },
   unstageAsk: (id) =>

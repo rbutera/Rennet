@@ -38,6 +38,8 @@ export interface Ask {
    * (board prose has no diff position to pin to).
    */
   codeAnchor?: { path: string; line: number }
+  /** The quote thread this ask was staged from, so the pip counts one item, not two. */
+  threadId?: string
 }
 
 /** A draft block retired by rework or Drop — ledgered, restorable (R32). */
@@ -59,7 +61,13 @@ interface CodeCommentsStore {
   focusThread: (id: string | null) => void
   /** Hand-off state: staged asks, the retired ledger, and rework triggers. */
   asks: Ask[]
-  stageAsk: (text: string, intent: Ask["intent"], source: string, codeAnchor?: Ask["codeAnchor"]) => string
+  stageAsk: (
+    text: string,
+    intent: Ask["intent"],
+    source: string,
+    codeAnchor?: Ask["codeAnchor"],
+    threadId?: string,
+  ) => string
   unstageAsk: (id: string) => void
   retired: RetiredBlock[]
   retireBlock: (text: string, reason: string) => void
