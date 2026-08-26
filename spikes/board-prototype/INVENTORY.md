@@ -958,11 +958,7 @@ These four are tracked on **[#492](https://github.com/rbutera/rennet/issues/492)
 - [ ] **`Discuss` on a finding's fix is inert.** R68 specifies it: create a local comment citing the fix, then move focus to the orchestrator chat — `components/lens-board.tsx` (R68, R24, #492)
 - [ ] **The run route's header spacer is 40px.** R60 makes the run route a session surface, so it takes 56px; the minted session's own pre-boards spacer is already 56px, so the two disagree — `app/s/[slug]/run/page.tsx` vs `components/session-view.tsx` (R60, #492)
 
-Two inert controls Rai did not rule on. They need a ruling before they need code, and are deliberately left open rather than guessed at:
+- [ ] **The spec-header's "raw ⌘R" control dies.** R69 kills it — remove the control; its chord joins no registry — `components/lens-board.tsx`, `lib/settings-data.ts` (R69, #492)
+- [ ] **Keybind remapping is unbuilt.** R70: the shortcuts page's per-row "Change" performs real remapping — capture the next chord, surface conflicts inline, persist to client settings — `components/settings-view.tsx` (R70, #476, #492)
 
-- [ ] The spec-header's "raw ⌘R" control is inert, and its chord is in no keybinding registry — `components/lens-board.tsx`, `lib/settings-data.ts`
-- [ ] The keyboard-shortcuts page's per-row "Change" control is inert — `components/settings-view.tsx`
-
-One open architectural question, unchanged by this batch:
-
-- [ ] The named "composition Board" of #457 Topology A has no surface: the prototype has lens boards and nothing that presents as the orchestrator-authored composition. The plan must decide whether it is a surface or whether the lens boards are it — `components/main-surface.tsx` (#457)
+The composition-Board question is resolved: **there is no sixth board** (#464, 2026-08-26). The lens boards are the reading surface; "composition" names the orchestrator's connective authoring across them — coverage assertion, carry + delta stamps, rollups, the hand-off drafts. Nothing to build here; the former open question is closed.

@@ -89,9 +89,9 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Code block card**: the reusable interface component that renders a code ref — highlighted code with its file path and line span, framed by surrounding commentary. The one way code appears in review surfaces; it renders a citation, so the never-copied rule holds. Distinct from the retired "card" sense of a board element.
 - **Diff view**: the raw patchset in GitHub's Files-changed shape — changed-file tree with filter, per-file cards with unified dual-gutter hunks, and viewed tracking. Not a lens: it toggles from a chip beside Map, outside the view switcher. Its line comments use the same local-comment → ask flow as code block cards, keyed to new-side line numbers so a request-change ask carries a real diff position.
 - **Review comment**: a comment drafted for the GitHub review, distinct from an internal finding until the human posts it.
-- **Draft board**: the board a lens's review agent drafts.
-- **Composition Board** (the Board): the surface the orchestrator authors from the lens drafts, where the human reviews.
-  _Avoid_: table, canvas
+- **Draft board**: the board a lens's review agent drafts; when it freezes it is the lens board the human reads. There is no separate composed surface.
+- **Composition**: the orchestrator's connective authoring across the lens boards — the coverage assertion, section carry with delta stamps, rollups, and the hand-off drafts. Composition is work, not a surface.
+  _Avoid_: composition Board, the Board (as a sixth surface), table, canvas
 - **Generation**: the set of boards produced for one review of one patchset.
 - **Successor account**: the comparison of a reviewed patchset with its successor after a coding-agent handoff.
   _Avoid_: delta re-review
