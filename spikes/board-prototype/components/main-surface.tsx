@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   DraftingCompass,
@@ -20,6 +21,7 @@ import { ContextMapPanel, MapBaseLine } from "@/components/context-map"
 import { DiffView } from "@/components/diff-view"
 import { HandoffView } from "@/components/handoff-view"
 import { useCodeComments } from "@/components/code-comments"
+import { FabPips } from "@/components/fab-pips"
 import { LensBoardView } from "@/components/lens-board"
 import type { LensBoard } from "@/lib/lens-data"
 import type { LensId } from "@/lib/lens-data"
@@ -93,6 +95,12 @@ export function MainSurface({
   const askCount = store?.asks.length ?? 0
   // The CTA names the job per review target (R35).
   const ctaLabel = scenario.cta
+  const fabRef = React.useRef<HTMLButtonElement>(null)
+  // Opening the hand-off marks the staged deltas as seen — pips clear.
+  const [pipClear, setPipClear] = React.useState(0)
+  React.useEffect(() => {
+    if (handoffOpen) setPipClear((n) => n + 1)
+  }, [handoffOpen])
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -180,12 +188,15 @@ export function MainSurface({
           </div>
         ) : null}
 
-        {/* The exit CTA — a real floating action button, bottom-right. */}
+        {/* The exit CTA — a real floating action button, bottom-right. Staged
+            work flies in and lands as register pips (R50); opening the
+            hand-off clears them (the draft has been seen). */}
         <button
+          ref={fabRef}
           type="button"
           onClick={() => go(handoffOpen ? "board" : "handoff", view.lens)}
           aria-pressed={handoffOpen}
-          aria-label={ctaLabel}
+          aria-label={askCount > 0 ? `${ctaLabel} · ${askCount}` : ctaLabel}
           title={ctaLabel}
           className={cn(
             "absolute bottom-6 right-5 z-20 flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-semibold shadow-lg transition-colors",
@@ -197,6 +208,7 @@ export function MainSurface({
           <PenLine className="size-4.5 shrink-0" aria-hidden="true" />
           <span className="hidden @[54rem]:inline">{ctaLabel}</span>
           {askCount > 0 && <span>· {askCount}</span>}
+          <FabPips fabRef={fabRef} clearSignal={pipClear} />
         </button>
       </div>
     </div>

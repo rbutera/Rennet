@@ -273,6 +273,22 @@
   animation: word-in 260ms ease-out forwards;
 }
 
+@keyframes pip-in {
+  0% {
+    transform: scale(0.4);
+  }
+  60% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-pip-in {
+  animation: pip-in 240ms ease-out;
+}
+
 /* Thin themed scrollbars — the default chrome scrollbar reads as a foreign
    element inside code block cards. */
 * {

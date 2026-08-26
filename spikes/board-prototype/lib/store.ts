@@ -1,3 +1,4 @@
+import { signalFab } from "@/lib/fab-signal"
 import { create } from "zustand"
 import { buildInitialHosts, type HostItem } from "@/lib/sidebar-data"
 import { DEFAULT_CHAT_WIDTH } from "@/components/resize-handle"
@@ -225,10 +226,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const next = { ...s.comments }
       const lineMap = { ...(next[path] ?? {}) }
+      const had = lineMap[line] !== undefined
       if (text === null) {
         delete lineMap[line]
+        if (had) signalFab("comment", -1)
       } else {
         lineMap[line] = text
+        if (!had) signalFab("comment")
       }
       if (Object.keys(lineMap).length > 0) {
         next[path] = lineMap
@@ -239,25 +243,34 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   addQuoteComment: (quote, text) => {
     const id = `quote-${quoteSeq++}`
+    signalFab("comment")
     set((s) => ({ quoteComments: [...s.quoteComments, { id, quote, messages: [{ author: "user", text }] }] }))
     return id
   },
-  addQuoteReply: (id, author, text) =>
+  addQuoteReply: (id, author, text) => {
+    if (author === "orchestrator") signalFab("model")
     set((s) => ({
       quoteComments: s.quoteComments.map((entry) =>
         entry.id === id ? { ...entry, messages: [...entry.messages, { author, text }] } : entry,
       ),
-    })),
+    }))
+  },
   removeQuoteComment: (id) => set((s) => ({ quoteComments: s.quoteComments.filter((entry) => entry.id !== id) })),
   focusedThreadId: null,
   focusThread: (id) => set({ focusedThreadId: id }),
   asks: [],
   stageAsk: (text, intent, source, codeAnchor) => {
     const id = `ask-${askSeq++}`
+    signalFab(intent === "request-change" ? "change" : "comment")
     set((s) => ({ asks: [...s.asks, { id, text, intent, source, codeAnchor }] }))
     return id
   },
-  unstageAsk: (id) => set((s) => ({ asks: s.asks.filter((ask) => ask.id !== id) })),
+  unstageAsk: (id) =>
+    set((s) => {
+      const gone = s.asks.find((ask) => ask.id === id)
+      if (gone) signalFab(gone.intent === "request-change" ? "change" : "comment", -1)
+      return { asks: s.asks.filter((ask) => ask.id !== id) }
+    }),
   retired: [],
   retireBlock: (text, reason) =>
     set((s) => ({ retired: [...s.retired, { id: `retired-${s.retired.length}`, text, reason }] })),
