@@ -20,7 +20,6 @@
     "@rennet/core": "workspace:*",
     "@rennet/protocol": "workspace:*",
     "@rennet/server": "workspace:*",
-    "@rennet/types": "workspace:*",
     "@rennet/app-ui": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
     "electron": "43.2.0",

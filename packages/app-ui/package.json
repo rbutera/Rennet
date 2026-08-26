@@ -7,7 +7,6 @@
   "dependencies": {
     "@rennet/protocol": "workspace:*",
     "@rennet/theme": "workspace:*",
-    "@rennet/types": "workspace:*",
     "@rennet/ui": "workspace:*",
     "@shikijs/langs": "4.4.3",
     "lucide-react": "1.31.0",
