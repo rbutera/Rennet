@@ -270,7 +270,8 @@ function assemble(
   return {
     reviewId,
     patchsetId,
-    tasks,
+    // Strip the array-level readonly: the mutable z.infer bundle field wants ComposedTask[].
+    tasks: [...tasks],
     prompt: renderComposedPrompt(tasks),
     digest: composedDigest(tasks),
     composed,

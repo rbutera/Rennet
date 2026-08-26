@@ -389,7 +389,9 @@ export async function runHypothesisPass(
     const report = validateDocument({ document, patchset: patchsetRef, manifest });
     if (report.admitted) {
       attempts.push({ attempt, outcome: "admitted", report });
-      const hypothesis: ReviewHypothesis = { ...body, repoContextPresent };
+      // readonly-variance: body is the hand-written (readonly) ReviewHypothesisBody;
+      // ReviewHypothesis is the mutable z.infer. Same shape, compile-time only.
+      const hypothesis = { ...body, repoContextPresent } as ReviewHypothesis;
       return { status: "ok", hypothesis, document, report, attempts, budgetRefused };
     }
     attempts.push({ attempt, outcome: "rejected", report });

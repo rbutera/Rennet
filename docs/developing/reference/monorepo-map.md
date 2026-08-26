@@ -23,7 +23,7 @@ check rejects missing or misnamed rows here.
 | `rennet-types` | `@rennet/types` | `packages/types` | Shared domain types | None |
 | `rennet-theme` | `@rennet/theme` | `packages/theme` | Shared design tokens and generated mobile palette | None |
 | `rennet-protocol` | `@rennet/protocol` | `packages/protocol` | Command, event, and wire schemas | types |
-| `rennet-instructions` | `@rennet/instructions` | `packages/instructions` | Versioned model instructions | types |
+| `rennet-instructions` | `@rennet/instructions` | `packages/instructions` | Versioned model instructions | protocol |
 | `rennet-lens-instructions` | `@rennet/lens-instructions` | `packages/lens-instructions` | Lens-agent drafting prompts and the unslop editor pass | None |
 | `rennet-core` | `@rennet/core` | `packages/core` | Review behavior and domain workflows | types, protocol, instructions |
 | `rennet-adapters` | `@rennet/adapters` | `packages/adapters` | Git, GitHub, filesystem, persistence, and harness integrations | types, protocol, instructions, core |
