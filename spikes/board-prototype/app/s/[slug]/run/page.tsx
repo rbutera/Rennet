@@ -28,8 +28,12 @@ export default function RunPage() {
     .flatMap((p) => p.sessions)
     .find((s) => s.id === scenario?.session.id)?.time
   const alreadyRan = isRound && liveTime !== scenario?.session.time
+  // Captured at mount: onComplete stamps the session row, and a live recompute
+  // would flip this guard on the still-mounted page — its bounce-back replace
+  // then races (and beats) the forward push to /s/returned.
+  const alreadyRanAtMount = React.useRef(alreadyRan).current
 
-  const bounce = !isRound || alreadyRan
+  const bounce = !isRound || alreadyRanAtMount
   React.useEffect(() => {
     if (bounce) router.replace(`/s/${slug}`)
   }, [bounce, router, slug])
