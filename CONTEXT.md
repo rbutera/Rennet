@@ -52,6 +52,9 @@ This file defines the terms shared by the product, documentation, and code. It c
 
 ## Session targets
 
+- **Session**: one continuous conversation with the orchestrator and everything hanging off it — its threads, its claim, and at most one review once a target binds. The one chat travels with the reviewer across every surface; it never splits per surface. Sessions nest under projects in the sidebar. Once boards exist the target is locked: a new target means a new session.
+  _Avoid_: chat (as the entity name), thread (for the whole session)
+- **Claim**: a session's hold on its review target, taken when the session starts. A branch and its pull request are one claimed thing; claimed targets leave the New chat list. Released only by archiving the session.
 - **Review target**: the thing a session reviews — your branch, your PR, or a teammate PR. Every surface names a target with these three terms and no synonyms.
   _Avoid_: own diff, local work (as a target name)
 - **Your branch**: a working branch of yours with no pull request yet.
