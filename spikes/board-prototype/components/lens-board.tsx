@@ -556,7 +556,13 @@ function FixCallout({
     <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
       <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fix</span>
       <RichText text={fix} paragraphClassName="text-[13px] leading-relaxed text-foreground/90" />
-      <div className="flex items-center gap-1.5 pt-0.5">
+      <div className="flex items-center justify-end gap-1.5 pt-0.5">
+        <button
+          type="button"
+          className="rounded border border-border px-2 py-0.5 text-[11.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+        >
+          Discuss
+        </button>
         <button
           type="button"
           onClick={toggle}
@@ -568,12 +574,6 @@ function FixCallout({
           )}
         >
           {staged ? "Staged · Request Change ✓" : "Request This Change"}
-        </button>
-        <button
-          type="button"
-          className="rounded border border-border px-2 py-0.5 text-[11.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-        >
-          Discuss
         </button>
       </div>
     </div>
