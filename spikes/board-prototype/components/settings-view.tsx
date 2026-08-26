@@ -258,6 +258,35 @@ function MachinePage({ hosts }: { hosts: HostItem[] }) {
   )
 }
 
+/**
+ * Official marks, served locally from `public/brand/`. They identify the
+ * third-party services a row talks to (nominative use); each remains its
+ * owner's trademark. The Git logo is by Jason Long, CC BY 3.0.
+ * GitHub's Invertocat has no sanctioned colour form — black or white only, so
+ * it scheme-swaps like the sidebar lockup does. The rest read on both schemes.
+ */
+const TOOL_MARKS: Partial<Record<SourceControlTool["id"], string>> = {
+  git: "/brand/git.svg",
+  glab: "/brand/gitlab.svg",
+  bitbucket: "/brand/bitbucket.svg",
+}
+
+function ToolMark({ id }: { id: SourceControlTool["id"] }) {
+  const src = TOOL_MARKS[id]
+  if (!src) {
+    return (
+      <>
+        {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
+        <img src="/brand/github-mark-white.svg" alt="" aria-hidden="true" className="hidden size-4 dark:block" />
+        {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
+        <img src="/brand/github-mark-black.svg" alt="" aria-hidden="true" className="size-4 dark:hidden" />
+      </>
+    )
+  }
+  // biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed
+  return <img src={src} alt="" aria-hidden="true" className="size-4" />
+}
+
 const SOURCE_CONTROL_STATUS: Record<SourceControlTool["status"], { label: string; chip: string }> = {
   available: { label: "Available", chip: "bg-green-soft text-green" },
   "not-authenticated": { label: "Not Authenticated", chip: "bg-warn-soft text-warn" },
@@ -290,6 +319,7 @@ function SourceControlList({ host }: { host: HostItem }) {
             key={tool.id}
             label={
               <span className="flex items-center gap-2">
+                <ToolMark id={tool.id} />
                 {tool.label}
                 {tool.version && (
                   <span className="font-mono text-[11px] font-normal text-muted-foreground/70">
