@@ -69,8 +69,14 @@ best-practices, Huntley's Ralph, Pocock's bounded AFK variant). The rules:
 
 ### The packet (per OpenSpec change)
 
-Every change directory carries a `context.md` manifest — the implementing
-agent's *entire* context authority, copied from this plan's workstream entry:
+**The packets are pre-authored and committed**: every Rennet-side change
+directory (`openspec/changes/b01-*` … `c14-*`) already exists holding its
+`context.md`, written by the plan session while it held every decision —
+the packet precedes the proposal, not the other way round. A dispatching
+session authors `proposal.md` + `tasks.md` *from* the packet sitting next to
+them, plus the shared loop rules in `openspec/BUILD-LOOP.md`. (Track A's
+packet is [#463](https://github.com/rbutera/rennet/issues/463) itself — its
+repo doesn't exist yet.) Each packet carries:
 
 1. Objective + out-of-scope statement + completion sigil.
 2. The decision tickets it implements (permalinks) and the ruling texts it
