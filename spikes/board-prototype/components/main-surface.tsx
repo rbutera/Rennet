@@ -96,11 +96,12 @@ export function MainSurface({
   // The CTA names the job per review target (R35).
   const ctaLabel = scenario.cta
   const fabRef = React.useRef<HTMLButtonElement>(null)
-  // Opening the hand-off marks the staged deltas as seen — pips clear.
-  const [pipClear, setPipClear] = React.useState(0)
-  React.useEffect(() => {
-    if (handoffOpen) setPipClear((n) => n + 1)
-  }, [handoffOpen])
+  // One durable pip: everything currently staged into the review.
+  const commentCount = Object.values(store?.comments ?? {}).reduce(
+    (sum, lines) => sum + Object.keys(lines).length,
+    0,
+  )
+  const pipCount = askCount + commentCount + (store?.quoteComments.length ?? 0)
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -196,7 +197,7 @@ export function MainSurface({
           type="button"
           onClick={() => go(handoffOpen ? "board" : "handoff", view.lens)}
           aria-pressed={handoffOpen}
-          aria-label={askCount > 0 ? `${ctaLabel} · ${askCount}` : ctaLabel}
+          aria-label={pipCount > 0 ? `${ctaLabel} · ${pipCount}` : ctaLabel}
           title={ctaLabel}
           className={cn(
             "absolute bottom-6 right-5 z-20 flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-semibold shadow-lg transition-colors",
@@ -207,8 +208,7 @@ export function MainSurface({
         >
           <PenLine className="size-4.5 shrink-0" aria-hidden="true" />
           <span className="hidden @[54rem]:inline">{ctaLabel}</span>
-          {askCount > 0 && <span>· {askCount}</span>}
-          <FabPips fabRef={fabRef} clearSignal={pipClear} />
+          <FabPips fabRef={fabRef} count={pipCount} />
         </button>
       </div>
     </div>
