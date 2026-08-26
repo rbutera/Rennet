@@ -383,9 +383,8 @@ export function AppSidebar({
     setRenamingId(null)
   }
 
-  if (!open) {
-    return (
-      <div className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border py-2">
+  const rail = (
+      <div className="flex h-full w-12 flex-col items-center py-2">
         <button
           type="button"
           onClick={onToggle}
@@ -458,11 +457,19 @@ export function AppSidebar({
           </button>
         </div>
       </div>
-    )
-  }
+  )
 
   return (
-    <div className="flex h-full min-h-0 w-64 shrink-0 flex-col border-r border-border">
+    // One persistent element animates the width; rail/full swap inside it.
+    <div
+      className={cn(
+        "h-full shrink-0 overflow-hidden border-r border-border transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        open ? "w-64" : "w-12",
+      )}
+    >
+      {!open && rail}
+      {open && (
+      <div className="flex h-full min-h-0 w-64 flex-col">
       <div className="flex h-10 shrink-0 items-center justify-between px-3">
         <span className="text-[13px] font-medium tracking-tight text-foreground">Rennet</span>
         <button
@@ -753,6 +760,8 @@ export function AppSidebar({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
+      )}
     </div>
   )
 }

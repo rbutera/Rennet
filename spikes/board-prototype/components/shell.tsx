@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { cn } from "@/lib/utils"
 import { usePathname, useRouter } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
 import { AppearanceSync } from "@/components/appearance-sync"
@@ -33,6 +34,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const hosts = useAppStore((s) => s.hosts)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const chatOpen = useAppStore((s) => s.chatOpen)
+  const [resizingChat, setResizingChat] = React.useState(false)
+  const resizeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const chatWidth = useAppStore((s) => s.chatWidth)
   const addProjectOpen = useAppStore((s) => s.addProjectOpen)
   const addProjectHostId = useAppStore((s) => s.addProjectHostId)
@@ -113,10 +116,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           }}
         />
 
-        {/* Chat stays mounted while chatOpen; hidden (not unmounted) off the
-            scenario board so its turns survive navigation. */}
-        {chatOpen && (
-          <div className={showChat ? "contents" : "hidden"}>
+        {/* Chat stays mounted; the wrapper animates its width shut so the
+            column slides instead of vanishing. Resizing bypasses the
+            transition (it would lag the drag). */}
+        {showChat && (
+          <div
+            className={cn(
+              "flex overflow-hidden",
+              !resizingChat && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+            )}
+            style={{ width: chatOpen ? chatWidth + 4 : 0 }}
+            inert={!chatOpen}
+          >
             <ChatColumn
               onCollapse={() => useAppStore.getState().setChatOpen(false)}
               width={chatWidth}
@@ -124,7 +135,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               projectName={trail.projectName}
               session={trail.session}
             />
-            <ResizeHandle value={chatWidth} onChange={(w) => useAppStore.getState().setChatWidth(w)} />
+            <ResizeHandle
+              value={chatWidth}
+              onChange={(w) => {
+                setResizingChat(true)
+                if (resizeTimer.current) clearTimeout(resizeTimer.current)
+                resizeTimer.current = setTimeout(() => setResizingChat(false), 200)
+                useAppStore.getState().setChatWidth(w)
+              }}
+            />
           </div>
         )}
 
