@@ -328,7 +328,7 @@ export const reviewRoles: ReviewRole[] = [
     id: "second-seat",
     label: "Flagged Second Seat",
     hint: "The independent second opinion on Flagged — reconciled, never merged.",
-    dual: { model: "gpt-5.5", effort: "medium" },
+    dual: { model: "gpt-5.6-sol", effort: "high" },
     claudeOnly: null,
     codexOnly: null,
   },
