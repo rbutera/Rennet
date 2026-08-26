@@ -265,46 +265,76 @@ function MachinePage({ hosts }: { hosts: HostItem[] }) {
           <EnvironmentCard key={h.id} host={h} />
         ))}
       </Section>
-
-      <ReviewAgentsSection />
     </>
   )
 }
 
 /**
- * How reviews use the agents above. Dual model runs an independent second
- * seat where both agents are available; a single-agent review carries a
- * "single provider — no second opinion" note instead of blocking. Mappings
- * are the Model Council's per-role defaults; an edit becomes a
+ * How reviews use this host's agents, so it lives on the card with them.
+ * The mode switch only exists when there is a choice — two enabled agents;
+ * dual runs an independent second seat and reconciles, never merges. The
+ * mappings are the Model Council's per-role defaults; an edit becomes a
  * `routing.task.*` override — model and effort only, the harness always
  * follows the model's provider (#89).
  */
-function ReviewAgentsSection() {
+function ReviewSettings({ host, enabledIds }: { host: HostItem; enabledIds: string[] }) {
   const [mode, setMode] = React.useState<ReviewMode>("dual")
   const [mappingsOpen, setMappingsOpen] = React.useState(false)
 
+  const detected = (agentTools[host.id] ?? []).length > 0
+  if (!detected) return null
+
+  const both = enabledIds.includes("claude") && enabledIds.includes("codex")
+  // With one agent the scenario is settled; the switch would be a dead knob.
+  const effectiveMode: ReviewMode = both
+    ? mode
+    : enabledIds.includes("claude")
+      ? "claude-only"
+      : "codex-only"
+  const columns = both ? MODE_COLUMNS : MODE_COLUMNS.filter((c) => c.id === effectiveMode)
+
   return (
-    <Section title="Review Agents" caption="routing.* in ~/.rennet/daemon-settings.json">
+    <div className="flex flex-col border-t border-border pt-1">
+      <span className="pt-1 text-[12px] font-medium text-foreground">Review</span>
+      {both && (
+        <Row
+          label="Review Mode"
+          hint="dual runs an independent second seat and reconciles — concur or disagree, never a merged answer"
+        >
+          <Segmented
+            options={REVIEW_MODES.map((m) => m.label)}
+            value={REVIEW_MODES.find((m) => m.id === mode)?.label ?? "Dual Model"}
+            onChange={(label) => {
+              const next = REVIEW_MODES.find((m) => m.label === label)
+              if (next) setMode(next.id)
+            }}
+          />
+        </Row>
+      )}
       <Row
-        label="Review Mode"
-        hint="dual runs an independent second seat and reconciles — concur or disagree, never a merged answer"
+        label="Model Mappings"
+        hint={
+          enabledIds.length === 0
+            ? "enable an agent above to map models"
+            : "which model carries each role on this host"
+        }
       >
-        <Segmented
-          options={REVIEW_MODES.map((m) => m.label)}
-          value={REVIEW_MODES.find((m) => m.id === mode)?.label ?? "Dual Model"}
-          onChange={(label) => {
-            const next = REVIEW_MODES.find((m) => m.label === label)
-            if (next) setMode(next.id)
-          }}
-        />
-      </Row>
-      <Row label="Model Mappings" hint="which model carries each role, per availability">
-        <Button variant="outline" size="xs" onClick={() => setMappingsOpen(true)}>
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={enabledIds.length === 0}
+          onClick={() => setMappingsOpen(true)}
+        >
           Edit Mappings
         </Button>
       </Row>
-      <MappingsDialog mode={mode} open={mappingsOpen} onOpenChange={setMappingsOpen} />
-    </Section>
+      <MappingsDialog
+        mode={effectiveMode}
+        columns={columns}
+        open={mappingsOpen}
+        onOpenChange={setMappingsOpen}
+      />
+    </div>
   )
 }
 
@@ -322,16 +352,18 @@ function candidateModels(column: ReviewMode): string[] {
 }
 
 /**
- * The council's table, one row per role, the active availability column
- * highlighted. Cosmetic in the prototype: picks change local state, nothing
- * writes an override.
+ * The council's table, one row per role, only the columns this host's
+ * enabled agents make real, the active one highlighted. Cosmetic in the
+ * prototype: picks change local state, nothing writes an override.
  */
 function MappingsDialog({
   mode,
+  columns,
   open,
   onOpenChange,
 }: {
   mode: ReviewMode
+  columns: typeof MODE_COLUMNS
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -349,7 +381,7 @@ function MappingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className={columns.length > 1 ? "sm:max-w-[600px]" : "sm:max-w-[420px]"}>
         <DialogHeader>
           <DialogTitle>Model Mappings</DialogTitle>
           <DialogDescription>
@@ -357,9 +389,12 @@ function MappingsDialog({
             sets an override for that role — the harness follows the model.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr] items-center gap-x-3 gap-y-0 text-[12px]">
+        <div
+          className="grid items-center gap-x-3 gap-y-0 text-[12px]"
+          style={{ gridTemplateColumns: `1.4fr repeat(${columns.length}, 1fr)` }}
+        >
           <span />
-          {MODE_COLUMNS.map((column) => (
+          {columns.map((column) => (
             <span
               key={column.id}
               className={cn(
@@ -378,7 +413,7 @@ function MappingsDialog({
               >
                 {role.label}
               </span>
-              {MODE_COLUMNS.map((column) => {
+              {columns.map((column) => {
                 const assignment = role[column.key]
                 return (
                   <span key={column.id} className="border-t border-border py-2">
@@ -493,6 +528,16 @@ function EnvironmentCard({ host }: { host: HostItem }) {
   const version = updated ? LATEST_DAEMON : env.daemonVersion
   const sessions = host.projects.reduce((n, p) => n + p.sessions.length, 0)
 
+  // Which agents this host may use lives on the card, because the review
+  // settings below it depend on the answer. Cosmetic: toggles flip fixtures.
+  const hostAgents = agentTools[host.id] ?? []
+  const [agentEnabled, setAgentEnabled] = React.useState<Record<string, boolean>>(() =>
+    Object.fromEntries(hostAgents.map((t) => [t.id, t.enabled])),
+  )
+  const toggleAgent = (id: string, next: boolean) =>
+    setAgentEnabled((prev) => ({ ...prev, [id]: next }))
+  const enabledAgentIds = hostAgents.filter((t) => agentEnabled[t.id]).map((t) => t.id)
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-card/40 p-4">
       <div className="flex items-center gap-2">
@@ -585,7 +630,9 @@ function EnvironmentCard({ host }: { host: HostItem }) {
           Rennet rides gh — the OAuth-shaped Connect flow is gone). */}
       <SourceControlList host={host} />
 
-      <AgentsList host={host} />
+      <AgentsList host={host} enabled={agentEnabled} onToggle={toggleAgent} />
+
+      <ReviewSettings host={host} enabledIds={enabledAgentIds} />
 
       <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
         <DialogContent>
@@ -747,12 +794,16 @@ function AgentMark({ id }: { id: AgentTool["id"] }) {
  * fixes it. The toggle rules an agent out of reviews on this host without
  * uninstalling anything.
  */
-function AgentsList({ host }: { host: HostItem }) {
+function AgentsList({
+  host,
+  enabled,
+  onToggle,
+}: {
+  host: HostItem
+  enabled: Record<string, boolean>
+  onToggle: (id: string, next: boolean) => void
+}) {
   const tools = agentTools[host.id] ?? []
-  // Cosmetic in the prototype: the toggle flips fixture state, nothing detects.
-  const [enabled, setEnabled] = React.useState<Record<string, boolean>>(() =>
-    Object.fromEntries(tools.map((t) => [t.id, t.enabled])),
-  )
 
   return (
     <div className="flex flex-col border-t border-border pt-1">
@@ -788,7 +839,7 @@ function AgentsList({ host }: { host: HostItem }) {
           >
             <Switch
               checked={enabled[tool.id] ?? tool.enabled}
-              onChange={(next) => setEnabled((prev) => ({ ...prev, [tool.id]: next }))}
+              onChange={(next) => onToggle(tool.id, next)}
               label={`Use ${tool.label} on ${host.label}`}
             />
           </Row>
