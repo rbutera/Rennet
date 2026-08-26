@@ -1,4 +1,4 @@
-import type { DecompositionBlockingState, FlaggedReview } from "@rennet/types";
+import type { DecompositionBlockingState, FlaggedReview } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { stampBlockingStates } from "./flagged-blocking-states";
 

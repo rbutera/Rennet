@@ -10,7 +10,7 @@ import {
   decompose,
   runDualFindingReview,
 } from "@rennet/core";
-import type { Patchset, RspTokenUsage } from "@rennet/types";
+import type { Patchset, RspTokenUsage } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createClaudeHarness } from "./claude-query";
 import {

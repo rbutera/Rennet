@@ -36,8 +36,8 @@ import type {
   KnowledgeSet,
   KnowledgeStatement,
   KnowledgeStatus,
-} from "@rennet/types";
-import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/types";
+} from "@rennet/protocol";
+import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 import { fileBlobIndex, knowledgeStatementId } from "./knowledge";

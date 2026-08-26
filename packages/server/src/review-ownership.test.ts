@@ -8,7 +8,7 @@ import {
   ProjectSnapshotStore,
   resolveBaseRef,
 } from "@rennet/adapters";
-import type { Review } from "@rennet/types";
+import type { Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadReviewOwnership, type ReviewOwnershipDeps } from "./review-ownership";
 

@@ -25,7 +25,6 @@
  * file inventory IS the index (Rule 75: freshness by content, never by age).
  */
 
-import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type {
   AnchorSpan,
   KnowledgeAnchor,
@@ -34,8 +33,8 @@ import type {
   KnowledgeSet,
   KnowledgeStatement,
   KnowledgeStatus,
-} from "@rennet/types";
-import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/types";
+} from "@rennet/protocol";
+import { canonicalize, KNOWLEDGE_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import type { LoadedSnapshot, SnapshotGateFailure } from "./project-context";
 import { isSafeRepoRelativePath } from "./project-context";
 

@@ -1,4 +1,4 @@
-import type { OwnershipRule, PatchFile } from "@rennet/types";
+import type { OwnershipRule, PatchFile } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { type BlastRadiusInput, computeBlastRadius, type FanInIndex } from "./blast-radius";
 

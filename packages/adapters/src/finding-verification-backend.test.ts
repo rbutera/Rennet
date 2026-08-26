@@ -8,7 +8,7 @@ import type {
   SessionSpec,
   TurnInput,
 } from "@rennet/core";
-import type { Hunk, Patchset, PatchsetIntentSurface } from "@rennet/types";
+import type { Hunk, Patchset, PatchsetIntentSurface } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   createGitShowFileRead,

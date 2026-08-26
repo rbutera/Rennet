@@ -1,5 +1,5 @@
 import { createInvocationBudget } from "@rennet/core";
-import type { Patchset } from "@rennet/types";
+import type { Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
 

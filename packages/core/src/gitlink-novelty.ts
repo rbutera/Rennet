@@ -1,4 +1,4 @@
-import type { LedgerEntry, NoveltyLedger } from "@rennet/types";
+import type { LedgerEntry, NoveltyLedger } from "@rennet/protocol";
 
 export interface GitlinkEntry {
   readonly path: string;

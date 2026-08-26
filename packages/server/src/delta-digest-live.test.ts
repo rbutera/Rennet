@@ -5,7 +5,7 @@ import type {
   HarnessEvent,
   HarnessPort,
 } from "@rennet/core";
-import type { DeltaAccount, Patchset, Review } from "@rennet/types";
+import type { DeltaAccount, Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 

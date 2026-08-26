@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, posix, resolve, win32 } from "node:path";
 import { detectLocus, type Locus, type PatchsetCapturePort, toWindowsView } from "@rennet/core";
-import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/types";
+import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/protocol";
 import {
   type Counts,
   DEFAULT_VISIBLE_BYTE_LIMIT,

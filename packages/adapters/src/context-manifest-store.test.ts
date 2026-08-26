@@ -1,8 +1,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ContextManifest, ContextSendRecord } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { ContextManifest, ContextSendRecord } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { ContextManifestStore } from "./context-manifest-store";
 import { ProjectSnapshotStore } from "./project-snapshot-store";

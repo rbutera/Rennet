@@ -1,5 +1,5 @@
 import type { NoveltyResult } from "@rennet/core";
-import type { Patchset } from "@rennet/types";
+import type { Patchset } from "@rennet/protocol";
 import type { NoveltyLedgerReader } from "./novelty-ledger-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────

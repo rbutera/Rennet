@@ -27,7 +27,7 @@
  * is NOT a `0`; the distinction (defect vs instruction) is the whole point.
  */
 
-import { type BudgetGrant, type InvocationBudget, R10_BUDGET_EXHAUSTED } from "@rennet/types";
+import { type BudgetGrant, type InvocationBudget, R10_BUDGET_EXHAUSTED } from "@rennet/protocol";
 import { DEFAULT_MAX_HARNESS_INVOCATIONS } from "./route-plan";
 
 /**

@@ -2,14 +2,14 @@ import {
   DECOMPOSITION_PROPOSAL_CONTRACT,
   DECOMPOSITION_SKELETON_CONTRACT,
 } from "@rennet/instructions";
-import { CHUNK_ASSIGNABLE_ANGLES, sha256Hex } from "@rennet/protocol";
 import type {
   DecompositionProposalBody,
   PatchFile,
   Patchset,
   RspCapabilitySnapshot,
   RspEnvelope,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { CHUNK_ASSIGNABLE_ANGLES, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   buildOfferedManifest,

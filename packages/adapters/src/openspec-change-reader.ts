@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseOpenSpecChange } from "@rennet/core";
-import type { OpenSpecChange, Patchset } from "@rennet/types";
+import type { OpenSpecChange, Patchset } from "@rennet/protocol";
 import { createGitShowFileRead } from "./finding-verification-backend";
 import type { GitExec } from "./git-range-diff";
 

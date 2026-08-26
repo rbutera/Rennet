@@ -9,7 +9,7 @@ import {
   type ProjectMap,
   type ToolOutcome,
 } from "@rennet/core";
-import type { ProjectSnapshotManifest } from "@rennet/types";
+import type { ProjectSnapshotManifest } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { projectContextBackend, type ResolvedRepoContext } from "./project-context-backend";
 import { ProjectContextReader } from "./project-context-reader";

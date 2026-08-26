@@ -1,4 +1,4 @@
-import type { FindingElement, FindingSeverity } from "@rennet/types";
+import type { FindingElement, FindingSeverity } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ANCHOR_PROXIMITY,

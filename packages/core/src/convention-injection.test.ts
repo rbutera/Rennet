@@ -3,7 +3,7 @@ import type {
   Patchset,
   ReviewHypothesis,
   RspCapabilitySnapshot,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import { runDecisionAngle } from "./decision-generation";

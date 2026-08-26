@@ -1,4 +1,4 @@
-import type { Decomposition, DecompositionChunk } from "@rennet/types";
+import type { Decomposition, DecompositionChunk } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildRoutePlan, DEFAULT_MAX_HARNESS_INVOCATIONS } from "./route-plan";
 

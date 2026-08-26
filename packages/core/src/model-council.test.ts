@@ -1,4 +1,4 @@
-import type { CouncilAvailability, CouncilResolveContext } from "@rennet/types";
+import type { CouncilAvailability, CouncilResolveContext } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   ASSIGNMENT_TABLES,

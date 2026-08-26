@@ -1,4 +1,3 @@
-import { sha256Hex } from "@rennet/protocol";
 import type {
   ContextSendRecord,
   CouncilModel,
@@ -10,8 +9,8 @@ import type {
   RspProvenance,
   RspTokenUsage,
   ValidationReport,
-} from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+} from "@rennet/protocol";
+import { CANVAS_ANGLES, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { DecompositionTurnResult } from "./angle-generation";
 import { deterministicProposalBody } from "./angle-generation";

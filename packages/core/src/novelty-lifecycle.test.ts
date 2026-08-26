@@ -1,4 +1,4 @@
-import type { LedgerEntry, NoveltyLedger, Stage2NoveltyJudgment } from "@rennet/types";
+import type { LedgerEntry, NoveltyLedger, Stage2NoveltyJudgment } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   advanceNoveltyLifecycle,

@@ -41,7 +41,7 @@ import type {
   KnowledgeSet,
   KnowledgeStatement,
   ResolutionTrace,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 import { queryKnowledge } from "./knowledge";

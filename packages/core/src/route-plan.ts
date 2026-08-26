@@ -13,7 +13,7 @@
  * sentence in a document that drifts.
  */
 
-import type { Decomposition, PlannedInvocation, RoutePlanResult } from "@rennet/types";
+import type { Decomposition, PlannedInvocation, RoutePlanResult } from "@rennet/protocol";
 
 /** The <5-invocation ceiling for initial decomposition (R10). Five passes, six refuses. */
 export const DEFAULT_MAX_HARNESS_INVOCATIONS = 5;

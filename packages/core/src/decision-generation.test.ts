@@ -1,5 +1,5 @@
+import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import {

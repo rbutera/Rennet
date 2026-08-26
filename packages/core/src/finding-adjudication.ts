@@ -35,7 +35,6 @@ import {
   FINDING_ADJUDICATION_CONTRACT,
   renderFindingAdjudicationPrompt,
 } from "@rennet/instructions";
-import { parseAnchor, resolveAnchor } from "@rennet/protocol";
 import type {
   BudgetGrant,
   FindingAdjudication,
@@ -47,7 +46,8 @@ import type {
   ManifestOccurrence,
   OfferedManifest,
   RspTokenUsage,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { parseAnchor, resolveAnchor } from "@rennet/protocol";
 import { NO_CONCERN_ANSWER } from "./finding-reconcile";
 import type { VerificationFileReader, VerificationFileWindow } from "./finding-verification";
 import { absentBudgetGrant } from "./invocation-budget";

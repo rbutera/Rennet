@@ -1,4 +1,3 @@
-import { sha256Hex } from "@rennet/protocol";
 import type {
   ComposableAsk,
   ComposedHandoffBundle,
@@ -7,7 +6,8 @@ import type {
   HandoffBundle,
   HandoffTask,
   RspTokenUsage,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { sha256Hex } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Handoff-bundle composition (issue #72, Model Council job M24) — the light-tier
@@ -33,7 +33,7 @@ import type {
 // the reviewer's asks and facts derived from them. This is NOT a consent gate: nothing
 // is confirmed or withheld; the prompt simply contains the asks and nothing invented.
 //
-// Pure and node-free like `handoff-loop.ts`: `@rennet/types` + the node-free
+// Pure and node-free like `handoff-loop.ts`: `@rennet/protocol` + the node-free
 // `sha256Hex` only; the real council-routed model turn is injected as a `ComposePort`.
 // ─────────────────────────────────────────────────────────────────────────────
 

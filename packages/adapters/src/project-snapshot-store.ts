@@ -10,13 +10,13 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Locus } from "@rennet/core";
-import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type {
   BuiltSnapshot,
   ProjectSnapshotManifest,
   ReferenceShard,
   SymbolShard,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { canonicalize, sha256Hex } from "@rennet/protocol";
 
 /**
  * The app-owned, LOCAL-FIRST ProjectSnapshot store (R27/R55, #141).

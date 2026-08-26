@@ -7,8 +7,8 @@ import type {
   InvocationBudget,
   PatchFile,
   Patchset,
-} from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+} from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { type AdmittedDocument, buildCanvas } from "./canvas";
 import { decompose } from "./decomposition";

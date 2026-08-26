@@ -30,7 +30,7 @@ import type {
   CouncilResolveContext,
   OfferedManifest,
   RspDocType,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import type { FindingProvenanceSeed } from "./finding-generation";

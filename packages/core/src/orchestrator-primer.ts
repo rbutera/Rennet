@@ -1,6 +1,5 @@
-import { sha256Hex } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, DispositionType } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+import type { Canvas, CanvasAngle, DispositionType } from "@rennet/protocol";
+import { CANVAS_ANGLES, sha256Hex } from "@rennet/protocol";
 import { compareCodeUnits } from "./canvas";
 import {
   CANVAS_OPS_TOOLS,

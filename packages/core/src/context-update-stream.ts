@@ -1,4 +1,4 @@
-import type { CanvasAngle, CanvasChangeNotification, DispositionType } from "@rennet/types";
+import type { CanvasAngle, CanvasChangeNotification, DispositionType } from "@rennet/protocol";
 import type { CanvasChangeFeed } from "./canvas-change-feed";
 import type { ViewState } from "./canvas-ops";
 

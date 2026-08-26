@@ -3,7 +3,7 @@ import type {
   ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
 } from "@rennet/core";
-import type { Review, SymbolInspection, SymbolNeighbors } from "@rennet/types";
+import type { Review, SymbolInspection, SymbolNeighbors } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.symbolLookup — the LIVE symbol inspector port (Rai, wireframes #8).

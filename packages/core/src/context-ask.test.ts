@@ -5,8 +5,8 @@ import type {
   SnapshotFileEntry,
   SymbolShard,
   WorkspaceScope,
-} from "@rennet/types";
-import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/types";
+} from "@rennet/protocol";
+import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { runContextAsk } from "./context-ask";
 import type { HarnessTurnResult } from "./harness-run-turn";

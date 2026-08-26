@@ -30,7 +30,6 @@
  * near here — keeping it out is what preserves the checkability of the map.
  */
 
-import { sha256Hex } from "@rennet/protocol";
 import type {
   BaseRefResolution,
   ConventionEntry,
@@ -45,7 +44,8 @@ import type {
   SymbolShard,
   TestEntry,
   WorkspaceScope,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { sha256Hex } from "@rennet/protocol";
 import type { FanInIndex } from "./blast-radius";
 
 /** Load a content-addressed shard's bytes by digest, or `undefined` if absent. */

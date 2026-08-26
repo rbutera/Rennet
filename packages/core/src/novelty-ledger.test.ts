@@ -1,4 +1,3 @@
-import { sha256Hex } from "@rennet/protocol";
 import type {
   BaseRefResolution,
   ConventionEntry,
@@ -12,8 +11,8 @@ import type {
   SymbolShard,
   TestEntry,
   WorkspaceScope,
-} from "@rennet/types";
-import { DIFF_TRUNCATION_MARKER } from "@rennet/types";
+} from "@rennet/protocol";
+import { DIFF_TRUNCATION_MARKER, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   classifyNovelty,

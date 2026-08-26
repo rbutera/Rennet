@@ -45,8 +45,8 @@ import type {
   ReviewIntent,
   UiScreenshot,
   UiVerification,
-} from "@rennet/types";
-import { MAX_UI_SCREENSHOTS_PER_RUN } from "@rennet/types";
+} from "@rennet/protocol";
+import { MAX_UI_SCREENSHOTS_PER_RUN } from "@rennet/protocol";
 import type { VerificationTurn } from "./finding-verification";
 
 // ── ① The deterministic UI-surface classifier ────────────────────────────────

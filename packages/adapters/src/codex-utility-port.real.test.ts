@@ -1,4 +1,4 @@
-import type { OfferedManifest, PatchsetRef } from "@rennet/types";
+import type { OfferedManifest, PatchsetRef } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createCodexUtilityAdapter } from "./codex-exec";
 

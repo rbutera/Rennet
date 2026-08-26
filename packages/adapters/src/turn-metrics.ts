@@ -25,8 +25,8 @@
  */
 
 import type { HarnessPort, HarnessTurnResult } from "@rennet/core";
+import type { RspDocType } from "@rennet/protocol";
 import { bodyJsonSchema } from "@rennet/protocol";
-import type { RspDocType } from "@rennet/types";
 
 /** Token accounting extracted from a Claude Agent SDK `result` frame's `usage`. */
 export interface ClaudeTurnUsage {

@@ -1,5 +1,5 @@
 import type { RunUiVerificationResult } from "@rennet/core";
-import type { FlaggedReview } from "@rennet/types";
+import type { FlaggedReview } from "@rennet/protocol";
 
 export interface ImmediateUiVerificationInput {
   readonly touchesUi: boolean;

@@ -23,7 +23,7 @@ import type {
   FlaggedReview,
   ReviewHypothesis,
   RiskCrossCheck,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /** The minimum number of shared salient tokens for a finding to address a risk. */
 export const RISK_MATCH_MIN_SHARED_TOKENS = 2;

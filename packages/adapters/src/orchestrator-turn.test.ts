@@ -9,8 +9,8 @@ import {
   createInvocationBudget,
   renderOpenAssembledPrompt,
 } from "@rennet/core";
+import type { ContextSendRecord, PatchFile, Patchset, Review } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { ContextSendRecord, PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CANVAS_OPS_SERVER_NAME } from "./canvas-ops-server";
 import { createLiveCanvasOpsBackend } from "./live-review-backend";

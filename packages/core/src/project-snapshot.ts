@@ -27,7 +27,6 @@
  * by a pure property test that never touches git or the disk.
  */
 
-import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type {
   BaseRefResolution,
   BuiltShard,
@@ -46,8 +45,8 @@ import type {
   SymbolShard,
   TestEntry,
   WorkspaceScope,
-} from "@rennet/types";
-import { PROJECT_SNAPSHOT_SCHEMA_VERSION } from "@rennet/types";
+} from "@rennet/protocol";
+import { canonicalize, PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 
 /** Content-address any value: its canonical bytes and their sha256. */
 export function contentAddress(value: unknown): BuiltShard {

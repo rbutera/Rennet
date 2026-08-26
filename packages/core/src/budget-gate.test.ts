@@ -13,7 +13,7 @@ import type {
   PatchFile,
   Patchset,
   RspCapabilitySnapshot,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildOfferedManifest,

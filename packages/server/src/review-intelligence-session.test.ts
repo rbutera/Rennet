@@ -1,4 +1,4 @@
-import type { InvocationBudget, Review, ReviewHypothesis } from "@rennet/types";
+import type { InvocationBudget, Review, ReviewHypothesis } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createReviewIntelligenceSessions } from "./review-intelligence-session";
 

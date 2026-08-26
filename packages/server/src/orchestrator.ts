@@ -11,7 +11,7 @@ import {
   runOrchestratorTurn,
 } from "@rennet/adapters";
 import type { CanvasOpsEffect, Locus, ReviewPipelineResult, UserAct } from "@rennet/core";
-import type { Review } from "@rennet/types";
+import type { Review } from "@rennet/protocol";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 
 // ─────────────────────────────────────────────────────────────────────────────

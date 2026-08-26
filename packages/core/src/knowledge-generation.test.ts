@@ -1,4 +1,4 @@
-import type { KnowledgeSet } from "@rennet/types";
+import type { KnowledgeSet } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";

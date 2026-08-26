@@ -1,4 +1,3 @@
-import { sha256Hex } from "@rennet/protocol";
 import type {
   ConventionEntry,
   DependencyEdge,
@@ -8,7 +7,8 @@ import type {
   SymbolShard,
   TestEntry,
   WorkspaceScope,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   buildSnapshot,

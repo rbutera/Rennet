@@ -8,7 +8,7 @@ import type {
   Hunk,
   Review,
   RspProvenance,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import type {
   CanvasOpsBackend,
   CanvasOpsEffect,

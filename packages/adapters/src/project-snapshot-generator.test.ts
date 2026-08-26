@@ -3,8 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isSnapshotFresh, serializeManifest, verifySnapshotIntegrity } from "@rennet/core";
-import { sha256Hex } from "@rennet/protocol";
-import { PROJECT_SNAPSHOT_SCHEMA_VERSION } from "@rennet/types";
+import { PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { matchesGlob, parseWorkspaceGlobs } from "./project-snapshot-source";

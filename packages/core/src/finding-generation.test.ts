@@ -1,5 +1,5 @@
+import type { PatchFile, Patchset, RspCapabilitySnapshot, RspEnvelope } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { PatchFile, Patchset, RspCapabilitySnapshot, RspEnvelope } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import { createCodexRunTurn } from "./codex-run-turn";

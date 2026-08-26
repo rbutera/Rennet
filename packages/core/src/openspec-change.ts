@@ -19,7 +19,7 @@ import type {
   OpenSpecTaskGroup,
   OpenSpecTaskItem,
   OpenSpecTasks,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /**
  * The source-origin base for a run of lines handed to `parseBlocks`: which

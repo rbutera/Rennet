@@ -43,7 +43,6 @@ import {
   renderFindingVerificationPrompt,
   type VerificationContract,
 } from "@rennet/instructions";
-import { parseAnchor, resolveAnchor } from "@rennet/protocol";
 import type {
   BudgetGrant,
   FindingElement,
@@ -55,7 +54,8 @@ import type {
   ManifestOccurrence,
   OfferedManifest,
   RspTokenUsage,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { parseAnchor, resolveAnchor } from "@rennet/protocol";
 import { absentBudgetGrant } from "./invocation-budget";
 
 // ── ① The deterministic non-obvious gate ─────────────────────────────────────

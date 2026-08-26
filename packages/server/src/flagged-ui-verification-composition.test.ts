@@ -1,5 +1,5 @@
 import type { RunUiVerificationResult } from "@rennet/core";
-import type { FlaggedReview } from "@rennet/types";
+import type { FlaggedReview } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 

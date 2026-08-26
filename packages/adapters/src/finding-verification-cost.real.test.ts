@@ -8,7 +8,7 @@ import {
   runFindingAngle,
   runFindingVerification,
 } from "@rennet/core";
-import type { Patchset } from "@rennet/types";
+import type { Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createClaudeHarness } from "./claude-query";
 import {

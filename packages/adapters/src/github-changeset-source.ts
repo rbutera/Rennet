@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ForgePort, ForgePullRequest, ForgePullRequestRef, SsoState } from "@rennet/core";
-import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/types";
+import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/protocol";
 import {
   captureRangePatchset,
   DEFAULT_VISIBLE_BYTE_LIMIT,

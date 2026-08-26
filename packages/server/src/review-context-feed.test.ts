@@ -1,4 +1,4 @@
-import type { ContextManifest, ContextSendRecord } from "@rennet/types";
+import type { ContextManifest, ContextSendRecord } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 

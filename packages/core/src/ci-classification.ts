@@ -1,5 +1,5 @@
+import type { CiFailure, FindingElement, OfferedManifest } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { CiFailure, FindingElement, OfferedManifest } from "@rennet/types";
 import type { ForgeCheckRun } from "./forge-port";
 
 export const CI_ENVIRONMENTAL_SIGNATURES_VERSION = 2;

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assembleContext, type ContextAssembly, type ContextDocumentInput } from "@rennet/core";
-import type { RepoComposition } from "@rennet/types";
+import type { RepoComposition } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ADAPTER side of the ContextManifest assembly (issue #30). `core`'s

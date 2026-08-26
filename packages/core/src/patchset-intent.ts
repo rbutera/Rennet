@@ -1,4 +1,4 @@
-import type { PatchsetIntent, ReviewIntent } from "@rennet/types";
+import type { PatchsetIntent, ReviewIntent } from "@rennet/protocol";
 
 /**
  * Project the frozen `PatchsetIntent` captured on a patchset (#136) onto the live

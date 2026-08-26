@@ -1,8 +1,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { computeFingerprint, verifySnapshotIntegrity } from "@rennet/core";
+import type { BuiltSnapshot, ProjectSnapshotManifest } from "@rennet/protocol";
 import { canonicalize } from "@rennet/protocol";
-import type { BuiltSnapshot, ProjectSnapshotManifest } from "@rennet/types";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
 /**

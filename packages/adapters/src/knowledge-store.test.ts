@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KnowledgeSet, KnowledgeStatement } from "@rennet/types";
+import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { committedKnowledgeDir, KNOWLEDGE_FILE, KnowledgeStore } from "./knowledge-store";
 import { ProjectSnapshotStore } from "./project-snapshot-store";

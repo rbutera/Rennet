@@ -18,7 +18,7 @@ import {
   type UserAct,
 } from "@rennet/core";
 import { renderLayer } from "@rennet/instructions";
-import type { Canvas, ContextSendRecord } from "@rennet/types";
+import type { Canvas, ContextSendRecord } from "@rennet/protocol";
 import {
   attachCodexOrchestratorSession,
   type CanvasOpsExternalServerOptions,

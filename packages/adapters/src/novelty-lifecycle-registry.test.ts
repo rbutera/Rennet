@@ -1,4 +1,4 @@
-import type { NoveltyLedger } from "@rennet/types";
+import type { NoveltyLedger } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
 

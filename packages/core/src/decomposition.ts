@@ -31,7 +31,7 @@ import {
   type MechanicalClass,
   type PatchFile,
   type Patchset,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /** The SmartBear/Cisco 400-LOC review ceiling (Architecture Plan D7 step 3). */
 export const DEFAULT_MAX_CHUNK_LOC = 400;

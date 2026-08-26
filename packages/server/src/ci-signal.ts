@@ -14,7 +14,7 @@ import type {
   OfferedManifest,
   Patchset,
   ReviewPostTarget,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 export interface AttachCiSignalInput {
   readonly review: FlaggedReview;

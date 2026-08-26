@@ -1,5 +1,5 @@
+import type { Disposition, DispositionType } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { Disposition, DispositionType } from "@rennet/types";
 import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
 
 /**

@@ -4,7 +4,7 @@ import {
   type PatchFile,
   type Patchset,
   type Review,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   fileContentDigest,

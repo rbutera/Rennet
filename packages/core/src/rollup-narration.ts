@@ -35,7 +35,6 @@ import {
   type PromptContract,
   renderBaseInstruction,
 } from "@rennet/instructions";
-import { computeInputDigest, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
   Canvas,
@@ -55,7 +54,8 @@ import type {
   RspTokenUsage,
   ValidationError,
   ValidationReport,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { computeInputDigest, validateDocument } from "@rennet/protocol";
 import { buildOfferedManifest } from "./angle-generation";
 import type { HarnessTurnResult, TurnExecutorFacts } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";

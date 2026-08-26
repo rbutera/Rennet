@@ -15,7 +15,7 @@ import {
   type RelevanceVerdict,
   type Review,
   type ReviewPostTarget,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { v7 as uuidv7 } from "uuid";
 import { buildDeltaAccount, changedPathsBetween } from "./delta-account";
 

@@ -1,4 +1,4 @@
-import type { AskAnswer, AskMode, AskReviewResult } from "@rennet/types";
+import type { AskAnswer, AskMode, AskReviewResult } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.ask — ask the AI a question, one model or both (issue #139).
@@ -24,7 +24,7 @@ import type { AskAnswer, AskMode, AskReviewResult } from "@rennet/types";
 // the ports become real — it is a pure function of `mode` and the two ports.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type { AskAnswer, AskMode, AskReviewResult } from "@rennet/types";
+export type { AskAnswer, AskMode, AskReviewResult } from "@rennet/protocol";
 
 /**
  * A port that produces ONE labelled answer to the reviewer's question. The port

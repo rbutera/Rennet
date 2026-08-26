@@ -9,7 +9,7 @@ import {
   resolveAssignment,
   runContextAsk,
 } from "@rennet/core";
-import type { CouncilResolveContext, InvocationBudget } from "@rennet/types";
+import type { CouncilResolveContext, InvocationBudget } from "@rennet/protocol";
 import type { KnowledgeStore } from "./knowledge-store";
 import type { ResolvedRepoContext } from "./project-context-backend";
 import type { ProjectContextReader } from "./project-context-reader";

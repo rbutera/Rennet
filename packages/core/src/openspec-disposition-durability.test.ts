@@ -1,4 +1,4 @@
-import type { PatchFile, Patchset, Review } from "@rennet/types";
+import type { PatchFile, Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   anchorKey,

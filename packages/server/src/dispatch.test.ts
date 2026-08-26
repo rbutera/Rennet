@@ -20,17 +20,6 @@ import {
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
-import {
-  type DetectedHarness,
-  type DiscoveryResult,
-  type ProcessedRepoSummary,
-  type Project,
-  type ProjectKind,
-  type ProjectProcessEvent,
-  type ProjectProgressEvent,
-  type ReviewAskStreamEvent,
-  reviewAskStreamEventSchema,
-} from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -41,8 +30,19 @@ import type {
   PatchFile,
   Patchset,
   Review,
-} from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+} from "@rennet/protocol";
+import {
+  CANVAS_ANGLES,
+  type DetectedHarness,
+  type DiscoveryResult,
+  type ProcessedRepoSummary,
+  type Project,
+  type ProjectKind,
+  type ProjectProcessEvent,
+  type ProjectProgressEvent,
+  type ReviewAskStreamEvent,
+  reviewAskStreamEventSchema,
+} from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
 import { InFlightReviews } from "./in-flight-reviews";

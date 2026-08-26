@@ -1,4 +1,4 @@
-import type { FindingElement, OfferedManifest, RspTokenUsage } from "@rennet/types";
+import type { FindingElement, OfferedManifest, RspTokenUsage } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   type AdjudicationTurn,

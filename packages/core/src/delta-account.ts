@@ -9,7 +9,7 @@ import type {
   DispositionType,
   HandoffAskTrace,
   Patchset,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import {
   addedOf,
   deletedOf,

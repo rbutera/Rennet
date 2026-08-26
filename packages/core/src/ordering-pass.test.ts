@@ -1,11 +1,11 @@
 import { ORDERING_CONTRACT } from "@rennet/instructions";
-import { sha256Hex } from "@rennet/protocol";
 import type {
   DecompositionProposalBody,
   OrderingBody,
   RspCapabilitySnapshot,
   RspEnvelope,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort, CodexUtilityResult } from "./codex-utility-port";

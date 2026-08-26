@@ -54,8 +54,8 @@ import type {
   RspCapabilitySnapshot,
   RspDocType,
   RspModelReportedBy,
-} from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+} from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import {
   buildOfferedManifest,
   type DecompositionTurnResult,

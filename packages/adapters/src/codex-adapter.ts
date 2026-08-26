@@ -17,7 +17,7 @@ import {
   type ToolKind,
   type TurnInput,
 } from "@rennet/core";
-import type { RspTokenUsage } from "@rennet/types";
+import type { RspTokenUsage } from "@rennet/protocol";
 import {
   type CodexTurnError,
   type CodexTurnResultFrame,

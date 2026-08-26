@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RepoComposition } from "@rennet/types";
+import type { RepoComposition } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { assembleContextForComposition, gatherContextDocuments } from "./context-manifest";
 

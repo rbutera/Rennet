@@ -1,4 +1,4 @@
-import { R10_BUDGET_EXHAUSTED } from "@rennet/types";
+import { R10_BUDGET_EXHAUSTED } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { absentBudgetGrant, createInvocationBudget } from "./invocation-budget";
 import { DEFAULT_MAX_HARNESS_INVOCATIONS } from "./route-plan";

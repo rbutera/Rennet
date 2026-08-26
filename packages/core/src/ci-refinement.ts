@@ -3,7 +3,7 @@ import {
   type CiClassificationContract,
   renderCiClassificationPrompt,
 } from "@rennet/instructions";
-import type { CiFailure, InvocationBudget, RspTokenUsage } from "@rennet/types";
+import type { CiFailure, InvocationBudget, RspTokenUsage } from "@rennet/protocol";
 import { absentBudgetGrant } from "./invocation-budget";
 
 export type CiRefinementTurnResult =

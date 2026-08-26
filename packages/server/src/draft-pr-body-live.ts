@@ -8,7 +8,12 @@ import {
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
-import type { CouncilHarnessId, DispositionType, PrBodyDraftResult, Review } from "@rennet/types";
+import type {
+  CouncilHarnessId,
+  DispositionType,
+  PrBodyDraftResult,
+  Review,
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.draftPrBody — the LIVE producer (issue #74, M26).

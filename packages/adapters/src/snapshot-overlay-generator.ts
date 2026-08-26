@@ -7,7 +7,7 @@ import {
   type SnapshotGateFailure,
   verifySnapshotIntegrity,
 } from "@rennet/core";
-import type { SnapshotOverlay, StructuralShardSlot } from "@rennet/types";
+import type { SnapshotOverlay, StructuralShardSlot } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";

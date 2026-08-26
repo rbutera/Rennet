@@ -1,4 +1,4 @@
-import type { DeltaAccount } from "@rennet/types";
+import type { DeltaAccount } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { buildDeltaDigestPrompt, type DeltaDigestPort, draftDeltaDigest } from "./delta-digest";
 

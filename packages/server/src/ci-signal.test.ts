@@ -1,5 +1,5 @@
 import type { ForgeCiStatus } from "@rennet/core";
-import type { FindingElement, FlaggedReview, Patchset, ReviewPostTarget } from "@rennet/types";
+import type { FindingElement, FlaggedReview, Patchset, ReviewPostTarget } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { attachCiSignal } from "./ci-signal";
 

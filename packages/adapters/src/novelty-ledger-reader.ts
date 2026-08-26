@@ -4,7 +4,7 @@ import {
   type GitlinkEntry,
   type NoveltyResult,
 } from "@rennet/core";
-import type { Patchset } from "@rennet/types";
+import type { Patchset } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 import type { ProjectContextReader, SnapshotGateFailure } from "./project-context-reader";
 import { discoverGitlinks } from "./repo-composition-discovery";

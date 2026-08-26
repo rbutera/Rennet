@@ -18,7 +18,7 @@ import type {
   RepoComposition,
   RepoMapMember,
   WorkspaceContext,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { ProjectContextReader } from "./project-context-reader";
 import { ensureProjectSnapshotPin } from "./project-snapshot-pin";

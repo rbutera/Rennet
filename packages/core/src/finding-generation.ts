@@ -39,7 +39,6 @@ import {
   renderConventionLayer,
   renderHypothesisLayer,
 } from "@rennet/instructions";
-import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
   ConventionCatalogue,
@@ -56,7 +55,8 @@ import type {
   RspProvenance,
   RspTokenUsage,
   ValidationReport,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type { TurnExecutorFacts } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 

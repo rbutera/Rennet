@@ -8,7 +8,7 @@ import {
   type OpsEnvelope,
   type ToolOutcome,
 } from "@rennet/core";
-import type { NoveltyLedger, PatchFile, Patchset, ProjectSnapshotManifest } from "@rennet/types";
+import type { NoveltyLedger, PatchFile, Patchset, ProjectSnapshotManifest } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";

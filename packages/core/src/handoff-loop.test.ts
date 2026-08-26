@@ -1,4 +1,4 @@
-import type { HandoffDisposition, PatchFile, Patchset } from "@rennet/types";
+import type { HandoffDisposition, PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   anchoredContext,

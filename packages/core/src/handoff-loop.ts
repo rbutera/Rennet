@@ -1,4 +1,3 @@
-import { sha256Hex } from "@rennet/protocol";
 import type {
   AnchorSide,
   AnchorSpan,
@@ -10,13 +9,14 @@ import type {
   PatchFile,
   Patchset,
   RspTokenUsage,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { sha256Hex } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The review→agent handoff loop (issue #18, Contracts §2.1 destination B — "your
 // own branch"). This module is the PURE half: the deterministic bundle composer,
 // the spend disclosure, and the turn orchestrator over injected ports. It imports
-// only `@rennet/types` + the node-free `sha256Hex` from `@rennet/protocol`, so it
+// only `@rennet/protocol` + the node-free `sha256Hex` from `@rennet/protocol`, so it
 // stays node-free and testable with fakes — the real `claude` write session and
 // the real git checkpoint store are composed by `apps/desktop`/`@rennet/adapters`
 // and passed in.

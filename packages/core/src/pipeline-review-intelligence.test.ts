@@ -1,4 +1,4 @@
-import type { InvocationBudget, Patchset, RspCapabilitySnapshot } from "@rennet/types";
+import type { InvocationBudget, Patchset, RspCapabilitySnapshot } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import type { CodexUtilityPort } from "./codex-utility-port";
