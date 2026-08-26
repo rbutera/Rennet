@@ -135,6 +135,15 @@ export default defineConfig({
                 ],
               },
               {
+                label: "Plans",
+                items: [
+                  {
+                    label: "Board rebuild plan",
+                    link: "/developing/plans/board-rebuild-plan/",
+                  },
+                ],
+              },
+              {
                 label: "Decisions",
                 items: [
                   {
