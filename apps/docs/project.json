@@ -19,7 +19,7 @@
     },
     "test": {
       "cache": false,
-      "dependsOn": ["build"],
+      "dependsOn": ["build", "typecheck"],
       "inputs": [
         "default",
         "^production",
@@ -33,6 +33,7 @@
       "command": "pnpm exec vitest run apps/docs/src/plugins/docs-projection.test.ts apps/docs/src/plugins/remark-canonical-links.test.ts && node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs ."
     },
     "typecheck": {
+      "dependsOn": ["build"],
       "command": "pnpm --dir apps/docs exec astro sync && pnpm exec tsc --noEmit -p apps/docs/tsconfig.json"
     },
     "dev": {
