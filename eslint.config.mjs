@@ -23,6 +23,13 @@ export default [
               onlyDependOnLibsWithTags: ["layer:protocol", "layer:instructions"],
             },
             {
+              // @rennet/lens-instructions: a leaf prompt-text package that imports
+              // no Rennet package (renamed to @rennet/prompts in B02). Its own tag
+              // keeps it off layer:instructions' protocol grant — a real backstop.
+              sourceTag: "layer:lens-instructions",
+              onlyDependOnLibsWithTags: ["layer:lens-instructions"],
+            },
+            {
               sourceTag: "layer:core",
               onlyDependOnLibsWithTags: ["layer:protocol", "layer:instructions", "layer:core"],
             },

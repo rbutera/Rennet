@@ -168,8 +168,8 @@ port). `@rennet/ui` is a vendored shadcn/ui component kit built on Base UI
 (`@base-ui/react`, MIT). It carries Button, Input, Dialog, Sheet, Popover,
 DropdownMenu, Select, Switch, Checkbox, Tabs, Tooltip, ScrollArea, Badge,
 Skeleton, Separator, Toast, and the `cmdk` Command palette, importing only
-`types` and `theme`. `@rennet/app-ui` composes the kit into Rennet's screens and
-imports only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies.
+`protocol` and `theme`. `@rennet/app-ui` composes the kit into Rennet's screens and
+imports only `protocol`, `theme`, `ui`, and browser-safe dependencies.
 Neither imports `core`, adapters, Node, or Electron.
 
 Base UI is the primary primitive family. Radix is not banned: a Radix

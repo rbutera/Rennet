@@ -3,7 +3,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "packages/lens-instructions/src",
   "projectType": "library",
-  "tags": ["scope:rennet", "layer:instructions"],
+  "tags": ["scope:rennet", "layer:lens-instructions"],
   "targets": {
     "build": { "command": "pnpm exec tsc -p packages/lens-instructions/tsconfig.json" },
     "lint": {
