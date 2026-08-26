@@ -11,7 +11,7 @@ import type {
   FlaggedReview,
   UiScreenshot,
   UiVerification,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /**
  * The Flagged lens, pure derivation (issue #138).
@@ -42,7 +42,7 @@ export type {
   FindingModelAnswer,
   FindingSeverity,
   FindingVerification,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /** One row in the flagged index: the flag, its severity, agreement, and anchor. */
 export interface FlaggedRow {

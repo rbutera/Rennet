@@ -5,8 +5,7 @@
 // returns none, nothing is rendered (honest absence, never a fabricated stand-in —
 // Rule Zero). This mounts the whole `RennetApp` over a fake `RennetBridge` and
 // asserts the mount behaviourally.
-import type { RennetBridge } from "@rennet/protocol";
-import type { ContextManifest, Review } from "@rennet/types";
+import type { ContextManifest, RennetBridge, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

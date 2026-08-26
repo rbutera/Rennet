@@ -8,8 +8,7 @@
 // Rennet's whole job, no consent step) and asserts, behaviourally, that the loud
 // fallback banner appears iff the
 // engine's `aiReview` is false, and names the missing Claude CLI.
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review, ReviewEngine } from "@rennet/types";
+import type { RennetBridge, Review, ReviewEngine } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

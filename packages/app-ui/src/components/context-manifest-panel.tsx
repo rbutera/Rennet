@@ -1,4 +1,4 @@
-import type { ContextDocumentRecord, ContextManifest } from "@rennet/types";
+import type { ContextDocumentRecord, ContextManifest } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 
 // ─────────────────────────────────────────────────────────────────────────────

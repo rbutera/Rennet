@@ -1,4 +1,4 @@
-import type { FindingSeverity, ReviewHypothesis, RiskCrossCheck } from "@rennet/types";
+import type { FindingSeverity, ReviewHypothesis, RiskCrossCheck } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildHypothesisFrame } from "./hypothesis";
 

@@ -6,7 +6,7 @@
 // labelled, a row jumps to its anchor, and the empty vs failed states render
 // LOUDLY differently. Assertions are behavioural (rendered text, recorded jumps),
 // not presence-only.
-import type { FlaggedReview } from "@rennet/types";
+import type { FlaggedReview } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { buildFlaggedIndex } from "../canvas/flagged";
 import { mount } from "../test/dom";

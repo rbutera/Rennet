@@ -1,4 +1,4 @@
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType } from "@rennet/protocol";
 import type { CollationDraft, CollationItem } from "./collation";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ import type { CollationDraft, CollationItem } from "./collation";
 // wire). Here we encode the routing INTENT + the published-subset exclusion; the
 // live send is deferred to those issues.
 //
-// The `layer:ui` boundary allows only `@rennet/types` + this package: nothing here
+// The `layer:ui` boundary allows only `@rennet/protocol` + this package: nothing here
 // imports `@rennet/core`.
 // ─────────────────────────────────────────────────────────────────────────────
 

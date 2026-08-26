@@ -6,7 +6,7 @@
 // the review flagged: identifying a response by NAME alone let the oldest response
 // complete the newest entry. It is driven end-to-end (click → dispatch → state → DOM),
 // not over a hand-built fixture, because that is where the bug lived.
-import type { SymbolInspection } from "@rennet/types";
+import type { SymbolInspection } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { demoCanvases } from "../canvas/fixtures";
 import { createViewStore } from "../canvas/store";

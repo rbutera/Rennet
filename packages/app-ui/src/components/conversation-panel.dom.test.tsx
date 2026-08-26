@@ -8,8 +8,7 @@
 // They also cover the anchorless GENERAL ASK restored as a stacked rail entry (#356):
 // answered with no thread, both-model routing, and the draft KEPT on a failed turn.
 
-import type { CommandInput, RennetBridge } from "@rennet/protocol";
-import type { AskReviewResult } from "@rennet/types";
+import type { AskReviewResult, CommandInput, RennetBridge } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { ConversationAnchor } from "../canvas/conversation";
 import { fireEvent, mount, waitFor } from "../test/dom";

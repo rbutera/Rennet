@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
-import type { CommandInput, RennetBridge, ReviewAskStreamEvent } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { CommandInput, RennetBridge, Review, ReviewAskStreamEvent } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

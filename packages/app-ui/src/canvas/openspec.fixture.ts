@@ -1,4 +1,4 @@
-import type { OpenSpecChange } from "@rennet/types";
+import type { OpenSpecChange } from "@rennet/protocol";
 
 // A REAL Rennet OpenSpec change, parsed by `@rennet/core parseOpenSpecChange`
 // (`openspec/changes/add-review-intelligence-core/`) and frozen here as the Spec

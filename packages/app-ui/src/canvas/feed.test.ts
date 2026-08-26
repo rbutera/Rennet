@@ -1,4 +1,4 @@
-import type { CanvasChangeNotification } from "@rennet/types";
+import type { CanvasChangeNotification } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { type CanvasChangeListener, type CanvasFeedSource, createCanvasFeedStore } from "./feed";
 

@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { fireEvent, mount, waitFor } from "./test/dom";

@@ -1,4 +1,4 @@
-import type { CanvasAngle, Review } from "@rennet/types";
+import type { CanvasAngle, Review } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";

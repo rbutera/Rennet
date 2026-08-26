@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
-import type { Project, ProjectDetail as ProjectDetailData, RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type {
+  Project,
+  ProjectDetail as ProjectDetailData,
+  RennetBridge,
+  Review,
+} from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

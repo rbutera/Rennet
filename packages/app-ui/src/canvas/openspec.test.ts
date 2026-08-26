@@ -1,5 +1,5 @@
+import type { OpenSpecChange } from "@rennet/protocol";
 import { openSpecRequirementCoverageKey } from "@rennet/protocol";
-import type { OpenSpecChange } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { anchorPathKey } from "./logic";
 import {

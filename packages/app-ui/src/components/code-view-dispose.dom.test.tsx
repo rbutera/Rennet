@@ -4,7 +4,7 @@
 // cluster is additive (absent with no `onDispose`, so existing callers and the R16
 // node envelope are untouched), that it anchors to the file/chunk, and that
 // disposing on the header fires the host with the chosen verb.
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { fireEvent, mount } from "../test/dom";
 import { CodeView } from "./code-view";

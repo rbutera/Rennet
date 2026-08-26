@@ -4,7 +4,7 @@ import type {
   NoiseItem,
   NoiseJudgedBy,
   NoiseReview,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /**
  * The Noise lens, pure derivation (issue #34).
@@ -33,7 +33,7 @@ import type {
  *   • A malformed group (or item) can never surface as noise — the guard is strict.
  */
 
-export type { NoiseCategory, NoiseItem, NoiseJudgedBy } from "@rennet/types";
+export type { NoiseCategory, NoiseItem, NoiseJudgedBy } from "@rennet/protocol";
 
 /** The fixed category order for deterministic group placement (matches the union). */
 const CATEGORY_RANK: Record<NoiseCategory, number> = {

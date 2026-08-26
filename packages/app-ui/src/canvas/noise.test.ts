@@ -1,4 +1,4 @@
-import type { NoiseGroup, NoiseReview } from "@rennet/types";
+import type { NoiseGroup, NoiseReview } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildNoiseIndex, isNoiseGroup } from "./noise";
 

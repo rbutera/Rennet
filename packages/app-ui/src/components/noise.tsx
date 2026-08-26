@@ -1,4 +1,4 @@
-import type { NoiseCategory } from "@rennet/types";
+import type { NoiseCategory } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { useState } from "react";
 import type { NoiseGroupRow, NoiseIndex, NoiseJudgedBy } from "../canvas/noise";

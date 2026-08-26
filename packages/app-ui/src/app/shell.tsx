@@ -1,13 +1,3 @@
-import {
-  type AppearanceScheme,
-  type CommandInput,
-  openSpecRequirementCoverageKey,
-  type Project,
-  type ProjectDetail as ProjectDetailData,
-  type ProjectKind,
-  type ProjectSource,
-  type RennetBridge,
-} from "@rennet/protocol";
 import type {
   CanvasAngle,
   ContextManifest,
@@ -20,8 +10,18 @@ import type {
   Review,
   ReviewEngine,
   ReviewNarration,
-} from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+} from "@rennet/protocol";
+import {
+  type AppearanceScheme,
+  CANVAS_ANGLES,
+  type CommandInput,
+  openSpecRequirementCoverageKey,
+  type Project,
+  type ProjectDetail as ProjectDetailData,
+  type ProjectKind,
+  type ProjectSource,
+  type RennetBridge,
+} from "@rennet/protocol";
 import { Button, Input } from "@rennet/ui";
 import { ArrowLeft, ArrowRight, FileDiff, Folder, Layers, TriangleAlert } from "lucide-react";
 import {

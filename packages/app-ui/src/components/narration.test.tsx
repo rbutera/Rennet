@@ -1,4 +1,4 @@
-import type { ReviewNarration } from "@rennet/types";
+import type { ReviewNarration } from "@rennet/protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { demoCanvases, demoNarration } from "../canvas/fixtures";

@@ -12,8 +12,13 @@
 // truth in every reachable state: loaded, not-yet-landed, failed, the mechanical
 // outline, a failed Decisions runner beside a landed set, a gone repository, and
 // the staleness edges (regenerate / review switch while on Files).
-import type { Project, ProjectDetail as ProjectDetailData, RennetBridge } from "@rennet/protocol";
-import type { Canvas, Review } from "@rennet/types";
+import type {
+  Canvas,
+  Project,
+  ProjectDetail as ProjectDetailData,
+  RennetBridge,
+  Review,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

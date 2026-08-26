@@ -4,7 +4,7 @@
 // (exact vs guess, never fabricated), and the pin → mini-browser (breadcrumb, back /
 // forward, and clicking a real neighbour symbol to re-look-it-up). These are
 // interaction behaviours, so they belong in the DOM harness.
-import type { SymbolInspection } from "@rennet/types";
+import type { SymbolInspection } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, mount } from "../test/dom";
 import { SymbolInspector } from "./symbol-inspector";

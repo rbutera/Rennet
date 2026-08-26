@@ -6,7 +6,7 @@ import type {
   Proposal,
   ReviewNarration,
   SubstrateChunkRef,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deterministic demo canvases (issue #11).

@@ -1,4 +1,4 @@
-import type { AnchorSpan, DispositionType } from "@rennet/types";
+import type { AnchorSpan, DispositionType } from "@rennet/protocol";
 import type { AuthoringAct, Granularity } from "../canvas/authoring";
 import { DispositionBar } from "./disposition";
 

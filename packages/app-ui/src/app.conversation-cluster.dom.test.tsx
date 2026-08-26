@@ -12,8 +12,13 @@
 //     scans the outbound the engine records, with a thread MOUNTED and carrying a canary,
 //     red-proofable by a real fifth door. Threads now live in the aligned margin, so the
 //     asks are driven through each thread's own cluster composer.
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { AskReviewResult, Review } from "@rennet/types";
+import type {
+  AskReviewResult,
+  CommandInput,
+  CommandOutput,
+  RennetBridge,
+  Review,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

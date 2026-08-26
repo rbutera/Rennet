@@ -1,4 +1,3 @@
-import { parseAnchor } from "@rennet/protocol";
 import type {
   AnchorSide,
   AnchorSpan,
@@ -8,8 +7,8 @@ import type {
   NarrationPlacement,
   Proposal,
   ReviewNarration,
-} from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+} from "@rennet/protocol";
+import { CANVAS_ANGLES, parseAnchor } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Canvas UI logic (issue #11) — pure functions, no React, no DOM.
@@ -21,7 +20,7 @@ import { CANVAS_ANGLES } from "@rennet/types";
 // creates L2), the amber overlay (never a queue), and the windowed diff envelope.
 //
 // The UI consumes the #10 `Canvas` shape and never runs the engine projector
-// (the `layer:ui` boundary allows only `@rennet/types` + `@rennet/protocol`).
+// (the `layer:ui` boundary allows only `@rennet/protocol` + `@rennet/protocol`).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Approve at any granularity: one user act fans out to per-anchor L2 ────────

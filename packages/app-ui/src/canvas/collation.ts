@@ -1,4 +1,4 @@
-import type { AnchorSide, AnchorSpan, DispositionType } from "@rennet/types";
+import type { AnchorSide, AnchorSpan, DispositionType } from "@rennet/protocol";
 import type { DispositionBatch } from "./authoring";
 import { anchorPathKey, type DispositionWrite } from "./logic";
 
@@ -25,7 +25,7 @@ import { anchorPathKey, type DispositionWrite } from "./logic";
 // where two items MAY share a path (a split, or an intentional pair). Array order
 // IS the draft order, and it is the order the paper previews and signs.
 //
-// The `layer:ui` boundary allows only `@rennet/types` + this package: nothing here
+// The `layer:ui` boundary allows only `@rennet/protocol` + this package: nothing here
 // imports `@rennet/core`.
 // ─────────────────────────────────────────────────────────────────────────────
 

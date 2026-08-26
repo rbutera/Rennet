@@ -22,8 +22,8 @@ import type {
   CommandOutput,
   PersistedThreadWire,
   RennetBridge,
+  Review,
 } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

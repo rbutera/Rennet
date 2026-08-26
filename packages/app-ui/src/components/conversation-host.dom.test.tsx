@@ -13,8 +13,7 @@
 //   • a failed turn surfaces honestly and never falls back to a fixture answer;
 //   • a turn in flight shows an honest pending row and holds the composer.
 
-import type { CommandInput, RennetBridge } from "@rennet/protocol";
-import type { AskReviewResult } from "@rennet/types";
+import type { AskReviewResult, CommandInput, RennetBridge } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { ConversationAnchor } from "../canvas/conversation";
 import { fireEvent, mount, waitFor } from "../test/dom";

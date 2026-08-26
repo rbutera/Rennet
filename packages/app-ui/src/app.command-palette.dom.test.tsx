@@ -6,8 +6,7 @@
 // command end-to-end: filtering to "Show Files view" and running it must actually
 // switch the app to the Files view. The assertion is behavioural (the Files surface
 // renders), never a presence check on the palette alone.
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

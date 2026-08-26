@@ -1,4 +1,4 @@
-import type { ReviewNarration } from "@rennet/types";
+import type { ReviewNarration } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { narrationForZoom } from "./logic";
 

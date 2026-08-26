@@ -5,8 +5,7 @@
 // on the review workspace, and proves the effective binding is what key dispatch
 // matches: the remapped chord runs the command and the replaced default no longer
 // does. Behavioural, never a label check.
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

@@ -8,7 +8,7 @@
 // EJECTED above the fold; and the empty vs failed states render LOUDLY differently.
 // Assertions are behavioural (rendered text, recorded jumps, toggled state), not
 // presence-only.
-import type { NoiseReview } from "@rennet/types";
+import type { NoiseReview } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { buildNoiseIndex } from "../canvas/noise";
 import { mount } from "../test/dom";

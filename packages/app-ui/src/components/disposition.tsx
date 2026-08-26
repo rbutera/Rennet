@@ -1,4 +1,4 @@
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType } from "@rennet/protocol";
 import { Check, CircleHelp, type LucideIcon, MessageSquare, TriangleAlert } from "lucide-react";
 import { Icon } from "./icon";
 

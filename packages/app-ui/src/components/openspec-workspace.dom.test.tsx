@@ -6,13 +6,14 @@
 // an artifact file not in the reviewed patchset, or a wrong-side span), and proves
 // the rejection is SURFACED — `onDispositionError` fires and it is logged — never a
 // swallowed no-op that looks like the comment persisted.
+
+import type { Canvas, CanvasAngle, ElementDiff, OpenSpecChange } from "@rennet/protocol";
 import {
+  CANVAS_ANGLES,
   type CommandInput,
   openSpecRequirementCoverageKey,
   type RennetBridge,
 } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, ElementDiff, OpenSpecChange } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { demoCanvases } from "../canvas/fixtures";
 import type { DispositionWrite } from "../canvas/logic";

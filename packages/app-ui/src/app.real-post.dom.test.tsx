@@ -19,8 +19,13 @@
 // handler — so these renderer-level proofs, together with `dispatch.test.ts`'s
 // main-side gate proofs (no-token / wrong-payload / wrong-node / single-use /
 // retrospective refusals), pin the whole "only a human sign posts" circuit.
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Review, ReviewPostTarget } from "@rennet/types";
+import type {
+  CommandInput,
+  CommandOutput,
+  RennetBridge,
+  Review,
+  ReviewPostTarget,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { fireEvent, mount, waitFor } from "./test/dom";

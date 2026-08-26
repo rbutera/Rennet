@@ -7,8 +7,7 @@
 // body on B. The fix binds the draft generation to `activePatchsetId` (via the
 // drafting-input fingerprint): the patchset change bumps the generation, so A's turn
 // is dropped on arrival. Red-provable against a build that omits the bump.
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { CommandInput, CommandOutput, RennetBridge, Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

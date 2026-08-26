@@ -9,8 +9,13 @@
 // canonical review payload + derived verdict and that the dry-run outcome renders.
 // The assertions are behavioural (the recorded command input; the rendered result),
 // never a presence check.
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { FlaggedReview, Review } from "@rennet/types";
+import type {
+  CommandInput,
+  CommandOutput,
+  FlaggedReview,
+  RennetBridge,
+  Review,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { reviewComments, reviewCommentsPayload } from "./canvas/publish";

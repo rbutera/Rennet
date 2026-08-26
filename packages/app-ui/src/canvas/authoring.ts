@@ -1,4 +1,4 @@
-import type { AnchorSpan, Canvas, Disposition, DispositionType } from "@rennet/types";
+import type { AnchorSpan, Canvas, Disposition, DispositionType } from "@rennet/protocol";
 import { type ApprovalScope, type DispositionWrite, fanOutApproval } from "./logic";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11,7 +11,7 @@ import { type ApprovalScope, type DispositionWrite, fanOutApproval } from "./log
 // the publish/handoff payload (edit / withdraw-with-zero-residue), and the
 // orphaned-disposition set on a patchset advance.
 //
-// The `layer:ui` boundary allows only `@rennet/types` + this package: nothing here
+// The `layer:ui` boundary allows only `@rennet/protocol` + this package: nothing here
 // imports `@rennet/core`. Every altitude resolves to file-path L2 writes (slice-1
 // `Disposition` anchors on a path); the finer altitude lives in the trace.
 // ─────────────────────────────────────────────────────────────────────────────

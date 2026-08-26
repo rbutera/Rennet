@@ -1,4 +1,4 @@
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType } from "@rennet/protocol";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import {
   type CollationDraft,
@@ -43,7 +43,7 @@ import { Icon } from "./icon";
 // #19/#72 DEEP mechanics (the live refiner, the orchestrator's real proposals) are
 // follow-up beads; their seams are present and honest here.
 //
-// The `layer:ui` boundary allows only `@rennet/types` + this package.
+// The `layer:ui` boundary allows only `@rennet/protocol` + this package.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TYPES: DispositionType[] = ["approve", "request-change", "comment", "question"];

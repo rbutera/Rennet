@@ -5,7 +5,7 @@
 // (the material law is visible before a click), and that disposing fires the host
 // callback with the right verb — the red-provable proof the cluster is WIRED, not
 // just rendered.
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { fireEvent, mount } from "../test/dom";
 import { DispositionCluster } from "./disposition-cluster";

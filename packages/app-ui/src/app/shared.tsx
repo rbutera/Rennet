@@ -1,4 +1,4 @@
-import type { AnchorSide, AnchorSpan, CanvasAngle, Patchset, Review } from "@rennet/types";
+import type { AnchorSide, AnchorSpan, CanvasAngle, Patchset, Review } from "@rennet/protocol";
 
 /**
  * One row of the Files view's Angles rail (critique P2: the rail was DEAD — six

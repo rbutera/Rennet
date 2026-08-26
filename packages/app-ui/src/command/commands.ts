@@ -1,5 +1,5 @@
-import type { CanvasAngle } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+import type { CanvasAngle } from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import type { ZoomLevel } from "../canvas/logic";
 import {
   crumb,

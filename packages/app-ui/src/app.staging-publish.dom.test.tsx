@@ -17,8 +17,7 @@
 // implementation. They also resolve the report's named contradiction: `staging.test.ts`
 // says an unstaged default comment is blue/local, and the "unstaged comment stays
 // local" case below now AGREES (it never reaches publish.review).
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { CommandInput, CommandOutput, RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { fireEvent, mount, waitFor } from "./test/dom";

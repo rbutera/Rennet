@@ -1,5 +1,5 @@
+import type { ParsedAnchor, RenderedHunkOccurrence } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
-import type { ParsedAnchor, RenderedHunkOccurrence } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
   buildRowRegistry,

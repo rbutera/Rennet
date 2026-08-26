@@ -9,8 +9,7 @@
 // controllable outcomes, then walks the real journey. Assertions are behavioural
 // (recorded inputs, rendered outcome), never a bare presence check — each guard is
 // red-proofable (revert the fix it pins and the test fails).
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { CommandInput, CommandOutput, RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { fireEvent, mount, waitFor } from "./test/dom";
@@ -18,7 +17,7 @@ import { fireEvent, mount, waitFor } from "./test/dom";
 type ComposedBundle = CommandOutput<"review.handoff.compose">["bundle"];
 type RunOutput = CommandOutput<"review.handoff.run">;
 // The zod-inferred (mutable) Review the run's "ran" result carries — structurally the
-// @rennet/types Review, minus its readonly markers, so a fixture Review casts to it.
+// @rennet/protocol Review, minus its readonly markers, so a fixture Review casts to it.
 type RanReview = Extract<RunOutput, { status: "ran" }>["result"]["review"];
 
 /** A promise whose resolution a test controls, so a run can be held PENDING. */

@@ -17,8 +17,7 @@
 // enriched workspace (`.canvas-app`) renders. Test 2 fails the first enrichment and
 // asserts the retry re-fetches (success-only key recording). Both are behavioural and
 // red-provable against the pre-fix effect.
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

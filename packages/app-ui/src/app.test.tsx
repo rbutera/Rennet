@@ -1,4 +1,4 @@
-import type { Review } from "@rennet/types";
+import type { Review } from "@rennet/protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ReviewWorkspace } from "./app";

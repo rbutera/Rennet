@@ -12,8 +12,7 @@
 // GONE during the refetch gap (the effect clears + the patchset binding drops it),
 // then the NEW patchset's frame appears once its flagged review lands (the effect
 // re-ran on the patchset change). Red-provable against the pre-fix reviewId-only key.
-import type { RennetBridge } from "@rennet/protocol";
-import type { FlaggedReview, Review, ReviewHypothesis } from "@rennet/types";
+import type { FlaggedReview, RennetBridge, Review, ReviewHypothesis } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

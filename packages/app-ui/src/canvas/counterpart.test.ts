@@ -1,4 +1,4 @@
-import type { Canvas, CanvasAngle } from "@rennet/types";
+import type { Canvas, CanvasAngle } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { implementationPathFor, isTestPath, resolveCounterpart, testPathsFor } from "./counterpart";
 

@@ -3,7 +3,7 @@ import type {
   HypothesisScope,
   ReviewHypothesis,
   RiskCrossCheck,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /**
  * The hypothesis reading-frame, pure derivation (issue #178).

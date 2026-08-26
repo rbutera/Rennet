@@ -1,4 +1,4 @@
-import type { CanvasAngle } from "@rennet/types";
+import type { CanvasAngle } from "@rennet/protocol";
 import { Badge, Button } from "@rennet/ui";
 import { type KeyboardEvent, useRef } from "react";
 import { CANVAS_LENSES } from "../canvas/logic";

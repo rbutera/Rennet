@@ -7,8 +7,12 @@
 // on completion. Risk #1 (an interrupted/streaming state that never reaches a human is
 // indistinguishable from silence) is answered here, at the rendered DOM, not the store.
 
-import type { CommandInput, RennetBridge, ReviewAskStreamEvent } from "@rennet/protocol";
-import type { AskReviewResult } from "@rennet/types";
+import type {
+  AskReviewResult,
+  CommandInput,
+  RennetBridge,
+  ReviewAskStreamEvent,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { ConversationAnchor } from "../canvas/conversation";
 import { act, fireEvent, mount, waitFor } from "../test/dom";
