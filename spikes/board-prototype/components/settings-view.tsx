@@ -35,8 +35,6 @@ import {
   LATEST_DAEMON,
   previewWorktreeName,
   projectSettings,
-  REVIEW_MODES,
-  type ReviewMode,
   type ReviewRole,
   reviewRoles,
   type RoleAssignment,
@@ -270,52 +268,26 @@ function MachinePage({ hosts }: { hosts: HostItem[] }) {
 
 /**
  * How reviews use this host's agents, so it lives on the card with them.
- * The mode switch only exists when there is a choice — two enabled agents;
- * dual runs an independent second seat and reconciles, never merges. The
- * mappings are the Model Council's per-role defaults; an edit becomes a
- * `routing.task.*` override — model and effort only, the harness always
- * follows the model's provider (#89).
+ * The old Review Mode row is gone — the mode is chosen inside the mappings
+ * dialog by clicking a column header. The mappings are the Model Council's
+ * per-role defaults; an edit becomes a `routing.task.*` override — model
+ * and effort only, the harness always follows the model's provider (#89).
  */
 function ReviewSettings({ host, enabledIds }: { host: HostItem; enabledIds: string[] }) {
-  const [mode, setMode] = React.useState<ReviewMode>("dual")
   const [mappingsOpen, setMappingsOpen] = React.useState(false)
 
   const detected = (agentTools[host.id] ?? []).length > 0
   if (!detected) return null
 
-  const both = enabledIds.includes("claude") && enabledIds.includes("codex")
-  // With one agent the scenario is settled; the switch would be a dead knob.
-  const effectiveMode: ReviewMode = both
-    ? mode
-    : enabledIds.includes("claude")
-      ? "claude-only"
-      : "codex-only"
-  const columns = both ? MODE_COLUMNS : MODE_COLUMNS.filter((c) => c.id === effectiveMode)
-
   return (
     <div className="flex flex-col border-t border-border pt-1">
       <span className="pt-1 text-[12px] font-medium text-foreground">Review</span>
-      {both && (
-        <Row
-          label="Review Mode"
-          hint="dual runs an independent second seat and reconciles — concur or disagree, never a merged answer"
-        >
-          <Segmented
-            options={REVIEW_MODES.map((m) => m.label)}
-            value={REVIEW_MODES.find((m) => m.id === mode)?.label ?? "Dual Model"}
-            onChange={(label) => {
-              const next = REVIEW_MODES.find((m) => m.label === label)
-              if (next) setMode(next.id)
-            }}
-          />
-        </Row>
-      )}
       <Row
         label="Model Mappings"
         hint={
           enabledIds.length === 0
             ? "enable an agent above to map models"
-            : "which model carries each role on this host"
+            : "review mode and which model carries each role on this host"
         }
       >
         <Button
@@ -327,45 +299,42 @@ function ReviewSettings({ host, enabledIds }: { host: HostItem; enabledIds: stri
           Edit Mappings
         </Button>
       </Row>
-      <MappingsDialog
-        mode={effectiveMode}
-        columns={columns}
-        open={mappingsOpen}
-        onOpenChange={setMappingsOpen}
-      />
+      <MappingsDialog enabledIds={enabledIds} open={mappingsOpen} onOpenChange={setMappingsOpen} />
     </div>
   )
 }
 
-const MODE_COLUMNS: { id: ReviewMode; key: "dual" | "claudeOnly" | "codexOnly"; label: string }[] = [
-  { id: "dual", key: "dual", label: "Dual Model" },
-  { id: "claude-only", key: "claudeOnly", label: "Claude Only" },
-  { id: "codex-only", key: "codexOnly", label: "Codex Only" },
-]
-
-/** Candidate models for a cell: the column's provider set; dual sees both. */
-function candidateModels(column: ReviewMode): string[] {
-  if (column === "claude-only") return CLAUDE_MODELS
-  if (column === "codex-only") return CODEX_MODELS
-  return [...CLAUDE_MODELS, ...CODEX_MODELS]
-}
+type HarnessMode = "dual" | "single"
 
 /**
- * The council's table, one row per role, only the columns this host's
- * enabled agents make real, the active one highlighted. Cosmetic in the
- * prototype: picks change local state, nothing writes an override.
+ * The council's table with the mode built in: two columns — Dual Harness
+ * and Single Harness — and the column headers ARE the mode switch. The
+ * selected header carries the check; the other column dims and locks until
+ * its header is clicked. Dual is unavailable until both agents are enabled
+ * (hover says which one to enable); Single auto-detects its provider,
+ * Claude first. Cosmetic in the prototype: picks and resets change local
+ * state, nothing writes an override.
  */
 function MappingsDialog({
-  mode,
-  columns,
+  enabledIds,
   open,
   onOpenChange,
 }: {
-  mode: ReviewMode
-  columns: typeof MODE_COLUMNS
+  enabledIds: string[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const claudeOn = enabledIds.includes("claude")
+  const codexOn = enabledIds.includes("codex")
+  const both = claudeOn && codexOn
+  const singleKey: "claudeOnly" | "codexOnly" = claudeOn ? "claudeOnly" : "codexOnly"
+  const singleProvider = claudeOn ? "Claude" : "Codex"
+  const missingProvider = claudeOn ? "Codex" : "Claude"
+
+  const [mode, setMode] = React.useState<HarnessMode>(both ? "dual" : "single")
+  // Losing the second agent settles the question, whatever was clicked.
+  const effective: HarnessMode = both ? mode : "single"
+
   const [roles, setRoles] = React.useState<ReviewRole[]>(reviewRoles)
 
   function setModel(roleId: string, key: "dual" | "claudeOnly" | "codexOnly", model: string) {
@@ -378,77 +347,215 @@ function MappingsDialog({
     )
   }
 
+  function resetRole(roleId: string) {
+    const fallback = reviewRoles.find((r) => r.id === roleId)
+    if (fallback) setRoles((prev) => prev.map((role) => (role.id === roleId ? fallback : role)))
+  }
+
+  const isDefault = (role: ReviewRole) => {
+    const fallback = reviewRoles.find((r) => r.id === role.id)
+    return (
+      !!fallback &&
+      (["dual", "claudeOnly", "codexOnly"] as const).every(
+        (key) =>
+          role[key]?.model === fallback[key]?.model && role[key]?.effort === fallback[key]?.effort,
+      )
+    )
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={columns.length > 1 ? "sm:max-w-[600px]" : "sm:max-w-[420px]"}>
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>Model Mappings</DialogTitle>
           <DialogDescription>
-            The Model Council’s defaults per role. Availability picks the column; changing a cell
-            sets an override for that role — the harness follows the model.
+            The Model Council’s defaults per role. Click a column header to set the review mode;
+            changing a cell sets an override for that role — the harness follows the model.
           </DialogDescription>
         </DialogHeader>
-        <div
-          className="grid items-center gap-x-3 gap-y-0 text-[12px]"
-          style={{ gridTemplateColumns: `1.4fr repeat(${columns.length}, 1fr)` }}
-        >
+        <div className="grid grid-cols-[1.4fr_1fr_1fr] items-center gap-x-3 gap-y-0 text-[12px]">
           <span />
-          {columns.map((column) => (
-            <span
-              key={column.id}
-              className={cn(
-                "pb-1.5 font-medium",
-                column.id === mode ? "text-foreground" : "text-muted-foreground/60",
-              )}
-            >
-              {column.label}
-            </span>
-          ))}
-          {roles.map((role) => (
-            <React.Fragment key={role.id}>
-              <span
-                className="border-t border-border py-2 pr-2 text-[13px] font-medium text-foreground"
-                title={role.hint}
-              >
-                {role.label}
-              </span>
-              {columns.map((column) => {
-                const assignment = role[column.key]
-                return (
-                  <span key={column.id} className="border-t border-border py-2">
-                    {assignment ? (
-                      <ModelCell
-                        assignment={assignment}
-                        active={column.id === mode}
-                        models={candidateModels(column.id)}
-                        onChange={(model) => setModel(role.id, column.key, model)}
-                      />
-                    ) : (
-                      <span className="text-muted-foreground/50">—</span>
-                    )}
+          <DualUnavailableHint active={!both} missing={missingProvider}>
+            <ModeHeader
+              label="Dual Harness"
+              sub="one seat per provider"
+              selected={effective === "dual"}
+              available={both}
+              onSelect={() => setMode("dual")}
+            />
+          </DualUnavailableHint>
+          <ModeHeader
+            label="Single Harness"
+            sub={both ? `falls to ${singleProvider}` : singleProvider}
+            selected={effective === "single"}
+            available
+            onSelect={() => setMode("single")}
+          />
+          {roles.map((role) => {
+            const cells: {
+              key: "dual" | "claudeOnly" | "codexOnly"
+              editable: boolean
+              unavailable?: boolean
+              models: string[]
+            }[] = [
+              {
+                key: "dual",
+                editable: both && effective === "dual",
+                unavailable: !both,
+                models: [...CLAUDE_MODELS, ...CODEX_MODELS],
+              },
+              {
+                key: singleKey,
+                editable: effective === "single",
+                models: claudeOn ? CLAUDE_MODELS : CODEX_MODELS,
+              },
+            ]
+            return (
+              <React.Fragment key={role.id}>
+                <span className="flex flex-col items-start border-t border-border py-2 pr-2">
+                  <span className="text-[13px] font-medium text-foreground" title={role.hint}>
+                    {role.label}
                   </span>
-                )
-              })}
-            </React.Fragment>
-          ))}
+                  {!isDefault(role) && (
+                    <button
+                      type="button"
+                      onClick={() => resetRole(role.id)}
+                      className="flex items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <RotateCcw className="size-2.5" aria-hidden="true" />
+                      Reset to default
+                    </button>
+                  )}
+                </span>
+                {cells.map((cell) => {
+                  const assignment = role[cell.key]
+                  const body = assignment ? (
+                    <ModelCell
+                      assignment={assignment}
+                      editable={cell.editable}
+                      models={cell.models}
+                      onChange={(model) => setModel(role.id, cell.key, model)}
+                    />
+                  ) : (
+                    <span className="text-muted-foreground/50">—</span>
+                  )
+                  return (
+                    <span
+                      key={cell.key}
+                      className={cn(
+                        "border-t border-border py-2",
+                        !cell.editable && "opacity-40",
+                      )}
+                    >
+                      {cell.unavailable ? (
+                        <DualUnavailableHint active missing={missingProvider}>
+                          {body}
+                        </DualUnavailableHint>
+                      ) : (
+                        body
+                      )}
+                    </span>
+                  )
+                })}
+              </React.Fragment>
+            )
+          })}
         </div>
       </DialogContent>
     </Dialog>
   )
 }
 
+/** A column header that is also the mode switch. The check is the state. */
+function ModeHeader({
+  label,
+  sub,
+  selected,
+  available,
+  onSelect,
+}: {
+  label: string
+  sub?: string
+  selected: boolean
+  available: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={!available}
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        "flex items-start gap-1.5 pb-1.5 text-left font-medium transition-colors",
+        selected
+          ? "text-foreground"
+          : available
+            ? "text-muted-foreground/60 hover:text-foreground"
+            : "cursor-not-allowed text-muted-foreground/40",
+      )}
+    >
+      <span className="flex flex-col">
+        {label}
+        {sub && <span className="text-[10px] font-normal text-muted-foreground/60">{sub}</span>}
+      </span>
+      {selected && <Check className="size-4 shrink-0 text-green" strokeWidth={3} aria-hidden="true" />}
+    </button>
+  )
+}
+
+/**
+ * Hand-rolled hover tip (the kit has no tooltip; the coach marks are
+ * hand-rolled too, R55). Wraps every cell of the unavailable Dual column so
+ * hovering anywhere in it says what would unlock dual.
+ */
+function DualUnavailableHint({
+  active,
+  missing,
+  children,
+}: {
+  active: boolean
+  missing: string
+  children: React.ReactNode
+}) {
+  if (!active) return <>{children}</>
+  return (
+    <span className="group relative block">
+      {children}
+      <span className="pointer-events-none absolute top-full left-1/2 z-10 hidden w-max -translate-x-1/2 rounded-md border border-border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md group-hover:block">
+        Enable {missing} to turn on Dual Harness (Recommended)
+      </span>
+    </span>
+  )
+}
+
 function ModelCell({
   assignment,
-  active,
+  editable,
   models,
   onChange,
 }: {
   assignment: RoleAssignment
-  active: boolean
+  editable: boolean
   models: string[]
   onChange: (model: string) => void
 }) {
   const [open, setOpen] = React.useState(false)
+
+  const display = (
+    <>
+      <span>{assignment.model}</span>
+      <span className="text-[10px] text-muted-foreground/60">{assignment.effort}</span>
+    </>
+  )
+
+  if (!editable) {
+    return (
+      <span className="flex flex-col items-start px-1.5 py-1 font-mono text-[11px] text-muted-foreground/70">
+        {display}
+      </span>
+    )
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -456,15 +563,11 @@ function ModelCell({
         render={
           <button
             type="button"
-            className={cn(
-              "flex flex-col items-start rounded-md px-1.5 py-1 text-left font-mono text-[11px] transition-colors hover:bg-secondary",
-              active ? "text-foreground" : "text-muted-foreground/70",
-            )}
+            className="flex flex-col items-start rounded-md px-1.5 py-1 text-left font-mono text-[11px] text-foreground transition-colors hover:bg-secondary"
           />
         }
       >
-        <span>{assignment.model}</span>
-        <span className="text-[10px] text-muted-foreground/60">{assignment.effort}</span>
+        {display}
       </PopoverTrigger>
       <PopoverContent className="w-44 p-1" align="start">
         <Command>

@@ -251,15 +251,7 @@ export const agentTools: Record<string, AgentTool[]> = {
   h3: [],
 }
 
-/** ——— Review agents: mode + Model Council mappings ——— */
-
-export type ReviewMode = "dual" | "claude-only" | "codex-only"
-
-export const REVIEW_MODES: { id: ReviewMode; label: string }[] = [
-  { id: "dual", label: "Dual Model" },
-  { id: "claude-only", label: "Claude Only" },
-  { id: "codex-only", label: "Codex Only" },
-]
+/** ——— Review agents: Model Council mappings ——— */
 
 /** The council's model set — bare ids, as the tables use them. */
 export const CLAUDE_MODELS = ["haiku", "sonnet-5", "opus-4.8"]
