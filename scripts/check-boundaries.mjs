@@ -6,28 +6,18 @@ import { assertPnpmCommandShape, pnpmCommand } from "./pnpm-launcher.mjs";
 const workspaceRoot = resolve(import.meta.dirname, "..");
 assertPnpmCommandShape();
 const allowed = new Map([
-  ["@rennet/types", new Set()],
   ["@rennet/theme", new Set()],
-  ["@rennet/protocol", new Set(["@rennet/types"])],
-  ["@rennet/instructions", new Set(["@rennet/types", "@rennet/protocol"])],
-  ["@rennet/core", new Set(["@rennet/types", "@rennet/protocol", "@rennet/instructions"])],
-  [
-    "@rennet/adapters",
-    new Set(["@rennet/types", "@rennet/protocol", "@rennet/instructions", "@rennet/core"]),
-  ],
+  ["@rennet/protocol", new Set()],
+  ["@rennet/instructions", new Set(["@rennet/protocol"])],
+  ["@rennet/core", new Set(["@rennet/protocol", "@rennet/instructions"])],
+  ["@rennet/adapters", new Set(["@rennet/protocol", "@rennet/instructions", "@rennet/core"])],
   [
     "@rennet/server",
-    new Set([
-      "@rennet/types",
-      "@rennet/protocol",
-      "@rennet/instructions",
-      "@rennet/core",
-      "@rennet/adapters",
-    ]),
+    new Set(["@rennet/protocol", "@rennet/instructions", "@rennet/core", "@rennet/adapters"]),
   ],
-  ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol", "@rennet/theme"])],
-  ["@rennet/app-ui", new Set(["@rennet/types", "@rennet/protocol", "@rennet/theme", "@rennet/ui"])],
-  ["@rennet/client", new Set(["@rennet/types", "@rennet/protocol"])],
+  ["@rennet/ui", new Set(["@rennet/protocol", "@rennet/theme"])],
+  ["@rennet/app-ui", new Set(["@rennet/protocol", "@rennet/theme", "@rennet/ui"])],
+  ["@rennet/client", new Set(["@rennet/protocol"])],
 ]);
 
 for (const [packageName, permitted] of allowed) {

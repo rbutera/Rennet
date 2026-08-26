@@ -14,28 +14,21 @@ export default [
         {
           allowCircularSelfDependency: false,
           depConstraints: [
-            { sourceTag: "layer:types", onlyDependOnLibsWithTags: ["layer:types"] },
             {
               sourceTag: "layer:protocol",
-              onlyDependOnLibsWithTags: ["layer:types", "layer:protocol"],
+              onlyDependOnLibsWithTags: ["layer:protocol"],
             },
             {
               sourceTag: "layer:instructions",
-              onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:instructions"],
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:instructions"],
             },
             {
               sourceTag: "layer:core",
-              onlyDependOnLibsWithTags: [
-                "layer:types",
-                "layer:protocol",
-                "layer:instructions",
-                "layer:core",
-              ],
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:instructions", "layer:core"],
             },
             {
               sourceTag: "layer:adapter",
               onlyDependOnLibsWithTags: [
-                "layer:types",
                 "layer:protocol",
                 "layer:instructions",
                 "layer:core",
@@ -45,7 +38,6 @@ export default [
             {
               sourceTag: "layer:server",
               onlyDependOnLibsWithTags: [
-                "layer:types",
                 "layer:protocol",
                 "layer:instructions",
                 "layer:core",
@@ -64,19 +56,13 @@ export default [
               // (@rennet/ui): headless primitives themed by tokens only. It may
               // import protocol + theme and nothing else — no core.
               sourceTag: "layer:ui-kit",
-              onlyDependOnLibsWithTags: [
-                "layer:types",
-                "layer:protocol",
-                "layer:theme",
-                "layer:ui-kit",
-              ],
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:theme", "layer:ui-kit"],
             },
             {
               // layer:ui is @rennet/app-ui, Rennet's composites/screens: it
               // consumes the kit (layer:ui-kit) plus protocol + theme.
               sourceTag: "layer:ui",
               onlyDependOnLibsWithTags: [
-                "layer:types",
                 "layer:protocol",
                 "layer:theme",
                 "layer:ui-kit",
@@ -85,23 +71,17 @@ export default [
             },
             {
               sourceTag: "layer:client",
-              onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:client"],
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:client"],
             },
             {
               // apps/mobile (issue #383 M1): a native shell that consumes the shared client
               // runtime + the projection contract only — never core/adapter/server/ui.
               sourceTag: "layer:mobile",
-              onlyDependOnLibsWithTags: [
-                "layer:types",
-                "layer:protocol",
-                "layer:client",
-                "layer:mobile",
-              ],
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:client", "layer:mobile"],
             },
             {
               sourceTag: "layer:app",
               onlyDependOnLibsWithTags: [
-                "layer:types",
                 "layer:protocol",
                 "layer:instructions",
                 "layer:core",
