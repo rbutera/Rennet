@@ -5,6 +5,6 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@rennet/types": "workspace:*"
+    "@rennet/protocol": "workspace:*"
   }
 }

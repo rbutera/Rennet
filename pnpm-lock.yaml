@@ -331,9 +331,6 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       chokidar:
         specifier: 5.0.0
         version: 5.0.0
@@ -420,26 +417,20 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       uuid:
         specifier: 14.0.1
         version: 14.0.1
 
   packages/instructions:
     dependencies:
-      '@rennet/types':
+      '@rennet/protocol':
         specifier: workspace:*
-        version: link:../types
+        version: link:../protocol
 
   packages/lens-instructions: {}
 
   packages/protocol:
     dependencies:
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -455,9 +446,6 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       ws:
         specifier: 8.21.1
         version: 8.21.1
