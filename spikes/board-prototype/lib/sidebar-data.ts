@@ -7,6 +7,8 @@ export interface SessionItem {
   title: string
   time: string
   active?: boolean
+  /** Orchestrator activity the reviewer hasn't opened yet — the verdigris dot. */
+  unreadUpdates?: boolean
   /** The unified review-target vocabulary (CONTEXT.md "Session targets"). */
   target: TargetKind
   targetState?: "needs-you" | "merged" | "reviewed"

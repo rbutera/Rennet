@@ -122,6 +122,7 @@ export const roundsScenario: Scenario = {
   session: {
     id: "s2",
     title: "Token refresh before the PR",
+    unreadUpdates: true,
     time: "1h",
     target: "your-branch",
   },

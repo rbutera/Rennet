@@ -236,8 +236,11 @@ function SessionRow({
             {session.pinned && (
               <Pin className="size-2.5 shrink-0 text-muted-foreground/60" aria-label="Pinned" />
             )}
-            {session.active && (
-              <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" />
+            {/* Unread orchestrator updates — verdigris, the machine's register.
+                The ACTIVE session never shows it: the row highlight already
+                says where you are, and being there means you've read it. */}
+            {session.unreadUpdates && !session.active && (
+              <span className="size-1.5 shrink-0 rounded-full bg-model" aria-label="Unread updates" />
             )}
           </span>
           <span className="pl-[18px] text-[11px] text-muted-foreground">{sublabel}</span>
