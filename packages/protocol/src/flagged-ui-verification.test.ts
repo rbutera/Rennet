@@ -1,10 +1,10 @@
+import { describe, expect, it } from "vitest";
 import {
   type FindingElement,
   MAX_UI_EVIDENCE_DATA_URL_LENGTH,
+  parseCommandOutput,
   type UiVerification,
-} from "@rennet/types";
-import { describe, expect, it } from "vitest";
-import { parseCommandOutput } from "./index";
+} from "./index";
 
 /**
  * The delivery check (Rule 80, the #349 lesson) for the verify-ui status (#183) that

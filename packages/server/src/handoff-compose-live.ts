@@ -8,7 +8,7 @@ import {
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
-import type { ComposedHandoffBundle, CouncilHarnessId, HandoffBundle } from "@rennet/types";
+import type { ComposedHandoffBundle, CouncilHarnessId, HandoffBundle } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.handoff.compose — the LIVE producer (issue #72, Model Council job M24).

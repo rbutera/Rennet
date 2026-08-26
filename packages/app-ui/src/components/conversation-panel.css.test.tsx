@@ -12,8 +12,9 @@
 // DOM. A `both` result carries `data-count="2"` and renders two `.ask-answer-card`s inside
 // `.ask-answer-cards`; an orchestrator-only result renders one. That is the two-column
 // comparison, independent of which CSS mechanism lays it out.
+
+import type { AskReviewResult } from "@rennet/protocol";
 import { parseCommandOutput } from "@rennet/protocol";
-import type { AskReviewResult } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { mount } from "../test/dom";
 import { AskAnswers } from "./ask";

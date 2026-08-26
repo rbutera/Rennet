@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ConventionCatalogue, ConventionRule, FindingSeverity } from "@rennet/protocol";
 import { findingSeveritySchema } from "@rennet/protocol";
-import type { ConventionCatalogue, ConventionRule, FindingSeverity } from "@rennet/types";
 
 /**
  * The per-project convention / anti-pattern catalogue reader (issue #180).

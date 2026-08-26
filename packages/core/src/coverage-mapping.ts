@@ -31,7 +31,7 @@
  *      configured ceiling is refused; an ABSENT budget runs ungated (no ceiling, not no spend).
  */
 
-import type { InvocationBudget, OpenSpecCoverageEdge } from "@rennet/types";
+import type { InvocationBudget, OpenSpecCoverageEdge } from "@rennet/protocol";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 import { classifyTestGlob } from "./novelty-ledger";

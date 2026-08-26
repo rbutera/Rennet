@@ -1,4 +1,4 @@
-import type { Disposition } from "@rennet/types";
+import type { Disposition } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { ForgeCapabilities } from "./forge-port";
 import {

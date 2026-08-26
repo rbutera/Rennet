@@ -1,125 +1,36 @@
+import { z } from "zod";
 import type {
-  AnalysisCohort,
-  AnalysisElement,
-  AnchorSpan,
-  Annotation,
-  AskAnswer,
-  AskReviewResult,
-  BlastRadiusPaint,
-  Canvas,
-  CiFailure,
   CiSignal,
-  ComposableAsk,
-  ComposedHandoffBundle,
-  ComposedTask,
   CompositionFreshness,
   CompositionStaleMember,
   ContextDocumentRecord,
   ContextManifest,
   ContextSendRecord,
-  DecisionDetail,
-  DecisionEvidence,
   DecisionsRunStatus,
-  DecisionWhy,
-  DeltaAccount,
-  DeltaAskAccount,
-  DeltaBeyondHunk,
   DeltaDigestResult,
-  Disposition,
   DispositionAnchor,
-  DualReviewNote,
-  ElementDiff,
   ElementDiffs,
-  FindingAdjudication,
   FindingAgreement,
-  FindingElement,
-  FindingModelAnswer,
-  FindingVerification,
   FlaggedReview,
-  HandoffBundle,
-  HandoffDisclosure,
-  HandoffDisposition,
-  HandoffRunResult,
-  HandoffTask,
-  NarrationEvidence,
-  NoiseGroup,
-  NoiseItem,
   NoiseReview,
-  OpenSpecCapabilityNote,
-  OpenSpecChange,
-  OpenSpecChangeRaw,
-  OpenSpecCoverage,
-  OpenSpecCoverageEdge,
-  OpenSpecDesign,
-  OpenSpecListItem,
-  OpenSpecProposal,
-  OpenSpecScenario,
-  OpenSpecSource,
-  OpenSpecSpecDelta,
-  OpenSpecTasks,
-  Patchset,
-  PatchsetIntent,
-  PatchsetSpecSnapshot,
   PrBodyDraftResult,
-  Proposal,
   RefinementResult,
-  RenderedHunkOccurrence,
-  RepositoryProvenance,
-  Review,
-  ReviewEngine,
-  ReviewHypothesis,
-  ReviewNarration,
-  RiskCrossCheck,
-  SubstrateChunkRef,
-  SymbolInspection,
-  SymbolNeighbor,
-  SymbolNeighbors,
-  UiScreenshot,
   UiVerification,
-} from "@rennet/types";
-import { MAX_UI_EVIDENCE_DATA_URL_LENGTH, MAX_UI_SCREENSHOTS_PER_RUN } from "@rennet/types";
-import { z } from "zod";
-
-/**
- * Bind a `z.object` to a hand-written type `T` so that OMITTING ANY FIELD OF `T` —
- * an optional field included — is a BUILD ERROR, never a silent IPC strip (#242).
- *
- * The plain `z.ZodType<T>` annotation only catches a missing REQUIRED field (the
- * inferred output stops being assignable to `T`). A missing OPTIONAL field stays
- * assignable, so it slips the annotation, and `parseCommandOutput` then strips it
- * at runtime while every unit test on either side of the boundary stays green —
- * exactly how #179's `verification`, #238's `tier`/`neighbors` and #84's
- * `hunkOccurrences` reached the renderer as `undefined`. This closes the hole
- * structurally: the shape MUST carry a schema for every key of `T`, and each
- * field's schema must produce that field's type, so a forgotten field cannot
- * compile and therefore can never silently strip.
- *
- * Usage: `export const fooSchema = objectSchemaFor<Foo>()({ ...every key of Foo });`
- * Object types only. A union / record / discriminated-union keeps its own
- * `z.ZodType<T>` annotation; the object schemas that are its members use this.
- */
-export function objectSchemaFor<T>() {
-  // Return the PRECISE `z.ZodObject<S>`, not a `z.ZodType<T>` cast. The coverage
-  // constraint on the parameter already guarantees the shape produces `T`, and the
-  // precise object type preserves BOTH `z.output` AND `z.input`. A `z.ZodType<T>`
-  // cast keeps the output but erases the input to `unknown` — harmless for an
-  // output-only schema, but it breaks any command whose INPUT schema uses one
-  // (disposition anchors, handoff dispositions), turning `z.input` into `unknown`
-  // at the consumer.
-  return <S extends { [K in keyof T]-?: z.ZodType<T[K]> }>(shape: S) => z.object(shape);
-}
+} from "./domain";
+import { MAX_UI_EVIDENCE_DATA_URL_LENGTH, MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 
 import type { AttentionEventFrame } from "./session";
 import { attentionFamilySchema } from "./session";
 
 export * from "./bodies";
+export * from "./domain";
 export * from "./rsp";
 export * from "./session";
 export * from "./sha256";
 
 const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
 
-const repositoryProvenanceSchema = objectSchemaFor<RepositoryProvenance>()({
+const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
   root: z.string().min(1),
   commonDir: z.string().min(1),
@@ -137,12 +48,12 @@ const repositoryProvenanceSchema = objectSchemaFor<RepositoryProvenance>()({
 // command boundary here so it survives IPC intact rather than being stripped: the
 // type declares it, so the schema must carry it (#242).
 const patchsetIntentSurfaceSchema = z.enum(["github-pr", "github-rest", "working-tree"]);
-const patchsetSpecSnapshotSchema = objectSchemaFor<PatchsetSpecSnapshot>()({
+const patchsetSpecSnapshotSchema = z.object({
   path: z.string(),
   digest: z.string(),
   content: z.string().optional(),
 });
-const patchsetIntentSchema = objectSchemaFor<PatchsetIntent>()({
+const patchsetIntentSchema = z.object({
   surface: patchsetIntentSurfaceSchema,
   prTitle: z.string().optional(),
   prBody: z.string().optional(),
@@ -151,7 +62,7 @@ const patchsetIntentSchema = objectSchemaFor<PatchsetIntent>()({
   commitSubjects: z.array(z.string()).optional(),
 });
 
-export const patchsetSchema = objectSchemaFor<Patchset>()({
+export const patchsetSchema = z.object({
   id: z.string().min(1),
   createdAt: z.iso.datetime(),
   repository: repositoryProvenanceSchema,
@@ -190,7 +101,7 @@ export const patchsetSchema = objectSchemaFor<Patchset>()({
 export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
 
 /** A 1-based file-line span (issue #78). Shared by the disposition anchor + command inputs. */
-const anchorSpanSchema = objectSchemaFor<AnchorSpan>()({
+const anchorSpanSchema = z.object({
   startLine: z.number().int().min(1),
   endLine: z.number().int().min(1).optional(),
 });
@@ -227,7 +138,7 @@ const dispositionAnchorSchema: z.ZodType<DispositionAnchor> = z
     { message: "span.endLine must be >= span.startLine" },
   );
 
-export const dispositionSchema = objectSchemaFor<Disposition>()({
+export const dispositionSchema = z.object({
   anchor: dispositionAnchorSchema,
   type: dispositionTypeSchema,
   body: z.string(),
@@ -258,7 +169,7 @@ const forgePublishTargetSchema = z.object({
 // crosses IPC on `Review.deltaAccount`, so it is declared here (an unlisted optional
 // on Review would be silently stripped at the boundary — the #242 discipline).
 const deltaAskStatusSchema = z.enum(["addressed", "partially-addressed", "untouched"]);
-const deltaAskAccountSchema = objectSchemaFor<DeltaAskAccount>()({
+const deltaAskAccountSchema = z.object({
   path: z.string().min(1),
   span: anchorSpanSchema.optional(),
   side: anchorSideSchema.optional(),
@@ -271,14 +182,14 @@ const deltaAskAccountSchema = objectSchemaFor<DeltaAskAccount>()({
 });
 // Hunk-grain beyond-asks (issue #73 wave 3): one uncovered new hunk, its file line range
 // and bucket. `side: "deletions"` on a pure-deletion hunk (range is the old-file image).
-const deltaBeyondHunkSchema = objectSchemaFor<DeltaBeyondHunk>()({
+const deltaBeyondHunkSchema = z.object({
   path: z.string().min(1),
   span: anchorSpanSchema,
   side: anchorSideSchema.optional(),
   bucket: z.enum(["unasked-file", "asked-file"]),
   excerpt: z.string(),
 });
-export const deltaAccountSchema = objectSchemaFor<DeltaAccount>()({
+export const deltaAccountSchema = z.object({
   asks: z.array(deltaAskAccountSchema),
   beyondAsks: z.array(z.string()),
   // Hunk grain (issue #73 wave 3). Optional + additive: ABSENT ⇒ a legacy path-grain
@@ -286,7 +197,7 @@ export const deltaAccountSchema = objectSchemaFor<DeltaAccount>()({
   beyondAskHunks: z.array(deltaBeyondHunkSchema).optional(),
 });
 
-export const reviewSchema = objectSchemaFor<Review>()({
+export const reviewSchema = z.object({
   id: z.string().min(1),
   repositoryRoot: z.string().min(1),
   patchsets: z.array(patchsetSchema).min(1),
@@ -318,11 +229,11 @@ export const reviewSchema = objectSchemaFor<Review>()({
 // The engine produces canvases from the durable log; this schema validates the
 // live canvas set delivered to the renderer over `review.canvases`. It is a full,
 // failing-capable schema (not a passthrough) so the IPC output surface has a real
-// positive control, mirroring the `Canvas` shape in `@rennet/types`.
+// positive control for the local `Canvas` shape.
 
 const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "noise", "flagged"]);
 
-const substrateChunkRefSchema = objectSchemaFor<SubstrateChunkRef>()({
+const substrateChunkRefSchema = z.object({
   chunkId: z.string(),
   hunkIds: z.array(z.string()),
   filePaths: z.array(z.string()),
@@ -333,22 +244,22 @@ const substrateChunkRefSchema = objectSchemaFor<SubstrateChunkRef>()({
 // silently strips) the evidence chips + reconstructed why the decisions lens
 // renders. `reconstructed` is pinned to the literal `true` so a `why` can only
 // EXIST as reconstructed — the schema enforces the same guarantee as the type.
-const decisionEvidenceSchema = objectSchemaFor<DecisionEvidence>()({
+const decisionEvidenceSchema = z.object({
   kind: z.enum(["spec", "pr-body", "hunk"]),
   label: z.string(),
   detail: z.string(),
 });
-const decisionWhySchema = objectSchemaFor<DecisionWhy>()({
+const decisionWhySchema = z.object({
   reconstructed: z.literal(true),
   text: z.string(),
 });
-const decisionDetailSchema = objectSchemaFor<DecisionDetail>()({
+const decisionDetailSchema = z.object({
   evidence: z.array(decisionEvidenceSchema),
   why: decisionWhySchema.optional(),
   alternatives: z.array(z.string()),
 });
 
-const analysisElementSchema = objectSchemaFor<AnalysisElement>()({
+const analysisElementSchema = z.object({
   elementKey: z.string(),
   docId: z.string(),
   anchor: z.string(),
@@ -359,13 +270,13 @@ const analysisElementSchema = objectSchemaFor<AnalysisElement>()({
   decision: decisionDetailSchema.optional(),
 });
 
-const analysisCohortSchema = objectSchemaFor<AnalysisCohort>()({
+const analysisCohortSchema = z.object({
   cohortKey: z.string(),
   title: z.string(),
   elementKeys: z.array(z.string()),
 });
 
-const annotationSchema = objectSchemaFor<Annotation>()({
+const annotationSchema = z.object({
   annotationId: z.string(),
   target: z.string(),
   kind: z.enum(["highlight", "callout", "link"]),
@@ -373,7 +284,7 @@ const annotationSchema = objectSchemaFor<Annotation>()({
   pinned: z.boolean(),
 });
 
-const proposalSchema = objectSchemaFor<Proposal>()({
+const proposalSchema = z.object({
   proposalId: z.string(),
   kind: z.enum(["disposition", "regroup", "split"]),
   target: z.string(),
@@ -385,7 +296,7 @@ const proposalSchema = objectSchemaFor<Proposal>()({
 // unlisted key at the IPC boundary, so a deterministic signal paint would arrive
 // with `signal`/`reason`/`assessed` silently gone and the overlay would render
 // nothing but the target. `docId` is now optional (deterministic paints omit it).
-const blastRadiusPaintSchema = objectSchemaFor<BlastRadiusPaint>()({
+const blastRadiusPaintSchema = z.object({
   target: z.string(),
   docId: z.string().optional(),
   signal: z
@@ -402,7 +313,7 @@ const blastRadiusPaintSchema = objectSchemaFor<BlastRadiusPaint>()({
   assessed: z.boolean().optional(),
 });
 
-export const canvasSchema = objectSchemaFor<Canvas>()({
+export const canvasSchema = z.object({
   canvasId: z.string(),
   reviewId: z.string(),
   patchsetId: z.string(),
@@ -447,14 +358,14 @@ const canvasSetSchema = z.object({
 // once because the field was absent from this schema; making it required (with `[]`
 // for genuinely identity-less patches) means the `z.ZodType<ElementDiffs>` annotation
 // below fails to compile if the schema ever omits it again.
-const renderedHunkOccurrenceSchema = objectSchemaFor<RenderedHunkOccurrence>()({
+const renderedHunkOccurrenceSchema = z.object({
   id: z.string(),
   oldStart: z.number(),
   oldLines: z.number(),
   newStart: z.number(),
   newLines: z.number(),
 });
-const elementDiffSchema = objectSchemaFor<ElementDiff>()({
+const elementDiffSchema = z.object({
   path: z.string(),
   paths: z.array(z.string()),
   diff: z.string(),
@@ -467,7 +378,7 @@ const elementDiffsSchema: z.ZodType<ElementDiffs> = z.record(z.string(), element
 // renders the agent's account at each altitude. A discriminated union keeps the
 // never-blank contract honest at the IPC boundary: a placement is a narrated
 // account or an explicit pending/failed state — there is no shape for "blank".
-const narrationEvidenceSchema = objectSchemaFor<NarrationEvidence>()({
+const narrationEvidenceSchema = z.object({
   anchor: z.string(),
   quote: z.string(),
 });
@@ -481,7 +392,7 @@ const narrationPlacementSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("pending") }),
   z.object({ status: z.literal("failed") }),
 ]);
-const reviewNarrationSchema = objectSchemaFor<ReviewNarration>()({
+const reviewNarrationSchema = z.object({
   rollup: narrationPlacementSchema,
   cohorts: z.record(z.string(), narrationPlacementSchema),
 });
@@ -491,7 +402,7 @@ const reviewNarrationSchema = objectSchemaFor<ReviewNarration>()({
 // from the deterministic mechanical outline (no model installed) and say so
 // loudly. Optional on the wire so a desktop build that predates it still
 // validates (absence → the UI shows no engine claim, never a false "AI" badge).
-const reviewEngineSchema = objectSchemaFor<ReviewEngine>()({
+const reviewEngineSchema = z.object({
   aiReview: z.boolean(),
   claudeAvailable: z.boolean(),
   codexAvailable: z.boolean(),
@@ -1225,22 +1136,22 @@ export type KnowledgeDispositionResult = z.infer<typeof knowledgeDispositionResu
 // into the flagged index; `status` keeps "ran clean" honestly apart from "the
 // runner did not complete".
 export const findingSeveritySchema = z.enum(["high", "medium", "low"]);
-export const findingModelAnswerSchema = objectSchemaFor<FindingModelAnswer>()({
+export const findingModelAnswerSchema = z.object({
   model: z.string().min(1),
   answer: z.string(),
 });
-export const findingAdjudicationSchema = objectSchemaFor<FindingAdjudication>()({
+export const findingAdjudicationSchema = z.object({
   verdict: z.enum(["supported", "contradicted", "insufficient"]),
   evidence: z.string(),
   adjudicatedBy: z.string().min(1),
 });
 export const findingAgreementSchema: z.ZodType<FindingAgreement> = z.union([
-  objectSchemaFor<Extract<FindingAgreement, { kind: "concur" }>>()({
+  z.object({
     kind: z.literal("concur"),
     agree: z.number(),
     total: z.number(),
   }),
-  objectSchemaFor<Extract<FindingAgreement, { kind: "disagree" }>>()({
+  z.object({
     kind: z.literal("disagree"),
     answers: z.array(findingModelAnswerSchema),
     adjudication: findingAdjudicationSchema.optional(),
@@ -1255,11 +1166,11 @@ export const findingAgreementSchema: z.ZodType<FindingAgreement> = z.union([
  * verification pass computed would silently never reach the row (a delivery gap,
  * Rule 80) — the UI would render every finding as unverified.
  */
-export const findingVerificationSchema = objectSchemaFor<FindingVerification>()({
+export const findingVerificationSchema = z.object({
   verdict: z.enum(["reproduced", "refuted", "inconclusive"]),
   evidence: z.string(),
 });
-export const findingElementSchema = objectSchemaFor<FindingElement>()({
+export const findingElementSchema = z.object({
   findingId: z.string().min(1),
   anchor: z.string().min(1),
   summary: z.string(),
@@ -1272,7 +1183,7 @@ export const findingElementSchema = objectSchemaFor<FindingElement>()({
  * flagged review: `seats` names the provider labels that ran; `secondSeatUnavailable`
  * is the honest degradation marker. It carries NO merged verdict.
  */
-export const dualReviewNoteSchema = objectSchemaFor<DualReviewNote>()({
+export const dualReviewNoteSchema = z.object({
   seats: z.array(z.string().min(1)),
   secondSeatUnavailable: z.string().optional(),
 });
@@ -1285,13 +1196,13 @@ export const dualReviewNoteSchema = objectSchemaFor<DualReviewNote>()({
  * renderer (the ok branch is a strict `z.object`), so the anti-rubber-stamp payoff
  * would silently never reach the UI (a delivery check, Rule 80).
  */
-export const riskCrossCheckSchema = objectSchemaFor<RiskCrossCheck>()({
+export const riskCrossCheckSchema = z.object({
   riskId: z.string().min(1),
   status: z.enum(["confirmed", "open"]),
   findingIds: z.array(z.string().min(1)),
 });
 export const ciFailureVerdictSchema = z.enum(["change-caused", "environmental", "unclassified"]);
-export const ciFailureSchema = objectSchemaFor<CiFailure>()({
+export const ciFailureSchema = z.object({
   checkId: z.string().min(1),
   checkName: z.string().min(1),
   verdict: ciFailureVerdictSchema,
@@ -1323,7 +1234,7 @@ export const ciSignalSchema: z.ZodType<CiSignal> = z.union([
  * keeps that pair consistent. Absent ⇒ no hypothesis was produced (the pre-#178
  * shape); the reading frame is simply not shown.
  */
-export const reviewHypothesisSchema = objectSchemaFor<ReviewHypothesis>()({
+export const reviewHypothesisSchema = z.object({
   domain: z.string(),
   scope: z.object({
     inScope: z.array(z.string()),
@@ -1357,27 +1268,27 @@ const flaggedBlockingStateSchema = z.object({
  * BYTES never ride this shape — only `{ path, label }` references the renderer reads
  * on demand via `review.uiEvidence`, so the review payload stays small.
  */
-export const uiScreenshotSchema = objectSchemaFor<UiScreenshot>()({
+export const uiScreenshotSchema = z.object({
   path: z.string().min(1),
   label: z.string(),
 });
 export const uiVerificationSchema: z.ZodType<UiVerification> = z.union([
-  objectSchemaFor<Extract<UiVerification, { status: "ran" }>>()({
+  z.object({
     status: z.literal("ran"),
     classifierVersion: z.number().int().positive(),
     screenshots: z.array(uiScreenshotSchema).max(MAX_UI_SCREENSHOTS_PER_RUN),
     observationCount: z.number(),
     mounted: z.boolean(),
   }),
-  objectSchemaFor<Extract<UiVerification, { status: "pending" }>>()({
+  z.object({
     status: z.literal("pending"),
     classifierVersion: z.number().int().positive(),
   }),
-  objectSchemaFor<Extract<UiVerification, { status: "not-ui" }>>()({
+  z.object({
     status: z.literal("not-ui"),
     classifierVersion: z.number().int().positive(),
   }),
-  objectSchemaFor<Extract<UiVerification, { status: "unavailable" }>>()({
+  z.object({
     status: z.literal("unavailable"),
     classifierVersion: z.number().int().positive(),
     reason: z.string(),
@@ -1424,11 +1335,11 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
 // in "both" mode) — there is no field for a merged answer, so "no synthesis, ever"
 // is enforced by the schema itself, not only by the router.
 export const askModeSchema = z.enum(["orchestrator", "both"]);
-export const askAnswerSchema = objectSchemaFor<AskAnswer>()({
+export const askAnswerSchema = z.object({
   model: z.string().min(1),
   answer: z.string(),
 });
-export const askReviewResultSchema = objectSchemaFor<AskReviewResult>()({
+export const askReviewResultSchema = z.object({
   mode: askModeSchema,
   primary: askAnswerSchema,
   secondOpinion: askAnswerSchema.optional(),
@@ -1619,12 +1530,12 @@ export const noiseJudgedBySchema = z.union([
   z.object({ kind: z.literal("rule"), rule: z.string().min(1) }),
   z.object({ kind: z.literal("noise-job"), model: z.string().min(1) }),
 ]);
-export const noiseItemSchema = objectSchemaFor<NoiseItem>()({
+export const noiseItemSchema = z.object({
   anchor: z.string().min(1),
   detail: z.string(),
   deviates: z.boolean().optional(),
 });
-export const noiseGroupSchema = objectSchemaFor<NoiseGroup>()({
+export const noiseGroupSchema = z.object({
   groupId: z.string().min(1),
   category: noiseCategorySchema,
   summary: z.string(),
@@ -1679,16 +1590,16 @@ function symbolSectionSchema<T extends z.ZodTypeAny>(row: T) {
 }
 // The definition file's sibling symbols (#11), the pinned mini-browser's clickable
 // rungs — likewise must survive the boundary or in-app navigation never exists.
-const symbolNeighborSchema = objectSchemaFor<SymbolNeighbor>()({
+const symbolNeighborSchema = z.object({
   name: z.string().min(1),
   kind: z.string().min(1),
   line: z.number().int().positive(),
 });
-const symbolNeighborsSchema = objectSchemaFor<SymbolNeighbors>()({
+const symbolNeighborsSchema = z.object({
   path: z.string().min(1),
   symbols: z.array(symbolNeighborSchema),
 });
-export const symbolInspectionSchema = objectSchemaFor<SymbolInspection>()({
+export const symbolInspectionSchema = z.object({
   name: z.string().min(1),
   definition: symbolSectionSchema(symbolDefinitionRowSchema),
   references: symbolSectionSchema(symbolReferenceRowSchema),
@@ -1700,12 +1611,12 @@ export const symbolInspectionSchema = objectSchemaFor<SymbolInspection>()({
 // live parse-on-open crosses to the renderer as the exact `OpenSpecChange` shape.
 // Every node's `source` (artifact + line) rides across — that is what makes a
 // Spec-view disposition durable against the real artifact file.
-const openSpecSourceSchema = objectSchemaFor<OpenSpecSource>()({
+const openSpecSourceSchema = z.object({
   artifact: z.enum(["proposal", "design", "tasks", "spec"]),
   capability: z.string().optional(),
   line: z.number(),
 });
-const openSpecListItemSchema = objectSchemaFor<OpenSpecListItem>()({
+const openSpecListItemSchema = z.object({
   lead: z.string().optional(),
   text: z.string(),
   source: openSpecSourceSchema.optional(),
@@ -1735,19 +1646,19 @@ const openSpecBlockSchema = z.discriminatedUnion("kind", [
     source: openSpecSourceSchema.optional(),
   }),
 ]);
-const openSpecCapabilityNoteSchema = objectSchemaFor<OpenSpecCapabilityNote>()({
+const openSpecCapabilityNoteSchema = z.object({
   name: z.string(),
   summary: z.string(),
   source: openSpecSourceSchema.optional(),
 });
-const openSpecProposalSchema = objectSchemaFor<OpenSpecProposal>()({
+const openSpecProposalSchema = z.object({
   why: z.array(openSpecBlockSchema),
   whatChanges: z.array(openSpecListItemSchema),
   newCapabilities: z.array(openSpecCapabilityNoteSchema),
   modifiedCapabilities: z.array(openSpecCapabilityNoteSchema),
   impact: z.array(z.object({ area: z.string(), detail: z.string() })),
 });
-const openSpecDesignSchema = objectSchemaFor<OpenSpecDesign>()({
+const openSpecDesignSchema = z.object({
   sections: z.array(
     z.object({
       id: z.string(),
@@ -1758,7 +1669,7 @@ const openSpecDesignSchema = objectSchemaFor<OpenSpecDesign>()({
     }),
   ),
 });
-const openSpecTasksSchema = objectSchemaFor<OpenSpecTasks>()({
+const openSpecTasksSchema = z.object({
   groups: z.array(
     z.object({
       id: z.string(),
@@ -1778,12 +1689,12 @@ const openSpecTasksSchema = objectSchemaFor<OpenSpecTasks>()({
   total: z.number(),
   done: z.number(),
 });
-const openSpecScenarioSchema = objectSchemaFor<OpenSpecScenario>()({
+const openSpecScenarioSchema = z.object({
   name: z.string(),
   steps: z.array(z.object({ keyword: z.enum(["given", "when", "then", "and"]), text: z.string() })),
   source: openSpecSourceSchema.optional(),
 });
-const openSpecSpecDeltaSchema = objectSchemaFor<OpenSpecSpecDelta>()({
+const openSpecSpecDeltaSchema = z.object({
   capability: z.string(),
   groups: z.array(
     z.object({
@@ -1800,13 +1711,13 @@ const openSpecSpecDeltaSchema = objectSchemaFor<OpenSpecSpecDelta>()({
   ),
   source: openSpecSourceSchema.optional(),
 });
-const openSpecChangeRawSchema = objectSchemaFor<OpenSpecChangeRaw>()({
+const openSpecChangeRawSchema = z.object({
   proposalMd: z.string().optional(),
   designMd: z.string().optional(),
   tasksMd: z.string().optional(),
   specDeltas: z.array(z.object({ capability: z.string(), md: z.string() })),
 });
-export const openSpecChangeSchema = objectSchemaFor<OpenSpecChange>()({
+export const openSpecChangeSchema = z.object({
   name: z.string(),
   proposal: openSpecProposalSchema.optional(),
   design: openSpecDesignSchema.optional(),
@@ -1816,14 +1727,14 @@ export const openSpecChangeSchema = objectSchemaFor<OpenSpecChange>()({
 });
 
 // ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ────────────
-const openSpecCoverageEdgeSchema = objectSchemaFor<OpenSpecCoverageEdge>()({
+const openSpecCoverageEdgeSchema = z.object({
   capability: z.string(),
   requirement: z.string(),
   hunks: z.array(z.string()),
   tests: z.number(),
 });
 
-export const openSpecCoverageSchema = objectSchemaFor<OpenSpecCoverage>()({
+export const openSpecCoverageSchema = z.object({
   status: z.enum(["ok", "failed"]),
   edges: z.array(openSpecCoverageEdgeSchema),
 });
@@ -1855,9 +1766,8 @@ export type ProjectVisibility = z.infer<typeof projectVisibilitySchema>;
 
 /**
  * A project's execution locus on the wire (add-windows-support): the host OS, or a
- * named WSL distro. Structurally identical to the `Locus` type in `@rennet/types`
- * that the execution seam uses; kept as a schema here because `protocol` may not
- * import `core`.
+ * named WSL distro. The wire form of the execution seam's `Locus`; protocol is
+ * its source of truth and infers the `Locus` type from this schema below.
  */
 export const locusSchema = z.union([
   z.object({ kind: z.literal("host") }),
@@ -2089,7 +1999,7 @@ export const settingsGuidanceSchema = z.object({
 export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
 
 // ── The review→agent handoff loop schemas (issue #18) ──────────────────────────
-// Mirror the `@rennet/types` wire shapes. The OUTPUT schemas are annotated
+// The review->agent handoff wire shapes. The OUTPUT schemas are annotated
 // `z.ZodType<T>` so a field added to a type that is NOT added here fails the build
 // (the IPC-strip guard: an optional field silently dropped at the boundary is the
 // recurring #242 defect). The disposition INPUT schema is a plain object so its
@@ -2097,7 +2007,7 @@ export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
 // param to `unknown`, which would type the command input's `dispositions` as
 // `unknown[]`). The bundle's `z.ZodType<HandoffBundle>` annotation still catches a
 // task-shape drift through `tasks: z.array(handoffTaskSchema)`.
-const handoffDispositionSchema = objectSchemaFor<HandoffDisposition>()({
+const handoffDispositionSchema = z.object({
   path: z.string().min(1),
   type: dispositionTypeSchema,
   body: z.string(),
@@ -2105,7 +2015,7 @@ const handoffDispositionSchema = objectSchemaFor<HandoffDisposition>()({
   side: anchorSideSchema.optional(),
 });
 
-const handoffTaskSchema = objectSchemaFor<HandoffTask>()({
+const handoffTaskSchema = z.object({
   path: z.string().min(1),
   type: dispositionTypeSchema,
   instruction: z.string(),
@@ -2114,7 +2024,7 @@ const handoffTaskSchema = objectSchemaFor<HandoffTask>()({
   context: z.string(),
 });
 
-const handoffBundleSchema = objectSchemaFor<HandoffBundle>()({
+const handoffBundleSchema = z.object({
   reviewId: z.string().min(1),
   patchsetId: z.string().min(1),
   tasks: z.array(handoffTaskSchema),
@@ -2122,7 +2032,7 @@ const handoffBundleSchema = objectSchemaFor<HandoffBundle>()({
   digest: z.string().min(1),
 });
 
-const handoffDisclosureSchema = objectSchemaFor<HandoffDisclosure>()({
+const handoffDisclosureSchema = z.object({
   harness: z.string().min(1),
   model: z.string().optional(),
   taskCount: z.number().int().nonnegative(),
@@ -2131,7 +2041,7 @@ const handoffDisclosureSchema = objectSchemaFor<HandoffDisclosure>()({
   summary: z.string(),
 });
 
-const handoffRunResultSchema = objectSchemaFor<HandoffRunResult>()({
+const handoffRunResultSchema = z.object({
   review: reviewSchema,
   turnDiff: z.string(),
   filesTouched: z.array(z.string()),
@@ -2167,7 +2077,7 @@ export type HandoffRunOutput = z.infer<typeof handoffRunOutputSchema>;
 // ── Handoff-bundle composition schemas (issue #72, M24) ────────────────────────
 // The output shapes are annotated `z.ZodType<T>` for the IPC-strip guard; the input
 // (`handoffDispositionSchema`, reused from #18) is the plain-object one.
-const composableAskSchema = objectSchemaFor<ComposableAsk>()({
+const composableAskSchema = z.object({
   path: z.string().min(1),
   type: dispositionTypeSchema,
   instruction: z.string(),
@@ -2177,13 +2087,13 @@ const composableAskSchema = objectSchemaFor<ComposableAsk>()({
   id: z.string().min(1),
 });
 
-const composedTaskSchema = objectSchemaFor<ComposedTask>()({
+const composedTaskSchema = z.object({
   title: z.string(),
   sourceDispositions: z.array(z.string()),
   asks: z.array(composableAskSchema),
 });
 
-const composedHandoffBundleSchema = objectSchemaFor<ComposedHandoffBundle>()({
+const composedHandoffBundleSchema = z.object({
   reviewId: z.string().min(1),
   patchsetId: z.string().min(1),
   tasks: z.array(composedTaskSchema),
@@ -2207,6 +2117,439 @@ export const pairedDeviceSchema = z.object({
   expiresAt: z.iso.datetime(),
 });
 export type PairedDevice = z.infer<typeof pairedDeviceSchema>;
+
+// ── Wire-schema types (protocol is the source of truth) ────────────────────────
+// Each type is INFERRED from its Zod schema above, so the schema cannot drift from
+// the type it validates. JSDoc carried from the former hand-written declarations.
+export type RepositoryProvenance = z.infer<typeof repositoryProvenanceSchema>;
+/**
+ * An immutable snapshot of one spec / openspec document relevant to the change,
+ * frozen onto the patchset at capture time (#136). `digest` is a sha256 over the
+ * FULL captured document; `content` is the document text INLINED when it is under
+ * the inlining cap, and absent (digest-only) when it was too large. Captured from
+ * the committed content at the reviewed head OID (or the working-tree content for
+ * a local review), so the spec view renders what the change actually shipped
+ * against rather than a later-edited version of the same file.
+ */
+export type PatchsetSpecSnapshot = z.infer<typeof patchsetSpecSnapshotSchema>;
+/**
+ * The change's stated intent, captured WITH the patchset and immutable for its
+ * lifetime (#136). It is the raw material the Decisions lens, the hypothesis pass,
+ * and the spec view reason over — widening the live `ReviewIntent` / `DecisionIntent`
+ * seam the runners already consume with the additional surface provenance and the
+ * frozen spec set. A remote head update mints a NEW patchset (R28); it never
+ * rewrites the intent frozen on the prior one.
+ *
+ * Honest absence is first-class: `prBodyAbsent` marks "there was no PR body surface
+ * at all" (a working-tree / no-PR review), so a consumer never mistakes an empty
+ * string for the stated intent. A no-PR review captures the available surface
+ * (`commitSubjects`) instead of fabricating a body.
+ */
+export type PatchsetIntent = z.infer<typeof patchsetIntentSchema>;
+export type Patchset = z.infer<typeof patchsetSchema>;
+/** A 1-based line span WITHIN the anchored unit (never absolute file lines). */
+export type AnchorSpan = z.infer<typeof anchorSpanSchema>;
+/**
+ * A reviewer action taken against an anchor. In this model a file/chunk is
+ * "read" iff it carries a disposition: reading is an action, never scroll/dwell.
+ */
+export type Disposition = z.infer<typeof dispositionSchema>;
+/** One staged ask and what the returned patchset did to it (issue #73). */
+export type DeltaAskAccount = z.infer<typeof deltaAskAccountSchema>;
+/**
+ * One change the successor made BEYOND every ask, at HUNK grain (issue #73 wave 3). A
+ * new hunk (its changed-line content appears in no prior hunk for the file or its rename
+ * source) that no ask covers. `span` is the hunk's file line range — the new-file range,
+ * or the OLD-file range for a pure-deletion hunk (with `side: "deletions"`). `bucket`
+ * separates a hunk in a file NO ask targeted (`"unasked-file"`, the loud scope-creep) from
+ * one inside an asked file but outside every asked span (`"asked-file"`). BOTH are honest
+ * narration of work the agent was allowed to do — never a violation, warning, or gate.
+ * `excerpt` is the first changed line, bounded — the human hook to the change.
+ */
+export type DeltaBeyondHunk = z.infer<typeof deltaBeyondHunkSchema>;
+/**
+ * The delta re-review account (issue #73): a deterministic, model-free record of what
+ * a returned patchset did relative to the staged asks. `asks` classifies every staged
+ * ask (addressed / partially-addressed / untouched); `beyondAsks` lists the paths the
+ * successor changed that NO ask targeted — the scope-creep the reviewer must see. The
+ * partition is total by construction: every changed path is either an ask's path or a
+ * beyond-asks path, never silently dropped. This structured account is complete on its
+ * own; optional light-tier prose (M25) only rephrases it and adds no fact.
+ *
+ * `beyondAskHunks` (issue #73 wave 3) is the HUNK-grain detail layered on top: the exact
+ * beyond-ask hunks, including one inside an asked file that path grain cannot see. It is
+ * ABSENT on a legacy account computed before hunk grain existed (⇒ render path grain
+ * only) and an EMPTY ARRAY when hunk grain WAS computed and found nothing beyond — the
+ * two are distinct, so the panel never shows precision it did not compute.
+ */
+export type DeltaAccount = z.infer<typeof deltaAccountSchema>;
+export type Review = z.infer<typeof reviewSchema>;
+/** L0 — a slice of the substrate a canvas is about: the chunks it covers. */
+export type SubstrateChunkRef = z.infer<typeof substrateChunkRefSchema>;
+/**
+ * One evidence chip a decision is drawn from (issue #137). The Decisions lens
+ * shows the raw material a decision was discerned from — a spec line, a passage of
+ * the PR body, or a hunk of the diff — so a reviewer can judge the decision at its
+ * source. `kind` is the source class; `label` is the short chip caption (e.g.
+ * "spec §3.2", "PR body", "store.ts +12"); `detail` is the quoted material.
+ *
+ * NOTE (issue #137, load-bearing): these three kinds name the SOURCE of evidence,
+ * never a verdict about the decision. There is deliberately no evidenced /
+ * mechanical / contestable triage bucket here — judging a decision is the
+ * reviewer's job, not a pre-chewed classification's.
+ */
+export type DecisionEvidence = z.infer<typeof decisionEvidenceSchema>;
+/**
+ * A decision's reconstructed rationale (issue #137). `reconstructed` is a literal
+ * `true`: the TYPE SYSTEM enforces that every `why` is marked reconstructed, so an
+ * inferred rationale can never be presented as a stated fact. A decision with no
+ * discernible rationale simply has no `why` (it still renders — title + evidence —
+ * rather than inventing one).
+ */
+export type DecisionWhy = z.infer<typeof decisionWhySchema>;
+/**
+ * The rich detail a decision carries beyond its id/anchor/title (issue #137):
+ * the evidence chips it was drawn from, an optional reconstructed why, and the
+ * alternatives not taken where the diff or PR body made them discernible. Carried
+ * on the placed `AnalysisElement` so the existing decisions surface renders it.
+ */
+export type DecisionDetail = z.infer<typeof decisionDetailSchema>;
+/**
+ * L1 — one placed analysis element. `elementKey` is DERIVED from `docId` + anchor
+ * (never minted). `kind` is the element species label; `title` is display text.
+ */
+export type AnalysisElement = z.infer<typeof analysisElementSchema>;
+/**
+ * L1 — a cohort: a deterministically grouped set of element keys (the decisions
+ * canvas groups into cohorts; hard-baked grouping, OQ17 closed). Collapsible in
+ * the UI; never capped.
+ */
+export type AnalysisCohort = z.infer<typeof analysisCohortSchema>;
+/**
+ * An L3 annotation: an orchestrator mark on an element or anchor. Ephemeral by
+ * default (`pinned: false`), promoted to persistent only by the user pinning it.
+ */
+export type Annotation = z.infer<typeof annotationSchema>;
+/**
+ * An orchestrator PROPOSAL, rendered on L3 next to its target. A disposition
+ * proposal becomes L2 ONLY when the user accepts it — accepting is a user act
+ * (L2 sovereignty). `payload` carries the proposed content opaquely.
+ */
+export type Proposal = z.infer<typeof proposalSchema>;
+/**
+ * A single amber blast-radius paint, targeting an element or anchor. The overlay
+ * renders `reason` as the one-line explanation next to the paint (issue #35 AC).
+ * `docId` is present only for the legacy model-angle paint source; deterministic
+ * signal paints omit it. `assessed: false` marks a signal that was NOT computed
+ * (deferred) — rendered visibly as "not assessed", never silently absent, so the
+ * reviewer never mistakes no-amber for no-risk.
+ */
+export type BlastRadiusPaint = z.infer<typeof blastRadiusPaintSchema>;
+/**
+ * A canvas: the layered projection scoped to `(reviewId, patchsetId, angle)`.
+ * `canvasId` is deterministic (hash of the key). The overlay is the amber
+ * blast-radius paint, never a writable layer.
+ */
+export type Canvas = z.infer<typeof canvasSchema>;
+/**
+ * The real diff material for one canvas element (issue #60). Delivered ALONGSIDE
+ * the canvas set (never embedded on the `Canvas`, so the canvas projection stays
+ * byte-identical for replay). `diff` is sliced VERBATIM from the captured
+ * patchset — the exact hunk text git produced — so zooming into an element shows
+ * the real code, not a fixture.
+ */
+/**
+ * One occurrence (decomposition hunk) mapped onto a rendered `@@` hunk. `id` is the
+ * hunk id an anchor references; the line range is the occurrence's own span, so a
+ * mark anchored to an oversize-split (R18) FRAGMENT resolves within its slice of the
+ * shared raw hunk, never the whole hunk. `oldStart`/`newStart` are 1-based file
+ * lines; `oldLines`/`newLines` the side counts — the same shape as `Hunk`.
+ */
+export type RenderedHunkOccurrence = z.infer<typeof renderedHunkOccurrenceSchema>;
+export type ElementDiff = z.infer<typeof elementDiffSchema>;
+/**
+ * An optional code citation on a narration entry: a `rennet:` code anchor plus the
+ * byte-exact quote it stands on. The generic validator walk (V006) byte-verifies
+ * every `{anchor, quote}` pair against the resolved span, so a fabricated quote is
+ * rejected. Absent when a narration cites no specific code.
+ */
+export type NarrationEvidence = z.infer<typeof narrationEvidenceSchema>;
+/**
+ * The narration placed onto a review's canvases, keyed by the node the reader is
+ * looking at (issue #70). `rollup` is the whole-changeset account; `cohorts` maps
+ * each cohortKey to its account. Consumed by the renderer at the matching zoom
+ * level (rollup zoom → `rollup`; cohort zoom → `cohorts[cohortKey]`).
+ */
+export type ReviewNarration = z.infer<typeof reviewNarrationSchema>;
+/**
+ * How the live canvas set was actually produced — the honesty signal the renderer
+ * needs so it never passes the mechanical outline off as an AI review.
+ *
+ *   - `aiReview: true`  — at least one real model harness (the user's Claude
+ *     and/or Codex) was installed and drove the enrichment turns. This is a real
+ *     AI review.
+ *   - `aiReview: false` — the model phase did NOT complete, for one of two
+ *     reasons: no model was available (no `claude` binary, no `codex`), OR the
+ *     model-invocation budget refused it (#260 — over budget pre-flight, or the
+ *     shared ceiling exhausted by retries). Either way the canvases are the
+ *     DETERMINISTIC mechanical outline of the diff: real structure, but not AI
+ *     findings, and the UI must say so LOUDLY. A budget-exhausted review must
+ *     never present as a completed AI review.
+ *
+ * `claudeAvailable` / `codexAvailable` let the UI name the cause: with no model
+ * it points at the missing CLI; with a model present, `aiReview: false` means the
+ * budget was the limit, so the UI names the budget rather than a missing binary.
+ */
+export type ReviewEngine = z.infer<typeof reviewEngineSchema>;
+/** One model's answer in a disagreement, labelled by the model that gave it. */
+export type FindingModelAnswer = z.infer<typeof findingModelAnswerSchema>;
+/**
+ * The adjudication chip on a `disagree` agreement (issue #41). `verdict` is the
+ * three-way judgement; `evidence` is the one-line reason (the code that supports or
+ * contradicts, or WHY it was insufficient); `adjudicatedBy` is the resolved seat's
+ * honest label (the model/harness the council routed the adjudication job to), so
+ * provenance cannot lie. Additive-optional on the disagree arm — an old `finding`
+ * doc without it validates unchanged and an old renderer ignores it.
+ */
+export type FindingAdjudication = z.infer<typeof findingAdjudicationSchema>;
+/**
+ * The verification chip attached to a surfaced finding (issue #179). ADDITIVE and
+ * OPTIONAL on `FindingElement`: a finding without it validates and renders exactly
+ * as before this change, and existing `finding` documents remain admissible
+ * unchanged. `evidence` is the one-line "we dug into it and found Y" for a
+ * `reproduced` finding, and the honest caveat for an `inconclusive` one — which
+ * also carries WHY it was not established (genuine verifier uncertainty, the
+ * per-review verification cap, an exhausted budget, or unreadable code). A
+ * `refuted` finding never carries this, because it never surfaces.
+ */
+export type FindingVerification = z.infer<typeof findingVerificationSchema>;
+/**
+ * The canvas-facing shape of one finding: an id, the anchor it is about, a short
+ * summary, its severity, and its agreement state. The `finding` doc body (issue
+ * #32) is an ADDITIVE superset — the lens placement only needs these fields.
+ */
+export type FindingElement = z.infer<typeof findingElementSchema>;
+/**
+ * How the flagged review was produced (issue #41, dual-model). It rides the
+ * `ok` variant as an ADDITIVE optional field, so a single-seat review (today's
+ * default) omits it and nothing downstream changes. When two provider seats run,
+ * `seats` names both labels in order; `secondSeatUnavailable` is the HONEST
+ * degradation marker — set only when a second seat was requested (deep review,
+ * two providers installed) but was unavailable or errored, so the lens can show a
+ * "single provider — no second opinion" badge rather than fabricate a concurrence.
+ * It NEVER carries a merged verdict — disagreement lives in each finding's
+ * `agreement`, this only records WHO ran.
+ */
+export type DualReviewNote = z.infer<typeof dualReviewNoteSchema>;
+/**
+ * The deterministic predicted-risk cross-check (issue #181): each hypothesised
+ * risk is `confirmed` (a finding addresses it — a predicted-and-found signal) or
+ * `open` (no finding addresses it — surfaced to the human as a manual check they
+ * must make themselves, NEVER silently dropped). Runs no model turn.
+ */
+export type RiskCrossCheck = z.infer<typeof riskCrossCheckSchema>;
+/** One failing CI check classified against the reviewed changeset. */
+export type CiFailure = z.infer<typeof ciFailureSchema>;
+/**
+ * The pass's extracted, ready-to-inject hypothesis: the committed body plus
+ * whether the repo context was present when it was formed (an honest degradation
+ * marker, never a fabricated snapshot). This is what the lens runners consume as
+ * disconfirmation criteria and what the reading-frame derivation renders.
+ */
+export type ReviewHypothesis = z.infer<typeof reviewHypothesisSchema>;
+/**
+ * One screenshot the verify-ui turn captured (issue #183). `path` is RELATIVE to
+ * the review's evidence directory and includes the completed patchset/run namespace;
+ * `label` is the human caption ("mobile viewport",
+ * "focus ring"). The bytes never ride this shape — the renderer reads them on
+ * demand via the `review.uiEvidence` command, so the review snapshot and IPC
+ * payload stay small.
+ */
+export type UiScreenshot = z.infer<typeof uiScreenshotSchema>;
+/**
+ * One model's answer to a review question, labelled by the model that gave it
+ * (e.g. "Orchestrator · Claude", "codex"). The label is what the side-by-side
+ * cards show, so the reviewer always knows WHO said WHAT.
+ */
+export type AskAnswer = z.infer<typeof askAnswerSchema>;
+/**
+ * The result of one review question. `primary` is ALWAYS the orchestrator's
+ * answer; `secondOpinion` is Codex's answer and is present ONLY in "both" mode.
+ * There is deliberately NO third field: the shape cannot express a synthesized or
+ * merged answer, so "no synthesis, ever" holds by construction rather than by
+ * discipline. When both are present they render side by side, labelled, and the
+ * reviewer reconciles any disagreement themselves.
+ */
+export type AskReviewResult = z.infer<typeof askReviewResultSchema>;
+/**
+ * One churn item inside a noise group: the anchor it lives at and a short plain
+ * detail. `deviates` marks a line that BREAKS its group's pattern — the totality
+ * floor's deviating-line ejection: it is never suppressed inside the group, it
+ * ejects into normal review (the derivation lifts it out; nothing is dropped).
+ */
+export type NoiseItem = z.infer<typeof noiseItemSchema>;
+/**
+ * The canvas-facing shape of one noise group: an id, its category, the plain-speech
+ * one-line summary the collapsed row shows, how it was judged (rule vs noise job),
+ * and the churn items it collects (kept INSPECTABLE — the group is collapsed, never
+ * dropped). The live `noise` doc body (a follow-up) is an ADDITIVE superset.
+ */
+export type NoiseGroup = z.infer<typeof noiseGroupSchema>;
+/**
+ * One neighbouring top-level symbol declared in a definition's file — the real
+ * `context.overview` symbols (name, kind, line), NOT fabricated code text. These
+ * are the clickable rungs of the pinned mini-browser: clicking one re-runs the
+ * lookup for that name, so a reviewer walks declaration→declaration in the rail
+ * while the diff stays put (Rai, wireframes #11).
+ */
+export type SymbolNeighbor = z.infer<typeof symbolNeighborSchema>;
+/** The sibling symbols of a definition's file, for the pinned mini-browser preview. */
+export type SymbolNeighbors = z.infer<typeof symbolNeighborsSchema>;
+/** The whole answer for one inspected name: its definition sites and its references. */
+export type SymbolInspection = z.infer<typeof symbolInspectionSchema>;
+/**
+ * Where a reviewable node lives in its source artifact — the file it came from and
+ * its 1-based start line. This is what turns a Spec-view review affordance into a
+ * DURABLE disposition: the disposition is written against the REAL artifact file
+ * path (`openspec/changes/<name>/<artifact>`) at this line span, so the engine (a
+ * patchset-file-scoped store) accepts it, and distinct nodes on the same file carry
+ * distinct line spans rather than colliding. Absent only on hand-built fixtures.
+ */
+export type OpenSpecSource = z.infer<typeof openSpecSourceSchema>;
+/**
+ * One list item. `lead` is a bolded lead-in phrase pulled out for emphasis
+ * (the `**Storage.** the rest…` idiom the artifacts use heavily); `text` is the
+ * remainder. When there is no bold lead, `lead` is absent and `text` is the whole
+ * item.
+ */
+export type OpenSpecListItem = z.infer<typeof openSpecListItemSchema>;
+/** A named capability noted in a proposal's Capabilities section. */
+export type OpenSpecCapabilityNote = z.infer<typeof openSpecCapabilityNoteSchema>;
+/** The structured proposal: why, the changes, the capabilities, and the impact. */
+export type OpenSpecProposal = z.infer<typeof openSpecProposalSchema>;
+/** The design doc, as an ordered section list (a table of contents is derivable from it). */
+export type OpenSpecDesign = z.infer<typeof openSpecDesignSchema>;
+/** The tasks doc: the grouped checklists plus an honest whole-change roll-up. */
+export type OpenSpecTasks = z.infer<typeof openSpecTasksSchema>;
+/** One scenario under a requirement (`#### Scenario: …`). */
+export type OpenSpecScenario = z.infer<typeof openSpecScenarioSchema>;
+/** One capability's spec delta (`specs/<capability>/spec.md`). */
+export type OpenSpecSpecDelta = z.infer<typeof openSpecSpecDeltaSchema>;
+/**
+ * The raw markdown of an OpenSpec change's artifacts, verbatim as read from disk —
+ * never a re-serialization of the parsed model (issue #239). `specDeltas` is empty
+ * rather than absent when there are no spec files.
+ */
+export type OpenSpecChangeRaw = z.infer<typeof openSpecChangeRawSchema>;
+/**
+ * A whole parsed OpenSpec change. Any artifact may be absent (a change need not
+ * ship a design doc); `specDeltas` is empty rather than absent when there are no
+ * spec files. The `name` is the change directory name.
+ */
+export type OpenSpecChange = z.infer<typeof openSpecChangeSchema>;
+/**
+ * One produced coverage edge: a requirement (identified by its capability + exact
+ * name, so a consumer can key it without the ui's anchor-slug logic) mapped to the
+ * grounded hunks that implement it and the count of tests that exercise it. `hunks`
+ * are `rennet:hunk/<id>` anchors already grounded against the offered manifest (the
+ * producer dropped any the model hallucinated); an empty `hunks` is a computed zero
+ * (`unimplemented`), never a fabrication.
+ */
+export type OpenSpecCoverageEdge = z.infer<typeof openSpecCoverageEdgeSchema>;
+/**
+ * The coverage producer's result over a whole change. `status: "ok"` means the
+ * mapping RAN — every requirement has an edge (covered or an honest zero), so the
+ * Spec view can render every chip. `status: "failed"` means the runner did not
+ * complete (no model available, budget refused, every turn failed): `edges` is empty
+ * and the Spec view renders NO chips, keeping "not computed" distinct from a real
+ * zero. Never a fabricated edge on failure.
+ */
+export type OpenSpecCoverage = z.infer<typeof openSpecCoverageSchema>;
+// ─────────────────────────────────────────────────────────────────────────────
+// The review→agent handoff loop (issue #18, Contracts §2.1 destination B). The
+// wire shapes only; the composer, disclosure, and orchestrator live in
+// `@rennet/core` (`handoff-loop.ts`), and the command schemas mirror these in
+// `@rennet/protocol`. Appended at the file END so it does not collide with the
+// concurrent lineage-matcher work above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One disposition addressed to the coding agent — the effective (refined-if-kept,
+ * else raw) body the reviewer staged, plus its anchor. Path-grained ⟺ `span`/`side`
+ * both absent; span-grained ⟺ both present (the #78 all-or-none rule). The renderer
+ * supplies these from the SAME collation draft it would publish, so the agent
+ * addresses exactly what the reviewer wrote, in its cleaned form.
+ */
+export type HandoffDisposition = z.infer<typeof handoffDispositionSchema>;
+/**
+ * One resolved task in the bundle: a disposition whose anchor has been resolved to
+ * the concrete diff context (the anchored hunk, or the file section) it refers to.
+ * `context` is bounded and honestly marked when cut; "" when the file is not in the
+ * active patchset's diff (the agent then works from the instruction alone).
+ */
+export type HandoffTask = z.infer<typeof handoffTaskSchema>;
+/**
+ * The task bundle handed to the coding harness. The `prompt` IS the contract: it
+ * enumerates the tasks and instructs the agent to address them AND NOTHING ELSE
+ * (the human still disposes; the agent addresses dispositions, §2.1). `digest` is a
+ * content hash over the ordered tasks, so the spend disclosure the user approved and
+ * the bundle the write session runs are provably the same bundle (the consent token
+ * binds to it).
+ */
+export type HandoffBundle = z.infer<typeof handoffBundleSchema>;
+/**
+ * The spend disclosure surfaced BEFORE a write-enabled session runs (issue #18's
+ * "spend is disclosed" invariant). A handoff spends the user's own harness quota AND
+ * edits their working tree, so the disclosure names both. `model` is the harness's
+ * resolved model when known (absent ⇒ the harness runs its own default). This is the
+ * surface the user acts on; `requestConsent` binds a token to the bundle it describes.
+ */
+export type HandoffDisclosure = z.infer<typeof handoffDisclosureSchema>;
+/**
+ * The result of a completed handoff run. `review` carries the NEW patchset (the
+ * delta re-review's successor canvas opens on it) with the prior patchset preserved
+ * byte-identical (R28). `turnDiff` is the exact diff the agent's turn produced
+ * (bracketed by workspace checkpoints); `filesTouched` is every path the turn
+ * changed — including edits unrelated to any disposition (the totality guarantee).
+ */
+export type HandoffRunResult = z.infer<typeof handoffRunResultSchema>;
+// ─────────────────────────────────────────────────────────────────────────────
+// Handoff-bundle COMPOSITION (issue #72, Model Council job M24). The light-tier
+// authoring step OVER the mechanical `HandoffBundle`: order the asks for execution
+// sense, merge overlapping asks into coherent tasks, and write a connective
+// narrative — WITHOUT altering what was asked. Appended after the #18 handoff block
+// so it does not collide with that work.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One addressable ask in a bundle — a `HandoffTask` given a stable `id` the
+ * composition trace cites (issue #73 maps delta-review results back through it).
+ * The id is the ask's ordinal in the mechanical bundle's DETERMINISTIC order, so
+ * the same disposition set always yields the same ids; the ask itself rides
+ * alongside, so an id always resolves to concrete path/anchor/body.
+ */
+export type ComposableAsk = z.infer<typeof composableAskSchema>;
+/**
+ * One composed task: a group of asks the model judged should be executed as one
+ * coherent unit, with a model-authored connective `title`. ⭐ The member `asks` are
+ * carried VERBATIM from the trusted input — the model chooses order+grouping and
+ * cites ids, it NEVER rewrites a body — so a composition can neither drop nor alter
+ * what was asked (only how it reads). `title` is PREVIEW-ONLY metadata (shown to the
+ * human on the paper); it is NEVER inserted into the executable handoff prompt, whose
+ * per-task heading is derived mechanically from the trusted ask paths. `title` is ""
+ * in the mechanical floor.
+ */
+export type ComposedTask = z.infer<typeof composedTaskSchema>;
+/**
+ * The composed bundle handed toward the coding harness (previewed on the paper at
+ * journey stage 6). `composed` is TRUE when a validated model authoring was adopted
+ * and FALSE when the deterministic FLOOR ran (the model was unavailable, failed, or
+ * returned an incomplete/invalid partition — fail-closed to the pass-through list).
+ * `traceMap` maps every input ask id to its index in `tasks`; the invariant, asserted
+ * by the composer, is that EVERY id appears exactly once (no ask dropped, none
+ * invented) — the round-trip guarantee #72's acceptance names.
+ */
+export type ComposedHandoffBundle = z.infer<typeof composedHandoffBundleSchema>;
 
 export const commandDefinitions = {
   "app.bootstrap": {

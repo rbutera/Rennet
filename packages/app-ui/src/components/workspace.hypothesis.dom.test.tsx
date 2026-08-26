@@ -7,8 +7,8 @@
 // as the anti-rubber-stamp payoff (#181), that a confirmed risk jumps to its
 // finding in the Flagged lens, that it collapses, and that a review with no
 // hypothesis shows no frame.
-import type { Canvas, CanvasAngle, FlaggedReview, ReviewHypothesis } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+import type { Canvas, CanvasAngle, FlaggedReview, ReviewHypothesis } from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { mount, waitFor } from "../test/dom";
 import { CanvasWorkspace } from "./workspace";

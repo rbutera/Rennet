@@ -5,7 +5,7 @@ import type {
   DecisionEvidence,
   DecisionsRunStatus,
   DispositionType,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { ChevronDown } from "lucide-react";
 import {
   type ApprovalScope,

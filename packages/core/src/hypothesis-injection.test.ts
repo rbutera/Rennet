@@ -1,4 +1,4 @@
-import type { Patchset, ReviewHypothesis, RspCapabilitySnapshot } from "@rennet/types";
+import type { Patchset, ReviewHypothesis, RspCapabilitySnapshot } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import { decompose } from "./decomposition";

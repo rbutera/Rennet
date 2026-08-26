@@ -1,7 +1,12 @@
-import type { Canvas, CanvasAngle } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { canvasSchema, isCommandName, parseCommandInput, parseCommandOutput } from "./index";
+import type { Canvas, CanvasAngle } from "./index";
+import {
+  CANVAS_ANGLES,
+  canvasSchema,
+  isCommandName,
+  parseCommandInput,
+  parseCommandOutput,
+} from "./index";
 
 function emptyCanvas(angle: CanvasAngle): Canvas {
   return {

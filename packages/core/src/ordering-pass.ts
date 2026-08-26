@@ -27,7 +27,6 @@ import {
   type PromptContract,
   renderBaseInstruction,
 } from "@rennet/instructions";
-import { computeInputDigest, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
   DecompositionEdge,
@@ -45,7 +44,8 @@ import type {
   RspTokenUsage,
   ValidationError,
   ValidationReport,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { computeInputDigest, validateDocument } from "@rennet/protocol";
 import type { TurnExecutorFacts } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 

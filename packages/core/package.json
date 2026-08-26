@@ -7,7 +7,6 @@
   "dependencies": {
     "@rennet/instructions": "workspace:*",
     "@rennet/protocol": "workspace:*",
-    "@rennet/types": "workspace:*",
     "uuid": "14.0.1"
   }
 }

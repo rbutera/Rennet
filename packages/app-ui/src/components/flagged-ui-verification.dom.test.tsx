@@ -6,7 +6,7 @@
 // not-found screenshot degrades to a plain note, a review WITHOUT the field renders
 // byte-for-byte as before (additive proof), and an unavailable status beside
 // unresolved findings never gates the surface (Rule Zero).
-import type { FlaggedReview } from "@rennet/types";
+import type { FlaggedReview } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { buildFlaggedIndex } from "../canvas/flagged";
 import { mount, waitFor } from "../test/dom";

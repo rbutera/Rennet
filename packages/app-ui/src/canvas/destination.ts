@@ -26,7 +26,7 @@ import type { DispositionWrite } from "./logic";
 //
 // The staged set IS the #17 batch (`DispositionBatch`); this module re-expresses
 // it in the "staged" vocabulary and adds the mode framing + the sign gate. The
-// `layer:ui` boundary allows only `@rennet/types` + this package: nothing here
+// `layer:ui` boundary allows only `@rennet/protocol` + this package: nothing here
 // imports `@rennet/core`.
 // ─────────────────────────────────────────────────────────────────────────────
 

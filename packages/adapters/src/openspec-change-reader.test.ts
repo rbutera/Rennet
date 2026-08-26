@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Patchset, PatchsetIntentSurface, PatchsetSource } from "@rennet/types";
+import type { Patchset, PatchsetIntentSurface, PatchsetSource } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";

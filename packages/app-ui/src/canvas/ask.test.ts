@@ -1,4 +1,4 @@
-import type { AskReviewResult } from "@rennet/types";
+import type { AskReviewResult } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   ASK_OPTIONS,

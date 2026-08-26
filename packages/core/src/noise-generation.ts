@@ -57,7 +57,6 @@ import {
   renderConventionLayer,
   renderHypothesisLayer,
 } from "@rennet/instructions";
-import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
   ConventionCatalogue,
@@ -76,7 +75,8 @@ import type {
   RspProvenance,
   RspTokenUsage,
   ValidationReport,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import { absentBudgetGrant } from "./invocation-budget";
 
 /** The result of one noise turn: the emitted body, or a turn-level failure. */

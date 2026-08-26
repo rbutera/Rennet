@@ -1,4 +1,4 @@
-import type { DecompositionBlockingState, FindingElement, FlaggedReview } from "@rennet/types";
+import type { DecompositionBlockingState, FindingElement, FlaggedReview } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildFlaggedIndex, flaggedForPatchset, isFinding } from "./flagged";
 

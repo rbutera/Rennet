@@ -1,4 +1,4 @@
-import type { ComposedHandoffBundle, ComposedTask } from "@rennet/types";
+import type { ComposedHandoffBundle, ComposedTask } from "@rennet/protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { HandoffPaper } from "./handoff-paper";

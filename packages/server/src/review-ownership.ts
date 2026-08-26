@@ -1,5 +1,5 @@
 import { materializeSnapshot } from "@rennet/core";
-import type { OwnershipRule, ProjectSnapshotManifest, Review } from "@rennet/types";
+import type { OwnershipRule, ProjectSnapshotManifest, Review } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Review ownership source (issue #35, F4).

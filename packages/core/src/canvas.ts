@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { parseAnchor } from "@rennet/protocol";
 import type {
   AnalysisCohort,
   AnalysisElement,
@@ -20,7 +19,8 @@ import type {
   RspDocType,
   SubstrateChunkRef,
   SubstrateLayer,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { parseAnchor } from "@rennet/protocol";
 import { payloadDigest } from "./index";
 
 // ─────────────────────────────────────────────────────────────────────────────

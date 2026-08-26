@@ -3,7 +3,7 @@ import type {
   ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
 } from "@rennet/core";
-import type { Review } from "@rennet/types";
+import type { Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   createLiveSymbolLookup,

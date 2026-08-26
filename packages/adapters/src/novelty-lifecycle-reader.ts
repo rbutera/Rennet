@@ -3,7 +3,7 @@ import {
   type NoveltyAdvance,
   type NoveltyLifecycleState,
 } from "@rennet/core";
-import type { Patchset } from "@rennet/types";
+import type { Patchset } from "@rennet/protocol";
 import type { NoveltyLedgerFailure, NoveltyLedgerReader } from "./novelty-ledger-reader";
 
 export type NoveltyLifecycleAdvanceResult =

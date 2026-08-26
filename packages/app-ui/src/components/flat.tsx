@@ -1,4 +1,4 @@
-import type { Canvas, DispositionType } from "@rennet/types";
+import type { Canvas, DispositionType } from "@rennet/protocol";
 import {
   type ApprovalScope,
   anchorChunkId,

@@ -8,7 +8,7 @@
 //        does, so an element whose chunk covers a targeted file is amber, with the
 //        covering chunk's one-line reason beside it.
 //   F1 — amber FOLLOWS the overlay toggle: overlayOn=false paints nothing.
-import type { Canvas } from "@rennet/types";
+import type { Canvas } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { mount } from "../test/dom";
 import { FlatCanvas } from "./flat";

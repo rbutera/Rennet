@@ -1,4 +1,4 @@
-import type { FindingElement, FlaggedReview, ReviewHypothesis } from "@rennet/types";
+import type { FindingElement, FlaggedReview, ReviewHypothesis } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { attachRiskCrossCheck, crossCheckRisks, salientTokens } from "./risk-crosscheck";
 

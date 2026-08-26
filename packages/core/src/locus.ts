@@ -14,7 +14,7 @@
  * through `locusCommand`, and it always emits the `-e` form.
  */
 
-import type { Locus } from "@rennet/types";
+import type { Locus } from "@rennet/protocol";
 
 export type { Locus };
 

@@ -18,7 +18,7 @@ import {
   runFindingAdjudication,
   scoreAdjudicationCalibration,
 } from "@rennet/core";
-import type { CouncilResolveContext, FindingAdjudicationVerdict } from "@rennet/types";
+import type { CouncilResolveContext, FindingAdjudicationVerdict } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createClaudeAdjudicationTurn, createCodexAdjudicationTurn } from "./adjudication-backend";
 import { recordCommittedAdjudicationCalibration } from "./adjudication-calibration";

@@ -1,6 +1,6 @@
-import type { OfferedManifest, PatchsetRef } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { findingAdjudicationJsonSchema } from "./bodies";
+import type { OfferedManifest, PatchsetRef } from "./index";
 import { computeInputDigest, validateDocument } from "./rsp";
 
 // The additive `agreement.adjudication` field on a disagree row (issue #41): a

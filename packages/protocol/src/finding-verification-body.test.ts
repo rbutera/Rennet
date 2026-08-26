@@ -1,6 +1,6 @@
-import type { OfferedManifest, PatchsetRef } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { findingVerificationJsonSchema } from "./bodies";
+import type { OfferedManifest, PatchsetRef } from "./index";
 import { computeInputDigest, validateDocument } from "./rsp";
 
 // The additive `finding.verification` field (issue #179): a finding with no

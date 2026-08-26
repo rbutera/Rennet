@@ -1,4 +1,4 @@
-import type { Annotation, Proposal } from "@rennet/types";
+import type { Annotation, Proposal } from "@rennet/protocol";
 import { Button, Textarea } from "@rennet/ui";
 
 // ─────────────────────────────────────────────────────────────────────────────

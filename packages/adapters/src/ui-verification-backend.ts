@@ -29,8 +29,7 @@ import type {
   UiEvidenceInspection,
   VerificationTurnResult,
 } from "@rennet/core";
-import { uiVerificationJsonSchema } from "@rennet/protocol";
-import { MAX_UI_EVIDENCE_BYTES } from "@rennet/types";
+import { MAX_UI_EVIDENCE_BYTES, uiVerificationJsonSchema } from "@rennet/protocol";
 import { createExecObservingTurn } from "./exec-observing-turn";
 
 export interface UiVerificationTurnOptions {

@@ -1,4 +1,4 @@
-import type { DispositionType, RefinementResult } from "@rennet/types";
+import type { DispositionType, RefinementResult } from "@rennet/protocol";
 
 export type { RefinementResult };
 
@@ -84,7 +84,7 @@ export type RefinePort = (prompt: string) => Promise<RefinePortResult>;
 
 /**
  * The result the `review.refine` command returns to the renderer lives in
- * `@rennet/types` (`RefinementResult`, re-exported above) so the protocol schema
+ * `@rennet/protocol` (`RefinementResult`, re-exported above) so the protocol schema
  * and this producer are typed to the SAME shape. `refined` carries a cleaned body
  * guaranteed non-empty and NOT byte-identical to the raw; `no-change` means the
  * raw was already clear; `unavailable`/`failed` are the honest degradations.

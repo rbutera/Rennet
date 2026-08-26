@@ -9,7 +9,7 @@ import {
   type NoveltyResult,
   type ProjectMapResult,
 } from "@rennet/core";
-import type { PatchFile, Patchset, Review } from "@rennet/types";
+import type { PatchFile, Patchset, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { createClaudeHarness } from "./claude-query";
 import { createLiveCanvasOpsBackend } from "./live-review-backend";

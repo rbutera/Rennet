@@ -7,7 +7,7 @@ import type {
   FindingAdjudication,
   UiScreenshot,
   UiVerification,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { Badge, Button } from "@rennet/ui";
 import { type ReactNode, useEffect, useState } from "react";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";

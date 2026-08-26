@@ -3,7 +3,7 @@ import {
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   reviewInvocationCeiling,
 } from "@rennet/core";
-import type { InvocationBudget, Review, ReviewHypothesis } from "@rennet/types";
+import type { InvocationBudget, Review, ReviewHypothesis } from "@rennet/protocol";
 
 export type ReviewIntelligenceFlow = "canvases" | "flagged";
 

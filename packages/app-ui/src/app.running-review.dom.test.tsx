@@ -8,8 +8,7 @@
 // while `review.canvases` is in flight the elapsed clock (a marker ONLY `RunningReview`
 // carries) is on screen, and once the enrichment lands it is gone and the workspace
 // renders. Deferred-bridge harness mirrors app.render-race.dom.test.tsx.
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

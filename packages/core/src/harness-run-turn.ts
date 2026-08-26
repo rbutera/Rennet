@@ -19,7 +19,6 @@
  */
 
 import { renderLayer } from "@rennet/instructions";
-import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
 import type {
   ContextSendRecord,
   RspCapabilitySnapshot,
@@ -27,7 +26,8 @@ import type {
   RspRoute,
   RspTier,
   RspTokenUsage,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
 import type { HarnessPort } from "./harness";
 
 /**

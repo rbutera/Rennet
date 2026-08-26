@@ -3,7 +3,7 @@
 // The delta re-review account panel (issue #73): it renders the deterministic account
 // at the top of a successor review — what moved per ask + what changed beyond the asks
 // — and each item anchors (navigates the diff to that path). It gates nothing.
-import type { DeltaAccount } from "@rennet/types";
+import type { DeltaAccount } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, mount } from "../test/dom";
 import { DeltaAccountPanel } from "./delta-account-panel";

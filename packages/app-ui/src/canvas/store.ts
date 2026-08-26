@@ -1,4 +1,4 @@
-import type { CanvasAngle } from "@rennet/types";
+import type { CanvasAngle } from "@rennet/protocol";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { rotateLens, type ZoomState } from "./logic";

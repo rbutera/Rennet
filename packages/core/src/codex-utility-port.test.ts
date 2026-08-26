@@ -1,5 +1,5 @@
+import type { OfferedManifest, PatchsetRef } from "@rennet/protocol";
 import { computeInputDigest } from "@rennet/protocol";
-import type { OfferedManifest, PatchsetRef } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
   type CodexExecRequest,

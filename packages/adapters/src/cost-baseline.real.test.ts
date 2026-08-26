@@ -11,7 +11,7 @@ import {
   runHypothesisPass,
   runNoiseAngle,
 } from "@rennet/core";
-import type { HypothesisStructure, Patchset } from "@rennet/types";
+import type { HypothesisStructure, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createClaudeHarness } from "./claude-query";
 import { captureRangePatchset, execaGit } from "./git-range-diff";

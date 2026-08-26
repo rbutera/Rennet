@@ -7,7 +7,7 @@ import {
   type HarnessPort,
   type SessionSpec,
 } from "@rennet/core";
-import type { HandoffDisposition, Patchset } from "@rennet/types";
+import type { HandoffDisposition, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   claudeComposePort,

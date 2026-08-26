@@ -1,5 +1,5 @@
-import type { CiSignal, FlaggedReview } from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import type { CiSignal, FlaggedReview } from "./index";
 import { flaggedReviewSchema } from "./index";
 
 const checked: CiSignal = {

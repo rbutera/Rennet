@@ -1,5 +1,4 @@
 import { ROLLUP_NARRATION_CONTRACT } from "@rennet/instructions";
-import { sha256Hex } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -8,8 +7,8 @@ import type {
   RollupNarrationBody,
   RspCapabilitySnapshot,
   RspEnvelope,
-} from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+} from "@rennet/protocol";
+import { CANVAS_ANGLES, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import { createCodexRunTurn } from "./codex-run-turn";

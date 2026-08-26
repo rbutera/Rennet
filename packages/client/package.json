@@ -5,8 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@rennet/protocol": "workspace:*",
-    "@rennet/types": "workspace:*"
+    "@rennet/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "8.18.1",

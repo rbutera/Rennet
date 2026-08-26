@@ -52,7 +52,7 @@ Apply the sources by scope:
 |---|---|
 | **R1** | The product and package namespace are Rennet and `@rennet/*`. |
 | **R2** | The Claude adapter uses `@anthropic-ai/claude-agent-sdk` with the user's installed `claude`. Packaging strips the SDK's platform executables. |
-| **R3** | Every Rennet package uses the FSL-1.1-MIT licence (Functional Source License, MIT Future License): source-available, free for any non-competing use, with each release converting to MIT two years after publication. This is the outbound licence and is independent of dependencies' inbound licences. `types` and `protocol` remain separate for architecture, not licensing. |
+| **R3** | Every Rennet package uses the FSL-1.1-MIT licence (Functional Source License, MIT Future License): source-available, free for any non-competing use, with each release converting to MIT two years after publication. This is the outbound licence and is independent of dependencies' inbound licences. |
 | **R4** | Base instructions live in `@rennet/instructions`. They are product behavior, not part of the public RSP wire contract. |
 | **R6** | Disagreement is a product data shape. It requires more than one real opinion; repeated concern is evidence, not a fixed model-call count. |
 | **R7** | Review of another person's pull request and review of the user's own branch are first-class modes. |
@@ -71,8 +71,8 @@ Apply the sources by scope:
 | **R17** | Commands produce receipts and events. Projections rebuild from durable history. Publication represents `outcome-unknown` and queries before retrying. |
 | **R18** | Diff ingestion preserves bytes and represents binaries, submodules, mode-only changes, oversize splits, and incomplete capture explicitly. |
 | **R19** | Public protocol is transport-neutral and JSON-Schema-first. Private commands and events are Zod-first. Remote clients receive recipient-specific projections without host paths. |
-| **R20** | The UI splits in two: `@rennet/ui` (the vendored shadcn/Base UI component kit) imports only `types` and `theme`; `@rennet/app-ui` (Rennet's composites and screens) imports only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies. Neither imports `core`. |
-| **R21** | Production packages are `types`, `theme`, `protocol`, `instructions`, `core`, `adapters`, `server`, `client`, `ui`, and `app-ui`, with apps as composition roots. CI checks the dependency arrows. |
+| **R20** | The UI splits in two: `@rennet/ui` (the vendored shadcn/Base UI component kit) imports only `protocol` and `theme`; `@rennet/app-ui` (Rennet's composites and screens) imports only `protocol`, `theme`, `ui`, and browser-safe dependencies. Neither imports `core`. |
+| **R21** | Production packages are `protocol`, `theme`, `instructions`, `core`, `adapters`, `server`, `client`, `ui`, and `app-ui`, with apps as composition roots. `protocol` is the base layer: its Zod schemas are the single source of truth for the wire types, which are `z.infer` exports. CI checks the dependency arrows. |
 | **R24** | Forge behavior sits behind capability-based `ForgePort`. Core does not contain scattered GitHub conditionals. |
 | **R28** | A review edition is an immutable patchset. Source movement creates a successor patchset. |
 | **R29** | Exact unaffected analysis may carry forward. Direct changes invalidate; dependency, context, and ambiguity changes become potentially invalid. |

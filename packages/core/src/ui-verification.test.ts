@@ -1,4 +1,4 @@
-import type { Hunk, InvocationBudget, PatchFile } from "@rennet/types";
+import type { Hunk, InvocationBudget, PatchFile } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { VerificationTurn, VerificationTurnResult } from "./finding-verification";
 import { createInvocationBudget } from "./invocation-budget";

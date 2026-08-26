@@ -7,8 +7,9 @@
 // and that the review affordances reuse the shared seams: a per-requirement
 // DispositionCluster fires `onDispose` with the right anchor + verb, and the
 // AskControl fires `onAsk`. Assertions are behavioural, not presence-only.
+
+import type { OpenSpecChange } from "@rennet/protocol";
 import { openSpecRequirementCoverageKey } from "@rennet/protocol";
-import type { OpenSpecChange } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildOpenSpecView,

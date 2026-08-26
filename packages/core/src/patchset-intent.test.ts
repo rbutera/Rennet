@@ -1,4 +1,4 @@
-import type { PatchsetIntent } from "@rennet/types";
+import type { PatchsetIntent } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { patchsetIntentToReviewIntent } from "./patchset-intent";
 

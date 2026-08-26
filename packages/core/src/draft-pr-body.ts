@@ -1,4 +1,4 @@
-import type { DispositionType, PrBodyDraftResult } from "@rennet/types";
+import type { DispositionType, PrBodyDraftResult } from "@rennet/protocol";
 
 export type { PrBodyDraftResult };
 

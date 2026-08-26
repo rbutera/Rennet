@@ -1,5 +1,5 @@
+import type { AnchorSide, ParsedAnchor, RenderedHunkOccurrence } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
-import type { AnchorSide, ParsedAnchor, RenderedHunkOccurrence } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The anchor↔row registrar — the coordinate system that turns the CodeView from

@@ -6,7 +6,7 @@ import type {
   SymbolNeighbor,
   SymbolNeighbors,
   SymbolTier,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import type { TokenType } from "../syntax/shiki";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ export function splitIdentifierRuns(text: string): TokenSegment[] {
 }
 
 // The lookup answer shapes are shared with the protocol command
-// (`review.symbolLookup`) and so live in `@rennet/types`; aliased here under the
+// (`review.symbolLookup`) and so live in `@rennet/protocol`; aliased here under the
 // names the inspector + helpers use.
 export type SymbolDefinitionRow = SymbolInspectorDefinitionRow;
 export type SymbolReferenceRow = SymbolInspectorReferenceRow;

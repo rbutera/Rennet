@@ -1,4 +1,4 @@
-import type { DecompositionBlockingState } from "@rennet/types";
+import type { DecompositionBlockingState } from "@rennet/protocol";
 import { ArrowLeft } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {

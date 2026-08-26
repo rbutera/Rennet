@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildReviewCanvases, createInvocationBudget } from "@rennet/core";
-import type { PatchFile, Patchset, Review } from "@rennet/types";
+import type { PatchFile, Patchset, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createDesktopReviewBackend,

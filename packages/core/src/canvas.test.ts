@@ -5,7 +5,7 @@ import type {
   Disposition,
   PatchFile,
   Patchset,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   type AdmittedDocument,

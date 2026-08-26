@@ -1,11 +1,14 @@
-import { canonicalize } from "@rennet/protocol";
 import type {
   BaseRefResolution,
   ProjectSnapshotManifest,
   ShardRef,
   StructuralShardSlot,
-} from "@rennet/types";
-import { PROJECT_SNAPSHOT_SCHEMA_VERSION, SNAPSHOT_OVERLAY_SCHEMA_VERSION } from "@rennet/types";
+} from "@rennet/protocol";
+import {
+  canonicalize,
+  PROJECT_SNAPSHOT_SCHEMA_VERSION,
+  SNAPSHOT_OVERLAY_SCHEMA_VERSION,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { computeFingerprint } from "./project-snapshot";
 import {

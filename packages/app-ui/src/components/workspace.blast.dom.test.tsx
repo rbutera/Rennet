@@ -12,8 +12,8 @@
 // — because each has its OWN toggle-passing call in workspace.tsx: hardcoding EITHER
 // call's `overlayOn` prop (true → the shipped default-off-amber bug, false → amber
 // suppressed) must redden a test here, in that lens's own path.
-import type { Canvas, CanvasAngle } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+import type { Canvas, CanvasAngle } from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createViewStore } from "../canvas/store";
 import { mount } from "../test/dom";

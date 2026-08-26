@@ -1,14 +1,14 @@
-import type { RennetBridge } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
   ContextManifest,
   DecisionsRunStatus,
   ElementDiffs,
+  RennetBridge,
   Review,
   ReviewEngine,
   ReviewNarration,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /** The five-angle canvas set the canvas workspace renders. */
 export type CanvasSet = Record<CanvasAngle, Canvas>;

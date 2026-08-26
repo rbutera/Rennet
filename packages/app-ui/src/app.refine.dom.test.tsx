@@ -7,8 +7,7 @@
 // app sent AND that the refined body rounds back onto the draft (the effective
 // body the paper would post). Behavioural, never a presence check: RED-proof is
 // unwiring `onRefine` (no command sent) or dropping `setRefined` (no refined body).
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { CommandInput, CommandOutput, RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { fireEvent, mount, waitFor, within } from "./test/dom";

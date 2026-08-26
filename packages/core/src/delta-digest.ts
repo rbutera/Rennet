@@ -3,7 +3,7 @@ import type {
   DeltaAskStatus,
   DeltaBeyondHunk,
   DeltaDigestResult,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 export type { DeltaDigestResult };
 

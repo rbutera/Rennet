@@ -1,4 +1,3 @@
-import { openSpecRequirementCoverageKey } from "@rennet/protocol";
 import type {
   AnchorSide,
   AnchorSpan,
@@ -16,7 +15,8 @@ import type {
   OpenSpecSpecDelta,
   OpenSpecTaskGroup,
   OpenSpecTaskItem,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { openSpecRequirementCoverageKey } from "@rennet/protocol";
 import type { AuthoringTrace } from "./authoring";
 import { anchorPathKey, type DispositionWrite } from "./logic";
 
@@ -249,7 +249,7 @@ export interface OpenSpecCapabilityView {
   readonly anchor: OpenSpecReviewAnchor;
 }
 
-export type { OpenSpecRequirementCoverage } from "@rennet/types";
+export type { OpenSpecRequirementCoverage } from "@rennet/protocol";
 
 /**
  * The coverage index a build consumes: per-requirement coverage keyed by

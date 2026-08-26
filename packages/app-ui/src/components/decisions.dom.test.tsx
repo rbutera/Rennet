@@ -9,7 +9,7 @@
 // differently. There is NO evidenced/mechanical/contestable triage bucket in the
 // rendered DOM. Assertions are behavioural (rendered text/classes), not presence-
 // only.
-import type { Canvas, DecisionsRunStatus } from "@rennet/types";
+import type { Canvas, DecisionsRunStatus } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { mount } from "../test/dom";
 import { DecisionsCanvas } from "./decisions";

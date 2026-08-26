@@ -12,7 +12,7 @@
  * deliberately out of this slice.
  */
 
-import type { RspTokenUsage } from "@rennet/types";
+import type { RspTokenUsage } from "@rennet/protocol";
 
 export type HarnessId = "claude-code" | "codex" | "omp";
 

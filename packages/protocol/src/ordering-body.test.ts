@@ -1,6 +1,6 @@
-import type { OfferedManifest, OrderingBody, PatchsetRef } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { bodyJsonSchema } from "./bodies";
+import type { OfferedManifest, OrderingBody, PatchsetRef } from "./index";
 import { computeInputDigest, validateDocument } from "./rsp";
 
 // ── Fixtures: three offered CHUNKS (not hunks), one valid ordering, mutated ────

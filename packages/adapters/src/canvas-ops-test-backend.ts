@@ -8,7 +8,7 @@ import {
   type ReviewIdentity,
   type ViewState,
 } from "@rennet/core";
-import type { CanvasAngle, Decomposition } from "@rennet/types";
+import type { CanvasAngle, Decomposition } from "@rennet/protocol";
 
 // Shared canvasOps@2 test backend fixture — a minimal but complete backend
 // sufficient for tool registration and the describe→read round-trip, reused by

@@ -9,9 +9,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { canonicalize, sha256Hex } from "@rennet/protocol";
-import type { SnapshotOverlay } from "@rennet/types";
-import { SNAPSHOT_OVERLAY_SCHEMA_VERSION } from "@rennet/types";
+import type { SnapshotOverlay } from "@rennet/protocol";
+import { canonicalize, SNAPSHOT_OVERLAY_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
 /**

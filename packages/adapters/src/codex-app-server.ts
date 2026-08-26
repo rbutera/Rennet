@@ -40,7 +40,7 @@
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { HOST_LOCUS, type Locus, locusCommand } from "@rennet/core";
-import type { RspTokenUsage } from "@rennet/types";
+import type { RspTokenUsage } from "@rennet/protocol";
 import { execa } from "execa";
 
 /** How Rennet introduces itself on `initialize`. */

@@ -3,7 +3,7 @@ import type {
   NoveltyJudgmentEvidence,
   NoveltyLedger,
   Stage2NoveltyJudgment,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 export interface NoveltyClassificationChange {
   readonly entryKey: string;

@@ -1,4 +1,4 @@
-import type { ContextManifest, ContextSendRecord } from "@rennet/types";
+import type { ContextManifest, ContextSendRecord } from "@rennet/protocol";
 
 export interface ReviewContextFeedDeps {
   ensure(): Promise<{ readonly manifest: ContextManifest; readonly text: string } | undefined>;

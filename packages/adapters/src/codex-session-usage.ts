@@ -41,7 +41,7 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { RspTokenUsage } from "@rennet/types";
+import type { RspTokenUsage } from "@rennet/protocol";
 
 /** A measured-zero usage record (all fields 0, reasoning null). */
 export const ZERO_CODEX_USAGE: RspTokenUsage = {

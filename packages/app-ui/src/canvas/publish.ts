@@ -4,7 +4,7 @@ import type {
   DispositionType,
   HandoffDisposition,
   RepositoryProvenance,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import {
   type CollationDraft,
   type CollationItem,
@@ -35,7 +35,7 @@ import type { DestinationMode } from "./destination";
 // and signs the SAME bytes, and the structured card/list the human reads is a
 // faithful render of the SAME target the payload was serialised from.
 //
-// The `layer:ui` boundary allows only `@rennet/types` + this package: nothing
+// The `layer:ui` boundary allows only `@rennet/protocol` + this package: nothing
 // here imports `@rennet/core`.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -379,7 +379,7 @@ export function refinedCount(comments: readonly ReviewComment[]): number {
 // mechanically from the trusted ask paths): the title reaches the human's eyes here
 // but never the coding agent's work order.
 //
-// `layer:ui`: `@rennet/types` only, no `@rennet/core` — the composed bundle is the
+// `layer:ui`: `@rennet/protocol` only, no `@rennet/core` — the composed bundle is the
 // input; nothing here re-derives order or re-runs the model.
 // ─────────────────────────────────────────────────────────────────────────────
 

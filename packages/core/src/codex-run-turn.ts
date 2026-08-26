@@ -27,7 +27,7 @@
  *     floor stands. "Never admits blind" holds at both layers.
  */
 
-import type { OfferedManifest, PatchsetRef, RspDocType } from "@rennet/types";
+import type { OfferedManifest, PatchsetRef, RspDocType } from "@rennet/protocol";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import type { HarnessTurnResult } from "./harness-run-turn";
 

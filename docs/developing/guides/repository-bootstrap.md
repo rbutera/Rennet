@@ -29,12 +29,12 @@ pnpm nx show project rennet-core --json
 pnpm nx show project rennet-desktop --json
 ```
 
-The production workspace contains four apps and ten packages:
+The production workspace contains four apps and nine packages:
 
 | Area | Projects |
 |---|---|
 | Apps | `rennet-desktop`, `rennet-docs`, `rennet-marketing`, `rennet-mobile` |
-| Product packages | `rennet-types`, `rennet-protocol`, `rennet-instructions`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-app-ui`, `rennet-theme` |
+| Product packages | `rennet-protocol`, `rennet-instructions`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-app-ui`, `rennet-theme` |
 
 `rennet-docs-content` represents the canonical Markdown library under `docs/`.
 The root `rennet` project owns repository-wide checks. Spikes have their own Nx
@@ -46,7 +46,6 @@ The [monorepo map](../reference/monorepo-map.md) lists each project and its role
 
 ```mermaid
 flowchart TD
-  types["@rennet/types"]
   theme["@rennet/theme"]
   protocol["@rennet/protocol"]
   instructions["@rennet/instructions"]
@@ -59,24 +58,18 @@ flowchart TD
   desktop["apps/desktop"]
   mobile["apps/mobile"]
 
-  protocol --> types
-  instructions --> types
-  core --> types
+  instructions --> protocol
   core --> protocol
   core --> instructions
-  adapters --> types
   adapters --> protocol
   adapters --> instructions
   adapters --> core
-  server --> types
   server --> protocol
   server --> core
   server --> adapters
-  client --> types
   client --> protocol
-  ui --> types
+  ui --> protocol
   ui --> theme
-  appui --> types
   appui --> protocol
   appui --> theme
   appui --> ui
@@ -85,14 +78,13 @@ flowchart TD
   desktop --> appui
   mobile --> client
   mobile --> protocol
-  mobile --> types
 ```
 
-An arrow means "imports." `types` and `theme` import no Rennet package. `core`
+An arrow means "imports." `protocol` and `theme` import no Rennet package. `core`
 contains platform-neutral product logic. `adapters` owns Git, filesystem,
 GitHub, harness, and process effects. `server` composes the daemon. `client`
 implements the transport-neutral client. `ui` is the vendored component kit,
-importing only `types` and `theme`. `app-ui` builds the Rennet interface on that
+importing only `protocol` and `theme`. `app-ui` builds the Rennet interface on that
 kit. Both stay browser-safe. The desktop and mobile apps are composition roots
 for their platforms.
 
@@ -136,7 +128,7 @@ command. Long-running, interactive, and end-to-end targets are not cacheable.
 
 | Change | Owner |
 |---|---|
-| Shared wire type or command | `packages/types` or `packages/protocol` |
+| Shared wire type, schema, or command | `packages/protocol` |
 | Product rule or pure transformation | `packages/core` |
 | Git, filesystem, network, or process effect | `packages/adapters` |
 | Daemon composition or dispatch | `packages/server` |

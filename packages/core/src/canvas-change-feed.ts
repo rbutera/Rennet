@@ -1,4 +1,4 @@
-import type { CanvasChangeNotification } from "@rennet/types";
+import type { CanvasChangeNotification } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Canvas-scoped post-commit change feed (issue #10; R35's ONE change feed, canvas

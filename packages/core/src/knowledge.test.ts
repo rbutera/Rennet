@@ -3,7 +3,7 @@ import type {
   KnowledgeStatement,
   ProjectSnapshotManifest,
   SnapshotFileEntry,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   anchorResolves,

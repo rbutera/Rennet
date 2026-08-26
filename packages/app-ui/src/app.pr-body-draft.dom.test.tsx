@@ -9,8 +9,7 @@
 //     never appears in the resulting submission — private notes do not egress.
 //   • MED-4: a drafted body flows into the composer and the paper's preview bytes.
 //   • HIGH-2: the draft Sign (open-paper) is disabled while a draft is in flight.
-import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { CommandInput, CommandOutput, RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { act, fireEvent, mount, waitFor } from "./test/dom";

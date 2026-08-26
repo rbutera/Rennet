@@ -7,8 +7,8 @@ import {
   runDecompositionAngle,
 } from "@rennet/core";
 import { DECOMPOSITION_PROPOSAL_CONTRACT } from "@rennet/instructions";
+import type { PatchFile, Patchset } from "@rennet/protocol";
 import { bodyJsonSchema } from "@rennet/protocol";
-import type { PatchFile, Patchset } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { createClaudeHarness } from "../src/claude-query";
 

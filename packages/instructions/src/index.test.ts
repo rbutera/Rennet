@@ -1,4 +1,4 @@
-import type { ConventionCatalogue } from "@rennet/types";
+import type { ConventionCatalogue } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   assemblePrompt,

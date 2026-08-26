@@ -1,5 +1,5 @@
 import { type RunUiVerificationResult, UI_SURFACE_CLASSIFIER_VERSION } from "@rennet/core";
-import type { FlaggedReview } from "@rennet/types";
+import type { FlaggedReview } from "@rennet/protocol";
 import { applyUiVerification } from "./flagged-ui-verification";
 
 export interface ComposeFlaggedLateEnrichmentInput {

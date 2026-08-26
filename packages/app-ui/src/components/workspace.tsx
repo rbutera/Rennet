@@ -1,4 +1,3 @@
-import { parseAnchor, type RennetBridge } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -11,7 +10,8 @@ import type {
   OpenSpecChange,
   Proposal,
   ReviewNarration,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { parseAnchor, type RennetBridge } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import {

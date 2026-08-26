@@ -1,4 +1,9 @@
-import type { BlastRadiusPaint, BlastRadiusSignal, OwnershipRule, PatchFile } from "@rennet/types";
+import type {
+  BlastRadiusPaint,
+  BlastRadiusSignal,
+  OwnershipRule,
+  PatchFile,
+} from "@rennet/protocol";
 
 // ── Blast-radius signal producer (issue #35) ─────────────────────────────────
 //

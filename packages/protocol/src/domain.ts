@@ -1,29 +1,32 @@
+// Types owned by the wire schemas in ./index (protocol is the source of truth).
+import type {
+  AnalysisCohort,
+  AnalysisElement,
+  AnchorSpan,
+  Annotation,
+  CiFailure,
+  DecisionEvidence,
+  DecisionWhy,
+  Disposition,
+  DualReviewNote,
+  ElementDiff,
+  FindingAdjudication,
+  FindingElement,
+  FindingModelAnswer,
+  NarrationEvidence,
+  NoiseGroup,
+  OpenSpecListItem,
+  OpenSpecScenario,
+  OpenSpecSource,
+  Patchset,
+  Proposal,
+  ReviewHypothesis,
+  RiskCrossCheck,
+  SubstrateChunkRef,
+  UiScreenshot,
+} from "./index";
+
 export type FileChangeStatus = "added" | "modified" | "deleted" | "renamed";
-
-/**
- * A project's execution locus (add-windows-support): where its repo-facing
- * processes and files live — the host OS, or a named WSL distro. Defined here (the
- * leaf package) so both the execution seam in `core` and the wire schema in
- * `protocol` share one shape.
- */
-export type Locus = { readonly kind: "host" } | { readonly kind: "wsl"; readonly distro: string };
-
-export interface RepositoryProvenance {
-  id: string;
-  root: string;
-  commonDir: string;
-  baseRef: string;
-  baseOid: string;
-  headOid: string;
-  /**
-   * The captured head's BRANCH ref (the current branch name), when HEAD is on a
-   * branch. Absent on a detached HEAD, where there is no branch to submit from.
-   * This is the ref an own-branch PR opens its `head` against (#107) — a commit
-   * SHA (`headOid`) can never be a PR `head`, so the branch name is carried here
-   * distinctly rather than sliced out of the OID.
-   */
-  headRef?: string;
-}
 
 export interface PatchFile {
   path: string;
@@ -56,90 +59,8 @@ export const DIFF_TRUNCATION_MARKER = "[diff truncated by Rennet]";
  */
 export type PatchsetSource = "local" | "github-local" | "github-rest";
 
-/**
- * An immutable snapshot of one spec / openspec document relevant to the change,
- * frozen onto the patchset at capture time (#136). `digest` is a sha256 over the
- * FULL captured document; `content` is the document text INLINED when it is under
- * the inlining cap, and absent (digest-only) when it was too large. Captured from
- * the committed content at the reviewed head OID (or the working-tree content for
- * a local review), so the spec view renders what the change actually shipped
- * against rather than a later-edited version of the same file.
- */
-export interface PatchsetSpecSnapshot {
-  readonly path: string;
-  readonly digest: string;
-  /** The captured document text; absent ⇒ digest-only (over the inlining cap). */
-  readonly content?: string;
-}
-
 /** Which surface a patchset's captured intent came from. */
 export type PatchsetIntentSurface = "github-pr" | "github-rest" | "working-tree";
-
-/**
- * The change's stated intent, captured WITH the patchset and immutable for its
- * lifetime (#136). It is the raw material the Decisions lens, the hypothesis pass,
- * and the spec view reason over — widening the live `ReviewIntent` / `DecisionIntent`
- * seam the runners already consume with the additional surface provenance and the
- * frozen spec set. A remote head update mints a NEW patchset (R28); it never
- * rewrites the intent frozen on the prior one.
- *
- * Honest absence is first-class: `prBodyAbsent` marks "there was no PR body surface
- * at all" (a working-tree / no-PR review), so a consumer never mistakes an empty
- * string for the stated intent. A no-PR review captures the available surface
- * (`commitSubjects`) instead of fabricating a body.
- */
-export interface PatchsetIntent {
-  /** The surface this intent was captured from. */
-  readonly surface: PatchsetIntentSurface;
-  /** The PR title, when a PR exists. */
-  readonly prTitle?: string;
-  /** The PR body (markdown), when a PR exists and carried one. */
-  readonly prBody?: string;
-  /** True when NO PR body surface existed (working-tree / no-PR) — not an empty body. */
-  readonly prBodyAbsent?: boolean;
-  /** Immutable snapshots / digests of the spec documents the change shipped against. */
-  readonly specSnapshots?: readonly PatchsetSpecSnapshot[];
-  /**
-   * The available intent surface for a no-PR review: the commit subject lines
-   * between base and head. Captured honestly instead of inventing a PR body.
-   */
-  readonly commitSubjects?: readonly string[];
-}
-
-export interface Patchset {
-  id: string;
-  createdAt: string;
-  repository: RepositoryProvenance;
-  files: PatchFile[];
-  rawDiff: string;
-  byteLength: number;
-  truncated: boolean;
-  /** Provenance of the content. Absent ⇒ `local` (additive; identity ignores it). */
-  source?: PatchsetSource;
-  /** True when this changeset was produced by a degraded path (the REST fallback). */
-  degraded?: boolean;
-  /** Human-facing reason a degraded changeset is degraded (the badge copy). */
-  degradationReason?: string;
-  /**
-   * The ProjectSnapshot the changeset was computed against (#144 / T0.3 — the
-   * net-novel spine). Fills the Contracts §3.1 role the `RspEnvelope` already
-   * carries: a composite fingerprint that pins the diff pack to a specific
-   * base-branch map, so "what is net-novel" is judged relative to a KNOWN
-   * baseline rather than a bare OID. Optional only for legacy or remote-degraded
-   * captures that have no local map to resolve; the live local capture path stamps
-   * it and `NoveltyLedgerReader` verifies it against the effective snapshot.
-   */
-  projectSnapshotId?: string;
-  /**
-   * The change's stated intent (PR title/body + immutable spec snapshots), frozen
-   * at capture time (#136). OPTIONAL and additive: a patchset captured before this
-   * field, or by a path with no intent surface, simply omits it and every
-   * downstream pass degrades honestly to structure-only. The id is content-addressed
-   * over `(repository, files, bytes)` and does NOT include intent, so stamping it
-   * leaves patchset identity unchanged.
-   */
-  intent?: PatchsetIntent;
-}
 
 /**
  * The unit a disposition is attached to.
@@ -178,16 +99,6 @@ export interface DispositionAnchor {
 export type DispositionType = "approve" | "request-change" | "comment" | "question";
 
 /**
- * A reviewer action taken against an anchor. In this model a file/chunk is
- * "read" iff it carries a disposition: reading is an action, never scroll/dwell.
- */
-export interface Disposition {
-  anchor: DispositionAnchor;
-  type: DispositionType;
-  body: string;
-}
-
-/**
  * How a returned patchset acted on ONE staged ask's target (issue #73). Derived
  * deterministically from the shipped lineage carry + the successor's changed paths —
  * never a model call:
@@ -199,64 +110,6 @@ export interface Disposition {
  *    was deleted).
  */
 export type DeltaAskStatus = "addressed" | "partially-addressed" | "untouched";
-
-/** One staged ask and what the returned patchset did to it (issue #73). */
-export interface DeltaAskAccount {
-  readonly path: string;
-  readonly span?: AnchorSpan;
-  readonly side?: AnchorSide;
-  readonly type: DispositionType;
-  /** A short excerpt of the ask body, for the account's "what moved" line. */
-  readonly summary: string;
-  readonly status: DeltaAskStatus;
-  /**
-   * The composed task that carried this ask on a handoff run (issue #73 wave 3): the
-   * task's `index` in the verified bundle's `traceMap` plus its preview `title`, so the
-   * account can narrate "ran as task 2 — 'Tighten the parser'". Present ONLY when the
-   * successor was captured by a handoff run whose ask trace matched this ask; a plain
-   * regenerate carries none. Attribution is narration — it never alters `status`.
-   */
-  readonly handoffTask?: { readonly index: number; readonly title: string };
-}
-
-/**
- * One change the successor made BEYOND every ask, at HUNK grain (issue #73 wave 3). A
- * new hunk (its changed-line content appears in no prior hunk for the file or its rename
- * source) that no ask covers. `span` is the hunk's file line range — the new-file range,
- * or the OLD-file range for a pure-deletion hunk (with `side: "deletions"`). `bucket`
- * separates a hunk in a file NO ask targeted (`"unasked-file"`, the loud scope-creep) from
- * one inside an asked file but outside every asked span (`"asked-file"`). BOTH are honest
- * narration of work the agent was allowed to do — never a violation, warning, or gate.
- * `excerpt` is the first changed line, bounded — the human hook to the change.
- */
-export interface DeltaBeyondHunk {
-  readonly path: string;
-  readonly span: AnchorSpan;
-  readonly side?: AnchorSide;
-  readonly bucket: "unasked-file" | "asked-file";
-  readonly excerpt: string;
-}
-
-/**
- * The delta re-review account (issue #73): a deterministic, model-free record of what
- * a returned patchset did relative to the staged asks. `asks` classifies every staged
- * ask (addressed / partially-addressed / untouched); `beyondAsks` lists the paths the
- * successor changed that NO ask targeted — the scope-creep the reviewer must see. The
- * partition is total by construction: every changed path is either an ask's path or a
- * beyond-asks path, never silently dropped. This structured account is complete on its
- * own; optional light-tier prose (M25) only rephrases it and adds no fact.
- *
- * `beyondAskHunks` (issue #73 wave 3) is the HUNK-grain detail layered on top: the exact
- * beyond-ask hunks, including one inside an asked file that path grain cannot see. It is
- * ABSENT on a legacy account computed before hunk grain existed (⇒ render path grain
- * only) and an EMPTY ARRAY when hunk grain WAS computed and found nothing beyond — the
- * two are distinct, so the panel never shows precision it did not compute.
- */
-export interface DeltaAccount {
-  readonly asks: readonly DeltaAskAccount[];
-  readonly beyondAsks: readonly string[];
-  readonly beyondAskHunks?: readonly DeltaBeyondHunk[];
-}
 
 /**
  * A disposition the deterministic floor DROPPED on a re-capture, offered to the
@@ -324,59 +177,6 @@ export interface ReviewPostTarget {
   readonly forgeRef: string;
   /** The reviewed head commit OID, pinned at review start (GraphQL `commitOID`). */
   readonly headOid: string;
-}
-
-export interface Review {
-  id: string;
-  repositoryRoot: string;
-  patchsets: Patchset[];
-  activePatchsetId: string;
-  pendingPatchsetId?: string;
-  /**
-   * The reviewer's dispositions against the active patchset. This is the
-   * canonical read-state: the derived read-set is the distinct anchor paths.
-   */
-  dispositions: Disposition[];
-  /**
-   * The orphan tray (issue #16, §3.4): dispositions whose anchored occurrence
-   * VANISHED from the successor patchset — the file left the changeset entirely,
-   * with no same-path successor and no rename link. Per the frozen contract a
-   * vanished occurrence "orphans, surfaced against its last known version" — it
-   * must NEVER silently drop to void. A changed-but-present occurrence is NOT an
-   * orphan (it reopens for re-reading, dropped from `dispositions`); only a true
-   * disappearance lands here. Recomputed on every patchset activation. Optional
-   * and stamped ONLY when non-empty, so every existing review snapshot validates
-   * unchanged (back-compat, exactly like `retrospective`/`postTarget`).
-   */
-  orphaned?: Disposition[];
-  status: "current" | "invalid";
-  /**
-   * A RETROSPECTIVE review is opened to READ an already-merged (or any) pull
-   * request after the fact — the reviewer disposes locally, and NOTHING is posted
-   * back to the forge. When true, egress is structurally refused in MAIN
-   * (`publish.review` throws before any send) and the renderer hides the
-   * sign/publish affordance entirely. Omitted ⇒ a normal, postable review, so every
-   * existing snapshot and the live working-tree / open-PR paths validate unchanged.
-   */
-  retrospective?: boolean;
-  /**
-   * The real PR post-target (issue #21). Present ONLY on a non-retrospective PR
-   * review, so its presence is precisely "this review can post to a real PR". A
-   * local working-tree review and a retrospective review both omit it, and the
-   * renderer's sign path stays a dry-run/no-op for those. Omitted ⇒ every existing
-   * snapshot validates unchanged.
-   */
-  postTarget?: ReviewPostTarget;
-  /**
-   * The delta re-review account (issue #73): stamped on a SUCCESSOR review — one
-   * whose active patchset carried dispositions from a predecessor — recording what
-   * the returned patchset did relative to the staged asks (addressed / partially /
-   * untouched) and the paths it changed beyond any ask. Deterministic and model-free.
-   * Optional and stamped ONLY on a successor with asks to account for, so a first
-   * capture and every existing snapshot validate unchanged (back-compat, exactly like
-   * `orphaned`).
-   */
-  deltaAccount?: DeltaAccount;
 }
 
 export interface CommandFailure {
@@ -543,12 +343,6 @@ export type AnchorKind =
 
 /** The side of a diff a span addresses; spans are always side-qualified. */
 export type AnchorSide = "additions" | "deletions" | "context";
-
-/** A 1-based line span WITHIN the anchored unit (never absolute file lines). */
-export interface AnchorSpan {
-  startLine: number;
-  endLine?: number;
-}
 
 /** A parsed `rennet:` anchor. `span` and `pointer` are mutually exclusive. */
 export interface ParsedAnchor {
@@ -1018,17 +812,6 @@ export interface OrderingBody {
 export type NarrationAltitude = "rollup" | "group" | "cohort";
 
 /**
- * An optional code citation on a narration entry: a `rennet:` code anchor plus the
- * byte-exact quote it stands on. The generic validator walk (V006) byte-verifies
- * every `{anchor, quote}` pair against the resolved span, so a fabricated quote is
- * rejected. Absent when a narration cites no specific code.
- */
-export interface NarrationEvidence {
-  anchor: string;
-  quote: string;
-}
-
-/**
  * One narrated account at one altitude. `anchor` is the canvas-node key it is
  * about (the rollup key, a group key, or a cohortKey — a plain node key, never a
  * `rennet:` code anchor). `oneLine` is the collapsed-view sentence; `paragraph`
@@ -1086,48 +869,6 @@ export const CANVAS_ANGLES: readonly CanvasAngle[] = [
 ] as const;
 
 /**
- * One evidence chip a decision is drawn from (issue #137). The Decisions lens
- * shows the raw material a decision was discerned from — a spec line, a passage of
- * the PR body, or a hunk of the diff — so a reviewer can judge the decision at its
- * source. `kind` is the source class; `label` is the short chip caption (e.g.
- * "spec §3.2", "PR body", "store.ts +12"); `detail` is the quoted material.
- *
- * NOTE (issue #137, load-bearing): these three kinds name the SOURCE of evidence,
- * never a verdict about the decision. There is deliberately no evidenced /
- * mechanical / contestable triage bucket here — judging a decision is the
- * reviewer's job, not a pre-chewed classification's.
- */
-export interface DecisionEvidence {
-  kind: "spec" | "pr-body" | "hunk";
-  label: string;
-  detail: string;
-}
-
-/**
- * A decision's reconstructed rationale (issue #137). `reconstructed` is a literal
- * `true`: the TYPE SYSTEM enforces that every `why` is marked reconstructed, so an
- * inferred rationale can never be presented as a stated fact. A decision with no
- * discernible rationale simply has no `why` (it still renders — title + evidence —
- * rather than inventing one).
- */
-export interface DecisionWhy {
-  reconstructed: true;
-  text: string;
-}
-
-/**
- * The rich detail a decision carries beyond its id/anchor/title (issue #137):
- * the evidence chips it was drawn from, an optional reconstructed why, and the
- * alternatives not taken where the diff or PR body made them discernible. Carried
- * on the placed `AnalysisElement` so the existing decisions surface renders it.
- */
-export interface DecisionDetail {
-  evidence: DecisionEvidence[];
-  why?: DecisionWhy;
-  alternatives: string[];
-}
-
-/**
  * The canvas-facing shape of a decision. `decisionId`, `anchor`, and `title` are
  * all the projector needs for PLACEMENT (grouping by anchored chunk — the chunk's
  * title IS the theme label the lens shows, e.g. "Storage and state"); the richer
@@ -1171,14 +912,6 @@ export type DecisionsRunStatus = { status: "ok" } | { status: "failed"; reason: 
 /** A flag's severity. Three levels; ordered high → medium → low for the lens. */
 export type FindingSeverity = "high" | "medium" | "low";
 
-/** One model's answer in a disagreement, labelled by the model that gave it. */
-export interface FindingModelAnswer {
-  /** The model/harness label shown beside the answer (e.g. "Claude", "Codex"). */
-  model: string;
-  /** That model's verdict text, rendered side by side with the others. */
-  answer: string;
-}
-
 /**
  * Whether the models agree on a flag. `concur` carries the vote counts (e.g. 3 of
  * 3); `disagree` carries each model's answer, shown side by side and labelled. The
@@ -1216,20 +949,6 @@ export type FindingAgreement =
 export type FindingAdjudicationVerdict = "supported" | "contradicted" | "insufficient";
 
 /**
- * The adjudication chip on a `disagree` agreement (issue #41). `verdict` is the
- * three-way judgement; `evidence` is the one-line reason (the code that supports or
- * contradicts, or WHY it was insufficient); `adjudicatedBy` is the resolved seat's
- * honest label (the model/harness the council routed the adjudication job to), so
- * provenance cannot lie. Additive-optional on the disagree arm — an old `finding`
- * doc without it validates unchanged and an old renderer ignores it.
- */
-export interface FindingAdjudication {
-  verdict: FindingAdjudicationVerdict;
-  evidence: string;
-  adjudicatedBy: string;
-}
-
-/**
  * The verdict of a per-finding reproduce-or-refute verification (issue #179). A
  * fresh session — by default a different seat than the one that raised the finding
  * — is fed the REAL code around the anchor (more than the offered hunk) and asked
@@ -1244,34 +963,6 @@ export interface FindingAdjudication {
  * hiding a real bug).
  */
 export type FindingVerdict = "reproduced" | "refuted" | "inconclusive";
-
-/**
- * The verification chip attached to a surfaced finding (issue #179). ADDITIVE and
- * OPTIONAL on `FindingElement`: a finding without it validates and renders exactly
- * as before this change, and existing `finding` documents remain admissible
- * unchanged. `evidence` is the one-line "we dug into it and found Y" for a
- * `reproduced` finding, and the honest caveat for an `inconclusive` one — which
- * also carries WHY it was not established (genuine verifier uncertainty, the
- * per-review verification cap, an exhausted budget, or unreadable code). A
- * `refuted` finding never carries this, because it never surfaces.
- */
-export interface FindingVerification {
-  verdict: FindingVerdict;
-  evidence: string;
-}
-
-/**
- * One screenshot the verify-ui turn captured (issue #183). `path` is RELATIVE to
- * the review's evidence directory and includes the completed patchset/run namespace;
- * `label` is the human caption ("mobile viewport",
- * "focus ring"). The bytes never ride this shape — the renderer reads them on
- * demand via the `review.uiEvidence` command, so the review snapshot and IPC
- * payload stay small.
- */
-export interface UiScreenshot {
-  path: string;
-  label: string;
-}
 
 /** Maximum bytes `review.uiEvidence` will read for one screenshot. */
 export const MAX_UI_EVIDENCE_BYTES = 8 * 1024 * 1024;
@@ -1321,20 +1012,6 @@ export type UiVerification =
  */
 export type CiFailureVerdict = "change-caused" | "environmental" | "unclassified";
 
-/** One failing CI check classified against the reviewed changeset. */
-export interface CiFailure {
-  /** Stable forge identity; display names are not unique across workflows. */
-  checkId: string;
-  checkName: string;
-  verdict: CiFailureVerdict;
-  evidence: string;
-  implicatedPaths: string[];
-  detailsUrl?: string;
-  classifiedBy: "deterministic" | "model";
-  /** Present only when this failure was actually folded into an anchored finding. */
-  findingId?: string;
-}
-
 /** Informational CI state for the pinned head under review. Never a review gate. */
 export type CiSignal =
   | {
@@ -1347,50 +1024,9 @@ export type CiSignal =
   | { status: "no-checks"; headOid: string }
   | { status: "unavailable"; reason: string };
 
-/**
- * The canvas-facing shape of one finding: an id, the anchor it is about, a short
- * summary, its severity, and its agreement state. The `finding` doc body (issue
- * #32) is an ADDITIVE superset — the lens placement only needs these fields.
- */
-export interface FindingElement {
-  findingId: string;
-  anchor: string;
-  summary: string;
-  severity: FindingSeverity;
-  agreement: FindingAgreement;
-  /**
-   * The reproduce-or-refute verification chip (issue #179), when the verification
-   * pass ran on this finding. Absent on an unverified finding (obvious, or the pass
-   * did not run) — additive, so nothing downstream breaks when it is missing.
-   */
-  verification?: FindingVerification;
-}
-
 /** The `finding` doc body as consumed by the flagged-canvas projector. */
 export interface FindingBody {
   findings: FindingElement[];
-}
-
-/**
- * How the flagged review was produced (issue #41, dual-model). It rides the
- * `ok` variant as an ADDITIVE optional field, so a single-seat review (today's
- * default) omits it and nothing downstream changes. When two provider seats run,
- * `seats` names both labels in order; `secondSeatUnavailable` is the HONEST
- * degradation marker — set only when a second seat was requested (deep review,
- * two providers installed) but was unavailable or errored, so the lens can show a
- * "single provider — no second opinion" badge rather than fabricate a concurrence.
- * It NEVER carries a merged verdict — disagreement lives in each finding's
- * `agreement`, this only records WHO ran.
- */
-export interface DualReviewNote {
-  /** The provider labels that actually contributed findings, in order (e.g. ["Claude", "Codex"]). */
-  readonly seats: readonly string[];
-  /**
-   * Present ONLY when dual review degraded to a single seat: the reason the second
-   * seat produced nothing (unavailable, errored, or only one provider installed).
-   * Absent on a full two-seat run and on a deliberate single-seat (quick) review.
-   */
-  readonly secondSeatUnavailable?: string;
 }
 
 /**
@@ -1490,35 +1126,6 @@ export type FlaggedReview =
 
 /** Which minds answer a review question. Default "orchestrator" — one model. */
 export type AskMode = "orchestrator" | "both";
-
-/**
- * One model's answer to a review question, labelled by the model that gave it
- * (e.g. "Orchestrator · Claude", "codex"). The label is what the side-by-side
- * cards show, so the reviewer always knows WHO said WHAT.
- */
-export interface AskAnswer {
-  /** The model/harness label shown on the answer card (prototype frame 14). */
-  model: string;
-  /** That model's answer text, rendered verbatim (never merged with another). */
-  answer: string;
-}
-
-/**
- * The result of one review question. `primary` is ALWAYS the orchestrator's
- * answer; `secondOpinion` is Codex's answer and is present ONLY in "both" mode.
- * There is deliberately NO third field: the shape cannot express a synthesized or
- * merged answer, so "no synthesis, ever" holds by construction rather than by
- * discipline. When both are present they render side by side, labelled, and the
- * reviewer reconciles any disagreement themselves.
- */
-export interface AskReviewResult {
-  /** Which routing produced this result (echoes the requested mode). */
-  mode: AskMode;
-  /** The orchestrator's answer — the one model you converse with. Always present. */
-  primary: AskAnswer;
-  /** Codex's answer — present ONLY in "both" mode. Never merged with `primary`. */
-  secondOpinion?: AskAnswer;
-}
 
 // ─── review.refine: the comment-refinement loop's result (issue #19) ──────────
 //
@@ -1674,17 +1281,6 @@ export interface ReviewHypothesisBody {
 }
 
 /**
- * The pass's extracted, ready-to-inject hypothesis: the committed body plus
- * whether the repo context was present when it was formed (an honest degradation
- * marker, never a fabricated snapshot). This is what the lens runners consume as
- * disconfirmation criteria and what the reading-frame derivation renders.
- */
-export interface ReviewHypothesis extends ReviewHypothesisBody {
-  /** False when the ProjectSnapshot backend refused; the hypothesis stands on intent + structure. */
-  readonly repoContextPresent: boolean;
-}
-
-/**
  * The Flagged lens's per-review hypothesis input, behind the typed boundary. A
  * pass that RAN and produced a hypothesis (`ok`) is strictly apart from one that
  * FAILED (`failed`, with a reason) — a failed pass is "no hypothesis," never an
@@ -1693,19 +1289,6 @@ export interface ReviewHypothesis extends ReviewHypothesisBody {
 export type HypothesisPass =
   | { status: "ok"; hypothesis: ReviewHypothesis }
   | { status: "failed"; reason: string };
-
-/**
- * The deterministic predicted-risk cross-check (issue #181): each hypothesised
- * risk is `confirmed` (a finding addresses it — a predicted-and-found signal) or
- * `open` (no finding addresses it — surfaced to the human as a manual check they
- * must make themselves, NEVER silently dropped). Runs no model turn.
- */
-export interface RiskCrossCheck {
-  readonly riskId: string;
-  readonly status: "confirmed" | "open";
-  /** The findings that address this risk, when confirmed (empty when open). */
-  readonly findingIds: readonly string[];
-}
 
 // ─── The per-project convention / anti-pattern catalogue (issue #180) ─────────
 //
@@ -1791,32 +1374,6 @@ export type NoiseCategory =
 export type NoiseJudgedBy = { kind: "rule"; rule: string } | { kind: "noise-job"; model: string };
 
 /**
- * One churn item inside a noise group: the anchor it lives at and a short plain
- * detail. `deviates` marks a line that BREAKS its group's pattern — the totality
- * floor's deviating-line ejection: it is never suppressed inside the group, it
- * ejects into normal review (the derivation lifts it out; nothing is dropped).
- */
-export interface NoiseItem {
-  anchor: string;
-  detail: string;
-  deviates?: boolean;
-}
-
-/**
- * The canvas-facing shape of one noise group: an id, its category, the plain-speech
- * one-line summary the collapsed row shows, how it was judged (rule vs noise job),
- * and the churn items it collects (kept INSPECTABLE — the group is collapsed, never
- * dropped). The live `noise` doc body (a follow-up) is an ADDITIVE superset.
- */
-export interface NoiseGroup {
-  groupId: string;
-  category: NoiseCategory;
-  summary: string;
-  judgedBy: NoiseJudgedBy;
-  items: NoiseItem[];
-}
-
-/**
  * The `noise` doc body (docType `noise`, issue #34): the live noise-classification
  * runner's structured output, consumed by the noise-lens derivation. The runner
  * (`runNoiseAngle`) emits it, culls each group's churn items to the GROUNDED ones
@@ -1841,46 +1398,9 @@ export type NoiseReview =
   | { status: "ok"; groups: NoiseGroup[] }
   | { status: "failed"; reason: string };
 
-/** L0 — a slice of the substrate a canvas is about: the chunks it covers. */
-export interface SubstrateChunkRef {
-  chunkId: string;
-  hunkIds: string[];
-  filePaths: string[];
-}
-
 /** L0 substrate layer: read-only, owned entirely by deterministic ingest. */
 export interface SubstrateLayer {
   chunks: SubstrateChunkRef[];
-}
-
-/**
- * L1 — one placed analysis element. `elementKey` is DERIVED from `docId` + anchor
- * (never minted). `kind` is the element species label; `title` is display text.
- */
-export interface AnalysisElement {
-  elementKey: string;
-  docId: string;
-  anchor: string;
-  kind: string;
-  title: string;
-  /**
-   * The rich decision detail (issue #137), present ONLY on `kind:"decision"`
-   * elements the decisions projector places. Optional so every other canvas's
-   * elements are unchanged (and byte-identical replay is preserved); the
-   * decisions surface reads it to render evidence chips + a reconstructed why.
-   */
-  decision?: DecisionDetail;
-}
-
-/**
- * L1 — a cohort: a deterministically grouped set of element keys (the decisions
- * canvas groups into cohorts; hard-baked grouping, OQ17 closed). Collapsible in
- * the UI; never capped.
- */
-export interface AnalysisCohort {
-  cohortKey: string;
-  title: string;
-  elementKeys: string[];
 }
 
 /**
@@ -1902,36 +1422,11 @@ export interface DispositionLayer {
 /** The orchestrator's L3 mark kinds (glass — chrome, visually distinct). */
 export type AnnotationKind = "highlight" | "callout" | "link";
 
-/**
- * An L3 annotation: an orchestrator mark on an element or anchor. Ephemeral by
- * default (`pinned: false`), promoted to persistent only by the user pinning it.
- */
-export interface Annotation {
-  annotationId: string;
-  target: string;
-  kind: AnnotationKind;
-  body: string;
-  pinned: boolean;
-}
-
 /** The kinds of proposal the orchestrator may raise (a suggestion — user decides). */
 export type ProposalKind = "disposition" | "regroup" | "split";
 
 /** A proposal's lifecycle: pending until the user accepts or dismisses it. */
 export type ProposalStatus = "pending" | "accepted" | "dismissed";
-
-/**
- * An orchestrator PROPOSAL, rendered on L3 next to its target. A disposition
- * proposal becomes L2 ONLY when the user accepts it — accepting is a user act
- * (L2 sovereignty). `payload` carries the proposed content opaquely.
- */
-export interface Proposal {
-  proposalId: string;
-  kind: ProposalKind;
-  target: string;
-  payload: string;
-  status: ProposalStatus;
-}
 
 /** L3 annotation layer: the orchestrator's marks and proposals. */
 export interface AnnotationLayer {
@@ -1954,100 +1449,6 @@ export type BlastRadiusSignal =
   | "fan-in"
   | "contract-surface";
 
-/**
- * A single amber blast-radius paint, targeting an element or anchor. The overlay
- * renders `reason` as the one-line explanation next to the paint (issue #35 AC).
- * `docId` is present only for the legacy model-angle paint source; deterministic
- * signal paints omit it. `assessed: false` marks a signal that was NOT computed
- * (deferred) — rendered visibly as "not assessed", never silently absent, so the
- * reviewer never mistakes no-amber for no-risk.
- */
-export interface BlastRadiusPaint {
-  target: string;
-  /** Present only for the legacy model-assigned `blast-radius` chunk-angle source. */
-  docId?: string;
-  /** Which signal produced this paint (deterministic producer, issue #35). */
-  signal?: BlastRadiusSignal;
-  /** The one-line, human-readable explanation rendered with the paint. */
-  reason?: string;
-  /** False ⟺ this signal was NOT assessed (deferred); surfaced as such, not hidden. */
-  assessed?: boolean;
-}
-
-/**
- * A canvas: the layered projection scoped to `(reviewId, patchsetId, angle)`.
- * `canvasId` is deterministic (hash of the key). The overlay is the amber
- * blast-radius paint, never a writable layer.
- */
-export interface Canvas {
-  canvasId: string;
-  reviewId: string;
-  patchsetId: string;
-  angle: CanvasAngle;
-  layers: {
-    substrate: SubstrateLayer;
-    analysis: AnalysisLayer;
-    disposition: DispositionLayer;
-    annotation: AnnotationLayer;
-  };
-  overlay: BlastRadiusPaint[];
-}
-
-/**
- * The real diff material for one canvas element (issue #60). Delivered ALONGSIDE
- * the canvas set (never embedded on the `Canvas`, so the canvas projection stays
- * byte-identical for replay). `diff` is sliced VERBATIM from the captured
- * patchset — the exact hunk text git produced — so zooming into an element shows
- * the real code, not a fixture.
- */
-/**
- * One occurrence (decomposition hunk) mapped onto a rendered `@@` hunk. `id` is the
- * hunk id an anchor references; the line range is the occurrence's own span, so a
- * mark anchored to an oversize-split (R18) FRAGMENT resolves within its slice of the
- * shared raw hunk, never the whole hunk. `oldStart`/`newStart` are 1-based file
- * lines; `oldLines`/`newLines` the side counts — the same shape as `Hunk`.
- */
-export interface RenderedHunkOccurrence {
-  id: string;
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-}
-
-export interface ElementDiff {
-  /** The primary/display path (the header shows this one). */
-  path: string;
-  /**
-   * EVERY file this element's diff renders, in file order. Usually one, but a
-   * proposal chunk can regroup hunks from several files into ONE element (e.g. an
-   * implementation and its test), and then `diff` shows all of them — so a consumer
-   * asking "does this element render file X?" must test membership here, not just
-   * compare `path` (which is only the first file). Always contains `path`.
-   */
-  paths: readonly string[];
-  diff: string;
-  /**
-   * The occurrence identity of each rendered `@@` hunk, in diff order — emitted by
-   * the SAME pass that assembles `diff`, so the mark↔row mapping can never drift
-   * from the text (issue #84). Outer index aligns to the Nth `@@` hunk in `diff`;
-   * the inner list is every occurrence carried by that hunk (usually one; an
-   * oversize split renders several fragments under one raw `@@`, in file order).
-   *
-   * This is the structural cure for positional hunk↔occurrence matching: the diff
-   * text and the identity are ONE artifact, so a multi-file reorder or a split's
-   * count mismatch cannot silently land a mark on the wrong row.
-   *
-   * REQUIRED, with `[]` for a genuinely identity-less patch (a synthetic-only
-   * element). It was optional at first, and that is exactly how it hid: the IPC
-   * output schema omitted the field, Zod silently stripped it, and every content row
-   * reached the renderer identity-less. Required means the protocol's
-   * `z.ZodType<ElementDiffs>` annotation cannot compile unless the boundary schema
-   * carries the field too — the strip is now a build error, not a runtime surprise.
-   */
-  hunkOccurrences: readonly (readonly RenderedHunkOccurrence[])[];
-}
-
 /** The per-element real diff map, keyed by `AnalysisElement.elementKey` (issue #60). */
 export type ElementDiffs = Record<string, ElementDiff>;
 
@@ -2066,42 +1467,6 @@ export type NarrationPlacement =
   | { status: "narrated"; oneLine: string; paragraph: string; evidence?: NarrationEvidence[] }
   | { status: "pending" }
   | { status: "failed" };
-
-/**
- * The narration placed onto a review's canvases, keyed by the node the reader is
- * looking at (issue #70). `rollup` is the whole-changeset account; `cohorts` maps
- * each cohortKey to its account. Consumed by the renderer at the matching zoom
- * level (rollup zoom → `rollup`; cohort zoom → `cohorts[cohortKey]`).
- */
-export interface ReviewNarration {
-  rollup: NarrationPlacement;
-  cohorts: Record<string, NarrationPlacement>;
-}
-
-/**
- * How the live canvas set was actually produced — the honesty signal the renderer
- * needs so it never passes the mechanical outline off as an AI review.
- *
- *   - `aiReview: true`  — at least one real model harness (the user's Claude
- *     and/or Codex) was installed and drove the enrichment turns. This is a real
- *     AI review.
- *   - `aiReview: false` — the model phase did NOT complete, for one of two
- *     reasons: no model was available (no `claude` binary, no `codex`), OR the
- *     model-invocation budget refused it (#260 — over budget pre-flight, or the
- *     shared ceiling exhausted by retries). Either way the canvases are the
- *     DETERMINISTIC mechanical outline of the diff: real structure, but not AI
- *     findings, and the UI must say so LOUDLY. A budget-exhausted review must
- *     never present as a completed AI review.
- *
- * `claudeAvailable` / `codexAvailable` let the UI name the cause: with no model
- * it points at the missing CLI; with a model present, `aiReview: false` means the
- * budget was the limit, so the UI names the budget rather than a missing binary.
- */
-export interface ReviewEngine {
-  aiReview: boolean;
-  claudeAvailable: boolean;
-  codexAvailable: boolean;
-}
 
 /**
  * A canvas-scoped post-commit change notification (R35's ONE change feed, canvas
@@ -2589,41 +1954,6 @@ export type SymbolInspectorSection<Row> =
       readonly tier?: SymbolTier;
     }
   | { readonly status: "unavailable"; readonly reason: string };
-
-/**
- * One neighbouring top-level symbol declared in a definition's file — the real
- * `context.overview` symbols (name, kind, line), NOT fabricated code text. These
- * are the clickable rungs of the pinned mini-browser: clicking one re-runs the
- * lookup for that name, so a reviewer walks declaration→declaration in the rail
- * while the diff stays put (Rai, wireframes #11).
- */
-export interface SymbolNeighbor {
-  readonly name: string;
-  readonly kind: string;
-  readonly line: number;
-}
-
-/** The sibling symbols of a definition's file, for the pinned mini-browser preview. */
-export interface SymbolNeighbors {
-  /** Repo-relative POSIX path of the file whose symbols these are. */
-  readonly path: string;
-  /** The file's declared top-level symbols, ranked by line. May be empty. */
-  readonly symbols: readonly SymbolNeighbor[];
-}
-
-/** The whole answer for one inspected name: its definition sites and its references. */
-export interface SymbolInspection {
-  /** The inspected identifier name. */
-  readonly name: string;
-  readonly definition: SymbolInspectorSection<SymbolInspectorDefinitionRow>;
-  readonly references: SymbolInspectorSection<SymbolInspectorReferenceRow>;
-  /**
-   * The sibling top-level symbols of the PRIMARY definition site's file (from the
-   * model-free `context.overview`), for the pinned mini-browser. Absent when there
-   * is no definition site or the overview could not be read.
-   */
-  readonly neighbors?: SymbolNeighbors;
-}
 
 /** The logical structural shards a manifest points at (excluding per-file symbol shards). */
 export type StructuralShardSlot =
@@ -3228,22 +2558,6 @@ export interface KnowledgeSet {
 /** Which artifact file a reviewable node came from. */
 export type OpenSpecArtifact = "proposal" | "design" | "tasks" | "spec";
 
-/**
- * Where a reviewable node lives in its source artifact — the file it came from and
- * its 1-based start line. This is what turns a Spec-view review affordance into a
- * DURABLE disposition: the disposition is written against the REAL artifact file
- * path (`openspec/changes/<name>/<artifact>`) at this line span, so the engine (a
- * patchset-file-scoped store) accepts it, and distinct nodes on the same file carry
- * distinct line spans rather than colliding. Absent only on hand-built fixtures.
- */
-export interface OpenSpecSource {
-  readonly artifact: OpenSpecArtifact;
-  /** For a spec delta, the capability dir — so the file is `specs/<capability>/spec.md`. */
-  readonly capability?: string;
-  /** 1-based line of the node's start in its artifact file. */
-  readonly line: number;
-}
-
 /** One rendered block inside a section: a paragraph, a list, a fenced code block, or a table. */
 export type OpenSpecBlock =
   | { readonly kind: "paragraph"; readonly text: string; readonly source?: OpenSpecSource }
@@ -3266,46 +2580,11 @@ export type OpenSpecBlock =
       readonly source?: OpenSpecSource;
     };
 
-/**
- * One list item. `lead` is a bolded lead-in phrase pulled out for emphasis
- * (the `**Storage.** the rest…` idiom the artifacts use heavily); `text` is the
- * remainder. When there is no bold lead, `lead` is absent and `text` is the whole
- * item.
- */
-export interface OpenSpecListItem {
-  readonly lead?: string;
-  readonly text: string;
-  readonly source?: OpenSpecSource;
-}
-
-/** A named capability noted in a proposal's Capabilities section. */
-export interface OpenSpecCapabilityNote {
-  /** The capability slug (the `code`-fenced name, e.g. `review-hypothesis-pass`). */
-  readonly name: string;
-  /** The prose after the colon. */
-  readonly summary: string;
-  readonly source?: OpenSpecSource;
-}
-
 /** One row of a proposal's Impact section (the area touched + what changes there). */
 export interface OpenSpecImpactEntry {
   /** The impacted area — a package or seam (the bold/code lead, e.g. `packages/types`). */
   readonly area: string;
   readonly detail: string;
-}
-
-/** The structured proposal: why, the changes, the capabilities, and the impact. */
-export interface OpenSpecProposal {
-  /** The Why section, as ordered blocks (paragraphs, numbered sub-points). */
-  readonly why: readonly OpenSpecBlock[];
-  /** The What Changes bullet list. */
-  readonly whatChanges: readonly OpenSpecListItem[];
-  /** Capabilities introduced by the change. */
-  readonly newCapabilities: readonly OpenSpecCapabilityNote[];
-  /** Capabilities the change modifies. */
-  readonly modifiedCapabilities: readonly OpenSpecCapabilityNote[];
-  /** The per-area impact rows. */
-  readonly impact: readonly OpenSpecImpactEntry[];
 }
 
 /** A design-doc section (a `##` or `###` heading and its rendered blocks). */
@@ -3316,11 +2595,6 @@ export interface OpenSpecDesignSection {
   readonly heading: string;
   readonly blocks: readonly OpenSpecBlock[];
   readonly source?: OpenSpecSource;
-}
-
-/** The design doc, as an ordered section list (a table of contents is derivable from it). */
-export interface OpenSpecDesign {
-  readonly sections: readonly OpenSpecDesignSection[];
 }
 
 /** Whether a checklist task is ticked. */
@@ -3346,15 +2620,6 @@ export interface OpenSpecTaskGroup {
   readonly source?: OpenSpecSource;
 }
 
-/** The tasks doc: the grouped checklists plus an honest whole-change roll-up. */
-export interface OpenSpecTasks {
-  readonly groups: readonly OpenSpecTaskGroup[];
-  /** Total checklist items across all groups. */
-  readonly total: number;
-  /** Ticked items across all groups. */
-  readonly done: number;
-}
-
 /** A spec-delta operation heading (`## ADDED Requirements`, etc.). */
 export type OpenSpecDeltaOperation = "added" | "modified" | "removed" | "renamed";
 
@@ -3365,13 +2630,6 @@ export type OpenSpecScenarioKeyword = "given" | "when" | "then" | "and";
 export interface OpenSpecScenarioStep {
   readonly keyword: OpenSpecScenarioKeyword;
   readonly text: string;
-}
-
-/** One scenario under a requirement (`#### Scenario: …`). */
-export interface OpenSpecScenario {
-  readonly name: string;
-  readonly steps: readonly OpenSpecScenarioStep[];
-  readonly source?: OpenSpecSource;
 }
 
 /** One requirement (`### Requirement: …`): its SHALL statement and its scenarios. */
@@ -3387,47 +2645,6 @@ export interface OpenSpecRequirement {
 export interface OpenSpecRequirementGroup {
   readonly operation: OpenSpecDeltaOperation;
   readonly requirements: readonly OpenSpecRequirement[];
-}
-
-/** One capability's spec delta (`specs/<capability>/spec.md`). */
-export interface OpenSpecSpecDelta {
-  /** The capability directory name under `specs/`. */
-  readonly capability: string;
-  readonly groups: readonly OpenSpecRequirementGroup[];
-  readonly source?: OpenSpecSource;
-}
-
-/**
- * A whole parsed OpenSpec change. Any artifact may be absent (a change need not
- * ship a design doc); `specDeltas` is empty rather than absent when there are no
- * spec files. The `name` is the change directory name.
- */
-export interface OpenSpecChange {
-  readonly name: string;
-  readonly proposal?: OpenSpecProposal;
-  readonly design?: OpenSpecDesign;
-  readonly tasks?: OpenSpecTasks;
-  readonly specDeltas: readonly OpenSpecSpecDelta[];
-  /**
-   * The verbatim raw markdown of the change's artifacts, as read off disk (issue
-   * #239). Carried alongside the parsed model so the Spec viewer can offer the raw
-   * text one keystroke away — the structured rendering stays the default, and raw is
-   * the escape hatch #33 promised. Absent when the reader did not carry it (older
-   * producers, or a change parsed from a source without raw retention).
-   */
-  readonly raw?: OpenSpecChangeRaw;
-}
-
-/**
- * The raw markdown of an OpenSpec change's artifacts, verbatim as read from disk —
- * never a re-serialization of the parsed model (issue #239). `specDeltas` is empty
- * rather than absent when there are no spec files.
- */
-export interface OpenSpecChangeRaw {
-  readonly proposalMd?: string;
-  readonly designMd?: string;
-  readonly tasksMd?: string;
-  readonly specDeltas: readonly { readonly capability: string; readonly md: string }[];
 }
 
 /**
@@ -3446,191 +2663,6 @@ export interface OpenSpecRequirementCoverage {
   readonly hunks: readonly string[];
   /** The count of tests that exercise this requirement. */
   readonly tests: number;
-}
-
-/**
- * One produced coverage edge: a requirement (identified by its capability + exact
- * name, so a consumer can key it without the ui's anchor-slug logic) mapped to the
- * grounded hunks that implement it and the count of tests that exercise it. `hunks`
- * are `rennet:hunk/<id>` anchors already grounded against the offered manifest (the
- * producer dropped any the model hallucinated); an empty `hunks` is a computed zero
- * (`unimplemented`), never a fabrication.
- */
-export interface OpenSpecCoverageEdge {
-  readonly capability: string;
-  readonly requirement: string;
-  readonly hunks: readonly string[];
-  readonly tests: number;
-}
-
-/**
- * The coverage producer's result over a whole change. `status: "ok"` means the
- * mapping RAN — every requirement has an edge (covered or an honest zero), so the
- * Spec view can render every chip. `status: "failed"` means the runner did not
- * complete (no model available, budget refused, every turn failed): `edges` is empty
- * and the Spec view renders NO chips, keeping "not computed" distinct from a real
- * zero. Never a fabricated edge on failure.
- */
-export interface OpenSpecCoverage {
-  readonly status: "ok" | "failed";
-  readonly edges: readonly OpenSpecCoverageEdge[];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The review→agent handoff loop (issue #18, Contracts §2.1 destination B). The
-// wire shapes only; the composer, disclosure, and orchestrator live in
-// `@rennet/core` (`handoff-loop.ts`), and the command schemas mirror these in
-// `@rennet/protocol`. Appended at the file END so it does not collide with the
-// concurrent lineage-matcher work above.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * One disposition addressed to the coding agent — the effective (refined-if-kept,
- * else raw) body the reviewer staged, plus its anchor. Path-grained ⟺ `span`/`side`
- * both absent; span-grained ⟺ both present (the #78 all-or-none rule). The renderer
- * supplies these from the SAME collation draft it would publish, so the agent
- * addresses exactly what the reviewer wrote, in its cleaned form.
- */
-export interface HandoffDisposition {
-  readonly path: string;
-  readonly type: DispositionType;
-  /** The effective body the agent must address (refined if the user kept one, else raw). */
-  readonly body: string;
-  readonly span?: AnchorSpan;
-  readonly side?: AnchorSide;
-}
-
-/**
- * One resolved task in the bundle: a disposition whose anchor has been resolved to
- * the concrete diff context (the anchored hunk, or the file section) it refers to.
- * `context` is bounded and honestly marked when cut; "" when the file is not in the
- * active patchset's diff (the agent then works from the instruction alone).
- */
-export interface HandoffTask {
-  readonly path: string;
-  readonly type: DispositionType;
-  /** The reviewer's instruction — the effective disposition body, verbatim. */
-  readonly instruction: string;
-  readonly span?: AnchorSpan;
-  readonly side?: AnchorSide;
-  /** The bounded diff context the instruction is anchored to (may be ""). */
-  readonly context: string;
-}
-
-/**
- * The task bundle handed to the coding harness. The `prompt` IS the contract: it
- * enumerates the tasks and instructs the agent to address them AND NOTHING ELSE
- * (the human still disposes; the agent addresses dispositions, §2.1). `digest` is a
- * content hash over the ordered tasks, so the spend disclosure the user approved and
- * the bundle the write session runs are provably the same bundle (the consent token
- * binds to it).
- */
-export interface HandoffBundle {
-  readonly reviewId: string;
-  /** The active patchset the dispositions were made against (the bundle's baseline). */
-  readonly patchsetId: string;
-  readonly tasks: readonly HandoffTask[];
-  readonly prompt: string;
-  readonly digest: string;
-}
-
-/**
- * The spend disclosure surfaced BEFORE a write-enabled session runs (issue #18's
- * "spend is disclosed" invariant). A handoff spends the user's own harness quota AND
- * edits their working tree, so the disclosure names both. `model` is the harness's
- * resolved model when known (absent ⇒ the harness runs its own default). This is the
- * surface the user acts on; `requestConsent` binds a token to the bundle it describes.
- */
-export interface HandoffDisclosure {
-  readonly harness: string;
-  readonly model?: string;
-  readonly taskCount: number;
-  /** Always true: the session may write files. Named so the user sees it, never a surprise. */
-  readonly writeEnabled: true;
-  /** Always true: the agent edits the working tree in place (a new patchset captures it). */
-  readonly editsWorkingTree: true;
-  /** A plain-language one-liner for the disclosure surface (R41 chrome is terse; this is content). */
-  readonly summary: string;
-}
-
-/**
- * The result of a completed handoff run. `review` carries the NEW patchset (the
- * delta re-review's successor canvas opens on it) with the prior patchset preserved
- * byte-identical (R28). `turnDiff` is the exact diff the agent's turn produced
- * (bracketed by workspace checkpoints); `filesTouched` is every path the turn
- * changed — including edits unrelated to any disposition (the totality guarantee).
- */
-export interface HandoffRunResult {
-  readonly review: Review;
-  readonly turnDiff: string;
-  readonly filesTouched: readonly string[];
-  /**
-   * How the delta re-review's DETERMINISTIC carry (`carryDispositionsByLineage`, run
-   * in `service.capture`) landed the prior approvals (issue #254). `carriedForward` is
-   * the number kept on the new patchset (byte-identical at the same path, or a
-   * byte-verified git rename re-anchored); `orphaned` is the number surfaced for
-   * re-review because their occurrence VANISHED or was DELETED — surfaced, never
-   * silently dropped. A disposition whose same-path code merely CHANGED (or cannot be
-   * verified) reopens and is counted in NEITHER number; #266 tracks that this reopened
-   * case is currently unsurfaced. The fuzzy occurrence matcher deliberately does NOT
-   * drive this carry.
-   */
-  readonly carriedForward: number;
-  readonly orphaned: number;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Handoff-bundle COMPOSITION (issue #72, Model Council job M24). The light-tier
-// authoring step OVER the mechanical `HandoffBundle`: order the asks for execution
-// sense, merge overlapping asks into coherent tasks, and write a connective
-// narrative — WITHOUT altering what was asked. Appended after the #18 handoff block
-// so it does not collide with that work.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * One addressable ask in a bundle — a `HandoffTask` given a stable `id` the
- * composition trace cites (issue #73 maps delta-review results back through it).
- * The id is the ask's ordinal in the mechanical bundle's DETERMINISTIC order, so
- * the same disposition set always yields the same ids; the ask itself rides
- * alongside, so an id always resolves to concrete path/anchor/body.
- */
-export interface ComposableAsk extends HandoffTask {
-  readonly id: string;
-}
-
-/**
- * One composed task: a group of asks the model judged should be executed as one
- * coherent unit, with a model-authored connective `title`. ⭐ The member `asks` are
- * carried VERBATIM from the trusted input — the model chooses order+grouping and
- * cites ids, it NEVER rewrites a body — so a composition can neither drop nor alter
- * what was asked (only how it reads). `title` is PREVIEW-ONLY metadata (shown to the
- * human on the paper); it is NEVER inserted into the executable handoff prompt, whose
- * per-task heading is derived mechanically from the trusted ask paths. `title` is ""
- * in the mechanical floor.
- */
-export interface ComposedTask {
-  readonly title: string;
-  readonly sourceDispositions: readonly string[];
-  readonly asks: readonly ComposableAsk[];
-}
-
-/**
- * The composed bundle handed toward the coding harness (previewed on the paper at
- * journey stage 6). `composed` is TRUE when a validated model authoring was adopted
- * and FALSE when the deterministic FLOOR ran (the model was unavailable, failed, or
- * returned an incomplete/invalid partition — fail-closed to the pass-through list).
- * `traceMap` maps every input ask id to its index in `tasks`; the invariant, asserted
- * by the composer, is that EVERY id appears exactly once (no ask dropped, none
- * invented) — the round-trip guarantee #72's acceptance names.
- */
-export interface ComposedHandoffBundle {
-  readonly reviewId: string;
-  readonly patchsetId: string;
-  readonly tasks: readonly ComposedTask[];
-  readonly prompt: string;
-  readonly digest: string;
-  readonly composed: boolean;
-  readonly traceMap: Readonly<Record<string, number>>;
 }
 
 /**

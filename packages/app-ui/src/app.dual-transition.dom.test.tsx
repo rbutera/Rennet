@@ -16,8 +16,7 @@
 // review B via the freshness poll — and asserts review B NEVER receives
 // `deepReview:false`, only the dual default. Red-provable against the pre-fix boundary
 // (which produced a {B, false} call before the {B, true} rerun).
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

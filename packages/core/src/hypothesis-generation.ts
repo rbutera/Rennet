@@ -41,7 +41,6 @@ import {
   REVIEW_HYPOTHESIS_CONTRACT,
   renderBaseInstruction,
 } from "@rennet/instructions";
-import { canonicalize, computeInputDigest, sha256Hex, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
   HypothesisRepoContext,
@@ -59,7 +58,8 @@ import type {
   RspProvenance,
   RspTokenUsage,
   ValidationReport,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { canonicalize, computeInputDigest, sha256Hex, validateDocument } from "@rennet/protocol";
 import { absentBudgetGrant } from "./invocation-budget";
 
 /** The result of one hypothesis turn: the emitted body, or a turn-level failure. */
@@ -389,7 +389,9 @@ export async function runHypothesisPass(
     const report = validateDocument({ document, patchset: patchsetRef, manifest });
     if (report.admitted) {
       attempts.push({ attempt, outcome: "admitted", report });
-      const hypothesis: ReviewHypothesis = { ...body, repoContextPresent };
+      // readonly-variance: body is the hand-written (readonly) ReviewHypothesisBody;
+      // ReviewHypothesis is the mutable z.infer. Same shape, compile-time only.
+      const hypothesis = { ...body, repoContextPresent } as ReviewHypothesis;
       return { status: "ok", hypothesis, document, report, attempts, budgetRefused };
     }
     attempts.push({ attempt, outcome: "rejected", report });

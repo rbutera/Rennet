@@ -7,7 +7,7 @@
 // absence let the #11 Canvas UI ship four interaction bugs past green SSR tests
 // (frozen CodeView scroll among them). The pattern established here is what #17,
 // #22, #35, #36 and #37 mount through.
-import type { RenderedHunkOccurrence } from "@rennet/types";
+import type { RenderedHunkOccurrence } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { Mark } from "../canvas/registrar";
 import { fireEvent, mount, waitFor } from "../test/dom";

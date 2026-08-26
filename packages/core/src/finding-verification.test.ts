@@ -1,4 +1,9 @@
-import type { FindingElement, FlaggedReview, OfferedManifest, RspTokenUsage } from "@rennet/types";
+import type {
+  FindingElement,
+  FlaggedReview,
+  OfferedManifest,
+  RspTokenUsage,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   classifyNonObvious,

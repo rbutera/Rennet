@@ -21,7 +21,7 @@ import type {
   ProjectSnapshotManifest,
   ReferenceShard,
   SymbolShard,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 import {
   listTree,

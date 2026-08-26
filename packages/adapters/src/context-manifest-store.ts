@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ContextManifest, ContextSendRecord } from "@rennet/protocol";
 import { canonicalize, sha256Hex } from "@rennet/protocol";
-import type { ContextManifest, ContextSendRecord } from "@rennet/types";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
 /**

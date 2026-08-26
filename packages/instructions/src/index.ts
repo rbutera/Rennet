@@ -10,13 +10,13 @@
  * how they drift). The ordering slot hard-wires correction 8: logical dependency,
  * first principles, ground-up — never salience, danger, or blast radius.
  *
- * This package is node-free and depends on `@rennet/types` only: it is product
+ * This package is node-free and depends on `@rennet/protocol` only: it is product
  * content plus deterministic assembly, and a phone could import it. Digests over
  * the assembled bytes are computed by the caller (which has the protocol
  * SHA-256), so nothing here needs a hash or the filesystem.
  */
 
-import type { ConventionCatalogue, ReviewHypothesis, RspDocType } from "@rennet/types";
+import type { ConventionCatalogue, ReviewHypothesis, RspDocType } from "@rennet/protocol";
 
 /** The contract template version. Bumped when the SLOT SET changes, not the content. */
 export const PROMPT_CONTRACT_VERSION = 1;

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { foldReview, type ReviewEvent, type ReviewStorePort } from "@rennet/core";
-import type { Review } from "@rennet/types";
+import type { Review } from "@rennet/protocol";
 
 interface ReceiptRow {
   payload_digest: string;

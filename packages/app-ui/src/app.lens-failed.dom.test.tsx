@@ -15,8 +15,7 @@
 // surface: a failed/malformed fetch → "Couldn't check" (never "ran clean"); a valid
 // empty fetch → "ran clean" (never "Couldn't check"). Behavioural and red-provable
 // against the pre-fix boundary.
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

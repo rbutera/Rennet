@@ -1,4 +1,4 @@
-import type { ComposedHandoffBundle, ComposedTask } from "@rennet/types";
+import type { ComposedHandoffBundle, ComposedTask } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { CollationDraft } from "./collation";
 import {

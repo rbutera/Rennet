@@ -1,4 +1,4 @@
-import type { CiFailure, RspTokenUsage } from "@rennet/types";
+import type { CiFailure, RspTokenUsage } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { refineCiFailures } from "./ci-refinement";
 import { createInvocationBudget } from "./invocation-budget";

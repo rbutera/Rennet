@@ -5,7 +5,7 @@
 // disposition type back through `onEditType(path, type)`, the byte-for-byte edit
 // the publish/handoff payload serialises. Presence tests miss a dead callback; this
 // drives the control and asserts the recorded call.
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { DispositionBatch } from "../canvas/authoring";
 import { mount, waitFor } from "../test/dom";

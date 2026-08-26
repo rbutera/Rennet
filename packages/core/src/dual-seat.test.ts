@@ -1,4 +1,8 @@
-import type { CouncilResolveContext, OfferedManifest, RspCapabilitySnapshot } from "@rennet/types";
+import type {
+  CouncilResolveContext,
+  OfferedManifest,
+  RspCapabilitySnapshot,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import {

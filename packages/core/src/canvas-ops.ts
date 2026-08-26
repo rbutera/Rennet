@@ -12,7 +12,7 @@ import type {
   RoutePlanResult,
   RspProvenance,
   RspTier,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { v7 as uuidv7 } from "uuid";
 import { type CanvasEvent, dispatchOrchestratorCanvasOp } from "./canvas";
 import type { ContextAskQuery, RunContextAskResult } from "./context-ask";

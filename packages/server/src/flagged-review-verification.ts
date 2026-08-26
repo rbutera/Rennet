@@ -1,5 +1,5 @@
 import { markVerificationUnavailable } from "@rennet/core";
-import type { FlaggedReview } from "@rennet/types";
+import type { FlaggedReview } from "@rennet/protocol";
 
 export function projectUnavailableDeepVerification(
   review: FlaggedReview,

@@ -22,8 +22,8 @@
  * composed, not by gating what may be composed.
  */
 
+import type { ContextDocumentRecord, ContextDocumentState } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { ContextDocumentRecord, ContextDocumentState } from "@rennet/types";
 
 /** One candidate document offered to the assembly, in its declared order. */
 export interface ContextDocumentInput {

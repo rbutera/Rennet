@@ -19,7 +19,7 @@ import {
   type CanvasAngle,
   type PatchFile,
   type Patchset,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 
 const repository = {

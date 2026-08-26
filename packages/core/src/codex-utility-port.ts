@@ -18,7 +18,6 @@
  * `status: "admitted"` is only ever constructed inside `if (report.admitted)`.
  */
 
-import { bodyJsonSchema, computeInputDigest, validateDocument } from "@rennet/protocol";
 import type {
   OfferedManifest,
   PatchsetRef,
@@ -28,7 +27,8 @@ import type {
   RspProvenance,
   RspTokenUsage,
   ValidationReport,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { bodyJsonSchema, computeInputDigest, validateDocument } from "@rennet/protocol";
 
 // ── The executor seam (implemented by @rennet/adapters as a real `codex exec`) ─
 

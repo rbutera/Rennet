@@ -55,7 +55,7 @@ Contracts and rulings wins on general product and architecture conflicts, and Pr
 
 ## Package boundaries
 
-`packages/types` and `packages/theme` import no Rennet package. `protocol` may import `types`; `instructions` may import `types`; `core` may import `types`, `protocol`, and `instructions`; `adapters` may import those packages plus Node dependencies; `server` may import `types`, `protocol`, `instructions`, `core`, and `adapters`; `client` may import `types` and `protocol`; `ui` (the vendored shadcn/Base UI component kit) may import only `types` and `theme`; `app-ui` (Rennet's composites and screens) may import only `types`, `protocol`, `theme`, `ui`, and browser-safe dependencies. `apps/desktop` is the only Electron package. Spikes are excluded from the pnpm workspace.
+`packages/protocol` and `packages/theme` import no Rennet package. `instructions` may import `protocol`; `core` may import `protocol` and `instructions`; `adapters` may import those packages plus Node dependencies; `server` may import `protocol`, `instructions`, `core`, and `adapters`; `client` may import `protocol`; `ui` (the vendored shadcn/Base UI component kit) may import only `protocol` and `theme`; `app-ui` (Rennet's composites and screens) may import only `protocol`, `theme`, `ui`, and browser-safe dependencies. `apps/desktop` is the only Electron package. Spikes are excluded from the pnpm workspace.
 
 ## Documentation
 

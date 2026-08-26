@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { PatchFile, PatchsetSpecSnapshot } from "@rennet/types";
+import type { PatchFile, PatchsetSpecSnapshot } from "@rennet/protocol";
 
 /**
  * Immutable spec-set capture for the patchset intent (#136).

@@ -12,14 +12,14 @@ import {
   type HarnessSession,
   type ProjectMap,
 } from "@rennet/core";
-import { sha256Hex } from "@rennet/protocol";
 import {
   KNOWLEDGE_SCHEMA_VERSION,
   type NoveltyLedger,
   type PatchFile,
   type Patchset,
   type Review,
-} from "@rennet/types";
+  sha256Hex,
+} from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContextManifestStore } from "./context-manifest-store";
 import { KnowledgeStore } from "./knowledge-store";

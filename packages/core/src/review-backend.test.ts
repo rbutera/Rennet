@@ -1,4 +1,10 @@
-import type { InvocationBudget, PatchFile, Patchset, Review, RspProvenance } from "@rennet/types";
+import type {
+  InvocationBudget,
+  PatchFile,
+  Patchset,
+  Review,
+  RspProvenance,
+} from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { CanvasOpsEffect, RunLedgerEntry } from "./canvas-ops";
 import { createInvocationBudget } from "./invocation-budget";

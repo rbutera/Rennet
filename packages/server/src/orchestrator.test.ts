@@ -18,8 +18,8 @@ import {
   createInvocationBudget,
   type ReviewPipelineResult,
 } from "@rennet/core";
+import type { PatchFile, Patchset, Review } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadDesktopReviewContextManifest } from "./live-review-backend";
 import {

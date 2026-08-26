@@ -1,4 +1,4 @@
-import { CANVAS_ANGLES, type Canvas, type CanvasAngle } from "@rennet/types";
+import { CANVAS_ANGLES, type Canvas, type CanvasAngle } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The implementation ↔ test counterpart jump (Rai, wireframes #7).

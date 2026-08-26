@@ -1,4 +1,4 @@
-import type { AskAnswer, AskMode, AskReviewResult } from "@rennet/types";
+import type { AskAnswer, AskMode, AskReviewResult } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.ask — the surface's pure logic (issue #139).
@@ -17,7 +17,7 @@ import type { AskAnswer, AskMode, AskReviewResult } from "@rennet/types";
 // without a DOM (mirroring `canvas/flagged.ts`).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type { AskAnswer, AskMode, AskReviewResult } from "@rennet/types";
+export type { AskAnswer, AskMode, AskReviewResult } from "@rennet/protocol";
 
 /** The default routing: the orchestrator, the one model you converse with. */
 export const DEFAULT_ASK_MODE: AskMode = "orchestrator";

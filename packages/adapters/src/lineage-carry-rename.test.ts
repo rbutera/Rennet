@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { carryDispositionsByLineage, fileContentDigest } from "@rennet/core";
-import type { Disposition } from "@rennet/types";
+import type { Disposition } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitCaptureAdapter } from "./git-capture";
 

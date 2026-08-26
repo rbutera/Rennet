@@ -5,7 +5,7 @@ import {
   type CodexExecResult,
   type ReviewPipelineResult,
 } from "@rennet/core";
-import type { Patchset, Review } from "@rennet/types";
+import type { Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { OrchestratorTurnOutcome, OrchestratorTurnRunner } from "./orchestrator";
 import {

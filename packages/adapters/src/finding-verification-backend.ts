@@ -38,8 +38,8 @@ import type {
   VerificationFileWindow,
   VerificationTurnResult,
 } from "@rennet/core";
+import type { Hunk, Patchset } from "@rennet/protocol";
 import { findingVerificationJsonSchema } from "@rennet/protocol";
-import type { Hunk, Patchset } from "@rennet/types";
 import { createExecObservingTurn, EXEC_OUTPUT_TAIL } from "./exec-observing-turn";
 import type { GitExec } from "./git-range-diff";
 

@@ -9,7 +9,7 @@ import {
   runKnowledgeDeltaPass,
   runKnowledgeEnrichment,
 } from "@rennet/core";
-import type { InvocationBudget } from "@rennet/types";
+import type { InvocationBudget } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 import type { KnowledgeStore } from "./knowledge-store";
 import type { ProjectContextReader } from "./project-context-reader";

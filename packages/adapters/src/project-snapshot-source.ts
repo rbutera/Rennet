@@ -9,7 +9,7 @@ import type {
   SnapshotFileEntry,
   TestEntry,
   WorkspaceScope,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 
 /**

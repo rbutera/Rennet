@@ -94,7 +94,6 @@ Repository architecture checks enforce these import directions:
 
 ```mermaid
 flowchart LR
-  types[@rennet/types]
   theme[@rennet/theme]
   protocol[@rennet/protocol]
   instructions[@rennet/instructions]
@@ -105,36 +104,30 @@ flowchart LR
   appui["@rennet/app-ui<br/>screens"]
   client[@rennet/client]
 
-  protocol --> types
-  instructions --> types
-  core --> types
+  instructions --> protocol
   core --> protocol
   core --> instructions
-  adapters --> types
   adapters --> protocol
   adapters --> instructions
   adapters --> core
-  server --> types
   server --> protocol
   server --> instructions
   server --> core
   server --> adapters
-  ui --> types
+  ui --> protocol
   ui --> theme
-  appui --> types
   appui --> protocol
   appui --> theme
   appui --> ui
-  client --> types
   client --> protocol
 ```
 
-`@rennet/types` and `@rennet/theme` have no in-repository dependencies. The
-`@rennet/ui` kit imports only `@rennet/types` and `@rennet/theme`; `@rennet/app-ui`
-adds `@rennet/protocol` and the kit. Only the desktop app imports Electron.
+`@rennet/protocol` and `@rennet/theme` have no in-repository dependencies. The
+`@rennet/ui` kit imports only `@rennet/protocol` and `@rennet/theme`; `@rennet/app-ui`
+adds the kit. Only the desktop app imports Electron.
 `scripts/check-boundaries.mjs` runs three positive controls that prove forbidden
 imports fail: `@rennet/app-ui` importing `@rennet/core`, the `@rennet/ui` kit
-importing `@rennet/protocol`, and `@rennet/server` importing Electron.
+importing `@rennet/core`, and `@rennet/server` importing Electron.
 
 ## Review flow
 

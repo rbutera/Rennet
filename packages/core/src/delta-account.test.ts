@@ -1,4 +1,4 @@
-import { DIFF_TRUNCATION_MARKER, type Disposition, type Patchset } from "@rennet/types";
+import { DIFF_TRUNCATION_MARKER, type Disposition, type Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildDeltaAccount, changedPathsBetween, newHunksBetween } from "./delta-account";
 

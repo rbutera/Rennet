@@ -19,7 +19,6 @@
  * byte-identical for replay (R17).
  */
 
-import { parseAnchor } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -29,7 +28,8 @@ import type {
   Hunk,
   Patchset,
   RenderedHunkOccurrence,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { parseAnchor } from "@rennet/protocol";
 import { type AdmittedDocument, isProposalBody } from "./canvas";
 
 /** A verbatim `@@` hunk sliced from a file patch: its line ranges + exact text. */

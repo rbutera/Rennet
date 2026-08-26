@@ -1,6 +1,13 @@
-import type { CommandInput, CommandName, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, Review } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  CommandInput,
+  CommandName,
+  CommandOutput,
+  RennetBridge,
+  Review,
+} from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { loadCanvases } from "./load";
 

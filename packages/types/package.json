@@ -1,7 +1,0 @@
-{
-  "name": "@rennet/types",
-  "version": "0.3.36",
-  "private": true,
-  "type": "module",
-  "exports": "./src/index.ts"
-}

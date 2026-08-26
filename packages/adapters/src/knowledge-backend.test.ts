@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KnowledgeSet, KnowledgeStatement } from "@rennet/types";
+import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { knowledgeBackend } from "./knowledge-backend";
 import { KnowledgeStore } from "./knowledge-store";

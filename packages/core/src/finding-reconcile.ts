@@ -23,14 +23,14 @@
  * red-then-green proof that no reconciled summary is a merge of the two inputs.
  */
 
-import { parseAnchor } from "@rennet/protocol";
 import type {
   FindingAgreement,
   FindingElement,
   FindingModelAnswer,
   FindingSeverity,
   ParsedAnchor,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { parseAnchor } from "@rennet/protocol";
 
 /** The provider labels for the two seats, shown beside each disagreement answer. */
 export interface ReconcileLabels {

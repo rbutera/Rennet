@@ -1,4 +1,4 @@
-import type { AnchorSide, AskMode } from "@rennet/types";
+import type { AnchorSide, AskMode } from "@rennet/protocol";
 import { DEFAULT_ASK_MODE } from "./ask";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,11 +45,11 @@ import { DEFAULT_ASK_MODE } from "./ask";
 // interrupting things. The model is shaped so live streaming appends real
 // `ThreadMessage`s later with no change here — the streaming seam is `answerInThread`.
 //
-// The `layer:ui` boundary allows only `@rennet/types` + this package: nothing here
+// The `layer:ui` boundary allows only `@rennet/protocol` + this package: nothing here
 // imports `@rennet/core`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type { AskMode } from "@rennet/types";
+export type { AskMode } from "@rennet/protocol";
 
 /**
  * What a conversation is anchored to. Line + chunk are this slice's floor; a

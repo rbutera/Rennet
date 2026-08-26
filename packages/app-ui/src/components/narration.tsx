@@ -1,4 +1,4 @@
-import type { NarrationPlacement } from "@rennet/types";
+import type { NarrationPlacement } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NarrationPanel (issue #70) — the zoom ladder's own voice at one altitude.

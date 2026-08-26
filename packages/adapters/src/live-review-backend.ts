@@ -14,7 +14,7 @@ import type {
   InvocationBudget,
   Patchset,
   Review,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";

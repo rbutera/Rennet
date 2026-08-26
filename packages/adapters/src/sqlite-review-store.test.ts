@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { foldReview, ReviewService } from "@rennet/core";
-import type { PatchFile, Patchset, Review } from "@rennet/types";
+import type { PatchFile, Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { SqliteReviewStore } from "./sqlite-review-store";
 

@@ -40,7 +40,7 @@ import type {
   CouncilTier,
   ResolutionSource,
   ResolutionTrace,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 // ── Model → provider → harness ────────────────────────────────────────────────
 

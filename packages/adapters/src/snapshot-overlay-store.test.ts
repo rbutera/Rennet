@@ -1,9 +1,8 @@
 import { mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sha256Hex } from "@rennet/protocol";
-import type { SnapshotOverlay } from "@rennet/types";
-import { SNAPSHOT_OVERLAY_SCHEMA_VERSION } from "@rennet/types";
+import type { SnapshotOverlay } from "@rennet/protocol";
+import { SNAPSHOT_OVERLAY_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 import { SnapshotOverlayStore } from "./snapshot-overlay-store";

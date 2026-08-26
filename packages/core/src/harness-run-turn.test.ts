@@ -1,6 +1,6 @@
 import { renderLayer } from "@rennet/instructions";
+import type { ContextSendRecord } from "@rennet/protocol";
 import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
-import type { ContextSendRecord } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import type {
   HarnessDescriptor,

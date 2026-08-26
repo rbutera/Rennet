@@ -158,34 +158,32 @@ import {
   verifyFlaggedReview,
 } from "@rennet/core";
 import type {
-  DetectedHarness,
-  GitHubAuthStatus,
-  GitHubConnectPoll,
-  KnowledgeDispositionResult,
-  ProjectContextAskResult,
-  ProjectContextMapResult,
-  ProjectProcessEvent,
-} from "@rennet/protocol";
-import type {
   Canvas,
   CanvasAngle,
   ContextManifest,
   ConventionCatalogue,
   CouncilHarnessId,
   DecisionsRunStatus,
+  DetectedHarness,
   ElementDiffs,
   FlaggedReview,
+  GitHubAuthStatus,
+  GitHubConnectPoll,
   HypothesisStructure,
   InvocationBudget,
+  KnowledgeDispositionResult,
   NoiseReview,
   OpenSpecCoverage,
   OwnershipRule,
   Patchset,
+  ProjectContextAskResult,
+  ProjectContextMapResult,
+  ProjectProcessEvent,
   Review,
   ReviewEngine,
   ReviewHypothesis,
   ReviewNarration,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type FlaggedReviewRun } from "./dispatch";

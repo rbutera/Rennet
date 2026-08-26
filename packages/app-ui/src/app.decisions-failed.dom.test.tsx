@@ -7,8 +7,7 @@
 // the earlier suite and found that deleting `setDecisionsRun(live.decisionsRun)` left all
 // UI tests green: the pipe could be cut and nothing noticed. This closes that gap.
 // (Red-proof: delete that setState in app.tsx and the failed banner never renders here.)
-import type { RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { RennetBridge, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

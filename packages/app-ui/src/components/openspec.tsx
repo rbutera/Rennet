@@ -3,7 +3,7 @@ import type {
   OpenSpecBlock,
   OpenSpecChangeRaw,
   OpenSpecScenario,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { Square, SquareCheckBig } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AskMode, AskReviewResult } from "../canvas/ask";

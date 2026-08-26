@@ -1,4 +1,4 @@
-import { CANVAS_ANGLES } from "@rennet/types";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { USER_CANVAS_COMMANDS } from "./canvas";
 import type { ViewState } from "./canvas-ops";

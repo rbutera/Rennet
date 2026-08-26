@@ -4,7 +4,7 @@ import type {
   DeltaAccount,
   DeltaAskStatus,
   DeltaBeyondHunk,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The DELTA RE-REVIEW ACCOUNT (issue #73). Rendered at the TOP of a successor

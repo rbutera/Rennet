@@ -5,8 +5,8 @@
 // its own nested `data-scheme`; this makes that nested scheme FOLLOW the resolved
 // app scheme (so a restored review and a live OS change re-theme the canvas too)
 // until the reviewer takes explicit control with the in-review toggle.
-import type { Canvas, CanvasAngle } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+import type { Canvas, CanvasAngle } from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, mount, waitFor } from "../test/dom";
 import { CanvasWorkspace } from "./workspace";

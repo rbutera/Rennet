@@ -19,7 +19,7 @@ import type {
   OpenSpecTaskGroup,
   OpenSpecTaskItem,
   OpenSpecTasks,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 /**
  * The source-origin base for a run of lines handed to `parseBlocks`: which
@@ -414,7 +414,9 @@ function parseProposal(md: string): OpenSpecProposal {
     }
   }
 
-  return { why, whatChanges, newCapabilities, modifiedCapabilities, impact };
+  // readonly-variance: parse* build from hand-written (readonly) OpenSpec* element
+  // types; the return types are the mutable z.infer schemas. Same shape, compile-time only.
+  return { why, whatChanges, newCapabilities, modifiedCapabilities, impact } as OpenSpecProposal;
 }
 
 // ── design.md ────────────────────────────────────────────────────────────────
@@ -438,7 +440,7 @@ function parseDesign(md: string): OpenSpecDesign {
       source: { artifact: "design", line: heading.line + 1 },
     });
   }
-  return { sections };
+  return { sections } as OpenSpecDesign;
 }
 
 // ── tasks.md ─────────────────────────────────────────────────────────────────
@@ -488,7 +490,7 @@ function parseTasks(md: string): OpenSpecTasks {
   }
   const total = groups.reduce((sum, group) => sum + group.total, 0);
   const done = groups.reduce((sum, group) => sum + group.done, 0);
-  return { groups, total, done };
+  return { groups, total, done } as OpenSpecTasks;
 }
 
 // ── spec deltas ──────────────────────────────────────────────────────────────
@@ -592,7 +594,11 @@ function parseSpecDelta(capability: string, md: string): OpenSpecSpecDelta {
     groups.push({ operation, requirements });
   }
 
-  return { capability, groups, source: { artifact: "spec", capability, line: 1 } };
+  return {
+    capability,
+    groups,
+    source: { artifact: "spec", capability, line: 1 },
+  } as OpenSpecSpecDelta;
 }
 
 /**

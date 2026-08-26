@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PatchFile, Patchset, ProjectSnapshotManifest } from "@rennet/types";
+import type { PatchFile, Patchset, ProjectSnapshotManifest } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import { ProjectContextReader } from "./project-context-reader";

@@ -28,8 +28,8 @@ import {
   snapshotStoreFor,
 } from "@rennet/adapters";
 import { materializeSnapshot, queryFileOverview, queryProjectMap } from "@rennet/core";
+import type { ProjectSnapshotManifest } from "@rennet/protocol";
 import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
-import type { ProjectSnapshotManifest } from "@rennet/types";
 import { WebSocket } from "ws";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";

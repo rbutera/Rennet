@@ -1,5 +1,5 @@
+import type { AnchorSide, DispositionType, RenderedHunkOccurrence } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
-import type { AnchorSide, DispositionType, RenderedHunkOccurrence } from "@rennet/types";
 import { type ReactNode, type Ref, useCallback, useEffect, useRef, useState } from "react";
 import {
   type ConversationAnchor,

@@ -1,4 +1,4 @@
-import type { ReviewHypothesis } from "@rennet/types";
+import type { ReviewHypothesis } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   assemblePrompt,

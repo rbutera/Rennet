@@ -1,5 +1,11 @@
-import { normalizeQuote, sha256Hex } from "@rennet/protocol";
-import { AUTO_CARRY_LINEAGES, autoCarries, type Lineage, type LineageEntry } from "@rennet/types";
+import {
+  AUTO_CARRY_LINEAGES,
+  autoCarries,
+  type Lineage,
+  type LineageEntry,
+  normalizeQuote,
+  sha256Hex,
+} from "@rennet/protocol";
 
 // ── The lineage matcher (issue #16, pre-build spike 1) ───────────────────────
 //
@@ -80,7 +86,7 @@ export interface MatchResult {
   readonly classifications: readonly LineageClassification[];
   /** Successor ids with no prior antecedent (newly added occurrences). */
   readonly added: readonly string[];
-  /** The `@rennet/types` lineage graph — the substrate `resolveAnchor` reads. */
+  /** The `@rennet/protocol` lineage graph — the substrate `resolveAnchor` reads. */
   readonly lineage: readonly LineageEntry[];
 }
 
@@ -480,7 +486,7 @@ export function classifyLineage(
   return { classifications, added, lineage };
 }
 
-// The auto-carry authority is DEFINED ONCE in `@rennet/types` (`AUTO_CARRY_LINEAGES`
+// The auto-carry authority is DEFINED ONCE in `@rennet/protocol` (`AUTO_CARRY_LINEAGES`
 // / `autoCarries`) so the disposition seam here and the graph consumer
 // `resolveAnchor` in `@rennet/protocol` share one binding policy — a local copy
 // here is exactly how the policy drifted from `resolveAnchor` (issue #16

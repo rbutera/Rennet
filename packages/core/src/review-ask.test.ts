@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { AskAnswer } from "@rennet/types";
+import type { AskAnswer } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { askReview, type ReviewAskPorts } from "./review-ask";
 

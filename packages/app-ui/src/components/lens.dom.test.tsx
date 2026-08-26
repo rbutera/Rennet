@@ -6,7 +6,7 @@
 // it: every tab sat in the tab order and arrows did nothing. These tests mount the real
 // component in a controlled harness and exercise the roving tabindex + arrow/Home/End
 // movement, plus the unchanged click path.
-import type { CanvasAngle } from "@rennet/types";
+import type { CanvasAngle } from "@rennet/protocol";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { fireEvent, mount } from "../test/dom";

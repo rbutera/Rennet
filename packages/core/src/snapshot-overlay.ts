@@ -16,14 +16,18 @@
  * manifests and is exercised by a pure test that never touches git or the disk.
  */
 
-import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type {
   ProjectSnapshotManifest,
   ShardRef,
   SnapshotOverlay,
   StructuralShardSlot,
-} from "@rennet/types";
-import { PROJECT_SNAPSHOT_SCHEMA_VERSION, SNAPSHOT_OVERLAY_SCHEMA_VERSION } from "@rennet/types";
+} from "@rennet/protocol";
+import {
+  canonicalize,
+  PROJECT_SNAPSHOT_SCHEMA_VERSION,
+  SNAPSHOT_OVERLAY_SCHEMA_VERSION,
+  sha256Hex,
+} from "@rennet/protocol";
 
 const STRUCTURAL_SLOTS: readonly StructuralShardSlot[] = [
   "files",

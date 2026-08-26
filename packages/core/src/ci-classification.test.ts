@@ -1,4 +1,4 @@
-import type { CiFailure, OfferedManifest } from "@rennet/types";
+import type { CiFailure, OfferedManifest } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { ciFindingsFor, classifyCiFailures } from "./ci-classification";
 import type { ForgeCheckRun } from "./forge-port";

@@ -10,7 +10,7 @@ import {
   snapshotStoreFor,
 } from "@rennet/adapters";
 import type { ReviewPipelineResult } from "@rennet/core";
-import type { ContextManifest, Review } from "@rennet/types";
+import type { ContextManifest, Review } from "@rennet/protocol";
 import { createReviewContextFeed, type ReviewContextFeed } from "./review-context-feed";
 
 // ─────────────────────────────────────────────────────────────────────────────

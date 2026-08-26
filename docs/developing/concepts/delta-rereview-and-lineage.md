@@ -32,7 +32,7 @@ patchset. The lineage graph can describe a successor relationship as `exact`,
 `one-to-one`, `move`, `split`, `merge`, `ambiguous`, or `terminated`.
 
 These labels describe a relationship. They do not all authorize carry.
-`AUTO_CARRY_LINEAGES` in `@rennet/types` contains only `exact`, and
+`AUTO_CARRY_LINEAGES` in `@rennet/protocol` contains only `exact`, and
 `resolveAnchor()` reports whether the relationship carries state.
 
 ```mermaid
@@ -135,7 +135,7 @@ a particular hunk.
 
 | Concern | Owner |
 | --- | --- |
-| Lineage types and exact-only carry policy | `packages/types/src/index.ts` |
+| Lineage types and exact-only carry policy | `packages/protocol/src/index.ts` |
 | Anchor resolution over a lineage graph | `packages/protocol/src/rsp.ts` |
 | Fuzzy occurrence classifier | `packages/core/src/lineage-matcher.ts` |
 | Live disposition carry and successor fold | `packages/core/src/index.ts` |

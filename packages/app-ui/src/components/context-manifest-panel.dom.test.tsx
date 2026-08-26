@@ -4,7 +4,7 @@
 // documents Rennet assembled, in composition order, with hashes, byte counts,
 // and truncated/dropped state — plus the assembled-prompt digest. It is deterministic,
 // model-free, and gate-free: it shows the truth, it never gates what may be sent.
-import type { ContextDocumentRecord, ContextManifest, ContextSendRecord } from "@rennet/types";
+import type { ContextDocumentRecord, ContextManifest, ContextSendRecord } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { mount } from "../test/dom";
 import { ContextManifestPanel } from "./context-manifest-panel";

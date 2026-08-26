@@ -11,7 +11,7 @@ import type {
   SessionSpec,
   TurnInput,
 } from "@rennet/core";
-import { MAX_UI_EVIDENCE_BYTES } from "@rennet/types";
+import { MAX_UI_EVIDENCE_BYTES } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   beginUiEvidenceRun,

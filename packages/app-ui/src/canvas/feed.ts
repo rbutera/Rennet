@@ -1,4 +1,4 @@
-import type { CanvasChangeNotification } from "@rennet/types";
+import type { CanvasChangeNotification } from "@rennet/protocol";
 import { useMemo, useSyncExternalStore } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────

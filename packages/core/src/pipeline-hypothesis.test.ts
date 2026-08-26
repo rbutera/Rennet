@@ -1,4 +1,4 @@
-import type { InvocationBudget, Patchset } from "@rennet/types";
+import type { InvocationBudget, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createInvocationBudget } from "./invocation-budget";
 import {

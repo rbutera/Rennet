@@ -1,4 +1,4 @@
-import type { NoiseReview } from "@rennet/types";
+import type { NoiseReview } from "@rennet/protocol";
 
 /**
  * The Noise lens substrate (issue #34), STUBBED for this wave.

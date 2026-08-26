@@ -5,8 +5,8 @@ import {
   DEFAULT_CODEX_UTILITY_MODEL,
   type ReviewPipelineResult,
 } from "@rennet/core";
+import type { Patchset, Review } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
-import type { Patchset, Review } from "@rennet/types";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 
 // ─────────────────────────────────────────────────────────────────────────────

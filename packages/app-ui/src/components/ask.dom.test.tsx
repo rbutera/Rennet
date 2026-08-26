@@ -8,8 +8,9 @@
 // fixture is validated against the REAL `@rennet/protocol` schema before it is
 // rendered, so the surface is driven by a fixture behind the real typed boundary.
 // Assertions are behavioural (rendered text, recorded callbacks), not presence-only.
+
+import type { AskReviewResult } from "@rennet/protocol";
 import { parseCommandOutput } from "@rennet/protocol";
-import type { AskReviewResult } from "@rennet/types";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { type AskModeByThread, askModeForThread, rememberAskMode } from "../canvas/ask";

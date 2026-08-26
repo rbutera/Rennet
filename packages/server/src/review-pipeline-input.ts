@@ -1,5 +1,5 @@
 import type { buildReviewCanvases } from "@rennet/core";
-import type { CouncilHarnessId } from "@rennet/types";
+import type { CouncilHarnessId } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Review pipeline input assembly (issue #35, F4 — the composition boundary).

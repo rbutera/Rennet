@@ -45,8 +45,8 @@ import type {
   StructuralShardSlot,
   TestEntry,
   WorkspaceScope,
-} from "@rennet/types";
-import { DIFF_TRUNCATION_MARKER } from "@rennet/types";
+} from "@rennet/protocol";
+import { DIFF_TRUNCATION_MARKER } from "@rennet/protocol";
 import type { LoadedSnapshot, SnapshotGateFailure } from "./project-context";
 import { queryFileContext } from "./project-context";
 import { structuralTsExtractor } from "./project-snapshot";

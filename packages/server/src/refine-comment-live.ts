@@ -15,7 +15,7 @@ import type {
   Patchset,
   RefinementResult,
   Review,
-} from "@rennet/types";
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.refine — the LIVE producer (issue #19).

@@ -1,5 +1,5 @@
 import type { AdmittedDocument } from "@rennet/core";
-import type { DecisionRecordBody, DecisionsRunStatus } from "@rennet/types";
+import type { DecisionRecordBody, DecisionsRunStatus } from "@rennet/protocol";
 
 /**
  * The Decisions lens substrate (issue #137), STUBBED for this wave.

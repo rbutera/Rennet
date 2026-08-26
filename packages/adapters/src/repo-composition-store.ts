@@ -1,8 +1,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { RepoComposition, WorkspaceContext } from "@rennet/protocol";
 import { canonicalize } from "@rennet/protocol";
-import type { RepoComposition, WorkspaceContext } from "@rennet/types";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
 export class RepoCompositionStore {

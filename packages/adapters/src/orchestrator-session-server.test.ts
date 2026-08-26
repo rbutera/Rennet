@@ -9,7 +9,7 @@ import {
   type CanvasAngle,
   type Decomposition,
   type RoutePlanResult,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { CANVAS_OPS_SERVER_NAME, type LoadCanvasOpsSdk } from "./canvas-ops-server";
 import { attachOrchestratorSession } from "./orchestrator-session-server";

@@ -1,4 +1,4 @@
-import type { DecisionRecordBody } from "@rennet/types";
+import type { DecisionRecordBody } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   decisionsRecordFixture,

@@ -5,7 +5,7 @@
 // LINE anchor (plain click), a RANGE anchor (shift-click), and a CHUNK anchor (the
 // header verb). These assertions are impossible under the SSR harness: they drive
 // real click events with modifier keys and assert the emitted anchor.
-import type { RenderedHunkOccurrence } from "@rennet/types";
+import type { RenderedHunkOccurrence } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { ConversationAnchor } from "../canvas/conversation";
 import { fireEvent, mount } from "../test/dom";

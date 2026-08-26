@@ -1,5 +1,5 @@
-import type { OfferedManifest, PatchsetRef } from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import type { OfferedManifest, PatchsetRef } from "./index";
 import { computeInputDigest, validateDocument } from "./rsp";
 
 // The `review.hypothesis` validator (issue #178): an ATOMIC doc — any body error

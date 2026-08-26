@@ -4,7 +4,7 @@ import type {
   RspEnvelope,
   RspTokenUsage,
   ValidationReport,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type {

@@ -7,8 +7,8 @@
 // renders on NO row. Presenting it as "placed" is the silent loss the registrar's loud
 // failure was meant to prevent. These mount the REAL CanvasWorkspace over a real diff
 // and assert the orphan surfaces in the visible tray.
-import type { Canvas, CanvasAngle, ElementDiff } from "@rennet/types";
-import { CANVAS_ANGLES } from "@rennet/types";
+import type { Canvas, CanvasAngle, ElementDiff } from "@rennet/protocol";
+import { CANVAS_ANGLES } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createViewStore } from "../canvas/store";
 import { mount } from "../test/dom";

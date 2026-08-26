@@ -150,9 +150,6 @@ importers:
       '@rennet/server':
         specifier: workspace:*
         version: link:../../packages/server
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       '@tailwindcss/vite':
         specifier: 4.3.3
         version: 4.3.3(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
@@ -252,9 +249,6 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       expo:
         specifier: ~55.0.26
         version: 55.0.28(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(expo-router@55.0.17)(react-dom@19.2.8(react@19.2.8))(react-native@0.83.6(@babel/core@7.29.7)(@types/react@19.2.14)(react@19.2.8))(react@19.2.8)(typescript@5.4.5)
@@ -331,9 +325,6 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       chokidar:
         specifier: 5.0.0
         version: 5.0.0
@@ -352,9 +343,6 @@ importers:
       '@rennet/theme':
         specifier: workspace:*
         version: link:../theme
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       '@rennet/ui':
         specifier: workspace:*
         version: link:../ui
@@ -401,9 +389,6 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
     devDependencies:
       '@types/ws':
         specifier: 8.18.1
@@ -420,26 +405,20 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       uuid:
         specifier: 14.0.1
         version: 14.0.1
 
   packages/instructions:
     dependencies:
-      '@rennet/types':
+      '@rennet/protocol':
         specifier: workspace:*
-        version: link:../types
+        version: link:../protocol
 
   packages/lens-instructions: {}
 
   packages/protocol:
     dependencies:
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -455,9 +434,6 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       ws:
         specifier: 8.21.1
         version: 8.21.1
@@ -490,19 +466,17 @@ importers:
         specifier: 5.3.0
         version: 5.3.0
 
-  packages/types: {}
-
   packages/ui:
     dependencies:
       '@base-ui/react':
         specifier: 1.7.0
         version: 1.7.0(@types/react@19.2.14)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@rennet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@rennet/theme':
         specifier: workspace:*
         version: link:../theme
-      '@rennet/types':
-        specifier: workspace:*
-        version: link:../types
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1

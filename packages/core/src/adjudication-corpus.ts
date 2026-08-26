@@ -16,7 +16,7 @@
  * the scorer's correctness is what the hermetic default gate proves — zero model spend.
  */
 
-import type { FindingAdjudicationVerdict, FindingElement, OfferedManifest } from "@rennet/types";
+import type { FindingAdjudicationVerdict, FindingElement, OfferedManifest } from "@rennet/protocol";
 
 /** A claim class that maps to a real cross-harness disagreement kind (design D4). */
 export type AdjudicationClaimClass =

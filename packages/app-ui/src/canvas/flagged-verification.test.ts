@@ -1,4 +1,4 @@
-import type { FindingElement } from "@rennet/types";
+import type { FindingElement } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildFlaggedIndex } from "./flagged";
 

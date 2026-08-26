@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ForgePort, ForgePullRequest, ForgePullRequestRef, SsoState } from "@rennet/core";
-import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/types";
+import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/protocol";
 import {
   captureRangePatchset,
   DEFAULT_VISIBLE_BYTE_LIMIT,
@@ -356,11 +356,11 @@ function forgePrIntent(
     prTitle?: string;
     prBody?: string;
     prBodyAbsent?: boolean;
-    specSnapshots?: readonly PatchsetSpecSnapshot[];
+    specSnapshots?: PatchsetSpecSnapshot[];
   } = { surface };
   if (pr.title.trim().length > 0) intent.prTitle = pr.title;
   if (pr.body.trim().length > 0) intent.prBody = pr.body;
   else intent.prBodyAbsent = true;
-  if (specSnapshots.length > 0) intent.specSnapshots = specSnapshots;
+  if (specSnapshots.length > 0) intent.specSnapshots = [...specSnapshots];
   return intent;
 }

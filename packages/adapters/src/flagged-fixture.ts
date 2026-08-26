@@ -1,4 +1,4 @@
-import type { FlaggedReview } from "@rennet/types";
+import type { FlaggedReview } from "@rennet/protocol";
 
 /**
  * The Flagged lens substrate (issue #138), STUBBED for this wave.

@@ -1,4 +1,4 @@
-import type { Disposition } from "@rennet/types";
+import type { Disposition } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-state (issue #17) — pure, event-sourced, no React, no DOM.

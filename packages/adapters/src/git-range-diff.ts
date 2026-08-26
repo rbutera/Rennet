@@ -7,7 +7,7 @@ import {
   type PatchFile,
   type Patchset,
   type PatchsetSource,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import { execa } from "execa";
 
 /**

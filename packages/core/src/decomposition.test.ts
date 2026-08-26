@@ -1,4 +1,4 @@
-import type { Decomposition, PatchFile, Patchset } from "@rennet/types";
+import type { Decomposition, PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_CHUNK_LOC,

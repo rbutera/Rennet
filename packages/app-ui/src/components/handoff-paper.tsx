@@ -1,4 +1,4 @@
-import type { ComposedHandoffBundle, HandoffRunResult } from "@rennet/types";
+import type { ComposedHandoffBundle, HandoffRunResult } from "@rennet/protocol";
 import { handoffPreview } from "../canvas/publish";
 
 // The STAGE-6 HANDOFF PAPER (issue #72): the reviewer SEES the composed work order
@@ -12,7 +12,7 @@ import { handoffPreview } from "../canvas/publish";
 // the human's eyes here but never the coding agent's work order.
 //
 // The RUN is one action from the preview (Rule Zero — no consent ceremony): the paper
-// takes `onRun` + `runState` as PROPS and stays presentational (`@rennet/types` only,
+// takes `onRun` + `runState` as PROPS and stays presentational (`@rennet/protocol` only,
 // no IPC). The `runState` is the `review.handoff.run` discriminated outcome, surfaced
 // verbatim — a refusal renders as a refusal, a failure as an error, and no non-success
 // outcome is ever dressed as success. When `onRun` is absent the paper is preview-only.
@@ -20,7 +20,7 @@ import { handoffPreview } from "../canvas/publish";
 /**
  * The run lifecycle the paper renders. `idle`/`pending` are the pre-outcome states;
  * the rest mirror `review.handoff.run`'s discriminated outcome VERBATIM (the union is
- * expressed from `@rennet/types` alone so the paper keeps its `layer:ui` import rule).
+ * expressed from `@rennet/protocol` alone so the paper keeps its `layer:ui` import rule).
  */
 export type HandoffRunState =
   | { readonly status: "idle" }

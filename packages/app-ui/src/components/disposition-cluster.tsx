@@ -1,4 +1,4 @@
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType } from "@rennet/protocol";
 import { Check, CircleHelp, type LucideIcon, MessageSquare, TriangleAlert } from "lucide-react";
 import { defaultLane, type StagingLane } from "../canvas/staging";
 import { VERB_HOVER } from "./disposition";

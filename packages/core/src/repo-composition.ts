@@ -1,4 +1,3 @@
-import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type {
   CompositionFreshness,
   CompositionStaleMember,
@@ -10,7 +9,8 @@ import type {
   ScopeTreeNode,
   WorkspaceContext,
   WorkspaceMember,
-} from "@rennet/types";
+} from "@rennet/protocol";
+import { canonicalize, sha256Hex } from "@rennet/protocol";
 
 export interface ScopeDeclaration {
   readonly name: string;

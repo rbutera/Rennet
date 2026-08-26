@@ -7,7 +7,7 @@ import {
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
-import type { CouncilHarnessId, DeltaAccount, DeltaDigestResult, Review } from "@rennet/types";
+import type { CouncilHarnessId, DeltaAccount, DeltaDigestResult, Review } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.deltaDigest — the LIVE producer (issue #73 / M25).

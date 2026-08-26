@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { RennetBridge } from "@rennet/protocol";
-import type { FlaggedReview, Review } from "@rennet/types";
+import type { FlaggedReview, RennetBridge, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";

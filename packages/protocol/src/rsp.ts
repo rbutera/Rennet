@@ -15,11 +15,12 @@
  * digestibility, not the product's purpose.
  */
 
+import { z } from "zod";
+import { validateBodyRules } from "./bodies";
 import type {
   AdmissionKind,
   AnchorKind,
   AnchorSide,
-  AnchorSpan,
   OfferedManifest,
   ParsedAnchor,
   PatchsetRef,
@@ -31,10 +32,9 @@ import type {
   SizeLimits,
   ValidationError,
   ValidationReport,
-} from "@rennet/types";
-import { autoCarries } from "@rennet/types";
-import { z } from "zod";
-import { validateBodyRules } from "./bodies";
+} from "./domain";
+import { autoCarries } from "./domain";
+import type { AnchorSpan } from "./index";
 import { sha256Hex } from "./sha256";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -374,7 +374,7 @@ export function resolveAnchor(parsed: ParsedAnchor, manifest: OfferedManifest): 
     }
     // A mapped-forward lineage supersedes to its successor id — but whether it may
     // CARRY analysis/read-state without re-review is the shared auto-carry
-    // authority (`autoCarries`, `@rennet/types`), NOT "has a target". §3.4: only
+    // authority (`autoCarries`), NOT "has a target". §3.4: only
     // an EXACT byte-identical occurrence carries; a changed/moved/split/merged one
     // reopens (superseded so it re-anchors to the successor, but carriesState
     // false). This is the binding gate the disposition seam shares — issue #16

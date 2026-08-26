@@ -19,7 +19,7 @@ import {
   type ToolKind,
   type TurnInput,
 } from "@rennet/core";
-import type { RspTokenUsage } from "@rennet/types";
+import type { RspTokenUsage } from "@rennet/protocol";
 import { compareVersions } from "./harness-discovery";
 import { readTestedRange } from "./harness-tested-range";
 

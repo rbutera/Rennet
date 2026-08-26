@@ -30,7 +30,7 @@ import type {
   InvocationBudget,
   OfferedManifest,
   ReviewHypothesis,
-} from "@rennet/types";
+} from "@rennet/protocol";
 import type { DualSeat } from "./dual-seat";
 import {
   type FindingIntent,

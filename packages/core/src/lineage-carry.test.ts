@@ -1,5 +1,5 @@
+import type { Disposition, HandoffAskTrace, PatchFile, Patchset, Review } from "@rennet/protocol";
 import { parseCommandOutput } from "@rennet/protocol";
-import type { Disposition, HandoffAskTrace, PatchFile, Patchset, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { carryDispositionsByLineage, fileContentDigest, foldReview } from "./index";
 
