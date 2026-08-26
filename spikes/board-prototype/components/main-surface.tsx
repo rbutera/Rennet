@@ -15,9 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { ChevronRight } from "lucide-react"
-import { TargetIcon } from "@/components/target-badge"
-import { TARGET_LABEL } from "@/lib/target-language"
+import { SessionTrail } from "@/components/location-trail"
 import { ViewSwitcher } from "@/components/view-switcher"
 import { ContextMapPanel, MapBaseLine } from "@/components/context-map"
 import { DiffView } from "@/components/diff-view"
@@ -127,26 +125,10 @@ export function MainSurface({
               >
                 <PanelLeft className="size-3.5" aria-hidden="true" />
               </button>
-              {(() => {
-                const session = trail?.session ?? scenario.session
-                const projectName = trail?.projectName ?? "rennet"
-                return (
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="truncate text-[13px] font-medium leading-tight text-foreground">
-                      {session.title}
-                    </span>
-                    <span className="flex min-w-0 items-center gap-1 text-[11px] leading-tight text-muted-foreground">
-                      <TargetIcon kind={session.target} state={session.targetState} className="size-3" />
-                      <span className="shrink-0">{projectName}</span>
-                      <ChevronRight className="size-2.5 shrink-0 text-muted-foreground/50" aria-hidden="true" />
-                      <span className="truncate">
-                        {TARGET_LABEL[session.target]}
-                        {session.targetState === "needs-you" ? " · needs you" : ""}
-                      </span>
-                    </span>
-                  </div>
-                )
-              })()}
+              <SessionTrail
+                projectName={trail?.projectName ?? "rennet"}
+                session={trail?.session ?? scenario.session}
+              />
             </>
           )}
         </div>

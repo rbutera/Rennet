@@ -19,7 +19,15 @@ function NewChatInner() {
   const searchParams = useSearchParams()
   const hosts = useAppStore((s) => s.hosts)
 
-  const projectId = searchParams.get("project") ?? hosts[0]?.projects[0]?.id ?? "p1"
+  // Resolve the param against real projects (by id, then by name) — an
+  // unknown value must fall back, never mint a session into a ghost project.
+  const allProjects = hosts.flatMap((h) => h.projects)
+  const projectParam = searchParams.get("project")
+  const projectId =
+    allProjects.find((p) => p.id === projectParam)?.id ??
+    allProjects.find((p) => p.name === projectParam)?.id ??
+    allProjects[0]?.id ??
+    "p1"
 
   function start(item: SmartListItem | null, message: string) {
     const project = hosts.flatMap((h) => h.projects).find((p) => p.id === projectId)

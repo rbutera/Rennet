@@ -103,7 +103,7 @@ export function SessionView({
         />
       ) : (
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-          <header className="h-10 shrink-0 border-b border-border" />
+          <header className="h-14 shrink-0 border-b border-border" />
           <RunView targetKind={targetKind} targetLabel={targetLabel} onReady={() => setBoardsReady(true)} />
         </div>
       )}

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { PanelRight } from "lucide-react"
-import { LocationTrail } from "@/components/location-trail"
+import { SessionTrail } from "@/components/location-trail"
 import { ConversationPane } from "@/components/conversation-pane"
 import { InputBar } from "@/components/input-bar"
 import { followUpExchanges, type TurnData } from "@/lib/conversation-data"
@@ -144,8 +144,8 @@ export function ChatHeader({
   onCollapse: () => void
 }) {
   return (
-    <header className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
-      <LocationTrail projectName={projectName} session={session} />
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-3">
+      <SessionTrail projectName={projectName} session={session} />
       <button
         type="button"
         onClick={onCollapse}
