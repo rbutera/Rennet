@@ -1,6 +1,6 @@
 ---
 title: Common questions
-description: Answers about GitHub, models, credentials, data, and the own-branch workflow.
+description: Answers about GitHub, models, credentials, data, licensing, and the own-branch workflow.
 ---
 
 Rennet changes where you read and prepare a review. It does not require your
@@ -74,6 +74,19 @@ When work is recaptured, a disposition carries only when its content is
 byte-identical at the same path and the match is unambiguous. Changed or
 ambiguous work is reviewed again. Once the branch is ready, Rennet can push the
 named branch and open the pull request described by the outbound draft.
+
+## What licence is Rennet under?
+
+Rennet is licensed under
+[FSL-1.1-MIT](https://github.com/rbutera/rennet/blob/main/LICENSE), the
+Functional Source License with an MIT future grant. The source is available:
+you can read it, run it, modify it, and redistribute it for any purpose except
+building a product that competes with Rennet. Two years after a release is
+published, that release converts to the MIT licence.
+
+This is source-available, not OSI-approved open source. Bundled third-party
+dependencies keep their own permissive licences, listed in
+[`THIRD-PARTY-LICENSES.md`](https://github.com/rbutera/rennet/blob/main/THIRD-PARTY-LICENSES.md).
 
 ## Where to go next
 
