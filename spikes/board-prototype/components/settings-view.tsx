@@ -28,6 +28,8 @@ import {
   projectSettings,
   type SettingsLayer,
   type SettingsPage,
+  sourceControl,
+  type SourceControlTool,
   worktreeTokens,
   type WorktreeSettings,
 } from "@/lib/settings-data"
@@ -232,43 +234,124 @@ function MachinePage({ hosts }: { hosts: HostItem[] }) {
                 )}
                 <span className="text-[13px] font-medium text-foreground">{h.label}</span>
               </div>
-              <div className="flex min-h-8 items-center gap-3 pl-5">
-                <span className="text-[13px] text-foreground/90">GitHub</span>
-                <span className="ml-auto flex shrink-0 items-center gap-2">
-                  {daemon.github.connected ? (
-                    <>
-                      <span className="text-[13px] text-foreground/90">{daemon.github.account}</span>
-                      <button
-                        type="button"
-                        className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-                      >
-                        Disconnect
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-[12px] text-muted-foreground">not connected</span>
-                      <button
-                        type="button"
-                        className="rounded-md border border-border px-2 py-1 text-[12px] text-foreground/90 hover:bg-secondary"
-                      >
-                        Connect GitHub
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-                      >
-                        Use a Token Instead
-                      </button>
-                    </>
-                  )}
-                </span>
-              </div>
+              {/* GitHub state lives in the Source Control rows below (#483:
+                  Rennet rides gh — the OAuth-shaped Connect flow is gone). */}
+              <SourceControlList host={h} />
             </div>
           )
         })}
       </Section>
     </>
+  )
+}
+
+const SOURCE_CONTROL_STATUS: Record<SourceControlTool["status"], { label: string; chip: string }> = {
+  available: { label: "Available", chip: "bg-green-soft text-green" },
+  "not-authenticated": { label: "Not Authenticated", chip: "bg-warn-soft text-warn" },
+  unreachable: { label: "Unreachable", chip: "bg-warn-soft text-warn" },
+  "not-installed": { label: "Not Installed", chip: "bg-secondary text-muted-foreground" },
+}
+
+/**
+ * What this host can talk to, as detected on the host itself: git, and the
+ * CLIs Rennet rides for each forge (#483, #484). Honest state plus the one
+ * command that fixes it — no connect ceremony.
+ */
+function SourceControlList({ host }: { host: HostItem }) {
+  const tools = sourceControl[host.id] ?? []
+  // Cosmetic in the prototype: the toggle flips fixture state, nothing detects.
+  const [enabled, setEnabled] = React.useState<Record<string, boolean>>(() =>
+    Object.fromEntries(tools.map((t) => [t.id, t.enabled])),
+  )
+
+  return (
+    <div className="flex flex-col pl-5">
+      <span className="pt-1 text-[12px] font-medium text-foreground">Source Control</span>
+      {tools.length === 0 ? (
+        <span className="py-2 text-[12px] text-muted-foreground">
+          Connect {host.label} to detect its tooling.
+        </span>
+      ) : (
+        tools.map((tool) => (
+          <Row
+            key={tool.id}
+            label={
+              <span className="flex items-center gap-2">
+                {tool.label}
+                {tool.version && (
+                  <span className="font-mono text-[11px] font-normal text-muted-foreground/70">
+                    {tool.version}
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide",
+                    SOURCE_CONTROL_STATUS[tool.status].chip,
+                  )}
+                >
+                  {SOURCE_CONTROL_STATUS[tool.status].label}
+                </span>
+              </span>
+            }
+            hint={<CommandCopy text={tool.detail} />}
+          >
+            <Switch
+              checked={enabled[tool.id] ?? tool.enabled}
+              onChange={(next) => setEnabled((prev) => ({ ...prev, [tool.id]: next }))}
+              label={`Use ${tool.label} on ${host.label}`}
+            />
+          </Row>
+        ))
+      )}
+    </div>
+  )
+}
+
+/** Settings copy renders `backticked` commands as code, as Add Remote does. */
+function CommandCopy({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/`([^`]+)`/).map((part, index) =>
+        index % 2 === 1 ? (
+          <code key={index} className="rounded bg-secondary px-1 font-mono">
+            {part}
+          </code>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  )
+}
+
+function Switch({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        checked ? "bg-primary" : "bg-muted",
+      )}
+    >
+      <span
+        className={cn(
+          "size-3 rounded-full transition-transform",
+          checked ? "translate-x-3 bg-primary-foreground" : "translate-x-0 bg-muted-foreground/60",
+        )}
+      />
+    </button>
   )
 }
 
@@ -566,8 +649,8 @@ function Row({
   stacked,
   children,
 }: {
-  label: string
-  hint?: string
+  label: React.ReactNode
+  hint?: React.ReactNode
   stacked?: boolean
   children: React.ReactNode
 }) {

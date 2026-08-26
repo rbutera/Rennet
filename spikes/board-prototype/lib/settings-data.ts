@@ -107,6 +107,95 @@ export function previewWorktreeName(pattern: string, projectName: string): strin
   return out.replaceAll("/", "-")
 }
 
+/**
+ * A source-control tool as detected on one host. Rennet rides the CLIs the
+ * host already has: `gh` for GitHub (#483), `glab` for GitLab, and a plain API
+ * token for Bitbucket, which has no official CLI (#484).
+ */
+export interface SourceControlTool {
+  id: "git" | "gh" | "glab" | "bitbucket"
+  label: string
+  /** The tool's own version line; absent when nothing was found to ask. */
+  version?: string
+  status: "available" | "not-authenticated" | "not-installed" | "unreachable"
+  /** One line of honest state and the fix. Backticks render as code. */
+  detail: string
+  enabled: boolean
+}
+
+/**
+ * Detection is per host — the tools live on that machine, not in the client.
+ * A host with no entry is one Rennet could not reach to look.
+ */
+export const sourceControl: Record<string, SourceControlTool[]> = {
+  h1: [
+    {
+      id: "git",
+      label: "Git",
+      version: "git version 2.51.0",
+      status: "available",
+      detail: "Diffs, branches, and worktrees run through this git.",
+      enabled: true,
+    },
+    {
+      id: "gh",
+      label: "GitHub",
+      version: "gh version 2.76.0",
+      status: "available",
+      detail: "Rennet rides the `gh` CLI, signed in as rbutera.",
+      enabled: true,
+    },
+    {
+      id: "glab",
+      label: "GitLab",
+      status: "not-installed",
+      detail: "Install the GitLab CLI (`brew install glab`) and sign in with `glab auth login`.",
+      enabled: false,
+    },
+    {
+      id: "bitbucket",
+      label: "Bitbucket",
+      status: "not-authenticated",
+      detail: "Set a Bitbucket API token (repository + pull request scopes) in this host's credentials.",
+      enabled: false,
+    },
+  ],
+  h2: [
+    {
+      id: "git",
+      label: "Git",
+      version: "git version 2.43.0",
+      status: "available",
+      detail: "Diffs, branches, and worktrees run through this git.",
+      enabled: true,
+    },
+    {
+      id: "gh",
+      label: "GitHub",
+      version: "gh version 2.74.0",
+      status: "not-authenticated",
+      detail: "Run `gh auth login` on dev-box.",
+      enabled: true,
+    },
+    {
+      id: "glab",
+      label: "GitLab",
+      status: "not-installed",
+      detail: "Install the GitLab CLI (`sudo apt install glab`) and sign in with `glab auth login`.",
+      enabled: false,
+    },
+    {
+      id: "bitbucket",
+      label: "Bitbucket",
+      status: "not-authenticated",
+      detail: "Set a Bitbucket API token (repository + pull request scopes) in this host's credentials.",
+      enabled: false,
+    },
+  ],
+  // gpu-01 is not connected, so nothing can be detected on it.
+  h3: [],
+}
+
 export interface HostSettings {
   github: { connected: true; account: string } | { connected: false }
 }
