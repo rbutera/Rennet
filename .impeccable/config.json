@@ -446,6 +446,18 @@
         "value": "9.5px",
         "createdAt": "2026-08-25T16:52:25.820Z",
         "reason": "board-prototype spike: minimal neutral prototype styling explicitly outside DESIGN.md (README + #458 styling rule)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "24px",
+        "createdAt": "2026-08-26T00:27:39.847Z",
+        "reason": "Rai directed the ramp-step header bump (R40 correction, 2026-08-26): board title text-2xl 24px, on the documented 11-24 ramp"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "18px",
+        "createdAt": "2026-08-26T00:27:39.884Z",
+        "reason": "Rai directed the ramp-step header bump (R40 correction, 2026-08-26): section titles text-lg 18px, on the documented 11-24 ramp"
       }
     ]
   }
