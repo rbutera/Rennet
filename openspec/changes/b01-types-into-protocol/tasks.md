@@ -32,9 +32,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 ## 5. Docs (same change, definition of done)
 
-- [ ] 5.1 `docs/developing/reference/monorepo-map.md`: delete the `rennet-types` row; update the dependency column of every row that listed `types` (desktop, mobile, protocol, instructions, core, adapters, server, client, ui, app-ui).
-- [ ] 5.2 Update the other source pages that name `@rennet/types`/`packages/types`: `developing/concepts/architecture-overview.md`, `developing/reference/dependency-standard.md`, `developing/concepts/surfacing-and-routing.md`, `developing/concepts/delta-rereview-and-lineage.md`, `developing/guides/repository-bootstrap.md` (skip `docs/dist` — generated). Re-grep `docs/` for others.
-- [ ] 5.3 Commit.
+- [x] 5.1 `docs/developing/reference/monorepo-map.md`: delete the `rennet-types` row; update the dependency column of every row that listed `types` (desktop, mobile, protocol, instructions, core, adapters, server, client, ui, app-ui).
+- [x] 5.2 Update the other source pages that name `@rennet/types`/`packages/types`: `developing/concepts/architecture-overview.md`, `developing/reference/dependency-standard.md`, `developing/concepts/surfacing-and-routing.md`, `developing/concepts/delta-rereview-and-lineage.md`, `developing/guides/repository-bootstrap.md` (skip `docs/dist` — generated). Re-grep `docs/` for others.
+- [x] 5.3 Commit.
 
 ## 6. Verification (packet)
 

@@ -183,7 +183,7 @@ animate-ui) is checked then. Syntax highlighting uses `shiki`; icons use
 `lucide-react`; prose uses `react-markdown`.
 
 The mobile app uses Expo SDK 55, expo-router, and React Native 0.83.6. It imports
-`@rennet/client`, `@rennet/protocol`, and `@rennet/types`, not the DOM-bound UI
+`@rennet/client` and `@rennet/protocol`, not the DOM-bound UI
 packages (`@rennet/ui`, `@rennet/app-ui`). Expo modules own camera, secure storage, notifications, linking, and
 background tasks. AsyncStorage owns the replica cache, daemon list, and
 notification preferences.
