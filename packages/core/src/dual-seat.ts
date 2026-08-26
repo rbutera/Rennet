@@ -13,7 +13,9 @@
  * provenance is honest per seat: the provider the council actually assigned this
  * job carries the resolved model + effort + resolution trace; the other provider
  * carries a provider-default model with NO trace (the council did not pick it —
- * dual-model added the second opinion). The harness always follows the model
+ * dual-model added the second opinion). That second-seat default is the
+ * STRONGEST Codex model, not the light utility model — see
+ * `DEFAULT_CODEX_SECOND_SEAT_MODEL`. The harness always follows the model
  * (`providerHarness`), so no `model=codex`/`harness=claude` provenance lie is
  * possible (Rule 75, double-switched honesty circuit — the same guarantee
  * `resolveSeat` makes).
@@ -31,7 +33,6 @@ import type {
 } from "@rennet/types";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
-import { DEFAULT_CODEX_UTILITY_EFFORT, DEFAULT_CODEX_UTILITY_MODEL } from "./codex-utility-port";
 import type { FindingProvenanceSeed } from "./finding-generation";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { providerHarness, resolveAssignment } from "./model-council";
@@ -46,6 +47,19 @@ export const DEFAULT_SEAT_LABELS: Readonly<Record<CouncilHarnessId, string>> = {
 
 /** The fixed provider order every dual set is emitted in (Claude first, Codex second). */
 const PROVIDER_ORDER: readonly CouncilHarnessId[] = ["claude-code", "codex"];
+
+/**
+ * The Codex second-seat default (Rai's ruling): when the council assigned this
+ * job to Claude, the second opinion pairs the STRONGEST Codex model against the
+ * drafter — not the light-tier utility model. A second opinion is only worth
+ * reading if it can disagree with the primary seat on the merits, so this is
+ * deliberately NOT `DEFAULT_CODEX_UTILITY_*` (that stays the cheap formatting
+ * default for genuine light-tier utility calls). Still a default: a council task
+ * override for the job wins over it, and the assigned seat's own resolution
+ * always wins.
+ */
+export const DEFAULT_CODEX_SECOND_SEAT_MODEL = "gpt-5.6-sol";
+export const DEFAULT_CODEX_SECOND_SEAT_EFFORT = "high";
 
 /** One resolved provider seat: its label, honest provenance seed, and executor. */
 export interface DualSeat {
@@ -131,8 +145,8 @@ export function resolveDualSeat(input: ResolveDualSeatInput): DualSeat[] {
     // Codex seat: executed through the utility port via createCodexRunTurn, so the
     // council's cross-harness routing is EXECUTED, not merely stamped.
     if (input.codexPort === undefined) continue;
-    const model = councilPicked ? councilPicked.model : DEFAULT_CODEX_UTILITY_MODEL;
-    const effort = councilPicked ? councilPicked.effort : DEFAULT_CODEX_UTILITY_EFFORT;
+    const model = councilPicked ? councilPicked.model : DEFAULT_CODEX_SECOND_SEAT_MODEL;
+    const effort = councilPicked ? councilPicked.effort : DEFAULT_CODEX_SECOND_SEAT_EFFORT;
     const seed: FindingProvenanceSeed = councilPicked
       ? {
           ...input.baseSeed,

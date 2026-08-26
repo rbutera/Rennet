@@ -1,8 +1,12 @@
 import type { CouncilResolveContext, OfferedManifest, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import type { CodexUtilityPort } from "./codex-utility-port";
-import { DEFAULT_CODEX_UTILITY_MODEL } from "./codex-utility-port";
-import { DEFAULT_SEAT_LABELS, resolveDualSeat } from "./dual-seat";
+import {
+  DEFAULT_CODEX_SECOND_SEAT_EFFORT,
+  DEFAULT_CODEX_SECOND_SEAT_MODEL,
+  DEFAULT_SEAT_LABELS,
+  resolveDualSeat,
+} from "./dual-seat";
 import type { FindingProvenanceSeed } from "./finding-generation";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { providerHarness, resolveAssignment } from "./model-council";
@@ -131,7 +135,23 @@ describe("resolveDualSeat — the dual-model seat resolver (#41)", () => {
     expect(DEFAULT_SEAT_LABELS.codex).toBe("Codex");
     expect(seats[1]?.seed.model).toBe(
       // when the council doesn't pick codex, the codex seat defaults its model
-      seats[1]?.seed.resolutionTrace ? seats[1]?.seed.model : DEFAULT_CODEX_UTILITY_MODEL,
+      seats[1]?.seed.resolutionTrace ? seats[1]?.seed.model : DEFAULT_CODEX_SECOND_SEAT_MODEL,
     );
+  });
+
+  // Rai's ruling: the second opinion is the STRONGEST Codex model at high effort,
+  // never the cheap light-tier utility default. Under `both` the council assigns
+  // finding-generation to Claude, so the Codex seat is exactly that second seat.
+  it("fills the unassigned Codex second seat with gpt-5.6-sol at high effort", () => {
+    const council: CouncilResolveContext = {
+      availability: { installed: ["claude-code", "codex"] },
+    };
+    const seats = resolveDualSeat({ ...baseInput(), council });
+    const codex = seats.find((s) => s.provider === "codex");
+    expect(codex?.seed.resolutionTrace).toBeUndefined(); // the council did not pick it
+    expect(codex?.seed.model).toBe("gpt-5.6-sol");
+    expect(codex?.seed.effort).toBe("high");
+    expect(DEFAULT_CODEX_SECOND_SEAT_MODEL).toBe("gpt-5.6-sol");
+    expect(DEFAULT_CODEX_SECOND_SEAT_EFFORT).toBe("high");
   });
 });

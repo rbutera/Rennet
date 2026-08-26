@@ -3,8 +3,8 @@ import {
   buildOfferedManifest,
   createCodexRunTurn,
   createInvocationBudget,
-  DEFAULT_CODEX_UTILITY_EFFORT,
-  DEFAULT_CODEX_UTILITY_MODEL,
+  DEFAULT_CODEX_SECOND_SEAT_EFFORT,
+  DEFAULT_CODEX_SECOND_SEAT_MODEL,
   DEFAULT_MAX_HARNESS_INVOCATIONS,
   type DualSeat,
   decompose,
@@ -138,8 +138,8 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
         docType: "finding",
         patchset: { id: patchset.id },
         manifest,
-        model: DEFAULT_CODEX_UTILITY_MODEL,
-        effort: DEFAULT_CODEX_UTILITY_EFFORT,
+        model: DEFAULT_CODEX_SECOND_SEAT_MODEL,
+        effort: DEFAULT_CODEX_SECOND_SEAT_EFFORT,
       });
       let codexTokens: RspTokenUsage | null = null;
       let codexLatencyMs = 0;
@@ -147,7 +147,7 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
       const codexSeat: DualSeat = {
         provider: "codex",
         label: "Codex",
-        seed: { ...SEED, harness: "codex", model: DEFAULT_CODEX_UTILITY_MODEL },
+        seed: { ...SEED, harness: "codex", model: DEFAULT_CODEX_SECOND_SEAT_MODEL },
         runTurn: async (prompt: string, attempt: number) => {
           codexAttempts += 1;
           const started = Date.now();
@@ -211,7 +211,7 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
           String(codexAttempts).padStart(6),
           String(codexTotal ?? "UNMEASURED").padStart(12),
           String(Math.round(codexLatencyMs)).padStart(10),
-          `${DEFAULT_CODEX_UTILITY_MODEL} / subscription`,
+          `${DEFAULT_CODEX_SECOND_SEAT_MODEL} / subscription`,
         ].join(" "),
       );
       if (codexMeasured && cx) {

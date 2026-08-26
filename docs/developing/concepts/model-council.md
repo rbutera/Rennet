@@ -33,7 +33,7 @@ The council has three versioned default tables:
 - Claude only; and
 - Codex only.
 
-The tables use these model identifiers:
+The council recognises these model identifiers, in the tables and in overrides:
 
 | Provider | Models |
 |---|---|
@@ -83,6 +83,19 @@ flowchart LR
 With both providers available, a light job may resolve to a Codex harness while
 the review's heavy session runs on Claude. The resolution trace marks that
 cross-harness choice.
+
+## The dual-model second seat
+
+Flagged can run the same finding lens on both providers and reconcile the two
+results. Only one seat is a council assignment; the other is the second opinion
+the council never picked, so it carries no resolution trace. That second seat is
+deliberately strong rather than cheap: a Codex second seat that the council did
+not assign runs `gpt-5.6-sol` at effort `high`. A second opinion is only worth
+reading if it can disagree with the drafter on the merits.
+
+The light-tier utility default (`gpt-5.6-luna` at effort `low`) still applies to
+genuine light-tier Codex calls such as formatting and narration. It is not the
+second seat.
 
 ## Trace and ledger
 

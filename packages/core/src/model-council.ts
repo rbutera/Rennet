@@ -320,6 +320,8 @@ const TABLE_BOTH: AssignmentTable = {
   "claim-requirement-mapping": pick("opus-4.8", "high"),
   "derived-spec-extraction": pick("opus-4.8", "high"),
   "spec-derivation": pick("opus-4.8", "high"),
+  // The council seat only; the Flagged dual-model SECOND seat pairs Codex against
+  // this drafter at `DEFAULT_CODEX_SECOND_SEAT_MODEL` (dual-seat.ts), not a table row.
   "finding-generation": pick("sonnet-5", "medium"),
   "finding-generation-decisions-claims": pick("opus-4.8", "high"),
   "comprehension-ordering": pick("gpt-5.6-terra", "medium"),
@@ -365,7 +367,7 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "self-consistency": pick("opus-4.8", "xhigh"),
 };
 
-/** Table 3 — Codex-only (GPT-5.5 / Sol / Terra / Luna). */
+/** Table 3 — Codex-only (Sol / Terra / Luna). */
 const TABLE_CODEX_ONLY: AssignmentTable = {
   "chunk-titles": pick("gpt-5.6-luna", "low"),
   "claim-extraction": pick("gpt-5.6-luna", "low"),
@@ -392,12 +394,13 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "claim-requirement-mapping": pick("gpt-5.6-sol", "high"),
   "derived-spec-extraction": pick("gpt-5.6-sol", "high"),
   "spec-derivation": pick("gpt-5.6-sol", "high"),
-  "finding-generation": pick("gpt-5.5", "medium"),
+  // The finding seat is the review's judgement seat: strongest Codex model.
+  "finding-generation": pick("gpt-5.6-sol", "high"),
   "finding-generation-decisions-claims": pick("gpt-5.6-sol", "high"),
   "comprehension-ordering": pick("gpt-5.6-luna", "medium"),
   "anomaly-spotting": pick("gpt-5.6-terra", "medium"),
   "orchestrator-chat": pick("gpt-5.6-terra", "medium"),
-  adjudication: pick("gpt-5.6-sol", "high"), // pairs with GPT-5.5-high; primary seat here
+  adjudication: pick("gpt-5.6-sol", "high"), // pairs with Sol-high (fresh session); primary seat here
   "self-consistency": pick("gpt-5.6-sol", "xhigh"),
 };
 
