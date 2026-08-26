@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getHighlightedLines } from "@/lib/code-highlighter"
@@ -190,6 +191,17 @@ export function CodeBlock({
   const [copied, setCopied] = useState(false)
   const [openLine, setOpenLine] = useState<number | null>(null)
   const shikiTheme = useShikiTheme()
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  // The filename is a direct link into the Diff view, landed on this file.
+  function openInDiff() {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("view", "diff")
+    params.set("file", path)
+    router.push(`${pathname}?${params.toString()}`)
+  }
 
   const lineCount = useMemo(() => code.split("\n").length, [code])
   const highlightSet = useMemo(() => new Set(highlightLines ?? []), [highlightLines])
@@ -245,7 +257,14 @@ export function CodeBlock({
       <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/50 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
           <FileCode className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="truncate font-mono text-[12px] text-foreground/80">{path}</span>
+          <button
+            type="button"
+            onClick={openInDiff}
+            title="Open in diff"
+            className="truncate font-mono text-[12px] text-foreground/80 underline-offset-2 transition-colors hover:text-foreground hover:underline hover:decoration-dotted"
+          >
+            {path}
+          </button>
           <span className="shrink-0 text-[11px] text-muted-foreground">
             {lineCount > 1 ? `L${startLine}\u2013${endLine}` : `L${startLine}`}
           </span>

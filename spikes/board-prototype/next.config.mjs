@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  allowedDevOrigins: ['nimbus.piranha-wyvern.ts.net'],
+  allowedDevOrigins: ['nimbus.piranha-wyvern.ts.net', '127.0.0.1'],
   typescript: {
     ignoreBuildErrors: true,
   },

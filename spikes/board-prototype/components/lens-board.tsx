@@ -37,7 +37,7 @@ export function LensBoardView({
         board.wide ? "max-w-[960px]" : "max-w-[760px]",
       )}
     >
-      <h1 className="text-[22px] font-semibold tracking-tight text-foreground">{board.title}</h1>
+      <h1 className="text-[24px] font-semibold tracking-tight text-foreground">{board.title}</h1>
       {board.intro && (
         <RichText
           text={board.intro}
@@ -70,7 +70,7 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
           className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", folded && "-rotate-90")}
           aria-hidden="true"
         />
-        <span className="text-[17px] font-medium text-foreground">{section.title}</span>
+        <span className="text-[18px] font-medium text-foreground">{section.title}</span>
         {section.badge && <DeltaBadge delta={section.badge} />}
         {folded && (
           <span className="min-w-0 truncate text-[13px] text-muted-foreground">
@@ -314,7 +314,7 @@ function Element({ element }: { element: BoardElement }) {
             >
               {element.severity}
             </span>
-            <h3 className="min-w-0 flex-1 text-[15px] font-semibold leading-snug text-foreground">
+            <h3 className="min-w-0 flex-1 text-[16px] font-semibold leading-snug text-foreground">
               <InlineCode text={element.title} />
             </h3>
             <Concurrence agreement={element.agreement} />
@@ -411,7 +411,7 @@ function Element({ element }: { element: BoardElement }) {
           <div className="flex flex-col gap-1.5">
             {element.name ? (
               <div className="flex items-center gap-2">
-                <h3 className="text-[15px] font-semibold text-foreground">{element.name}</h3>
+                <h3 className="text-[16px] font-semibold text-foreground">{element.name}</h3>
                 {element.delta && <DeltaBadge delta={element.delta} />}
               </div>
             ) : null}
@@ -463,7 +463,7 @@ function NoiseGroup({ element }: { element: Extract<BoardElement, { kind: "noise
   return (
     <div className={cn("rounded-md border border-border", dismissed && "opacity-50")}>
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <h3 className="text-[14.5px] font-medium text-foreground">{element.label}</h3>
+        <h3 className="text-[16px] font-medium text-foreground">{element.label}</h3>
         <span className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
           {element.judgedBy === "llm" && <Sparkles className="size-2.5" aria-hidden="true" />}
           {element.judgedBy === "llm" ? "model judged" : "rule"}

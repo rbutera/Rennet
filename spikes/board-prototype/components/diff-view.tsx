@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import type { CSSProperties } from "react"
+import { useSearchParams } from "next/navigation"
 import {
   Check,
   ChevronDown,
@@ -71,6 +72,16 @@ function StatSquares({ additions, deletions }: { additions: number; deletions: n
 export function DiffView({ files = diffFiles }: { files?: DiffFile[] }) {
   const [filter, setFilter] = React.useState("")
   const [viewed, setViewed] = React.useState<Record<string, boolean>>({})
+  const searchParams = useSearchParams()
+
+  // ?file=<path> deep-links to one file's card (the code-block filename links
+  // here with it). Read once on mount; the param stays shareable.
+  const fileParam = searchParams.get("file")
+  React.useEffect(() => {
+    if (!fileParam) return
+    document.getElementById(`diff-${fileParam}`)?.scrollIntoView({ block: "start" })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only jump
+  }, [])
 
   const q = filter.trim().toLowerCase()
   const shown = files.filter((f) => !q || f.path.toLowerCase().includes(q))
