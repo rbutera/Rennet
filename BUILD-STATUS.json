@@ -1,5 +1,5 @@
 {
-  "a1": { "status": "pending", "passes": false },
+  "a1": { "status": "done", "passes": true },
   "a2": { "status": "pending", "passes": false },
   "a3": { "status": "pending", "passes": false },
   "a4": { "status": "pending", "passes": false },
