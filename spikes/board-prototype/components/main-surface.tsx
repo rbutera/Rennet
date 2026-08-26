@@ -15,7 +15,9 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { LocationTrail } from "@/components/location-trail"
+import { ChevronRight } from "lucide-react"
+import { TargetIcon } from "@/components/target-badge"
+import { TARGET_LABEL } from "@/lib/target-language"
 import { ViewSwitcher } from "@/components/view-switcher"
 import { ContextMapPanel, MapBaseLine } from "@/components/context-map"
 import { DiffView } from "@/components/diff-view"
@@ -113,7 +115,7 @@ export function MainSurface({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="grid h-10 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border px-3 @container">
+      <header className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border px-3 @container">
         <div className="flex items-center gap-2 justify-self-start">
           {showLocationTrail && (
             <>
@@ -121,14 +123,30 @@ export function MainSurface({
                 type="button"
                 onClick={onExpandChat}
                 aria-label="Expand chat"
-                className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+                className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
               >
                 <PanelLeft className="size-3.5" aria-hidden="true" />
               </button>
-              <LocationTrail
-                projectName={trail?.projectName ?? "rennet"}
-                session={trail?.session ?? scenario.session}
-              />
+              {(() => {
+                const session = trail?.session ?? scenario.session
+                const projectName = trail?.projectName ?? "rennet"
+                return (
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="truncate text-[13px] font-medium leading-tight text-foreground">
+                      {session.title}
+                    </span>
+                    <span className="flex min-w-0 items-center gap-1 text-[11px] leading-tight text-muted-foreground">
+                      <TargetIcon kind={session.target} state={session.targetState} className="size-3" />
+                      <span className="shrink-0">{projectName}</span>
+                      <ChevronRight className="size-2.5 shrink-0 text-muted-foreground/50" aria-hidden="true" />
+                      <span className="truncate">
+                        {TARGET_LABEL[session.target]}
+                        {session.targetState === "needs-you" ? " · needs you" : ""}
+                      </span>
+                    </span>
+                  </div>
+                )
+              })()}
             </>
           )}
         </div>

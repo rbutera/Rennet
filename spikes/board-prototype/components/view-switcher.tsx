@@ -26,7 +26,7 @@ export function ViewSwitcher({
     <div
       role="tablist"
       aria-label="Main surface view"
-      className="flex items-center gap-0.5 rounded-md border border-border bg-card/40 p-0.5"
+      className="flex items-center gap-0.5 rounded-lg border border-border bg-card/40 p-1"
     >
       {segments.map((segment) => {
         const isActive = segment.label === active
@@ -41,11 +41,11 @@ export function ViewSwitcher({
             title={segment.label}
             onClick={() => onChange(segment.label)}
             className={cn(
-              "flex items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2.5 py-1 text-[12px] font-medium transition-colors",
+              "flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 py-2 text-[13px] font-medium transition-colors",
               isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+            <Icon className="size-4 shrink-0" aria-hidden="true" />
             <span className="hidden @[46rem]:inline">{segment.label}</span>
           </button>
         )
