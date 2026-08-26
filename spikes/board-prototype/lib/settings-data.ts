@@ -24,11 +24,45 @@ export interface GuidanceRule {
   severity: "high" | "medium" | "low"
 }
 
+export type TrackerKind = "github" | "jira" | "linear" | "none"
+
+export const TRACKER_LABELS: Record<TrackerKind, string> = {
+  github: "GitHub Issues",
+  jira: "JIRA",
+  linear: "Linear",
+  none: "None",
+}
+
+/**
+ * Related-context config (#461): which tracker the retrieval worker reads so
+ * tickets a branch or PR references reach the review agents. GitHub rides
+ * `gh`; JIRA and Linear are config-only — a base URL plus the name of the env
+ * var holding the token (never the token itself).
+ */
+export interface IssueTrackerSettings {
+  kind: { value: TrackerKind; layer: SettingsLayer }
+  /** JIRA project key / Linear team key, e.g. PAY. Unused for GitHub. */
+  projectKey: { value: string; layer: SettingsLayer } | null
+  /** JIRA/Linear: where the worker points its REST calls. */
+  baseUrl: { value: string; layer: SettingsLayer } | null
+  /** JIRA/Linear: env var the worker reads the API token from. */
+  tokenEnv: { value: string; layer: SettingsLayer } | null
+}
+
 export interface ProjectSettings {
   visibility: { value: "local" | "git-visible"; layer: SettingsLayer }
   promoted: boolean
   locus: { value: string; layer: SettingsLayer }
   guidance: GuidanceRule[]
+  tracker: IssueTrackerSettings
+}
+
+/** A project whose scout found nothing — tracker unset until the user says. */
+export const UNSET_TRACKER: IssueTrackerSettings = {
+  kind: { value: "none", layer: "builtin" },
+  projectKey: null,
+  baseUrl: null,
+  tokenEnv: null,
 }
 
 export const projectSettings: Record<string, ProjectSettings> = {
@@ -41,18 +75,36 @@ export const projectSettings: Record<string, ProjectSettings> = {
       { rule: "No new dependencies without a licence check", severity: "medium" },
       { rule: "Prefer table-driven tests in adapters", severity: "low" },
     ],
+    tracker: {
+      kind: { value: "github", layer: "detected" },
+      projectKey: null,
+      baseUrl: null,
+      tokenEnv: null,
+    },
   },
   p0: {
     visibility: { value: "local", layer: "builtin" },
     promoted: false,
     locus: { value: "This machine", layer: "detected" },
     guidance: [],
+    tracker: {
+      kind: { value: "github", layer: "detected" },
+      projectKey: null,
+      baseUrl: null,
+      tokenEnv: null,
+    },
   },
   p3: {
     visibility: { value: "git-visible", layer: "repo" },
     promoted: true,
     locus: { value: "This machine", layer: "detected" },
     guidance: [{ rule: "Broken links fail the build — check anchors", severity: "medium" }],
+    tracker: {
+      kind: { value: "github", layer: "repo" },
+      projectKey: null,
+      baseUrl: null,
+      tokenEnv: null,
+    },
   },
   p2: {
     visibility: { value: "local", layer: "builtin" },
@@ -62,12 +114,21 @@ export const projectSettings: Record<string, ProjectSettings> = {
       { rule: "Money amounts are integer cents, never floats", severity: "high" },
       { rule: "Webhook handlers must be idempotent", severity: "high" },
     ],
+    // Branch names carry PAY-#### keys, so the scout called JIRA; the base
+    // URL was guessed from the org name and needs the user's eyes.
+    tracker: {
+      kind: { value: "jira", layer: "detected" },
+      projectKey: { value: "PAY", layer: "detected" },
+      baseUrl: { value: "https://meridian.atlassian.net", layer: "global" },
+      tokenEnv: { value: "JIRA_API_TOKEN", layer: "global" },
+    },
   },
   p4: {
     visibility: { value: "local", layer: "builtin" },
     promoted: false,
     locus: { value: "gpu-01", layer: "detected" },
     guidance: [],
+    tracker: UNSET_TRACKER,
   },
 }
 

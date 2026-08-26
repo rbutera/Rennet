@@ -31,6 +31,7 @@ import {
   type EnvironmentInfo,
   environments,
   type GuidanceRule,
+  type IssueTrackerSettings,
   keyCommands,
   LATEST_DAEMON,
   previewWorktreeName,
@@ -42,6 +43,8 @@ import {
   type SettingsPage,
   sourceControl,
   type SourceControlTool,
+  type TrackerKind,
+  UNSET_TRACKER,
   worktreeTokens,
   type WorktreeSettings,
 } from "@/lib/settings-data"
@@ -1121,6 +1124,8 @@ function ProjectsPage({
         </Row>
       </Section>
 
+      <TrackerSection project={project} host={host} />
+
       <Section title="Guidance" caption={`.rennet/ in ${project.name}`}>
         <Row label="Rules" hint="repo rules the review agents read" stacked>
           <GuidanceList
@@ -1132,6 +1137,104 @@ function ProjectsPage({
         </Row>
       </Section>
     </>
+  )
+}
+
+/**
+ * Related-context config (#461): the tracker whose tickets the retrieval
+ * worker fetches when a branch or PR references them, handed to the review
+ * agents as part of their delta context.
+ */
+function TrackerSection({ project, host }: { project: ProjectItem; host: HostItem }) {
+  const stored = projectSettings[project.id]?.tracker ?? UNSET_TRACKER
+  const [byProject, setByProject] = React.useState<Record<string, IssueTrackerSettings>>({})
+  const tracker = byProject[project.id] ?? stored
+  const patch = (next: Partial<IssueTrackerSettings>) =>
+    setByProject((prev) => ({ ...prev, [project.id]: { ...tracker, ...next } }))
+
+  const stopEscape = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.stopPropagation()
+      ;(event.currentTarget as HTMLElement).blur()
+    }
+  }
+
+  const setKind = (kind: TrackerKind) => {
+    if (kind === tracker.kind.value) return
+    // A user pick lands on the global rung; REST trackers seed their fields.
+    const rest = kind === "jira" || kind === "linear"
+    patch({
+      kind: { value: kind, layer: "global" },
+      projectKey: rest ? (tracker.projectKey ?? { value: "", layer: "global" }) : null,
+      baseUrl: rest ? (tracker.baseUrl ?? { value: "", layer: "global" }) : null,
+      tokenEnv: rest
+        ? (tracker.tokenEnv ?? {
+            value: kind === "jira" ? "JIRA_API_TOKEN" : "LINEAR_API_KEY",
+            layer: "global",
+          })
+        : null,
+    })
+  }
+
+  const textField = (
+    field: "projectKey" | "baseUrl" | "tokenEnv",
+    ariaLabel: string,
+    placeholder: string,
+  ) => {
+    const entry = tracker[field]
+    if (!entry) return null
+    return (
+      <>
+        <LayerChip layer={entry.layer} />
+        <input
+          value={entry.value}
+          onChange={(event) => patch({ [field]: { value: event.target.value, layer: "global" } })}
+          onKeyDown={stopEscape}
+          aria-label={ariaLabel}
+          placeholder={placeholder}
+          spellCheck={false}
+          className="w-56 rounded-md border border-border bg-card px-2 py-1.5 font-mono text-[12px] text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+        />
+      </>
+    )
+  }
+
+  return (
+    <Section title="Issue Tracker" caption={`.rennet/ in ${project.name}`}>
+      <Row
+        label="Tracker"
+        hint="tickets a branch or PR references are fetched for the review agents"
+      >
+        <LayerChip layer={tracker.kind.layer} />
+        <Segmented
+          options={["github", "jira", "linear", "none"]}
+          value={tracker.kind.value}
+          onChange={(value) => setKind(value as TrackerKind)}
+        />
+      </Row>
+      {tracker.kind.value === "github" && (
+        <Row label="Access" hint="how tickets are read">
+          <span className="text-[12px] text-muted-foreground">
+            rides the <code className="font-mono text-foreground/80">gh</code> CLI on {host.label}
+          </span>
+        </Row>
+      )}
+      {tracker.projectKey && (
+        <Row label="Project Key" hint="the ticket prefix in branch names and commits">
+          {textField("projectKey", "Tracker project key", "PAY")}
+        </Row>
+      )}
+      {tracker.baseUrl && (
+        <Row label="Base URL" hint="where the retrieval worker points its calls">
+          {textField("baseUrl", "Tracker base URL", "https://your-org.atlassian.net")}
+        </Row>
+      )}
+      {tracker.tokenEnv && (
+        <Row label="Token" hint={`env var on ${host.label}; the token itself never leaves it`}>
+          {textField("tokenEnv", "Tracker token environment variable", "JIRA_API_TOKEN")}
+        </Row>
+      )}
+    </Section>
   )
 }
 
