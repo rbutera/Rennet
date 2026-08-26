@@ -3,6 +3,7 @@
 import * as React from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
+  ArrowLeft,
   DraftingCompass,
   FileDiff,
   Flag,
@@ -93,12 +94,21 @@ export function MainSurface({
   const view = views.find((v) => v.lens === lensParam) ?? views[0]
   const active = view.segment
 
-  // Replace (never push) so toggling views doesn't spam back history.
-  const go = (nextView: ViewParam, lens: LensId) => {
+  // Replace (never push) so toggling views doesn't spam back history — the
+  // back arrow rides this remembered view instead of the browser's stack.
+  const previous = React.useRef<{ view: ViewParam; lens: LensId } | null>(null)
+  const go = (nextView: ViewParam, lens: LensId, remember = true) => {
+    if (remember && nextView !== currentView)
+      previous.current = nextView === "board" ? null : { view: currentView, lens: view.lens }
     const params = new URLSearchParams()
     if (nextView !== "board") params.set("view", nextView)
     params.set("lens", lens)
     router.replace(`${pathname}?${params.toString()}`)
+  }
+  const goBack = () => {
+    const target = previous.current ?? { view: "board" as ViewParam, lens: view.lens }
+    previous.current = null
+    go(target.view, target.lens, false)
   }
 
   const viewedDeltaSections = useAppStore((s) => s.viewedDeltaSections)
@@ -128,6 +138,17 @@ export function MainSurface({
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <header className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border px-3 @container">
         <div className="flex items-center gap-2 justify-self-start">
+          {currentView !== "board" && (
+            <button
+              type="button"
+              onClick={goBack}
+              aria-label="Back"
+              title="Back"
+              className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+            >
+              <ArrowLeft className="size-4" aria-hidden="true" />
+            </button>
+          )}
           {showLocationTrail && (
             <>
               <button
@@ -254,10 +275,9 @@ export function MainSurface({
           aria-label={pipCount > 0 ? `${ctaLabel} · ${pipCount}` : ctaLabel}
           title={ctaLabel}
           className={cn(
-            "absolute bottom-6 right-5 z-20 flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-semibold shadow-lg transition-colors",
-            handoffOpen
-              ? "border border-border bg-secondary text-foreground"
-              : "bg-primary text-primary-foreground hover:bg-primary/90",
+            "absolute bottom-6 right-5 z-20 flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-[14px] font-semibold text-primary-foreground shadow-lg transition-all duration-200 hover:bg-primary/90",
+            // The hand-off IS the exit: on that view the FAB gets out of the way.
+            handoffOpen && "pointer-events-none scale-75 opacity-0",
           )}
         >
           <PenLine className="size-4.5 shrink-0" aria-hidden="true" />

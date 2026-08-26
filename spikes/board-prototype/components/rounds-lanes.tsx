@@ -7,8 +7,11 @@ import { Coachmark } from "@/components/coachmark"
 import { type Ask, useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
 import { AnchorReveal } from "@/components/code-tabs"
+import { HandoffAction } from "@/components/handoff-action"
 import { RichText } from "@/components/rich-text"
 import { StreamingProse } from "@/components/streaming-prose"
+
+const PR_URL = "https://github.com/rbutera/rennet/pull/438"
 
 /** Deterministic demo stand-in for the orchestrator reworking a work-order span. */
 function applyRevision(text: string, instruction: string): string {
@@ -107,23 +110,29 @@ export function RoundsLanes({
           <div className="flex flex-col">{prBodyParagraphs.map(prBlock)}</div>
           {submitted ? (
             <div className="flex flex-col gap-1 pt-1">
-              <span className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+              <span className="flex items-center gap-2 text-[14px] font-medium text-foreground">
                 <Check className="size-4 text-green" aria-hidden="true" />
                 Pull request opened · #438
               </span>
-              <span className="text-[12px] text-muted-foreground">github.com/rbutera/rennet/pull/438</span>
+              <a
+                href={PR_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="w-fit text-[12.5px] text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+              >
+                github.com/rbutera/rennet/pull/438
+              </a>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
+            <HandoffAction
+              label="Open Pull Request"
+              postingLabel="Opening pull request…"
+              icon={GitPullRequest}
+              onPosted={() => {
                 setSubmitted(true)
                 onOpenPullRequest?.()
               }}
-              className="w-fit rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
-            >
-              Open Pull Request
-            </button>
+            />
           )}
         </div>
       </div>

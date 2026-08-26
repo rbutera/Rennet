@@ -7,6 +7,7 @@ import { Coachmark } from "@/components/coachmark"
 import { type Ask, useCodeComments } from "@/components/code-comments"
 import { ProseSelectionLayer } from "@/components/selection-toolbar"
 import { AnchorReveal } from "@/components/code-tabs"
+import { HandoffAction } from "@/components/handoff-action"
 import { RichText } from "@/components/rich-text"
 import { StreamingProse } from "@/components/streaming-prose"
 import { RoundsLanes } from "@/components/rounds-lanes"
@@ -212,6 +213,7 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
 
   const inlineAsks = asks.filter((ask) => ask.codeAnchor)
   const bodyAsks = asks.filter((ask) => !ask.codeAnchor)
+  const reviewUrl = `https://github.com/acme/orbital/pull/${prLabel.replace(/\D/g, "")}#pullrequestreview`
 
   if (stage === "posted") {
     return (
@@ -222,9 +224,16 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
         </span>
         <p className="text-[13.5px] text-muted-foreground">
           {verdict} · {inlineAsks.length} line comment
-          {inlineAsks.length === 1 ? "" : "s"} · body —
-          github.com/acme/orbital/pull/434#pullrequestreview
+          {inlineAsks.length === 1 ? "" : "s"} · body
         </p>
+        <a
+          href={reviewUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[13px] text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+        >
+          {reviewUrl.replace("https://", "")}
+        </a>
       </div>
     )
   }
@@ -479,13 +488,12 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
 
         {/* Post: the draft above is exactly what posts — no separate preview. */}
         <div className="flex items-center border-t border-border/60 pt-4">
-          <button
-            type="button"
-            onClick={() => setStage("posted")}
-            className="rounded-md bg-primary px-3.5 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Post Review
-          </button>
+          <HandoffAction
+            label="Post Review"
+            postingLabel="Posting review…"
+            icon={GitPullRequest}
+            onPosted={() => setStage("posted")}
+          />
         </div>
       </div>
     </div>
