@@ -23,6 +23,8 @@ export interface QuoteComment {
   quote: string
   /** The exchange: the opening comment/question and every reply. */
   messages: QuoteMessage[]
+  /** "explain" threads are questions to the orchestrator, not review content — no pip, no count. */
+  kind?: "comment" | "explain"
 }
 
 /** The staged unit of the hand-off (R29): anchor + text + intent + provenance. */
@@ -53,7 +55,7 @@ interface CodeCommentsStore {
   comments: CodeComments
   quoteComments: QuoteComment[]
   setComment: (path: string, line: number, text: string | null) => void
-  addQuoteComment: (quote: string, text: string) => string
+  addQuoteComment: (quote: string, text: string, kind?: "comment" | "explain") => string
   addQuoteReply: (id: string, author: "user" | "orchestrator", text: string) => void
   removeQuoteComment: (id: string) => void
   /** Thread to auto-open (set on creation so the tooltip shows immediately). */

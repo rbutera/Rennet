@@ -89,7 +89,7 @@ interface AppState {
   comments: CodeComments
   quoteComments: QuoteComment[]
   setComment: (path: string, line: number, text: string | null) => void
-  addQuoteComment: (quote: string, text: string) => string
+  addQuoteComment: (quote: string, text: string, kind?: "comment" | "explain") => string
   addQuoteReply: (id: string, author: "user" | "orchestrator", text: string) => void
   removeQuoteComment: (id: string) => void
   focusedThreadId: string | null
@@ -265,14 +265,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { comments: next }
     }),
-  addQuoteComment: (quote, text) => {
+  addQuoteComment: (quote, text, kind = "comment") => {
     const id = `quote-${quoteSeq++}`
-    signalFab("comment")
-    set((s) => ({ quoteComments: [...s.quoteComments, { id, quote, messages: [{ author: "user", text }] }] }))
+    if (kind !== "explain") signalFab("comment")
+    set((s) => ({
+      quoteComments: [...s.quoteComments, { id, quote, messages: [{ author: "user", text }], kind }],
+    }))
     return id
   },
   addQuoteReply: (id, author, text) => {
-    if (author === "orchestrator") signalFab("model")
     set((s) => ({
       quoteComments: s.quoteComments.map((entry) =>
         entry.id === id ? { ...entry, messages: [...entry.messages, { author, text }] } : entry,

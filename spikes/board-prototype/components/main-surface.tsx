@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Coachmark } from "@/components/coachmark"
 import { SessionTrail } from "@/components/location-trail"
 import { ViewSwitcher } from "@/components/view-switcher"
 import { ContextMapPanel, MapBaseLine } from "@/components/context-map"
@@ -108,7 +109,9 @@ export function MainSurface({
       sum + Object.keys(lines).filter((line) => !claimedLines.has(`${path}:${line}`)).length,
     0,
   )
-  const threadCount = (store?.quoteComments ?? []).filter((t) => !claimedThreads.has(t.id)).length
+  const threadCount = (store?.quoteComments ?? []).filter(
+    (t) => t.kind !== "explain" && !claimedThreads.has(t.id),
+  ).length
   const pipCount = askCount + commentCount + threadCount
 
   return (
@@ -132,7 +135,8 @@ export function MainSurface({
             </>
           )}
         </div>
-        <div className="flex min-w-0 items-center gap-1.5 justify-self-center">
+        <div data-tour="lenses" className="flex min-w-0 items-center gap-1.5 justify-self-center">
+          <Coachmark id="lenses" />
           <ViewSwitcher
             segments={views.map((v) => ({ label: v.segment, icon: v.icon }))}
             active={mapOpen || diffOpen || handoffOpen ? "" : active}
@@ -192,7 +196,8 @@ export function MainSurface({
         ) : diffOpen ? (
           <DiffView />
         ) : view?.board ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div data-tour="highlight" className="min-h-0 flex-1 overflow-y-auto">
+            <Coachmark id="highlight" />
             <LensBoardView board={view.board} foldAll={view.lens !== "flagged"} />
           </div>
         ) : null}
@@ -200,9 +205,11 @@ export function MainSurface({
         {/* The exit CTA — a real floating action button, bottom-right. Staged
             work flies in and lands as register pips (R50); opening the
             hand-off clears them (the draft has been seen). */}
+        <Coachmark id="fab" />
         <button
           ref={fabRef}
           type="button"
+          data-tour="fab"
           onClick={() => go(handoffOpen ? "board" : "handoff", view.lens)}
           aria-pressed={handoffOpen}
           aria-label={pipCount > 0 ? `${ctaLabel} · ${pipCount}` : ctaLabel}

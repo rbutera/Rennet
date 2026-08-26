@@ -92,9 +92,9 @@ export function ProseSelectionLayer({
     }
   }, [dismiss])
 
-  function startThread(opener: string) {
+  function startThread(opener: string, kind: "comment" | "explain" = "comment") {
     if (!anchor || !store) return
-    const id = store.addQuoteComment(anchor.quote, opener)
+    const id = store.addQuoteComment(anchor.quote, opener, kind)
     store.focusThread(id)
     const reply = nextCannedReply()
     window.setTimeout(() => store.addQuoteReply(id, "orchestrator", reply), 1100)
@@ -209,7 +209,7 @@ export function ProseSelectionLayer({
                   <button
                     type="button"
                     onClick={() => {
-                      startThread(EXPLAIN_OPENER)
+                      startThread(EXPLAIN_OPENER, "explain")
                       dismiss()
                     }}
                     className="flex items-center gap-1.5 rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
