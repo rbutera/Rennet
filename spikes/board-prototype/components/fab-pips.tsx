@@ -22,7 +22,11 @@ export function FabPips({
   React.useEffect(() => {
     return onFabSignal((_register, source, delta) => {
       const fab = fabRef.current
-      if (!source || !fab || delta <= 0) return
+      if (delta <= 0) return
+      if (!source || !fab) {
+        popNow()
+        return
+      }
       const from = source.getBoundingClientRect()
       const to = fab.getBoundingClientRect()
       const dot = document.createElement("span")
@@ -40,23 +44,22 @@ export function FabPips({
         ],
         { duration: 420, easing: "cubic-bezier(0.3, 0.6, 0.3, 1)" },
       )
-      flight.onfinish = () => dot.remove()
+      flight.onfinish = () => {
+        dot.remove()
+        popNow()
+      }
     })
   }, [fabRef])
 
-  // Animate only a fresh addition while mounted — a remount (view switch)
-  // renders the pip statically, it is not news.
-  const prevCount = React.useRef(count)
+  // The pop rides the GESTURE (the signal / its flight landing), never the
+  // count: route transitions and scenario seeding re-render statically.
   const [pop, setPop] = React.useState(false)
-  React.useEffect(() => {
-    if (count > prevCount.current) {
-      setPop(true)
-      const timer = setTimeout(() => setPop(false), 280)
-      prevCount.current = count
-      return () => clearTimeout(timer)
-    }
-    prevCount.current = count
-  }, [count])
+  const popTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  function popNow() {
+    setPop(true)
+    if (popTimer.current) clearTimeout(popTimer.current)
+    popTimer.current = setTimeout(() => setPop(false), 280)
+  }
 
   if (count === 0) return null
 

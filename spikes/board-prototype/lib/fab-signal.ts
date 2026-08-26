@@ -46,7 +46,20 @@ function flush() {
   }
 }
 
+let muted = false
+
+/** Programmatic staging (scenario seeding) is not a gesture — no flights, no pops. */
+export function muteFabSignals<T>(fn: () => T): T {
+  muted = true
+  try {
+    return fn()
+  } finally {
+    muted = false
+  }
+}
+
 export function signalFab(register: PipRegister, delta = 1): void {
+  if (muted) return
   const source =
     delta > 0 && typeof document !== "undefined" && document.activeElement instanceof HTMLElement
       ? document.activeElement
