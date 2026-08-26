@@ -522,47 +522,72 @@ function Concurrence({ agreement }: { agreement: { claude: boolean; codex: boole
  */
 function FindingCard({ element }: { element: Extract<BoardElement, { kind: "finding" }> }) {
   const dismissed = useAppStore((s) => s.findingStatus[element.id] === "dismissed")
+  // Each finding folds to its title row — the title is the claim (the prompt
+  // doctrine makes it a standalone sentence), so no separate gist is needed.
+  // Same disclosure pattern as sections; dismissing folds, undo unfolds, and
+  // a folded dismissed finding can still be peeked open.
+  const [folded, setFolded] = React.useState(false)
+  React.useEffect(() => setFolded(dismissed), [dismissed])
 
   return (
     <div className={cn("flex flex-col gap-2 transition-opacity", dismissed && "opacity-50")}>
-      <div className="flex items-start gap-2">
-        <span
-          className={cn(
-            "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-            element.severity === "high" && "bg-destructive/15 text-destructive",
-            element.severity === "medium" && "bg-warn-soft text-warn",
-            element.severity === "low" && "bg-secondary text-muted-foreground",
-          )}
+      <h3 className="contents">
+        <button
+          type="button"
+          onClick={() => setFolded((f) => !f)}
+          aria-expanded={!folded}
+          className="flex items-start gap-2 text-left"
         >
-          {element.severity}
-        </span>
-        <h3 className="min-w-0 flex-1 text-[16px] font-semibold leading-snug text-foreground">
-          <InlineCode text={element.title} />
-        </h3>
-        <Concurrence agreement={element.agreement} />
-      </div>
-      <RichText text={element.body} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
-      {element.details?.map((detail) => (
-        <div key={detail.heading} className="mt-2 flex flex-col gap-1.5">
-          <h4 className="text-[14px] font-semibold text-foreground">
-            <InlineCode text={detail.heading} />
-          </h4>
-          <RichText
-            text={detail.body}
-            paragraphClassName="text-[13.5px] leading-relaxed text-foreground/85"
+          <ChevronDown
+            className={cn(
+              "mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform",
+              folded && "-rotate-90",
+            )}
+            aria-hidden="true"
           />
+          <span
+            className={cn(
+              "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              element.severity === "high" && "bg-destructive/15 text-destructive",
+              element.severity === "medium" && "bg-warn-soft text-warn",
+              element.severity === "low" && "bg-secondary text-muted-foreground",
+            )}
+          >
+            {element.severity}
+          </span>
+          <span className="min-w-0 flex-1 text-[16px] font-semibold leading-snug text-foreground">
+            <InlineCode text={element.title} />
+            {dismissed && <span className="sr-only">, dismissed</span>}
+          </span>
+          <Concurrence agreement={element.agreement} />
+        </button>
+      </h3>
+      <Collapse open={!folded}>
+        <div className="flex flex-col gap-2 pl-5">
+          <RichText text={element.body} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
+          {element.details?.map((detail) => (
+            <div key={detail.heading} className="mt-2 flex flex-col gap-1.5">
+              <h4 className="text-[14px] font-semibold text-foreground">
+                <InlineCode text={detail.heading} />
+              </h4>
+              <RichText
+                text={detail.body}
+                paragraphClassName="text-[13.5px] leading-relaxed text-foreground/85"
+              />
+            </div>
+          ))}
+          {element.fix && (
+            <FixCallout
+              fix={element.fix}
+              findingId={element.id}
+              findingTitle={element.title}
+              anchor={element.anchor}
+              dismissed={dismissed}
+            />
+          )}
+          {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
         </div>
-      ))}
-      {element.fix && (
-        <FixCallout
-          fix={element.fix}
-          findingId={element.id}
-          findingTitle={element.title}
-          anchor={element.anchor}
-          dismissed={dismissed}
-        />
-      )}
-      {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
+      </Collapse>
     </div>
   )
 }
