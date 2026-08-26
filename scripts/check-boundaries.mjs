@@ -25,7 +25,7 @@ const allowed = new Map([
       "@rennet/adapters",
     ]),
   ],
-  ["@rennet/ui", new Set(["@rennet/types", "@rennet/theme"])],
+  ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol", "@rennet/theme"])],
   ["@rennet/app-ui", new Set(["@rennet/types", "@rennet/protocol", "@rennet/theme", "@rennet/ui"])],
   ["@rennet/client", new Set(["@rennet/types", "@rennet/protocol"])],
 ]);
@@ -62,16 +62,16 @@ try {
   rmSync(positiveControl, { force: true });
 }
 
-// The kit (@rennet/ui, layer:ui-kit) may import only types + theme. A manifest
-// check is not enough: with a hoisted node_modules a source `import` of a
-// non-declared package still resolves, so ESLint's module-boundary rule is the
-// real guard. Prove it fails on a protocol import from the kit.
+// The kit (@rennet/ui, layer:ui-kit) may import only protocol + theme. A
+// manifest check is not enough: with a hoisted node_modules a source `import`
+// of a non-declared package still resolves, so ESLint's module-boundary rule
+// is the real guard. Prove it fails on a core import from the kit.
 const uiKitPositiveControl = resolve(
   workspaceRoot,
   "packages/ui/src/.boundary-positive-control.ts",
 );
 try {
-  writeFileSync(uiKitPositiveControl, 'import "@rennet/protocol";\n');
+  writeFileSync(uiKitPositiveControl, 'import "@rennet/core";\n');
   const { command, args } = pnpmCommand(["exec", "eslint", uiKitPositiveControl]);
   const result = spawnSync(command, args, {
     cwd: workspaceRoot,
@@ -105,5 +105,5 @@ try {
 }
 
 console.log(
-  "Package manifests obey the dependency arrows; the @rennet/core, ui-kit-protocol, and Electron forbidden-import controls all failed as expected.",
+  "Package manifests obey the dependency arrows; the @rennet/core, ui-kit-core, and Electron forbidden-import controls all failed as expected.",
 );

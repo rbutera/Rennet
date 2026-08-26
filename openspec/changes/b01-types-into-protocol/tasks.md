@@ -20,7 +20,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 - [x] 3.1 Re-point every `@rennet/types` import to `@rennet/protocol` in `packages/app-ui` (114 files), `packages/ui` (2 files), `packages/client` (1 file), `apps/desktop` (1 file), `apps/mobile` (1 file).
 - [x] 3.2 Swap the `package.json` edges in all five; `ui` gains `@rennet/protocol` (replacing `@rennet/types`).
-- [ ] 3.3 Grant the new `ui-kit → protocol` edge in both enforcers (`scripts/check-boundaries.mjs`: `@rennet/ui` → `{@rennet/protocol, @rennet/theme}`; `eslint.config.mjs`: `layer:ui-kit` gains `layer:protocol`).
+- [x] 3.3 Grant the new `ui-kit → protocol` edge in both enforcers (`scripts/check-boundaries.mjs`: `@rennet/ui` → `{@rennet/protocol, @rennet/theme}`; `eslint.config.mjs`: `layer:ui-kit` gains `layer:protocol`).
 - [ ] 3.4 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
 
 ## 4. Delete packages/types and rewrite the boundary law
