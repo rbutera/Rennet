@@ -61,6 +61,9 @@ interface AppState {
   hosts: HostItem[]
   addProject: (hostId: string, name: string) => string
   addRemote: (label: string) => string
+  renameHost: (id: string, label: string) => void
+  /** Drops an environment and everything under it. Never offered for local. */
+  removeHost: (id: string) => void
   renameProject: (id: string, name: string) => void
   setProjectIcon: (id: string, icon: string) => void
   removeProject: (id: string) => void
@@ -177,6 +180,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ hosts: [...s.hosts, { id: hostId, label, kind: "remote", projects: [] }] }))
     return hostId
   },
+  renameHost: (id, label) =>
+    set((s) => ({ hosts: s.hosts.map((h) => (h.id === id ? { ...h, label } : h)) })),
+  removeHost: (id) => set((s) => ({ hosts: s.hosts.filter((h) => h.id !== id) })),
   renameProject: (id, name) =>
     set((s) => ({
       hosts: s.hosts.map((h) => ({

@@ -2,6 +2,8 @@
 
 import * as React from "react"
 import {
+  Apple,
+  AppWindow,
   ArrowLeft,
   Check,
   ChevronDown,
@@ -9,9 +11,11 @@ import {
   Layers,
   Monitor,
   Palette,
+  Pencil,
   Plus,
   RotateCcw,
   Server,
+  Trash2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAppStore } from "@/lib/store"
@@ -21,9 +25,11 @@ import type { HostItem, ProjectItem } from "@/lib/sidebar-data"
 import { PROJECT_ICONS, ProjectIcon, type ProjectIconName } from "@/components/project-icon"
 import {
   defaultWorktrees,
+  type EnvironmentInfo,
+  environments,
   type GuidanceRule,
-  hostSettings,
   keyCommands,
+  LATEST_DAEMON,
   previewWorktreeName,
   projectSettings,
   type SettingsLayer,
@@ -42,6 +48,16 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 /**
  * Settings as a main-surface location (ticket #476): the chat column stays
@@ -234,28 +250,179 @@ function MachinePage({ hosts }: { hosts: HostItem[] }) {
           </button>
         }
         caption="~/.rennet/daemon-settings.json on each host"
+        bare
       >
-        {hosts.map((h) => {
-          const daemon = hostSettings[h.id] ?? { github: { connected: false as const } }
-          return (
-            <div key={h.id} className="flex flex-col gap-1 py-2.5">
-              <div className="flex items-center gap-1.5">
-                {h.kind === "local" ? (
-                  <Monitor className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                ) : (
-                  <Server className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                )}
-                <span className="text-[13px] font-medium text-foreground">{h.label}</span>
-              </div>
-              {/* GitHub state lives in the Source Control rows below (#483:
-                  Rennet rides gh — the OAuth-shaped Connect flow is gone). */}
-              <SourceControlList host={h} />
-            </div>
-          )
-        })}
+        {hosts.map((h) => (
+          <EnvironmentCard key={h.id} host={h} />
+        ))}
       </Section>
     </>
   )
+}
+
+/**
+ * The machine, not the tooling: which OS it runs, how Rennet reaches it, and
+ * what the daemon there reports. An unreachable host says so instead of
+ * guessing a version. Local is never removable — it is where Rennet runs.
+ */
+function EnvironmentCard({ host }: { host: HostItem }) {
+  const env: EnvironmentInfo = environments[host.id] ?? { os: "linux", reachable: false }
+  const [renaming, setRenaming] = React.useState(false)
+  const [draft, setDraft] = React.useState("")
+  const [removeOpen, setRemoveOpen] = React.useState(false)
+  // Cosmetic in the prototype: nothing dials, nothing installs. The pause is
+  // texture, and Reconnect settles back to the honest unreachable state.
+  const [busy, setBusy] = React.useState<"connecting" | "updating" | null>(null)
+  const [updated, setUpdated] = React.useState(false)
+
+  function commitRename() {
+    // An emptied name keeps the old one, as the sidebar's rename does.
+    useAppStore.getState().renameHost(host.id, draft.trim() || host.label)
+    setRenaming(false)
+  }
+
+  function pretend(kind: "connecting" | "updating", done?: () => void) {
+    setBusy(kind)
+    setTimeout(() => {
+      setBusy(null)
+      done?.()
+    }, 1600)
+  }
+
+  const version = updated ? LATEST_DAEMON : env.daemonVersion
+  const sessions = host.projects.reduce((n, p) => n + p.sessions.length, 0)
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card/40 p-4">
+      <div className="flex items-center gap-2">
+        <OsIcon os={env.os} />
+        {renaming ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onFocus={(event) => event.target.select()}
+            onBlur={commitRename}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitRename()
+              if (event.key === "Escape") {
+                event.stopPropagation()
+                setRenaming(false)
+              }
+            }}
+            aria-label="Environment name"
+            className="min-w-0 flex-1 rounded-sm bg-secondary px-1 py-0.5 text-[14px] font-medium text-foreground outline-none"
+          />
+        ) : (
+          <span className="truncate text-[14px] font-medium text-foreground">{host.label}</span>
+        )}
+        {env.os === "wsl" && (
+          <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            WSL
+          </span>
+        )}
+        {env.address ? (
+          <span className="truncate font-mono text-[11px] text-muted-foreground/70">{env.address}</span>
+        ) : (
+          <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            Local
+          </span>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Rename ${host.label}`}
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              setDraft(host.label)
+              setRenaming(true)
+            }}
+          >
+            <Pencil aria-hidden="true" />
+          </Button>
+          {/* This Machine is where Rennet runs — there is nothing to remove. */}
+          {host.kind !== "local" && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Remove ${host.label}`}
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => setRemoveOpen(true)}
+            >
+              <Trash2 aria-hidden="true" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
+        <span>
+          {busy === "connecting"
+            ? "Connecting…"
+            : busy === "updating"
+              ? "Updating the daemon…"
+              : !env.reachable
+                ? version
+                  ? `Not connected — last seen running Rennet daemon v${version}`
+                  : "Not connected — daemon unreachable, version unknown"
+                : `Rennet daemon v${version}`}
+        </span>
+        {!busy && !env.reachable && (
+          <Button variant="outline" size="xs" onClick={() => pretend("connecting")}>
+            Reconnect
+          </Button>
+        )}
+        {!busy && env.reachable && env.daemonUpdateAvailable && !updated && (
+          <Button variant="outline" size="xs" onClick={() => pretend("updating", () => setUpdated(true))}>
+            Update Daemon
+          </Button>
+        )}
+      </div>
+
+      {/* GitHub state lives in the Source Control rows below (#483:
+          Rennet rides gh — the OAuth-shaped Connect flow is gone). */}
+      <SourceControlList host={host} />
+
+      <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {host.label}?</DialogTitle>
+            <DialogDescription>
+              {host.projects.length > 0
+                ? `This removes the environment, its ${plural(host.projects.length, "project")}${sessions > 0 ? ` and ${plural(sessions, "session")}` : ""}, from Rennet.`
+                : "This removes the environment from Rennet."}{" "}
+              The machine itself is not touched.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setRemoveOpen(false)
+                useAppStore.getState().removeHost(host.id)
+              }}
+            >
+              Remove Environment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`
+
+/**
+ * The machine's OS. Lucide's Apple is the fruit, not the trademarked logo —
+ * nominative enough for a settings glyph. WSL is a Windows box, so it takes
+ * the window mark plus the "WSL" chip beside the name.
+ */
+function OsIcon({ os }: { os: EnvironmentInfo["os"] }) {
+  const Icon = os === "macos" ? Apple : os === "linux" ? Server : AppWindow
+  return <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 }
 
 /**
@@ -307,7 +474,7 @@ function SourceControlList({ host }: { host: HostItem }) {
   )
 
   return (
-    <div className="flex flex-col pl-5">
+    <div className="flex flex-col border-t border-border pt-1">
       <span className="pt-1 text-[12px] font-medium text-foreground">Source Control</span>
       {tools.length === 0 ? (
         <span className="py-2 text-[12px] text-muted-foreground">
@@ -663,11 +830,14 @@ function Section({
   title,
   titleExtra,
   caption,
+  bare,
   children,
 }: {
   title: string
   titleExtra?: React.ReactNode
   caption: string
+  /** Children bring their own surface (the environment cards) — no box. */
+  bare?: boolean
   children: React.ReactNode
 }) {
   return (
@@ -679,7 +849,12 @@ function Section({
         </span>
         <span className="font-mono text-[11px] text-muted-foreground/60">{caption}</span>
       </div>
-      <div className="flex flex-col divide-y divide-border rounded-md border border-border px-3">
+      <div
+        className={cn(
+          "flex flex-col",
+          bare ? "gap-3 pt-1" : "divide-y divide-border rounded-md border border-border px-3",
+        )}
+      >
         {children}
       </div>
     </section>

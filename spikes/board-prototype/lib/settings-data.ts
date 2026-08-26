@@ -196,13 +196,33 @@ export const sourceControl: Record<string, SourceControlTool[]> = {
   h3: [],
 }
 
-export interface HostSettings {
-  github: { connected: true; account: string } | { connected: false }
+/**
+ * What an environment IS, as opposed to what it can talk to: the machine, its
+ * address, and the Rennet daemon running on it. Unknown fields stay absent —
+ * an unreachable host has nothing to report, and says so.
+ */
+export interface EnvironmentInfo {
+  os: "macos" | "linux" | "windows" | "wsl"
+  /** Absent for the local machine — there is nothing to dial. */
+  address?: string
+  /** The daemon's version on that host; absent when it could not be asked. */
+  daemonVersion?: string
+  daemonUpdateAvailable?: boolean
+  reachable: boolean
 }
 
-/** Daemon-settings scope: one per host, ~/.rennet/daemon-settings.json on that machine. */
-export const hostSettings: Record<string, HostSettings> = {
-  h1: { github: { connected: true, account: "rbutera" } },
-  h2: { github: { connected: true, account: "rbutera" } },
-  h3: { github: { connected: false } },
+/** The version a daemon update lands on — the local machine already runs it. */
+export const LATEST_DAEMON = "1.0.1"
+
+export const environments: Record<string, EnvironmentInfo> = {
+  h1: { os: "macos", daemonVersion: LATEST_DAEMON, reachable: true },
+  h2: {
+    os: "linux",
+    address: "dev-box.tailnet.ts.net",
+    daemonVersion: "1.0.0",
+    daemonUpdateAvailable: true,
+    reachable: true,
+  },
+  // A Windows box running the daemon inside WSL, currently off the network.
+  h3: { os: "wsl", address: "gpu-01.tailnet.ts.net", reachable: false },
 }
