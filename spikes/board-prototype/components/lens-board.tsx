@@ -343,40 +343,7 @@ function Element({ element }: { element: BoardElement }) {
       )
 
     case "finding":
-      return (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-start gap-2">
-            <span
-              className={cn(
-                "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                element.severity === "high" && "bg-destructive/15 text-destructive",
-                element.severity === "medium" && "bg-warn-soft text-warn",
-                element.severity === "low" && "bg-secondary text-muted-foreground",
-              )}
-            >
-              {element.severity}
-            </span>
-            <h3 className="min-w-0 flex-1 text-[16px] font-semibold leading-snug text-foreground">
-              <InlineCode text={element.title} />
-            </h3>
-            <Concurrence agreement={element.agreement} />
-          </div>
-          <RichText text={element.body} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
-          {element.details?.map((detail) => (
-            <div key={detail.heading} className="mt-2 flex flex-col gap-1.5">
-              <h4 className="text-[14px] font-semibold text-foreground">
-                <InlineCode text={detail.heading} />
-              </h4>
-              <RichText
-                text={detail.body}
-                paragraphClassName="text-[13.5px] leading-relaxed text-foreground/85"
-              />
-            </div>
-          ))}
-          {element.fix && <FixCallout fix={element.fix} findingTitle={element.title} anchor={element.anchor} />}
-          {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
-        </div>
-      )
+      return <FindingCard element={element} />
 
     case "annotation":
       return (
@@ -549,19 +516,78 @@ function Concurrence({ agreement }: { agreement: { claude: boolean; codex: boole
 }
 
 /**
+ * A flagged finding. Dismissing or requesting it takes it out of the Flagged
+ * tab's pip count (store `findingStatus`); a dismissed finding dims in place
+ * with its undo, it never disappears.
+ */
+function FindingCard({ element }: { element: Extract<BoardElement, { kind: "finding" }> }) {
+  const dismissed = useAppStore((s) => s.findingStatus[element.id] === "dismissed")
+
+  return (
+    <div className={cn("flex flex-col gap-2 transition-opacity", dismissed && "opacity-50")}>
+      <div className="flex items-start gap-2">
+        <span
+          className={cn(
+            "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+            element.severity === "high" && "bg-destructive/15 text-destructive",
+            element.severity === "medium" && "bg-warn-soft text-warn",
+            element.severity === "low" && "bg-secondary text-muted-foreground",
+          )}
+        >
+          {element.severity}
+        </span>
+        <h3 className="min-w-0 flex-1 text-[16px] font-semibold leading-snug text-foreground">
+          <InlineCode text={element.title} />
+        </h3>
+        <Concurrence agreement={element.agreement} />
+      </div>
+      <RichText text={element.body} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
+      {element.details?.map((detail) => (
+        <div key={detail.heading} className="mt-2 flex flex-col gap-1.5">
+          <h4 className="text-[14px] font-semibold text-foreground">
+            <InlineCode text={detail.heading} />
+          </h4>
+          <RichText
+            text={detail.body}
+            paragraphClassName="text-[13.5px] leading-relaxed text-foreground/85"
+          />
+        </div>
+      ))}
+      {element.fix && (
+        <FixCallout
+          fix={element.fix}
+          findingId={element.id}
+          findingTitle={element.title}
+          anchor={element.anchor}
+          dismissed={dismissed}
+        />
+      )}
+      {element.anchor && <AnchorReveal anchors={[element.anchor]} />}
+    </div>
+  )
+}
+
+/**
  * A finding's fix as an actionable callout. On a teammate PR the action stages
- * a request-change ask (R29); the button is its own receipt and undo.
+ * a request-change ask (R29); the button is its own receipt and undo. Both
+ * exits — request and dismiss — clear the finding from the Flagged pip;
+ * dismiss hides while an ask is staged (unstage first, then dismiss).
  */
 function FixCallout({
   fix,
+  findingId,
   findingTitle,
   anchor,
+  dismissed,
 }: {
   fix: string
+  findingId: string
   findingTitle: string
   anchor?: { path: string; line: number }
+  dismissed: boolean
 }) {
   const store = useCodeComments()
+  const setFindingStatus = useAppStore((s) => s.setFindingStatus)
   const [askId, setAskId] = React.useState<string | null>(null)
   const staged = askId !== null && (store?.asks ?? []).some((ask) => ask.id === askId)
 
@@ -570,9 +596,11 @@ function FixCallout({
     if (staged && askId) {
       store.unstageAsk(askId)
       setAskId(null)
+      setFindingStatus(findingId, null)
       return
     }
     setAskId(store.stageAsk(fix, "request-change", `finding: ${findingTitle.slice(0, 56)}`, anchor))
+    setFindingStatus(findingId, "requested")
   }
 
   return (
@@ -580,24 +608,35 @@ function FixCallout({
       <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fix</span>
       <RichText text={fix} paragraphClassName="text-[13px] leading-relaxed text-foreground/90" />
       <div className="flex items-center justify-end gap-1.5 pt-0.5">
+        {!staged && (
+          <button
+            type="button"
+            onClick={() => setFindingStatus(findingId, dismissed ? null : "dismissed")}
+            className="rounded border border-border px-2 py-0.5 text-[11.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+          >
+            {dismissed ? "Dismissed · Undo" : "Dismiss"}
+          </button>
+        )}
         <button
           type="button"
           className="rounded border border-border px-2 py-0.5 text-[11.5px] text-muted-foreground hover:bg-secondary hover:text-foreground"
         >
           Discuss
         </button>
-        <button
-          type="button"
-          onClick={toggle}
-          className={cn(
-            "rounded px-2.5 py-1 text-[12px] transition-colors",
-            staged
-              ? "border border-border bg-secondary/60 text-muted-foreground"
-              : "bg-foreground font-medium text-background hover:bg-foreground/90",
-          )}
-        >
-          {staged ? "Staged · Request Change ✓" : "Request This Change"}
-        </button>
+        {!dismissed && (
+          <button
+            type="button"
+            onClick={toggle}
+            className={cn(
+              "rounded px-2.5 py-1 text-[12px] transition-colors",
+              staged
+                ? "border border-border bg-secondary/60 text-muted-foreground"
+                : "bg-foreground font-medium text-background hover:bg-foreground/90",
+            )}
+          >
+            {staged ? "Staged · Request Change ✓" : "Request This Change"}
+          </button>
+        )}
       </div>
     </div>
   )

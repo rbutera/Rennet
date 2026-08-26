@@ -112,6 +112,16 @@ export function MainSurface({
   }
 
   const viewedDeltaSections = useAppStore((s) => s.viewedDeltaSections)
+  // The Flagged pip: findings not yet dismissed or requested. Both exits
+  // shrink it; requesting also lands the staged ask on the FAB as usual.
+  const findingStatus = useAppStore((s) => s.findingStatus)
+  const openFindings = (board: LensBoard | null) =>
+    board?.sections.reduce(
+      (sum, section) =>
+        sum +
+        section.elements.filter((e) => e.kind === "finding" && !findingStatus[e.id]).length,
+      0,
+    ) ?? 0
   const store = useCodeComments()
   const askCount = store?.asks.length ?? 0
   // The CTA names the job per review target (R35).
@@ -174,6 +184,7 @@ export function MainSurface({
               icon: v.icon,
               // Unread round-delta rollup (dot decays as sections are opened).
               dot: v.board?.sections.some((s) => s.delta && !viewedDeltaSections[s.id]) ?? false,
+              count: v.lens === "flagged" ? openFindings(v.board) : undefined,
             }))}
             active={mapOpen || diffOpen || handoffOpen || roundsOpen ? "" : active}
             onChange={(segment) => {

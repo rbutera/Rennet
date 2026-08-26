@@ -9,6 +9,9 @@ export interface ViewSegment {
   /** Unread round-delta rollup: the board behind this segment has sections the
    * last round touched that the reviewer has not opened yet. */
   dot?: boolean
+  /** Open-work counter (Flagged: findings not yet dismissed or requested).
+   * Wears the same red as the FAB pip and outranks the delta dot. */
+  count?: number
 }
 
 /**
@@ -50,15 +53,28 @@ export function ViewSwitcher({
           >
             <span className="relative flex shrink-0">
               <Icon className="size-4 shrink-0" aria-hidden="true" />
-              {segment.dot && (
+              {segment.count ? (
                 <span
-                  className="absolute -right-1 -top-1 size-1.5 rounded-full bg-primary"
+                  className="absolute -right-2 -top-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-600 px-0.5 text-[9px] font-semibold leading-none text-white"
                   aria-hidden="true"
-                />
+                >
+                  {segment.count}
+                </span>
+              ) : (
+                segment.dot && (
+                  <span
+                    className="absolute -right-1 -top-1 size-1.5 rounded-full bg-primary"
+                    aria-hidden="true"
+                  />
+                )
               )}
             </span>
             <span className="hidden @[46rem]:inline">{segment.label}</span>
-            {segment.dot && <span className="sr-only">, changed this round</span>}
+            {segment.count ? (
+              <span className="sr-only">, {segment.count} open</span>
+            ) : (
+              segment.dot && <span className="sr-only">, changed this round</span>
+            )}
           </button>
         )
       })}

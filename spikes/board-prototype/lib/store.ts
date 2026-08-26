@@ -82,6 +82,10 @@ interface AppState {
    * unfolds it, clearing its round-delta dot. Replaced wholesale next round. */
   viewedDeltaSections: Record<string, true>
   markDeltaViewed: (sectionId: string) => void
+  /** A flagged finding leaves the Flagged pip by being dismissed or by having
+   * its fix requested; null undoes either. Keyed by the finding element id. */
+  findingStatus: Record<string, "dismissed" | "requested">
+  setFindingStatus: (findingId: string, status: "dismissed" | "requested" | null) => void
   sessionTurns: string[]
   boardsReady: boolean
   appendSessionTurn: (turn: string) => void
@@ -248,6 +252,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   viewedDeltaSections: {},
   markDeltaViewed: (sectionId) =>
     set((s) => (s.viewedDeltaSections[sectionId] ? s : { viewedDeltaSections: { ...s.viewedDeltaSections, [sectionId]: true } })),
+  findingStatus: {},
+  setFindingStatus: (findingId, status) =>
+    set((s) => {
+      const next = { ...s.findingStatus }
+      if (status === null) delete next[findingId]
+      else next[findingId] = status
+      return { findingStatus: next }
+    }),
   sessionTurns: [],
   boardsReady: false,
   appendSessionTurn: (turn) => set((s) => ({ sessionTurns: [...s.sessionTurns, turn] })),
