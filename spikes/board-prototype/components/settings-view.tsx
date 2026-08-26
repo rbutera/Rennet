@@ -2,8 +2,6 @@
 
 import * as React from "react"
 import {
-  Apple,
-  AppWindow,
   ArrowLeft,
   Check,
   ChevronDown,
@@ -18,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { OS_GLYPHS } from "@/lib/os-glyphs"
 import { useAppStore } from "@/lib/store"
 import { THEME_PACKS } from "@/lib/theme-packs"
 import { CODE_THEMES } from "@/lib/code-theme"
@@ -666,13 +665,20 @@ function EnvironmentCard({ host }: { host: HostItem }) {
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`
 
 /**
- * The machine's OS. Lucide's Apple is the fruit, not the trademarked logo —
- * nominative enough for a settings glyph. WSL is a Windows box, so it takes
- * the window mark plus the "WSL" chip beside the name.
+ * The machine's OS — real platform glyphs (see lib/os-glyphs.ts provenance),
+ * inline with currentColor so they follow the theme. WSL is a Windows box,
+ * so it takes the Windows mark plus the "WSL" chip beside the name.
  */
 function OsIcon({ os }: { os: EnvironmentInfo["os"] }) {
-  const Icon = os === "macos" ? Apple : os === "linux" ? Server : AppWindow
-  return <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="size-3.5 shrink-0 fill-current text-muted-foreground"
+      aria-hidden="true"
+    >
+      <path d={OS_GLYPHS[os]} />
+    </svg>
+  )
 }
 
 /**
