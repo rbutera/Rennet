@@ -28,6 +28,8 @@ This file defines the terms shared by the product, documentation, and code. It c
   _Avoid_: Host (for the machine), location, target
 - **Rennet host**: the serving process a Rennet client talks to, running on a source. The preferred interface-facing name for the process; architecture writing may still say daemon.
   _Avoid_: Daemon (in interface copy), server
+- **Project scout**: the seat that inspects a newly added project — after a deterministic pass — to detect its per-project configuration (issue tracker, worktree convention, logo, default branch, gate command, seed guidance), each answer carrying provenance. Its results prefill the project questionnaire.
+  _Avoid_: Onboarding agent, detector
 
 ## GitHub account
 
@@ -101,6 +103,8 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Round report**: the board accounting for what a round did with the asks — addressed, partial, untouched, or beyond the asks, each item verified against the round's diff and anchored. Drafted first when a round returns (its own prompt, the shared post-process pass): it is the greeting the reviewer reads while the lens drafters regenerate, and the successor account those drafters receive.
 - **Rounds ledger**: the header control beside Map · Diff, present exactly when the session has a completed round. It lists every round's report; each round pins its asks, worker commits, frozen board generation, and the patchset generation it minted, so earlier reports and diffs stay readable.
 - **Living draft**: an outbound document (review text, work order, PR description) the orchestrator alone authors and continuously reworks as the review progresses. Steered by conversation or span selection, never typed into; retired content is ledgered and restorable.
+- **Related-context dossier**: the bounded, structured collection of material related to a change — referenced issue-tracker tickets, the PR description and comments, one-hop links — retrieved per patchset generation and handed verbatim to the review agents as part of their delta context. Items carry id, provenance, and freshness; agents cite them by id.
+  _Avoid_: Ticket context, linked issues (as a mechanism name)
 
 ## Settings
 

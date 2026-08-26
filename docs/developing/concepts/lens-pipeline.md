@@ -70,6 +70,27 @@ separately, so instructions and schema cannot drift apart.
 5. **Compose.** The orchestrator authors the composition Board from the frozen
    drafts (issue #457's compose-by-authoring model).
 
+## Related context in the delta
+
+The delta context every drafter receives includes the **related-context
+dossier** ([#461](https://github.com/rbutera/rennet/issues/461)): the change's
+referenced issue-tracker tickets, the PR description and comments, and one-hop
+links, retrieved per patchset generation by a light-tier Model Council seat
+(`related-context-retrieval`) after a deterministic pass extracts issue refs
+from the branch name, commit messages, and PR body. GitHub is first-class via
+`gh`; JIRA and Linear work from per-project config (base URL plus a token
+environment variable). The bounded dossier is inlined verbatim into every
+drafting prompt — the orchestrator, round workers, and the round-report
+drafter receive the same dossier — while full raw payloads stay behind a
+context tool. Items are structured (id, tracker, title, state, bounded body,
+acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
+how ticket citations reach boards. Standing tracker knowledge enters the
+context map through the knowledge swarm
+([#460](https://github.com/rbutera/rennet/issues/460)) instead; cosmetic
+project facts (the logo) never enter agent context. When no tracker is
+configured, the orchestrator asks in chat and persists the answer to project
+settings — the review proceeds meanwhile.
+
 Three layers carry every rule: the schema makes good structure the only
 expressible structure (a fix field exists, so a fix sentence buried in prose
 is a lint error, not a style preference); the lint makes the mechanical rules
@@ -133,7 +154,7 @@ hunks renders as an honest "unimplemented".
 
 ## What is still open
 
-The context-map swarm that feeds drafting (#460), related-context retrieval
-(#461), the drafting-agent runtime architecture (#464), and lane arbitration
-edge cases beyond the scaffold-stamp rule are undecided. This page updates as
+The drafting-agent runtime architecture (#464) and lane arbitration edge
+cases beyond the scaffold-stamp rule are undecided. The add-project flow that
+configures related context is being prototyped (#487). This page updates as
 those close.
