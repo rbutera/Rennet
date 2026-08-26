@@ -4,6 +4,7 @@ import * as React from "react"
 import { ArrowLeft, Check, ChevronRight, LoaderCircle, Map, MessageSquarePlus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { mapScopes, mapStatements } from "@/lib/context-map-data"
+import { Coachmark } from "@/components/coachmark"
 
 /**
  * The add-project flow (#487): the modal stays a host + folder picker;
@@ -143,6 +144,12 @@ export function ProjectIndexingView({
   )
   const ready = elapsed >= READY_AT
 
+  // The CTA appears at the bottom of a scrolled timeline — bring it on screen.
+  const ctaRef = React.useRef<HTMLButtonElement>(null)
+  React.useEffect(() => {
+    if (ready) ctaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }, [ready])
+
   // Timeline mirrors the #460 swarm architecture: scope-partitioned light-tier
   // workers, then the medium verify/synthesis seat confirming hypotheses itself.
   const confirmed = mapStatements.filter((s) => s.status === "confirmed").length
@@ -230,34 +237,42 @@ export function ProjectIndexingView({
           {scoutDone && <div className="flex flex-col gap-1.5">{renderSteps(mapSteps)}</div>}
 
           {ready && (
-            <div className="flex flex-col gap-3 rounded-lg border border-border px-4 py-3.5">
-              <div className="flex items-center gap-2">
-                <Check className="size-4 shrink-0 text-green-500" aria-hidden="true" />
-                <span className="text-[13.5px] font-medium text-foreground">Context Map Ready</span>
-                <span className="text-[12px] text-muted-foreground">
-                  {SCOPE_TOTAL} scopes · {mapScopes.reduce((n, s) => n + s.files, 0)} files ·{" "}
-                  {confirmed} statements confirmed · {rejected} rejected
-                </span>
+            <>
+              <div className="flex flex-col gap-3 rounded-lg border border-border px-4 py-3.5">
+                <div className="flex items-center gap-2">
+                  <Check className="size-4 shrink-0 text-green-500" aria-hidden="true" />
+                  <span className="text-[13.5px] font-medium text-foreground">
+                    Context Map Ready
+                  </span>
+                  <span className="text-[12px] text-muted-foreground">
+                    {SCOPE_TOTAL} scopes · {mapScopes.reduce((n, s) => n + s.files, 0)} files ·{" "}
+                    {confirmed} statements confirmed · {rejected} rejected
+                  </span>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={onViewMap}
+                    className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] font-medium text-foreground/90 transition-colors hover:bg-secondary"
+                  >
+                    <Map className="size-3.5" aria-hidden="true" />
+                    View Context Map
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onNewChat}
-                  className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                  <MessageSquarePlus className="size-3.5" aria-hidden="true" />
-                  New Chat on {projectName}
-                </button>
-                <button
-                  type="button"
-                  onClick={onViewMap}
-                  className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] font-medium text-foreground/90 transition-colors hover:bg-secondary"
-                >
-                  <Map className="size-3.5" aria-hidden="true" />
-                  View Context Map
-                </button>
-              </div>
-            </div>
+
+              <button
+                ref={ctaRef}
+                type="button"
+                onClick={onNewChat}
+                data-tour="start-review"
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-4 text-[15px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              >
+                <MessageSquarePlus className="size-5" aria-hidden="true" />
+                Start a Review
+              </button>
+              <Coachmark id="start-review" />
+            </>
           )}
         </div>
       </div>

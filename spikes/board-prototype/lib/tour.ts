@@ -15,6 +15,7 @@ import { create } from "zustand"
  */
 
 export type MarkId =
+  | "start-review"
   | "new-chat"
   | "smart-list"
   | "lenses"
@@ -36,6 +37,14 @@ export interface Mark {
 
 /** System order. Chaining is this order: the first unseen registered mark wins. */
 export const MARKS: Mark[] = [
+  // First so it outranks the sidebar's Start Here while the indexing CTA shows.
+  {
+    id: "start-review",
+    title: "Ready to Go",
+    body: "Click here to start your first review on this project.",
+    side: "top",
+    align: "center",
+  },
   {
     id: "new-chat",
     title: "Start Here",
