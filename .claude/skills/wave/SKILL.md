@@ -86,6 +86,7 @@ The proposal lands in `openspec/changes/<name>/` as `proposal.md`, `design.md`, 
 
 The same agent applies its own proposal (`openspec-apply-change`), working through `tasks.md`.
 
+- **Tick the `tasks.md` checkbox in the same commit that completes the task.** The checked boxes are the progress record an interrupted session resumes from; a done-but-unchecked task reads as pending and gets redone, an unchecked-but-abandoned task needs a note saying why. Progress that is not a checked box or a commit does not exist.
 - Worktree path, branch name, base commit and the current gate baseline go in the brief so nobody re-derives them.
 - Red-proof every fix **with the prediction named before running it**, then restore and run the full green pass.
 - ⛔ Never derive a test's assertions by reading your own implementation. That can only confirm it, bugs included. Assert the contract.
@@ -101,6 +102,8 @@ Then §4: **sort the findings before any of them reach the implementer.**
 ### Step 4 — archive the change
 
 **Once the review fixes are done and the branch has merged, archive the OpenSpec change** (`openspec-archive-change`). This is the last step of the loop and it is not optional.
+
+Before archiving, open `tasks.md` and reconcile it: every box checked, or unchecked with a note naming where the work went (cut, deferred to a named issue, deliberately unwired). Tick any box whose task verifiably shipped but was left unchecked — then the archive move (`openspec/changes/archive/YYYY-MM-DD-<name>/`) carries an honest ledger. For board-rebuild changes (`b*`/`c*`), this is also the moment the orchestrator flips the workstream's `BUILD-STATUS.json` entry.
 
 An un-archived change stays in `openspec/changes/` looking like live in-flight work. The next agent proposing against the same area reads it as a pending intention rather than a shipped fact, and either duplicates it or designs around a constraint that no longer exists. That is the same "correct in a place that cannot produce action" rot this repo keeps producing in new costumes.
 
