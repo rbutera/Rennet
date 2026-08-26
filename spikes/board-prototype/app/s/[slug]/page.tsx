@@ -28,7 +28,6 @@ export default function BoardPage() {
         targetLabel={sessionView.targetLabel}
         targetKind={sessionView.targetKind}
         badge={sessionView.badge}
-        onBack={() => router.back()}
       />
     )
   }

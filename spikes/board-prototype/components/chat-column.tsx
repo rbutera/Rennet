@@ -112,17 +112,7 @@ export function ChatColumn({
       className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border"
       style={{ width }}
     >
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
-        <LocationTrail projectName={projectName} session={session} />
-        <button
-          type="button"
-          onClick={onCollapse}
-          aria-label="Collapse chat"
-          className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
-        >
-          <PanelRight className="size-3.5" aria-hidden="true" />
-        </button>
-      </header>
+      <ChatHeader projectName={projectName} session={session} onCollapse={onCollapse} />
       <ConversationPane
         turns={turns}
         comments={comments}
@@ -137,5 +127,33 @@ export function ChatColumn({
         onAddImage={handleAddImage}
       />
     </div>
+  )
+}
+
+/**
+ * The one chat-pane header: trail + collapse. Every chat surface (scenario
+ * sessions AND the minted new-chat run) renders this — never a bespoke bar.
+ */
+export function ChatHeader({
+  projectName,
+  session,
+  onCollapse,
+}: {
+  projectName: string
+  session: SessionItem
+  onCollapse: () => void
+}) {
+  return (
+    <header className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
+      <LocationTrail projectName={projectName} session={session} />
+      <button
+        type="button"
+        onClick={onCollapse}
+        aria-label="Collapse chat"
+        className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+      >
+        <PanelRight className="size-3.5" aria-hidden="true" />
+      </button>
+    </header>
   )
 }
