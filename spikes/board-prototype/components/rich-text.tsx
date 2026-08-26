@@ -245,7 +245,7 @@ export function RichText({
   const store = useCodeComments()
   const paragraphs = text.split(/\n\n+/)
 
-  function plainNodes(chunk: string, keyBase: string): React.ReactNode[] {
+  function keywordNodes(chunk: string, keyBase: string): React.ReactNode[] {
     if (!keywords) return [chunk]
     const parts = chunk.split(SPEC_KEYWORD)
     return parts.map((part, index) =>
@@ -255,6 +255,22 @@ export function RichText({
         </span>
       ) : (
         <React.Fragment key={`${keyBase}-kw-${index}`}>{part}</React.Fragment>
+      ),
+    )
+  }
+
+  // `**bold**` is the one markdown feature board prose carries (the bold-lead
+  // form); anything richer stays out of the pipeline deliberately.
+  function plainNodes(chunk: string, keyBase: string): React.ReactNode[] {
+    const segments = chunk.split(/(\*\*[^*]+\*\*)/)
+    if (segments.length === 1) return keywordNodes(chunk, keyBase)
+    return segments.flatMap((segment, index) =>
+      segment.startsWith("**") && segment.endsWith("**") ? (
+        <strong key={`${keyBase}-b-${index}`} className="font-semibold text-foreground">
+          {keywordNodes(segment.slice(2, -2), `${keyBase}-b-${index}`)}
+        </strong>
+      ) : (
+        keywordNodes(segment, `${keyBase}-${index}`)
       ),
     )
   }
