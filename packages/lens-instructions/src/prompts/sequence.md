@@ -24,7 +24,10 @@ end of a section the reader should be able to predict why the next one exists.
   reader skimming only the steps should still see the change's architecture.
 - Give every section a one-line gist for its folded state, with honest counts
   ("6 changes", "2 findings referenced"). The gist is what the reader sees when
-  they roll the section up, so it must summarize, not tease.
+  they roll the section up, so it must summarize, not tease. Counts name
+  domain objects (steps, findings, decisions, requirements), never element
+  kinds — "1 prose · 2 code" tells the reader nothing; omit counts entirely
+  before writing that.
 
 ## Coverage
 

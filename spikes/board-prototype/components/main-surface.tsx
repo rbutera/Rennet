@@ -184,7 +184,7 @@ export function MainSurface({
         <DiffView />
       ) : view?.board ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <LensBoardView board={view.board} />
+          <LensBoardView board={view.board} foldAll={view.lens !== "flagged"} />
         </div>
       ) : null}
     </div>

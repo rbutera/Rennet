@@ -29,7 +29,6 @@ export const sequenceBoard: LensBoard = {
       id: "record-shape",
       title: "The shape of an observation, secret-free by construction",
       gist: "`RefreshLogRecord` is the type every refresh observation takes; no field on it can hold a credential.",
-      counts: "1 prose · 1 code",
       elements: [
         {
           kind: "prose",
@@ -60,7 +59,6 @@ export interface RefreshLogRecord {
       id: "token-kind",
       title: "The one non-secret detail, kept safe by a closed allowlist",
       gist: "`tokenKind` returns only an allowlisted prefix or the fixed `\"token\"`, never a slice of the credential body.",
-      counts: "1 prose · 1 code · 1 annotation",
       elements: [
         {
           kind: "prose",
@@ -107,7 +105,6 @@ export function tokenKind(token: string): string {
       id: "emit-and-observe",
       title: "Emit at every outcome, and refuse to retry the network case",
       gist: "`refreshAndPersist` logs `attempt`, then `declined`, `network`, or `persisted`; the network branch only observes and propagates, no retry.",
-      counts: "1 prose · 1 code · 1 callout",
       elements: [
         {
           kind: "prose",
@@ -154,7 +151,6 @@ export function tokenKind(token: string): string {
       id: "daemon-sink",
       title: "Wire the sink at the composition boundary",
       gist: "`create-server` binds one `log` that serializes each secret-free record to a single `[github-auth]` line on the daemon's stdout.",
-      counts: "1 prose · 1 code",
       elements: [
         {
           kind: "prose",
@@ -185,7 +181,6 @@ export function tokenKind(token: string): string {
       id: "tests",
       title: "Tests pin the exact record sequences",
       gist: "The network test pins the `[attempt, network]` sequence and asserts `refresh()` is called exactly once, the machine-checkable no-retry guarantee.",
-      counts: "1 prose · 1 code",
       elements: [
         {
           kind: "prose",

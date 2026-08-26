@@ -25,9 +25,12 @@ import { useCodeComments } from "@/components/code-comments"
 export function LensBoardView({
   board,
   initiallyFolded = [],
+  foldAll = false,
 }: {
   board: LensBoard
   initiallyFolded?: string[]
+  /** Start every section folded (all lenses except Flagged — R44). */
+  foldAll?: boolean
 }) {
   return (
     <ProseSelectionLayer>
@@ -46,7 +49,11 @@ export function LensBoardView({
         />
       )}
       {board.sections.map((section) => (
-        <Section key={section.id} section={section} initiallyFolded={initiallyFolded.includes(section.id)} />
+        <Section
+          key={section.id}
+          section={section}
+          initiallyFolded={foldAll || initiallyFolded.includes(section.id)}
+        />
       ))}
     </div>
     </ProseSelectionLayer>
@@ -85,10 +92,14 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
         <button
           type="button"
           onClick={() => setFolded(false)}
-          className="-mt-1 pl-5 text-left text-[14px] leading-relaxed text-muted-foreground transition-colors hover:text-foreground/80"
+          className="-mt-1 flex flex-col items-start gap-0.5 pl-5 text-left transition-colors hover:text-foreground/80"
         >
-          <InlineCode text={section.gist} />
-          {section.counts ? <span className="text-muted-foreground/60"> · {section.counts}</span> : null}
+          <span className="text-[14px] leading-relaxed text-muted-foreground">
+            <InlineCode text={section.gist} />
+          </span>
+          {section.counts ? (
+            <span className="text-[12px] text-muted-foreground/60">{section.counts}</span>
+          ) : null}
         </button>
       ) : (
         <div className="flex flex-col gap-6 pl-5">
