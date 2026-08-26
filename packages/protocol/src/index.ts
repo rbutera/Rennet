@@ -229,7 +229,7 @@ export const reviewSchema = z.object({
 // The engine produces canvases from the durable log; this schema validates the
 // live canvas set delivered to the renderer over `review.canvases`. It is a full,
 // failing-capable schema (not a passthrough) so the IPC output surface has a real
-// positive control, mirroring the `Canvas` shape in `@rennet/types`.
+// positive control for the local `Canvas` shape.
 
 const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "noise", "flagged"]);
 
@@ -1766,9 +1766,8 @@ export type ProjectVisibility = z.infer<typeof projectVisibilitySchema>;
 
 /**
  * A project's execution locus on the wire (add-windows-support): the host OS, or a
- * named WSL distro. Structurally identical to the `Locus` type in `@rennet/types`
- * that the execution seam uses; kept as a schema here because `protocol` may not
- * import `core`.
+ * named WSL distro. The wire form of the execution seam's `Locus`; protocol is
+ * its source of truth and infers the `Locus` type from this schema below.
  */
 export const locusSchema = z.union([
   z.object({ kind: z.literal("host") }),
@@ -2000,7 +1999,7 @@ export const settingsGuidanceSchema = z.object({
 export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
 
 // ── The review→agent handoff loop schemas (issue #18) ──────────────────────────
-// Mirror the `@rennet/types` wire shapes. The OUTPUT schemas are annotated
+// The review->agent handoff wire shapes. The OUTPUT schemas are annotated
 // `z.ZodType<T>` so a field added to a type that is NOT added here fails the build
 // (the IPC-strip guard: an optional field silently dropped at the boundary is the
 // recurring #242 defect). The disposition INPUT schema is a plain object so its
@@ -2119,7 +2118,7 @@ export const pairedDeviceSchema = z.object({
 });
 export type PairedDevice = z.infer<typeof pairedDeviceSchema>;
 
-// ── Wire-schema types (protocol is the source of truth; formerly @rennet/types) ──
+// ── Wire-schema types (protocol is the source of truth) ────────────────────────
 // Each type is INFERRED from its Zod schema above, so the schema cannot drift from
 // the type it validates. JSDoc carried from the former hand-written declarations.
 export type RepositoryProvenance = z.infer<typeof repositoryProvenanceSchema>;

@@ -390,7 +390,7 @@ describe("resolveAnchor — the total function with four outcomes", () => {
 
 // ── The carry authority across ALL seven lineage classes (issue #16 Critical 2) ─
 // `carriesState` is the BINDING gate the disposition seam shares via the single
-// `autoCarries` authority in `@rennet/types`. Only `exact` may carry; every other
+// `autoCarries` authority. Only `exact` may carry; every other
 // mapped class supersedes (re-anchors) or orphans WITHOUT carrying state. Before
 // the fix, resolveAnchor returned carriesState:true for every targeted non-ambiguous
 // class — one-to-one/move/split/merge all carried read state onto changed code.

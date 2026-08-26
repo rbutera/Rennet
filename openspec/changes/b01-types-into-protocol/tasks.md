@@ -25,7 +25,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 ## 4. Delete packages/types and rewrite the boundary law
 
-- [ ] 4.1 Confirm zero remaining `@rennet/types` references in workspace source (`packages/`, `apps/`, `scripts/` — excluding `scripts/check-boundaries.mjs`'s own map, handled next), then delete `packages/types` entirely.
+- [x] 4.1 Confirm zero remaining `@rennet/types` references in workspace source (`packages/`, `apps/`, `scripts/` — excluding `scripts/check-boundaries.mjs`'s own map, handled next), then delete `packages/types` entirely.
 - [ ] 4.2 Rewrite the law in both enforcers: remove the `@rennet/types` entry and every `@rennet/types` reference from `scripts/check-boundaries.mjs`; remove `layer:types` from every depConstraint in `eslint.config.mjs`. Final edges: `protocol` imports no Rennet package; `instructions` → `protocol`; `core` → `{protocol, instructions}`; `adapters` → `{protocol, instructions, core}`; `server` → `{protocol, instructions, core, adapters}`; `client` → `protocol`; `ui` → `{protocol, theme}`; `app-ui` → `{protocol, theme, ui}`.
 - [ ] 4.3 Rewrite the CLAUDE.md "Package boundaries" paragraph to the same law (also drop the `packages/types` clause from the "imports no Rennet package" sentence — that now names `protocol` and `theme`).
 - [ ] 4.4 Sweep for stragglers: `pnpm-workspace.yaml`, `tsconfig.base.json`, Nx project references, lockfile (`sh -c 'pnpm install'` after the deletion). Commit.
