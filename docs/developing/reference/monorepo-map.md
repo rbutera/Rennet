@@ -29,7 +29,7 @@ check rejects missing or misnamed rows here.
 | `rennet-adapters` | `@rennet/adapters` | `packages/adapters` | Git, GitHub, filesystem, persistence, and harness integrations | types, protocol, instructions, core |
 | `rennet-server` | `@rennet/server` | `packages/server` | Daemon composition, command dispatch, and network transport | types, protocol, instructions, core, adapters |
 | `rennet-client` | `@rennet/client` | `packages/client` | Browser-safe connection and session runtime | types, protocol |
-| `rennet-ui` | `@rennet/ui` | `packages/ui` | Vendored shadcn/Base UI component kit | types, theme |
+| `rennet-ui` | `@rennet/ui` | `packages/ui` | Vendored shadcn/Base UI component kit | protocol, theme |
 | `rennet-app-ui` | `@rennet/app-ui` | `packages/app-ui` | Rennet's composites and review-interface screens | types, protocol, theme, ui |
 
 The root `rennet` Nx project owns workspace-wide checks. The content-only
