@@ -106,6 +106,13 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Related-context dossier**: the bounded, structured collection of material related to a change — referenced issue-tracker tickets, the PR description and comments, one-hop links — retrieved per patchset generation and handed verbatim to the review agents as part of their delta context. Items carry id, provenance, and freshness; agents cite them by id.
   _Avoid_: Ticket context, linked issues (as a mechanism name)
 
+## Commands
+
+- **Command**: one entry in the app's command registry — a named operation with typed arguments and a label, declared once and exposed selectively to the sidebar, the command menu, and the orchestrator. The one vocabulary of things Rennet can be told to do.
+  _Avoid_: action (as the registry term)
+- **App tools**: the commands exposed to the orchestrator as tools, letting it drive Rennet itself from the conversation. Distinct from the whiteboard authoring tools, which author board content.
+  _Avoid_: app-control tools
+
 ## Settings
 
 - **Settings ladder**: the precedence order a setting resolves through — builtin, detected, global, repo. The highest layer offering a value is effective, and every contribution stays visible as provenance.
