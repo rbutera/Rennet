@@ -10,8 +10,29 @@ function splitWords(text: string): string[] {
  * per-word delay. All words mount at once and animate via CSS `animation-delay`,
  * so there's a single continuous reveal across paragraph breaks with no re-renders.
  */
-export function StreamingProse({ paragraphs, className }: { paragraphs: string[]; className?: string }) {
+export function StreamingProse({
+  paragraphs,
+  className,
+  animate = true,
+}: {
+  paragraphs: string[]
+  className?: string
+  /** false renders instantly — historical turns replay as records, never as arrivals. */
+  animate?: boolean
+}) {
   let wordIndex = 0
+
+  if (!animate) {
+    return (
+      <div className={className}>
+        {paragraphs.map((paragraph, pIndex) => (
+          <p key={pIndex} className={pIndex > 0 ? "mt-3" : undefined}>
+            {paragraph}
+          </p>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div className={className}>

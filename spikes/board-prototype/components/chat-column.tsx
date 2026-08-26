@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { PanelRight } from "lucide-react"
 import { LocationTrail } from "@/components/location-trail"
 import { ConversationPane } from "@/components/conversation-pane"
@@ -28,9 +28,14 @@ export function ChatColumn({
   session: SessionItem
 }) {
   const [turns, setTurns] = useState<TurnData[]>(transcript)
+  // Turns appended after mount animate in; everything else is a record.
+  const liveIds = useRef(new Set<string>())
 
   // A scenario switch replaces the whole conversation record.
-  useEffect(() => setTurns(transcript), [transcript])
+  useEffect(() => {
+    liveIds.current = new Set()
+    setTurns(transcript)
+  }, [transcript])
   const [exchangeIndex, setExchangeIndex] = useState(0)
   const [imageBadges, setImageBadges] = useState<ComposerBadge[]>([])
   const store = useCodeComments()
@@ -62,12 +67,14 @@ export function ChatColumn({
       id: `user-${now}`,
       paragraphs: [message],
     }
+    liveIds.current.add(userTurn.id)
     setTurns((prev) => [...prev, userTurn])
     setExchangeIndex((i) => Math.min(i + 1, followUpExchanges.length - 1))
     setImageBadges([])
     store?.clear()
 
     setTimeout(() => {
+      liveIds.current.add(`orchestrator-${now}`)
       setTurns((prev) => [...prev, { ...nextExchange.orchestrator, id: `orchestrator-${now}` }])
     }, 700)
   }
@@ -116,7 +123,12 @@ export function ChatColumn({
           <PanelRight className="size-3.5" aria-hidden="true" />
         </button>
       </header>
-      <ConversationPane turns={turns} comments={comments} onCommentChange={handleCommentChange} />
+      <ConversationPane
+        turns={turns}
+        comments={comments}
+        onCommentChange={handleCommentChange}
+        liveIds={liveIds.current}
+      />
       <InputBar
         onSend={handleSend}
         prefillMessage={nextExchange.user.paragraphs[0]}

@@ -10,10 +10,13 @@ export function Turn({
   turn,
   comments,
   onCommentChange,
+  animate = false,
 }: {
   turn: TurnData
   comments?: Record<string, Record<number, string>>
   onCommentChange?: (path: string, line: number, text: string | null) => void
+  /** true only for turns arriving live; historical turns render as records. */
+  animate?: boolean
 }) {
   const isUser = turn.speaker === "user"
   // `turn` is keyed by turn.id in the parent list, so this component remounts
@@ -39,6 +42,7 @@ export function Turn({
     <div className="flex flex-col gap-1.5">
       {turn.lead && (
         <StreamingProse
+          animate={animate}
           paragraphs={[turn.lead]}
           className="max-w-[640px] font-prose text-[15px] leading-relaxed text-foreground/90"
         />
@@ -50,6 +54,7 @@ export function Turn({
             block.kind === "text" ? (
               <StreamingProse
                 key={index}
+                animate={animate}
                 paragraphs={[block.text]}
                 className="font-prose text-[15px] leading-relaxed text-foreground/90"
               />
@@ -72,6 +77,7 @@ export function Turn({
       )}
       {prefaceDone && !turn.body && (
         <StreamingProse
+          animate={animate}
           paragraphs={turn.paragraphs}
           className="max-w-[640px] font-prose text-[15px] leading-relaxed text-foreground/90"
         />
