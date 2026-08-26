@@ -91,7 +91,7 @@ function Section({ section, initiallyFolded }: { section: BoardSection; initiall
           {section.counts ? <span className="text-muted-foreground/60"> · {section.counts}</span> : null}
         </button>
       ) : (
-        <div className="flex flex-col gap-5 pl-5">
+        <div className="flex flex-col gap-6 pl-5">
           {section.elements.map((element, index) => (
             <Element key={index} element={element} />
           ))}
@@ -326,7 +326,7 @@ function Element({ element }: { element: BoardElement }) {
           </div>
           <RichText text={element.body} paragraphClassName="text-[13.5px] leading-relaxed text-foreground/90" />
           {element.details?.map((detail) => (
-            <div key={detail.heading} className="flex flex-col gap-1.5">
+            <div key={detail.heading} className="mt-2 flex flex-col gap-1.5">
               <h4 className="text-[14px] font-semibold text-foreground">
                 <InlineCode text={detail.heading} />
               </h4>
@@ -539,7 +539,7 @@ function FixCallout({
   }
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
+    <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
       <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fix</span>
       <RichText text={fix} paragraphClassName="text-[13px] leading-relaxed text-foreground/90" />
       <div className="flex items-center gap-1.5 pt-0.5">

@@ -125,6 +125,8 @@ The wordmark is vector artwork. Do not recreate it with a font.
 
 Display headings can reach `6rem` with a line height near `1`. Keep letter spacing at `-0.04em` or looser. Keep long prose lines between 45 and 75 characters where the layout permits.
 
+**Content rhythm.** Vertical space encodes hierarchy on every content surface (lens boards, hand-off lanes, summaries): 8px between lines within a block, 16px at a sub-block boundary inside one item (a detail subhead, a fix callout), 24px between sibling items (findings, decisions, requirements), 32px between sections. A reader should be able to find item boundaries from the whitespace alone; if two adjacent gaps are equal across a hierarchy level, one of them is wrong.
+
 ### Desktop type scale
 
 Desktop components use `11 / 12 / 14 / 16 / 18 / 20 / 24` px, plus `text-display` at `clamp(2.125rem, 5vw, 3.5rem)`. Source code expresses the scale in `rem` through Tailwind utilities.
