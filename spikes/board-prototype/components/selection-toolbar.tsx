@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { GitPullRequestArrow, MessageSquare, Pencil, Sparkles, Trash2 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { useCodeComments } from "@/components/code-comments"
 import { EXPLAIN_OPENER, nextCannedReply } from "@/lib/quote-thread-demo"
 
@@ -29,7 +30,12 @@ export function ProseSelectionLayer({
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const panelRef = React.useRef<HTMLDivElement>(null)
-  const [anchor, setAnchor] = React.useState<{ top: number; left: number; quote: string } | null>(null)
+  const [anchor, setAnchor] = React.useState<{
+    top: number
+    left: number
+    quote: string
+    placement: "above" | "below"
+  } | null>(null)
   const [mode, setMode] = React.useState<"toolbar" | "comment" | "comment-rc" | "revise" | "explain">("toolbar")
   const [draft, setDraft] = React.useState("")
   const [explanation, setExplanation] = React.useState("")
@@ -62,11 +68,15 @@ export function ProseSelectionLayer({
       }
       const rect = range.getBoundingClientRect()
       const wrapRect = containerRef.current.getBoundingClientRect()
+      // Flip below when the selection sits too close to the viewport top for
+      // the tallest panel mode (the comment/revise editor), so nothing clips.
+      const placement: "above" | "below" = rect.top < 240 ? "below" : "above"
       setMode("toolbar")
       setAnchor({
-        top: rect.top - wrapRect.top,
+        top: (placement === "below" ? rect.bottom : rect.top) - wrapRect.top,
         left: rect.left - wrapRect.left + rect.width / 2,
         quote: text,
+        placement,
       })
     }
 
@@ -133,8 +143,14 @@ export function ProseSelectionLayer({
       {anchor && (
         <div
           ref={panelRef}
-          className="absolute z-50 -translate-x-1/2 -translate-y-full"
-          style={{ top: anchor.top - 8, left: anchor.left }}
+          className={cn(
+            "absolute z-50 -translate-x-1/2",
+            anchor.placement === "above" && "-translate-y-full",
+          )}
+          style={{
+            top: anchor.placement === "above" ? anchor.top - 8 : anchor.top + 8,
+            left: anchor.left,
+          }}
         >
           {mode === "toolbar" ? (
             <div className="flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-md">
