@@ -1,5 +1,5 @@
-import type { FindingElement, ReviewHypothesis } from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import type { FindingElement, ReviewHypothesis } from "./index";
 import { parseCommandOutput } from "./index";
 
 /**

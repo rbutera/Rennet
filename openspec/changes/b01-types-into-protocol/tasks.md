@@ -4,10 +4,10 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 ## 1. Protocol becomes the source of truth
 
-- [ ] 1.1 In `packages/protocol/src/index.ts`, rewrite the 69 `objectSchemaFor<T>()({...})` call sites to plain `z.object({...})` and export their types as `export type T = z.infer<typeof tSchema>`, carrying each type's JSDoc from `packages/types/src/index.ts` onto the schema or inferred type. Delete the `objectSchemaFor` helper (and its doc block).
-- [ ] 1.2 Move every `packages/types` export with no schema counterpart into `protocol` verbatim (hand-written `type`/`interface` declarations, unions like `Locus`/`PatchsetSource`, and the 11 runtime value exports: `DIFF_TRUNCATION_MARKER`, `AUTO_CARRY_LINEAGES`, `autoCarries`, `CANVAS_ANGLES`, `MAX_UI_EVIDENCE_BYTES`, `MAX_UI_SCREENSHOTS_PER_RUN`, `MAX_UI_EVIDENCE_DATA_URL_LENGTH`, `R10_BUDGET_EXHAUSTED`, `PROJECT_SNAPSHOT_SCHEMA_VERSION`, `SNAPSHOT_OVERLAY_SCHEMA_VERSION`, `KNOWLEDGE_SCHEMA_VERSION`), JSDoc intact. Everything `@rennet/types` exported must now be exported by `@rennet/protocol`.
-- [ ] 1.3 Remove the `@rennet/types` imports from all 17 protocol source files (`index.ts`, `bodies.ts`, `rsp.ts`, `session.ts`, tests, …) in favor of the now-local declarations; drop `@rennet/types` from `packages/protocol/package.json`. Leave `packages/types` itself untouched.
-- [ ] 1.4 `sh -c 'pnpm nx run-many -t typecheck,test -p rennet-protocol rennet-types'` green. Commit.
+- [x] 1.1 In `packages/protocol/src/index.ts`, rewrite the 69 `objectSchemaFor<T>()({...})` call sites to plain `z.object({...})` and export their types as `export type T = z.infer<typeof tSchema>`, carrying each type's JSDoc from `packages/types/src/index.ts` onto the schema or inferred type. Delete the `objectSchemaFor` helper (and its doc block).
+- [x] 1.2 Move every `packages/types` export with no schema counterpart into `protocol` verbatim (hand-written `type`/`interface` declarations, unions like `Locus`/`PatchsetSource`, and the 11 runtime value exports: `DIFF_TRUNCATION_MARKER`, `AUTO_CARRY_LINEAGES`, `autoCarries`, `CANVAS_ANGLES`, `MAX_UI_EVIDENCE_BYTES`, `MAX_UI_SCREENSHOTS_PER_RUN`, `MAX_UI_EVIDENCE_DATA_URL_LENGTH`, `R10_BUDGET_EXHAUSTED`, `PROJECT_SNAPSHOT_SCHEMA_VERSION`, `SNAPSHOT_OVERLAY_SCHEMA_VERSION`, `KNOWLEDGE_SCHEMA_VERSION`), JSDoc intact. Everything `@rennet/types` exported must now be exported by `@rennet/protocol`.
+- [x] 1.3 Remove the `@rennet/types` imports from all 17 protocol source files (`index.ts`, `bodies.ts`, `rsp.ts`, `session.ts`, tests, …) in favor of the now-local declarations; drop `@rennet/types` from `packages/protocol/package.json`. Leave `packages/types` itself untouched.
+- [x] 1.4 `sh -c 'pnpm nx run-many -t typecheck,test -p rennet-protocol rennet-types'` green. Commit.
 
 ## 2. Re-point the engine side (core, instructions, adapters, server)
 

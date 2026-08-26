@@ -1,5 +1,5 @@
-import type { FindingElement } from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import type { FindingElement } from "./index";
 import { parseCommandOutput } from "./index";
 
 function disagree(overrides: Partial<FindingElement> = {}): FindingElement {

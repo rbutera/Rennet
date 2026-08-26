@@ -1,5 +1,5 @@
-import type { OfferedManifest, ParsedAnchor, PatchsetRef } from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import type { OfferedManifest, ParsedAnchor, PatchsetRef } from "./index";
 import {
   canonicalize,
   computeInputDigest,

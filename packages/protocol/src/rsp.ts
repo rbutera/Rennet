@@ -15,11 +15,12 @@
  * digestibility, not the product's purpose.
  */
 
+import { z } from "zod";
+import { validateBodyRules } from "./bodies";
 import type {
   AdmissionKind,
   AnchorKind,
   AnchorSide,
-  AnchorSpan,
   OfferedManifest,
   ParsedAnchor,
   PatchsetRef,
@@ -31,10 +32,9 @@ import type {
   SizeLimits,
   ValidationError,
   ValidationReport,
-} from "@rennet/types";
-import { autoCarries } from "@rennet/types";
-import { z } from "zod";
-import { validateBodyRules } from "./bodies";
+} from "./domain";
+import { autoCarries } from "./domain";
+import type { AnchorSpan } from "./index";
 import { sha256Hex } from "./sha256";
 
 // ── Constants ────────────────────────────────────────────────────────────────
