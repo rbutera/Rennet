@@ -118,7 +118,7 @@ export function NewChatView({
         </button>
         <span className="text-[13px] text-muted-foreground">{project.name}</span>
         <span className="text-[13px] text-muted-foreground/50">›</span>
-        <span className="text-[13px] font-medium text-foreground">New chat</span>
+        <span className="text-[13px] font-medium text-foreground">New Chat</span>
         <span className="ml-auto flex items-center gap-2">
           <button
             type="button"
@@ -265,7 +265,7 @@ function CheckoutRow({ selected, onSelect }: { selected: boolean; onSelect: () =
       )}
     >
       <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="text-[13px] font-medium text-foreground">Current checkout</span>
+      <span className="text-[13px] font-medium text-foreground">Current Checkout</span>
       <span className="font-mono text-[12px] text-muted-foreground">main</span>
       <span className="ml-auto text-[11px] text-muted-foreground/50">no target — talk about the project</span>
       <SelectionMark selected={selected} />

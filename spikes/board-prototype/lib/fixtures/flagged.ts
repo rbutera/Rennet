@@ -62,7 +62,7 @@ export const flaggedBoard: LensBoard = {
     },
     {
       id: "flagged-cleared",
-      title: "Checked and cleared",
+      title: "Checked and Cleared",
       startFolded: true,
       gist: "Four concerns verified safe: the retry allowlist gap, secret-safety, log injection, the account lock.",
       counts: "4 checks",

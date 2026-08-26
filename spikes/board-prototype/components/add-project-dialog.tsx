@@ -57,7 +57,7 @@ export function AddProjectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg md:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Add project</DialogTitle>
+          <DialogTitle>Add Project</DialogTitle>
           <DialogDescription>Pick a source and a folder of repositories.</DialogDescription>
         </DialogHeader>
 
@@ -105,7 +105,7 @@ export function AddProjectDialog({
               className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-secondary sm:py-1.5"
             >
               <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              Add remote
+              Add Remote
             </button>
           </PopoverContent>
         </Popover>

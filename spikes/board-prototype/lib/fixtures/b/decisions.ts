@@ -60,7 +60,7 @@ export const decisionsBoardB: LensBoard = {
   sections: [
     {
       id: "delivery",
-      title: "Delivery & path discipline",
+      title: "Delivery & Path Discipline",
       badge: "added",
       gist: "Where the bundle lives inside the distro, how it gets there, and how the runtime parses noisy shell output.",
       counts: "3 decisions · 2 with code tabs",
@@ -185,7 +185,7 @@ export function lastAbsolutePathLine(raw: string): string | null {
     },
     {
       id: "lifecycle",
-      title: "Health & spawn",
+      title: "Health & Spawn",
       badge: "added",
       gist: "How the runtime decides the daemon's health, launches it, and sequences a version-skew restart.",
       counts: "4 decisions · 2 with code tabs",
@@ -371,7 +371,7 @@ export async function readWslDaemonPort(
     },
     {
       id: "composition",
-      title: "Routing & composition",
+      title: "Routing & Composition",
       badge: "added",
       gist: "How the WSL runtime reuses the host supervisor shape, routes a project to its distro daemon, and stays effect-injected.",
       counts: "4 decisions · 2 with code tabs",

@@ -65,7 +65,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 
-const HELP_ITEMS = ["Documentation", "Keyboard shortcuts", "Report an issue"]
+const HELP_ITEMS = ["Documentation", "Keyboard Shortcuts", "Report an Issue"]
 
 function UpdateDialog({ trigger }: { trigger: React.ReactElement }) {
   return (
@@ -73,7 +73,7 @@ function UpdateDialog({ trigger }: { trigger: React.ReactElement }) {
       <DialogTrigger render={trigger} />
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Update available</DialogTitle>
+          <DialogTitle>Update Available</DialogTitle>
           <DialogDescription>
             A new version of Rennet is ready to install. Restart the app to apply it.
           </DialogDescription>
@@ -85,7 +85,7 @@ function UpdateDialog({ trigger }: { trigger: React.ReactElement }) {
         </ul>
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Later</DialogClose>
-          <DialogClose render={<Button />}>Update now</DialogClose>
+          <DialogClose render={<Button />}>Update Now</DialogClose>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -117,7 +117,7 @@ function HelpPopover({
               type="button"
               onClick={() => {
                 // Keyboard shortcuts live in the settings keybindings section (#476).
-                if (label === "Keyboard shortcuts") {
+                if (label === "Keyboard Shortcuts") {
                   setOpen(false)
                   onOpenSettings()
                 }
@@ -310,7 +310,7 @@ function NewChatPicker({
                 }}
               >
                 <FolderPlus className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                <span>New project</span>
+                <span>New Project</span>
               </CommandItem>
             </CommandGroup>
           </CommandList>
@@ -411,8 +411,8 @@ export function AppSidebar({
             trigger={
               <button
                 type="button"
-                aria-label="New chat"
-                title="New chat"
+                aria-label="New Chat"
+                title="New Chat"
                 className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               >
                 <MessageSquarePlus className="size-4" aria-hidden="true" />
@@ -425,8 +425,8 @@ export function AppSidebar({
             trigger={
               <button
                 type="button"
-                aria-label="Update available"
-                title="Update available"
+                aria-label="Update Available"
+                title="Update Available"
                 className="flex size-7 items-center justify-center rounded-md bg-update text-update-foreground transition-colors hover:bg-update/90"
               >
                 <RefreshCw className="size-4" aria-hidden="true" />
@@ -497,7 +497,7 @@ export function AppSidebar({
               className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-foreground/90 transition-colors hover:bg-secondary"
             >
               <MessageSquarePlus className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span>New chat</span>
+              <span>New Chat</span>
             </button>
           }
         />
@@ -507,7 +507,7 @@ export function AppSidebar({
           className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <FolderPlus className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>Add project</span>
+          <span>Add Project</span>
         </button>
         <button
           type="button"
@@ -515,7 +515,7 @@ export function AppSidebar({
           className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <Plus className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>Add remote</span>
+          <span>Add Remote</span>
         </button>
       </div>
 
@@ -645,7 +645,7 @@ export function AppSidebar({
                             className="size-3 shrink-0 transition-transform duration-200 group-hover/newchat:rotate-90"
                             aria-hidden="true"
                           />
-                          <span>New chat</span>
+                          <span>New Chat</span>
                         </button>
                       </div>
                     </Collapse>
@@ -653,7 +653,7 @@ export function AppSidebar({
                   <ContextMenuContent>
                     <ContextMenuItem onClick={() => onOpenMap(project.id)}>
                       <MapIcon aria-hidden="true" />
-                      View context map
+                      View Context Map
                     </ContextMenuItem>
                     <ContextMenuItem onClick={() => beginRename(project)}>
                       <Pencil aria-hidden="true" />
@@ -661,7 +661,7 @@ export function AppSidebar({
                     </ContextMenuItem>
                     <ContextMenuItem onClick={() => onOpenProjectSettings(project.id)}>
                       <Settings2 aria-hidden="true" />
-                      Project settings
+                      Project Settings
                     </ContextMenuItem>
                     <ContextMenuSeparator />
                     <ContextMenuItem variant="destructive" onClick={() => setRemoveTarget(project)}>
@@ -748,7 +748,7 @@ export function AppSidebar({
                 setRemoveTarget(null)
               }}
             >
-              Remove project
+              Remove Project
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -48,6 +48,13 @@ which identifiers the draft names is not.
 
 ## Step 2 — unslop
 
+One house override to the skill below: its rule 17 (sentence-case headings)
+governs prose and documents, not board structure. **Structural headers —
+section titles and short label-like headers — use title case.** A code token
+in a header keeps its exact casing (`wsl.exe` never becomes `Wsl.exe`), and a
+header that is a sentence (a finding claim, a decision statement) stays a
+sentence.
+
 The rules below are the unslop skill, copied verbatim.
 
 ---

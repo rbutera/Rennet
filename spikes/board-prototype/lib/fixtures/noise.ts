@@ -56,7 +56,7 @@ export const noiseBoard: LensBoard = {
   sections: [
     {
       id: "mechanical",
-      title: "Mechanical & generated churn",
+      title: "Mechanical & Generated Churn",
       gist: "A barrel and an import that echo the two new symbols, plus the generated scaffold stamp.",
       counts: "2 groups · 3 hunks · judged by rule",
       elements: [

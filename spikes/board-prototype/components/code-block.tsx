@@ -96,7 +96,7 @@ export function LineCommentEditor({
       <div className="mb-1.5 flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
           <MessageSquare className="size-3 text-muted-foreground" aria-hidden="true" />
-          Local comment
+          Local Comment
         </span>
         <span className="shrink-0 text-[11px] text-muted-foreground">Comment on line {lineLabel}</span>
       </div>

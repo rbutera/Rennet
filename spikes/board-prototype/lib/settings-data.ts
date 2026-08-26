@@ -12,10 +12,10 @@ export interface KeyCommand {
 /** Client-settings: keybinding overrides live in ~/.rennet/client-settings.json. */
 export const keyCommands: KeyCommand[] = [
   { id: "search", label: "Search", keys: "⌘P" },
-  { id: "commands", label: "Command menu", keys: "⌘K" },
-  { id: "new-chat", label: "New chat", keys: "⌘N" },
-  { id: "toggle-sidebar", label: "Toggle sidebar", keys: "⌘B" },
-  { id: "toggle-chat", label: "Toggle chat", keys: "⌘J" },
+  { id: "commands", label: "Command Menu", keys: "⌘K" },
+  { id: "new-chat", label: "New Chat", keys: "⌘N" },
+  { id: "toggle-sidebar", label: "Toggle Sidebar", keys: "⌘B" },
+  { id: "toggle-chat", label: "Toggle Chat", keys: "⌘J" },
   { id: "settings", label: "Settings", keys: "⌘," },
 ]
 

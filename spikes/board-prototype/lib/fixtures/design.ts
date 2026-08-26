@@ -16,7 +16,7 @@ export const designBoard: LensBoard = {
   sections: [
     {
       id: "change",
-      title: "The change",
+      title: "The Change",
       gist: "observe-github-token-refresh · 2 new capabilities · 1 modified · tasks 11/13.",
       elements: [
         {
@@ -289,7 +289,7 @@ expect(refresh).toHaveBeenCalledTimes(1);`,
     },
     {
       id: "field-proof",
-      title: "github-auth · field proof (lancelot)",
+      title: "github-auth · Field Proof (lancelot)",
       badge: "modified",
       source: "specs/github-auth/spec.md",
       gist: "Watch a live refresh succeed and rotate, deferred to a manual run against the real account.",

@@ -11,7 +11,7 @@ const STATUS: Record<SummaryItem["status"], { label: string; icon: typeof Check;
   addressed: { label: "Addressed", icon: Check, tint: "text-green" },
   partial: { label: "Partial", icon: CircleDashed, tint: "text-warn" },
   untouched: { label: "Untouched", icon: Minus, tint: "text-muted-foreground" },
-  beyond: { label: "Beyond the asks", icon: Sparkles, tint: "text-model" },
+  beyond: { label: "Beyond the Asks", icon: Sparkles, tint: "text-model" },
 }
 
 /**
@@ -42,7 +42,7 @@ export function SuccessorSummary({ onDismiss }: { onDismiss: () => void }) {
         {feedOpen && (
           <div className="flex flex-col gap-3 px-8 pb-3 pl-[3.75rem]">
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Trigger queue</span>
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Trigger Queue</span>
               {round.triggers.map((trigger) => (
                 <span key={trigger} className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
                   <span aria-hidden="true" className="select-none text-muted-foreground/50">‣</span>
@@ -51,7 +51,7 @@ export function SuccessorSummary({ onDismiss }: { onDismiss: () => void }) {
               ))}
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Turn anatomy</span>
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Turn Anatomy</span>
               <span className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
                 <Sparkles className="size-3 shrink-0" aria-hidden="true" /> Read the successor account and re-anchored asks by quote match
               </span>

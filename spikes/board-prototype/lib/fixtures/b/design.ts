@@ -22,7 +22,7 @@ export const designBoardB: LensBoard = {
   sections: [
     {
       id: "change",
-      title: "The change",
+      title: "The Change",
       gist: "wsl-daemon-runtime · 1 new capability · 5 requirements · tasks 13/15.",
       elements: [
         {
@@ -148,7 +148,7 @@ export const designBoardB: LensBoard = {
     },
     {
       id: "req-delivery",
-      title: "wsl-daemon-runtime: bundle delivery",
+      title: "wsl-daemon-runtime: Bundle Delivery",
       badge: "added",
       source: "specs/wsl-daemon-runtime/spec.md",
       gist: "Deliver the versioned bundle into the distro's native fs once, run it from there, never over 9P.",
@@ -183,7 +183,7 @@ export const designBoardB: LensBoard = {
     },
     {
       id: "req-spawn",
-      title: "wsl-daemon-runtime: spawn via wsl.exe",
+      title: "wsl-daemon-runtime: Spawn via wsl.exe",
       badge: "added",
       source: "specs/wsl-daemon-runtime/spec.md",
       gist: "Resolve the distro's Node, spawn the byte-verbatim launch descriptor, surface a no-Node distro plainly.",
@@ -230,7 +230,7 @@ export const designBoardB: LensBoard = {
     },
     {
       id: "req-lifecycle",
-      title: "wsl-daemon-runtime: port-first health and lifecycle",
+      title: "wsl-daemon-runtime: Port-First Health and Lifecycle",
       badge: "added",
       source: "specs/wsl-daemon-runtime/spec.md",
       gist: "Health on the port over localhost; version-skew restart; stop by pid inside the distro.",
@@ -272,7 +272,7 @@ export const designBoardB: LensBoard = {
     },
     {
       id: "req-routing",
-      title: "wsl-daemon-runtime: locus routing",
+      title: "wsl-daemon-runtime: Locus Routing",
       badge: "added",
       startFolded: true,
       source: "specs/wsl-daemon-runtime/spec.md",
@@ -315,7 +315,7 @@ export const designBoardB: LensBoard = {
     },
     {
       id: "req-secret",
-      title: "wsl-daemon-runtime: distro-native credential store",
+      title: "wsl-daemon-runtime: Distro-Native Credential Store",
       badge: "added",
       startFolded: true,
       source: "specs/wsl-daemon-runtime/spec.md",

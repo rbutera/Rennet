@@ -236,7 +236,7 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
           ask.intent === "request-change" ? "bg-warn-soft text-warn" : "bg-secondary text-muted-foreground",
         )}
       >
-        {ask.intent === "request-change" ? "request change" : "comment"}
+        {ask.intent === "request-change" ? "Request Change" : "Comment"}
       </span>
     )
   }
@@ -350,7 +350,7 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
   const reviewBody = (
     <div className="flex flex-col gap-4">
       <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Review body
+        Review Body
       </span>
       {opener &&
         (openerStreaming ? (
@@ -432,7 +432,7 @@ function PostReviewLane({ prLabel = "PR #434" }: { prLabel?: string }) {
         {inlineAsks.length > 0 && (
           <div className="flex flex-col gap-3 border-t border-border/60 pt-4">
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Line comments · {inlineAsks.length}
+              Line Comments · {inlineAsks.length}
             </span>
             {[...inlineByFile.entries()].map(([path, fileAsks]) => (
               <div key={path} className="flex flex-col gap-2">

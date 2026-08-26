@@ -35,7 +35,7 @@ export const sequenceBoardB: LensBoard = {
   sections: [
     {
       id: "shell-parser",
-      title: "Lift a value out of a noisy WSL shell",
+      title: "Lift a Value Out of a Noisy WSL Shell",
       gist: "One shared parser strips shell control noise while keeping newlines, so every distro read that follows can trust a path lifted from multi-line output.",
       elements: [
         {
@@ -76,7 +76,7 @@ export const sequenceBoardB: LensBoard = {
     },
     {
       id: "bundle-delivery",
-      title: "Deliver the bundle into the distro's native filesystem",
+      title: "Deliver the Bundle Into the Distro's Native Filesystem",
       gist: "The daemon code is copied once per version into `~/.rennet/server/<version>/` inside the distro, verified present, and never run over 9P.",
       elements: [
         {
@@ -110,7 +110,7 @@ export const sequenceBoardB: LensBoard = {
     },
     {
       id: "port-first-lifecycle",
-      title: "Decide lifecycle on the port, never across 9P",
+      title: "Decide Lifecycle on the Port, Never Across 9P",
       gist: "The daemon spawns as a managed hidden child, one claim-file read learns its port, health comes from `localhost/healthz`, and stopping signals the pid inside the distro.",
       elements: [
         {
@@ -154,7 +154,7 @@ export const sequenceBoardB: LensBoard = {
     },
     {
       id: "ensure-orchestrator",
-      title: "Compose the pieces into one ensure-a-healthy-daemon call",
+      title: "Compose the Pieces Into One ensure-a-healthy-daemon Call",
       gist: "`ensureWslDaemon` resolves `$HOME`, returns a healthy same-version daemon as-is, and otherwise resolves Node, delivers, and launches; on version skew it stops the old daemon, waits for it to exit, respawns, and confirms the new version.",
       elements: [
         {
@@ -177,7 +177,7 @@ export const sequenceBoardB: LensBoard = {
     },
     {
       id: "locus-seam",
-      title: "Select host or distro by where the project lives",
+      title: "Select Host or Distro by Where the Project Lives",
       gist: "`ensureDaemonForProject` routes host-locus projects through today's path byte-identically and WSL-locus projects to `ensureWslDaemon`, folding concurrent opens on the same distro into one ensure.",
       elements: [
         {
@@ -207,7 +207,7 @@ export const sequenceBoardB: LensBoard = {
     },
     {
       id: "guarantees-pinned",
-      title: "The guarantees the tests make machine-checkable",
+      title: "The Guarantees the Tests Make Machine-Checkable",
       gist: "Tests pin the promises that carry the change: copy once and verify, an exactly-200 health check with a matching identity, a skew restart that stops before it spawns, and host routing that folds concurrent opens yet stays byte-identical.",
       elements: [
         {

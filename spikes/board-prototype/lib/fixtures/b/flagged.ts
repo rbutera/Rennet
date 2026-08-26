@@ -97,7 +97,7 @@ export const flaggedBoardB: LensBoard = {
     },
     {
       id: "b-flagged-cleared",
-      title: "Checked and cleared",
+      title: "Checked and Cleared",
       startFolded: true,
       gist: "Three bugs from earlier revisions, all fixed in the current tree, plus five concerns verified safe.",
       counts: "8 entries",

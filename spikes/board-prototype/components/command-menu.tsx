@@ -72,23 +72,23 @@ export function CommandMenu() {
         list.push({
           id: `project-map:${project.id}`,
           group: "Project",
-          title: `${project.name} — context map`,
+          title: `${project.name} — Context Map`,
           keywords: [project.name, project.repo, "map"],
           run: () => router.push(`/projects/${project.id}/map`),
         })
         list.push({
           id: `project-newchat:${project.id}`,
           group: "Project",
-          title: `New chat in ${project.name}`,
+          title: `New Chat in ${project.name}`,
           keywords: [project.name, project.repo, "new chat"],
           run: () => router.push(`/new-chat?project=${project.id}`),
         })
       }
     }
     for (const [id, title] of [
-      ["machine", "This machine"],
+      ["machine", "This Machine"],
       ["appearance", "Appearance"],
-      ["shortcuts", "Keyboard shortcuts"],
+      ["shortcuts", "Keyboard Shortcuts"],
       ["projects", "Projects"],
     ] as const) {
       list.push({
@@ -102,14 +102,14 @@ export function CommandMenu() {
     list.push({
       id: "action:add-project",
       group: "Actions",
-      title: "Add project",
+      title: "Add Project",
       keywords: ["add", "project"],
       run: () => useAppStore.getState().openAddProject(),
     })
     list.push({
       id: "action:add-remote",
       group: "Actions",
-      title: "Add remote",
+      title: "Add Remote",
       keywords: ["add", "remote", "host"],
       run: () => useAppStore.getState().setAddRemoteOpen(true),
     })
@@ -134,7 +134,7 @@ export function CommandMenu() {
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
-      title="Command menu"
+      title="Command Menu"
       description="Type a command to run it."
     >
       <CommandInput placeholder="Type a command…" aria-label="Search commands" />

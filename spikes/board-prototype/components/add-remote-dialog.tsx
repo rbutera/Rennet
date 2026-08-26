@@ -57,7 +57,7 @@ export function AddRemoteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Add remote</DialogTitle>
+          <DialogTitle>Add Remote</DialogTitle>
           <DialogDescription>
             Pair a machine so its projects show up here.
           </DialogDescription>
@@ -76,7 +76,7 @@ export function AddRemoteDialog({
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="remote-code">Pairing code</FieldLabel>
+              <FieldLabel htmlFor="remote-code">Pairing Code</FieldLabel>
               <Input
                 id="remote-code"
                 placeholder="one-time code"
@@ -111,7 +111,7 @@ export function AddRemoteDialog({
                   if (hostIdRef.current) onBrowseProjects(hostIdRef.current)
                 }}
               >
-                Browse its projects
+                Browse Its Projects
               </Button>
             </>
           ) : (

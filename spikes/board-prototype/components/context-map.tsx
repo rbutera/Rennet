@@ -107,7 +107,7 @@ export function ContextMapFullView({
         <span className="flex min-w-0 items-center gap-1.5 text-[13px]">
           <span className="shrink-0 font-medium text-foreground">{projectName}</span>
           <ChevronRight className="size-3 shrink-0 text-muted-foreground/50" aria-hidden="true" />
-          <span className="text-muted-foreground">Context map</span>
+          <span className="text-muted-foreground">Context Map</span>
         </span>
         <kbd className="ml-auto rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">
           esc
@@ -123,7 +123,7 @@ export function ContextMapFullView({
 export function MapBaseLine({ building }: { building?: boolean }) {
   return (
     <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-      <span className="text-[13px] font-medium text-foreground">Context map</span>
+      <span className="text-[13px] font-medium text-foreground">Context Map</span>
       <span className="truncate font-mono text-[11px] text-muted-foreground/70">
         {mapBase.repoKey} · {mapBase.ref} @ {mapBase.oid}
       </span>

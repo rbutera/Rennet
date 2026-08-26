@@ -181,7 +181,7 @@ function Element({ element }: { element: BoardElement }) {
       return (
         <div className={cn("grid gap-4", element.impact && "md:grid-cols-[3fr_2fr]")}>
           <div className="flex flex-col">
-            <SmallLabel>What changes</SmallLabel>
+            <SmallLabel>What Changes</SmallLabel>
             <div className="flex flex-col divide-y divide-border/60">
               {element.rows.map((row, index) => (
                 <div key={index} className="flex items-baseline gap-2.5 py-1.5">

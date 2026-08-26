@@ -77,9 +77,9 @@ export function SettingsView({
   const project = host.projects.find((p) => p.id === projectId) ?? host.projects[0]
 
   const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode }[] = [
-    { id: "machine", label: "This machine", icon: <Monitor className="size-3.5" aria-hidden="true" /> },
+    { id: "machine", label: "This Machine", icon: <Monitor className="size-3.5" aria-hidden="true" /> },
     { id: "appearance", label: "Appearance", icon: <Palette className="size-3.5" aria-hidden="true" /> },
-    { id: "shortcuts", label: "Keyboard shortcuts", icon: <Keyboard className="size-3.5" aria-hidden="true" /> },
+    { id: "shortcuts", label: "Keyboard Shortcuts", icon: <Keyboard className="size-3.5" aria-hidden="true" /> },
     { id: "projects", label: "Projects", icon: <Layers className="size-3.5" aria-hidden="true" /> },
   ]
 
@@ -160,7 +160,7 @@ function AppearancePage() {
         </Row>
       </Section>
 
-      <Section title="Theme pack" caption="the interface palette">
+      <Section title="Theme Pack" caption="the interface palette">
         <Row label="Theme" stacked>
           <Choice
             options={THEME_PACKS}
@@ -170,7 +170,7 @@ function AppearancePage() {
         </Row>
       </Section>
 
-      <Section title="Code theme" caption="syntax highlighting in code and diffs">
+      <Section title="Code Theme" caption="syntax highlighting in code and diffs">
         <Row label="Theme" stacked>
           <Choice
             options={CODE_THEMES}
@@ -219,7 +219,7 @@ function Choice<T extends string>({
 function MachinePage({ hosts }: { hosts: HostItem[] }) {
   return (
     <>
-      <Section title="Rennet hosts" caption="~/.rennet/daemon-settings.json on each host">
+      <Section title="Rennet Hosts" caption="~/.rennet/daemon-settings.json on each host">
         {hosts.map((h) => {
           const daemon = hostSettings[h.id] ?? { github: { connected: false as const } }
           return (
@@ -258,7 +258,7 @@ function MachinePage({ hosts }: { hosts: HostItem[] }) {
                         type="button"
                         className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
                       >
-                        Use a token instead
+                        Use a Token Instead
                       </button>
                     </>
                   )}
@@ -277,7 +277,7 @@ function ShortcutsPage() {
   const shown = keyCommands.filter((c) => c.label.toLowerCase().includes(filter.trim().toLowerCase()))
 
   return (
-    <Section title="Keyboard shortcuts" caption="~/.rennet/client-settings.json">
+    <Section title="Keyboard Shortcuts" caption="~/.rennet/client-settings.json">
       <div className="py-2.5">
         <input
           value={filter}
@@ -365,7 +365,7 @@ function ProjectsPage({
       <WorktreeSection project={project} />
 
       <Section title="Repository" caption={`.rennet/ in ${project.name}`}>
-        <Row label="Review context" hint="whether .rennet is visible to git">
+        <Row label="Review Context" hint="whether .rennet is visible to git">
           <LayerChip layer={repo.visibility.layer} />
           <Segmented options={["local", "git-visible"]} value={repo.visibility.value} onChange={() => {}} />
         </Row>
@@ -759,7 +759,7 @@ function GuidanceList({
           className="flex h-7 w-fit items-center gap-1.5 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground"
         >
           <Plus className="size-3" aria-hidden="true" />
-          Add rule
+          Add Rule
         </button>
       )}
     </div>

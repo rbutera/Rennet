@@ -34,7 +34,7 @@ export const decisionsBoard: LensBoard = {
   sections: [
     {
       id: "secret-safe-observability",
-      title: "Secret-safe observability",
+      title: "Secret-Safe Observability",
       gist: "What each refresh writes to daemon.log, and why no credential can land there.",
       counts: "5 decisions · 3 with code tabs",
       elements: [
@@ -231,7 +231,7 @@ export function tokenKind(token: string): string {
     },
     {
       id: "retry-and-failure",
-      title: "Retry ownership and failure outcomes",
+      title: "Retry Ownership and Failure Outcomes",
       gist: "Who retries a transient blip, and what a genuine decline leaves behind.",
       counts: "2 decisions · 2 with code tabs",
       elements: [

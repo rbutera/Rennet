@@ -63,6 +63,9 @@ narrated. Never write prose about what is not on this board.
   (path + line span); the surface hydrates the real lines. Never type code
   bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
+- Structural headers (section titles, short labels) use title case; code
+  tokens in a header keep their exact casing; a title that is a sentence (a
+  finding claim, a decision statement) stays a sentence.
 - Every code token in prose wears backticks: function and type names,
   paths, commands, flags, env vars, literal values. A bare identifier in
   prose is a defect; an ordinary English word in backticks is too.

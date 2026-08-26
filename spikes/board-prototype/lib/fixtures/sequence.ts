@@ -27,7 +27,7 @@ export const sequenceBoard: LensBoard = {
   sections: [
     {
       id: "record-shape",
-      title: "The shape of an observation, secret-free by construction",
+      title: "The Shape of an Observation, Secret-Free by Construction",
       gist: "`RefreshLogRecord` is the type every refresh observation takes; no field on it can hold a credential.",
       elements: [
         {
@@ -57,7 +57,7 @@ export interface RefreshLogRecord {
     },
     {
       id: "token-kind",
-      title: "The one non-secret detail, kept safe by a closed allowlist",
+      title: "The One Non-Secret Detail, Kept Safe by a Closed Allowlist",
       gist: "`tokenKind` returns only an allowlisted prefix or the fixed `\"token\"`, never a slice of the credential body.",
       elements: [
         {
@@ -103,7 +103,7 @@ export function tokenKind(token: string): string {
     },
     {
       id: "emit-and-observe",
-      title: "Emit at every outcome, and refuse to retry the network case",
+      title: "Emit at Every Outcome, and Refuse to Retry the Network Case",
       gist: "`refreshAndPersist` logs `attempt`, then `declined`, `network`, or `persisted`; the network branch only observes and propagates, no retry.",
       elements: [
         {
@@ -149,7 +149,7 @@ export function tokenKind(token: string): string {
     },
     {
       id: "daemon-sink",
-      title: "Wire the sink at the composition boundary",
+      title: "Wire the Sink at the Composition Boundary",
       gist: "`create-server` binds one `log` that serializes each secret-free record to a single `[github-auth]` line on the daemon's stdout.",
       elements: [
         {

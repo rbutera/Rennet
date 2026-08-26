@@ -216,7 +216,7 @@ export function RoundRunView({ onComplete }: { onComplete: () => void }) {
         {elapsed >= ROUND_WORK_START - 300 && (
           <div className="flex flex-col gap-1">
             <span className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-              Round worker
+              Round Worker
             </span>
             <div className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
               {ROUND_WORK.map((step) => {

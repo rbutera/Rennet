@@ -139,7 +139,7 @@ export function ProjectIndexingView({
             <div className="flex flex-col gap-3 rounded-lg border border-border px-4 py-3.5">
               <div className="flex items-center gap-2">
                 <Check className="size-4 shrink-0 text-green-500" aria-hidden="true" />
-                <span className="text-[13.5px] font-medium text-foreground">Context map ready</span>
+                <span className="text-[13.5px] font-medium text-foreground">Context Map Ready</span>
                 <span className="text-[12px] text-muted-foreground">
                   {SCOPE_TOTAL} scopes · {mapScopes.reduce((n, s) => n + s.files, 0)} files ·{" "}
                   {confirmed} statements confirmed · {rejected} rejected
@@ -152,7 +152,7 @@ export function ProjectIndexingView({
                   className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                 >
                   <MessageSquarePlus className="size-3.5" aria-hidden="true" />
-                  New chat on {projectName}
+                  New Chat on {projectName}
                 </button>
                 <button
                   type="button"
@@ -160,7 +160,7 @@ export function ProjectIndexingView({
                   className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] font-medium text-foreground/90 transition-colors hover:bg-secondary"
                 >
                   <Map className="size-3.5" aria-hidden="true" />
-                  View context map
+                  View Context Map
                 </button>
               </div>
             </div>

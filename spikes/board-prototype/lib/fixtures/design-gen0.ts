@@ -36,7 +36,7 @@ export const designGen0Board: LensBoard = {
   sections: [
     {
       id: "change",
-      title: "The change",
+      title: "The Change",
       gist: "github-token-refresh-reliability · 2 new capabilities · 1 modified · tasks 0/13.",
       elements: [
         {
@@ -249,7 +249,7 @@ export const designGen0Board: LensBoard = {
     },
     {
       id: "field-proof",
-      title: "github-auth · field proof (lancelot)",
+      title: "github-auth · Field Proof (lancelot)",
       badge: "modified",
       source: "specs/github-auth/spec.md",
       gist: "Observe a refresh succeed and rotate live, deferred to a manual run against the real account.",

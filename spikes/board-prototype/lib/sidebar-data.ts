@@ -59,7 +59,7 @@ export function buildInitialHosts(): HostItem[] {
   return [
   {
     id: "h1",
-    label: "This machine",
+    label: "This Machine",
     kind: "local",
     projects: [
       {

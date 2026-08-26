@@ -155,7 +155,7 @@ export function RoundsLanes({
                           : "bg-secondary text-muted-foreground",
                       )}
                     >
-                      {ask.intent === "request-change" ? "request change" : "comment"}
+                      {ask.intent === "request-change" ? "Request Change" : "Comment"}
                     </span>
                     <span className="text-[11px] text-muted-foreground/80">{ask.source}</span>
                   </span>
