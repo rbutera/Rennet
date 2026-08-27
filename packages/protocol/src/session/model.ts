@@ -66,12 +66,21 @@ export type Ask = z.infer<typeof AskSchema>;
  * An anchored conversation thread (#466 res. 7). Thread CONTENT lives only in
  * the session transcript; boards and the diff store anchor→thread references —
  * this shape is that reference, plus the ask riding on it when one was minted.
+ *
+ * Two arms, not independent optionals: the ask specialization REQUIRES an
+ * anchor (#462 R29–R34 — an ask is anchor + intent + exit lane + provenance +
+ * lifecycle), so `{threadId, ask}` without an anchor does not parse. A plain
+ * conversation thread carries no ask and may or may not be anchored.
  */
-export const SessionThreadSchema = z.object({
-  threadId: id,
-  anchor: ThreadAnchorSchema.optional(),
-  ask: AskSchema.optional(),
-});
+export const SessionThreadSchema = z.union([
+  z.object({ threadId: id, anchor: ThreadAnchorSchema, ask: AskSchema }),
+  z.object({
+    threadId: id,
+    anchor: ThreadAnchorSchema.optional(),
+    // Present-and-defined `ask` must take the anchored arm above.
+    ask: z.never().optional(),
+  }),
+]);
 export type SessionThread = z.infer<typeof SessionThreadSchema>;
 
 /**

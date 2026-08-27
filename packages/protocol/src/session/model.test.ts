@@ -76,6 +76,13 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(SessionThreadSchema.parse(thread).threadId).toBe("th-1");
     // A bare thread — no anchor, no ask — is a plain conversation thread.
     expect(SessionThreadSchema.parse({ threadId: "th-2" }).ask).toBeUndefined();
+    // An anchored thread with no ask is the other plain shape.
+    expect(SessionThreadSchema.parse({ threadId: "th-3", anchor: codeAnchor }).ask).toBeUndefined();
+  });
+
+  it("rejects an unanchored ask — the ask specialization requires an anchor", () => {
+    const { anchor: _anchor, ...unanchored } = thread;
+    expect(SessionThreadSchema.safeParse(unanchored).success).toBe(false);
   });
 
   it("parses a generation and rejects an unknown lens key", () => {
