@@ -10,7 +10,7 @@ import {
   serializeDossier,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { type GhRunner, retrieveRelatedContext } from "./related-context";
+import { DOSSIER_TOTAL_MAX_CHARS, type GhRunner, retrieveRelatedContext } from "./related-context";
 
 /**
  * B07 packet E2E (reconciliation 4, ruled): a frozen real-Rennet-PR capture
@@ -128,10 +128,11 @@ describe("B07 packet e2e — frozen PR #514 capture through the full retrieval f
       expect(failure.error).toBe("unreachable");
     }
 
-    // Serialized size respects the bound: every body under the per-item cap,
-    // and the canonical bytes stay well under one item-cap per item.
+    // Serialized size respects the dossier-wide bound — a fixed cap, not one
+    // that scales with however many items were fetched.
     const serialized = serializeDossier(result.items);
-    expect(serialized.length).toBeLessThanOrEqual(result.items.length * DOSSIER_BODY_MAX_CHARS);
+    expect(serialized.length).toBeLessThanOrEqual(DOSSIER_TOTAL_MAX_CHARS);
+    expect(result.omitted).toEqual([]);
   });
 
   it("inlines into a B05 buildDeltaPacket call without truncation", async () => {

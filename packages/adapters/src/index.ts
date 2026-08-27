@@ -429,6 +429,7 @@ export {
   snapshotStoreFor,
 } from "./project-snapshot-store";
 export {
+  DOSSIER_TOTAL_MAX_CHARS,
   type EnrichmentReport,
   type ExtractedRef,
   type ExtractRefsInput,
@@ -443,6 +444,7 @@ export {
   type GithubRef,
   type JsonFetcher,
   type MissingConfigFact,
+  type OmittedItemFact,
   type RawContextPayload,
   RELATED_CONTEXT_ENRICH_SCHEMA,
   type RefFailure,

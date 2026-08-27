@@ -1,7 +1,8 @@
 import { createInvocationBudget, type HarnessTurnResult } from "@rennet/core";
-import { DOSSIER_BODY_MAX_CHARS } from "@rennet/protocol";
+import { DOSSIER_BODY_MAX_CHARS, serializeDossier } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
+  DOSSIER_TOTAL_MAX_CHARS,
   extractRefs,
   fetchGithubIssue,
   fetchPrView,
@@ -244,6 +245,33 @@ describe("retrieveRelatedContext", () => {
     ]);
     expect(result.enrichment.status).toBe("skipped");
     expect(result.raw.map((payload) => payload.id).sort()).toEqual(ids);
+  });
+
+  it("drops whole items, last-fetched first, when the dossier-wide bound overflows", async () => {
+    // Four issues near the per-item cap: total serialized size blows the
+    // aggregate bound, so the LAST-fetched items drop whole, each recorded.
+    const big = "x".repeat(DOSSIER_BODY_MAX_CHARS - 100);
+    const gh = canned({
+      ...issue(1, big),
+      ...issue(2, big),
+      ...issue(3, big),
+      ...issue(4, big),
+    });
+    const result = await retrieveRelatedContext(
+      { prBody: "See #1 then #2 then #3 then #4" },
+      { gh, repo, now },
+    );
+    const serialized = serializeDossier(result.items);
+    expect(serialized.length).toBeLessThanOrEqual(DOSSIER_TOTAL_MAX_CHARS);
+    expect(result.omitted.length).toBeGreaterThan(0);
+    expect(result.omitted[0]).toEqual({ id: "github:rbutera/rennet#4", reason: "total-bound" });
+    // The kept set is the fetch-order prefix.
+    expect(result.items.map((item) => item.id)).toEqual(
+      ["github:rbutera/rennet#1", "github:rbutera/rennet#2", "github:rbutera/rennet#3"].slice(
+        0,
+        result.items.length,
+      ),
+    );
   });
 
   it("truncates an over-bound body at the fetch edge and records it in provenance", async () => {

@@ -40,6 +40,9 @@ Add-project UI (C12); standing tracker knowledge through the swarm (B6 owns the 
 
 13. **One-hop link following covers every fetched payload (Codex 8, downgraded P2).** JIRA and Linear fetches now surface their body text as hop-extraction input alongside GitHub bodies, and configured tracker keys found one hop out are fetched through the same visited-set logic (one hop total; unconfigured hop keys stay out — hop prose is low-signal).
 
+14. **The dossier has an aggregate bound (Codex 5).** `DOSSIER_TOTAL_MAX_CHARS` (64 KiB, adapter-owned — the protocol item shape is untouched) caps the canonical serialized dossier: items over the cap drop WHOLE, last-fetched first, each recorded as an `omitted` fact on the result. Model-produced `acceptanceCriteria` is bounded at application like every body. The e2e's limit no longer scales with item count.
+
+
 ## Verification (packet)
 
 `pnpm check` green. E2E (ruled approach, reconciliation 4): against the frozen real-Rennet-PR fixture, extraction → retrieval produces a dossier where every item carries provenance + fetched-at, total serialized size respects the bound, and the dossier inlines into a B05 `buildDeltaPacket` call without truncation. Positive controls that can fail: oversize body → bounded (schema rejects / item truncated per the shape's rule); drop provenance from a fixture item → schema rejects; break the ref extractor → zero items and the e2e's item-count assert fails.

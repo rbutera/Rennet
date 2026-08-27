@@ -10,7 +10,7 @@
  */
 import { absentBudgetGrant, type HarnessTurnResult } from "@rennet/core";
 import type { DossierItem, InvocationBudget } from "@rennet/protocol";
-import { DOSSIER_BODY_MAX_CHARS, dossierItemSchema } from "@rennet/protocol";
+import { DOSSIER_BODY_MAX_CHARS, dossierItemSchema, serializeDossier } from "@rennet/protocol";
 import { execa } from "execa";
 import { GITHUB_REQUEST_TIMEOUT_MS } from "./github-fetch";
 
@@ -394,6 +394,21 @@ export interface EnrichmentReport {
   readonly overage?: boolean;
 }
 
+/**
+ * The dossier-WIDE serialized-size cap (the per-item cap is the protocol's
+ * `DOSSIER_BODY_MAX_CHARS`; this is the adapter's aggregate bound — the dossier
+ * inlines verbatim into drafter prompts, so its total must be bounded no matter
+ * how many refs a branch names). Items over the cap drop WHOLE, last-fetched
+ * first (hop items go before hop-0 items), each recorded as an `omitted` fact.
+ */
+export const DOSSIER_TOTAL_MAX_CHARS = 65_536;
+
+/** A dossier item dropped whole to respect `DOSSIER_TOTAL_MAX_CHARS`. */
+export interface OmittedItemFact {
+  readonly id: string;
+  readonly reason: "total-bound";
+}
+
 export interface RelatedContextResult {
   /** The bounded dossier — every item through `dossierItemSchema`. */
   readonly items: DossierItem[];
@@ -401,6 +416,8 @@ export interface RelatedContextResult {
   readonly raw: RawContextPayload[];
   readonly missingConfig: MissingConfigFact[];
   readonly failures: RefFailure[];
+  /** Items dropped whole for the aggregate bound — a fact, not a log line. */
+  readonly omitted: OmittedItemFact[];
   readonly enrichment: EnrichmentReport;
 }
 
@@ -764,7 +781,8 @@ export async function retrieveRelatedContext(
               if (truncated) next.provenance = `${next.provenance}; truncated at fetch edge`;
             }
             if (trim.acceptanceCriteria !== undefined) {
-              next.acceptanceCriteria = trim.acceptanceCriteria;
+              // The model's output is not trusted to respect bounds.
+              next.acceptanceCriteria = boundedBody(trim.acceptanceCriteria).body;
             }
             items.set(trim.id, dossierItemSchema.parse(next));
           }
@@ -781,7 +799,16 @@ export async function retrieveRelatedContext(
     }
   }
 
-  return { items: [...items.values()], raw, missingConfig, failures, enrichment };
+  // The aggregate bound: drop whole items, last-fetched first, until the
+  // canonical serialized dossier fits. Deterministic (insertion order), and
+  // every drop is a recorded fact.
+  const kept = [...items.values()];
+  const omitted: OmittedItemFact[] = [];
+  while (kept.length > 0 && serializeDossier(kept).length > DOSSIER_TOTAL_MAX_CHARS) {
+    const dropped = kept.pop();
+    if (dropped) omitted.push({ id: dropped.id, reason: "total-bound" });
+  }
+  return { items: kept, raw, missingConfig, failures, omitted, enrichment };
 }
 
 /** Route one tracker key to its configured endpoint, or a missing-config fact. */
