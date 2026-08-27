@@ -4,7 +4,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 ## 1. app-ui: delete the canvas workspace surface
 
-- [ ] 1.1 Delete the 24 canvas-era components, their 38 component tests, and the 22 app-level `app.*.dom.test.tsx` files listed DELETE in the proposal's app-ui section (includes `collation-draft-canvas.tsx` and `workspace.tsx`/`lens.tsx`/`flat.tsx` + per-angle renderers).
+- [x] 1.1 Delete the 24 canvas-era components, their 38 component tests, and the 22 app-level `app.*.dom.test.tsx` files listed DELETE in the proposal's app-ui section (includes `collation-draft-canvas.tsx` and `workspace.tsx`/`lens.tsx`/`flat.tsx` + per-angle renderers). Plus 8 amended dying siblings the census missed (5 component tests, 3 app tests — see proposal amendments): 92 files total.
 - [ ] 1.2 Trim the keepers: `code-view.tsx` drops its `canvas/conversation` + `canvas/logic` wiring (keep `registrar`/`symbol` paths and their two KEEP dom tests); `app/shell.tsx`, `app.tsx`, `app.test.tsx`, `app.dom.test.tsx`, `command/commands.ts`, `index.ts` drop every reference to a deleted component or dying canvas module. `app/review-workspace-route.tsx` becomes a stub route (route stays registered, renders a placeholder; keep its `canvas/registrar` use only if the stub still needs it — otherwise drop it).
 - [ ] 1.3 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
 
