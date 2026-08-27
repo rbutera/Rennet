@@ -325,6 +325,12 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@wboard/core':
+        specifier: 0.1.0-alpha.2
+        version: 0.1.0-alpha.2
+      '@wboard/server':
+        specifier: 0.1.0-alpha.2
+        version: 0.1.0-alpha.2
       chokidar:
         specifier: 5.0.0
         version: 5.0.0

@@ -448,6 +448,7 @@ export {
   type MetricsCollector,
   type TurnMetric,
 } from "./turn-metrics";
+export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
 export {
   discoverWorktreeIdentities,
   type LocalWorktree,
