@@ -76,7 +76,7 @@ export function RoundsLedger({
         {rows.map(({ record: r, round }) => {
           const active = round === selectedRound;
           return (
-            <li key={r.reportBoard}>
+            <li key={round}>
               <button
                 type="button"
                 data-round={round}

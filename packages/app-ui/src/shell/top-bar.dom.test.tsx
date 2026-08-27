@@ -8,9 +8,12 @@ import type { Project } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
+import type { RoundsSource } from "../rounds/rounds-data";
+import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
 import { cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
+import { fixtureCompletedRoundsSource } from "../test/fixtures/rounds";
 import { MemoryBridge } from "../test/memory-bridge";
 import {
   type SidebarSession,
@@ -49,7 +52,7 @@ const SESSIONS: Record<string, readonly SidebarSession[]> = {
   ],
 };
 
-function mountTopBar(path: string) {
+function mountTopBar(path: string, rounds?: RoundsSource) {
   const history = memoryHistory(path);
   const bridge = new MemoryBridge(frontDoorHandlers([project("p1", "atlas")]));
   const projection: SidebarSessionProjection = {
@@ -60,12 +63,15 @@ function mountTopBar(path: string) {
     restoreSession: () => undefined,
     renameProject: () => undefined,
   };
+  const inner = (
+    <SidebarSessionProjectionProvider value={projection}>
+      <TopBar />
+    </SidebarSessionProjectionProvider>
+  );
   const utils = mount(
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <SidebarSessionProjectionProvider value={projection}>
-          <TopBar />
-        </SidebarSessionProjectionProvider>
+        {rounds ? <RoundsSourceProvider value={rounds}>{inner}</RoundsSourceProvider> : inner}
       </Router>
     </BridgeProvider>,
   );
@@ -86,6 +92,12 @@ describe("session top-bar (C03 §4)", () => {
     }
     // History (rounds) is gated on a completed round — absent over the default source.
     expect(queryByText("History")).toBeNull();
+  });
+
+  it("shows the History pill exactly when a round has completed", () => {
+    // Absent by default (above); present once the source carries a completed round.
+    const { getByText } = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
+    expect(getByText("History")).toBeTruthy();
   });
 
   it("toggles with replace — the back-stack does not grow", () => {
