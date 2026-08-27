@@ -74,6 +74,34 @@ same folder but feeds lineage carry and the successor account, not the packet
 directly. Raw payloads and follow-up questions stay behind the context tools
 above.
 
+## The related-context dossier
+
+The dossier the packet carries is built in three stages, cheapest first. A
+deterministic pass extracts issue references from the branch name, commit
+subjects, and PR title and body — GitHub `#123` and `owner/repo#123` forms,
+issue URLs, and tracker keys gated on a configured or repeatedly-seen project
+prefix. `gh` then fetches each referenced GitHub issue or pull request (the
+token stays inside `gh`; Rennet never reads it), and JIRA or Linear tickets are
+fetched over their REST APIs from per-project config: a base URL and the *name*
+of a token environment variable, read at call time and never stored. Last, the
+`related-context-retrieval` Model Council seat (light tier) follows links one
+hop and trims for relevance. A missing tracker config never blocks retrieval:
+the result carries a typed missing-config fact, the answer becomes an ordinary
+settings write, and the review proceeds meanwhile.
+
+Retrieval fires in the background when a review opens and persists beside the
+project snapshot under `~/.rennet/projects/`, keyed by review target and
+patchset — a re-capture (new patchset) re-runs it. Per-round re-runs arrive
+with round scheduling (planned). Every item is structured (id, tracker, title,
+state, bounded body, acceptance criteria, URL, provenance, fetched-at) and
+bounded twice — per item and dossier-wide, dropping whole items with the
+omission recorded — so the dossier can inline verbatim through the Delta
+packet's dossier seam; the drafting prompts that consume it arrive with round
+scheduling (planned). Full comment threads and linked-ticket payloads persist
+in the same store record for depth on demand — they never enter the dossier
+itself, and the command binding that serves them to agents lands with dispatch
+binding (planned).
+
 ## Selection-aware questions
 
 `context.ask` is a live server operation. The UI sends the current review
