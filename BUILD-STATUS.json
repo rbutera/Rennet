@@ -89,12 +89,13 @@
     "passes": true
   },
   "c05": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 live-wiring swap B4/B8-gated"
   },
   "c06": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true
   },
   "c07": {
     "status": "pending",
@@ -117,8 +118,9 @@
     "passes": false
   },
   "c12": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 rename seam B9-gated"
   },
   "c13": {
     "status": "pending",

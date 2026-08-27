@@ -17,6 +17,22 @@ import { useRennetStore } from "../store";
 /** The opener for an Explain thread — a question to the orchestrator, never a review verb. */
 const EXPLAIN_OPENER = "Explain this passage.";
 
+/**
+ * The board-anchor identity of a selection (finding 2): the element id it landed in
+ * (`data-element-id`) and the board generation (`data-generation`), read from the DOM
+ * so a minted quote thread is scoped to exactly this element in this generation. A
+ * selection outside a board (draft mode) resolves neither, so its thread carries no
+ * durable board highlight.
+ */
+function scopeOfRange(range: Range): { target?: string; generation?: string } {
+  const node = range.commonAncestorContainer;
+  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  return {
+    target: el?.closest("[data-element-id]")?.getAttribute("data-element-id") ?? undefined,
+    generation: el?.closest("[data-generation]")?.getAttribute("data-generation") ?? undefined,
+  };
+}
+
 export interface DraftHandlers {
   onRevise: (quote: string, instruction: string) => void;
   onDrop: (quote: string) => void;
@@ -41,6 +57,9 @@ export function ProseSelectionLayer({
     left: number;
     quote: string;
     placement: "above" | "below";
+    /** The board-anchor identity of the selection (finding 2), if it landed in a board. */
+    target?: string;
+    generation?: string;
   } | null>(null);
   const [mode, setMode] = useState<Mode>("toolbar");
   const [draft, setDraft] = useState("");
@@ -84,12 +103,14 @@ export function ProseSelectionLayer({
       // Flip below when the selection sits too close to the viewport top for the
       // tallest panel mode (the comment/revise editor), so nothing clips.
       const placement: "above" | "below" = rect.top < 240 ? "below" : "above";
+      const scope = scopeOfRange(range);
       setMode("toolbar");
       setAnchor({
         top: (placement === "below" ? rect.bottom : rect.top) - wrapRect.top,
         left: rect.left - wrapRect.left + rect.width / 2,
         quote: text,
         placement,
+        ...scope,
       });
     }
 
@@ -107,7 +128,10 @@ export function ProseSelectionLayer({
 
   function startThread(opener: string, kind: "comment" | "explain" = "comment") {
     if (!anchor) return;
-    const id = addQuoteComment(anchor.quote, opener, kind);
+    const id = addQuoteComment(anchor.quote, opener, kind, {
+      target: anchor.target,
+      generation: anchor.generation,
+    });
     setFocusedThread(id);
     window.getSelection()?.removeAllRanges();
   }
@@ -125,7 +149,10 @@ export function ProseSelectionLayer({
     // Mint the thread, then stage an ask that keeps the quoted span as its source
     // provenance (`anchor`) AND names the thread it CLAIMS (`threadId`) — so the exit
     // tally counts the claimed thread once, without conflating source with claim.
-    const id = addQuoteComment(anchor.quote, text);
+    const id = addQuoteComment(anchor.quote, text, "comment", {
+      target: anchor.target,
+      generation: anchor.generation,
+    });
     stageAsk({ anchor: anchor.quote, type: "request-change", body: text, threadId: id });
     setFocusedThread(id);
     window.getSelection()?.removeAllRanges();

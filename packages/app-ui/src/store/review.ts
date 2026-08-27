@@ -38,13 +38,30 @@ export interface QuoteMessage {
 
 /**
  * A quote-anchored thread on board prose (C4, extends C01's placeholder). `anchor`
- * is the highlighted span; `messages` is the exchange (opener + replies); an
+ * is the highlighted span text; `messages` is the exchange (opener + replies); an
  * `explain` thread is a question to the orchestrator — it never raises the exit count.
+ *
+ * `target` + `generation` are the PROTOCOL-SHAPED anchor identity (C5 finding 2): the
+ * element id the thread lands on (mirroring the `message` kind's `quote_target`) and
+ * the board generation it belongs to. Without them the durable highlight would match
+ * `anchor` text review-wide and paint the same span on every element/lens/generation
+ * that repeats it (the fabrication finding 2 kills). A thread carries them when minted
+ * from a board selection; a thread that lacks them never renders a durable highlight.
  */
 export interface QuoteThread {
   readonly anchor: string;
   readonly kind?: "comment" | "explain";
+  /** The element id this thread anchors to (the `quote_target` identity). */
+  readonly target?: string;
+  /** The board generation this thread was raised against. */
+  readonly generation?: string;
   readonly messages: readonly QuoteMessage[];
+}
+
+/** The board-anchor identity a thread is scoped to when minted from a selection. */
+export interface QuoteScope {
+  readonly target?: string;
+  readonly generation?: string;
 }
 
 // A per-process thread-id counter — monotonic, deterministic, and independent of any
@@ -77,8 +94,15 @@ export interface ReviewSlice {
     unstageAsk(anchor: string): void;
     setCodeComment(path: string, line: number, body: string): void;
     clearCodeComment(path: string, line: number): void;
-    /** Mint a quote thread on `anchor` with `text` as the opener; returns the new thread id. */
-    addQuoteComment(anchor: string, text: string, kind?: "comment" | "explain"): string;
+    /** Mint a quote thread on `anchor` with `text` as the opener; returns the new thread
+     *  id. `scope` carries the board-anchor identity (target element + generation) so the
+     *  durable highlight lands only on that element in that generation (finding 2). */
+    addQuoteComment(
+      anchor: string,
+      text: string,
+      kind?: "comment" | "explain",
+      scope?: QuoteScope,
+    ): string;
     /** Append a reply to an existing thread (no-op if the thread is gone). */
     addQuoteReply(threadId: string, author: "user" | "orchestrator", text: string): void;
     /** Drop a quote thread. */
@@ -134,14 +158,20 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
           review: { ...s.review, codeComments: { ...s.review.codeComments, [path]: restLines } },
         };
       }),
-    addQuoteComment: (anchor, text, kind) => {
+    addQuoteComment: (anchor, text, kind, scope) => {
       const id = nextQuoteThreadId();
       set((s) => ({
         review: {
           ...s.review,
           quoteThreads: {
             ...s.review.quoteThreads,
-            [id]: { anchor, kind, messages: [{ author: "user", text }] },
+            [id]: {
+              anchor,
+              kind,
+              ...(scope?.target === undefined ? {} : { target: scope.target }),
+              ...(scope?.generation === undefined ? {} : { generation: scope.generation }),
+              messages: [{ author: "user", text }],
+            },
           },
         },
       }));
