@@ -52,9 +52,50 @@ Client rendering of the boards (C5). Exits (B11). The rounds machinery that cons
 - **Composition authoring (5.4, C2) — no dedicated council job exists.** The authored connective prose runs on the versioned `REVIEW_DRAFT_VOICE_FILE` (reconciliation 5), which reconciliation 5 already establishes IS "the post-process steps in the reviewer's first-person register" — so the authoring turn IS the post-process for the review draft (no separate editor turn). The council catalogue carries no `composition`/`review-draft` job id, so `composeReviewDraft` is pure over an INJECTED `composeTurn` free-text seam (the orchestrator's own heavy turn, wired by the composition root exactly like the harness ports) rather than a new council row — B08 adds no council job (cluster 1 owned the rows). The mechanical carry (`carriedElementIds`, cluster 4) is computed here; delta stamps already live on each board's sections from 5.1. The prose is screened by `lintReviewDraft` (L3/L4/L7 register) — visible, never blocking. Curation feedback threads in through `curationFeedback` (inlined into the authoring prompt); the lens boards remain the reading surface — no sixth composed board (C3).
 - **Writer-invariant (5.5).** `whiteboard-client.test.ts`'s `.apply(` scan is REUSED and STRENGTHENED: `packages/server/src/runtime/lens-pipeline.ts` is added as a `sanctionedCaller` (it routes through the INJECTED `WhiteboardClient` — the exact "B8 drafters route through WhiteboardClient.apply" case the client's docstring names), and the scan now additionally FAILS if any sanctioned caller imports `BoardService` — so an allowlisted caller can never quietly become a second direct writer.
 
-## Concurrency measurement (engine asset risk 3 — packet-required, filled in during cluster 6)
+## Concurrency measurement (engine asset risk 3 — packet-required, cluster 6)
 
-*To be recorded by the implementer: the measured warm-session concurrency cost that justifies (or revises) the retry/draft concurrency cap of 10. The runtime's fan-out concurrency is provisional until this lands.*
+**Method.** A warm harness session in Rennet is a spawned `claude` node process:
+the SDK's `query()` launches the user's own `claude` via
+`pathToClaudeCodeExecutable` in stream-json in/out mode and keeps it resident
+(`packages/adapters/src/claude-query.ts`). So the warm-session concurrency cost
+IS that process's resident memory, and it is measured directly: spawn *N* real
+`claude` processes with the exact args the SDK warms them under
+(`--output-format stream-json --input-format stream-json --verbose`), parked idle
+on stdin — no complete message is ever written, so no API call is made and no
+tokens are spent — then sample RSS via `ps` 6 s after spawn (fully loaded, at the
+idle read state), and kill. Host: 16 GB, node v24.18, `claude` 2.1.246,
+`@anthropic-ai/claude-agent-sdk` 0.3.223. (Measurement harness:
+`scratchpad/measure.mjs`; outside the gate — the gate makes no live spawn.)
+
+**Numbers (real, this host).**
+
+| Concurrent warm sessions | Total RSS | Per session | Range |
+| --- | --- | --- | --- |
+| 1 | 218 MB | 218 MB | — |
+| 10 | 1 885 MB | 189 MB | 146–235 MB |
+
+A warm session costs **~190–220 MB RSS**. Ten concurrent ≈ **1.9 GB — ~12 % of a
+16 GB host**, comfortable headroom.
+
+**Finding — the packet's "cap-10 fan-out" does not exist in the shipped runtime.**
+`runLensPipeline` drafts the five lenses **serially** (the `for (const lens of
+LENS_KINDS)` loop awaits each board before the next); the *only* concurrency is
+the Flagged dual seat's `Promise.all` over its two seats — a **max of 2**
+concurrent warm sessions at any instant. `RETRY_CAP = 10`
+(`core/board/validate.ts`) is a **sequential** retry bound: one lens's single
+session is re-prompted up to 10 times, never 10 sessions at once. Warm-session
+memory is therefore irrelevant to the retry cap.
+
+**Verdict — keep 10; no runtime concurrency change.** The retry cap of 10 stands
+(it is a sequential correctness bound, not a memory knob). No fan-out cap is
+distrusted because none exists: shipped peak concurrency is 2 (~0.4 GB). Even a
+hypothetical worst case — all five lenses + round-report + the Flagged second
+seat drafting at once (~7 sessions ≈ 1.3 GB), or a naive fan-out to the full 10
+(~1.9 GB) — fits a 16 GB host with room to spare. Engine-asset-risk-3 cleared: no
+cluster-5 change made. **Guidance for any future concurrent fan-out:** budget
+~200 MB/session and cap concurrency at ~10 to stay under ~2 GB (the
+worktree-per-agent daemon accumulation in `CLAUDE.md`'s cleanup note — ~7.8 GB of
+stale swap — is the real memory risk on this host, not a single pipeline run).
 
 ## Verification (packet)
 
