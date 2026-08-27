@@ -4,6 +4,8 @@
 // handle the shell drives in-process today and a transport serialises in phase 2.
 // Electron-owned effects (data dir, dialog, progress broadcast, shell.openPath,
 // net.fetch, process env) arrive as options; nothing here imports electron.
+
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   constants as fsConstants,
@@ -1625,6 +1627,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         workOrder,
         runWorkers: async (order) => {
           await runHandoffTurn({ repoRoot: review.repositoryRoot, prompt: order.prompt });
+          // PR-lane RIPENING (B11 cluster 5, task 5.2): an own-branch review's PR draft
+          // re-composes as the round lands — re-run `publish.compose(mode:"pr")` to re-raise
+          // publish-ready (idempotent by derived id; `submitPr`'s push+open-PR is unchanged).
+          // A team-PR review (postTarget) composes a review, not a PR, so it is skipped.
+          // Failure-isolated garnish: a failed re-compose never breaks the landed round.
+          if (!review.postTarget) {
+            try {
+              await dispatch("publish.compose", {
+                commandId: randomUUID(),
+                reviewId: review.id,
+                mode: "pr",
+              });
+            } catch {
+              // Ripening is garnish on the round; a failed re-compose is swallowed.
+            }
+          }
         },
       });
     },
