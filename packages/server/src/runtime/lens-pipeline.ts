@@ -18,7 +18,12 @@ import {
   stampDeltas,
   validateDraft,
 } from "@rennet/core";
-import { LENS_PROMPT_FILES, POST_PROCESS_FILE, renderLayer } from "@rennet/prompts";
+import {
+  LENS_PROMPT_FILES,
+  POST_PROCESS_FILE,
+  ROUND_REPORT_FILE,
+  renderLayer,
+} from "@rennet/prompts";
 import {
   type CouncilJobId,
   type CouncilResolveContext,
@@ -249,8 +254,17 @@ export function stampSingleSeatConcurrence(board: DraftBoard, label: string): Dr
  * turn builders open a fresh session per call, so nothing may rely on prior
  * turn state.
  */
-export function renderDrafterPrompt(promptText: string, packet: DeltaPacket): string {
-  const context = JSON.stringify({ deltaPacket: packet, hostSchema: boardOutputSchema() });
+export function renderDrafterPrompt(
+  promptText: string,
+  packet: DeltaPacket,
+  reportBoard?: DraftBoard,
+): string {
+  const context = JSON.stringify({
+    deltaPacket: packet,
+    hostSchema: boardOutputSchema(),
+    // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
+    ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
+  });
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
 }
 
@@ -349,6 +363,12 @@ export interface LensPipelineResult {
   readonly boards: readonly LensBoardOutcome[];
   /** Cross-lens every-hunk coverage (cluster 4), run ONCE over the frozen set. */
   readonly coverage: readonly Violation[];
+  /**
+   * The round-report board, present only on a ROUND (a prior generation exists).
+   * It drafts FIRST and is the lens drafters' input (D3/R58); it is NOT a lens,
+   * so it is excluded from the coverage assert.
+   */
+  readonly report?: LensBoardOutcome;
 }
 
 // ── Seat resolution (council-routed, the B06 precedent) ──
@@ -443,9 +463,17 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const postProcessText = await deps.readPrompt(POST_PROCESS_FILE);
   const postProcess = buildPostProcess(deps, council, postProcessText);
 
+  // R58/D3 — on a ROUND (a prior generation exists, so the packet carries a
+  // successor account) the round-report drafts FIRST: it gates the regeneration
+  // and is the lens drafters' input. Its validated board is threaded into every
+  // lens prompt below. Not a lens — excluded from the coverage assert.
+  const isRound = deps.deltaPacket.successorAccount !== undefined;
+  const report = isRound ? await runRoundReport(deps, council, postProcess) : undefined;
+  const reportBoard = report?.board;
+
   const outcomes: LensBoardOutcome[] = [];
   for (const lens of LENS_KINDS) {
-    outcomes.push(await runLensBoard(lens, deps, council, postProcess));
+    outcomes.push(await runLensBoard(lens, deps, council, postProcess, reportBoard));
   }
 
   // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam
@@ -453,7 +481,42 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const boards = outcomes.map((o) => o.board).filter((b): b is DraftBoard => b !== undefined);
   const coverage = assertCoverage(boards, deps.hunks);
 
-  return { boards: outcomes, coverage };
+  return { boards: outcomes, coverage, ...(report === undefined ? {} : { report }) };
+}
+
+/**
+ * The round-report drafter (D3, R58): resolves the `round-report` seat, drafts
+ * with the report lint register (`ctx.lens === "report"` ⇒ `REPORT_RULES`, no
+ * hunk-coverage obligation), funnels through the SAME post-process pass, writes
+ * to the report board, and announces its arrival. Honest degradation: no seat ⇒
+ * `undefined`, and the lens drafters simply proceed without a report.
+ */
+async function runRoundReport(
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
+  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
+): Promise<LensBoardOutcome | undefined> {
+  const seat = resolveBoardSeat("round-report", deps, council);
+  if ("failure" in seat) return undefined;
+
+  const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
+  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket);
+  const ctx = deps.lintContextFor("report");
+  const validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
+  const stamped = stampDeltas(deps.previous?.get("report"), validated.board);
+
+  const boardId = deps.boardIdFor("report");
+  await deps.whiteboard.apply(boardId, draftToOps(stamped), "seat:report");
+  deps.onBoardArrival?.({ lens: "report", boardId, elementCount: stamped.elements.length });
+
+  return {
+    lens: "report",
+    boardId,
+    board: stamped,
+    omissions: validated.omissions,
+    blemishes: validated.blemishes,
+    immutability: validated.immutability,
+  };
 }
 
 /** Draft, validate, post-process, write, and announce one lens board. */
@@ -530,9 +593,10 @@ async function runLensBoard(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
   postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
+  reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
   const promptText = await deps.readPrompt(LENS_PROMPT_FILES[lens]);
-  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket);
+  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, reportBoard);
   const ctx = deps.lintContextFor(lens);
 
   let validated: ValidatedLike;

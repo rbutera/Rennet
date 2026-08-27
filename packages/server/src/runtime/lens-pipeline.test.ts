@@ -345,6 +345,57 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ).toBe(true);
   });
 
+  it("runs the round-report FIRST on a round and threads it into the lens drafters (D3/R58)", async () => {
+    const captures: { model?: string; prompt?: string }[] = [];
+    const applied: Applied[] = [];
+    const arrivals: BoardArrivalEvent[] = [];
+
+    // A round: the packet carries a successor account ⇒ the report drafts first.
+    const roundPacket = {
+      patchset: { id: "ps-1", createdAt: "", truncated: false, files: [] },
+      successorAccount: { asks: [] },
+    } as unknown as DeltaPacket;
+
+    await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (p) => cleanBody(lensFromPrompt(p))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: roundPacket,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => arrivals.push(event),
+    });
+
+    // The report board is written and announced BEFORE any lens board.
+    expect(applied[0]?.boardId).toBe("board:report");
+    expect(arrivals[0]?.lens).toBe("report");
+    // The report seat routed to the round-report pick (claude-only ⇒ sonnet-5).
+    expect(captures.find((c) => c.prompt?.includes("report.md"))?.model).toBe("sonnet-5");
+    // Every LENS drafter prompt carried the round report as input.
+    const lensPrompts = captures.filter((c) => c.prompt?.includes("design.md"));
+    expect(lensPrompts.every((c) => c.prompt?.includes("roundReport"))).toBe(true);
+  });
+
+  it("does NOT run the round-report on a first generation (no successor account)", async () => {
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (p) => cleanBody(lensFromPrompt(p))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+    expect(result.report).toBeUndefined();
+    expect(applied.some((a) => a.boardId === "board:report")).toBe(false);
+  });
+
   it("records an honest failure (never a throw) when no harness resolves the seat", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
