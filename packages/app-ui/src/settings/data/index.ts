@@ -14,6 +14,7 @@ export {
   useSetRepoVisibility,
   useSettingsView,
 } from "./live";
+export { LiveSettingsProjectionProvider } from "./live-projection";
 export {
   type DaemonInfo,
   type DetectedTool,

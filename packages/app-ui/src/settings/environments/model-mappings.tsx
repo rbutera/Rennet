@@ -143,92 +143,102 @@ function MappingsDialog({
             mode; changing a cell sets an override for that role — the harness follows the model.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-[1.4fr_1fr_1fr] items-center gap-x-3 gap-y-0 text-xs">
-          <span />
-          <DualUnavailableHint active={!both} missing={missingProvider}>
+        {roles.length === 0 ? (
+          // Agents are detected live (harness.detect), but the Model Council's role → model
+          // catalogue has no served backend yet — so this is an honest gap, not an empty
+          // table pretending to be a mappings grid (named in the cluster-10 report §10.1).
+          <p className="py-2 text-xs text-ink-soft">
+            The review engine will supply each role&rsquo;s model here once its Model Council is
+            served.
+          </p>
+        ) : (
+          <div className="grid grid-cols-[1.4fr_1fr_1fr] items-center gap-x-3 gap-y-0 text-xs">
+            <span />
+            <DualUnavailableHint active={!both} missing={missingProvider}>
+              <ModeHeader
+                label="Dual Harness"
+                sub="one seat per provider"
+                selected={effective === "dual"}
+                available={both}
+                onSelect={() => setMode("dual")}
+              />
+            </DualUnavailableHint>
             <ModeHeader
-              label="Dual Harness"
-              sub="one seat per provider"
-              selected={effective === "dual"}
-              available={both}
-              onSelect={() => setMode("dual")}
+              label="Single Harness"
+              sub={both ? `falls to ${singleProvider}` : singleProvider}
+              selected={effective === "single"}
+              available
+              onSelect={() => setMode("single")}
             />
-          </DualUnavailableHint>
-          <ModeHeader
-            label="Single Harness"
-            sub={both ? `falls to ${singleProvider}` : singleProvider}
-            selected={effective === "single"}
-            available
-            onSelect={() => setMode("single")}
-          />
-          {roles.map((role) => {
-            const cells: {
-              readonly key: Scenario;
-              readonly editable: boolean;
-              readonly unavailable?: boolean;
-              readonly models: readonly string[];
-            }[] = [
-              {
-                key: "dual",
-                editable: both && effective === "dual",
-                unavailable: !both,
-                models: [...CLAUDE_MODELS, ...CODEX_MODELS],
-              },
-              {
-                key: singleKey,
-                editable: effective === "single",
-                models: singleModels,
-              },
-            ];
-            return (
-              <Fragment key={role.id}>
-                <span className="flex flex-col items-start border-t border-line py-2 pr-2">
-                  <span className="text-xs font-medium text-ink" title={role.hint}>
-                    {role.label}
-                  </span>
-                  {!isRoleDefault(role) && (
-                    <button
-                      type="button"
-                      onClick={() => resetRole(role.id)}
-                      className="flex items-center gap-1 text-2xs text-ink-soft transition-colors hover:text-ink"
-                    >
-                      <Icon icon={RotateCcw} className="size-2.5" />
-                      Reset to default
-                    </button>
-                  )}
-                </span>
-                {cells.map((cell) => {
-                  const assignment = role[cell.key];
-                  const body = assignment ? (
-                    <ModelCell
-                      assignment={assignment}
-                      editable={cell.editable}
-                      models={cell.models}
-                      label={`${role.label} model`}
-                      onChange={(model) => setModel(role.id, cell.key, model)}
-                    />
-                  ) : (
-                    <span className="text-ink-faint">—</span>
-                  );
-                  return (
-                    <span
-                      key={cell.key}
-                      className={cn("border-t border-line py-2", !cell.editable && "opacity-40")}
-                    >
-                      {cell.unavailable ? (
-                        <DualUnavailableHint active missing={missingProvider}>
-                          {body}
-                        </DualUnavailableHint>
-                      ) : (
-                        body
-                      )}
+            {roles.map((role) => {
+              const cells: {
+                readonly key: Scenario;
+                readonly editable: boolean;
+                readonly unavailable?: boolean;
+                readonly models: readonly string[];
+              }[] = [
+                {
+                  key: "dual",
+                  editable: both && effective === "dual",
+                  unavailable: !both,
+                  models: [...CLAUDE_MODELS, ...CODEX_MODELS],
+                },
+                {
+                  key: singleKey,
+                  editable: effective === "single",
+                  models: singleModels,
+                },
+              ];
+              return (
+                <Fragment key={role.id}>
+                  <span className="flex flex-col items-start border-t border-line py-2 pr-2">
+                    <span className="text-xs font-medium text-ink" title={role.hint}>
+                      {role.label}
                     </span>
-                  );
-                })}
-              </Fragment>
-            );
-          })}
-        </div>
+                    {!isRoleDefault(role) && (
+                      <button
+                        type="button"
+                        onClick={() => resetRole(role.id)}
+                        className="flex items-center gap-1 text-2xs text-ink-soft transition-colors hover:text-ink"
+                      >
+                        <Icon icon={RotateCcw} className="size-2.5" />
+                        Reset to default
+                      </button>
+                    )}
+                  </span>
+                  {cells.map((cell) => {
+                    const assignment = role[cell.key];
+                    const body = assignment ? (
+                      <ModelCell
+                        assignment={assignment}
+                        editable={cell.editable}
+                        models={cell.models}
+                        label={`${role.label} model`}
+                        onChange={(model) => setModel(role.id, cell.key, model)}
+                      />
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    );
+                    return (
+                      <span
+                        key={cell.key}
+                        className={cn("border-t border-line py-2", !cell.editable && "opacity-40")}
+                      >
+                        {cell.unavailable ? (
+                          <DualUnavailableHint active missing={missingProvider}>
+                            {body}
+                          </DualUnavailableHint>
+                        ) : (
+                          body
+                        )}
+                      </span>
+                    );
+                  })}
+                </Fragment>
+              );
+            })}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
