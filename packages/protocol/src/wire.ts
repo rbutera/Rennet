@@ -1491,9 +1491,16 @@ export const locusSchema = z.union([
 export type Locus = z.infer<typeof locusSchema>;
 
 /**
- * The global (layer 1) config document, stored at `~/.rennet/config.json`. Every
- * field beyond `version` is optional so an untouched install is a trivially-valid
- * (or absent) `{ version }`; defaults are read-through, never migrated in.
+ * The LEGACY (pre-split) global config document, once stored at a single
+ * `~/.rennet/config.json` (schema v1). It mixed viewer preferences (appearance,
+ * keybindings) with the host's daemon rung (`daemon.listen`) in one blob. B10
+ * (#476) split that blob into `client-settings.json` (viewer prefs) and
+ * `daemon-settings.json` (the host rung); this schema now exists ONLY as the
+ * migration SOURCE — `migrateLegacyGlobalConfig` parses a legacy file with it,
+ * then writes the two split documents below. It is never written any more.
+ *
+ * Every field beyond `version` is optional so an untouched legacy install was a
+ * trivially-valid (or absent) `{ version }`; defaults are read-through.
  */
 export const globalConfigSchema = z.object({
   version: z.number().int().nonnegative(),
@@ -1526,6 +1533,48 @@ export const globalConfigSchema = z.object({
     .optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
+
+/**
+ * Client settings — viewer preferences, stored at `~/.rennet/client-settings.json`
+ * (B10 #476). These are personal, app-side choices that live OUTSIDE the config
+ * ladder: the appearance scheme the renderer consumes as `data-scheme`, and the
+ * command-registry keybinding overrides (#44). Never a repo fact, never written
+ * into a working tree. Every field beyond `version` is optional — an untouched
+ * install is a trivially-valid (or absent) `{ version }`.
+ */
+export const clientSettingsSchema = z.object({
+  version: z.number().int().nonnegative(),
+  appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
+  /** Command-registry keybinding overrides (#44): command id → chord token or `null` to unbind. */
+  keybindings: z.record(z.string(), z.string().nullable()).optional(),
+});
+export type ClientSettings = z.infer<typeof clientSettingsSchema>;
+
+/**
+ * Daemon settings — the global ladder rung as it exists ON ITS HOST, stored at
+ * `~/.rennet/daemon-settings.json` (B10 #476). Today it carries only the opt-in
+ * listener bind (#380); the settings surface lists every paired host's section.
+ * Additive-optional exactly as the legacy blob was.
+ */
+export const daemonSettingsSchema = z.object({
+  version: z.number().int().nonnegative(),
+  /**
+   * Opt-in bind beyond loopback (#380). Absent ⇒ the daemon binds `127.0.0.1` on
+   * an ephemeral port. `host` names an interface (e.g. a Tailscale address); `port`
+   * optionally fixes the port.
+   */
+  daemon: z
+    .object({
+      listen: z
+        .object({
+          host: z.string().min(1),
+          port: z.number().int().nonnegative().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+export type DaemonSettings = z.infer<typeof daemonSettingsSchema>;
 
 /**
  * Which ladder layer a resolved value came from. Precedence (lowest→highest):
