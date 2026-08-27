@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "./index";
 
-// The recorded registry snapshot (B3 clusters 4+6): the 62 commandDefinitions
-// ids the registry absorbed, plus patchset.readSpan (new in cluster 6 — the
+// The recorded registry snapshot (B3 clusters 4+6): the 62 ids absorbed from
+// the pre-B3 definitions table, plus patchset.readSpan (new in cluster 6 — the
 // span-read contract, client asset risk 2). A dropped or renamed command fails
 // this loudly; a NEW command is added here deliberately, with its registry row.
 const ABSORBED_IDS = [

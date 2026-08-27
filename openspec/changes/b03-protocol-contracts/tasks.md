@@ -56,9 +56,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 8. Verification (packet)
 
-- [ ] 8.1 `sh -c 'pnpm check'` green — exit 0 from the real target run, not a masked pipe status.
-- [ ] 8.2 Positive control 1 (derivation drift): hand-edit the draft schema (or add a 14th kind to Host without the omit-set ripple) — drift test 1 MUST fail. Show the failure, revert, re-run green.
-- [ ] 8.3 Positive control 2 (wire drift): change one kind attribute's type — drift test 2 MUST fail. Show the failure, revert, re-run green.
-- [ ] 8.4 Track C gate evidence: `LensBoard`, the span-read command row, `parseDraft`, `commands`, and `LensKind` are all importable from `@rennet/protocol`'s root export (grep/typecheck evidence shown).
-- [ ] 8.5 Drift-closure sweep: zero grep hits for `CanvasAngle`, `CANVAS_ANGLES`, and `commandDefinitions` in `packages/ apps/ scripts/ docs/` (excluding `docs/dist` and the archived/openspec record). Show the grep output.
-- [ ] 8.6 Flip `b03` in `BUILD-STATUS.json` and output the completion sigil `<promise>B03-COMPLETE</promise>`.
+- [x] 8.1 `sh -c 'pnpm check'` green — exit 0 from the real target run, not a masked pipe status.
+- [x] 8.2 Positive control 1 (derivation drift): hand-edit the draft schema (or add a 14th kind to Host without the omit-set ripple) — drift test 1 MUST fail. Show the failure, revert, re-run green.
+- [x] 8.3 Positive control 2 (wire drift): change one kind attribute's type — drift test 2 MUST fail. Show the failure, revert, re-run green.
+- [x] 8.4 Track C gate evidence: `LensBoard`, the span-read command row, `parseDraft`, `commands`, and `LensKind` are all importable from `@rennet/protocol`'s root export (grep/typecheck evidence shown).
+- [x] 8.5 Drift-closure sweep: zero grep hits for `CanvasAngle`, `CANVAS_ANGLES`, and `commandDefinitions` in `packages/ apps/ scripts/ docs/` (excluding `docs/dist` and the archived/openspec record). Show the grep output. *(One straggler fixed: a history comment in `commands/commands.test.ts` naming the old identifier — rephrased, test still green.)*
+- [x] 8.6 Flip `b03` in `BUILD-STATUS.json` and output the completion sigil `<promise>B03-COMPLETE</promise>`.
