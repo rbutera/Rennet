@@ -10,8 +10,7 @@ import {
 import { discoverCodex, wslDiscoveryDeps } from "./harness-discovery";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Gated MANUAL real WSL-locus codex round-trip (#334, task 5 — live counterpart
-// of orchestrator-codex-live.real.test.ts).
+// Gated MANUAL real WSL-locus codex round-trip (#334, task 5).
 //
 // On a real Windows host with a WSL distro, this proves the WHOLE locus-aware
 // codex path end to end: distro codex discovery through the distro's own login
@@ -23,9 +22,7 @@ import { discoverCodex, wslDiscoveryDeps } from "./harness-discovery";
 //
 //   RENNET_LIVE_WSL_CODEX=1 pnpm exec vitest run packages/adapters/src/codex-wsl-live.real.test.ts
 //
-// canvasOps is NOT asserted here: this transport-level turn does not consume the
-// canvasops MCP server (that is wired at the orchestrator-session layer, proven by
-// orchestrator-codex-live.real.test.ts). This test asserts exactly what the
+// This test asserts exactly what the
 // locus/transport seam owns. WSL usage/token accounting is a documented unmeasured
 // ceiling, so nothing is claimed about usage.
 // ─────────────────────────────────────────────────────────────────────────────
