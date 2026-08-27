@@ -59,6 +59,12 @@ export interface SettingsCompositionDeps {
   /** Persist a client-settings edit. MUST itself refuse a malformed file (throw). */
   updateGlobal(update: (current: ClientSettings) => ClientSettings): ClientSettings;
   /**
+   * Persist a daemon-settings edit — the host's global ladder rung (#476). The
+   * issue-tracker section (#461, B7) is a global-rung host fact, so it is written
+   * HERE, not in client settings. MUST itself refuse a malformed file (throw).
+   */
+  updateDaemon(update: (current: DaemonSettings) => DaemonSettings): DaemonSettings;
+  /**
    * Resolve a working path to its realpath-canonical git TOP LEVEL — the same
    * identity the snapshot generator keys on — or `null` when it is not a git
    * working tree (a since-removed checkout).
@@ -112,7 +118,7 @@ export interface SettingsComposition {
   setTrackerValue(input: {
     key: "kind" | "projectKey" | "baseUrl" | "tokenEnv";
     value: string | null;
-  }): NonNullable<GlobalConfig["tracker"]>;
+  }): NonNullable<DaemonSettings["tracker"]>;
   setRepoVisibility(input: {
     projectId: string;
     repoPath: string;
@@ -330,9 +336,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return written.keybindings ?? {};
     },
 
-    setTrackerValue: (input): NonNullable<GlobalConfig["tracker"]> => {
+    setTrackerValue: (input): NonNullable<DaemonSettings["tracker"]> => {
       // Validate through the registry declaration the resolver reads — the write
-      // and the read cannot disagree on what a legal value is. `null` resets.
+      // and the read cannot disagree on what a legal value is. `null` resets. The
+      // tracker is a GLOBAL-rung host fact (#461, B7), so it writes to DAEMON
+      // settings, the same store `resolveTrackerConfig` reads it back from.
       const declaration = {
         kind: SETTINGS_REGISTRY.trackerKind,
         projectKey: SETTINGS_REGISTRY.trackerProjectKey,
@@ -340,7 +348,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         tokenEnv: SETTINGS_REGISTRY.trackerTokenEnv,
       }[input.key];
       const value = input.value === null ? null : declaration.validate(input.value);
-      const written = deps.updateGlobal((current) => {
+      const written = deps.updateDaemon((current) => {
         const tracker = { ...current.tracker };
         if (value === null) delete tracker[input.key];
         else tracker[input.key] = value as never;

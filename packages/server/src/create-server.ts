@@ -1455,7 +1455,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           trackerConfig: resolveTrackerConfig(
             snapshotStore,
             repoKeyOf(review),
-            configStore.readState().config,
+            daemonSettingsStore.readState().config,
           ),
         });
       } catch {
@@ -1931,6 +1931,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // This host's daemon-settings — the local host's global rung, the only one
       // locally readable; remote/WSL hosts keep theirs on that host (#476, §4.2).
       readDaemonSettings: () => daemonSettingsStore.read(),
+      // The tracker section (#461, B7) is a global-rung host fact, so it writes to
+      // daemon-settings — the same store `resolveTrackerConfig` reads it back from.
+      updateDaemon: (update) => daemonSettingsStore.update(update),
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {

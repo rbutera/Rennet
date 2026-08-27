@@ -1503,7 +1503,12 @@ export type Locus = z.infer<typeof locusSchema>;
  * trivially-valid (or absent) `{ version }`; defaults are read-through.
  */
 export const globalConfigSchema = z.object({
-  version: z.number().int().nonnegative(),
+  // The ONE supported schema version. A future (v2+) or below-current doc fails
+  // this literal, so it reads as malformed rather than being silently accepted and
+  // re-stamped to v1 — which would strip every field this version does not know
+  // and destroy the newer doc's data (the "silent version downgrade" bug). Must
+  // equal GLOBAL_CONFIG_VERSION in file-config-store.ts.
+  version: z.literal(1),
   appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
   /**
    * User keybinding overrides for the command registry (#44), command id → chord
@@ -1557,7 +1562,9 @@ export type GlobalConfig = z.infer<typeof globalConfigSchema>;
  * install is a trivially-valid (or absent) `{ version }`.
  */
 export const clientSettingsSchema = z.object({
-  version: z.number().int().nonnegative(),
+  // Supported version literal — a future/below doc reads as malformed, never
+  // silently re-stamped (see globalConfigSchema). Must equal CLIENT_SETTINGS_VERSION.
+  version: z.literal(1),
   appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
   /** Command-registry keybinding overrides (#44): command id → chord token or `null` to unbind. */
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
@@ -1571,7 +1578,9 @@ export type ClientSettings = z.infer<typeof clientSettingsSchema>;
  * Additive-optional exactly as the legacy blob was.
  */
 export const daemonSettingsSchema = z.object({
-  version: z.number().int().nonnegative(),
+  // Supported version literal — a future/below doc reads as malformed, never
+  // silently re-stamped (see globalConfigSchema). Must equal DAEMON_SETTINGS_VERSION.
+  version: z.literal(1),
   /**
    * Opt-in bind beyond loopback (#380). Absent ⇒ the daemon binds `127.0.0.1` on
    * an ephemeral port. `host` names an interface (e.g. a Tailscale address); `port`

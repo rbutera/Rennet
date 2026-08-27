@@ -40,12 +40,20 @@ describe("FileConfigStore (client settings)", () => {
     expect(createClientSettingsStore(path).read().appearance?.scheme).toBe("light");
   });
 
-  it("always stamps the current version, upgrading a legacy shape on write", () => {
+  it("refuses an UNSUPPORTED version doc rather than silently re-stamping it (finding 6)", () => {
+    // A future (v2) doc must NOT be read as v1 and re-stamped — that strips every
+    // field this version does not know and destroys the newer doc's data. The
+    // version literal makes it read as malformed, and update refuses it.
     const path = tmpConfigPath();
-    writeFileSync(path, JSON.stringify({ version: 0, appearance: { scheme: "dark" } }));
-    const written = createClientSettingsStore(path).update((current) => current);
-    expect(written.version).toBe(CLIENT_SETTINGS_VERSION);
-    expect(written.appearance?.scheme).toBe("dark");
+    const future = JSON.stringify({ version: 2, appearance: { scheme: "dark" }, unknownV2: 1 });
+    writeFileSync(path, future);
+    const store = createClientSettingsStore(path);
+    expect(store.readState().status).toBe("malformed");
+    expect(() =>
+      store.update((current) => ({ ...current, appearance: { scheme: "light" } })),
+    ).toThrow(/malformed/);
+    // The v2 bytes are left byte-identical — no destructive down-migration.
+    expect(readFileSync(path, "utf8")).toBe(future);
   });
 
   it("degrades a malformed JSON file to defaults WITHOUT rewriting it (Rule 75, wrong-side)", () => {
@@ -181,7 +189,7 @@ describe("migrateLegacyGlobalConfig", () => {
     expect(existsSync(paths.daemonPath)).toBe(false);
   });
 
-  it("leaves a malformed legacy file untouched and migrates nothing (Rule 75)", () => {
+  it("reports a malformed legacy file as DISTINCT from absent, migrating nothing (finding 5, Rule 75)", () => {
     const dir = tmpDir();
     const legacyPath = join(dir, "config.json");
     writeFileSync(legacyPath, "{ not json");
@@ -190,8 +198,60 @@ describe("migrateLegacyGlobalConfig", () => {
       clientPath: join(dir, "client-settings.json"),
       daemonPath: join(dir, "daemon-settings.json"),
     };
-    expect(migrateLegacyGlobalConfig(paths).migrated).toBe(false);
+    const result = migrateLegacyGlobalConfig(paths);
+    expect(result.migrated).toBe(false);
+    // Corrupt is never collapsed into the fresh-install (absent) case.
+    expect(result.legacy).toBe("malformed");
     expect(existsSync(paths.clientPath)).toBe(false);
+    expect(existsSync(paths.daemonPath)).toBe(false);
     expect(readFileSync(legacyPath, "utf8")).toBe("{ not json");
+  });
+
+  it("reconciles a MISSING half after a partial prior write, never overwriting the present one (finding 4)", () => {
+    const paths = seed();
+    // Simulate a crashed first run: client half written, daemon write never landed.
+    writeFileSync(
+      paths.clientPath,
+      JSON.stringify({ version: 1, appearance: { scheme: "light" } }),
+    );
+    const clientBytesBefore = readFileSync(paths.clientPath, "utf8");
+
+    // Next launch: the daemon half is still absent, so it migrates from the legacy
+    // blob; the already-present client half is left byte-for-byte untouched.
+    const result = migrateLegacyGlobalConfig(paths);
+    expect(result.migrated).toBe(true);
+    expect(readFileSync(paths.clientPath, "utf8")).toBe(clientBytesBefore);
+    const daemon = createDaemonSettingsStore(paths.daemonPath).read();
+    expect(daemon.daemon?.listen).toEqual({ host: "100.64.0.1", port: 4321 });
+    expect(daemon.tracker?.kind).toBe("github");
+  });
+
+  it("refuses to down-migrate a v2 legacy blob (finding 6): nothing written, bytes untouched", () => {
+    const dir = tmpDir();
+    const legacyPath = join(dir, "config.json");
+    const futureBlob = JSON.stringify({ version: 2, tracker: { kind: "github" }, unknownV2: true });
+    writeFileSync(legacyPath, futureBlob);
+    const paths = {
+      legacyPath,
+      clientPath: join(dir, "client-settings.json"),
+      daemonPath: join(dir, "daemon-settings.json"),
+    };
+    const result = migrateLegacyGlobalConfig(paths);
+    expect(result.migrated).toBe(false);
+    expect(result.legacy).toBe("malformed");
+    expect(existsSync(paths.clientPath)).toBe(false);
+    expect(existsSync(paths.daemonPath)).toBe(false);
+    expect(readFileSync(legacyPath, "utf8")).toBe(futureBlob);
+  });
+
+  it("REFUSES to overwrite a v2 split file on update (finding 6)", () => {
+    const dir = tmpDir();
+    const daemonPath = join(dir, "daemon-settings.json");
+    const futureDoc = JSON.stringify({ version: 2, daemon: { listen: { host: "::1" } }, next: 1 });
+    writeFileSync(daemonPath, futureDoc);
+    const store = createDaemonSettingsStore(daemonPath);
+    expect(store.readState().status).toBe("malformed");
+    expect(() => store.update((current) => current)).toThrow(/malformed/);
+    expect(readFileSync(daemonPath, "utf8")).toBe(futureDoc);
   });
 });

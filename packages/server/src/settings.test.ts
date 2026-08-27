@@ -1,5 +1,5 @@
 import { escapePath } from "@rennet/core";
-import type { ClientSettings, Project, ProjectVisibility } from "@rennet/protocol";
+import type { ClientSettings, DaemonSettings, Project, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
 
@@ -49,6 +49,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
       calls.updateGlobal += 1;
       return update({ version: 1 });
     },
+    updateDaemon: (update) => update({ version: 1 }),
     // Default: the working path IS its own top level (identity).
     gitTopLevel: async (workingPath) => workingPath,
     discoverWorkspaceRepos: async () => {
@@ -103,6 +104,7 @@ function statefulDeps(
     readGlobalState: () => ({ status: "ok", config: { version: 1 } }),
     readDaemonSettings: () => ({ version: 1 }),
     updateGlobal: (update) => update({ version: 1 }),
+    updateDaemon: (update) => update({ version: 1 }),
     gitTopLevel: async (workingPath) => workingPath,
     discoverWorkspaceRepos: async () => [],
     loadGuidance: () => ({ dropped: 0, reason: "absent" }),
@@ -415,9 +417,9 @@ describe("createSettingsComposition — daemon host sections (#476, §4.2)", () 
 
 describe("setTrackerValue — the global-rung tracker write (#461, B7)", () => {
   it("writes, resets, and validates through the registry declarations", () => {
-    let stored: GlobalConfig = { version: 1 };
+    let stored: DaemonSettings = { version: 1 };
     const { deps } = makeDeps({
-      updateGlobal: (update) => {
+      updateDaemon: (update) => {
         stored = update(stored);
         return stored;
       },

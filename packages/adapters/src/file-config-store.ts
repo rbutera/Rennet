@@ -140,45 +140,68 @@ export function createDaemonSettingsStore(path: string): FileConfigStore<DaemonS
  * Mechanically migrate a legacy `config.json` v1 blob into the split
  * `client-settings.json` + `daemon-settings.json` (B10 #476). ONE-WAY and
  * DETERMINISTIC: viewer prefs (`appearance`, `keybindings`) go to client-settings,
- * the host rung (`daemon`) to daemon-settings, every field lands in exactly one
- * target and nothing is dropped. The legacy file is LEFT IN PLACE (a human may
- * still want it); re-migration is prevented by the split-file guard, so this is
- * provably idempotent: a second call sees a split file already present and no-ops.
+ * the host rung (`daemon`, `tracker`) to daemon-settings, every field lands in
+ * exactly one target and nothing is dropped. The legacy file is LEFT IN PLACE.
  *
- * Runs only when there is something to migrate and nothing already migrated:
- *   • either split file already exists ⇒ already migrated, no-op.
- *   • legacy file absent or malformed ⇒ nothing to migrate (fresh/broken install);
- *     the stores' fail-safe read handles those.
+ * PER-TARGET RECONCILIATION (data-loss finding 4): each split file is reconciled
+ * INDEPENDENTLY — a missing half is migrated even when the other half already
+ * exists, and an existing target is NEVER overwritten. So a partial prior run
+ * (client written, daemon write crashed) recovers on the next launch instead of
+ * stranding the missing half forever, and an unrelated write that created ONE
+ * split file cannot block the OTHER half from migrating later (finding 5). Because
+ * an existing target is left untouched, this stays idempotent.
+ *
+ * MALFORMED IS DISTINCT (finding 5, Rule 75): a legacy file that is present but
+ * unparseable/invalid is reported as `legacy: "malformed"`, NOT collapsed into the
+ * `absent` (fresh-install) case — corrupt is never treated as empty, and nothing
+ * is written from a failed parse (a v2+ legacy also fails the version literal and
+ * lands here, so a future doc is never destructively down-migrated).
  */
 export function migrateLegacyGlobalConfig(paths: {
   legacyPath: string;
   clientPath: string;
   daemonPath: string;
-}): { migrated: boolean } {
-  if (existsSync(paths.clientPath) || existsSync(paths.daemonPath)) return { migrated: false };
-
-  let legacy: GlobalConfig;
-  try {
-    const parsed = globalConfigSchema.safeParse(JSON.parse(readFileSync(paths.legacyPath, "utf8")));
-    if (!parsed.success) return { migrated: false };
-    legacy = parsed.data;
-  } catch {
-    return { migrated: false };
+}): { migrated: boolean; legacy: "absent" | "malformed" | "ok" } {
+  // Both targets already present ⇒ nothing to reconcile (fast path).
+  if (existsSync(paths.clientPath) && existsSync(paths.daemonPath)) {
+    return { migrated: false, legacy: "ok" };
   }
 
-  const client: ClientSettings = { version: CLIENT_SETTINGS_VERSION };
-  if (legacy.appearance !== undefined) client.appearance = legacy.appearance;
-  if (legacy.keybindings !== undefined) client.keybindings = legacy.keybindings;
+  let raw: string;
+  try {
+    raw = readFileSync(paths.legacyPath, "utf8");
+  } catch {
+    return { migrated: false, legacy: "absent" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { migrated: false, legacy: "malformed" };
+  }
+  const result = globalConfigSchema.safeParse(parsed);
+  if (!result.success) return { migrated: false, legacy: "malformed" };
+  const legacy: GlobalConfig = result.data;
 
-  const daemon: DaemonSettings = { version: DAEMON_SETTINGS_VERSION };
-  if (legacy.daemon !== undefined) daemon.daemon = legacy.daemon;
-  // The issue-tracker section is a GLOBAL-rung host fact (#461, B7), so it lands
-  // in daemon-settings — not client. Omitting this mapping is exactly the B7-fold
-  // data-loss the round-trip test guards against.
-  if (legacy.tracker !== undefined) daemon.tracker = legacy.tracker;
-
-  // Validate both targets before writing either, then write atomically.
-  atomicWrite(paths.clientPath, clientSettingsSchema.parse(client), "client");
-  atomicWrite(paths.daemonPath, daemonSettingsSchema.parse(daemon), "daemon");
-  return { migrated: true };
+  let migrated = false;
+  // Reconcile the client half only if it is absent (never clobber a live target).
+  if (!existsSync(paths.clientPath)) {
+    const client: ClientSettings = { version: CLIENT_SETTINGS_VERSION };
+    if (legacy.appearance !== undefined) client.appearance = legacy.appearance;
+    if (legacy.keybindings !== undefined) client.keybindings = legacy.keybindings;
+    atomicWrite(paths.clientPath, clientSettingsSchema.parse(client), "client");
+    migrated = true;
+  }
+  // Reconcile the daemon half independently.
+  if (!existsSync(paths.daemonPath)) {
+    const daemon: DaemonSettings = { version: DAEMON_SETTINGS_VERSION };
+    if (legacy.daemon !== undefined) daemon.daemon = legacy.daemon;
+    // The issue-tracker section is a GLOBAL-rung host fact (#461, B7), so it lands
+    // in daemon-settings — not client. Omitting this mapping is exactly the B7-fold
+    // data-loss the round-trip test guards against.
+    if (legacy.tracker !== undefined) daemon.tracker = legacy.tracker;
+    atomicWrite(paths.daemonPath, daemonSettingsSchema.parse(daemon), "daemon");
+    migrated = true;
+  }
+  return { migrated, legacy: "ok" };
 }
