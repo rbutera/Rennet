@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
+import { ProseSelectionLayer } from "../review";
 import { useRennetStore } from "../store";
-import { mount } from "../test/dom";
-import { designBoard, designGen0Board } from "../test/fixtures/boards";
+import { act, mount } from "../test/dom";
+import { designBoard, designGen0Board, prose } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
 import { BoardElement, BoardElementsProvider } from "./kinds";
 import { QuoteHighlightLayer } from "./quote-highlight";
@@ -17,7 +18,7 @@ const PROSE =
   "The adapter authenticates with the user's subscription and costs nothing per token.\n\nA separate paragraph with untouched prose.";
 
 const EL = "p1";
-const { addQuoteComment, setFocusedThread, resetReview } = useRennetStore.getState().reviewActions;
+const { addQuoteComment, resetReview } = useRennetStore.getState().reviewActions;
 
 beforeEach(() => resetReview());
 
@@ -25,6 +26,19 @@ beforeEach(() => resetReview());
  *  bare layer reads) — the identity every durable highlight now requires (finding 2). */
 function seed(anchor: string, text: string, kind?: "comment" | "explain") {
   return addQuoteComment(anchor, text, kind, { target: EL, generation: "" });
+}
+
+/** Select the contents of `el` and release inside it — the real anchoring gesture the
+ *  ProseSelectionLayer listens for (mirrors review/selection-toolbar.dom.test). */
+function selectAndRelease(el: Element) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  act(() => {
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
 }
 
 function render(text = PROSE) {
@@ -102,14 +116,40 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     expect(Object.keys(useRennetStore.getState().review.stagedAsks)).toHaveLength(0);
   });
 
-  it("the selection-toolbar hand-off: focusing a fresh thread opens its popover, no click", () => {
-    // The toolbar mints a thread then calls setFocusedThread(id) — the highlight opens
-    // straight into the exchange and releases the focus.
-    const id = seed("costs nothing per token", "why free?");
-    setFocusedThread(id);
-    const { container } = render();
-    expect(container.textContent).toContain("why free?");
-    expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
+  it("a REAL selection → toolbar → highlight round-trip mints a scoped thread (finding 7)", async () => {
+    // Not a seeded store: select real board prose, drive the toolbar's Comment verb, and
+    // prove the minted thread carries the DOM-discovered (target, generation) scope and
+    // renders as a durable highlight on THIS element. Also exercises the focus hand-off —
+    // Comment calls setFocusedThread(id), which opens the popover with no extra click.
+    const proseEl = prose("p-sel", "A quotable board sentence.");
+    const { container, getByText, getByPlaceholderText, user } = mount(
+      <BridgeProvider bridge={new MemoryBridge({})}>
+        <BoardElementsProvider elements={[proseEl]} generation="gen1" boardId="b1">
+          <ProseSelectionLayer>
+            {/* data-generation on the ancestor is what scopeOfRange reads for the mint. */}
+            <article data-generation="gen1">
+              <BoardElement element={proseEl} />
+            </article>
+          </ProseSelectionLayer>
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+    expect(container.querySelector("[data-quote-highlight]")).toBeNull();
+
+    selectAndRelease(getByText("A quotable board sentence."));
+    await user.click(getByText("Comment"));
+    await user.type(getByPlaceholderText("Ask a question or leave a comment…"), "which sentence?");
+    await user.click(getByText("Save"));
+
+    const threads = Object.values(useRennetStore.getState().review.quoteThreads);
+    expect(threads).toHaveLength(1);
+    expect(threads[0]?.target).toBe("p-sel");
+    expect(threads[0]?.generation).toBe("gen1");
+    // Scoped identity ⇒ the highlight renders on this element, and the focus hand-off
+    // opened its exchange without a further click.
+    const hl = container.querySelector<HTMLElement>("[data-kind=prose] [data-quote-highlight]");
+    expect(hl?.textContent).toBe("A quotable board sentence.");
+    expect(container.textContent).toContain("which sentence?");
     expect(useRennetStore.getState().review.focusedThreadId).toBeNull();
   });
 

@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
-import type { LensBoard } from "@rennet/protocol";
+import { LENS_KINDS } from "@rennet/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
 import { FIXTURE_BOARDS, fixtureBoardSource } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
-import { BoardSourceProvider } from "./board-data";
+import { BoardSourceProvider, resolveBoard } from "./board-data";
 import { LensBoardView } from "./board-view";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,18 +114,49 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     );
   });
 
-  it("every fixture board resolves and validates through the one board-data seam", () => {
-    // The client never invents board shape: each fixture round-trips LensBoardSchema
-    // via the seam (resolveBoard) before it can render. A partial map (absent lens =
-    // no board) is the switcher's absent-not-disabled contract, not an error.
-    const boards: LensBoard[] = [];
+  it("every fixture board round-trips THROUGH the seam (resolveBoard), identity and all", () => {
+    // The client never invents board shape: each fixture is parsed BY the seam — not
+    // merely inspected — and only a `valid` resolution whose identity matches the
+    // requested (generation, lens) yields the board. A partial map (absent lens = no
+    // board) resolves `missing`, the switcher's absent-not-disabled contract.
+    let valid = 0;
     for (const gen of GENERATIONS) {
-      for (const board of Object.values(FIXTURE_BOARDS[gen] ?? {})) {
-        if (board) boards.push(board);
+      for (const lens of LENS_KINDS) {
+        const raw = fixtureBoardSource(gen, lens);
+        const r = resolveBoard(raw, { generation: gen, lens });
+        if (raw === undefined) {
+          expect(r.status).toBe("missing");
+          continue;
+        }
+        expect(r.status).toBe("valid");
+        if (r.status === "valid") {
+          // The seam's parsed output IS the fixture's shape — lens/generation/sections.
+          expect(r.board.lens).toBe(lens);
+          expect(r.board.generation).toBe(gen);
+          expect(r.board.sections.length).toBeGreaterThan(0);
+          valid++;
+        }
       }
     }
-    expect(boards.length).toBe(8); // gen0:1 + gen1:5 + gen2:2
-    for (const b of boards) expect(b.sections.length).toBeGreaterThan(0);
+    expect(valid).toBe(8); // gen0:1 + gen1:5 + gen2:2
+  });
+
+  it("the seam REJECTS a wrong-lens or wrong-generation board (finding 1 positive controls)", () => {
+    // Feed the seam a well-formed board under the wrong identity. Pre-fix these passed
+    // (shape-only), rendering a stale/cross-wired board as if it were the one asked for.
+    const designGen1 = FIXTURE_BOARDS.gen1?.design;
+    const designGen0 = FIXTURE_BOARDS.gen0?.design;
+    if (!designGen1 || !designGen0) throw new Error("fixture missing");
+
+    // Right shape, wrong LENS: the design board answered for a sequence request.
+    const wrongLens = resolveBoard(designGen1, { generation: "gen1", lens: "sequence" });
+    expect(wrongLens.status).toBe("invalid");
+    if (wrongLens.status === "invalid") expect(wrongLens.reason).toBe("identity");
+
+    // Right shape, wrong GENERATION: gen0's design board answered for a gen1 request.
+    const wrongGen = resolveBoard(designGen0, { generation: "gen1", lens: "design" });
+    expect(wrongGen.status).toBe("invalid");
+    if (wrongGen.status === "invalid") expect(wrongGen.reason).toBe("identity");
   });
 
   it("folds: a non-delta lens folds every section to its gist + counts; Flagged opens expanded", async () => {
