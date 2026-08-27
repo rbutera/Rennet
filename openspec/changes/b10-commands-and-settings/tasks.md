@@ -15,8 +15,8 @@ Kills the 2,357-line `switch (name)` in `packages/server/src/dispatch.ts`. Serve
 - [x] 1.1 Create `packages/server/src/dispatch/` with one module per command family (`app`, `attention`, `device`, `flagged`, `fs`, `github`, `harness`, `noise`, `openspec`, `pairing`, `patchset`, `project`, `projects`, `publish`, `repository`, `review`, `settings`). Each module exports its family's `{ commandId → handler }` entries. Handler bodies are the existing switch-arm bodies re-seated verbatim; do not change what any handler does.
 - [x] 1.2 `packages/server/src/dispatch/index.ts` (or `dispatch.ts` shrunk to the composer): build a `Map<commandId, handler>` bound from `protocol/commands`, assembled from the per-family modules. Preserve the `createDispatch({...})` DI surface and its consumers in `create-server.ts` — same deps in, same dispatch-call shape out.
 - [x] 1.3 Delete the old `switch (name)` body. The map is the only router. Wire the map lookup so an unknown/unregistered id fails the same way the switch's default did (no new gate — Rule Zero).
-- [ ] 1.4 Diff-empty proof (unit): enumerate the map's keys and the registry's `exposure.agent`-independent id set; assert the map serves **every** command id the registry declares (and the pre-refactor switch served). **Positive control shown once**: add a registry id the map omits, watch the assertion fail, revert.
-- [ ] 1.5 Cluster gate green. Commit.
+- [x] 1.4 Diff-empty proof (unit): enumerate the map's keys and the registry's `exposure.agent`-independent id set; assert the map serves **every** command id the registry declares (and the pre-refactor switch served). **Positive control shown once**: add a registry id the map omits, watch the assertion fail, revert.
+- [x] 1.5 Cluster gate green. Commit.
 
 ## 2. Agent tool surface — registry-driven `app_*` in-process SDK tools (#465, non-session)
 
