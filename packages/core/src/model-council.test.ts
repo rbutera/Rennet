@@ -257,6 +257,62 @@ describe("resolveAssignment — R39 cross-harness (acceptance 4)", () => {
   });
 });
 
+describe("resolveAssignment — the context-map swarm jobs (#460)", () => {
+  it("resolves partition-worker per scenario (Luna / Haiku / Luna) and degraded", () => {
+    expect(resolveAssignment("partition-worker", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    expect(resolveAssignment("partition-worker", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "haiku",
+      effort: "low",
+    });
+    expect(resolveAssignment("partition-worker", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    const degraded = resolveAssignment("partition-worker", ctx({ installed: [] }));
+    if (degraded.kind !== "model") throw new Error("expected a model resolution");
+    expect(degraded.trace.source).toBe("degraded");
+  });
+
+  it("resolves map-verify per scenario (Sonnet / Sonnet / Terra) and degraded", () => {
+    expect(resolveAssignment("map-verify", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("map-verify", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("map-verify", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+    const degraded = resolveAssignment("map-verify", ctx({ installed: [] }));
+    if (degraded.kind !== "model") throw new Error("expected a model resolution");
+    expect(degraded.trace.source).toBe("degraded");
+  });
+
+  it("partition-worker is cross-harness under both (light on Codex, review on Claude)", () => {
+    const worker = resolveAssignment("partition-worker", ctx(BOTH));
+    if (worker.kind !== "model") throw new Error("expected a model resolution");
+    expect(worker.trace.crossHarness).toBe(true);
+    // The verify seat runs ON the review harness — never cross-harness.
+    const verify = resolveAssignment("map-verify", ctx(BOTH));
+    if (verify.kind !== "model") throw new Error("expected a model resolution");
+    expect(verify.trace.crossHarness).toBeUndefined();
+  });
+});
+
 describe("resolveAssignment — deterministic tier + degraded", () => {
   it("a deterministic-tier job resolves to no model", () => {
     const resolved = resolveAssignment("rsp-validation", ctx(BOTH));
