@@ -25,9 +25,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 4. Composer + badges + orchestrator presence
 
-- [ ] 4.1 `packages/app-ui/src/chat/composer.tsx` (port `InputBar`): auto-grow textarea, Enter-sends / Shift-Enter-newline / IME-safe, send button, image-paste → local image badges. Send fires `review.ask` via `chat-data.ts` (no ask staging — that's C8; no command effects — that's B10, reconciliation 8).
-- [ ] 4.2 Badges read the real `review` slice (reconciliation 5): comment badges from `review.codeComments`, quote badges from `review.quoteThreads`; removal calls `reviewActions.clearCodeComment`/`removeQuoteComment`. No `useCodeComments()` shim, no `store?.` guard. Orchestrator-presence affordance reflects whether a turn is in flight (the stream/reattach state), not a fixture flag.
-- [ ] 4.3 DOM tests over `MemoryBridge`-backed `useRennetStore`: a code comment in the store surfaces a comment badge, removing it clears `review.codeComments`; a quote thread surfaces a quote badge; sending invokes `review.ask` with the typed body; image paste adds/removes a local badge; presence follows in-flight state. Cluster gate green. Commit.
+- [x] 4.1 `packages/app-ui/src/chat/composer.tsx` (port `InputBar`): auto-grow textarea, Enter-sends / Shift-Enter-newline / IME-safe, send button, image-paste → local image badges. Send fires `review.ask` via `chat-data.ts` (no ask staging — that's C8; no command effects — that's B10, reconciliation 8).
+- [x] 4.2 Badges read the real `review` slice (reconciliation 5): comment badges from `review.codeComments`, quote badges from `review.quoteThreads`; removal calls `reviewActions.clearCodeComment`/`removeQuoteComment`. No `useCodeComments()` shim, no `store?.` guard. Orchestrator-presence affordance reflects whether a turn is in flight (the stream/reattach state), not a fixture flag.
+- [x] 4.3 DOM tests over `MemoryBridge`-backed `useRennetStore`: a code comment in the store surfaces a comment badge, removing it clears `review.codeComments`; a quote thread surfaces a quote badge; sending invokes `review.ask` with the typed body; image paste adds/removes a local badge; presence follows in-flight state. Cluster gate green. Commit.
 
 ## 5. Anchored threads (transcript-side) + honest compaction
 
