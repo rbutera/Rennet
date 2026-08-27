@@ -1,0 +1,286 @@
+// @vitest-environment happy-dom
+//
+// The sidebar (C03 §2–3) over a MemoryBridge: the projects half is real
+// (`projects.list` / `projects.remove`), the sessions half rides the B9 projection
+// context (reconciliation 2) so rename / pin / archive / highlight are provable
+// today. Zero props — every read and write resolves through `sidebar-data`, folds
+// through the `ui` slice, highlight from the route.
+import type { Project } from "@rennet/protocol";
+import { type ReactNode, useState } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Router } from "wouter";
+import { useUpdateReady } from "../../components/update-ready";
+import { BridgeProvider } from "../../data";
+import { memoryHistory } from "../../routes/history";
+import { useRennetStore } from "../../store";
+import { cleanup, fireEvent, mount, waitFor } from "../../test/dom";
+import { frontDoorHandlers } from "../../test/fixtures/front-door";
+import { MemoryBridge, type MemoryBridgeHandlers } from "../../test/memory-bridge";
+import {
+  type SidebarSession,
+  type SidebarSessionProjection,
+  SidebarSessionProjectionProvider,
+} from "../sidebar-data";
+import { Sidebar } from "./sidebar";
+
+afterEach(() => {
+  cleanup();
+  useRennetStore.setState((s) => ({
+    ui: {
+      ...s.ui,
+      sidebarOpen: true,
+      sidebarFolds: {},
+      chatOpen: false,
+      commandMenuOpen: false,
+      openDialogs: [],
+    },
+  }));
+  useUpdateReady.setState({ ready: null, promptOpen: false });
+});
+
+function project(id: string, name: string, source = "local"): Project {
+  return {
+    id,
+    name,
+    path: `/repos/${id}`,
+    kind: "repo",
+    repoCount: 1,
+    branchCount: 1,
+    primaryBranch: "main",
+    openPath: `/repos/${id}`,
+    addedAt: "2026-08-27T00:00:00.000Z",
+    source: source as Project["source"],
+  };
+}
+
+type SessionMap = Record<string, readonly SidebarSession[]>;
+
+/** A state-backed projection so a mutation re-renders the tree (the row appears /
+ *  disappears / renames), exactly as B9's real projection will once it lands. */
+function Harness({
+  bridge,
+  history,
+  seed,
+}: {
+  readonly bridge: MemoryBridge;
+  readonly history: ReturnType<typeof memoryHistory>;
+  readonly seed: SessionMap;
+}): ReactNode {
+  const [sessions, setSessions] = useState<SessionMap>(seed);
+  const map = (id: string, patch: (s: SidebarSession) => SidebarSession): void =>
+    setSessions((prev) => {
+      const next: SessionMap = {};
+      for (const [pid, rows] of Object.entries(prev)) {
+        next[pid] = rows.map((s) => (s.id === id ? patch(s) : s));
+      }
+      return next;
+    });
+  const projection: SidebarSessionProjection = {
+    sessionsByProject: sessions,
+    renameSession: (id, title) => map(id, (s) => ({ ...s, title })),
+    setSessionPinned: (id, pinned) => map(id, (s) => ({ ...s, pinned })),
+    archiveSession: (id) => map(id, (s) => ({ ...s, archived: true })),
+    renameProject: () => undefined,
+  };
+  return (
+    <BridgeProvider bridge={bridge}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <SidebarSessionProjectionProvider value={projection}>
+          <Sidebar />
+        </SidebarSessionProjectionProvider>
+      </Router>
+    </BridgeProvider>
+  );
+}
+
+function mountSidebar(opts: {
+  projects?: readonly Project[];
+  sessions?: SessionMap;
+  path?: string;
+  extraHandlers?: MemoryBridgeHandlers;
+}) {
+  const history = memoryHistory(opts.path ?? "/");
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers(opts.projects ?? []),
+    ...opts.extraHandlers,
+  });
+  const utils = mount(<Harness bridge={bridge} history={history} seed={opts.sessions ?? {}} />);
+  return { ...utils, history, bridge };
+}
+
+const SESSIONS: SessionMap = {
+  p1: [
+    { id: "s1", slug: "s1", title: "Alpha", time: "2h", target: "your-branch" },
+    {
+      id: "s2",
+      slug: "s2",
+      title: "Beta",
+      time: "1d",
+      target: "your-pr",
+      targetState: "needs-you",
+      unread: true,
+    },
+  ],
+};
+
+describe("sidebar structure (C03 §2)", () => {
+  it("collapses the panel to the rail, writing ui.sidebarOpen both ways", async () => {
+    const { getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
+    fireEvent.click(getByLabelText("Collapse sidebar"));
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
+    await waitFor(() => expect(getByLabelText("Expand sidebar")).toBeTruthy());
+    fireEvent.click(getByLabelText("Expand sidebar"));
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+  });
+
+  it("orders the action block Search → New Chat → Add Project → Add Environment", () => {
+    const { getByText } = mountSidebar({ projects: [project("p1", "atlas")] });
+    const order = ["Search", "New Chat", "Add Project", "Add Environment"].map((t) => getByText(t));
+    for (let i = 1; i < order.length; i += 1) {
+      const prev = order[i - 1];
+      const curr = order[i];
+      if (!prev || !curr) throw new Error("missing action row");
+      // Node.DOCUMENT_POSITION_FOLLOWING (4) — each item follows the previous one.
+      expect(prev.compareDocumentPosition(curr) & 4).toBe(4);
+    }
+  });
+
+  it("Search opens the command menu (sets ui.commandMenuOpen)", () => {
+    const { getByText } = mountSidebar({ projects: [project("p1", "atlas")] });
+    fireEvent.click(getByText("Search"));
+    expect(useRennetStore.getState().ui.commandMenuOpen).toBe(true);
+  });
+
+  it("hides Archived at zero and shows it with a count when > 0", async () => {
+    const none = mountSidebar({ projects: [project("p1", "atlas")], sessions: SESSIONS });
+    await none.findByText("atlas");
+    expect(none.queryByText("Archived")).toBeNull();
+    cleanup();
+    const some = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: {
+        p1: [
+          { id: "s9", slug: "s9", title: "Old", time: "3d", target: "your-branch", archived: true },
+        ],
+      },
+    });
+    expect(await some.findByText("Archived")).toBeTruthy();
+  });
+});
+
+describe("sidebar tree (C03 §3)", () => {
+  it("renders host + project + session rows from the projection", async () => {
+    const { getByText, findByText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+    });
+    expect(await findByText("atlas")).toBeTruthy();
+    expect(getByText("This machine")).toBeTruthy();
+    expect(getByText("Alpha")).toBeTruthy();
+    expect(getByText("Beta")).toBeTruthy();
+  });
+
+  it("groups a remote project under a remote host", async () => {
+    const { findByText } = mountSidebar({ projects: [project("p2", "billing", "remote:dev-box")] });
+    expect(await findByText("dev-box")).toBeTruthy();
+  });
+
+  it("folds a project through the ui slice (aria-expanded + ui.sidebarFolds)", async () => {
+    const { getByText, findByText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+    });
+    await findByText("atlas");
+    const row = getByText("atlas").closest("button");
+    if (!row) throw new Error("project row missing");
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(row);
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(true);
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("highlights the active session from the route and follows a navigation", async () => {
+    const { getByText, findByText, history } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      path: "/s/s1",
+    });
+    await findByText("Alpha");
+    expect(getByText("Alpha").closest("button")?.getAttribute("aria-current")).toBe("true");
+    expect(getByText("Beta").closest("button")?.getAttribute("aria-current")).toBe("false");
+    history.navigate("/s/s2");
+    await waitFor(() =>
+      expect(getByText("Beta").closest("button")?.getAttribute("aria-current")).toBe("true"),
+    );
+    expect(getByText("Alpha").closest("button")?.getAttribute("aria-current")).toBe("false");
+  });
+
+  it("renames a session on Enter and keeps the old title on Escape", async () => {
+    const { getByText, findByText, getByRole, getByLabelText, queryByText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+    });
+    await findByText("Alpha");
+    // Escape does NOT commit.
+    fireEvent.contextMenu(getByText("Alpha"));
+    fireEvent.click(getByRole("menuitem", { name: "Rename" }));
+    fireEvent.change(getByLabelText("Session name"), { target: { value: "Renamed" } });
+    fireEvent.keyDown(getByLabelText("Session name"), { key: "Escape" });
+    expect(getByText("Alpha")).toBeTruthy();
+    expect(queryByText("Renamed")).toBeNull();
+    // Enter DOES commit.
+    fireEvent.contextMenu(getByText("Alpha"));
+    fireEvent.click(getByRole("menuitem", { name: "Rename" }));
+    fireEvent.change(getByLabelText("Session name"), { target: { value: "Renamed" } });
+    fireEvent.keyDown(getByLabelText("Session name"), { key: "Enter" });
+    await waitFor(() => expect(getByText("Renamed")).toBeTruthy());
+  });
+
+  it("archives a session, removing its row", async () => {
+    const { getByText, findByText, getByRole, queryByText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+    });
+    await findByText("Alpha");
+    fireEvent.contextMenu(getByText("Alpha"));
+    fireEvent.click(getByRole("menuitem", { name: "Archive" }));
+    await waitFor(() => expect(queryByText("Alpha")).toBeNull());
+  });
+
+  it("pins a session into the Pinned section and unpins it away", async () => {
+    const { getByText, findByText, getAllByText, getByRole, queryByText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+    });
+    await findByText("Alpha");
+    expect(queryByText("Pinned")).toBeNull();
+    fireEvent.contextMenu(getByText("Alpha"));
+    fireEvent.click(getByRole("menuitem", { name: "Pin" }));
+    await waitFor(() => expect(getByText("Pinned")).toBeTruthy());
+    // Alpha now appears twice (Pinned + its project) — unpin from the pinned row.
+    const rows = getAllByText("Alpha");
+    expect(rows.length).toBeGreaterThan(1);
+    const pinnedRow = rows[0];
+    if (!pinnedRow) throw new Error("pinned row missing");
+    fireEvent.contextMenu(pinnedRow);
+    fireEvent.click(getByRole("menuitem", { name: "Unpin" }));
+    await waitFor(() => expect(queryByText("Pinned")).toBeNull());
+  });
+
+  it("fires projects.remove from the remove-project confirmation", async () => {
+    const remove = vi.fn(() => ({ projects: [] }));
+    const { getByText, findByText, getByRole } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      extraHandlers: { "projects.remove": remove },
+    });
+    await findByText("atlas");
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Remove project…" }));
+    // Confirmation names the project + its session count, then removes.
+    expect(getByText("Remove atlas?")).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Remove Project" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledOnce());
+    expect(remove).toHaveBeenCalledWith(expect.objectContaining({ projectId: "p1" }));
+  });
+});
