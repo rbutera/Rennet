@@ -156,7 +156,7 @@ function UpdateControl({ variant }: { readonly variant: "rail" | "panel" }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="ml-auto flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-sm font-medium text-update-ink transition-colors hover:brightness-110"
+        className="flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-sm font-medium text-update-ink transition-colors hover:brightness-110"
       >
         <Icon icon={RefreshCw} className="size-3.5 shrink-0" />
         <span>Update</span>
@@ -704,7 +704,8 @@ function SidebarTree() {
   );
 }
 
-/** The footer — Archived (when > 0), then Settings · Help · Update. Self-wiring. */
+/** The footer — Archived (when > 0), then Update · Help · Settings (C03 order, the
+ *  rail's top-to-bottom order read left-to-right). Self-wiring. */
 function SidebarFooter() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
@@ -725,15 +726,7 @@ function SidebarFooter() {
         </button>
       ) : null}
       <div className="flex items-center gap-1">
-        <button
-          type="button"
-          aria-label="Settings"
-          title="Settings"
-          onClick={() => navigate(settingsPath("appearance"))}
-          className="flex size-8 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-        >
-          <Icon icon={Settings} className="size-3.5" />
-        </button>
+        <UpdateControl variant="panel" />
         <HelpPopover
           trigger={
             <button
@@ -746,7 +739,15 @@ function SidebarFooter() {
             </button>
           }
         />
-        <UpdateControl variant="panel" />
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          onClick={() => navigate(settingsPath("appearance"))}
+          className="flex size-8 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+        >
+          <Icon icon={Settings} className="size-3.5" />
+        </button>
       </div>
     </div>
   );

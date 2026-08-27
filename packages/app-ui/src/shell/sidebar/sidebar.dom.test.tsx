@@ -161,6 +161,23 @@ describe("sidebar structure (C03 §2)", () => {
     }
   });
 
+  it("orders the expanded footer Update → Help → Settings (rail order, read left-to-right)", () => {
+    useUpdateReady.setState({ ready: { version: "1.2.3" } });
+    const { getByText, getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
+    const order = [
+      getByText("Update").closest("button"),
+      getByLabelText("Help"),
+      getByLabelText("Settings"),
+    ];
+    for (let i = 1; i < order.length; i += 1) {
+      const prev = order[i - 1];
+      const curr = order[i];
+      if (!prev || !curr) throw new Error("missing footer control");
+      // Node.DOCUMENT_POSITION_FOLLOWING (4) — each control follows the previous one.
+      expect(prev.compareDocumentPosition(curr) & 4).toBe(4);
+    }
+  });
+
   it("Search opens the command menu (sets ui.commandMenuOpen)", () => {
     const { getByText } = mountSidebar({ projects: [project("p1", "atlas")] });
     fireEvent.click(getByText("Search"));
