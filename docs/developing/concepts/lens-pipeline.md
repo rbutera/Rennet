@@ -15,7 +15,8 @@ first. Each lens is a board of typed blocks drafted by a review agent on a
 fixed prompt.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`),
-one markdown file per lens plus the post-process editor pass. The package exports a
+one markdown file per lens plus the post-process editor pass, the
+reviewer-voice file, and the round-report prompt. The package exports a
 typed manifest; the pipeline reads the files and supplies the board schema
 separately, so instructions and schema cannot drift apart.
 
@@ -45,7 +46,7 @@ separately, so instructions and schema cannot drift apart.
      agents, seats, or drafts.
    A lint failure returns the draft to its agent with the violation named.
 4. **Post-process.** Every draft board passes through an editor agent running
-   the post-process pass (`prompts/post-process.md`): a break-it-down step
+   the post-process pass (`src/prompts/post-process.md`): a break-it-down step
    that reshapes dense prose into terse, scannable chunks — bullets for
    enumerable facts, prose kept for genuine narrative — then the unslop
    skill verbatim, then the humanizer additions (patterns from the MIT
@@ -55,7 +56,7 @@ separately, so instructions and schema cannot drift apart.
    screen. Typed data — paths, line numbers, counts, severities, concurrence
    flags — is untouched. The orchestrator applies the same steps
    write-through when authoring the review draft, in the reviewer's
-   first-person register (`prompts/review-draft-voice.md`).
+   first-person register (`src/prompts/review-draft-voice.md`).
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is the orchestrator's
    connective authoring across those boards — the coverage assertion, section

@@ -128,7 +128,7 @@ something the preview did not describe.
    gathered mid-run queue for the next round.
 3. Watch the run live.
 4. On completion the **round report** drafts first — its own seat on its own
-   prompt (`packages/prompts`, `prompts/report.md`), through the
+   prompt (`packages/prompts`, `src/prompts/report.md`), through the
    same post-process pass as every draft. It verifies each ask against the
    round's diff rather than taking the worker's word, and classifies the
    outcome: addressed / partial / untouched / beyond the asks, each item

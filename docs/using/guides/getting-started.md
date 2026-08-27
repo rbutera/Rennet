@@ -111,8 +111,8 @@ board opens folded except Flagged, which opens ready to read. Counts on a
 section name what is inside it — findings, steps, decisions, requirements.
 
 Code is cited, never copied. A code block card carries the file path and the
-exact line range and hydrates the real lines from the checkout, so numbering
-cannot drift from the file it claims to show. Clicking the path in its header
+exact line range and hydrates the real lines from the captured patchset, so
+numbering cannot drift from the code under review. Clicking the path in its header
 lands you in the Diff view on that file. In prose, a `path:line` citation is a
 chip: click it and the real lines unfold below the paragraph; click again and
 they fold away.

@@ -42,7 +42,7 @@ These readers run reviews. They do not have the codebase open, and most of them 
 
 **Red Flags**:
 - Text that presents a model finding as his conclusion, or anything that posts before he clicks.
-- An internal term (patchset, generation, daemon) dropped into a using page where "pull request" or plain words would carry the meaning.
+- An internal term (delta packet, drafter seat, daemon) dropped into a using page where "pull request" or plain words would carry the meaning.
 - A preview that flattens line comments into the body, or otherwise differs from the payload that posts.
 - Asks or threads that vanish when he switches lenses or navigates away.
 

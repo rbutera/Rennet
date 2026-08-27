@@ -1,6 +1,8 @@
 ---
 title: Connect to GitHub
 description: Rennet authenticates as you through the GitHub CLI, with an OAuth device-flow fallback, and everything GitHub-shaped goes straight from your machine to github.com.
+status: planned
+tracking: https://github.com/rbutera/rennet/issues/483
 ---
 
 Rennet talks to GitHub directly from your machine, as you. Its first choice of
