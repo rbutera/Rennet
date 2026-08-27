@@ -265,7 +265,7 @@ function segments(path: string): string[] {
   return path.split("/").filter(Boolean);
 }
 
-function isLockfile(path: string): boolean {
+export function isLockfile(path: string): boolean {
   return LOCKFILE_BASENAMES.has(basename(path).toLowerCase());
 }
 
@@ -273,7 +273,7 @@ function isVendored(path: string): boolean {
   return segments(path).some((s) => VENDOR_SEGMENTS.has(s.toLowerCase()));
 }
 
-function isGeneratedPath(path: string): boolean {
+export function isGeneratedPath(path: string): boolean {
   const base = basename(path).toLowerCase();
   if (/\.(min\.js|min\.css|map)$/.test(base)) return true;
   if (/\.pb\.go$/.test(base) || /_pb2\.py$/.test(base) || /\.g\.dart$/.test(base)) return true;
