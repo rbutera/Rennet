@@ -115,6 +115,7 @@ describe("command menu (§9)", () => {
               renameSession: () => undefined,
               setSessionPinned: () => undefined,
               archiveSession: () => undefined,
+              restoreSession: () => undefined,
               renameProject: () => undefined,
             }}
           >

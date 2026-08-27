@@ -53,15 +53,14 @@ describe("ReviewWorkspace ?view mount (C6 task 4.3)", () => {
     expect(getByText("packages/core/src/a.ts")).toBeTruthy();
   });
 
-  it("keeps the honest placeholder on the default (board) view", () => {
-    const { getByText, queryByText } = mountWorkspace("/s/x", [FILE_A]);
-    expect(getByText(/being rebuilt/i)).toBeTruthy();
+  it("does not render the diff surface on the default (board) view", () => {
+    const { queryByText } = mountWorkspace("/s/x", [FILE_A]);
     expect(queryByText("1 files changed")).toBeNull();
   });
 
-  it("keeps the placeholder for a non-diff explicit view (map)", () => {
-    const { getByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
-    expect(getByText(/being rebuilt/i)).toBeTruthy();
+  it("does not render the diff surface for a non-diff explicit view (map)", () => {
+    const { queryByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
+    expect(queryByText("1 files changed")).toBeNull();
   });
 
   it("an empty active patchset shows the honest one-line state, never a blank frame", () => {

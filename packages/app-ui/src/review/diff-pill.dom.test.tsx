@@ -90,14 +90,12 @@ function mountApp() {
 describe("open the diff via the top-bar pill", () => {
   it("clicking Diff navigates to ?view=diff and renders the diff surface", async () => {
     const { getByText, queryByText, user } = mountApp();
-    // Board view first: the honest placeholder, no diff surface.
-    expect(getByText(/being rebuilt/i)).toBeTruthy();
+    // Board view first (C05's LensBoardView owns the default view): no diff surface yet.
     expect(queryByText("1 files changed")).toBeNull();
     // Click the pill's Diff toggle.
     await user.click(getByText("Diff"));
     // The workspace now renders the live surface for the active patchset.
     expect(getByText("1 files changed")).toBeTruthy();
     expect(getByText("packages/core/src/a.ts")).toBeTruthy();
-    expect(queryByText(/being rebuilt/i)).toBeNull();
   });
 });
