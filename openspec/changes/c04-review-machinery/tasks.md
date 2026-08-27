@@ -12,8 +12,8 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 2. `LineCommentEditor` — the ONE editor
 
-- [ ] 2.1 `packages/app-ui/src/review/line-comment-editor.tsx` (reconciliation 2): port the spike's `code-block.tsx#LineCommentEditor` verbatim as its own module — `lineLabel`, `initialText`, `hasComment`, `onCancel`, `onSave(text | null)`, `onRequestChanges(text)`. Delete shown only when `hasComment`; Escape triggers `onCancel`; saving empty text calls `onSave(null)`.
-- [ ] 2.2 DOM tests: Save/Delete/Cancel/Escape/empty-clears, over a bare host (no store — the component takes only callbacks). Cluster gate green. Commit.
+- [x] 2.1 `packages/app-ui/src/review/line-comment-editor.tsx` (reconciliation 2): port the spike's `code-block.tsx#LineCommentEditor` verbatim as its own module — `lineLabel`, `initialText`, `hasComment`, `onCancel`, `onSave(text | null)`, `onRequestChanges(text)`. Delete shown only when `hasComment`; Escape triggers `onCancel`; saving empty text calls `onSave(null)`.
+- [x] 2.2 DOM tests: Save/Delete/Cancel/Escape/empty-clears, over a bare host (no store — the component takes only callbacks). Cluster gate green. Commit.
 
 ## 3. `code-block.tsx` — the one code surface
 
