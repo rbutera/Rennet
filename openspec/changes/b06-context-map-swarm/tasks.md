@@ -38,7 +38,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 ## Cluster 6 — docs
 
 - [x] 6.1 `docs/using/guides/context-map.md`: generation is a partitioned swarm (invisible plumbing — scopes + statements are what the user sees), model verdicts with optional human override (never a gate), incremental on baseline advance, uncapped by design.
-- [ ] 6.2 `docs/developing/concepts/code-intelligence.md` + `model-council.md`: the two new job rows, the council-routed knowledge path (the off-council asymmetry is gone), the 400-file cap's death. Sweep `docs/` for stale flat-pass claims.
+- [x] 6.2 `docs/developing/concepts/code-intelligence.md` + `model-council.md`: the two new job rows, the council-routed knowledge path (the off-council asymmetry is gone), the 400-file cap's death. Sweep `docs/` for stale flat-pass claims.
 - [ ] 6.3 Gate green (docs test inside).
 
 ## Cluster 7 — verification

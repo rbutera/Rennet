@@ -72,6 +72,20 @@ The pinned head tree covers committed code in the reviewed patchset. Diff tools
 remain the authority for staged, unstaged, and untracked changes captured on top
 of that tree.
 
+## The knowledge layer
+
+Beside the structural index, the Repo Map stores model-generated knowledge
+claims. `packages/core/src/knowledge/` generates them as a partitioned swarm:
+`buildPartitions` slices the snapshot along detected scopes so every in-scope
+file lands in exactly one slice, a light `partition-worker` council job emits
+anchored claims per slice, and a heavy `map-verify` seat confirms hypotheses
+against their cited spans and mints cross-cutting claims. Both jobs resolve
+through the [Model Council](./model-council.md) like every other model path.
+Claims that fail anchor resolution are dropped at mint time, so a stored claim
+always cites spans that resolve against the snapshot. On a baseline advance,
+only partitions containing changed paths re-run and untouched claims carry
+forward.
+
 ## Current scope
 
 The live index does not provide type-directed references, rename analysis,
