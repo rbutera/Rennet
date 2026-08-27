@@ -157,4 +157,43 @@ describe("ask.* dispatch — the sole write path (B11 2.3)", () => {
     expect(before.quoteThreads.t1?.messages).toHaveLength(1);
     expect(before.verdictOverride).toBe("APPROVE");
   });
+
+  // ── Ingestion path safety (P2 finding 9 — privacy) ──────────────────────────
+  it("REFUSES a code anchor or line-comment path that is not repo-relative (no host-path leak)", async () => {
+    const { store, handlers } = harness();
+    // An absolute code-anchor path would leak into the R19 projection — refused at ingestion.
+    await expect(
+      handlers["ask.stage"]({
+        sessionId: SID,
+        ask: { id: "bad", anchor: "/etc/passwd:10", type: "comment", body: "leak" },
+      }),
+    ).rejects.toThrow(/repo-relative|unsafe path/i);
+    // A traversing line-comment KEY is refused too (it becomes a projection record key).
+    await expect(
+      handlers["ask.setLineComment"]({ sessionId: SID, path: "../../secret", line: 3, body: "x" }),
+    ).rejects.toThrow(/repo-relative|unsafe path/i);
+    // Nothing was written — the corrupt/leaky input never entered the durable log.
+    expect(store.read(SID)).toHaveLength(0);
+  });
+
+  it("still accepts repo-relative code anchors and prose anchors (no false rejection)", async () => {
+    const { store, handlers } = harness();
+    // A normal code anchor.
+    await handlers["ask.stage"]({
+      sessionId: SID,
+      ask: { id: "ok1", anchor: "packages/server/src/x.ts:42", type: "comment", body: "fine" },
+    });
+    // A prose anchor (free text, with spaces) is not a path — accepted untouched.
+    await handlers["ask.stage"]({
+      sessionId: SID,
+      ask: { id: "ok2", anchor: "This whole section reads well.", type: "comment", body: "praise" },
+    });
+    await handlers["ask.setLineComment"]({
+      sessionId: SID,
+      path: "src/a.ts",
+      line: 1,
+      body: "nit",
+    });
+    expect(store.read(SID)).toHaveLength(3);
+  });
 });

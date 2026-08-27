@@ -1,6 +1,28 @@
-import { receiptFor } from "@rennet/core";
+import { isRepoRelativePath, receiptFor } from "@rennet/core";
 import { type AskEventBody, parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
+
+/**
+ * Ingestion path safety (B11 P2 finding 9 — privacy). A code anchor's path and a line-comment
+ * key are supposed to be REPO-RELATIVE; if an absolute or traversing path (`/etc/passwd`,
+ * `C:\…`, `..`) enters the durable log it survives into the R19 projection (the scrub keeps
+ * record keys + only substitutes known roots), leaking a host path to a projected remote
+ * client. Reject it at the write boundary so it can never be stored — the same defence
+ * `canvas.disposition` ingestion and `publish.compose` egress already apply. NOT a gate: input
+ * validation at a trust boundary, not a consent step.
+ */
+function assertRepoRelative(path: string, what: string): void {
+  if (!isRepoRelativePath(path)) {
+    throw new Error(`Refused: ${what} must be a repo-relative path, got an unsafe path (${path}).`);
+  }
+}
+
+/** A whitespace-free `path:line` anchor is a CODE anchor — validate its path. A prose anchor
+ *  (free text, often with spaces) is not a path and is left to the general prose honesty. */
+function assertCodeAnchorSafe(anchor: string): void {
+  const match = /^(\S+):(\d+)$/.exec(anchor);
+  if (match?.[1]) assertRepoRelative(match[1], "a code anchor's path");
+}
 
 /**
  * The durable-asks command surface (B11 cluster 2, Q15, #458 R29–R36) — the ONE
@@ -35,6 +57,9 @@ export function askHandlers(rt: DispatchRuntime) {
     "ask.stage": async (rawInput) => {
       const name = "ask.stage" as const;
       const input = parseCommandInput(name, rawInput);
+      // Privacy at ingestion (finding 9): a code-anchored ask's path must be repo-relative,
+      // so a host path can never enter the durable log and leak through the R19 projection.
+      assertCodeAnchorSafe(input.ask.anchor);
       return parseCommandOutput(
         name,
         applyWrite(rt, input.sessionId, { kind: "stage", ask: input.ask }),
@@ -124,6 +149,9 @@ export function askHandlers(rt: DispatchRuntime) {
     "ask.setLineComment": async (rawInput) => {
       const name = "ask.setLineComment" as const;
       const input = parseCommandInput(name, rawInput);
+      // Privacy at ingestion (finding 9): the line-comment KEY is a path — it must be
+      // repo-relative, or it leaks into the R19 projection as a record key the scrub keeps.
+      assertRepoRelative(input.path, "a line comment path");
       return parseCommandOutput(
         name,
         applyWrite(rt, input.sessionId, {
