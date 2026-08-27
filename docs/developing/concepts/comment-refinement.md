@@ -106,7 +106,7 @@ note remains the effective body unless a valid refinement was stored.
 | --- | --- |
 | Prompt and result rules | `packages/core/src/refine-comment.ts` |
 | Claude and Codex turn composition | `packages/server/src/refine-comment-live.ts` |
-| Command schema | `packages/protocol/src/index.ts` |
+| Command schema | `packages/protocol/src/commands/` |
 | Raw, refined, signature, and effective body | `packages/app-ui/src/canvas/collation.ts` |
 | Request lifecycle and stale-result check | `packages/app-ui/src/app.tsx` |
 

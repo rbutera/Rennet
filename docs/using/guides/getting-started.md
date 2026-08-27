@@ -23,7 +23,7 @@ flowchart LR
 2. **Choose a change.** The project list combines local branches and GitHub pull
    requests. **All**, **Needs you**, **Mine**, **Local**, and **PRs** filter that
    list.
-3. **Read the change.** Use Spec, Sequence, Decisions, Noise, and Flagged without
+3. **Read the change.** Use Design, Sequence, Decisions, Noise, and Flagged without
    changing the patchset under review.
 4. **Record decisions.** Comment, ask a question, request a change, or approve at
    the relevant cohort, requirement, chunk, range, or line.

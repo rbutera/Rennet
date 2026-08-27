@@ -45,7 +45,7 @@ sequenceDiagram
 
 1. Open a project and select a pull request. Use **PRs** or **Needs you** to
    narrow the project list.
-2. Read the patchset through Spec, Sequence, Decisions, Noise, and Flagged.
+2. Read the patchset through Design, Sequence, Decisions, Noise, and Flagged.
 3. Approve, question, comment, or request a change at the relevant anchor.
 4. Open the draft and edit the selected comments.
 5. Review the composed outbound artifact, then post it as one GitHub review.

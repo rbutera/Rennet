@@ -135,7 +135,7 @@ a particular hunk.
 
 | Concern | Owner |
 | --- | --- |
-| Lineage types and exact-only carry policy | `packages/protocol/src/index.ts` |
+| Lineage types and exact-only carry policy | `packages/protocol/src/domain.ts` |
 | Anchor resolution over a lineage graph | `packages/protocol/src/rsp.ts` |
 | Fuzzy occurrence classifier | `packages/core/src/lineage-matcher.ts` |
 | Live disposition carry and successor fold | `packages/core/src/index.ts` |

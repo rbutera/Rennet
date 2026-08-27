@@ -32,7 +32,7 @@ These readers run reviews. They do not have the codebase open, and most of them 
 **Profile**: Reviews other people's GitHub pull requests and posts one review under his own name, in his own words. Knows the GitHub review flow well but is new to Rennet's lenses.
 
 **Behaviors**:
-- Opens a GitHub pull request and reads it in comprehension order through the Spec, Sequence, Decisions, Noise, and Flagged lenses.
+- Opens a GitHub pull request and reads it in comprehension order through the Design, Sequence, Decisions, Noise, and Flagged lenses.
 - Records dispositions against a cohort, requirement, chunk, range, or line.
 - Reads what the models flagged, then decides for himself what counts as a real problem.
 - Edits the review preview and posts one batched GitHub review when he is ready.

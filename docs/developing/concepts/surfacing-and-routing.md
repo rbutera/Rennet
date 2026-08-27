@@ -159,7 +159,7 @@ review behavior.
 | --- | --- |
 | RSP envelope, registry, anchors, and validator | `packages/protocol/src/rsp.ts` |
 | Body schemas and semantic checks | `packages/protocol/src/bodies.ts` |
-| Shared RSP and lineage types | `packages/protocol/src/index.ts` |
+| Shared RSP and lineage types | `packages/protocol/src/delta/` and `packages/protocol/src/domain.ts` |
 | Base instructions and prompt assembly | `packages/prompts/src/index.ts` |
 | Harness-turn adapter used by core jobs | `packages/core/src/harness-run-turn.ts` |
 | Model Council catalog and resolution | `packages/core/src/model-council.ts` |
