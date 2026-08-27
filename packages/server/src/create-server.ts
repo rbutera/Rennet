@@ -1330,16 +1330,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
     // The knowledge pass is the council-routed partition swarm (#460, B06): the
-    // scheduler picks incremental vs full itself (a prior set + fromOid routes
-    // only the owning partitions), and its per-partition + verify lines ride the
-    // SAME rehydration progress push as the narrate above.
-    runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) => {
-      const outcome = await knowledgeSwarmRuntime.runForRepo({
-        repoKey,
-        repoRoot,
-        toOid,
-        fromOid,
-      });
+    // swarm picks skip vs incremental vs full itself from the stored prior set's
+    // identity, and its per-partition + verify lines ride the SAME rehydration
+    // progress push as the narrate above.
+    runKnowledgePass: async ({ repoKey, repoRoot, toOid }) => {
+      const outcome = await knowledgeSwarmRuntime.runForRepo({ repoKey, repoRoot, toOid });
       return outcome.status === "ok" || outcome.status === "skipped";
     },
   });

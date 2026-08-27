@@ -480,14 +480,7 @@ async function buildMap(
   io.out(`  stored: ${store.paths(manifest.repoKey).mapDir}`);
   const knowledgeStore = new KnowledgeStore(store);
   if (opts.enrich) {
-    const enrichExit = await enrichMap({
-      store,
-      knowledgeStore,
-      manifest,
-      root,
-      io,
-      env,
-    });
+    const enrichExit = await enrichMap({ store, manifest, root, io, env });
     if (enrichExit !== 0) return enrichExit;
   }
   if (opts.json) {
@@ -529,24 +522,17 @@ async function buildMap(
 /**
  * The `--enrich` leg: run the council-routed knowledge swarm (#460) against the
  * just-built snapshot — the same scheduler the daemon runs after a snapshot
- * advance. Full swarm when no prior set exists, partition-routed delta when the
- * prior set is pinned to an older OID, honest no-op when the set is already
- * current. Model choice is the council's (the map path takes no --model).
+ * advance. The swarm decides skip vs delta vs full from the stored prior set's
+ * identity. Model choice is the council's (the map path takes no --model).
  */
 async function enrichMap(input: {
   store: ProjectSnapshotStore;
-  knowledgeStore: KnowledgeStore;
   manifest: ProjectSnapshotManifest;
   root: string;
   io: CliIo;
   env: NodeJS.ProcessEnv;
 }): Promise<number> {
-  const { store, knowledgeStore, manifest, root, io, env } = input;
-  const prior = knowledgeStore.loadLocal(manifest.repoKey);
-  if (prior && prior.baseOid === manifest.baseOid) {
-    io.out(`  knowledge: already current at this base OID (${prior.statements.length} statements)`);
-    return 0;
-  }
+  const { store, manifest, root, io, env } = input;
   io.out("Discovering harnesses");
   const { adapter } = await createClaudeHarness({ env });
   // The hermetic harness-off hook (#386) covers the codex probe too — discovery
@@ -580,23 +566,18 @@ async function enrichMap(input: {
         io.out(`  ${event.note}${event.detail ? ` (${event.detail})` : ""}`);
     },
   });
-  io.out(
-    prior
-      ? `Running the partition-routed knowledge delta (${prior.baseOid.slice(0, 12)} → ${manifest.baseOid.slice(0, 12)})`
-      : "Running the knowledge swarm",
-  );
+  io.out(`Running the knowledge swarm at ${manifest.baseOid.slice(0, 12)}`);
   const outcome = await runtime.runForRepo({
     repoKey: manifest.repoKey,
     repoRoot: root,
     toOid: manifest.baseOid,
-    ...(prior === null ? {} : { fromOid: prior.baseOid }),
   });
   if (outcome.status === "snapshot-unavailable") {
     io.err(`rennet map: snapshot unavailable for enrichment (${outcome.reason})`);
     return 1;
   }
   if (outcome.status === "skipped") {
-    io.out("  knowledge: no changed paths touch the set; unchanged");
+    io.out(`  knowledge: ${outcome.reason}; unchanged`);
     return 0;
   }
   if (outcome.status !== "ok") {

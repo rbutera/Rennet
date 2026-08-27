@@ -13,9 +13,10 @@ import type { ProjectProcessEvent } from "@rennet/protocol";
 /**
  * The knowledge-swarm SCHEDULER (#460, B06 cluster 5 / reconciliation 3): the
  * `server/runtime/` home the packet names. One entry point covers both triggers
- * — the initial run after a project's snapshot is built (no prior set ⇒ full
- * swarm) and the partition-routed delta on a baseline advance (`fromOid` given
- * with a prior set ⇒ only owning partitions re-run). Progress rides the
+ * — the initial run after a project's snapshot is built and the partition-routed
+ * delta on a baseline advance. The swarm derives its own mode from the stored
+ * prior set's identity (current ⇒ skip, older ⇒ delta from `prior.baseOid`,
+ * absent/foreign-generator ⇒ full run). Progress rides the
  * EXISTING `ProjectProcessEvent` push (the `knowledge` stage): one line per
  * partition state change (queued / running / statement counts) and the verify
  * seat as its own line — no new channel.
@@ -36,8 +37,6 @@ export interface KnowledgeSwarmRunInput {
   readonly repoRoot: string;
   /** The base OID the snapshot is fresh at (the run's target). */
   readonly toOid: string;
-  /** The prior set's base OID, for a partition-routed delta. Absent ⇒ full run. */
-  readonly fromOid?: string;
 }
 
 export interface KnowledgeSwarmRuntime {
@@ -110,7 +109,6 @@ export function createKnowledgeSwarmRuntime(
         repoKey: input.repoKey,
         repoRoot: input.repoRoot,
         baseOid: input.toOid,
-        ...(input.fromOid === undefined ? {} : { fromOid: input.fromOid }),
         onProgress: (event) => deps.narrate(knowledgeStageLine(repoLabel, event)),
       });
     },
