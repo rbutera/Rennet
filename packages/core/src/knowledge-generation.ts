@@ -28,16 +28,12 @@
  *    until confirmed), stamped with provenance + the snapshot it was learned against.
  */
 
-import type {
-  InvocationBudget,
-  KnowledgeSet,
-  KnowledgeStatement,
-  KnowledgeStatus,
-} from "@rennet/protocol";
+import type { InvocationBudget, KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 import { fileBlobIndex } from "./knowledge";
+import { dispositionCarrier, statementIntersectsChange } from "./knowledge/incremental";
 import {
   dedupById,
   KNOWLEDGE_CONTRACT,
@@ -226,14 +222,10 @@ export async function runKnowledgeEnrichment(
 }
 
 // ── Delta pass (changed regions only) ────────────────────────────────────────
-
-/** Whether a statement cites any of the changed paths (⇒ needs re-adjudication). */
-export function statementIntersectsChange(
-  statement: KnowledgeStatement,
-  changed: ReadonlySet<string>,
-): boolean {
-  return statement.evidence.some((anchor) => changed.has(anchor.path));
-}
+// `statementIntersectsChange` + disposition durability extracted to
+// knowledge/incremental.ts (cluster 4); imported above. No re-export here — the
+// root index star-exports both modules, and a duplicate name would be silently
+// dropped from the seam as an ambiguous star export.
 
 export interface RunKnowledgeDeltaPassInput {
   /** The NEW snapshot the reference branch advanced to. */
@@ -289,20 +281,9 @@ export async function runKnowledgeDeltaPass(
     else carried.push(statement);
   }
 
-  // A human disposition (confirmed/rejected) is durable by statement id: if the
-  // re-adjudication turn re-mints the SAME claim (same id — e.g. a mode-only change,
-  // or the model re-emits an identical claim), it keeps the human's status rather
-  // than resurfacing as a fresh hypothesis. A genuinely changed claim gets a new id
-  // (its evidence blobOid moved) and is correctly a new hypothesis.
-  const priorDisposition = new Map<string, KnowledgeStatus>();
-  for (const statement of priorSet.statements)
-    if (statement.status !== "hypothesis") priorDisposition.set(statement.id, statement.status);
-  const applyDisposition = (statement: KnowledgeStatement): KnowledgeStatement => {
-    const disposed = priorDisposition.get(statement.id);
-    return disposed && disposed !== statement.status
-      ? { ...statement, status: disposed }
-      : statement;
-  };
+  // Disposition durability by statement id — the shipped rule, now shared with
+  // the swarm's incremental path (knowledge/incremental.ts).
+  const applyDisposition = dispositionCarrier(priorSet);
 
   if (changed.size === 0) {
     return {
