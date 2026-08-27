@@ -4,7 +4,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 ## Cluster 1 — council rows
 
-- [ ] 1.1 `core/model-council.ts`: `JOB_CATALOGUE` gains `related-context-retrieval` (light, batched — one worker per session/round) and `project-scout` (heavy, per-call); all three assignment tables gain rows per reconciliation 1 (light: luna/low both+codex-only, haiku/low claude-only; scout: sonnet-5/medium both+claude-only, terra/medium codex-only; `[extrapolated]` comments where #461 is silent, house style). Ids must match protocol `COUNCIL_JOB_IDS` — no protocol edit.
+- [x] 1.1 `core/model-council.ts`: `JOB_CATALOGUE` gains `related-context-retrieval` (light, batched — one worker per session/round) and `project-scout` (heavy, per-call); all three assignment tables gain rows per reconciliation 1 (light: luna/low both+codex-only, haiku/low claude-only; scout: sonnet-5/medium both+claude-only, terra/medium codex-only; `[extrapolated]` comments where #461 is silent, house style). Ids must match protocol `COUNCIL_JOB_IDS` — no protocol edit.
 - [ ] 1.2 Tests: `resolveAssignment` resolves both ids under all three scenarios + degraded (B06 cluster-1 pattern).
 - [ ] 1.3 Gate green.
 
