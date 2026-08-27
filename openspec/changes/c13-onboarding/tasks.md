@@ -27,7 +27,7 @@ Serial clusters. Each cluster is one session. Search before implementing
       element; the registry is closed over the `MarkId` union — an unknown id is
       a compile error, a **duplicate registration for one id is detected** (the
       S8 regression guard: dev-time throw/warn, never silently first-wins).
-- [ ] Port `coach/coachmark.tsx` from the spike: spotlight portal + anchored
+- [x] Port `coach/coachmark.tsx` from the spike: spotlight portal + anchored
       Popover card + dismiss-on-pointerdown-inside-anchor + Skip-all button.
       Strip every `@/lib/*` import; anchor comes from the registry, **not**
       `document.querySelector`. Use `packages/ui` kit primitives (Popover);
