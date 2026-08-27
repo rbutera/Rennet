@@ -415,7 +415,7 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
-  packages/lens-instructions: {}
+  packages/prompts: {}
 
   packages/protocol:
     dependencies:

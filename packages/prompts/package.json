@@ -1,5 +1,5 @@
 {
-  "name": "@rennet/lens-instructions",
+  "name": "@rennet/prompts",
   "version": "0.3.28",
   "private": true,
   "type": "module",
