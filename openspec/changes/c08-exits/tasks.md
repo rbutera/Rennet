@@ -19,7 +19,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 ## 3. The ask basket + staging receipts
 
 - [x] 3.1 `packages/app-ui/src/handoff/ask-basket.tsx` (Objective clause 2, R29): render the staged asks (`StagedAsk` — text, intent, provenance source, optional diff anchor, optional originating thread); body-vs-line routing from `selectBodyVsLineAsks` with **no chrome copy** explaining the split (placement is the statement, R36). Findings never auto-stage (the act lives in C5's finding renderer / C4's toolbar, already calling `stageAsk`); every basket control is its own receipt and its own undo (`unstageAsk`).
-- [ ] 3.2 DOM tests: a staged ask appears in the basket; unstage removes it and decrements the pip; a code-anchored ask routes to the line-comment stratum, an anchorless one to the body stratum. Cluster gate green. Commit.
+- [x] 3.2 DOM tests: a staged ask appears in the basket; unstage removes it and decrements the pip; a code-anchored ask routes to the line-comment stratum, an anchorless one to the body stratum. Cluster gate green. Commit.
 
 ## 4. The hand-off view toggle + the Post Review lane (teammate PR)
 
