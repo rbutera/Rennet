@@ -34,7 +34,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 - [x] 5.1 `docs/developing/concepts/architecture-contracts.md`: board event logs persist under `.rennet/boards/` (local, never staged — extend the persistence section); the client-projection section now also names board events/projections as wrapped surfaces.
 - [x] 5.2 `docs/developing/concepts/architecture-overview.md` + `docs/developing/reference/monorepo-map.md`: server row gains `@wboard/server` (embedded board service), adapters row gains whiteboard-client (the only board-op writer). Match the Nx graph exactly (check-docs.mjs enforces).
 - [x] 5.3 Re-grep `docs/` (excluding `docs/dist`) for claims a reader would now find wrong about board storage/broadcast; fix stragglers. (Sweep clean: remaining board mentions are planned-status lens/handoff pages and keyboard false hits; no stale storage/broadcast claim. Pre-existing lens-naming history aside at lens-pipeline.md:22 is out of B4 scope, noted for a later sweep.)
-- [ ] 5.4 Cluster gate green. Commit.
+- [x] 5.4 Cluster gate green. Commit.
 
 ## 6. Verification (packet)
 
