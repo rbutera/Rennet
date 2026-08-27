@@ -32,15 +32,15 @@ function harness(deps: Partial<DispatchDeps> = {}) {
   return sessionHandlers(rt);
 }
 
-describe("session.transcript — the chat dock read (C07, honest-absent)", () => {
-  it("returns the real transcript shape: empty coding rows, no context, an identity trail", async () => {
+describe("session.transcript — the chat dock read (C07, display read-model)", () => {
+  it("honest-EMPTY: an unseeded session returns empty coding rows, no context, an identity trail", async () => {
     const out = (await harness()["session.transcript"]({ reviewId: REVIEW_ID })) as {
       trail: { title: string; target?: string; projectName?: string };
       rows: unknown[];
       contextWindow?: unknown;
     };
-    // Honest-absent: the harness owns the coding transcript, so no server-side coding turns
-    // and no invented context figure — NOT a stub error.
+    // Honest-empty: capability present, but no captured turns yet ⇒ no fabricated content and no
+    // invented context figure — NOT a stub error.
     expect(out.rows).toEqual([]);
     expect(out.contextWindow).toBeUndefined();
     // The identity trail is Rennet's to project (branch title, own-branch target, project name).
@@ -48,6 +48,34 @@ describe("session.transcript — the chat dock read (C07, honest-absent)", () =>
     expect(out.trail.target).toBe("your-branch");
     expect(out.trail.projectName).toBe("acme");
     // The output validates against the registry schema (a real, dispatch-reachable shape).
+    expect(() => parseCommandOutput("session.transcript", out)).not.toThrow();
+  });
+
+  it("honest-PRESENT: serves the captured coding turns when the transcript store has rows", async () => {
+    const rows = [
+      {
+        kind: "turn" as const,
+        id: "turn-1",
+        speaker: "orchestrator" as const,
+        status: "complete" as const,
+        paragraphs: ["Read the file."],
+        preface: [
+          {
+            kind: "action" as const,
+            id: "act-c1",
+            label: "Read",
+            detail: "<acme>/src/a.ts",
+            status: "complete" as const,
+            toolKind: "read" as const,
+          },
+        ],
+      },
+    ];
+    const out = (await harness({ transcriptRowsForReview: () => rows })["session.transcript"]({
+      reviewId: REVIEW_ID,
+    })) as { rows: typeof rows };
+    expect(out.rows).toEqual(rows);
+    // A real coding turn with its action step round-trips the registry schema.
     expect(() => parseCommandOutput("session.transcript", out)).not.toThrow();
   });
 

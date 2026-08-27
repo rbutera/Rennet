@@ -12,12 +12,13 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  * deferred — the seam that unblocks C07's chat dock and C09's rounds ledger off their
  * MemoryBridge/honest-absent stubs.
  *
- *   • `session.transcript` (C07): the chat dock's read. Honest-absent by construction — the
- *     harness CLI owns the coding transcript (#466 res. 3; Rennet persists only the
- *     `HarnessCursor`), so there are no server-side coding turns to return. `rows` is empty
- *     and `contextWindow` absent until a harness-transcript read port lands (a future
- *     capability, not a projection). The live ask threads arrive separately via
- *     `review.reattach`, already wired. Only the identity trail is Rennet's to project here.
+ *   • `session.transcript` (C07): the chat dock's read. The harness CLI stays the canonical
+ *     conversation owner (#466 res. 3; Rennet persists only the `HarnessCursor` for resume) —
+ *     but issue-set B adds an ADDITIVE display read-model: the turn loop captures the harness
+ *     events it already sees, projects them to transcript rows (R19-scrubbed), and persists them
+ *     so the dock shows history and survives reload. This read serves those rows via
+ *     `transcriptRowsForReview`; honest-empty (`[]`) when no turns were captured yet. The live ask
+ *     threads still arrive separately via `review.reattach`. The identity trail is Rennet's here.
  *
  *   • `session.rounds` (C09): the rounds-ledger read. Projects the live rounds runtime's
  *     `RoundRecord[]` for the review's session (resolved read-only from the ask-log/target
@@ -54,7 +55,11 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // Freshness-pin the review (throws for a genuinely unknown id, like every review read);
       // the client only calls this once a slug has resolved to a real review.
       const review = rt.requireReviewById(input.reviewId);
-      return parseCommandOutput(name, { trail: sessionTrailForReview(review), rows: [] });
+      // The projected coding turns the turn loop captured for this session (issue-set B), already
+      // R19-scrubbed at projection time. Honest-empty by construction: no store wired, or a session
+      // with no captured turns yet, returns `[]` — capability present, never fabricated content.
+      const rows = rt.deps.transcriptRowsForReview?.(input.reviewId) ?? [];
+      return parseCommandOutput(name, { trail: sessionTrailForReview(review), rows: [...rows] });
     },
     "session.rounds": async (rawInput) => {
       const name = "session.rounds" as const;

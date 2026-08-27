@@ -103,6 +103,7 @@ import {
   SessionStore,
   SqliteReviewStore,
   snapshotStoreFor,
+  TranscriptStore,
   validateGitHubToken,
   wslDiscoveryDeps,
 } from "@rennet/adapters";
@@ -1526,6 +1527,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
   })();
   const sessionStore = new SessionStore();
+  // The display-transcript store (issue-set B): the read side of `session.transcript`. The turn
+  // loop's recordTranscript sink writes here once the interactive loop is wired; the read serves
+  // whatever it holds (honest-empty until then).
+  const transcriptStore = new TranscriptStore();
   const sessionEntry = new SessionEntry(sessionStore);
   const roundsRuntime = createRoundsRuntime({
     resolveClaudePort: claudeAdapterForRepo,
@@ -1620,6 +1625,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const review = service.reviewById(reviewId);
       if (!review) return [];
       return roundsRuntime.ledger(resolveRoundSessionId(review, sessionStore.list()));
+    },
+    // The display-transcript read for `session.transcript` (issue-set B): the coding-turn rows
+    // the turn loop captured and persisted for this review's session, resolved READ-ONLY via the
+    // SAME target-claim derivation the rounds read uses. Rows were R19-scrubbed at projection time.
+    // Honest-empty when no turns were captured yet — the harness CLI stays the canonical owner and
+    // this is an additive display read-model. (The WRITE side — the turn loop's recordTranscript
+    // sink into transcriptStore — lights up when the interactive turn loop is wired here.)
+    transcriptRowsForReview: (reviewId: string) => {
+      const review = service.reviewById(reviewId);
+      if (!review) return [];
+      return transcriptStore.read(resolveRoundSessionId(review, sessionStore.list()));
     },
     dispatchRound: async ({ review, workOrder }) => {
       const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
