@@ -95,7 +95,7 @@ export interface ParsedFile {
   hasModeChange: boolean;
 }
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+export const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 export function parseFilePatch(patch: string): ParsedFile {
   const lines = patch.split("\n");

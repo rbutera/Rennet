@@ -40,6 +40,12 @@ Drafter dispatch + composition incl. the every-hunk check (B8); knowledge genera
 
 8. **Amendment (cluster 6): the "real captured patchset" fixture is frozen, not found.** Core's test corpus held no captured-patchset fixture (every existing test builds synthetic `Patchset`s), so cluster 6 froze one: `core/src/delta/real-capture-fixture.json`, a real per-file `git diff` capture of this repository's own commit 3228a4cc (the B04 heal fix — an impl+test pair), validated through `patchsetSchema` in the test. Own-repo code only; no client material (fixture rule).
 
+## Review-fix amendments (PR #514 round 1)
+
+9. **HunkId hashes the verbatim hunk slice, not the parsed body.** `parseFilePatch` drops `\ No newline at end of file` markers, so hashing `path + header + parsed body` (reconciliation 4's original recipe) collided marker-on-deleted-side with marker-on-added-side — distinct changes, same id. The id is now `sha256Hex(path + "\n" + slice)` where the slice is the hunk's raw text from `@@` header to the next header, markers included. Collision regression test added; `parseFilePatch` itself is untouched (three other consumers count body lines).
+
+10. **HunkId contract pinned patchset-local.** Rerun stability over the same patchset is the whole contract; an unchanged hunk whose header drifts mints a new id. Cross-round identity is lineage / element-diffs (B8). Recorded in the `IndexedHunk` JSDoc.
+
 ## Verification (packet)
 
 `pnpm check` green. Fixture test: a real captured patchset produces a DeltaPacket whose hunk ids are **stable across a re-run** and whose successor-account section is **present iff** a prior generation exists. Positive control that can fail (mutate a hunk body → id changes; omit successorAccount → section absent).

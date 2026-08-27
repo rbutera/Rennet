@@ -45,6 +45,20 @@ describe("buildHunkIndex", () => {
     expect(after.hunks[1]?.id).toBe(before.hunks[1]?.id);
   });
 
+  it("distinguishes a no-newline marker on the deleted side from the added side", () => {
+    // Same parsed body either way — only the verbatim slice sees the marker's
+    // position. These are different changes and must not collide.
+    const markerOnDeleted = ["@@ -1 +1 @@", "-old", "\\ No newline at end of file", "+new"].join(
+      "\n",
+    );
+    const markerOnAdded = ["@@ -1 +1 @@", "-old", "+new", "\\ No newline at end of file"].join(
+      "\n",
+    );
+    const a = buildHunkIndex({ files: [file("a.txt", markerOnDeleted)] });
+    const b = buildHunkIndex({ files: [file("a.txt", markerOnAdded)] });
+    expect(a.hunks[0]?.id).not.toBe(b.hunks[0]?.id);
+  });
+
   it("flags every hunk of a truncated patch lossy, with ids still minted", () => {
     const truncated = `${PATCH}\n${DIFF_TRUNCATION_MARKER}`;
     const index = buildHunkIndex({ files: [file("src/a.ts", truncated)] });

@@ -1,16 +1,25 @@
 import { DIFF_TRUNCATION_MARKER, type HunkId, type PatchFile, sha256Hex } from "@rennet/protocol";
-import { parseFilePatch } from "../decomposition";
+import { HUNK_HEADER, parseFilePatch } from "../decomposition";
 
 /**
  * One hunk of the patchset, addressable by a stable content-derived id. The
  * header and body are verbatim slices of the unified diff (body lines keep
  * their `+`/`-`/` ` prefix), so the id is an identity over what the reviewer
  * actually sees, not a re-rendering of it.
+ *
+ * The id contract is PATCHSET-LOCAL rerun stability: the same patchset yields
+ * the same ids on every run. It is NOT a cross-round identity — an unchanged
+ * hunk whose `@@` header drifts (line moves) mints a new id; carrying identity
+ * across rounds is lineage / element-diffs work (B8).
  */
 export interface IndexedHunk {
   /**
-   * `sha256Hex(path + "\n" + header + "\n" + body)` — deterministic: the same
-   * patchset yields the same ids on every run, and any body change mints a new id.
+   * `sha256Hex(path + "\n" + slice)` where `slice` is the hunk's VERBATIM text
+   * from the diff — the `@@` header line plus every following line up to the
+   * next header, including `\ No newline at end of file` markers. Hashing the
+   * raw slice (not the parsed body) keeps positionally distinct changes
+   * distinct: a no-newline marker on the deleted side vs the added side is a
+   * different change and gets a different id.
    */
   readonly id: HunkId;
   readonly path: string;
@@ -41,29 +50,51 @@ export interface HunkIndex {
  * Parse every file patch of the (immutable) patchset into hunks with stable
  * ids. Binary and empty patches yield no hunks; nothing throws on them.
  */
+/**
+ * The verbatim per-hunk slices of a file patch: each slice is the `@@` header
+ * line plus every following line up to the next header (or end of patch).
+ * Split on the same header regex `parseFilePatch` uses, so the nth slice is
+ * the nth parsed hunk's raw text — markers and all.
+ */
+function hunkSlices(patch: string): string[] {
+  const slices: string[] = [];
+  let current: string[] | null = null;
+  for (const line of patch.split("\n")) {
+    if (HUNK_HEADER.test(line)) {
+      if (current) slices.push(current.join("\n"));
+      current = [line];
+      continue;
+    }
+    if (current) current.push(line);
+  }
+  if (current) slices.push(current.join("\n"));
+  return slices;
+}
+
 export function buildHunkIndex(patchset: { files: readonly PatchFile[] }): HunkIndex {
   const hunks: IndexedHunk[] = [];
   for (const file of patchset.files) {
     if (file.binary || file.patch === "") continue;
     const lossy = file.patch.includes(DIFF_TRUNCATION_MARKER);
-    for (const raw of parseFilePatch(file.patch).hunks) {
+    const slices = hunkSlices(file.patch);
+    parseFilePatch(file.patch).hunks.forEach((raw, i) => {
       // parseFilePatch retains the verbatim header for every parsed hunk; the
       // optional field only goes absent on synthesized split fragments, which
-      // never appear here.
+      // never appear here. Slices and parsed hunks split on the same regex,
+      // so index i pairs them.
       const header = raw.header ?? "";
-      const body = raw.body;
       hunks.push({
-        id: sha256Hex(`${file.path}\n${header}\n${body.join("\n")}`),
+        id: sha256Hex(`${file.path}\n${slices[i] ?? ""}`),
         path: file.path,
         header,
-        body,
+        body: raw.body,
         spans: {
           old: { start: raw.oldStart, lines: raw.oldLines },
           new: { start: raw.newStart, lines: raw.newLines },
         },
         lossy,
       });
-    }
+    });
   }
   return { hunks, byId: new Map(hunks.map((hunk) => [hunk.id, hunk])) };
 }
