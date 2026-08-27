@@ -4,7 +4,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 ## Cluster 1 — council rows
 
-- [ ] 1.1 `core/model-council.ts`: `JOB_CATALOGUE` gains `partition-worker` (light, batched) and `map-verify` (heavy, per-call); all three assignment tables gain rows — both: luna/low + sonnet-5/medium; claude-only: haiku/low + sonnet-5/medium; codex-only: luna/low + terra/medium (mark `[extrapolated]` where #460 is silent, house style). Ids must match protocol `COUNCIL_JOB_IDS` (reconciliation 1 — no protocol edit).
+- [x] 1.1 `core/model-council.ts`: `JOB_CATALOGUE` gains `partition-worker` (light, batched) and `map-verify` (heavy, per-call); all three assignment tables gain rows — both: luna/low + sonnet-5/medium; claude-only: haiku/low + sonnet-5/medium; codex-only: luna/low + terra/medium (mark `[extrapolated]` where #460 is silent, house style). Ids must match protocol `COUNCIL_JOB_IDS` (reconciliation 1 — no protocol edit).
 - [ ] 1.2 Tests: `resolveAssignment` resolves both ids under all three scenarios + degraded; cross-harness flag correct for partition-worker under `both`.
 - [ ] 1.3 Gate green.
 
