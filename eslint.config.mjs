@@ -1,5 +1,28 @@
 import nx from "@nx/eslint-plugin";
 
+// Shared no-restricted-syntax selectors. Kept as consts because ESLint flat config
+// REPLACES a rule's options rather than merging them: a file matched by two blocks
+// that both set `no-restricted-syntax` keeps only the LAST block's selectors. So the
+// invoke block below re-lists the hex selector to avoid silently dropping it on
+// app-ui surface files (a past stale-pass class of bug). Reference the const, never
+// re-type the selector.
+const NO_HARDCODED_HEX = {
+  selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
+  message:
+    "No hardcoded hex colours in the UI packages — use a theme utility or var(--rn-…) token from @rennet/theme.",
+};
+
+// The standing law (C01 §2.7, proposal): no app-ui surface/component code calls the
+// bridge's `.invoke` directly. Reads go through `useCommand`, writes through
+// `useMutation`, live narration through `useCommandStream` — the `src/data/` hooks
+// over `useBridge()`. This bans the method call itself (any `.invoke(...)`), so it
+// catches `bridge.invoke`, `temp.bridge.invoke`, and `RennetBridge.invoke` alike.
+const NO_DIRECT_INVOKE = {
+  selector: "CallExpression[callee.property.name='invoke']",
+  message:
+    "No direct bridge.invoke in app-ui surfaces — read through useCommand, write through useMutation, stream through useCommandStream (data/ hooks over useBridge). Only src/data/ may call .invoke.",
+};
+
 export default [
   {
     ignores: ["**/dist/**", "**/out/**", "**/coverage/**", "node_modules/**"],
@@ -140,14 +163,39 @@ export default [
       "packages/app-ui/src/canvas/openspec.fixture.ts",
     ],
     rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
-          message:
-            "No hardcoded hex colours in the UI packages — use a theme utility or var(--rn-…) token from @rennet/theme.",
-        },
-      ],
+      "no-restricted-syntax": ["error", NO_HARDCODED_HEX],
+    },
+  },
+  {
+    // The bridge seam is a standing architecture law, not a consent gate (Rule Zero):
+    // every app-ui surface reaches the bridge through the data-seam hooks, never by
+    // calling `.invoke` itself. The seam internals under `src/data/` are the ONE
+    // sanctioned caller and are exempt; tests drive MemoryBridge directly and are
+    // exempt too. Placed AFTER the hex block so it wins the merge on surface files —
+    // hence it re-lists NO_HARDCODED_HEX to keep hex enforced there.
+    files: ["packages/app-ui/src/**/*.ts", "packages/app-ui/src/**/*.tsx"],
+    ignores: [
+      "packages/app-ui/src/data/**",
+      "packages/app-ui/src/**/*.test.ts",
+      "packages/app-ui/src/**/*.test.tsx",
+      // ── LEGACY QUARANTINE (strangler-fig) ────────────────────────────────────
+      // Incumbent surfaces still on the Surface/prop-bridge model. Each is rebuilt
+      // onto the seam by the workstream named, which DROPS its line here. C14
+      // conformance verifies this list is EMPTY. Do not add new entries — new code
+      // uses the hooks. Every file below carries a live `.invoke` today.
+      "packages/app-ui/src/app/shell.tsx", // legacy — migrated by C03
+      "packages/app-ui/src/components/directory-browser.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/project-processing.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/front-door.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/project-detail.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/context-map-view.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/pr-worktree-status.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/connection-host.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/github-connect.tsx", // legacy — migrated by C12
+      "packages/app-ui/src/components/settings-screen.tsx", // legacy — migrated by C10
+    ],
+    rules: {
+      "no-restricted-syntax": ["error", NO_HARDCODED_HEX, NO_DIRECT_INVOKE],
     },
   },
 ];
