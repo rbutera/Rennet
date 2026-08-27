@@ -1880,6 +1880,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
       readGlobalState: () => clientSettingsStore.readState(),
       updateGlobal: (update) => clientSettingsStore.update(update),
+      // This host's daemon-settings — the local host's global rung, the only one
+      // locally readable; remote/WSL hosts keep theirs on that host (#476, §4.2).
+      readDaemonSettings: () => daemonSettingsStore.read(),
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {

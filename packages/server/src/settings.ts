@@ -11,7 +11,10 @@ import {
 } from "@rennet/core";
 import type {
   ClientSettings,
+  DaemonHostSection,
+  DaemonSettings,
   Project,
+  ProjectSource,
   ProjectVisibility,
   SetRepoLocusOutcome,
   SetRepoVisibilityOutcome,
@@ -47,6 +50,12 @@ export interface SettingsCompositionDeps {
       };
   /** The viewer's client-settings state (appearance, keybindings). */
   readGlobalState(): { status: "absent" | "ok" | "malformed"; config: ClientSettings };
+  /**
+   * This host's daemon-settings (the global ladder rung as it exists on the host this
+   * daemon runs on, #476). Its `daemon.listen` rung is the only host rung locally
+   * readable; remote/WSL hosts keep theirs on that host.
+   */
+  readDaemonSettings(): DaemonSettings;
   /** Persist a client-settings edit. MUST itself refuse a malformed file (throw). */
   updateGlobal(update: (current: ClientSettings) => ClientSettings): ClientSettings;
   /**
@@ -208,13 +217,37 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     return { project, target, multiRepo: targets.length > 1 };
   };
 
+  // Every daemon host the surface covers (#476): the LOCAL host first (its
+  // `daemon-settings` listener rung is the only one locally readable), then every
+  // distinct non-local `source` the projects route to. A remote/WSL host is LISTED so
+  // it is visible, but its rung lives on that host — not fabricated here.
+  const labelForSource = (source: ProjectSource): string => {
+    if (source === "local") return "This machine";
+    if (source.startsWith("wsl:")) return `WSL · ${source.slice("wsl:".length)}`;
+    return `Remote · ${source.slice("remote:".length)}`;
+  };
+  const daemonHostSections = (projects: Project[]): DaemonHostSection[] => {
+    const listen = deps.readDaemonSettings().daemon?.listen;
+    const hosts: DaemonHostSection[] = [
+      { source: "local", label: "This machine", isLocal: true, ...(listen ? { listen } : {}) },
+    ];
+    const seen = new Set<ProjectSource>(["local"]);
+    for (const project of projects) {
+      if (seen.has(project.source)) continue;
+      seen.add(project.source);
+      hosts.push({ source: project.source, label: labelForSource(project.source), isLocal: false });
+    }
+    return hosts;
+  };
+
   return {
     get: async (): Promise<SettingsView> => {
       const schemeState = deps.readGlobalState();
       const scheme = resolveScheme(schemeState.config);
       const projects: SettingsProject[] = [];
       const emittedRepoPaths = new Set<string>();
-      for (const project of deps.listProjects()) {
+      const allProjects = deps.listProjects();
+      for (const project of allProjects) {
         const targets = await targetsFor(project);
         const multiRepo = targets.length > 1;
         for (const target of targets) {
@@ -230,6 +263,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         projects,
         // The stored override map, verbatim (#44). Additive: absent field ⇒ omitted.
         ...(schemeState.config.keybindings ? { keybindings: schemeState.config.keybindings } : {}),
+        // Every daemon host the surface covers (#476), local first (§4.2).
+        daemonHosts: daemonHostSections(allProjects),
       };
     },
 

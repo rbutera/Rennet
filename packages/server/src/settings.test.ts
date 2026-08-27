@@ -48,6 +48,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
       return { status: "absent", config: null };
     },
     readGlobalState: () => ({ status: "ok", config: { version: 1 } }),
+    readDaemonSettings: () => ({ version: 1 }),
     updateGlobal: (update) => {
       calls.updateGlobal += 1;
       return update({ version: 1 });
@@ -109,6 +110,7 @@ function statefulDeps(
         ? { status: "malformed", config: null }
         : { status: "ok", config: { ...store } },
     readGlobalState: () => ({ status: "ok", config: { version: 1 } }),
+    readDaemonSettings: () => ({ version: 1 }),
     updateGlobal: (update) => update({ version: 1 }),
     gitTopLevel: async (workingPath) => workingPath,
     discoverWorkspaceRepos: async () => [],
@@ -531,5 +533,47 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     });
     expect(outcome.status).toBe("malformed");
     expect(calls.applyLocus).toEqual([]);
+  });
+});
+
+describe("createSettingsComposition — daemon host sections (#476, §4.2)", () => {
+  it("lists the local host first, carrying its daemon-settings listener rung", async () => {
+    const { deps } = makeDeps({
+      readDaemonSettings: () => ({
+        version: 1,
+        daemon: { listen: { host: "100.64.0.1", port: 7777 } },
+      }),
+    });
+    const view = await createSettingsComposition(deps).get();
+    expect(view.daemonHosts?.[0]).toEqual({
+      source: "local",
+      label: "This machine",
+      isLocal: true,
+      listen: { host: "100.64.0.1", port: 7777 },
+    });
+  });
+
+  it("enumerates EVERY paired host a project routes to, not just local — remote rungs live on that host", async () => {
+    const { deps } = makeDeps({
+      readDaemonSettings: () => ({ version: 1 }),
+      listProjects: () => [
+        project({ id: "a", source: "local" }),
+        project({ id: "b", source: "wsl:Ubuntu" }),
+        project({ id: "c", source: "remote:phone-9" }),
+        project({ id: "d", source: "wsl:Ubuntu" }), // dedup
+      ],
+    });
+    const hosts = (await createSettingsComposition(deps).get()).daemonHosts ?? [];
+    expect(hosts.map((h) => h.source)).toEqual(["local", "wsl:Ubuntu", "remote:phone-9"]);
+    // The local host carries no listen (loopback default here); non-local hosts are LISTED
+    // but their rung is not fabricated — it lives on that host.
+    expect(hosts[0]).toMatchObject({ isLocal: true });
+    expect(hosts[1]).toEqual({ source: "wsl:Ubuntu", label: "WSL · Ubuntu", isLocal: false });
+    expect(hosts[2]).toEqual({
+      source: "remote:phone-9",
+      label: "Remote · phone-9",
+      isLocal: false,
+    });
+    for (const h of hosts.slice(1)) expect(h.listen).toBeUndefined();
   });
 });

@@ -1653,6 +1653,31 @@ export const settingsProjectSchema = z
   });
 export type SettingsProject = z.infer<typeof settingsProjectSchema>;
 
+/**
+ * One daemon host's section on the settings surface (#476). Rennet runs a daemon per
+ * host; the surface lists EVERY host a project routes to, not just the local one. The
+ * `isLocal` host is the one this daemon runs on — its `listen` rung is read from this
+ * host's `daemon-settings.json`. A remote or in-WSL host keeps its rung on THAT host, so
+ * `listen` is populated only for the local section; a non-local host is listed by
+ * `source`/`label` so it is visible even though its settings are not locally readable.
+ */
+export const daemonHostSectionSchema = z.object({
+  /** `local`, `wsl:<distro>`, or `remote:<deviceId>` — the routing address of the host. */
+  source: sourceSchema,
+  /** Human label for the host (`This machine`, `WSL · Ubuntu`, `Remote · <id>`). */
+  label: z.string().min(1),
+  /** True for the host this daemon runs on — the only section whose `listen` is locally readable. */
+  isLocal: z.boolean(),
+  /**
+   * The host's daemon-settings listener rung (#380), present only on the local section
+   * (a remote/WSL host's rung lives on that host). Absent ⇒ loopback default there.
+   */
+  listen: z
+    .object({ host: z.string().min(1), port: z.number().int().nonnegative().optional() })
+    .optional(),
+});
+export type DaemonHostSection = z.infer<typeof daemonHostSectionSchema>;
+
 /** The whole settings view: the global layer plus every repo's repo layer. */
 export const settingsViewSchema = z.object({
   /** The resolved effective scheme (builtin `system`, overridden by global). */
@@ -1672,6 +1697,14 @@ export const settingsViewSchema = z.object({
    * these on the catalogue defaults for dispatch, display, and conflict detection.
    */
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
+  /**
+   * Every daemon host the surface covers (#476), local section FIRST. Each carries its
+   * `daemon-settings` rung where locally readable (the local host); a remote or in-WSL
+   * host is listed so it is visible even though its rung lives on that host. Enumerated
+   * from the local host plus every distinct `source` the projects route to. Additive-
+   * optional: an old `settings.get` caller ignores it, an untouched engine may omit it.
+   */
+  daemonHosts: z.array(daemonHostSectionSchema).optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 
