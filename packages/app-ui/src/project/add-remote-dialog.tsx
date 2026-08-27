@@ -60,6 +60,7 @@ export function AddRemoteDialog() {
 }
 
 function AddRemoteBody({ onClose }: { onClose(): void }) {
+  const openAddProjectForSource = useRennetStore((s) => s.uiActions.openAddProjectForSource);
   const [stage, setStage] = useState<Stage>("idle");
   const [address, setAddress] = useState("");
   const [code, setCode] = useState("");
@@ -138,7 +139,23 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
 
       <DialogFooter>
         {stage === "connected" ? (
-          <Button onClick={onClose}>Done</Button>
+          <>
+            <Button variant="outline" onClick={onClose}>
+              Done
+            </Button>
+            <Button
+              onClick={() => {
+                onClose();
+                // One `ui` hop: reopen Add Project preselected to the machine just paired,
+                // so the directory browser lands on its filesystem (§10.3).
+                if (deviceIdRef.current) {
+                  openAddProjectForSource(`remote:${deviceIdRef.current}`);
+                }
+              }}
+            >
+              Browse Its Projects
+            </Button>
+          </>
         ) : (
           <>
             <Button variant="outline" onClick={onClose} disabled={connecting}>

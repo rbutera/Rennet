@@ -13,7 +13,7 @@ import {
   Separator,
 } from "@rennet/ui";
 import { Check, ChevronDown, Monitor, Plus, Server } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { DirectoryBrowser } from "../components/directory-browser";
 import { Icon } from "../components/icon";
@@ -79,8 +79,23 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
   const openDialog = useRennetStore((s) => s.uiActions.openDialog);
   const environments = useEnvironments();
 
-  const [source, setSource] = useState<ProjectSource>("local");
+  const pendingSource = useRennetStore((s) => s.ui.pendingAddProjectSource);
+  const clearAddProjectSource = useRennetStore((s) => s.uiActions.clearAddProjectSource);
+
+  const [source, setSource] = useState<ProjectSource>(
+    (pendingSource as ProjectSource | undefined) ?? "local",
+  );
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+
+  // Consume the one-shot preselection from Add Environment → Browse Its Projects. On a
+  // fresh mount `source` already initialised to it above; this also switches an
+  // already-open dialog and, either way, clears the pending hop so the NEXT reopen is clean.
+  useEffect(() => {
+    if (!pendingSource) return;
+    setSource(pendingSource as ProjectSource);
+    setSelectedPath(null);
+    clearAddProjectSource();
+  }, [pendingSource, clearAddProjectSource]);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();

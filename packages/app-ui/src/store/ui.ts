@@ -23,6 +23,12 @@ export interface UiState {
   readonly commandMenuOpen: boolean;
   /** The stack of open dialog ids (top = frontmost); empty ⇒ no dialog. */
   readonly openDialogs: readonly string[];
+  /**
+   * A `ProjectSource` the NEXT Add Project open should preselect — the one `ui` hop
+   * behind Add Environment's "Browse Its Projects" (C12 §10.3). Set with the dialog,
+   * consumed (and cleared) by the Add Project body. Absent ⇒ Add Project opens on Local.
+   */
+  readonly pendingAddProjectSource?: string;
 }
 
 export interface UiSlice {
@@ -36,6 +42,10 @@ export interface UiSlice {
     setCommandMenuOpen(open: boolean): void;
     openDialog(id: string): void;
     closeDialog(id: string): void;
+    /** Open Add Project preselected to `source` (Add Environment → Browse Its Projects). */
+    openAddProjectForSource(source: string): void;
+    /** Clear the pending preselection once the Add Project body has consumed it. */
+    clearAddProjectSource(): void;
   };
 }
 
@@ -71,6 +81,16 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
       })),
     closeDialog: (id) =>
       set((s) => ({ ui: { ...s.ui, openDialogs: s.ui.openDialogs.filter((d) => d !== id) } })),
+    openAddProjectForSource: (source) =>
+      set((s) => ({
+        ui: {
+          ...s.ui,
+          pendingAddProjectSource: source,
+          openDialogs: [...s.ui.openDialogs.filter((d) => d !== "add-project"), "add-project"],
+        },
+      })),
+    clearAddProjectSource: () =>
+      set((s) => ({ ui: { ...s.ui, pendingAddProjectSource: undefined } })),
   },
 });
 
