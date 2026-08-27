@@ -93,8 +93,8 @@
     "passes": false
   },
   "c06": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true
   },
   "c07": {
     "status": "pending",
