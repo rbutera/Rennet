@@ -1,5 +1,5 @@
 import { cn } from "@rennet/ui";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { lineRef } from "./citations";
 import { CitationBlock } from "./code-tabs";
 import { ReferenceChip } from "./reference-chip";
@@ -54,6 +54,11 @@ export function RichText({
   keywords = false,
 }: RichTextProps) {
   const [activeRef, setActiveRef] = useState<string | null>(null);
+  // The revealed citation is keyed by paragraph index + ref; when the prose or the
+  // patchset it resolves against changes, that identity is stale — drop it so an old
+  // citation can never render below unrelated replacement text.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: text/patchsetId are the invalidation keys; activeRef is intentionally reset, not a dep.
+  useEffect(() => setActiveRef(null), [text, patchsetId]);
   const paragraphs = text.split(/\n\n+/);
 
   function keywordNodes(chunk: string, keyBase: string): ReactNode[] {
@@ -72,24 +77,10 @@ export function RichText({
     });
   }
 
-  // `**bold**` is the one markdown feature board prose carries (the bold-lead form);
-  // anything richer stays out of the pipeline deliberately.
-  function plainNodes(chunk: string, keyBase: string): ReactNode[] {
-    const segments = chunk.split(/(\*\*[^*]+\*\*)/);
-    if (segments.length === 1) return keywordNodes(chunk, keyBase);
-    return segments.flatMap((segment, index) => {
-      const key = `${keyBase}-b-${index}`;
-      return segment.startsWith("**") && segment.endsWith("**") ? (
-        <strong key={key} className="font-semibold text-foreground">
-          {keywordNodes(segment.slice(2, -2), key)}
-        </strong>
-      ) : (
-        keywordNodes(segment, key)
-      );
-    });
-  }
-
-  function renderTokens(segment: string, paragraphIndex: number, keyOffset: number): ReactNode[] {
+  // Run the supported token pipeline (citations, backticks, keywords) over one plain
+  // (already un-bolded) segment. Bold is handled OUTSIDE this, so a chip or code span
+  // wrapped in `**…**` renders inside the <strong>, never with literal ** left around it.
+  function tokenNodes(segment: string, paragraphIndex: number, keyBase: string): ReactNode[] {
     const nodes: ReactNode[] = [];
     let last = 0;
     let match: RegExpExecArray | null;
@@ -97,13 +88,13 @@ export function RichText({
     // biome-ignore lint/suspicious/noAssignInExpressions: the canonical single-pass regex tokenizer loop.
     while ((match = TOKEN.exec(segment)) !== null) {
       if (match.index > last)
-        nodes.push(...plainNodes(segment.slice(last, match.index), `${keyOffset}-${last}`));
+        nodes.push(...keywordNodes(segment.slice(last, match.index), `${keyBase}-${last}`));
       const token = match[0];
       const inner = token.startsWith("`") ? token.slice(1, -1) : token;
       const isRef = FILE_REF.test(inner);
-      const key = `${keyOffset}-${match.index}`;
+      const key = `${keyBase}-${match.index}`;
       if (isRef) {
-        const refKey = `${paragraphIndex}:${inner}`;
+        const refId = `${paragraphIndex}:${inner}`;
         const parsed = parseRef(inner);
         nodes.push(
           <ReferenceChip
@@ -111,10 +102,10 @@ export function RichText({
             path={parsed.path}
             startLine={parsed.startLine}
             endLine={parsed.endLine}
-            active={activeRef === refKey}
+            active={activeRef === refId}
             title={inner}
             className="inline-block underline decoration-dotted underline-offset-2"
-            onClick={() => setActiveRef((current) => (current === refKey ? null : refKey))}
+            onClick={() => setActiveRef((current) => (current === refId ? null : refId))}
           />,
         );
       } else if (token.startsWith("`")) {
@@ -129,8 +120,26 @@ export function RichText({
       last = match.index + token.length;
     }
     if (last < segment.length)
-      nodes.push(...plainNodes(segment.slice(last), `${keyOffset}-${last}`));
+      nodes.push(...keywordNodes(segment.slice(last), `${keyBase}-${last}`));
     return nodes;
+  }
+
+  // `**bold**` is the one markdown container board prose carries. Split it out FIRST,
+  // then run the token pipeline through both the bold and the plain runs, so a citation
+  // or code span inside the bold is a real chip/code element, not literal ** + a chip.
+  function renderInline(segment: string, paragraphIndex: number, keyOffset: number): ReactNode[] {
+    const parts = segment.split(/(\*\*[^*]+\*\*)/);
+    if (parts.length === 1) return tokenNodes(segment, paragraphIndex, `${keyOffset}`);
+    return parts.flatMap((part, index) => {
+      const key = `${keyOffset}-b-${index}`;
+      return part.startsWith("**") && part.endsWith("**") ? (
+        <strong key={key} className="font-semibold text-foreground">
+          {tokenNodes(part.slice(2, -2), paragraphIndex, key)}
+        </strong>
+      ) : (
+        tokenNodes(part, paragraphIndex, key)
+      );
+    });
   }
 
   function renderParagraph(paragraph: string, paragraphIndex: number) {
@@ -148,17 +157,18 @@ export function RichText({
         })()
       : null;
 
-    // A block whose lines all start with "- " is a bulleted list; each line keeps the
-    // full token pipeline (citations, code, bold, keywords).
+    // A block whose lines all start with "- " is a bulleted list (a one-item `- x`
+    // paragraph counts); each line keeps the full token pipeline (citations, code,
+    // bold, keywords).
     const lines = paragraph.split("\n");
-    if (lines.length > 1 && lines.every((line) => line.startsWith("- "))) {
+    if (lines.every((line) => line.startsWith("- "))) {
       return (
         <Fragment key={paragraphIndex}>
           <ul className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60">
             {lines.map((line, lineIndex) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: bullet lines are a fixed positional list.
               <li key={lineIndex} className={paragraphClassName}>
-                {renderTokens(line.slice(2), paragraphIndex, lineIndex * 100000)}
+                {renderInline(line.slice(2), paragraphIndex, lineIndex * 100000)}
               </li>
             ))}
           </ul>
@@ -169,7 +179,7 @@ export function RichText({
 
     return (
       <Fragment key={paragraphIndex}>
-        <p className={paragraphClassName}>{renderTokens(paragraph, paragraphIndex, 0)}</p>
+        <p className={paragraphClassName}>{renderInline(paragraph, paragraphIndex, 0)}</p>
         {reveal}
       </Fragment>
     );

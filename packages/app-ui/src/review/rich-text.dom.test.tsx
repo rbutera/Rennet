@@ -42,6 +42,46 @@ describe("RichText — R45 markdown subset (base tier)", () => {
     expect(container.querySelectorAll("li")).toHaveLength(3);
   });
 
+  it("renders a single `- item` paragraph as a one-item bulleted list", () => {
+    const { container } = mount(
+      withBridge(spanBridge(), <RichText text={"- only one"} patchsetId={PS} />),
+    );
+    expect(container.querySelectorAll("li")).toHaveLength(1);
+    expect(container.querySelector("li")?.textContent).toBe("only one");
+  });
+
+  it("renders a citation chip INSIDE bold, with no literal asterisks left over", () => {
+    const { container, getByRole, queryByText } = mount(
+      withBridge(spanBridge(), <RichText text="**packages/a/b.ts:10**" patchsetId={PS} />),
+    );
+    const strong = container.querySelector("strong");
+    expect(getByRole("button", { name: "b.ts:10" })).toBeTruthy();
+    expect(strong?.querySelector("button")).toBeTruthy();
+    expect(queryByText(/\*\*/)).toBeNull();
+  });
+
+  it("renders a backticked term INSIDE bold, with no literal asterisks left over", () => {
+    const { container, queryByText } = mount(
+      withBridge(spanBridge(), <RichText text={"**`term`**"} patchsetId={PS} />),
+    );
+    const strong = container.querySelector("strong");
+    expect(strong?.querySelector("code")?.textContent).toBe("term");
+    expect(queryByText(/\*\*/)).toBeNull();
+  });
+
+  it("drops a revealed citation when the prose changes (no stale reveal under new text)", async () => {
+    const { getByRole, getByText, queryByText, rerender, user } = mount(
+      withBridge(spanBridge(), <RichText text="see packages/core/x.ts:42 here" patchsetId={PS} />),
+    );
+    await user.click(getByRole("button", { name: "x.ts:42" }));
+    await waitFor(() => expect(getByText("L42")).toBeTruthy());
+    // Replace the prose entirely; the reveal keyed to the old paragraph must not survive.
+    rerender(
+      withBridge(spanBridge(), <RichText text="entirely different prose" patchsetId={PS} />),
+    );
+    expect(queryByText("L42")).toBeNull();
+  });
+
   it("bolds normative-grammar keywords only when keywords is set", () => {
     const on = mount(
       withBridge(spanBridge(), <RichText text="the code MUST hold" patchsetId={PS} keywords />),
