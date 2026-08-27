@@ -5,13 +5,16 @@ import { councilSeatTurn } from "@rennet/adapters";
 import {
   assertCoverage,
   type CodexExecutor,
+  DEFAULT_SEAT_LABELS,
   type DeltaPacket,
   type HarnessPort,
   type HarnessTurnResult,
   type LintContext,
   type LintHunk,
   type LintTarget,
+  NO_CONCERN_ANSWER,
   type Omission,
+  reconcileFindings,
   stampDeltas,
   validateDraft,
 } from "@rennet/core";
@@ -21,6 +24,9 @@ import {
   type CouncilResolveContext,
   type DraftBoard,
   DraftBoardSchema,
+  type DraftElement,
+  type FindingAgreement,
+  type FindingElement,
   LENS_KINDS,
   type LensKind,
   type Violation,
@@ -85,6 +91,154 @@ export function draftToOps(
   board: DraftBoard,
 ): { op: "create"; element: DraftBoard["elements"][number] }[] {
   return board.elements.map((element) => ({ op: "create", element }));
+}
+
+// ── Flagged dual seat: reconcile two boards' findings (J1/J2, cluster 5.2) ──
+
+/** One per-model concurrence tally, the board `finding.data.concurrence` element shape. */
+interface Concurrence {
+  readonly model: string;
+  readonly agree: number;
+  readonly total: number;
+}
+
+/** The finding elements of a board, in order. */
+function boardFindings(board: DraftBoard): DraftElement[] {
+  return board.elements.filter((el) => el.kind === "finding");
+}
+
+/**
+ * Synthesize the location anchor a board finding cites, so two seats' findings
+ * over the SAME code region reconcile as concurring. Built from the finding's
+ * first `code_ref` (path + new-image span) as a `rennet:file/…#L…` anchor; a
+ * finding with no citation gets a per-id `rennet:doc/<id>` anchor that can never
+ * match across seats (an uncited finding cannot be located to concur — honest).
+ */
+export function synthAnchor(finding: DraftElement, board: DraftBoard): string {
+  const code = (finding.data as { code?: unknown }).code;
+  const firstRef = Array.isArray(code) ? code.find((c) => typeof c === "string") : undefined;
+  if (typeof firstRef === "string") {
+    const ref = board.elements.find((el) => el.id === firstRef && el.kind === "code_ref");
+    const d = ref?.data as { path?: unknown; start_line?: unknown; end_line?: unknown } | undefined;
+    if (d && typeof d.path === "string" && typeof d.start_line === "number") {
+      const end = typeof d.end_line === "number" ? d.end_line : d.start_line;
+      return `rennet:file/${d.path}#L${d.start_line}-L${end}`;
+    }
+  }
+  return `rennet:doc/${finding.id}`;
+}
+
+/** Project a board finding into the wire `FindingElement` `reconcileFindings` folds. */
+export function toFindingElement(finding: DraftElement, board: DraftBoard): FindingElement {
+  const data = finding.data as { concern?: unknown; severity?: unknown };
+  return {
+    findingId: finding.id,
+    anchor: synthAnchor(finding, board),
+    summary: typeof data.concern === "string" ? data.concern : "",
+    severity:
+      data.severity === "high" || data.severity === "medium" || data.severity === "low"
+        ? data.severity
+        : "medium",
+    agreement: { kind: "concur", agree: 1, total: 1 },
+  };
+}
+
+/** Fold a reconciled agreement into the board's per-model concurrence tallies. */
+export function foldConcurrence(
+  agreement: FindingAgreement,
+  labels: { a: string; b: string },
+): Concurrence[] {
+  if (agreement.kind === "concur") {
+    return [
+      { model: labels.a, agree: 1, total: 1 },
+      { model: labels.b, agree: 1, total: 1 },
+    ];
+  }
+  return agreement.answers.map((ans) => ({
+    model: ans.model,
+    agree: ans.answer === NO_CONCERN_ANSWER ? 0 : 1,
+    total: 1,
+  }));
+}
+
+/** Merge accumulated skippedHunks from both boards (dedup by hunk id). */
+function mergeSkips(boardA: DraftBoard, boardB: DraftBoard): { hunk: string; reason: string }[] {
+  const read = (b: DraftBoard) =>
+    ((b as { skippedHunks?: unknown }).skippedHunks ?? []) as { hunk: string; reason: string }[];
+  const seen = new Set<string>();
+  const out: { hunk: string; reason: string }[] = [];
+  for (const s of [...read(boardA), ...read(boardB)]) {
+    if (Array.isArray(s) || s?.hunk === undefined || seen.has(s.hunk)) continue;
+    seen.add(s.hunk);
+    out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Reconcile two flagged-seat boards into one: `reconcileFindings` folds their
+ * findings by location (per-finding cross-model concurrence, J2), a matched pair
+ * collapses to the clearer one with both models' concurrence, a solo carries the
+ * raising model's concurrence. Non-finding elements union by id (seat A wins a
+ * clash); skippedHunks merge. Pure.
+ */
+export function reconcileFlaggedBoards(
+  boardA: DraftBoard,
+  boardB: DraftBoard,
+  labels: { a: string; b: string },
+): DraftBoard {
+  const aFindings = boardFindings(boardA);
+  const bFindings = boardFindings(boardB);
+  const reconciled = reconcileFindings(
+    aFindings.map((el) => toFindingElement(el, boardA)),
+    bFindings.map((el) => toFindingElement(el, boardB)),
+    labels,
+  );
+  const byId = new Map<string, { agreement: FindingAgreement }>(
+    reconciled.map((r) => [r.findingId, { agreement: r.agreement }]),
+  );
+
+  const merged = (el: DraftElement): DraftElement => {
+    const r = byId.get(el.id);
+    if (r === undefined) return el;
+    return {
+      ...el,
+      data: { ...(el.data as object), concurrence: foldConcurrence(r.agreement, labels) },
+    } as DraftElement;
+  };
+
+  const placed = new Set<string>();
+  const elements: DraftElement[] = [];
+  for (const el of boardA.elements) {
+    if (el.kind === "finding" && !byId.has(el.id)) continue; // collapsed into seat B's kept partner
+    elements.push(el.kind === "finding" ? merged(el) : el);
+    placed.add(el.id);
+  }
+  for (const el of boardB.elements) {
+    if (placed.has(el.id)) continue;
+    if (el.kind === "finding" && !byId.has(el.id)) continue; // collapsed into seat A's kept partner
+    elements.push(el.kind === "finding" ? merged(el) : el);
+    placed.add(el.id);
+  }
+
+  return {
+    ...(boardA as object),
+    elements,
+    skippedHunks: mergeSkips(boardA, boardB),
+  } as DraftBoard;
+}
+
+/** Stamp single-seat concurrence on every finding (the honest degrade — one harness only). */
+export function stampSingleSeatConcurrence(board: DraftBoard, label: string): DraftBoard {
+  const elements = board.elements.map((el) =>
+    el.kind === "finding"
+      ? ({
+          ...el,
+          data: { ...(el.data as object), concurrence: [{ model: label, agree: 1, total: 1 }] },
+        } as DraftElement)
+      : el,
+  );
+  return { ...(board as object), elements } as DraftBoard;
 }
 
 // ── Prompt assembly (each turn is a fresh stateless session — carry everything) ──
@@ -303,27 +457,100 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
 }
 
 /** Draft, validate, post-process, write, and announce one lens board. */
+/** The shape the common tail needs — one seat's or the reconciled dual seat's. */
+interface ValidatedLike {
+  readonly board: DraftBoard;
+  readonly omissions: readonly Omission[];
+  readonly blemishes: readonly Violation[];
+  readonly immutability: readonly Violation[];
+}
+
+/**
+ * The Flagged dual seat (J1/J2, cluster 5.2): run `lens-draft-flagged` as TWO
+ * independent seats — Claude and Codex, each forced to its own provider — and
+ * reconcile their findings by location into per-finding cross-model concurrence.
+ * Degrades to a SINGLE seat (honest single-seat concurrence) when only one
+ * harness resolves. Returns a failure only when neither seat can run.
+ */
+async function runFlaggedDual(
+  deps: LensPipelineDeps,
+  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
+  basePrompt: string,
+  ctx: LintContext,
+): Promise<ValidatedLike | { failure: string }> {
+  const claudeSeat = deps.claudePort
+    ? resolveBoardSeat("lens-draft-flagged", deps, { availability: { installed: ["claude-code"] } })
+    : { failure: "no claude harness" };
+  const codexSeat = deps.codexExecutor
+    ? resolveBoardSeat("lens-draft-flagged", deps, { availability: { installed: ["codex"] } })
+    : { failure: "no codex harness" };
+
+  const haveClaude = typeof claudeSeat === "function";
+  const haveCodex = typeof codexSeat === "function";
+  if (!haveClaude && !haveCodex) {
+    return { failure: "lens-draft-flagged resolved to no runnable seat" };
+  }
+
+  // Single-seat degrade — honest single-model concurrence.
+  if (!haveClaude || !haveCodex) {
+    const seat = haveClaude
+      ? (claudeSeat as (p: string, a: number) => Promise<HarnessTurnResult>)
+      : (codexSeat as (p: string, a: number) => Promise<HarnessTurnResult>);
+    const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
+    const single = await draftOneLens(basePrompt, seat, postProcess, ctx);
+    return { ...single, board: stampSingleSeatConcurrence(single.board, label) };
+  }
+
+  // Both seats run independently; reconcile their findings (Claude is seat A).
+  const [a, b] = await Promise.all([
+    draftOneLens(
+      basePrompt,
+      claudeSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
+      postProcess,
+      ctx,
+    ),
+    draftOneLens(
+      basePrompt,
+      codexSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
+      postProcess,
+      ctx,
+    ),
+  ]);
+  const labels = { a: DEFAULT_SEAT_LABELS["claude-code"], b: DEFAULT_SEAT_LABELS.codex };
+  return {
+    board: reconcileFlaggedBoards(a.board, b.board, labels),
+    omissions: [...a.omissions, ...b.omissions],
+    blemishes: [...a.blemishes, ...b.blemishes],
+    immutability: [...a.immutability, ...b.immutability],
+  };
+}
+
 async function runLensBoard(
   lens: LensKind,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
   postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
 ): Promise<LensBoardOutcome> {
-  const jobId =
-    lens === "noise"
-      ? "lens-draft-noise"
-      : lens === "flagged"
-        ? "lens-draft-flagged"
-        : "lens-draft";
-  const seat = resolveBoardSeat(jobId, deps, council);
-  if ("failure" in seat) {
-    return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
-  }
-
   const promptText = await deps.readPrompt(LENS_PROMPT_FILES[lens]);
   const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket);
   const ctx = deps.lintContextFor(lens);
-  const validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
+
+  let validated: ValidatedLike;
+  if (lens === "flagged") {
+    // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
+    const dual = await runFlaggedDual(deps, postProcess, basePrompt, ctx);
+    if ("failure" in dual) {
+      return { lens, omissions: [], blemishes: [], immutability: [], failure: dual.failure };
+    }
+    validated = dual;
+  } else {
+    const jobId: CouncilJobId = lens === "noise" ? "lens-draft-noise" : "lens-draft";
+    const seat = resolveBoardSeat(jobId, deps, council);
+    if ("failure" in seat) {
+      return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
+    }
+    validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
+  }
 
   // R58 delta stamps against the prior generation's board (cluster 4).
   const stamped = stampDeltas(deps.previous?.get(lens), validated.board);

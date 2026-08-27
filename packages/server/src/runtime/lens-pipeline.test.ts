@@ -5,8 +5,51 @@ import {
   type BoardArrivalEvent,
   boardOutputSchema,
   draftToOps,
+  reconcileFlaggedBoards,
   runLensPipeline,
+  stampSingleSeatConcurrence,
 } from "./lens-pipeline";
+
+// ── Flagged-board fixtures (5.2) ────────────────────────────────────────────────
+
+const flaggedAuthor = { kind: "lens-agent" as const, id: "flagged-seat" };
+const mkCodeRef = (
+  id: string,
+  path: string,
+  start: number,
+  end: number,
+): DraftBoard["elements"][number] =>
+  ({
+    id,
+    kind: "code_ref",
+    data: {
+      author: flaggedAuthor,
+      patchset_id: "ps-1",
+      path,
+      side: "head",
+      start_line: start,
+      end_line: end,
+    },
+  }) as unknown as DraftBoard["elements"][number];
+const mkFinding = (
+  id: string,
+  concern: string,
+  code: string[],
+  severity = "high",
+): DraftBoard["elements"][number] =>
+  ({
+    id,
+    kind: "finding",
+    data: { author: flaggedAuthor, severity, concern, code, concurrence: [], status: "open" },
+  }) as unknown as DraftBoard["elements"][number];
+const mkBoard = (elements: DraftBoard["elements"], skippedHunks: unknown[] = []): DraftBoard =>
+  ({ elements, skippedHunks }) as unknown as DraftBoard;
+const concurrenceOf = (board: DraftBoard, id: string): { model: string; agree: number }[] =>
+  (
+    board.elements.find((e) => e.id === id)?.data as {
+      concurrence?: { model: string; agree: number }[];
+    }
+  )?.concurrence ?? [];
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -107,6 +150,59 @@ describe("boardOutputSchema", () => {
   });
 });
 
+describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () => {
+  const labels = { a: "Claude", b: "Codex" };
+
+  it("collapses a matched pair to the clearer finding with BOTH models concurring", () => {
+    const a = mkBoard([mkFinding("f1", "short", ["c1"]), mkCodeRef("c1", "src/auth.ts", 11, 12)]);
+    const b = mkBoard([
+      mkFinding("f2", "a materially clearer, longer summary of the same concern", ["c2"]),
+      mkCodeRef("c2", "src/auth.ts", 11, 12),
+    ]);
+    const merged = reconcileFlaggedBoards(a, b, labels);
+    const findings = merged.elements.filter((e) => e.kind === "finding");
+    expect(findings).toHaveLength(1);
+    // The clearer (longer) summary — seat B's — is kept, with both models agreeing 1/1.
+    const conc = concurrenceOf(merged, findings[0]?.id ?? "");
+    expect(conc).toEqual([
+      { model: "Claude", agree: 1, total: 1 },
+      { model: "Codex", agree: 1, total: 1 },
+    ]);
+  });
+
+  it("keeps two solo findings, each with the raising model agreeing and the other at zero", () => {
+    const a = mkBoard([
+      mkFinding("f1", "only Claude saw this", ["c1"]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    const b = mkBoard([
+      mkFinding("f2", "only Codex saw this", ["c2"]),
+      mkCodeRef("c2", "src/other.ts", 3, 4),
+    ]);
+    const merged = reconcileFlaggedBoards(a, b, labels);
+    expect(merged.elements.filter((e) => e.kind === "finding")).toHaveLength(2);
+    expect(concurrenceOf(merged, "f1")).toEqual([
+      { model: "Claude", agree: 1, total: 1 },
+      { model: "Codex", agree: 0, total: 1 },
+    ]);
+    expect(concurrenceOf(merged, "f2")).toEqual([
+      { model: "Claude", agree: 0, total: 1 },
+      { model: "Codex", agree: 1, total: 1 },
+    ]);
+  });
+});
+
+describe("stampSingleSeatConcurrence — the honest single-seat degrade", () => {
+  it("stamps every finding with the one running model's concurrence", () => {
+    const board = mkBoard([
+      mkFinding("f1", "concern", ["c1"]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    const stamped = stampSingleSeatConcurrence(board, "Claude");
+    expect(concurrenceOf(stamped, "f1")).toEqual([{ model: "Claude", agree: 1, total: 1 }]);
+  });
+});
+
 describe("runLensPipeline — the real drafting path (fake harness, no live model)", () => {
   it("drafts all five lenses, writes each board via whiteboard, and emits arrival on freeze", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
@@ -175,6 +271,78 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(modelFor("prompts/design.md")).toBe("opus-4.8");
     expect(modelFor("prompts/noise.md")).toBe("haiku");
     expect(modelFor("prompts/flagged.md")).toBe("sonnet-5");
+  });
+
+  it("runs the Flagged lens as a dual seat under both harnesses — cross-model concurrence", async () => {
+    const claudeCaptures: { model?: string; prompt?: string }[] = [];
+    const codexCaptures: { model?: string; prompt?: string }[] = [];
+    const applied: Applied[] = [];
+
+    // A clean flagged board both seats return: a grounded finding citing c1 (covers
+    // h1), h2 consciously skipped — passes the flagged lens lint.
+    const flaggedBody = (): unknown =>
+      mkBoard(
+        [
+          mkFinding("f1", "The refresh token is classified as an error before its code is read.", [
+            "c1",
+          ]),
+          mkCodeRef("c1", "src/auth.ts", 11, 12),
+        ],
+        [{ hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." }],
+      );
+    const bodyFor = (prompt: string): unknown => {
+      const lens = lensFromPrompt(prompt);
+      if (lens === "flagged") return flaggedBody();
+      if (lens === "post-process") {
+        const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        return ctx ? (JSON.parse(ctx[1] as string).board as unknown) : { elements: [] };
+      }
+      return cleanBody(lens);
+    };
+    const codexExecutor = async (req: { model: string; prompt: string }) => {
+      codexCaptures.push({ model: req.model, prompt: req.prompt });
+      return { output: bodyFor(req.prompt) };
+    };
+
+    const flaggedCtx: LintContext = {
+      lens: "flagged",
+      hunks: [
+        { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5 },
+        { id: "h2", path: "src/util.ts", newStart: 1, newLines: 3 },
+      ],
+      files: new Map([
+        ["src/auth.ts", 200],
+        ["src/util.ts", 50],
+      ]),
+    };
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(claudeCaptures, bodyFor),
+      codexExecutor: codexExecutor as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor: (lens) => (lens === "flagged" ? flaggedCtx : lintContextFor(lens)),
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const flagged = result.boards.find((b) => b.lens === "flagged");
+    expect(flagged?.failure).toBeUndefined();
+    // Both models concurred on the matched finding.
+    const conc = concurrenceOf(flagged?.board as DraftBoard, "f1");
+    expect(conc).toEqual([
+      { model: "Claude", agree: 1, total: 1 },
+      { model: "Codex", agree: 1, total: 1 },
+    ]);
+    // Each seat was forced to its own provider's flagged pick.
+    expect(
+      claudeCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "sonnet-5"),
+    ).toBe(true);
+    expect(
+      codexCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "gpt-5.6-sol"),
+    ).toBe(true);
   });
 
   it("records an honest failure (never a throw) when no harness resolves the seat", async () => {
