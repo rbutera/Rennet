@@ -50,14 +50,12 @@ function review(id: string): Review {
 
 function stage(anchor: string) {
   act(() =>
-    useRennetStore
-      .getState()
-      .reviewActions.stageAsk({
-        id: anchor,
-        anchor,
-        type: "request-change",
-        body: `ask ${anchor}`,
-      }),
+    useRennetStore.getState().reviewActions.stageAsk({
+      id: anchor,
+      anchor,
+      type: "request-change",
+      body: `ask ${anchor}`,
+    }),
   );
 }
 
