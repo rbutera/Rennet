@@ -122,9 +122,15 @@ export function foldAsks(events: readonly AskEventBody[]): AskProjection {
  */
 export function receiptFor(event: AskEventBody, prior: AskProjection): AskEventBody {
   switch (event.kind) {
-    case "stage":
-      // Plain removal — undoing a stage leaves no ledger entry (a toggle-off).
-      return { kind: "unstage", id: event.ask.id };
+    case "stage": {
+      // `stage` OVERWRITES an existing id (the fold is a Record set), so its inverse is
+      // not always a plain removal: if an ask already lived at this id, undoing the
+      // overwrite must RESTORE the prior ask, not delete it (else applying the receipt
+      // after a duplicate stage would remove the original — receipt-is-undo would lie).
+      // Mirrors line-comment-set's "restore the prior value" inverse.
+      const prev = prior.stagedAsks[event.ask.id];
+      return prev ? { kind: "stage", ask: prev } : { kind: "unstage", id: event.ask.id };
+    }
     case "unstage": {
       // Re-stage the exact ask that was removed. If it was not staged, the unstage
       // was a no-op; a stage of the same id is harmless (nothing to restore, so
@@ -145,8 +151,14 @@ export function receiptFor(event: AskEventBody, prior: AskProjection): AskEventB
         ? { kind: "retire", id: event.id, reason: entry.reason }
         : { kind: "restore", id: event.id };
     }
-    case "quote-open":
-      return { kind: "quote-close", threadId: event.threadId };
+    case "quote-open": {
+      // Same as `stage`: quote-open OVERWRITES an existing thread id, so restore the
+      // prior thread if one existed rather than always closing (receipt-is-undo).
+      const prev = prior.quoteThreads[event.threadId];
+      return prev
+        ? { kind: "quote-open", threadId: event.threadId, thread: prev }
+        : { kind: "quote-close", threadId: event.threadId };
+    }
     case "quote-reply": {
       const thread = prior.quoteThreads[event.threadId];
       return {

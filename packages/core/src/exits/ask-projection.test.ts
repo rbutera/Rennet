@@ -124,6 +124,24 @@ describe("receipt-is-undo — applying a receipt returns the exact prior project
   // Each case: an event applied to a prior, then its receipt, must deep-equal prior.
   const cases: { name: string; prior: () => AskProjection; event: AskEventBody }[] = [
     { name: "stage", prior: richPrior, event: { kind: "stage", ask: ask("new") } },
+    // DUPLICATE-IDENTITY overwrite (P1 finding 6): staging over an existing id must
+    // round-trip to RESTORE the prior ask, not delete it. Before the fix the receipt was
+    // always `unstage`, so applying it after a re-stage of an existing id removed the
+    // ORIGINAL ask — receipt-is-undo lied on any duplicate identity.
+    {
+      name: "stage OVER an existing id (duplicate identity → restore prior)",
+      prior: richPrior,
+      event: { kind: "stage", ask: ask("a1", { body: "overwritten body", type: "comment" }) },
+    },
+    {
+      name: "quote-open OVER an existing thread id (duplicate identity → restore prior)",
+      prior: richPrior,
+      event: {
+        kind: "quote-open",
+        threadId: "t1",
+        thread: { anchor: "different span", messages: [{ author: "orchestrator", text: "new" }] },
+      },
+    },
     { name: "unstage (existing)", prior: richPrior, event: { kind: "unstage", id: "a1" } },
     {
       name: "edit (existing)",
