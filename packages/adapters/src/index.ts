@@ -120,9 +120,16 @@ export {
 } from "./exec-observing-turn";
 export { executeExternalCommand } from "./external-command";
 export {
+  CLIENT_SETTINGS_VERSION,
+  createClientSettingsStore,
+  createDaemonSettingsStore,
+  DAEMON_SETTINGS_VERSION,
+  defaultClientSettingsPath,
+  defaultDaemonSettingsPath,
   defaultGlobalConfigPath,
   FileConfigStore,
   GLOBAL_CONFIG_VERSION,
+  migrateLegacyGlobalConfig,
 } from "./file-config-store";
 export {
   deriveProjectDraft,

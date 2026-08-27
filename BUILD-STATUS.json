@@ -64,8 +64,9 @@
     "passes": false
   },
   "b10": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "clusters 1-5 landed (PR #523, 11 review fixes confirmed); cluster 6 live-turn wiring B9-gated"
   },
   "b11": {
     "status": "pending",

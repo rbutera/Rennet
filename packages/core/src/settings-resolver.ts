@@ -1,7 +1,7 @@
 import {
   type AppearanceScheme,
   appearanceSchemeSchema,
-  type GlobalConfig,
+  type ClientSettings,
   type Locus,
   locusSchema,
   type ProjectVisibility,
@@ -109,7 +109,11 @@ const LOCUS_SETTING: SettingDeclaration<Locus> = {
   key: "locus",
   validate: (value) => locusSchema.parse(value),
   builtinDefault: HOST_LOCUS,
-  layers: ["builtin", "detected", "repo"],
+  // Execution locus is a DETECTED FACT now (#476): builtin `host`, else the
+  // environment guess from the repo path. The `repo` rung is deliberately absent
+  // so a stale stored `config.locus` can NEVER re-enter resolution and silently
+  // route execution somewhere the "detected" surface does not admit to.
+  layers: ["builtin", "detected"],
   merge: "replace",
   render: renderLocus,
 };
@@ -220,11 +224,11 @@ export function resolve<T>(
 }
 
 /**
- * Resolve the appearance scheme: builtin `system`, overridden by the global
- * personal config. There is no repo layer for a personal preference.
+ * Resolve the appearance scheme: builtin `system`, overridden by the viewer's
+ * personal client settings. There is no repo layer for a personal preference.
  */
-export function resolveScheme(global: GlobalConfig): Resolved<AppearanceScheme> {
-  return resolve(SCHEME_SETTING, { global: global.appearance?.scheme });
+export function resolveScheme(client: ClientSettings): Resolved<AppearanceScheme> {
+  return resolve(SCHEME_SETTING, { global: client.appearance?.scheme });
 }
 
 /**
@@ -250,11 +254,11 @@ export function resolvePromoted(repoPromoted: boolean | undefined): Resolved<boo
 }
 
 /**
- * Resolve a project's execution locus through the ladder (not around it): builtin
- * `host`, the `detected` environment guess (auto-detection from the repo path), and
- * the persisted `repo` override, in that precedence. `detected` is the value
- * detection offers; `repoValue` is the persisted override or `undefined`.
+ * Resolve a project's execution locus: builtin `host` under the `detected`
+ * environment guess (auto-detection from the repo path). Detection-only (#476) —
+ * there is NO stored override rung, so `config.locus` from an old config never
+ * reaches execution; the resolved value always matches what the surface shows.
  */
-export function resolveLocus(detected: Locus, repoValue: Locus | undefined): Resolved<Locus> {
-  return resolve(LOCUS_SETTING, { detected, repo: repoValue });
+export function resolveLocus(detected: Locus): Resolved<Locus> {
+  return resolve(LOCUS_SETTING, { detected });
 }

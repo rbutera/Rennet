@@ -23,7 +23,6 @@ import {
   handoffDispositionSchema,
   handoffRunOutputSchema,
   knowledgeDispositionResultSchema,
-  locusSchema,
   noiseReviewSchema,
   openSpecChangeSchema,
   openSpecCoverageSchema,
@@ -47,7 +46,6 @@ import {
   resolvedProvenanceSchema,
   reviewCommentSchema,
   reviewSchema,
-  setRepoLocusOutcomeSchema,
   setRepoVisibilityOutcomeSchema,
   settingsGuidanceSchema,
   settingsRepoValueKeySchema,
@@ -903,19 +901,6 @@ const definitions = {
     }),
     output: setRepoVisibilityOutcomeSchema,
   },
-  // ── Settings: set (or clear) a repo's execution-locus override ─────────────
-  // A plain editable setting (add-windows-support, Rule Zero — never a gate). The
-  // override records `locus` in the repo's config; `locus: null` clears it back to
-  // auto-detection. Refused when the config is malformed (Rule 75), like
-  // visibility. `repoPath` addresses the row (validated against the project).
-  "settings.setRepoLocus": {
-    input: z.object({
-      projectId: z.string().min(1),
-      repoPath: z.string().min(1),
-      locus: locusSchema.nullable(),
-    }),
-    output: setRepoLocusOutcomeSchema,
-  },
   // ── Settings: reset a repo-scoped value to inheritance (issue #28) ──────────
   // Clear the repo-layer entry for `key` so the value falls back down the ladder.
   // For visibility this ALSO re-applies the gitignore switch toward the newly
@@ -932,10 +917,10 @@ const definitions = {
   },
   // ── Settings: pin a repo-scoped value at the repo layer (issue #28) ─────────
   // Write the CURRENT effective value explicitly at the repo layer, so a change in
-  // a lower layer or in detection no longer moves it (chiefly: freeze an
-  // auto-detected locus). Defined as set-to-current-effective, so it reuses the
-  // same write path as the explicit controls — no new validation. Refused when
-  // malformed (Rule 75). `repoPath` addresses the row.
+  // a lower layer no longer moves it. Defined as set-to-current-effective, so it
+  // reuses the same write path as the explicit controls — no new validation. The
+  // only pinnable key is `visibility`; execution locus is a detected fact, not a
+  // ladder value (#476). Refused when malformed (Rule 75). `repoPath` addresses the row.
   "settings.pinRepoValue": {
     input: z.object({
       projectId: z.string().min(1),
@@ -1080,8 +1065,16 @@ const definitions = {
 
 /** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose
  * today, mapped by inspection of the resolution's list against the commands that
- * actually exist (no session.* or navigate command exists yet; none invented). */
+ * actually exist. `projects.add` needs a DiscoveryResult it cannot fabricate, so its
+ * two prerequisites are exposed with it: `repository.choose` (grant/obtain the path)
+ * and `project.discover` (read-only discovery → the DiscoveryResult). Without them
+ * the add-project tool was uncompletable. `navigate` (#480) stays UNEXPOSED and
+ * unregistered: it is a client-locus command, and the dispatch table's compile-time
+ * exhaustiveness guard would force a HOST handler for it — that is client execution,
+ * deferred to C11. `session.*` likewise waits on its commands (B9). None invented. */
 const AGENT_EXPOSED = new Set<string>([
+  "repository.choose",
+  "project.discover",
   "projects.add",
   "projects.list",
   "review.openPr",
@@ -1090,7 +1083,6 @@ const AGENT_EXPOSED = new Set<string>([
   "settings.setAppearance",
   "settings.setKeybinding",
   "settings.setRepoVisibility",
-  "settings.setRepoLocus",
   "settings.resetRepoValue",
   "settings.pinRepoValue",
 ]);
