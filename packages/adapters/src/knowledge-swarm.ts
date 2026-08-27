@@ -214,8 +214,10 @@ export type KnowledgeSwarmProgress =
 
 /** Everything one swarm run needs, injected by the composition root. */
 export interface KnowledgeSwarmDeps {
-  readonly reader: ProjectContextReader;
-  readonly knowledgeStore: KnowledgeStore;
+  /** The fail-closed snapshot read gate (just the seam the swarm reads). */
+  readonly reader: Pick<ProjectContextReader, "loadFresh">;
+  /** The local knowledge store (just the seam the swarm touches). */
+  readonly knowledgeStore: Pick<KnowledgeStore, "loadLocal" | "save">;
   /** The Claude harness port, or null when no `claude` resolved. */
   readonly claudePort: HarnessPort | null;
   /** The codex utility executor, or null when no `codex` resolved. */
