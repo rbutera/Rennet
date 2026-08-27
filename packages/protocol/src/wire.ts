@@ -437,7 +437,9 @@ export type GitHubConnectPoll = z.infer<typeof gitHubConnectPollSchema>;
  * file tree at the base OID) → `workspace` (map scopes/edges/entry points) →
  * `conventions` (learn conventions, ownership, tests) → `symbols` (extract
  * symbols + references from the changed closure) → `build` (assemble the map) →
- * `verify` (integrity check) → `store` (persist as current).
+ * `verify` (integrity check) → `store` (persist as current). `knowledge` is the
+ * one post-build stage: the partitioned knowledge swarm's per-partition and
+ * verify-seat lines (#460) ride the same channel after `store`.
  */
 export const snapshotStageSchema = z.enum([
   "resolve",
@@ -448,6 +450,7 @@ export const snapshotStageSchema = z.enum([
   "build",
   "verify",
   "store",
+  "knowledge",
 ]);
 export type SnapshotStage = z.infer<typeof snapshotStageSchema>;
 

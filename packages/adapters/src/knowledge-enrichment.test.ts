@@ -13,13 +13,12 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execaGit } from "./git-range-diff";
 import {
-  changedPathsBetween,
   createKnowledgeRunTurn,
   enrichKnowledgeForRepo,
   runKnowledgeDeltaForRepo,
-  snapshotContextFromLoaded,
 } from "./knowledge-enrichment";
 import { KnowledgeStore } from "./knowledge-store";
+import { changedPathsBetween, snapshotContextFromLoaded } from "./knowledge-swarm";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
