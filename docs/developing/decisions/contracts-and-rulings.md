@@ -56,7 +56,7 @@ Apply the sources by scope:
 | **R4** | Base instructions live in `@rennet/prompts`. They are product behavior, not part of the public RSP wire contract. |
 | **R6** | Disagreement is a product data shape. It requires more than one real opinion; repeated concern is evidence, not a fixed model-call count. |
 | **R7** | Review of another person's pull request and review of the user's own branch are first-class modes. |
-| **R11** | The five review lenses are Design, Sequence, Decisions, Noise, and Flagged. Blast radius is an overlay. |
+| **R11** | The five review lenses are Design, Sequence, Decisions, Flagged, and Noise, in that display order. Each lens is its own board. Blast radius is an overlay. |
 | **R23** | `omp` means `@oh-my-pi/pi-coding-agent`. |
 | **R26** | Rennet's default interface is the opaque Affineur's Bench, and it is the theme Rennet ships screenshots of. Code and diff regions remain opaque. A viewer may select a bundled theme pack, which re-colours the same opaque interface under the same AA contract; packs never restore glass or alter type, spacing, or radius. |
 
@@ -92,45 +92,43 @@ Apply the sources by scope:
 The [dependency standard](../reference/dependency-standard.md) contains the exact
 pins and admission rules.
 
-## Dispositions and destinations
+## Asks and the exits
 
 | ID | Current ruling |
 |---|---|
-| **R36** | Creating a disposition stages it immediately. |
-| **R37** | Withdraw removes an item from the draft. Editing a staged item updates that draft item. |
-| **R38** | Posting uses every item currently staged. Withdraw items that should not leave. |
-| **R40** | The collation draft is editable. Preview renders the composed outbound artifact. |
-| **R46** | Comments, change requests, questions, and discussions attach to the relevant line, range, chunk, fragment, or spec anchor. |
-| **R52** | Conversation uses verbs and anchors. Threads and symbol inspection occupy the margin or right rail so the diff column does not reflow. |
-| **R53** | OpenSpec requirements, scenarios, tasks, and rationale render as structured review material with coverage and implementation state. |
+| **R36** | Everything the review gathers is an ask: a typed message carrying an anchor, text, an intent, and an exit lane, with provenance back to the finding, comment, thread, or conversation it came from. The orchestrator stages it. It stages directly when the reviewer stated the conclusion, and offers a one-tap pill when it inferred one. Findings never auto-stage. |
+| **R37** | Every staging act leaves an undecorated receipt at its source, and the receipt is the undo. |
+| **R38** | An exit carries every ask currently staged for its lane. Undo the receipt of an ask that should not travel. |
+| **R40** | Outbound documents are living drafts the orchestrator alone authors and reworks. The reviewer steers by conversation or span selection and never types into a draft. Retired content is ledgered with its reason and stays restorable. Preview renders the exact payload that posts. |
+| **R46** | Findings, change requests, questions, and discussions attach to the relevant line, range, hunk, element, or spec anchor. |
+| **R52** | Conversation uses verbs and anchors. Threads and symbol inspection occupy the margin or right rail so the reading column does not reflow. |
+| **R53** | Spec requirements, scenarios, tasks, and rationale render as structured review material with coverage and implementation state. |
 
-The same disposition model feeds two destinations. Another person's pull request
-receives one GitHub review. The user's branch receives a coding-agent task bundle,
-then a successor patchset and delta review. When the branch is ready, Rennet
-pushes the named branch and opens the composed pull request.
+The same ask model feeds three exits. A teammate PR receives one GitHub review.
+Your branch receives a work-order round, then a successor patchset and a new
+generation of boards. When nothing is left to ask, Rennet pushes the named
+branch and opens the composed pull request. Work orders exist only on your own
+branch.
 
 ```mermaid
 flowchart LR
-  review["Read patchset"] --> stage["Stage dispositions"]
-  stage --> draft["Edit collation draft"]
-  draft --> destination{"Destination"}
-  destination -->|Another person's PR| post["Post GitHub review"]
-  destination -->|Own branch needs work| handoff["Run coding agent"]
-  handoff --> successor["Capture successor patchset"]
-  successor --> review
-  destination -->|Own branch is ready| pr["Push branch and open PR"]
+  read["Read the lens boards"] --> stage["Stage asks"]
+  stage --> exit{"Exit"}
+  exit -->|Teammate PR| post["Post the GitHub review"]
+  exit -->|Your branch has asks| round["Dispatch a work-order round"]
+  round --> successor["Capture a successor patchset"]
+  successor --> read
+  exit -->|Nothing left to ask| pr["Push the branch and open the pull request"]
 ```
 
 Rennet composes the outbound artifact before the GitHub call. The preview and
 post commands use the same canonical payload. Pushing a source branch is part of
-the own-branch workflow; it is not the act that publishes review prose under the
+the own-branch loop; it is not the act that publishes review prose under the
 user's identity.
 
-The UI currently asks the user to press and hold its Post control, and the daemon
-uses a short-lived consent token for `publish.review`. That implementation does
-not satisfy Rule Zero. [The planned correction](https://github.com/rbutera/rennet/issues/435)
-is one explicit Post action over the current canonical preview, with no second
-confirmation or token.
+Publication is one explicit Post over the current canonical preview. There is no
+press-and-hold control and no consent token: a second confirmation over a payload
+the reviewer has already read in full is exactly the ceremony Rule Zero rejects.
 
 ## Routing and interaction
 
@@ -147,8 +145,9 @@ confirmation or token.
 | **R50** | Noise provides visible total coverage. Mechanical rules classify unambiguous churn; model judgement handles the remainder; restoring an item returns it to review. |
 | **R51** | `review.ask` returns one orchestrator answer by default. Ask both adds a separately labelled second opinion and no synthetic third answer. |
 
-Read state is action-defined: approve, request a change, or ask a question. Scroll
-position and dwell time do not mark content read.
+Read state is action-defined: the reviewer's own acts — staging an ask, marking a
+section, concluding a thread — mark content read. Scroll position and dwell time
+do not.
 
 ## Repo Map
 
@@ -162,18 +161,20 @@ visibility files but never stages or commits `.rennet/` content.
 
 ## Review lens contract
 
-A lens is a view over one immutable patchset for a `(reviewId, patchsetId)` pair.
+Each lens is a board over one immutable patchset. One generation of boards
+covers one `(reviewId, patchsetId)` pair.
 
 ```mermaid
 flowchart TB
   capture["Captured truth"] --> analysis["Validated analysis"]
-  analysis --> dispositions["Reviewer dispositions"]
-  dispositions --> annotations["Orchestrator annotations"]
+  analysis --> boards["Drafted lens boards"]
+  boards --> human["Board-native data and asks"]
+  human --> composition["Orchestrator composition"]
 ```
 
 The engine owns capture, invalidation, carry, and ordering. Analysis jobs emit
-RSP documents that project onto the lenses. Retrieval replies carry evidence,
-freshness, totals, cursors, and truncation state.
+RSP documents that project onto the lens boards. Retrieval replies carry
+evidence, freshness, totals, cursors, and truncation state.
 
 Track product work and unresolved decisions in
 [GitHub issues](https://github.com/rbutera/rennet/issues).

@@ -3,14 +3,15 @@ title: Using Rennet
 description: Guides and concepts for understanding changes and posting code reviews with Rennet.
 ---
 
-Rennet turns a local change or GitHub pull request into an ordered review. Start
-with the short tour, then follow the guide for the change in front of you.
+Rennet drafts a local branch or a GitHub pull request into boards you can read,
+then turns what you raise into a review, a work order, or a pull request. Start
+with the tour, then follow the guide for the change in front of you.
 
 ## Start here
 
-- [Getting started](./guides/getting-started.md) covers the main review loop.
+- [Getting started](./guides/getting-started.md) walks the whole loop: add a project, read the boards, stage asks, take an exit.
 - [Connect to GitHub](./guides/github-auth.md) signs Rennet into GitHub for pull request reviews.
-- [Review a GitHub pull request](./guides/reviewing-a-github-pr.md) covers the team review path.
+- [Review a GitHub pull request](./guides/reviewing-a-github-pr.md) covers a teammate's pull request and the review you post on it.
 - [The Context Map](./guides/context-map.md) shows the project context available to reviews.
 - [Remote access](./guides/remote-access.md) connects another device to a Rennet daemon.
 
@@ -21,13 +22,15 @@ with the short tour, then follow the guide for the change in front of you.
 
 ```mermaid
 flowchart LR
-  yours[Your branch] --> review[Review in Rennet]
-  team[Team pull request] --> review
-  review --> github[GitHub review]
-  review --> agent[Coding-agent handoff]
-  agent --> delta[Review the agent's changes]
+  yours[Your branch] --> review[Read the boards in Rennet]
+  team[Teammate pull request] --> review
+  review --> github[One GitHub review]
+  review --> round[Work-order round]
+  round --> delta[Read what the round changed]
+  delta --> review
 ```
 
-A team pull request can become one GitHub review. On your own branch, you can
-send requested changes to a coding agent, inspect its work, then push the branch
-and open a pull request.
+A teammate's pull request becomes one GitHub review, posted under your name. On
+your own branch the same asks become a work order: a coding agent runs the
+round, you read its report and the regenerated boards, and when nothing is left
+to ask, Rennet pushes the branch and opens the pull request.

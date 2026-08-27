@@ -60,5 +60,5 @@ refer to the registered repository instead of asking for the path again.
 opens the file in an editor there. If no supported editor is available, Rennet
 reports that result in the browser.
 
-Review capture, review lenses, conversations, dispositions, and outbound operations
+Review capture, boards, conversations, staged asks, and outbound operations
 otherwise use the same daemon commands as the desktop shell.

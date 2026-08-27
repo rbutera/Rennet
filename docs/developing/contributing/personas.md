@@ -13,18 +13,20 @@ These readers run reviews. They do not have the codebase open, and most of them 
 
 ### Agentic engineer reviewing their own branch: "Mara"
 
-**Profile**: Ships fast with Claude Code and Codex and hand-writes little, but signs off on every merge and answers for it. Faces changesets too large to read file by file and wants grouped cohorts and a reading order, not a flat list of changed files.
+**Profile**: Ships fast with Claude Code and Codex and hand-writes little, but signs off on every merge and answers for it. Faces changesets too large to read file by file and wants a reading order and a written account of the change, not a flat list of changed files.
 
 **Behaviors**:
 - Opens working-tree and committed changes, not only merged pull requests.
-- Acts at whatever altitude fits the moment: the whole review, one cohort, or a single line.
-- Sends dispositions back to a coding agent as a work order, then reviews only the resulting delta before pushing.
+- Reads the lens boards, then acts at whatever altitude fits the moment: a whole section, a finding, or a single cited line.
+- Turns findings and her own conclusions into asks, dispatches a work-order round, and reads the round report before deciding what to do next.
+- Runs several rounds on one branch, then takes the pull-request exit when nothing is left to ask.
 - Expects installed agents to work with no extra config, no separate API key, and no account.
 
 **Red Flags**:
 - Copy that implies Rennet approved the change or found a bug for her; she owns the verdict.
-- Grouping or reading order she cannot open up to the underlying hunks and decisions.
-- A guide that stops at "review a pull request" and never shows the own-branch handoff and rereview loop.
+- A board section or reading order she cannot open up to the cited hunks and decisions.
+- A guide that stops at "review a pull request" and never shows the own-branch rounds loop.
+- A round report that takes the worker's word instead of verifying each ask against the round's diff.
 - Any hint that she needs a Rennet backend, a model API key, or an inference markup.
 
 ### Team reviewer on a pull request: "Tomas"
@@ -32,16 +34,17 @@ These readers run reviews. They do not have the codebase open, and most of them 
 **Profile**: Reviews other people's GitHub pull requests and posts one review under his own name, in his own words. Knows the GitHub review flow well but is new to Rennet's lenses.
 
 **Behaviors**:
-- Opens a GitHub pull request and reads it in comprehension order through the Design, Sequence, Decisions, Noise, and Flagged lenses.
-- Records dispositions against a cohort, requirement, chunk, range, or line.
+- Opens a GitHub pull request and reads it in comprehension order through the Design, Sequence, Decisions, Flagged, and Noise lens boards.
+- Raises asks against a section, requirement, finding, code citation, or diff line, each carrying provenance back to where he raised it.
 - Reads what the models flagged, then decides for himself what counts as a real problem.
-- Edits the review preview and posts one batched GitHub review when he is ready.
+- Steers the drafted review by talking or by highlighting a span, never by typing into it.
+- Checks the preview against what will post — body plus line comments — and takes the post exit when he is ready.
 
 **Red Flags**:
 - Text that presents a model finding as his conclusion, or anything that posts before he clicks.
-- An internal term (patchset, cohort, daemon) dropped into a using page where "pull request" or plain words would carry the meaning.
-- A preview that hides what will actually be sent to GitHub.
-- Recorded dispositions that vanish when he switches lenses or navigates away.
+- An internal term (patchset, generation, daemon) dropped into a using page where "pull request" or plain words would carry the meaning.
+- A preview that flattens line comments into the body, or otherwise differs from the payload that posts.
+- Asks or threads that vanish when he switches lenses or navigates away.
 
 ### Local-first adopter: "Rune"
 

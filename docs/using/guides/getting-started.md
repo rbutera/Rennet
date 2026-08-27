@@ -1,210 +1,345 @@
 ---
 title: Getting started
-description: Choose a project, read a change, prepare a draft, and send the result.
+description: Add a project, start a session on a branch or pull request, read the boards, stage asks, and take an exit.
 ---
 
-Rennet turns a local branch or GitHub pull request into an ordered review. Both
-sources use the same reading and decision tools, then produce an artifact suited
-to their destination.
+Rennet reads a branch or a pull request and drafts it into boards you can
+actually read. What you raise while reading becomes one GitHub review, a work
+order for a coding agent, or the pull request itself. This page walks that loop
+once, end to end.
 
 ## The review loop
 
 ```mermaid
 flowchart LR
-  project[Choose a project] --> change[Choose a branch or PR]
-  change --> read[Read through lenses]
-  read --> decide[Record decisions]
-  decide --> draft[Edit the draft]
-  draft --> send[Review and send]
+  project[Add a project] --> session[Start a session on a target]
+  session --> boards[Read the boards]
+  boards --> raise[Comment, question, request changes]
+  raise --> asks[Staged asks]
+  asks --> exit[Post review · Dispatch round · Open pull request]
+  exit -->|a round returns| boards
 ```
-
-1. **Choose a project.** Add one repository or a workspace containing several
-   repositories and worktrees. See [Add a project](#add-a-project) below.
-2. **Choose a change.** The project list combines local branches and GitHub pull
-   requests. **All**, **Needs you**, **Mine**, **Local**, and **PRs** filter that
-   list.
-3. **Read the change.** Use Design, Sequence, Decisions, Noise, and Flagged without
-   changing the patchset under review.
-4. **Record decisions.** Comment, ask a question, request a change, or approve at
-   the relevant cohort, requirement, chunk, range, or line.
-5. **Edit the draft.** Reword, reorder, merge, split, stage, or withdraw the
-   collected items.
-6. **Review the outbound artifact.** Rennet composes the GitHub review, pull
-   request, or coding-agent handoff from that draft.
-
-The change list paints local branches first, without waiting for GitHub. Pull
-requests join the same list as each repository finishes loading. While that work
-is in flight, the status names the repository and reports the completed count
-instead of estimating a percentage. If GitHub authentication or networking
-fails, local work stays available and the project view offers reconnection where
-it is needed.
 
 ## Add a project
 
-Adding a project starts at **Projects > Add**. **Project repo** is selected by
-default; switch to **Workspace** for a folder containing several repositories.
+**Add Project** in the sidebar opens a dialog with two parts: a source picker
+and a directory browser.
 
-Pick a **source** first:
+The source picker lists every environment Rennet can reach — this machine,
+each WSL distro on Windows, and any environment you have paired — and ends with
+an **Add Environment** escape into pairing. Switching source reloads the browser
+against that machine's own filesystem, so browsing a distro or a paired machine
+works exactly like browsing locally.
 
-- **Local** — the machine Rennet is running on. Always present, always first.
-- **A WSL distro** — on Windows, every installed distro is listed automatically.
-  There is nothing to add by hand.
-- **A paired remote** — any device already paired under **Settings > Pairing**.
+The browser is the picker. There is no OS file dialog and no recents list.
+Click a row to descend, use **Up** or Backspace to ascend, or type an absolute
+path and press Enter to jump there. Arrow keys move between rows. A folder
+holding a repository wears a **repo** badge; a folder Rennet cannot read is
+dimmed and cannot be entered. **Add** stays inert until you select a folder.
 
-Selecting a non-local source attaches that source's own daemon and shows a
-brief "connecting…" state.
+Pair a new environment with **Add Environment**: it takes an address and a
+one-time code. Run `rennet pair` on the other machine and it prints a link that
+fills both fields.
+
+### What happens after you add it
+
+Adding a project lands on its processing view. A scout reads the git remotes,
+checks for issue-tracker markers and CI config, reads the README, contributing
+guide, and any agent instruction files, then reports how many answers it
+detected and how many it guessed. Context-map generation starts when the scout
+returns. The header status reads *scouting*, then *indexing*, then *indexed*.
+
+While the map generates, a prefilled questionnaire asks whether the scout got it
+right: issue tracker, default branch, worktree location, gate command, and the
+project's mark. Every answer carries a chip reading **detected** or **guessed**
+and a line naming where it came from. Answer it, or skip it — the map finishes
+and the project works either way, and everything stays editable in
+**Settings → Projects**.
+
+The project remembers which machine it lives on and reconnects there when you
+reopen it. See [Windows and WSL](./windows-and-wsl.md#wsl-requirements) for
+distro requirements.
+
+## Start a session
+
+A **session** is one conversation with the orchestrator and everything hanging
+off it. It claims exactly one **review target**: your branch, your PR, or a
+teammate PR.
+
+**New Chat** in the sidebar (`⌘N`) opens a searchable project picker. Choosing a
+project shows that project's branches and pull requests in one list. Local
+branch rows appear immediately; pull-request rows join as each repository
+finishes loading, and the progress names the repository being read rather than
+guessing a percentage. If GitHub is unreachable, local work stays available.
+
+Start a row and the session claims that target. A claimed target leaves the
+list, so two sessions can never fight over one branch. Sessions nest under their
+project in the sidebar, each leading with its target icon — a branch glyph, a
+pull-request glyph, or an incoming pull-request glyph for a teammate PR. A
+teammate PR whose review is requested of you renders its icon in the accent
+colour with the words "needs you" beside it.
+
+Once boards exist the target is locked. Reviewing something else means a new
+session.
+
+Right-click a session for **Pin**, **Rename**, or **Archive**. Pinned sessions
+rise to a Pinned section at the top of the tree; archived ones move to
+**Archived** at the sidebar's foot. Sessions are records: reopening one restores
+its transcript, its boards, and everything you staged, including generations
+frozen by earlier rounds.
+
+## Read the boards
+
+Each review angle is its own board, and the header's centred switcher moves
+between them.
+
+| Board | Question |
+|---|---|
+| Design | What should the change do, and which requirements have evidence? |
+| Sequence | In what order should I read the implementation? |
+| Decisions | Which implementation choices need explanation? |
+| Flagged | Where did automated analysis find a problem or a disagreement? |
+| Noise | What remains, and why may it need less attention? |
+
+A board Rennet has nothing for is simply absent from the switcher — reviewing a
+proposal before any code exists gives you Design alone, not four dead segments.
+Flagged carries a red count of findings you have neither dismissed nor acted on.
+
+A board reads as a document: a title, a short intro, then sections of typed
+content. Sections fold to a one-line gist and unfold to their contents; every
+board opens folded except Flagged, which opens ready to read. Counts on a
+section name what is inside it — findings, steps, decisions, requirements.
+
+Code is cited, never copied. A code block card carries the file path and the
+exact line range and hydrates the real lines from the checkout, so numbering
+cannot drift from the file it claims to show. Clicking the path in its header
+lands you in the Diff view on that file. In prose, a `path:line` citation is a
+chip: click it and the real lines unfold below the paragraph; click again and
+they fold away.
+
+A finding reads as flowing document text, not a boxed card: a severity chip, the
+claim as its title, a concurrence badge reading "concur 2/2" when both review
+seats raised it or naming the single seat when they disagree, then the body and
+the proposed fix as its own callout. The fix carries **Dismiss**, **Discuss**,
+and **Request This Change**. Dismissing dims the finding in place and offers an
+undo — nothing disappears.
+
+### Map and Diff
+
+Beside the switcher sits the **Map · Diff** pill.
+
+**Map** opens the project's [context map](./context-map.md). **Diff** opens the
+raw patchset in the familiar files-changed shape: a filterable file tree on the
+right, per-file cards with unified hunks and dual line-number gutters on the
+left, a summary line reading files changed with total additions and deletions,
+and a per-file **Viewed** checkbox that collapses the card and ticks the tally.
+Diff is not a board — it is the raw source, always one click away.
+
+## Raise what you find
+
+Three routes, one result.
+
+**Highlight board prose.** A toolbar appears above the selection with
+**Comment**, **Request Changes**, and **Explain**. Comment opens a small editor
+quoting the span; `⌘`/`Ctrl` + Enter saves. The quoted text keeps a durable
+highlight afterwards — click it to reopen the thread, read the replies, and add
+a follow-up. Explain asks the orchestrator a question; it is not review content
+and never counts toward an exit.
+
+**Comment on a line.** Hovering a line of code turns its line number into a
+`+`. Click it for an editor offering **Save**, **Request Changes**, and
+**Delete**. The same editor serves board code, the Diff view, and code in the
+chat — a comment made on one surface is the same object everywhere. Diff line
+comments key to new-side line numbers, so a requested change carries a real
+diff position.
+
+**Say it in chat.** The chat column beside the surface is one continuous
+conversation with the orchestrator that travels with you across every board.
+Ask it something, tell it what you have concluded, and it stages the result and
+narrates the receipt in the transcript.
+
+## Stage asks
+
+An **ask** is the staged unit of the hand-off: text, an intent (comment or
+request change), provenance back to the finding, comment, or thread it came
+from, and a code anchor where one applies.
+
+Findings never stage themselves. Staging records your judgement, not the
+board's output, so every staging control is also its own receipt and its own
+undo — press **Request This Change** and it becomes "Staged · Request Change ✓";
+press it again to unstage.
+
+The gold button at the bottom right of the surface is the basket. It reads
+**Write Review** on a teammate PR and **Continue** on your own branch or PR, and
+carries one red count: staged asks plus the comments and threads not yet claimed
+by one. Explain threads never count. Undo of any kind takes the count back down.
+
+## The three exits
+
+The gold button opens the hand-off view — a view over the main surface, exactly
+like Map and Diff, and the back arrow leaves it. What it offers depends on the
+target.
+
+### Post one GitHub review
+
+On a teammate PR there is one lane: **Post Review**.
+
+The verdict is a three-way control — Approve, Request Changes, Comment —
+proposed from what you actually did, with the arithmetic stated beside it
+("proposed from your review · N request changes · M comments"). It is always
+flippable, and an overridden verdict says so and offers "use proposal" to go
+back. An approving review is first class: the draft opener is grounded in what
+you walked and cleared, not an empty shell.
+
+The draft renders exactly as it will post, so there is no separate preview
+stage: an opener, the body asks with their intent and provenance, and the line
+comments as cards grouped by file with their anchors. Highlight any draft prose
+for **Revise**, **Drop**, and **Explain** — revise takes an instruction and
+re-streams that block, drop retires it to the Retired drawer where a click
+restores it, explain names the comment or finding the sentence came from. Your
+edit survives a verdict flip.
+
+A residue line states the bare count of threads and code comments that stay
+local. One **Post Review** action sends it, under your name, as one review
+pinned to the reviewed commit. The posted state names the PR, the verdict, the
+line-comment count, and links to the review on GitHub.
+
+### Dispatch a work order
+
+On your own branch the hand-off is one goal in two states, and the page's shape
+tells you which one you are in.
+
+While asks remain, the page is **Changes**: one card per ask with its intent,
+provenance, text, and anchor. The same **Revise / Drop / Explain** steering
+works on an ask's text. **Dispatch Round** sits beneath the cards. The pull
+request waits as a single muted line at the foot.
+
+Work orders exist on your own branch only. A teammate PR never offers one.
+
+### Open the pull request
+
+When nothing is left to ask and the description is ready, the page *is* the
+pull request: the title as its heading, the drafted description rendered
+beneath, and one **Open Pull Request** action that pushes the branch and opens
+it. The receipt names the PR number and links to it.
+
+After the PR exists, rounds continue exactly as before. There is no separate
+lane for reviewing your own pull request.
+
+## Rounds
+
+A **round** is one dispatched work order and the successor patchset it returns.
+Rounds run one at a time; asks you raise mid-run queue for the next one.
 
 ```mermaid
 flowchart LR
-  pick[Pick a source] --> attach[Attach that source's daemon]
-  attach --> list[fs.listDir on that daemon]
-  list --> browse[Browse or type a path]
-  browse --> add[Add the project]
+  stage[Stage asks] --> dispatch[Dispatch Round]
+  dispatch --> run[Watch the run]
+  run --> report[Read the round report]
+  report --> gen[New generation of boards]
+  gen --> stage
 ```
 
-Below the source picker, an in-app directory browser lists the selected
-source's own filesystem, starting at its home directory. Directories only,
-hidden directories included, and a folder containing a `.git` entry is badged
-**repo**. Click a row to descend, use **Up** or Backspace to go up, or type an
-absolute path directly into the path bar and press Enter to jump straight
-there. There is no native OS file dialog: browsing a WSL distro or a remote
-works the same way, over that source's own filesystem, because Rennet is
-asking that source's daemon rather than the local one.
+Dispatching moves you to the run, live: the detached worktree created, the
+round's asks applied, the worker's activity as a table of steps, your project's
+gate command running and resolving, the commits, and finally the round report
+being drafted.
 
-The project remembers which source it lives on, so reopening it reconnects to
-the right daemon automatically. See [Windows and
-WSL](./windows-and-wsl.md#wsl-requirements) for distro-specific requirements.
+The **round report** is what greets you when the round returns. It states what
+the round did, where it ran, and how the gate came back, then lists one item per
+ask: **Addressed**, **Partial**, **Untouched**, or **Beyond the Asks** for work
+the round did that you never requested. Every outcome is verified against the
+round's diff rather than taken from the worker's word, and each item names the
+ask it traces to and reveals the code where one applies.
 
-## Team pull requests and your own branch
+You read the report while the boards regenerate live beneath it. Boards nothing
+touched carry forward; boards the round changed re-draft. The surface never
+locks, and **View the New Boards** appears when the new generation is composed —
+never as a disabled button waiting to light up.
 
-```mermaid
-flowchart TD
-  engine[One review state]
-  engine --> team[Team pull request]
-  team --> github[GitHub review]
-  engine --> yours[Your branch]
-  yours --> agent[Coding-agent handoff]
-  agent --> delta[Review the agent's changes]
-```
+The new generation shows you the delta by its own shape. Sections the round
+touched open expanded with a small gold dot; sections that carried forward stay
+folded to their gists. The dot rolls up to that board's segment in the switcher
+and clears for good once you open the section. The previous generation stays
+readable as a folded drill-down, and Sequence grows a "Round N · Addressed"
+chapter at its foot, newest last.
 
-For a team pull request, Rennet posts one review pinned to the reviewed commit.
-For your own branch, Rennet can send the selected requests to a coding agent,
-capture the resulting changes, and focus the next review on that successor
-patchset. It can then push the named branch and open the pull request described
-by the draft.
+Once a round has completed, a **History** control joins Map · Diff in the
+header. It lists one row per round with its tally; selecting a round renders its
+full report, so nothing you have already read ever vanishes.
 
-Across patchsets, a disposition carries only when content is byte-identical at
-the same path and the match is unambiguous. Changed or ambiguous work reopens for
-review.
+## Move around quickly
 
-## Use the command palette
+Press `⌘P` (or `⌘K`) to open the command menu from anywhere — the same menu the
+sidebar's **Search** row opens. It filters fuzzily over your sessions, each
+project's context map and new-chat entry, every settings page, and the
+add-project and add-environment actions. Board and diff content is deliberately
+not searchable from here; the boards are where you read.
 
-Press `Command+K` on macOS or `Ctrl+K` elsewhere to open the command palette. It
-shows commands relevant to the current view, including navigation, recent
-locations, lens changes, zoom, review regeneration, appearance, settings, and
-outbound draft actions.
+| Shortcut | Action |
+|---|---|
+| `⌘P` | Search |
+| `⌘K` | Command menu |
+| `⌘N` | New chat |
+| `⌘B` | Toggle the sidebar |
+| `⌘J` | Toggle the chat column |
+| `⌘,` | Settings |
 
-`Command+[` and `Command+]` move backward and forward through navigation history.
-In a loaded review, `l` zooms in and `h` zooms out. A command that cannot run in
-the current state is omitted.
+Use `Ctrl` in place of `⌘` on Windows and Linux. **Settings → Keyboard
+Shortcuts** lists every command with its binding, filterable by name, with a
+**Change** control on each row.
 
-### Remap shortcuts
+## Settings
 
-Open **Settings > Keyboard** to change a stable command's shortcut. **Set** records
-the next supported chord, **Unbind** removes the shortcut, and **Reset** restores
-the default. Changes take effect immediately and are stored in
-`~/.rennet/config.json`.
+Settings takes over the view and leaves by the back arrow or Escape. It has four
+pages:
 
-The recorder accepts a bare key or the platform's primary modifier plus one key.
-It does not record Shift or Alt combinations. When two commands share a chord,
-both rows report the collision and the first registry match runs. If the config
-contains an invalid chord, Rennet shows the raw value and uses the default until
-you replace, unbind, or reset it.
+- **Environments** — one card per machine, with its OS glyph, name, and address
+  or a **Local** chip. Each card carries the source-control tooling detected
+  there, the coding harnesses detected there, and the model mappings for the
+  review roles. Rename inline; Reconnect appears only when a machine is
+  unreachable.
+- **Appearance** — light / dark / system, the interface theme pack, and a
+  separate code theme that applies to every code surface including the diff.
+- **Keyboard Shortcuts** — every named command and its binding.
+- **Projects** — scoped to one project: its name and mark, worktree location
+  and naming pattern, review context, issue tracker, and the guidance rules the
+  review agents read.
 
-## Open app destinations
-
-Click the Rennet mark in the top-left corner to open **Settings**, return to
-**Projects**, or open the documentation. The current version appears in the same
-panel. When an update is ready, the mark shows a badge and the panel adds a
-restart action.
-
-Settings also opens with `Command+,` on macOS or `Ctrl+,` elsewhere.
-
-On macOS, the native application menu provides system editing and window
-commands. Rennet commands remain in the command palette. Windows and Linux do
-not show a separate application menu strip.
-
-## Reopen a review
-
-Captured reviews are persisted locally. Reopening one restores its patchset,
-read state, dispositions, successor account, and conversation threads without
-running the review again.
-
-If the original worktree is gone, the captured review remains readable. Commands
-that need the repository report that the worktree is unavailable.
-
-Rennet also persists navigation history for project and review views. When a
-stored location no longer loads, it is removed from the route and Rennet returns
-to the nearest available view. **Projects** remains the fallback.
-
-## Configure Rennet
-
-Settings has four sections:
-
-- **Global** contains appearance and GitHub account settings.
-- **Repo** contains project-specific settings such as map visibility and
-  [where commands run](./windows-and-wsl.md#choose-where-commands-run).
-- **Keyboard** contains shortcut overrides.
-- **Pairing** creates pairing codes and lists paired devices.
-
-A setting reports whether its value came from a built-in default, environment
-detection, global config, or repository config. **Pin** stores the resolved value
-for the repository. **Reset** removes that repository override and returns to the
-inherited value.
-
-If a repository config file cannot be parsed, Rennet shows built-in defaults and
-disables writes for that file.
+Every layered value shows a chip naming where it resolved from — builtin,
+detected, global, or repo — and every section states the file behind it.
 
 ## Local-first and remote use
 
-Rennet has no hosted backend and no Rennet telemetry service. Its daemon and
-review state run on a machine you control. A selected coding harness may send
-assembled context to its provider, and Rennet records the context it assembled.
+Rennet has no backend of its own and no Rennet telemetry service. The daemon and
+your review state run on machines you control.
 
-A paired device connects to the daemon over your private network. See
+Material selected for a review turn goes to the coding harness you chose and to
+that harness's model provider, and Rennet records the exact context it
+assembled. GitHub receives an outbound review only when you post it.
+
+A paired machine connects over your private network. See
 [Remote access](./remote-access.md) for binding, pairing, and path projection.
 
-## Desktop updates
+## Updates and the desktop app
 
-On Windows, Rennet checks the project's public GitHub Releases for updates every
-five minutes. Once an update is staged, the Rennet mark and tray icon show a
-badge. Use **Restart Rennet to update** from either menu to apply it. Rennet does
-not restart automatically.
+When a release is ready, an **Update** control appears at the sidebar's foot. It
+opens a dialog listing what the release contains, with **Later** and **Update
+Now**. Rennet never restarts itself without you.
+
+Closing the window leaves Rennet in the macOS menu bar or the Windows system
+tray, with the local daemon and any running review intact. **Open Rennet**
+restores the window and reconnects it. When the desktop app owns the local
+daemon, quitting says so, and an interrupted turn can be retried after the next
+start. Quitting a client connected to a remote daemon does not stop that remote
+process.
 
 Public signed macOS releases and macOS auto-update are tracked in
 [GitHub issue #298](https://github.com/rbutera/rennet/issues/298).
 
-## Close or quit the desktop app
-
-Closing the window leaves Rennet in the macOS menu bar or Windows system tray.
-The local daemon and a running review continue in the background. **Open Rennet**
-restores the window and reconnects it to that daemon.
-
-The tray menu contains:
-
-- **Open Rennet** to focus or recreate the window.
-- **Restart Rennet to update** when an update is staged.
-- the installed version.
-- **Quit** to exit the app.
-
-When the desktop app owns the local daemon, the quit label states that the daemon
-will also stop. A running turn is stored as interrupted and can be retried after
-the next start. Quitting a client connected to a remote daemon does not stop that
-remote process.
-
 ## Next steps
 
-- [Review a GitHub pull request](./reviewing-a-github-pr.md) covers the team review path.
+- [Review a GitHub pull request](./reviewing-a-github-pr.md) covers the teammate review path in full.
 - [The Context Map](./context-map.md) covers stored project structure and knowledge.
-- [Windows and WSL](./windows-and-wsl.md) covers host and distro execution.
+- [Windows and WSL](./windows-and-wsl.md) covers running against a distro.
 - [Common questions](../concepts/common-questions.md) covers models, credentials, and data.

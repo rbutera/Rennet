@@ -27,23 +27,19 @@ reviews, and **Developing Rennet** for people who build Rennet.
 - [Start here](./developing/index.md)
 - Concepts: [architecture overview](./developing/concepts/architecture-overview.md),
   [architecture contracts](./developing/concepts/architecture-contracts.md),
-  [review lenses](./developing/concepts/review-lenses.md),
-  [the lens pipeline (planned)](./developing/concepts/lens-pipeline.md),
-  [hand off and the exits (planned)](./developing/concepts/handoff-and-exits.md),
+  [the lens pipeline](./developing/concepts/lens-pipeline.md),
+  [hand off and the exits](./developing/concepts/handoff-and-exits.md),
+  [delta re-review and lineage](./developing/concepts/delta-rereview-and-lineage.md),
   [context assembly](./developing/concepts/context-assembly.md),
   [code intelligence](./developing/concepts/code-intelligence.md),
   [Model Council](./developing/concepts/model-council.md),
   [surfacing and routing](./developing/concepts/surfacing-and-routing.md),
   [harness adapters](./developing/concepts/harness-adapters.md),
   [the WSL daemon](./developing/concepts/wsl-daemon.md),
-  [agent handoff](./developing/concepts/agent-handoff.md),
-  [delta re-review and lineage](./developing/concepts/delta-rereview-and-lineage.md),
-  [comment refinement](./developing/concepts/comment-refinement.md),
-  [collation and publishing](./developing/concepts/collation-and-publishing.md),
   and [design doctrine](./developing/concepts/design-doctrine.md)
 - Guides: [repository bootstrap](./developing/guides/repository-bootstrap.md)
   and [settings and setup](./developing/guides/settings-and-setup.md)
-- Plans: [board rebuild plan (planned)](./developing/plans/board-rebuild-plan.md)
+- Plans: [board rebuild plan](./developing/plans/board-rebuild-plan.md)
 - [Decisions](./developing/decisions/contracts-and-rulings.md): the cross-cutting
   decision register
 - [ADRs](./adr/0001-tray-quit-owns-the-daemon.md): narrow architectural
@@ -53,6 +49,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
 - Reference: [documentation authority](./developing/reference/doc-architecture.md),
   [monorepo map](./developing/reference/monorepo-map.md),
   [dependency standard](./developing/reference/dependency-standard.md),
+  [how Rennet consumes `@wboard/*`](./developing/reference/whiteboard-consumption.md),
   [protocol compatibility](./developing/reference/protocol-compatibility.md),
   [Codex app-server integration](./developing/reference/codex-app-server.md),
   and [reactive streams](./developing/reference/reactive-streams.md)

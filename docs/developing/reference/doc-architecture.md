@@ -68,10 +68,11 @@ to reconcile rather than a reason to pick whichever sentence is convenient.
 | Stable product and architecture decisions | [Contracts and rulings](../decisions/contracts-and-rulings.md) |
 | Runtime and persistence invariants | [Architecture contracts](../concepts/architecture-contracts.md) |
 | Allowed packages and tool ownership | [Dependency standard](./dependency-standard.md) |
-| The review interaction model | [Review lenses](../concepts/review-lenses.md) |
+| How lens boards are drafted, linted, and edited | [The lens pipeline](../concepts/lens-pipeline.md) |
+| How boards are stored and authored | [How Rennet consumes `@wboard/*`](./whiteboard-consumption.md) |
 | How model jobs are assigned | [Model council](../concepts/model-council.md) |
 | How context reaches models | [Context assembly](../concepts/context-assembly.md) |
-| How a review becomes an outbound artifact | [Collation and publishing](../concepts/collation-and-publishing.md) |
+| How a review becomes an outbound artifact | [Hand off and the exits](../concepts/handoff-and-exits.md) |
 | Accepted behavior for one capability | [Promoted OpenSpec specifications](https://github.com/rbutera/rennet/tree/main/openspec/specs) |
 | What the product does now | Current code and tests |
 

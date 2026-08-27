@@ -83,13 +83,12 @@ export default defineConfig({
                     label: "Architecture contracts",
                     link: "/developing/concepts/architecture-contracts/",
                   },
-                  { label: "Review lenses", link: "/developing/concepts/review-lenses/" },
                   {
-                    label: "The lens pipeline (planned)",
+                    label: "The lens pipeline",
                     link: "/developing/concepts/lens-pipeline/",
                   },
                   {
-                    label: "Hand off and the exits (planned)",
+                    label: "Hand off and the exits",
                     link: "/developing/concepts/handoff-and-exits/",
                   },
                   { label: "Context assembly", link: "/developing/concepts/context-assembly/" },
@@ -104,18 +103,9 @@ export default defineConfig({
                   },
                   { label: "Harness adapters", link: "/developing/concepts/harness-adapters/" },
                   { label: "The WSL daemon", link: "/developing/concepts/wsl-daemon/" },
-                  { label: "Agent handoff", link: "/developing/concepts/agent-handoff/" },
                   {
                     label: "Delta re-review and lineage",
                     link: "/developing/concepts/delta-rereview-and-lineage/",
-                  },
-                  {
-                    label: "Comment refinement",
-                    link: "/developing/concepts/comment-refinement/",
-                  },
-                  {
-                    label: "Collation and publishing",
-                    link: "/developing/concepts/collation-and-publishing/",
                   },
                   { label: "Design doctrine", link: "/developing/concepts/design-doctrine/" },
                 ],
@@ -189,6 +179,10 @@ export default defineConfig({
                   {
                     label: "Monorepo map",
                     link: "/developing/reference/monorepo-map/",
+                  },
+                  {
+                    label: "How Rennet consumes @wboard/*",
+                    link: "/developing/reference/whiteboard-consumption/",
                   },
                   {
                     label: "Spec formats",
