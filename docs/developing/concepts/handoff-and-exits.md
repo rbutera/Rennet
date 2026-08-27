@@ -108,9 +108,9 @@ already landed instead of posting a second one.
 
 The outbound payload holds only what the reviewer sent. Internal conversation,
 model traces, and draft history never enter it unless their text became
-outbound draft content. There is no hosted Rennet backend: GitHub receives the
-review or the pull request, and the harness provider receives model-turn
-context. Nothing else leaves.
+outbound draft content. There is no hosted Rennet backend: of the exit
+payload, GitHub receives the review or the pull request, and the harness
+provider receives model-turn context.
 
 ## Opening the pull request
 
@@ -173,8 +173,9 @@ still returns its diff and changed paths — a crashed worker is not an empty
 round. The round never modifies the patchset under review; that patchset stays
 the baseline the successor is compared against.
 
-The worker runs at the repository root with the harness's default tool set. It
-is told by prompt, not by a restricted profile, to leave committing and pushing
-to the pull-request flow. Repositories containing submodules are unsupported
+The worker runs at the repository root with the harness's default tool set. The
+round commits its work — the rounds ledger pins those commits — while pushing
+and opening the pull request remain the pull-request exit's job.
+Repositories containing submodules are unsupported
 here — a gitlink can escape the checkpoint diff — and the run fails before it
 starts rather than reporting a diff it cannot trust.

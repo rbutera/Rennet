@@ -96,7 +96,8 @@ reviewed identity.
 The **successor account** bridges the two generations: it compares generation N
 with N+1 and classifies every prior ask against the successor patchset's diff —
 addressed, partial, untouched, or work beyond the asks — each item anchored. It
-is a deterministic account of what changed, not a model's summary of it. See
+is a deterministic account of what changed, not a model's summary of it; the
+round-report seat drafts the reviewer-facing round report from it. See
 [Delta and generations](./delta-rereview-and-lineage.md).
 
 ## Review state and command persistence

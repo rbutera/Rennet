@@ -128,9 +128,11 @@ deterministically. It records:
 - new hunks outside the asked spans;
 - handoff task attribution when present.
 
-It has two consumers. The reviewer reads it as the round report — the greeting
-that appears while the lens drafters regenerate. The drafters receive the same
-account as delta context, which is why it is produced before they start.
+The account is raw material, not the artifact the reviewer reads. The
+round-report seat drafts the round report from it, verifying each ask against
+the round's diff, and that drafted report is the greeting the reviewer reads
+while the lens drafters regenerate — and the delta context the drafters
+receive, which is why it drafts before they start.
 
 ```mermaid
 sequenceDiagram

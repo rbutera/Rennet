@@ -100,8 +100,8 @@ Post Review, headed with the pull request reference.
 
 **The verdict** is a three-way control — Approve, Request Changes, Comment —
 proposed from your own acts, with the arithmetic stated beside it. Any requested
-change proposes Request Changes; other asks propose Comment; a clean walk
-proposes Approve. Flip it whenever you like; an overridden verdict says so and
+change proposes Request Changes; other asks propose Comment; nothing proposes
+Approve — approving is always your own act. Flip it whenever you like; an overridden verdict says so and
 offers "use proposal" to revert. An approving review is a real review here: its
 opener is grounded in what you walked and cleared.
 
