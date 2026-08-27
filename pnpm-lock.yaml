@@ -417,6 +417,9 @@ importers:
 
   packages/protocol:
     dependencies:
+      '@wboard/core':
+        specifier: 0.1.0-alpha.2
+        version: 0.1.0-alpha.2
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -4214,6 +4217,9 @@ packages:
 
   '@vscode/sudo-prompt@9.3.2':
     resolution: {integrity: sha512-gcXoCN00METUNFeQOFJ+C9xUI0DKB+0EGMVg7wbVYRHBw2Eq3fKisDZOkRdOz3kqXRKOENMfShPOmypw1/8nOw==}
+
+  '@wboard/core@0.1.0-alpha.2':
+    resolution: {integrity: sha512-XY+bhE+NbqF0XvuOpG9PMx+0dXVWTXn2rn5Aqr/5LeuKh69lfQEzbWcOjBv6vOKU5AjIrdeo32Tiy6PRncnkCA==}
 
   '@webassemblyjs/ast@1.14.1':
     resolution: {integrity: sha512-nuBEDgQfm1ccRp/8bCQrx1frohyufl4JlbMMZ4P1wpeOfDhF6FQkxZJ1b/e+PLwr6X1Nhw6OLme5usuBWYBvuQ==}
@@ -14295,6 +14301,10 @@ snapshots:
   '@vscode/l10n@0.0.18': {}
 
   '@vscode/sudo-prompt@9.3.2': {}
+
+  '@wboard/core@0.1.0-alpha.2':
+    dependencies:
+      zod: 4.4.3
 
   '@webassemblyjs/ast@1.14.1':
     dependencies:

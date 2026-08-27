@@ -2335,6 +2335,14 @@ export function createDispatch(
           const cleared = deps.acknowledgeAttention?.(input) ?? 0;
           return parseCommandOutput(name, { cleared });
         }
+        case "patchset.readSpan": {
+          // B3 ships this row as CONTRACT ONLY (proposal reconciliation 8): the
+          // registry freezes the shape for Track C; B4/B10 bind the real
+          // patchset-backed reader. Until then the wire answers unbound — an
+          // explicit case, because the exhaustiveness guard below is
+          // compile-time and must stay armed for future commands.
+          throw new Error("patchset.readSpan is not bound yet (B4/B10 bind dispatch)");
+        }
         default: {
           // Exhaustiveness guard: every CommandName is routed above, so `name` is
           // `never` here. If a future command is added to the protocol without a

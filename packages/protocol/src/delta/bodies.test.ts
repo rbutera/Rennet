@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { bodyJsonSchema, CHUNK_ASSIGNABLE_ANGLES } from "./bodies";
 import type {
   DecompositionProposalBody,
   DecompositionSkeletonBody,
   OfferedManifest,
   PatchsetRef,
   ProposalChunk,
-} from "./index";
+} from "../index";
+import { bodyJsonSchema, CHUNK_ASSIGNABLE_ANGLES } from "./bodies";
 import { computeInputDigest, validateDocument } from "./rsp";
 
 /** Fixture accessor: a chunk that must exist, without a non-null assertion. */

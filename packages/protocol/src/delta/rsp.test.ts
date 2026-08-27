@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OfferedManifest, ParsedAnchor, PatchsetRef } from "./index";
+import type { OfferedManifest, ParsedAnchor, PatchsetRef } from "../index";
 import {
   canonicalize,
   computeInputDigest,

@@ -1,7 +1,4 @@
-import type { AnchorSide, AnchorSpan, Patchset, Review } from "@rennet/protocol";
-// Local lens union — protocol's CanvasAngle was deleted (#489, B2); counterpart.ts
-// owns the app-ui-local shape until B3 gives LensKind its real home.
-import type { CanvasAngle } from "../canvas/counterpart";
+import type { AnchorSide, AnchorSpan, LensKind, Patchset, Review } from "@rennet/protocol";
 
 /**
  * One row of the Files view's Angles rail (critique P2: the rail was DEAD — six
@@ -13,7 +10,7 @@ import type { CanvasAngle } from "../canvas/counterpart";
  * repository is gone, so the live pipeline cannot run).
  */
 export interface AngleRailRow {
-  readonly angle: CanvasAngle;
+  readonly angle: LensKind;
   readonly label: string;
   readonly state: "pending" | "running" | "failed" | "unavailable" | "ran";
   /** Present only for `ran`: an honest quantity read from the loaded data. */

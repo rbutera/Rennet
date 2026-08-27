@@ -1,12 +1,12 @@
 import { WsRennetBridge } from "@rennet/client";
-import { commandDefinitions } from "@rennet/protocol";
+import { commands as commandRegistry } from "@rennet/protocol";
 import { startWsListener, type WsListener } from "@rennet/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { BROWSER_SHELL_INTERCEPTS, composeBrowserInvoke } from "./browser/shell-intercepts";
 
 // The parity inventory (issue #381, design D6). The truthful parity axis is the WIRE:
 // both shells share `WsRennetBridge`, so a per-command UI-driving test would test the ui
-// (shell-independent). Instead this proves (1) every `commandDefinitions` key reaches
+// (shell-independent). Instead this proves (1) every command-registry key reaches
 // dispatch over the real WS request path — no transport/allowlist filter silently drops a
 // command — and (2) the browser shell's interception allowlist is EXACTLY
 // `["repository.choose"]`, each entry carrying a justification. A new interception without
@@ -54,7 +54,7 @@ describe("browser-shell parity inventory (#381)", () => {
       () => "/tmp/rennet-browser-parity",
     );
 
-    const commands = Object.keys(commandDefinitions);
+    const commands = Object.keys(commandRegistry);
     for (const command of commands) {
       await invoke(composedInvoke, command, {});
     }

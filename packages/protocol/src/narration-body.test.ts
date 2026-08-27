@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { computeInputDigest, validateDocument } from "./delta/rsp";
 import type { OfferedManifest, PatchsetRef, RollupNarrationBody } from "./index";
-import { computeInputDigest, validateDocument } from "./rsp";
 
 // ── Fixtures: one manifest with a resolvable hunk, one valid narration ────────
 //

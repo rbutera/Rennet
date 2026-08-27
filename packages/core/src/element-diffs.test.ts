@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { decompose } from "./decomposition";
 import { type AdmittedDocument, buildElementDiffs } from "./element-diffs";
 
-// Local test shapes — protocol's `Canvas`/`CanvasAngle`/`AnalysisElement` state model
+// Local test shapes — protocol's canvas-era state model (`AnalysisElement` family)
 // was deleted (#489, B2). The slicer reads only each canvas's analysis elements
 // (elementKey + anchor), so a minimal element + a plain angle→canvas record suffice.
 type TestElement = {

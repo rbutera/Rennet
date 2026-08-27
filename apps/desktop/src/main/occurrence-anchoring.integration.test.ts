@@ -15,7 +15,7 @@ import { type AdmittedDocument, buildElementDiffs, decompose } from "@rennet/cor
 import type { PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 
-// Local test shapes — protocol's `Canvas`/`CanvasAngle`/`AnalysisElement` state model
+// Local test shapes — protocol's canvas-era state model (`AnalysisElement` family)
 // was deleted (#489, B2). `buildElementDiffs` reads only each canvas's analysis
 // elements (elementKey + anchor), so a minimal element + a plain angle→canvas record
 // exercise the same seam.

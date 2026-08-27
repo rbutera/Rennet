@@ -27,7 +27,7 @@ Read these pages in order when you need the whole system:
    packages, processes, and review loop.
 2. [Architecture contracts](./concepts/architecture-contracts.md) defines the
    rules for patchsets, project context, persistence, and outbound work.
-3. [Review lenses](./concepts/review-lenses.md) explains the Spec, Sequence,
+3. [Review lenses](./concepts/review-lenses.md) explains the Design, Sequence,
    Decisions, Noise, and Flagged views and how each shapes the shared patchset.
 4. [Surfacing and routing](./concepts/surfacing-and-routing.md) covers model
    output, validation, instructions, and model assignment.

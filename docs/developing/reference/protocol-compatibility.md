@@ -4,8 +4,10 @@ description: Rules for evolving the Rennet client-daemon wire protocol across in
 ---
 
 The desktop, mobile client, CLI, and daemon can run builds from different
-commits. `packages/protocol/src/session.ts` defines their shared wire vocabulary
-and compatibility rules.
+commits. `packages/protocol/src/session/wire.ts` defines their shared wire
+vocabulary and compatibility rules. It is one of the package's five contract
+folders — `board/`, `commands/`, `session/`, `delta/`, and `manifests/` — each
+exporting through a single seam that the root `index.ts` re-exports.
 
 ## Evolve schemas append-only
 
@@ -13,9 +15,12 @@ An existing frame or command payload may gain an optional field. It may not lose
 a field, make an optional field required, narrow an accepted value, or change a
 field's meaning within the same protocol version.
 
-`commandDefinitions` remains the single validation authority for request inputs
-and response outputs. Session envelopes refer to those schemas rather than
-copying command payload shapes. All wire payloads must be JSON-representable.
+The `commands` registry (`packages/protocol/src/commands/`) is the single
+validation authority for request inputs and response outputs: one table keyed by
+command id, each row carrying its input and output schema alongside label,
+exposure, and locus metadata. Session envelopes refer to those schemas rather
+than copying command payload shapes. All wire payloads must be
+JSON-representable.
 
 Use a new protocol version for a change that cannot follow the append-only rule.
 

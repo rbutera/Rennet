@@ -1,17 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Local lens shapes (B2, #489). The protocol Canvas/CanvasAngle model is deleted
-// this change; B3 owns the real `LensKind` home. Counterpart is a B5 survivor, so
-// it carries a five-value lens union and the minimal canvas shape it reads.
-
-/** The five review lenses, pending B3's real `LensKind`. */
-export type CanvasAngle = "spec" | "sequence" | "decisions" | "noise" | "flagged";
-export const CANVAS_ANGLES: readonly CanvasAngle[] = [
-  "spec",
-  "sequence",
-  "decisions",
-  "noise",
-  "flagged",
-];
+// Counterpart is a B5 survivor (#489): it reads the minimal canvas shape below
+// and keys lenses by the protocol `LensKind` (B3's manifests seam — the B2-era
+// local union is gone).
+import { LENS_KINDS, type LensKind } from "@rennet/protocol";
 
 /** The minimal canvas shape this resolver reads: its analysis elements' keys. */
 export interface CounterpartCanvas {
@@ -49,7 +40,7 @@ export interface CounterpartTarget {
   /** The element to select when the button is pressed (the counterpart's element in this review). */
   readonly elementKey: string;
   /** The lens whose canvas carries that element — may differ from the current one. */
-  readonly angle: CanvasAngle;
+  readonly angle: LensKind;
   /** The counterpart file's repo-relative path (for the button's title/tooltip). */
   readonly path: string;
   /** Which side the counterpart is — the shown file's own kind is the opposite. */
@@ -115,12 +106,12 @@ export type ElementPathsResolver = (elementKey: string) => readonly string[] | u
  * that path.
  */
 function locatePath(
-  canvases: Record<CanvasAngle, CounterpartCanvas>,
-  currentAngle: CanvasAngle,
+  canvases: Record<LensKind, CounterpartCanvas>,
+  currentAngle: LensKind,
   path: string,
   pathsForElement: ElementPathsResolver,
-): { angle: CanvasAngle; elementKey: string } | null {
-  const order: CanvasAngle[] = [currentAngle, ...CANVAS_ANGLES.filter((a) => a !== currentAngle)];
+): { angle: LensKind; elementKey: string } | null {
+  const order: LensKind[] = [currentAngle, ...LENS_KINDS.filter((a) => a !== currentAngle)];
   for (const angle of order) {
     const canvas = canvases[angle];
     if (!canvas) continue;
@@ -145,8 +136,8 @@ function locatePath(
  *     by DIFF-PATH MEMBERSHIP, not by analysis ID or a single path), else null.
  */
 export function resolveCounterpart(
-  canvases: Record<CanvasAngle, CounterpartCanvas>,
-  currentAngle: CanvasAngle,
+  canvases: Record<LensKind, CounterpartCanvas>,
+  currentAngle: LensKind,
   currentPath: string,
   pathsForElement: ElementPathsResolver,
 ): CounterpartTarget | null {

@@ -71,9 +71,9 @@ model name was obtained, capability evidence, and optional council resolution
 data. Producers mint document IDs. Models receive anchor IDs and refer to them;
 they do not create durable occurrence identities.
 
-The registry in `packages/protocol/src/rsp.ts` recognizes every protocol document
+The registry in `packages/protocol/src/delta/rsp.ts` recognizes every protocol document
 type. Recognition alone does not mean that a live review job produces the type.
-`BODY_SCHEMAS` in `packages/protocol/src/bodies.ts` currently supplies full body
+`BODY_SCHEMAS` in `packages/protocol/src/delta/bodies.ts` currently supplies full body
 validation for decomposition skeletons and proposals, ordering, roll-up
 narration, findings, decision records, noise, and review hypotheses.
 
@@ -157,9 +157,9 @@ review behavior.
 
 | Concern | Owner |
 | --- | --- |
-| RSP envelope, registry, anchors, and validator | `packages/protocol/src/rsp.ts` |
-| Body schemas and semantic checks | `packages/protocol/src/bodies.ts` |
-| Shared RSP and lineage types | `packages/protocol/src/index.ts` |
+| RSP envelope, registry, anchors, and validator | `packages/protocol/src/delta/rsp.ts` |
+| Body schemas and semantic checks | `packages/protocol/src/delta/bodies.ts` |
+| Shared RSP and lineage types | `packages/protocol/src/delta/` and `packages/protocol/src/domain.ts` |
 | Base instructions and prompt assembly | `packages/prompts/src/index.ts` |
 | Harness-turn adapter used by core jobs | `packages/core/src/harness-run-turn.ts` |
 | Model Council catalog and resolution | `packages/core/src/model-council.ts` |

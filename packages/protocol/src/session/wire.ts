@@ -13,7 +13,7 @@
 // `.strict()` habit used for intra-process shapes elsewhere in this package.
 
 import { z } from "zod";
-import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "./index";
+import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "../index";
 
 /** The protocol version this build speaks. One integer, bumped append-only. */
 export const PROTOCOL_VERSION = 1;
@@ -74,13 +74,15 @@ export const serverInfoFrameSchema = z.object({
 
 /**
  * Client → server: invoke a command. `command` is validated against the
- * existing `commandDefinitions` registry; the `input` payload stays validated by
- * `commandDefinitions[command].input` (single authority), not re-modeled here.
+ * existing command registry (`commands`); the `input` payload stays validated by
+ * `commands[command].args` (single authority), not re-modeled here.
  */
 export const requestFrameSchema = z.object({
   type: z.literal("request"),
   requestId: z.string().min(1),
-  command: z.string().refine(isCommandName, { message: "unknown command" }),
+  // Closure (not a bare reference): `session` and `commands` sit in an import cycle
+  // through the root seam, so the registry binding resolves at parse time, not here.
+  command: z.string().refine((value) => isCommandName(value), { message: "unknown command" }),
   input: z.unknown(),
 });
 

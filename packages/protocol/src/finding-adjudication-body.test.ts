@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { findingAdjudicationJsonSchema } from "./bodies";
+import { findingAdjudicationJsonSchema } from "./delta/bodies";
+import { computeInputDigest, validateDocument } from "./delta/rsp";
 import type { OfferedManifest, PatchsetRef } from "./index";
-import { computeInputDigest, validateDocument } from "./rsp";
 
 // The additive `agreement.adjudication` field on a disagree row (issue #41): a
 // disagree row with NO adjudication validates exactly as before (the additive

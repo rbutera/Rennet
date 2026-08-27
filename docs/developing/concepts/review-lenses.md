@@ -1,6 +1,6 @@
 ---
 title: Review lenses
-description: How Spec, Sequence, Decisions, Noise, and Flagged organize one immutable changeset.
+description: How Design, Sequence, Decisions, Noise, and Flagged organize one immutable changeset.
 ---
 
 The five review lenses share one immutable patchset and give it five useful
@@ -10,28 +10,29 @@ recorded disposition.
 ```mermaid
 flowchart LR
   patch["Immutable patchset"]
-  spec["Spec<br/>requirement coverage"]
+  design["Design<br/>requirement coverage"]
   sequence["Sequence<br/>reading order"]
   decisions["Decisions<br/>judgment queue"]
   noise["Noise<br/>visible remainder"]
   flagged["Flagged<br/>finding index"]
   blast["Blast radius<br/>overlay"]
 
-  patch --> spec
+  patch --> design
   patch --> sequence
   patch --> decisions
   patch --> noise
   patch --> flagged
-  blast -.-> spec
+  blast -.-> design
   blast -.-> sequence
   blast -.-> decisions
   blast -.-> noise
   blast -.-> flagged
 ```
 
-## Spec
+## Design
 
-Spec answers "did the implementation satisfy its stated intent?" The server
+Design answers "did the implementation
+satisfy its stated intent?" The server
 captures available OpenSpec material with the patchset and builds a structured
 spec model from that frozen input. Coverage mapping connects requirements to
 implementation occurrences and preserves unmatched requirements as visible

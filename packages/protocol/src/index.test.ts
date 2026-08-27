@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  commandDefinitions,
+  commands,
   dispositionSchema,
   globalConfigSchema,
   isCommandName,
@@ -83,7 +83,7 @@ describe("command protocol", () => {
 
 describe("review.load — reopen a persisted review by id (#324)", () => {
   it("app.bootstrap reports presence for its nullable latest review", () => {
-    const output = commandDefinitions["app.bootstrap"].output;
+    const output = commands["app.bootstrap"].output;
     expect(output.safeParse({ review: null, repositoryPresent: false }).success).toBe(true);
     expect(output.safeParse({ review: null }).success).toBe(false);
   });
@@ -110,7 +110,7 @@ describe("review.load — reopen a persisted review by id (#324)", () => {
   });
 
   it("outputs { review, repositoryPresent }", () => {
-    const output = commandDefinitions["review.load"].output;
+    const output = commands["review.load"].output;
     // repositoryPresent is required, boolean; review is the review schema.
     expect(output.safeParse({ review: null, repositoryPresent: true }).success).toBe(false);
     // A minimal valid review shape is exercised elsewhere; here we prove the boolean is required.
@@ -191,7 +191,7 @@ describe("ordering is agent-owned: no user-approval command exists (issue #9)", 
     // "The human does not approve ordering" is a property of the wiring: the
     // command registry simply contains no such operation.
     expect(isCommandName("ordering.approve")).toBe(false);
-    const orderingApproval = Object.keys(commandDefinitions).filter(
+    const orderingApproval = Object.keys(commands).filter(
       (name) => /order/i.test(name) && /(approve|accept|confirm|dispose)/i.test(name),
     );
     expect(orderingApproval).toEqual([]);
@@ -378,9 +378,9 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
 
 describe("fs.listDir — source directory browser contract", () => {
   it("accepts an optional path and returns dir entries", () => {
-    const input = commandDefinitions["fs.listDir"].input.parse({});
+    const input = commands["fs.listDir"].args.parse({});
     expect(input).toEqual({});
-    const out = commandDefinitions["fs.listDir"].output.parse({
+    const out = commands["fs.listDir"].output.parse({
       result: {
         path: "/home/rai",
         home: "/home/rai",
