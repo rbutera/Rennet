@@ -38,8 +38,8 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 ## Cluster 6 — verification
 
-- [ ] 6.1 `pnpm check` → EXIT=0 captured on its own line, tail shown.
-- [ ] 6.2 Packet E2E (ruled approach, reconciliation 4): frozen real-Rennet-PR fixture (captured `gh` JSON, own-repo material only) through the full retrieval flow with stub `runTurn` → dossier where EVERY item carries provenance + fetched-at, serialized size under the bound, and the result inlines into a real `buildDeltaPacket` call whose packet carries the items untruncated.
-- [ ] 6.3 Positive controls, fail-then-revert with evidence: (a) oversize a fixture body → the bound rejects it and the e2e fails; (b) strip provenance from a fixture item → schema rejects; (c) break `extractRefs` → zero items, item-count assert fails. Revert, re-run green, tree clean.
-- [ ] 6.4 BUILD-STATUS.json: `b07` → `{"status":"done","passes":true}` (only that line). Commit, push, local == origin.
-- [ ] 6.5 Output the sigil: `<promise>B07-COMPLETE</promise>`
+- [x] 6.1 `pnpm check` → EXIT=0 captured on its own line, tail shown.
+- [x] 6.2 Packet E2E (ruled approach, reconciliation 4): frozen real-Rennet-PR fixture (captured `gh` JSON, own-repo material only) through the full retrieval flow with stub `runTurn` → dossier where EVERY item carries provenance + fetched-at, serialized size under the bound, and the result inlines into a real `buildDeltaPacket` call whose packet carries the items untruncated.
+- [x] 6.3 Positive controls, fail-then-revert with evidence: (a) oversize a fixture body → the bound rejects it and the e2e fails; (b) strip provenance from a fixture item → schema rejects; (c) break `extractRefs` → zero items, item-count assert fails. Revert, re-run green, tree clean.
+- [x] 6.4 BUILD-STATUS.json: `b07` → `{"status":"done","passes":true}` (only that line). Commit, push, local == origin.
+- [x] 6.5 Output the sigil: `<promise>B07-COMPLETE</promise>`
