@@ -9,6 +9,7 @@
 import type { KnowledgeSetPayload, ProjectMapPayload, RennetBridge } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
+import { discussPrompt } from "../components/context-map-view";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { newChatPath, projectMapPath } from "../routes/url";
@@ -126,6 +127,14 @@ describe("ProjectContextMapView — router-side map (C12 cluster 5)", () => {
     });
     // The store's confirmed status wins — a disposed claim is not re-disposed.
     await waitFor(() => expect(container.querySelector(".context-map-confirm")).toBeNull());
+  });
+
+  it("discuss hands the statement to the project's New Chat, prefilled (not an inert button)", async () => {
+    const { container, history } = renderMap();
+    // The ask rail is absent here, so discuss is a real handoff to New Chat, not a no-op.
+    await waitFor(() => expect(container.querySelector(".context-map-discuss")).not.toBeNull());
+    fireEvent.click(container.querySelector(".context-map-discuss") as Element);
+    expect(history.history.at(-1)).toBe(newChatPath("p1", discussPrompt(k1)));
   });
 
   it("lands on that project's New Chat when the map is left", async () => {

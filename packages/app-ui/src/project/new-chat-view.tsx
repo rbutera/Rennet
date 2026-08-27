@@ -12,12 +12,21 @@ import {
   Search,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { Icon } from "../components/icon";
 import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
 import { TargetIcon } from "../shell/sidebar/target-icon";
 import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../shell/sidebar-data";
+
+/** The unified target vocabulary's STATE labels (R36) — a row with a state reads by its
+ *  state, not its bare kind, so "Needs you" / "Merged" / "Reviewed" surface honestly. */
+const STATE_LABEL: Record<SessionTargetState, string> = {
+  "needs-you": "Needs you",
+  merged: "Merged",
+  reviewed: "Reviewed",
+};
+
 import {
   buildSmartRows,
   filterSmartRows,
@@ -90,12 +99,15 @@ function targetChipLabel(target: NewChatTarget, branch: string): string {
 
 export function NewChatView({ projectId }: { readonly projectId: string }) {
   const [, navigate] = useLocation();
+  const search = useSearch();
   const { data: projectsData } = useCommand("projects.list", {});
   const projects = projectsData?.projects ?? [];
   const project = projects.find((candidate) => candidate.id === projectId);
 
   const [target, setTarget] = useState<NewChatTarget>({ kind: "checkout" });
-  const [message, setMessage] = useState("");
+  // Seed the composer from an `?ask=` handoff (the context map's "discuss" lands here with
+  // the statement prefilled) — read once on mount; the reviewer edits or sends from there.
+  const [message, setMessage] = useState(() => new URLSearchParams(search).get("ask") ?? "");
   const [tab, setTab] = useState<SmartFilter>("all");
   const [filter, setFilter] = useState("");
 
@@ -112,14 +124,15 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
 
   const close = () => navigate(newChatPath());
 
-  // Escape closes the page (the filter input's own Escape stops there first — 6.2).
+  // Escape closes the page (the filter input's own Escape stops there first — 6.2). `navigate`
+  // is wouter-stable, so the exhaustive dep re-subscribes only if it ever changes (finding 15).
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") navigate(newChatPath());
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  }, [navigate]);
 
   // Switching project rewrites the URL; reset the target back to the checkout. projectId
   // is the intended run trigger — the effect fires ON a project change to drop a stale
@@ -372,13 +385,14 @@ function SelectionMark({ selected }: { readonly selected: boolean }) {
   );
 }
 
-/** The unified target-vocabulary state chip: the R36 icon + its words. */
+/** The unified target-vocabulary state chip: the R36 icon + its words. A row with a derived
+ *  state reads by that state ("Needs you" / "Merged" / "Reviewed"); otherwise by its kind. */
 function StateChip({ row }: { readonly row: SmartRow }) {
   const { kind, state } = targetOf(row);
   return (
     <span className="flex shrink-0 items-center gap-1 rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-soft">
       <TargetIcon kind={kind} state={state} className="size-3" />
-      {TARGET_LABEL[kind]}
+      {state ? STATE_LABEL[state] : TARGET_LABEL[kind]}
     </span>
   );
 }

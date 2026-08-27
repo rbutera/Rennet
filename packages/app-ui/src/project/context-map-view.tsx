@@ -1,5 +1,5 @@
 import { useLocation } from "wouter";
-import { ContextMapView } from "../components/context-map-view";
+import { ContextMapView, discussPrompt } from "../components/context-map-view";
 import { useBridge } from "../data";
 import { newChatPath } from "../routes/url";
 
@@ -21,6 +21,9 @@ export function ProjectContextMapView({ projectId }: { readonly projectId: strin
       projectId={projectId}
       showAskRail={false}
       onBack={() => navigate(newChatPath(projectId))}
+      // No ask rail here, so "discuss" hands the statement to the project's New Chat,
+      // prefilled — a real handoff, not an inert button (finding 9).
+      onDiscuss={(statement) => navigate(newChatPath(projectId, discussPrompt(statement)))}
     />
   );
 }

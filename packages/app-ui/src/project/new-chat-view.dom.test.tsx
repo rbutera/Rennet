@@ -110,8 +110,8 @@ const EMPTY_DETAIL: ProjectDetail = {
 
 /** Mount the view at /new-chat?project=<id>, resolving projectId from the URL exactly
  *  as the real `NewChatScreen` route does, so a picker navigation re-renders the view. */
-function renderView(id: string, details: Record<string, ProjectDetail>) {
-  const history = memoryHistory(newChatPath(id));
+function renderView(id: string, details: Record<string, ProjectDetail>, ask?: string) {
+  const history = memoryHistory(newChatPath(id, ask));
   const bridge = new MemoryBridge({
     "projects.list": () => ({ projects: [project("p1", "rennet"), project("p2", "whiteboard")] }),
     "project.detail": (input) => details[input.projectId] ?? EMPTY_DETAIL,
@@ -248,5 +248,26 @@ describe("NewChatView", () => {
     expect(merged.className).toContain("opacity-50");
     // Single-repo workspace: the repo name is not rendered as a column.
     expect(within(merged).queryByText("rennet")).toBeNull();
+  });
+
+  it("seeds the composer from an ?ask= handoff (the context map's discuss lands here)", async () => {
+    renderView("p1", { p1: detailP1() }, "About X: is this claim right?");
+    const composer = (await screen.findByLabelText(
+      "Message the orchestrator",
+    )) as HTMLTextAreaElement;
+    expect(composer.value).toBe("About X: is this claim right?");
+  });
+
+  it("state chips read the DERIVED target vocabulary, not just the bare kind", async () => {
+    renderView("p1", { p1: detailP1() });
+    await screen.findByText("Teammate span fix");
+    // A teammate PR that needs you reads "Needs you" — the derived state, never the flat
+    // "Teammate PR" the kind-only label would print (finding 13).
+    expect(within(rowButton(/Teammate span fix/)).getByText("Needs you")).toBeTruthy();
+    expect(within(rowButton(/Teammate span fix/)).queryByText("Teammate PR")).toBeNull();
+    // A merged PR reads "Merged".
+    expect(within(rowButton(/Old merged work/)).getByText("Merged")).toBeTruthy();
+    // A mine open PR has no derived state → it reads by its kind, "Your PR".
+    expect(within(rowButton(/My open change/)).getByText("Your PR")).toBeTruthy();
   });
 });

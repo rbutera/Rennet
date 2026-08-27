@@ -10,7 +10,7 @@ import { NewChatView } from "../project/new-chat-view";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
-import { projectDetailPath, ROUTES, settingsPath } from "./url";
+import { newChatPath, ROUTES, settingsPath } from "./url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RennetRouterApp (C01 §4) — the router foundation the later Track-C surfaces mount
@@ -93,7 +93,7 @@ function NewChatFrontDoor() {
               <button
                 type="button"
                 className="text-ink underline-offset-2 hover:underline"
-                onClick={() => navigate(projectDetailPath(p.id))}
+                onClick={() => navigate(newChatPath(p.id))}
               >
                 {p.name}
               </button>

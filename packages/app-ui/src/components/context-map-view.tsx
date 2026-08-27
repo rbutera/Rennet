@@ -50,11 +50,18 @@ type LoadState =
  * fabricated: an absent snapshot is stated plainly, and the ask rail's unanswered and
  * failed states are first-class.
  */
+/** The prefill a "discuss" action carries — the statement, framed as a revise-it ask. Shared
+ *  by the ask-rail prefill and the New-Chat handoff so both phrase it identically. */
+export function discussPrompt(statement: KnowledgeStatementPayload): string {
+  return `About "${statement.subject}": the claim "${statement.claim}" — is this right? Revise it against the evidence.`;
+}
+
 export function ContextMapView({
   bridge,
   projectId,
   onBack,
   showAskRail = true,
+  onDiscuss,
 }: {
   bridge: RennetBridge;
   projectId: string;
@@ -62,6 +69,9 @@ export function ContextMapView({
   /** The project-scoped ask rail. The router-side map view (C12) hides it — the
    *  session chat column plays that role there — and leaves it on elsewhere. */
   showAskRail?: boolean;
+  /** Where a statement's "discuss" goes when there is no ask rail (the router map view hands
+   *  it to the project's New Chat, prefilled). Absent AND no ask rail ⇒ no discuss button. */
+  onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   useEffect(() => {
@@ -94,6 +104,7 @@ export function ContextMapView({
         knowledge={state.knowledge}
         onBack={onBack}
         showAskRail={showAskRail}
+        onDiscuss={onDiscuss}
       />
     );
   }
@@ -128,6 +139,7 @@ function ContextMap({
   knowledge,
   onBack,
   showAskRail,
+  onDiscuss,
 }: {
   bridge: RennetBridge;
   projectId: string;
@@ -135,6 +147,7 @@ function ContextMap({
   knowledge: KnowledgeSetPayload | null;
   onBack(): void;
   showAskRail: boolean;
+  onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
   const scopes = useMemo(() => buildScopes(map), [map]);
   const [selection, setSelection] = useState<Selection>(
@@ -186,11 +199,12 @@ function ContextMap({
   };
 
   const askRef = useRef<{ prefill(text: string): void }>(null);
-  const discuss = (statement: KnowledgeStatementPayload) => {
-    askRef.current?.prefill(
-      `About "${statement.subject}": the claim "${statement.claim}" — is this right? Revise it against the evidence.`,
-    );
-  };
+  // The discuss handler: with the ask rail present, prefill it; otherwise defer to the
+  // caller's handoff (the router map view sends it to New Chat). Undefined ⇒ the button is
+  // not rendered at all — never an inert control that looks live but does nothing.
+  const discuss = showAskRail
+    ? (statement: KnowledgeStatementPayload) => askRef.current?.prefill(discussPrompt(statement))
+    : onDiscuss;
 
   const fileCount = map.files.length;
   // The knowledge layer is loaded independently of the (gate-fresh) structural map
@@ -577,7 +591,7 @@ function DetailTabs({
   map: ProjectMapPayload;
   onConfirm(id: string): void;
   onReject(id: string): void;
-  onDiscuss(statement: KnowledgeStatementPayload): void;
+  onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
   const [tab, setTab] = useState<"knowledge" | "details">("knowledge");
   const subject = selection.kind === "file" ? selection.path : (scope?.name ?? "");
@@ -628,7 +642,7 @@ function KnowledgePanel({
   subject: string;
   onConfirm(id: string): void;
   onReject(id: string): void;
-  onDiscuss(statement: KnowledgeStatementPayload): void;
+  onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
   return (
     <div className="context-map-knowledge flex flex-col gap-3">
@@ -692,13 +706,15 @@ function KnowledgePanel({
               >
                 <Icon icon={X} className="h-3 w-3" /> reject
               </button>
-              <button
-                type="button"
-                onClick={() => onDiscuss(statement)}
-                className="context-map-discuss inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm hover:bg-raised hover:text-ink"
-              >
-                ↪ discuss
-              </button>
+              {onDiscuss ? (
+                <button
+                  type="button"
+                  onClick={() => onDiscuss(statement)}
+                  className="context-map-discuss inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm hover:bg-raised hover:text-ink"
+                >
+                  ↪ discuss
+                </button>
+              ) : null}
             </div>
           ) : null}
         </article>
