@@ -4,7 +4,9 @@
 // over a completed-round rounds source + the fixture board source. Load-bearing claims:
 //   - `?view=rounds` renders the ledger and its selected round's report;
 //   - rounds list newest-first, and selecting a row renders that round's report;
-//   - the round's FROZEN generation is reachable through C5's `GenerationSwitcher`;
+//   - a producer-shaped `RoundRecord` carries a single generation, so the
+//     `GenerationSwitcher` stays hidden (frozen-predecessor reachability is
+//     parked as a B9 `RoundRecord` predecessor-field gap — see proposal F3);
 //   - a `?view=rounds` deep-link with NO completed round falls back to the board.
 import type { Review, RoundRecord } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
