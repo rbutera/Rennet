@@ -160,16 +160,25 @@ which command runs when a client, the ⌘K menu, or the orchestrator asks for on
 That routing reads a single table: the command registry in
 `packages/protocol/src/commands/index.ts`. Every row is keyed by a stable command
 id and carries the id's argument schema, output schema, label, and an `exposure`
-record. Three consumers read that one table; none keeps its own list.
+record. The registry is designed for three consumers, but **two read it today**:
+the dispatch map and the `app_*` agent projection. The command menu / sidebar
+still reads its own `COMMAND_CATALOGUE` (`packages/app-ui/src/command/commands.ts`)
+— every registry row currently carries `commandMenu: false` — and is migrated onto
+the registry by C11. Until then the menu keeps its own list.
 
 ```mermaid
 flowchart LR
   registry["Command registry\n(protocol/commands)"] --> map["Dispatch map\nserver/dispatch/"]
   registry --> tools["app_* agent tools\nserver/agent-tools.ts"]
-  registry --> menu["Command menu / sidebar\n(app UI)"]
+  registry -.->|C11: commandMenu still false| menu["Command menu / sidebar\n(reads COMMAND_CATALOGUE today)"]
   map --> handler["Family handler runs"]
-  tools -->|exposure.agent| turn["Orchestrator turn"]
+  tools -.->|exposure.agent (bridge exported, not yet wired)| turn["Orchestrator turn\n(rebuilt in B9/B11)"]
 ```
+
+The dashed edge is deliberate: the `app_*` projection is built and exported, but
+no production turn consumes it yet — the orchestrator turn that would invoke these
+tools was torn down in the Board rebuild (B2) and is re-seated by B9/B11. Today the
+bridge is a tested pure projection with no live caller.
 
 **Dispatch map.** `packages/server/src/dispatch/` binds a
 `Map<commandId, handler>` from the registry, one module per command family
@@ -192,6 +201,13 @@ with no edit here. There is no per-tool allow or deny list (Rule Zero). The
 whiteboard five stay HTTP MCP tools (`WhiteboardClient`, #455-locked names); they
 are not registry ids, so they are structurally absent from this loop.
 
+`buildAppTools` is exported from `@rennet/server` but **currently unwired**: no
+production turn calls it, because the SDK orchestrator turn that would pass these
+tools to the harness does not exist yet (torn down in B2, rebuilt in B9/B11). The
+projection and its tests are ready; the consumer is B9/B11 scope. Until then, no
+live turn can invoke an `app_*` tool — treat this section as describing the shape
+the rebuilt turn will consume, not a path exercised today.
+
 `exposure.agent` is the only per-row datum that gates the agent surface. The v1
 inventory covers project add and list, review capture and open-PR, and the
 settings ops. Session-scoped tools (list and open session) wait on their
@@ -205,7 +221,7 @@ registry yet, so it is left unbound rather than stubbed.
 | RSP envelope, registry, anchors, and validator | `packages/protocol/src/delta/rsp.ts` |
 | Body schemas and semantic checks | `packages/protocol/src/delta/bodies.ts` |
 | Shared RSP and lineage types | `packages/protocol/src/delta/` and `packages/protocol/src/domain.ts` |
-| Command registry (one table, three readers) | `packages/protocol/src/commands/index.ts` |
+| Command registry (one table, two readers today; menu joins at C11) | `packages/protocol/src/commands/index.ts` |
 | Dispatch map (per-family command modules) | `packages/server/src/dispatch/` |
 | `app_*` agent tool surface | `packages/server/src/agent-tools.ts` |
 | Base instructions and prompt assembly | `packages/prompts/src/index.ts` |
