@@ -48,6 +48,8 @@ Drafter dispatch + composition incl. the every-hunk check (B8); knowledge genera
 
 11. **Mode-only changes reach the packet.** The parser saw `old mode`/`new mode` lines but the packet discarded them, so a chmod-only file (zero hunks) vanished from the drafters' "entire input". `parseFilePatch` now returns the typed pair and `DeltaPacketFile` carries `modeChange: {old, new}` where present; chmod-only fixture test added.
 
+12. **Generated-output rule narrowed to the approved globs.** Delegating to decomposition's `isGeneratedPath` swept up hand-authorable paths (`routes.map`, `build/config.ts`) — beyond mechanical certainty. The rule now matches only a `dist/` path segment, `*.min.*`, and JS/CSS sourcemap suffixes, locally in `noise-preclass.ts`; negative fixtures added.
+
 ## Verification (packet)
 
 `pnpm check` green. Fixture test: a real captured patchset produces a DeltaPacket whose hunk ids are **stable across a re-run** and whose successor-account section is **present iff** a prior generation exists. Positive control that can fail (mutate a hunk body → id changes; omit successorAccount → section absent).

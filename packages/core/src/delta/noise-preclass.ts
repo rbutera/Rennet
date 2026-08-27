@@ -1,5 +1,5 @@
 import type { HunkId } from "@rennet/protocol";
-import { isGeneratedPath, isLockfile } from "../decomposition";
+import { isLockfile } from "../decomposition";
 import type { HunkIndex } from "./hunk-index";
 
 /**
@@ -27,12 +27,27 @@ function isScaffoldStamp(path: string): boolean {
   return path.endsWith(".openspec.yaml");
 }
 
+/**
+ * The approved generated-output globs, and ONLY those: a `dist/` path segment,
+ * minified bundles (`*.min.*`), and JS/CSS sourcemaps. Deliberately narrower
+ * than decomposition's `isGeneratedPath` — that helper's `build/`, `generated/`
+ * and bare-`.map` matches sweep up hand-authored files (`build/config.ts`,
+ * `routes.map`), which is a judgement, not a mechanical certainty.
+ */
+function isGeneratedOutput(path: string): boolean {
+  const segs = path.split("/");
+  const base = (segs[segs.length - 1] ?? path).toLowerCase();
+  if (segs.slice(0, -1).some((s) => s.toLowerCase() === "dist")) return true;
+  if (/\.min\./.test(base)) return true;
+  return /\.(js|css|mjs|cjs)\.map$/.test(base);
+}
+
 function ruleFor(path: string): { rule: NoisePreclassRule; reason: string } | null {
   if (isLockfile(path)) return { rule: "lockfile", reason: `lockfile: ${path}` };
   if (isScaffoldStamp(path)) {
     return { rule: "generated-scaffold", reason: `generated scaffold stamp: ${path}` };
   }
-  if (isGeneratedPath(path))
+  if (isGeneratedOutput(path))
     return { rule: "generated-output", reason: `generated output: ${path}` };
   return null;
 }

@@ -38,6 +38,13 @@ describe("preclassifyNoise", () => {
     expect(factsFor("packages/core/src/delta/hunk-index.ts")).toEqual([]);
   });
 
+  it.each([["routes.map"], ["build/config.ts"], ["generated/schema.ts"]])(
+    "does not overreach: hand-authorable path %s yields no fact",
+    (path) => {
+      expect(factsFor(path)).toEqual([]);
+    },
+  );
+
   it("stamps every hunk of a matching file, addressed by hunk id", () => {
     const patch = ["@@ -1,2 +1,2 @@", " a", "-b", "+c", "@@ -9,2 +9,2 @@", " d", "-e", "+f"].join(
       "\n",
