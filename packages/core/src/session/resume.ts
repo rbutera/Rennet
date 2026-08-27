@@ -1,4 +1,5 @@
 import type { HarnessCursor, SessionModel } from "@rennet/protocol";
+import type { SessionOutcome } from "../harness";
 
 /**
  * `core/session/resume.ts` — the pure cursor-resume decisions (#466 res. 3, B09
@@ -46,4 +47,36 @@ export function advanceCursor(
     turnCount: (session.harnessCursor?.turnCount ?? 0) + 1,
   };
   return { ...session, harnessCursor: cursor };
+}
+
+/**
+ * Drop the session's harness cursor (B09 task 2.3, the resume-vanished path).
+ * When the harness no longer has the transcript the cursor named, the pointer is
+ * stale: clearing it lets the next turn start a FRESH harness conversation and
+ * re-mint the cursor from `turnCount` 1. The session's boards, threads, claim,
+ * and review are untouched — only the harness pointer is dropped.
+ */
+export function dropCursor(session: SessionModel): SessionModel {
+  return { ...session, harnessCursor: undefined };
+}
+
+/**
+ * Decide whether a turn that RESUMED a prior harness conversation failed because
+ * that conversation is gone (the CLI no longer has the transcript the cursor
+ * named), so the loop should rebuild context honestly rather than surface a dead
+ * turn (B09 task 2.3, #466 res. 3).
+ *
+ * The signal is a `invalid-request` failure on a turn that attempted resume: the
+ * harness rejected the resume pointer as invalid/unknown input. Transient
+ * failures (rate-limit, overloaded, upstream) and auth failures are DIFFERENT
+ * classes and are deliberately NOT treated as vanished — they would fail a fresh
+ * turn too, so they surface as real failures instead of a wasteful rebuild. The
+ * live native-code → `invalid-request` mapping for a missing session is confirmed
+ * against the real CLI in the packet E2E (cluster 8); this decision is the pure
+ * rule the offline gate exercises through an injected port.
+ */
+export function isResumeVanished(attemptedResume: boolean, outcome: SessionOutcome): boolean {
+  return (
+    attemptedResume && outcome.status === "failed" && outcome.error.class === "invalid-request"
+  );
 }

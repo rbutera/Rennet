@@ -1,7 +1,20 @@
 import type { SessionModel } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { advanceCursor, planResume } from "./resume";
+import type { HarnessError, SessionOutcome } from "../harness";
+import { advanceCursor, dropCursor, isResumeVanished, planResume } from "./resume";
 import { mintSession } from "./state";
+
+const err = (klass: HarnessError["class"]): SessionOutcome => ({
+  status: "failed",
+  error: {
+    class: klass,
+    origin: "harness",
+    message: klass,
+    retryable: false,
+    retryableSource: "inferred",
+    nativeCode: null,
+  },
+});
 
 const base = (): SessionModel => mintSession("proj", { id: () => "s1", now: () => 1 });
 
@@ -53,5 +66,39 @@ describe("advanceCursor", () => {
   it("does not advance on a session id without an anchor (the frozen cursor needs both)", () => {
     const session = base();
     expect(advanceCursor(session, { harnessSessionId: "h1" })).toBe(session);
+  });
+});
+
+describe("dropCursor", () => {
+  it("clears the harness cursor but leaves the rest of the session intact", () => {
+    const session: SessionModel = {
+      ...base(),
+      reviewId: "r1",
+      harnessCursor: { harnessSessionId: "h1", lastAssistantMessageAnchor: "a1", turnCount: 5 },
+    };
+    const dropped = dropCursor(session);
+    expect(dropped.harnessCursor).toBeUndefined();
+    expect(dropped.reviewId).toBe("r1");
+    expect(dropped.id).toBe(session.id);
+  });
+});
+
+describe("isResumeVanished", () => {
+  it("is true for an invalid-request failure on a resumed turn (the transcript is gone)", () => {
+    expect(isResumeVanished(true, err("invalid-request"))).toBe(true);
+  });
+
+  it("is false when resume was not attempted (a fresh turn cannot vanish)", () => {
+    expect(isResumeVanished(false, err("invalid-request"))).toBe(false);
+  });
+
+  it("is false for transient and auth failures (they would fail fresh too — not vanished)", () => {
+    expect(isResumeVanished(true, err("rate-limit"))).toBe(false);
+    expect(isResumeVanished(true, err("overloaded"))).toBe(false);
+    expect(isResumeVanished(true, err("auth"))).toBe(false);
+  });
+
+  it("is false for a completed turn", () => {
+    expect(isResumeVanished(true, { status: "completed", finalText: "ok" })).toBe(false);
   });
 });

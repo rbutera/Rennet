@@ -16,20 +16,34 @@
 //   3. PERSIST the advanced cursor after each completed turn, so the next turn
 //      resumes exactly where this one left off (and a restart reattaches).
 //
-// The resume-vanished fallback (a persisted cursor whose harness transcript the
-// CLI no longer has) is cluster 2's task 2.3, layered on top of this loop.
+// RESUME-VANISHED FALLBACK (task 2.3): when a resumed turn fails because the CLI
+// no longer has that conversation's transcript, the loop rebuilds context
+// honestly — it emits a `context_rebuilt` row, drops the stale cursor, and re-runs
+// the turn FRESH (no resume). The boards stay canonical: this loop never writes a
+// board, so a rebuild cannot drop or re-draft one; the reconstructed session
+// re-reads boards from the event log elsewhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
   advanceCursor,
+  dropCursor,
   type HarnessError,
   type HarnessPort,
   type HarnessSession,
+  isResumeVanished,
   planResume,
   type SessionOutcome,
   type SessionSpec,
 } from "@rennet/core";
 import type { SessionModel } from "@rennet/protocol";
+
+/**
+ * A row on the turn stream the reader sees. `context_rebuilt` is the honest
+ * marker that a resumed conversation's transcript was gone and context was
+ * rebuilt (B09 task 2.3) — a fact surfaced, never a gate. Cluster 3 extends this
+ * union with the harness's own `compact_boundary`.
+ */
+export type TurnRow = { readonly kind: "context_rebuilt"; readonly reason: string };
 
 /** The session persistence the loop reads the cursor from and writes it back to.
  *  The file-backed `SessionStore` (adapters) satisfies this; tests pass a fake. */
@@ -47,6 +61,8 @@ export interface TurnLoopDeps {
    * pointer from the loaded cursor, so `buildSpec` returns everything BUT resume.
    */
   readonly buildSpec: (session: SessionModel) => Omit<SessionSpec, "resume">;
+  /** Sink for turn-stream rows (e.g. the `context_rebuilt` marker). Optional. */
+  readonly emit?: (row: TurnRow) => void;
 }
 
 export interface TurnResult {
@@ -54,6 +70,9 @@ export interface TurnResult {
    *  turn that reported a resume point; unchanged otherwise. */
   readonly session: SessionModel;
   readonly outcome: SessionOutcome;
+  /** True when the resume-vanished fallback fired: the resumed transcript was
+   *  gone, so context was rebuilt on a fresh session (task 2.3). */
+  readonly contextRebuilt?: boolean;
 }
 
 const STREAM_ENDED_WITHOUT_TERMINAL: HarnessError = {
@@ -108,15 +127,46 @@ export class SessionTurnLoop {
       throw new Error(`SessionTurnLoop: session ${sessionId} is not persisted; mint it first`);
     }
     const resume = planResume(current);
-    const spec: SessionSpec = {
-      ...this.deps.buildSpec(current),
-      ...(resume === undefined ? {} : { resume }),
-    };
-    const harnessSession = await this.deps.port.createSession(spec);
-    const outcome = await runTurnToOutcome(harnessSession, prompt);
+    const outcome = await this.#runTurn(current, prompt, resume);
+
+    // Resume-vanished fallback: the harness lost this conversation's transcript.
+    // Rebuild context honestly — one fresh turn, no resume — and tell the reader.
+    if (resume !== undefined && isResumeVanished(true, outcome)) {
+      this.deps.emit?.({
+        kind: "context_rebuilt",
+        reason: "the harness no longer has this conversation's transcript",
+      });
+      // Drop the stale cursor so the fresh conversation re-mints it from turn 1.
+      // Boards/threads/claim are untouched — only the harness pointer is cleared.
+      const rebuilt = dropCursor(current);
+      const freshOutcome = await this.#runTurn(rebuilt, prompt, undefined);
+      if (freshOutcome.status !== "completed") {
+        return { session: rebuilt, outcome: freshOutcome, contextRebuilt: true };
+      }
+      const advanced = advanceCursor(rebuilt, freshOutcome);
+      this.deps.store.save(advanced);
+      return { session: advanced, outcome: freshOutcome, contextRebuilt: true };
+    }
+
     if (outcome.status !== "completed") return { session: current, outcome };
     const advanced = advanceCursor(current, outcome);
     if (advanced !== current) this.deps.store.save(advanced);
     return { session: advanced, outcome };
+  }
+
+  /** One harness turn: re-pass options (fresh `buildSpec`) and merge the resume
+   *  pointer, spawn a fresh session, and drive it to its terminal outcome. */
+  #runTurn(
+    session: SessionModel,
+    prompt: string,
+    resume: { harnessSessionId: string } | undefined,
+  ): Promise<SessionOutcome> {
+    const spec: SessionSpec = {
+      ...this.deps.buildSpec(session),
+      ...(resume === undefined ? {} : { resume }),
+    };
+    return this.deps.port
+      .createSession(spec)
+      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt));
   }
 }

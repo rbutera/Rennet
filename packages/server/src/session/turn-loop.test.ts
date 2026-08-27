@@ -9,7 +9,7 @@ import type {
 import { mintSession } from "@rennet/core";
 import type { SessionModel } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { type SessionCursorStore, SessionTurnLoop } from "./turn-loop";
+import { type SessionCursorStore, SessionTurnLoop, type TurnRow } from "./turn-loop";
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
 
@@ -273,5 +273,98 @@ describe("SessionTurnLoop: serialization per session (task 2.2)", () => {
     expect(started).toEqual(["/repo/a", "/repo/b"]);
     releaseA();
     await Promise.all([pa, pb]);
+  });
+});
+
+describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
+  // A session whose cursor names a harness transcript the CLI no longer has.
+  const withStaleCursor = (): SessionModel => ({
+    ...mintSession("proj", { id: () => "s1", now: () => 1 }),
+    harnessCursor: { harnessSessionId: "gone", lastAssistantMessageAnchor: "old", turnCount: 4 },
+  });
+
+  const invalidRequest: SessionOutcome = {
+    status: "failed",
+    error: {
+      class: "invalid-request",
+      origin: "harness",
+      message: "no conversation found for resume id",
+      retryable: false,
+      retryableSource: "inferred",
+      nativeCode: null,
+    },
+  };
+
+  it("rebuilds context on a fresh session and re-mints the cursor from turn 1", async () => {
+    const store = memoryStore(withStaleCursor());
+    const rows: TurnRow[] = [];
+    // Resumed turn fails invalid-request (vanished); the fresh turn (no resume) succeeds.
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => {}, {
+        outcome: (s) =>
+          s.resume !== undefined
+            ? invalidRequest
+            : {
+                status: "completed",
+                finalText: "ok",
+                harnessSessionId: "fresh-h",
+                lastAssistantMessageAnchor: "fresh-a",
+              },
+      }),
+      store,
+      buildSpec: spec,
+      emit: (r) => rows.push(r),
+    });
+
+    const { session: after, outcome, contextRebuilt } = await loop.runTurn("s1", "hi");
+
+    expect(contextRebuilt).toBe(true);
+    expect(outcome.status).toBe("completed");
+    // Honest row surfaced to the reader.
+    expect(rows).toEqual([
+      {
+        kind: "context_rebuilt",
+        reason: "the harness no longer has this conversation's transcript",
+      },
+    ]);
+    // Fresh conversation: new harness session id, turnCount reset to 1 (not 5).
+    expect(after.harnessCursor).toEqual({
+      harnessSessionId: "fresh-h",
+      lastAssistantMessageAnchor: "fresh-a",
+      turnCount: 1,
+    });
+    // Boards/threads/claim untouched — the loop never writes them (only the cursor moved).
+    expect(after.threads).toEqual([]);
+    expect(after.projectId).toBe("proj");
+    expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("fresh-h");
+  });
+
+  it("does not rebuild when the resumed turn merely fails transiently (not vanished)", async () => {
+    const store = memoryStore(withStaleCursor());
+    const rows: TurnRow[] = [];
+    const overloaded: SessionOutcome = {
+      status: "failed",
+      error: {
+        class: "overloaded",
+        origin: "provider",
+        message: "busy",
+        retryable: true,
+        retryableSource: "inferred",
+        nativeCode: null,
+      },
+    };
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => {}, { outcome: () => overloaded }),
+      store,
+      buildSpec: spec,
+      emit: (r) => rows.push(r),
+    });
+
+    const { outcome, contextRebuilt } = await loop.runTurn("s1", "hi");
+    expect(outcome.status).toBe("failed");
+    expect(contextRebuilt).toBeUndefined();
+    expect(rows).toEqual([]);
+    // The stale cursor is left intact — a transient failure is not a vanish.
+    expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("gone");
   });
 });
