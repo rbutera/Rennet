@@ -96,6 +96,22 @@ describe("DiffView — the raw-diff surface", () => {
     expect(struck?.textContent).toBe("a.ts");
   });
 
+  it("un-viewing reveals the card even after a chevron click while viewed (no latch)", () => {
+    const { getByLabelText, getByRole } = mountDiff([FILE_A]);
+    // Open to start.
+    expect(getByLabelText("Collapse file")).toBeTruthy();
+    // View it → collapses.
+    const viewedBox = getByRole("checkbox");
+    fireEvent.click(viewedBox);
+    expect(getByLabelText("Expand file")).toBeTruthy();
+    // Click the chevron WHILE viewed — this used to latch collapsed=true.
+    fireEvent.click(getByLabelText("Expand file"));
+    expect(getByLabelText("Expand file")).toBeTruthy();
+    // Un-view → the card reveals with no stray extra click.
+    fireEvent.click(viewedBox);
+    expect(getByLabelText("Collapse file")).toBeTruthy();
+  });
+
   it("copy-path writes the path, shows its confirmation, and clears it after 1.5s", async () => {
     vi.useFakeTimers();
     try {

@@ -213,7 +213,10 @@ function DiffFileCard({
   viewed: boolean;
   onViewedChange: (viewed: boolean) => void;
 }) {
-  // Marking a file viewed collapses it, exactly like GitHub.
+  // Marking a file viewed collapses it, exactly like GitHub. `collapsed` is the user's own
+  // collapse INTENT (toggled by the chevron); `viewed` collapses the display independently.
+  // Toggling Viewed re-syncs the intent so un-viewing reveals the card (below), instead of a
+  // chevron click on a viewed card latching `collapsed=true` and hiding it after un-view.
   const [collapsed, setCollapsed] = React.useState(false);
   const open = !collapsed && !viewed;
   const stats = fileStats(file);
@@ -245,7 +248,7 @@ function DiffFileCard({
       >
         <button
           type="button"
-          onClick={() => setCollapsed((value) => !value || viewed)}
+          onClick={() => setCollapsed((value) => !value)}
           aria-expanded={open}
           aria-label={open ? "Collapse file" : "Expand file"}
           className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -304,7 +307,12 @@ function DiffFileCard({
           <input
             type="checkbox"
             checked={viewed}
-            onChange={(event) => onViewedChange(event.target.checked)}
+            onChange={(event) => {
+              onViewedChange(event.target.checked);
+              // Re-sync the collapse intent to the Viewed state: checking collapses,
+              // un-checking reveals — so a prior chevron click can't leave it latched shut.
+              setCollapsed(event.target.checked);
+            }}
             className="size-3 accent-primary"
           />
           Viewed
