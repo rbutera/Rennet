@@ -1587,6 +1587,20 @@ export const daemonSettingsSchema = z.object({
         .optional(),
     })
     .optional(),
+  /**
+   * The issue-tracker section's GLOBAL rung (#461, B7). This is a host fact —
+   * the global rung of the settings ladder lives on the daemon's host — so the
+   * legacy blob's `tracker` migrates HERE, not into client settings. `tokenEnv`
+   * names the env var holding the token; the token VALUE never enters any store.
+   */
+  tracker: z
+    .object({
+      kind: z.enum(["none", "github", "jira", "linear"]).optional(),
+      projectKey: z.string().optional(),
+      baseUrl: z.string().optional(),
+      tokenEnv: z.string().optional(),
+    })
+    .optional(),
 });
 export type DaemonSettings = z.infer<typeof daemonSettingsSchema>;
 

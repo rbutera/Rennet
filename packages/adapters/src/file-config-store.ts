@@ -172,6 +172,10 @@ export function migrateLegacyGlobalConfig(paths: {
 
   const daemon: DaemonSettings = { version: DAEMON_SETTINGS_VERSION };
   if (legacy.daemon !== undefined) daemon.daemon = legacy.daemon;
+  // The issue-tracker section is a GLOBAL-rung host fact (#461, B7), so it lands
+  // in daemon-settings — not client. Omitting this mapping is exactly the B7-fold
+  // data-loss the round-trip test guards against.
+  if (legacy.tracker !== undefined) daemon.tracker = legacy.tracker;
 
   // Validate both targets before writing either, then write atomically.
   atomicWrite(paths.clientPath, clientSettingsSchema.parse(client), "client");

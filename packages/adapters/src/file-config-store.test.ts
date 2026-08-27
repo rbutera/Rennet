@@ -116,6 +116,10 @@ describe("migrateLegacyGlobalConfig", () => {
     appearance: { scheme: "dark" },
     keybindings: { "review.openPr": "mod+o", "projects.add": null },
     daemon: { listen: { host: "100.64.0.1", port: 4321 } },
+    // The B7 tracker section (#461): a GLOBAL-rung host fact that migrates into
+    // daemon-settings. Its presence here makes this the FULL current-main v1 shape;
+    // drop the migration mapping and the round-trip deep-equal breaks.
+    tracker: { kind: "github", projectKey: "rbutera/rennet", tokenEnv: "RENNET_TRACKER_TOKEN" },
   };
 
   function seed(): { legacyPath: string; clientPath: string; daemonPath: string } {
@@ -143,11 +147,13 @@ describe("migrateLegacyGlobalConfig", () => {
       ...(client.appearance ? { appearance: client.appearance } : {}),
       ...(client.keybindings ? { keybindings: client.keybindings } : {}),
       ...(daemon.daemon ? { daemon: daemon.daemon } : {}),
+      ...(daemon.tracker ? { tracker: daemon.tracker } : {}),
     };
     expect(reconstructed).toEqual(legacyFixture);
     // The correct-file assertion: the daemon rung is NOT in client settings, and
     // the viewer prefs are NOT in daemon settings.
     expect((client as GlobalConfig).daemon).toBeUndefined();
+    expect((client as GlobalConfig).tracker).toBeUndefined();
     expect((daemon as GlobalConfig).appearance).toBeUndefined();
     expect((daemon as GlobalConfig).keybindings).toBeUndefined();
   });
