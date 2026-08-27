@@ -8,9 +8,10 @@ import {
   type ForgePublishPort,
   type ForgeReviewPost,
   foldAsks,
+  mechanicalComposition,
   type ReviewCommentInput,
 } from "@rennet/core";
-import type { Review } from "@rennet/protocol";
+import type { ComposedHandoffBundle, HandoffBundle, Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatchRuntime, type DispatchDeps } from "./dispatch";
 import { askHandlers } from "./dispatch/ask";
@@ -117,6 +118,49 @@ describe("B11 E2E (b) — dispatch a round work-order twice → exactly one disp
     });
     await dispatch({ reviewId: SID });
     expect(dispatchRound).toHaveBeenCalledTimes(2);
+  });
+
+  // ── (b') Coalescing survives a NONDETERMINISTIC composer (finding 3 / finding 10b) ──
+  // The reproduced race: the live composer folds MODEL-authored titles/order into the
+  // work-order digest, so it differs run-to-run. Keying idempotency on THAT digest let a
+  // double-dispatch slip two real coding-agent runs through. This injects a composer whose
+  // output digest is random every call, and proves the deterministic INPUT-digest key still
+  // coalesces two identical dispatches to ONE compose + ONE kick.
+  it("coalesces two identical dispatches to one, even with a nondeterministic live composer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "b11-e2e-round-nd-"));
+    const store = new AskLogStore(dir);
+    const dispatchRound = vi.fn(() => Promise.resolve());
+    // A live composer that returns the SAME asks but a RANDOM title + digest each call, so the
+    // composed work-order digest is nondeterministic (exactly the model-authored composition).
+    const composeBundle = vi.fn(async ({ bundle }: { bundle: HandoffBundle }) => {
+      const floor = mechanicalComposition(bundle);
+      const nonce = randomUUID();
+      return {
+        ...floor,
+        tasks: floor.tasks.map((t) => ({ ...t, title: `group ${nonce}` })),
+        digest: `nondeterministic-${nonce}`,
+      } as ComposedHandoffBundle;
+    });
+    const rt = createDispatchRuntime({
+      askLog: store,
+      service: { reviewById: (id: string) => (id === SID ? ROUND_REVIEW : undefined) },
+      dispatchRound,
+      composeBundle,
+    } as unknown as DispatchDeps);
+    const askH = askHandlers(rt);
+    const dispatch = roundHandlers(rt)["round.dispatch"];
+
+    await askH["ask.stage"]({
+      sessionId: SID,
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "fix" },
+    });
+    // Fire two identical dispatches concurrently (a double-click / reconnect / retry).
+    await Promise.all([dispatch({ reviewId: SID }), dispatch({ reviewId: SID })]);
+
+    // The composer ran ONCE (coalescing is BEFORE composition) and the kick fired ONCE — the
+    // nondeterministic composed digest never got a chance to fork the key.
+    expect(composeBundle).toHaveBeenCalledTimes(1);
+    expect(dispatchRound).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1626,17 +1626,31 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         session,
         workOrder,
         runWorkers: async (order) => {
-          await runHandoffTurn({ repoRoot: review.repositoryRoot, prompt: order.prompt });
+          const outcome = await runHandoffTurn({
+            repoRoot: review.repositoryRoot,
+            prompt: order.prompt,
+          });
+          // A FAILED coding turn is NOT a successful round (P1 finding 4): throw so the
+          // dispatch memo evicts and an identical re-dispatch RETRIES — never a memoized
+          // failure that permanently suppresses the retry. (The rounds tail swallows the
+          // rejection so the session queue is not wedged; `round.dispatch`'s per-key memo
+          // sees the rejection and drops the key.)
+          if (outcome.status === "failed") {
+            throw new Error(`round worker turn failed: ${outcome.reason}`);
+          }
           // PR-lane RIPENING (B11 cluster 5, task 5.2): an own-branch review's PR draft
-          // re-composes as the round lands — re-run `publish.compose(mode:"pr")` to re-raise
-          // publish-ready (idempotent by derived id; `submitPr`'s push+open-PR is unchanged).
-          // A team-PR review (postTarget) composes a review, not a PR, so it is skipped.
-          // Failure-isolated garnish: a failed re-compose never breaks the landed round.
-          if (!review.postTarget) {
+          // re-composes as the round lands. Reload the review by id (finding 4) so the
+          // decision + compose run over the CURRENT persisted state, not the pre-round
+          // closure — `publish.compose` re-reads by id and re-raises publish-ready
+          // (idempotent by derived id; `submitPr`'s push+open-PR is unchanged). A team-PR
+          // review composes a review, not a PR, so it is skipped. Failure-isolated garnish:
+          // a failed re-compose never breaks the landed round.
+          const current = service.reviewById(review.id) ?? review;
+          if (!current.postTarget) {
             try {
               await dispatch("publish.compose", {
                 commandId: randomUUID(),
-                reviewId: review.id,
+                reviewId: current.id,
                 mode: "pr",
               });
             } catch {

@@ -113,6 +113,55 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     expect((r2 as DispatchResult).dispatched).toBe(true);
   });
 
+  it("finding 8: refuses the round exit on a TEAMMATE PR (the lane is own-branch only)", async () => {
+    // A review with a post target the viewer did NOT author is a teammate PR: its exit is
+    // *Post review*, never a coding round (handoff-and-exits.md "Work orders are own-branch
+    // only"). The lane is ABSENT — dispatch honestly returns an empty order, no kick.
+    const teamReview = {
+      ...(REVIEW as object),
+      postTarget: { number: 7, viewerDidAuthor: false },
+    } as unknown as Review;
+    const dispatchRound = vi.fn(() => Promise.resolve());
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-team-")));
+    const rt = createDispatchRuntime({
+      askLog: store,
+      service: { reviewById: (id: string) => (id === REVIEW_ID ? teamReview : undefined) },
+      dispatchRound,
+    } as unknown as DispatchDeps);
+    const dispatch = roundHandlers(rt)["round.dispatch"];
+    store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "fix" },
+    });
+
+    const { dispatched } = (await dispatch({ reviewId: REVIEW_ID })) as DispatchResult;
+    expect(dispatched).toBe(false);
+    expect(dispatchRound).not.toHaveBeenCalled();
+  });
+
+  it("finding 8: DISPATCHES on the viewer's OWN pull request (viewerDidAuthor true)", async () => {
+    const ownPr = {
+      ...(REVIEW as object),
+      postTarget: { number: 7, viewerDidAuthor: true },
+    } as unknown as Review;
+    const dispatchRound = vi.fn(() => Promise.resolve());
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-ownpr-")));
+    const rt = createDispatchRuntime({
+      askLog: store,
+      service: { reviewById: (id: string) => (id === REVIEW_ID ? ownPr : undefined) },
+      dispatchRound,
+    } as unknown as DispatchDeps);
+    const dispatch = roundHandlers(rt)["round.dispatch"];
+    store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "fix" },
+    });
+
+    const { dispatched } = (await dispatch({ reviewId: REVIEW_ID })) as DispatchResult;
+    expect(dispatched).toBe(true);
+    expect(dispatchRound).toHaveBeenCalledTimes(1);
+  });
+
   it("an empty ask set composes nothing to dispatch — no kick, no round", async () => {
     const dispatchRound = vi.fn(() => Promise.resolve());
     const { dispatch } = harness(dispatchRound);
@@ -194,6 +243,42 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
     release();
     await Promise.all([first, second]);
     expect(order).toEqual(["1-start", "1-end", "2-start"]);
+  });
+
+  it("finding 4: a FAILED worker turn rejects the round (memo evicts → retryable) without wedging the session", async () => {
+    const runtime = createRoundsRuntime(runtimeDeps());
+    // The create-server wiring throws when `runHandoffTurn` returns `{status:"failed"}`; model
+    // that here — a failed turn must REJECT the round so `round.dispatch`'s per-key memo drops
+    // the key and an identical re-dispatch retries, rather than memoizing a failure forever.
+    await expect(
+      runtime.dispatchRound({
+        session: session("s1"),
+        workOrder: WORK_ORDER,
+        runWorkers: async () => {
+          throw new Error("round worker turn failed: no harness");
+        },
+      }),
+    ).rejects.toThrow(/round worker turn failed/);
+
+    // The session tail is not wedged by the failure: a subsequent (successful) round still runs.
+    const ran = vi.fn(async () => {});
+    await runtime.dispatchRound({ session: session("s1"), workOrder: WORK_ORDER, runWorkers: ran });
+    expect(ran).toHaveBeenCalledTimes(1);
+  });
+
+  it("finding 4: a SUCCESSFUL round runs its ripening after the worker turn lands", async () => {
+    const runtime = createRoundsRuntime(runtimeDeps());
+    // Model the create-server runWorkers: after a completed turn it re-composes (ripens).
+    const ripen = vi.fn(async () => {});
+    await runtime.dispatchRound({
+      session: session("s1"),
+      workOrder: WORK_ORDER,
+      runWorkers: async () => {
+        // (a completed turn does not throw) …
+        await ripen();
+      },
+    });
+    expect(ripen).toHaveBeenCalledTimes(1);
   });
 
   it("runs dispatches on different sessions concurrently (the lock is per session)", async () => {
