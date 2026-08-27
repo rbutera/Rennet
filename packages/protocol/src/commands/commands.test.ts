@@ -73,9 +73,15 @@ const ABSORBED_IDS = [
 
 // The #465 v1 agent inventory, mapped by inspection (no session.*/navigate command
 // exists today). Mirrors AGENT_EXPOSED in index.ts so an exposure edit is deliberate.
+// `repository.choose` + `project.discover` are the add-project prerequisites (the
+// tool cannot fabricate a DiscoveryResult); `navigate` stays out until C11 (a
+// client-locus row would force a host dispatch handler). Kept sorted — the invariant
+// test compares against the alphabetically sorted list of agent-exposed ids.
 const AGENT_INVENTORY = [
+  "project.discover",
   "projects.add",
   "projects.list",
+  "repository.choose",
   "review.capture",
   "review.openPr",
   "settings.get",

@@ -1065,8 +1065,16 @@ const definitions = {
 
 /** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose
  * today, mapped by inspection of the resolution's list against the commands that
- * actually exist (no session.* or navigate command exists yet; none invented). */
+ * actually exist. `projects.add` needs a DiscoveryResult it cannot fabricate, so its
+ * two prerequisites are exposed with it: `repository.choose` (grant/obtain the path)
+ * and `project.discover` (read-only discovery → the DiscoveryResult). Without them
+ * the add-project tool was uncompletable. `navigate` (#480) stays UNEXPOSED and
+ * unregistered: it is a client-locus command, and the dispatch table's compile-time
+ * exhaustiveness guard would force a HOST handler for it — that is client execution,
+ * deferred to C11. `session.*` likewise waits on its commands (B9). None invented. */
 const AGENT_EXPOSED = new Set<string>([
+  "repository.choose",
+  "project.discover",
   "projects.add",
   "projects.list",
   "review.openPr",

@@ -38,6 +38,21 @@ describe("app_* agent tool surface (#465)", () => {
     expect(ids.has("projects.remove" as CommandName)).toBe(false);
   });
 
+  it("exposes the WHOLE add-project flow so the agent can complete it (finding 8)", () => {
+    // projects.add takes a DiscoveryResult it cannot fabricate: it must come from
+    // project.discover, over a path granted by repository.choose. All three ride the
+    // same projection, so the agent can grant → discover → add end to end. Missing any
+    // one (as before) left the add-project tool uncompletable.
+    const ids = new Set(buildAppTools(noop).map((t) => t.commandId));
+    for (const step of ["repository.choose", "project.discover", "projects.add"] as const) {
+      expect(ids.has(step)).toBe(true);
+    }
+    // The DiscoveryResult schema is the exact seam between the two steps.
+    expect(commands["project.discover"].output.shape.discovery).toBe(
+      commands["projects.add"].args.shape.discovery,
+    );
+  });
+
   it("names tools in app_<id> grammar with dots flattened", () => {
     expect(appToolName("projects.add")).toBe("app_projects_add");
     for (const t of buildAppTools(noop)) expect(t.name).toMatch(/^app_[a-z0-9_]+$/i);
