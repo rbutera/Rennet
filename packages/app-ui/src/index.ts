@@ -130,3 +130,7 @@ export {
   RennetRouterApp,
   type RennetRouterAppProps,
 } from "./routes";
+// The frame's command menu + the ONE global key owner (C11, autopsy S7). The key-layer
+// API lets a later overlay (C5/C12) register on the same Escape priority stack; the
+// entry builders + key-action catalogue stay module-private behind these.
+export { CommandMenu, type KeyLayerHandler, KeyOwner, useKeyLayer } from "./shell";
