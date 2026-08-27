@@ -24,7 +24,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 4. Privacy seam + broadcast
 
-- [ ] 4.1 Extend `packages/server/src/projection.ts` (KEEP as-is — additive only): `projectBoardEvent(event, ctx)` and `projectBoardProjection(elements, ctx)` deep-scrub board payloads with the module's existing walker (host-path fields → repo references where structural, blanket known-root/home-dir scrub in remaining strings; model-authored prose rule unchanged — board prose attributes are scrubbed only by the blanket pass, same as today's free text).
+- [x] 4.1 Extend `packages/server/src/projection.ts` (KEEP as-is — additive only): `projectBoardEvent(event, ctx)` and `projectBoardProjection(elements, ctx)` deep-scrub board payloads with the module's existing walker (host-path fields → repo references where structural, blanket known-root/home-dir scrub in remaining strings; model-authored prose rule unchanged — board prose attributes are scrubbed only by the blanket pass, same as today's free text).
 - [ ] 4.2 Wire broadcast: board events from the runtime flow to connected clients through the existing push/live-event path (inspect `create-server.ts`'s registry — reconciliation 7; record the actual wiring point here). Loopback connections receive raw events; `projected` connections receive wrapped ones. No new transport channel.
 - [ ] 4.3 Tests: a board event/projection whose data carries an absolute host path and a home-dir string comes out of the wrap with repo-reference/`~` substitutions; loopback path untouched. **This is the packet's positive control — it must be capable of failing** (see 6.3).
 - [ ] 4.4 Cluster gate green. Commit.

@@ -192,6 +192,27 @@ export function redactAbsolutePathsDeep(value: unknown, ctx: ProjectionContext):
   return value;
 }
 
+// ── Board projections (B4: board events/state before a projected broadcast) ───
+
+/**
+ * Project one board event for a `projected` connection. The board wire schema
+ * has no structural host-path field — a `code_ref` cites the patchset by
+ * repo-relative path (B3 contract) — so the wrap is the blanket deep scrub:
+ * known-root and home-dir prefixes in every string become display tokens,
+ * exactly the free-text rule `projectCommandOutput` applies. Board prose
+ * attributes are model/agent-authored and get ONLY this blanket pass. A future
+ * kind that carries a structural host path adds its projector here, beside the
+ * review/project ones. Loopback connections never touch this (module contract).
+ */
+export function projectBoardEvent(event: unknown, ctx: ProjectionContext): unknown {
+  return scrubProjectedValue(event, ctx);
+}
+
+/** Project a board state projection (its elements) for a `projected` connection — same rule. */
+export function projectBoardProjection(elements: unknown, ctx: ProjectionContext): unknown {
+  return scrubProjectedValue(elements, ctx);
+}
+
 // ── Structural projectors (host-path fields → repo references) ────────────────
 
 function projectProvenance(
