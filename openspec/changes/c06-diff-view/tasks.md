@@ -19,10 +19,10 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 3. Line comments — the C4 machinery, one object with the board
 
-- [ ] 3.1 Wire `DiffHunkView`'s per-line comment button to open C4's `review/line-comment-editor.tsx` (imported from the `review` barrel), spanning the card's full width regardless of horizontal scroll (Objective E). Hover swaps the new-line number for `+`; a commented line shows the persistent glyph.
-- [ ] 3.2 Comment state through the `review` slice, NOT `useCodeComments()` (Objective G, reconciliation 4): read via `selectCodeComments(path)` and `s.review.stagedAsks`; `onSave` ⇒ `setCodeComment`/`clearCodeComment`; `onRequestChanges` ⇒ `setCodeComment` + `stageAsk({ anchor: `${path}:${line}`, type: "request-change", body })` — byte-for-byte `review/code-block.tsx`'s contract. A line with a matching staged ask reads danger red; a plain comment reads evidence green. No `store?.` guard anywhere.
-- [ ] 3.3 Mount C4's `ProseSelectionLayer` around the diff scroll frame (as the spike does) so Comment/Explain on selected diff text works — the existing component only; ask-staging logic over B11 stays C8.
-- [ ] 3.4 DOM tests over `MemoryBridge`-backed `useRennetStore`: hover/click opens the editor; Save writes `review.codeComments[path][line]`; the glyph persists across remounts of the SAME store; Request Changes both sets the comment and stages the `${path}:${line}` ask; danger-red vs evidence-green follows the store, not local state. Cluster gate green. Commit.
+- [x] 3.1 Wire `DiffHunkView`'s per-line comment button to open C4's `review/line-comment-editor.tsx` (imported from the `review` barrel), spanning the card's full width regardless of horizontal scroll (Objective E). Hover swaps the new-line number for `+`; a commented line shows the persistent glyph.
+- [x] 3.2 Comment state through the `review` slice, NOT `useCodeComments()` (Objective G, reconciliation 4): read via `selectCodeComments(path)` and `s.review.stagedAsks`; `onSave` ⇒ `setCodeComment`/`clearCodeComment`; `onRequestChanges` ⇒ `setCodeComment` + `stageAsk({ anchor: `${path}:${line}`, type: "request-change", body })` — byte-for-byte `review/code-block.tsx`'s contract. A line with a matching staged ask reads danger red; a plain comment reads evidence green. No `store?.` guard anywhere.
+- [x] 3.3 Mount C4's `ProseSelectionLayer` around the diff scroll frame (as the spike does) so Comment/Explain on selected diff text works — the existing component only; ask-staging logic over B11 stays C8.
+- [x] 3.4 DOM tests over `MemoryBridge`-backed `useRennetStore`: hover/click opens the editor; Save writes `review.codeComments[path][line]`; the glyph persists across remounts of the SAME store; Request Changes both sets the comment and stages the `${path}:${line}` ask; danger-red vs evidence-green follows the store, not local state. Cluster gate green. Commit.
 
 ## 4. Deep-links and the pill mount
 

@@ -366,10 +366,15 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
         const hasComment = commentLine !== null && comments?.[commentLine] != null;
         const hasAsk = commentLine !== null && askLines.has(commentLine);
         const isOpen = commentLine !== null && openLine === commentLine;
+        // The row state a test reads (same vocabulary code-block exposes): a staged ask
+        // wins (danger red), then a plain comment (evidence green), else the diff line kind.
+        const state = hasAsk ? "ask" : hasComment ? "comment" : line.type;
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: hunk rows are a fixed positional list; the index is the line offset.
           <React.Fragment key={i}>
             <div
+              data-line={commentLine ?? ""}
+              data-line-state={state}
               className={cn(
                 "group flex min-h-[1.7em]",
                 line.type === "add" && "bg-green/10",
