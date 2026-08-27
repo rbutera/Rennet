@@ -18,7 +18,7 @@ Serial clusters. Each cluster is one session. Search before implementing
       every change. **No `localStorage`, no `?tour=reset`, no module-level
       mutable state** (S8) — the chain timer lives in the store, not at module
       scope.
-- [ ] Unit-test the election + chain + skip/replay transitions (pure store).
+- [x] Unit-test the election + chain + skip/replay transitions (pure store).
 
 ## Cluster 2 — Typed anchor registry + Coachmark component
 
