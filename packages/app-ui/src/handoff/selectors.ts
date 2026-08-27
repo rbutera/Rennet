@@ -99,18 +99,26 @@ export interface BodyVsLineAsks {
 }
 
 /**
- * Partition the staged asks into review-body prose vs code line comments (R36): an ask
+ * Partition a staged-ask map into review-body prose vs code line comments (R36): an ask
  * whose anchor is a `path:line` code position is a line comment; an anchorless/prose ask
  * travels in the review body. Placement is the statement — no chrome copy explains it.
- * Insertion order is preserved (object key order), so the body/line lists read in the
- * order the reviewer staged them.
+ * Insertion order is preserved (object key order), so the body/line lists read in the order
+ * the reviewer staged them. The single routing truth: `selectBodyVsLineAsks` reads it off the
+ * store, and a surface subscribing to the stable `stagedAsks` map memoizes over it directly
+ * (a store-derived object selector would return a fresh reference each render).
  */
-export const selectBodyVsLineAsks = (s: RennetState): BodyVsLineAsks => {
+export const partitionAsksByAnchor = (
+  asks: Readonly<Record<string, StagedAsk>>,
+): BodyVsLineAsks => {
   const body: StagedAsk[] = [];
   const line: StagedAsk[] = [];
-  for (const ask of Object.values(s.review.stagedAsks)) {
+  for (const ask of Object.values(asks)) {
     if (parseLineAnchor(ask.anchor)) line.push(ask);
     else body.push(ask);
   }
   return { body, line };
 };
+
+/** Partition the store's staged asks into review-body prose vs code line comments (R36). */
+export const selectBodyVsLineAsks = (s: RennetState): BodyVsLineAsks =>
+  partitionAsksByAnchor(s.review.stagedAsks);
