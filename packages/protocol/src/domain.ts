@@ -1,4 +1,10 @@
-// Types owned by the wire schemas in ./index (protocol is the source of truth).
+// Types owned by the wire schemas in ./wire (protocol is the source of truth).
+//
+// Parked residue (B3, #489, reconciliation 7): the project/settings/handoff/
+// locus families below have no contract folder yet. They migrate with the
+// changes that rework their surfaces (B4–B11); B3 deliberately leaves them
+// here behind the root re-export seam rather than churning ~2k lines that
+// later workstreams rewrite.
 
 // Citation vocabulary moved to ./delta/citations (B3 task 6.1, #489) — the
 // disposition/decomposition shapes below still key off it (type-only, erased).
