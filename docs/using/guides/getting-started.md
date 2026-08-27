@@ -137,7 +137,7 @@ not show a separate application menu strip.
 ## Reopen a review
 
 Captured reviews are persisted locally. Reopening one restores its patchset,
-read state, dispositions, delta account, and conversation threads without
+read state, dispositions, successor account, and conversation threads without
 running the review again.
 
 If the original worktree is gone, the captured review remains readable. Commands

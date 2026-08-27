@@ -19,7 +19,7 @@ flowchart TD
   before --> agent[Run one capable Claude Code turn]
   agent --> after[Capture the second checkpoint]
   after --> successor[Create a successor patchset]
-  successor --> delta[Build the delta account]
+  successor --> delta[Build the successor account]
   delta --> review
 ```
 
@@ -111,14 +111,14 @@ The display diff and changed-path list come from separate Git operations.
 path do not depend on parsing a human-readable patch header. Cleanup of the
 temporary refs runs after the diff has been collected.
 
-## Successor capture and delta account
+## Successor capture and the successor account
 
 The handoff does not modify the old patchset. After the turn, the review service
 captures the checkout again and activates the new patchset as the successor.
 The old patchset remains the comparison baseline.
 
 The fold carries byte-proven dispositions, records orphaned ones, and builds a
-deterministic delta account. The account classifies each prior ask as addressed,
+deterministic successor account. The account classifies each prior ask as addressed,
 partially addressed, or untouched. It also records changes beyond the asks and
 links asks to the composed task that contained them. An optional model digest can
 summarize those facts but cannot change them.
@@ -150,7 +150,7 @@ returns an error before pushing.
 | Command routing and successor capture | `packages/server/src/dispatch.ts` |
 | Per-project adapter composition | `packages/server/src/create-server.ts` |
 | Draft selection, preview model, and client calls | `packages/app-ui/src/canvas/publish.ts`, `packages/app-ui/src/app.tsx` |
-| Delta facts | `packages/core/src/delta-account.ts` |
+| Successor account facts | `packages/core/src/successor-account.ts` |
 
 The current precision limit is carry across changed code. Handoff uses the
 deterministic file and span comparison described on the delta page; the separate

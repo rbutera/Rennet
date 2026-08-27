@@ -115,7 +115,7 @@ external service as part of a requested operation.
 Coding-agent handoff is an acting path. The agent receives a digest-bound bundle,
 works in the repository, and may write, test, commit, and push. Rennet then
 captures the resulting repository state as a successor and presents a
-deterministic delta account. The handoff does not grant model output permission
+deterministic successor account. The handoff does not grant model output permission
 to rewrite the identity of the review it started from.
 
 ## Client projection
