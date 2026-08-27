@@ -80,6 +80,12 @@ export interface RawHunk {
   oldLines: number;
   newStart: number;
   newLines: number;
+  /**
+   * The verbatim `@@` header line as it appeared in the patch. Present on hunks
+   * straight from `parseFilePatch`; absent on synthesized fragments (R18 split),
+   * whose recomputed ranges no longer match any source line.
+   */
+  header?: string;
   /** Body lines with their unified-diff prefix (`+`/`-`/` `). */
   body: string[];
 }
@@ -87,15 +93,19 @@ export interface RawHunk {
 export interface ParsedFile {
   hunks: RawHunk[];
   hasModeChange: boolean;
+  /** Present when the preamble carries both `old mode`/`new mode` lines. */
+  modeChange?: { old: string; new: string };
 }
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+export const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 export function parseFilePatch(patch: string): ParsedFile {
   const lines = patch.split("\n");
   const hunks: RawHunk[] = [];
   let current: RawHunk | null = null;
   let hasModeChange = false;
+  let oldMode: string | undefined;
+  let newMode: string | undefined;
   for (const line of lines) {
     const header = HUNK_HEADER.exec(line);
     if (header) {
@@ -105,6 +115,7 @@ export function parseFilePatch(patch: string): ParsedFile {
         oldLines: header[2] === undefined ? 1 : Number(header[2]),
         newStart: Number(header[3]),
         newLines: header[4] === undefined ? 1 : Number(header[4]),
+        header: line,
         body: [],
       };
       continue;
@@ -112,7 +123,12 @@ export function parseFilePatch(patch: string): ParsedFile {
     if (current === null) {
       // Preamble, before the first hunk: the only signal we read here is a mode
       // change (a mode-only file has no hunk body at all).
-      if (/^(old|new) mode /.test(line)) hasModeChange = true;
+      const mode = /^(old|new) mode (\d+)$/.exec(line);
+      if (mode) {
+        hasModeChange = true;
+        if (mode[1] === "old") oldMode = mode[2];
+        else newMode = mode[2];
+      }
       continue;
     }
     const first = line.charAt(0);
@@ -120,7 +136,13 @@ export function parseFilePatch(patch: string): ParsedFile {
     // "\ No newline at end of file" and blank inter-hunk lines are not body: ignore.
   }
   if (current) hunks.push(current);
-  return { hunks, hasModeChange };
+  return {
+    hunks,
+    hasModeChange,
+    ...(oldMode !== undefined && newMode !== undefined
+      ? { modeChange: { old: oldMode, new: newMode } }
+      : {}),
+  };
 }
 
 export function addedOf(body: readonly string[]): string[] {
@@ -258,7 +280,7 @@ function segments(path: string): string[] {
   return path.split("/").filter(Boolean);
 }
 
-function isLockfile(path: string): boolean {
+export function isLockfile(path: string): boolean {
   return LOCKFILE_BASENAMES.has(basename(path).toLowerCase());
 }
 
@@ -266,7 +288,7 @@ function isVendored(path: string): boolean {
   return segments(path).some((s) => VENDOR_SEGMENTS.has(s.toLowerCase()));
 }
 
-function isGeneratedPath(path: string): boolean {
+export function isGeneratedPath(path: string): boolean {
   const base = basename(path).toLowerCase();
   if (/\.(min\.js|min\.css|map)$/.test(base)) return true;
   if (/\.pb\.go$/.test(base) || /_pb2\.py$/.test(base) || /\.g\.dart$/.test(base)) return true;

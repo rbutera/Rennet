@@ -1,3 +1,16 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// DEPRECATED (C01). The `Surface` stack + `PersistedNavState` below are superseded
+// by the injected-history router in `../routes/` (wouter over `RennetHistory`, the
+// #480 route table). Real browser/hash history replaces this bespoke stack; back /
+// forward and reopen-where-you-left-off become URL concerns there.
+//
+// Not deleted yet: three incumbent surfaces still import it — `app/shell.tsx` and
+// `components/breadcrumb.tsx` (retired by C03), `command/commands.ts` (retired by
+// C11). Each rebuild drops its import; when the last goes, this file goes. Do NOT
+// route new code through `Surface` — use `../routes/` (the go-forward navigation
+// seam). See tasks.md 4.5 / proposal.md reconciliations.
+// ─────────────────────────────────────────────────────────────────────────────
+
 export type Surface =
   | { kind: "projects" }
   | { kind: "project"; projectId: string }

@@ -164,6 +164,12 @@ Handoff task attribution applies to asks, not hunks. One harness turn executes
 the complete work order, so Rennet has no evidence that a particular task caused
 a particular hunk.
 
+On re-review rounds the account also feeds `buildDeltaPacket()` in
+`packages/core/src/delta/` — the folder that owns the hunk index with stable
+content-derived ids and the element differ, and assembles the lens drafters'
+input from them. Drafters see the same deterministic delta facts the account
+records.
+
 ## Delta marks
 
 Composition stamps each touched section of a regenerated lens board `new` or
@@ -182,6 +188,7 @@ clears on interaction, and is replaced wholesale by the next round's stamps.
 | Generation, round record, and session shapes | `packages/protocol/src/session/model.ts` |
 | Section delta stamps and the lens board projection | `packages/protocol/src/board/schema.ts`, `packages/protocol/src/board/lens-board.ts` |
 | Fuzzy occurrence classifier | `packages/core/src/lineage-matcher.ts` |
+| Hunk index, element differ, and Delta-packet assembly | `packages/core/src/delta/` |
 | Live carry and successor fold | `packages/core/src/index.ts` |
 | Path and hunk successor account | `packages/core/src/successor-account.ts` |
 | Optional delta digest turn | `packages/server/src/delta-digest-live.ts` |

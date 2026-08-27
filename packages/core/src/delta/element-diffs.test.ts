@@ -1,6 +1,6 @@
 import type { Decomposition, Hunk, PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { decompose } from "./decomposition";
+import { decompose } from "../decomposition";
 import { type AdmittedDocument, buildElementDiffs } from "./element-diffs";
 
 // Local test shapes — protocol's canvas-era state model (`AnalysisElement` family)

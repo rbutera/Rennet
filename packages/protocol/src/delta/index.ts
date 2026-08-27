@@ -4,5 +4,6 @@
  */
 export * from "./bodies";
 export * from "./citations";
+export * from "./counterpart";
 export * from "./dossier";
 export * from "./rsp";
