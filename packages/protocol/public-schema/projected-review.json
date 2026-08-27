@@ -477,6 +477,9 @@
         "headOid": {
           "type": "string",
           "minLength": 1
+        },
+        "viewerDidAuthor": {
+          "type": "boolean"
         }
       },
       "required": [

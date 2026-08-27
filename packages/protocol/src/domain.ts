@@ -149,6 +149,15 @@ export interface ReviewPostTarget {
   readonly forgeRef: string;
   /** The reviewed head commit OID, pinned at review start (GraphQL `commitOID`). */
   readonly headOid: string;
+  /**
+   * Whether the AUTHENTICATED viewer authored this pull request (GraphQL
+   * `viewerDidAuthor`) — the ownership fact that tells an OWN PR from a teammate's.
+   * True ⇒ the hand-off routes the own-branch lane (Continue / rounds + work orders),
+   * not the teammate Post-review lane. Optional + additive: absent on every legacy
+   * snapshot (and on the honest-unknown path), where the resolver keeps the prior
+   * teammate-PR routing rather than claiming an ownership it cannot prove.
+   */
+  readonly viewerDidAuthor?: boolean;
 }
 
 export interface CommandFailure {

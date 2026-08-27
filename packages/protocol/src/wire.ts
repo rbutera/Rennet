@@ -143,6 +143,12 @@ const forgePublishTargetSchema = z.object({
   forgeRef: z.string().min(1),
   /** The reviewed head commit OID, pinned at review start (GraphQL `commitOID`). */
   headOid: z.string().min(1),
+  /**
+   * Whether the authenticated viewer authored this PR (GraphQL `viewerDidAuthor`) —
+   * the ownership fact that routes an OWN PR down the own-branch lane. Optional +
+   * additive: absent on every existing snapshot, which parses unchanged.
+   */
+  viewerDidAuthor: z.boolean().optional(),
 });
 
 // The delta re-review account (issue #73): the deterministic record of what a

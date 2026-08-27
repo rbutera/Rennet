@@ -922,6 +922,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           number: pr.ref.number,
           forgeRef: pr.forgeRef,
           headOid: pr.headOid,
+          // The ownership fact (GraphQL `viewerDidAuthor`): an OWN PR routes the
+          // own-branch lane, a teammate's routes Post-review. Sourced honestly from
+          // the same authenticated PR fetch, not re-derived on the client.
+          viewerDidAuthor: pr.viewerDidAuthor,
         };
     const review = await service.createReviewFromPatchset(commandId, result.patchset, {
       retrospective,
