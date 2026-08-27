@@ -58,7 +58,7 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     second.unmount();
   });
 
-  it("Request Changes saves the comment AND stages the ${path}:${line} ask; the line reads danger red", async () => {
+  it("Request Changes saves the comment AND stages the path:line ask; the line reads danger red", async () => {
     const { getByLabelText, getByPlaceholderText, getByText, container, user } = mountDiff();
     await user.click(getByLabelText("Comment on line 1"));
     await user.type(getByPlaceholderText("Leave a comment on this line…"), "rename this");

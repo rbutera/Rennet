@@ -64,7 +64,7 @@ describe("diff-line and board-excerpt comments are one object", () => {
     });
   });
 
-  it("a diff-line Request Changes sets the comment AND stages the ${path}:${line} ask", async () => {
+  it("a diff-line Request Changes sets the comment AND stages the path:line ask", async () => {
     const diff = mountDiff();
     await diff.user.click(diff.getByLabelText("Comment on line 1"));
     await diff.user.type(diff.getByPlaceholderText("Leave a comment on this line…"), "guard this");
