@@ -2,10 +2,9 @@ import { cn } from "@rennet/ui";
 import { basename } from "../canvas/symbol";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The shared `basename:line` chip (C4). ONE presentational component used by both
-// code-tabs (the tab pills, the anchor-reveal chips) and rich-text (inline citation
-// chips), instead of each hand-rolling its own markup (the spike duplicated it). The
-// label is `basename:line` (or `basename:start-end`); the full path is the title.
+// The shared `basename:line` chip (C4): ONE presentational component for code-tabs' and
+// rich-text's citation chips, instead of each hand-rolling its own markup (the spike
+// duplicated it). Full path stays in the title for hover.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ReferenceChipProps {

@@ -4,16 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The ONE line-comment editor (C4, autopsy keep-list; reconciliation 2). Its own
-// module — NOT nested inside code-block — so a board-excerpt caller, code-block, and
-// C6's diff view each import it without pulling in the rest of code-block. Pure and
-// callback-driven: no store coupling to strip. The caller wires onSave/onRequestChanges
-// to the review slice; the SAME comment object mints from any surface (headline
-// invariant, verification 8.2).
-//
-// Delete (only when a comment already exists), Cancel (or Escape), Request Changes
-// (stages a request-change ask alongside the comment), Save (empty text clears via
-// onSave(null)).
+// The ONE line-comment editor (C4, autopsy keep-list; reconciliation 2). Its OWN module,
+// not nested in code-block, so a board excerpt, code-block, and C6's diff view each
+// import it without the rest of code-block. Pure and callback-driven — the caller wires
+// onSave/onRequestChanges to the review slice, so the SAME comment object mints from any
+// surface (headline invariant, verification 8.2).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LineCommentEditorProps {

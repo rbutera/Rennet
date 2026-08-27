@@ -6,15 +6,12 @@ import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ProseSelectionLayer (C4, packet keep-list). Selecting board prose floats a toolbar
-// above the selection (flips below near the viewport top), positioned INSIDE the
-// scrolling container so it travels with the anchored text; Escape or an outside click
-// dismisses it. The mode union is unchanged. Comment/Explain mint a quote thread on the
-// real `review` slice and focus it (so C5 can open the tooltip); Request Changes mints
-// the thread AND stages an ask that CLAIMS that thread (its anchor is the thread id, so
-// the exit counts once, not twice). The `draftHandlers` prop (Revise/Drop/Explain, for
-// retired-draft review) is host-supplied and kept verbatim. No `useCodeComments()`, no
-// `store?.` — the slice is read directly (reconciliations 1 and 8).
+// ProseSelectionLayer (C4, packet keep-list). The panel is positioned INSIDE the
+// scrolling container so it travels with the anchored text. Comment/Explain mint a quote
+// thread on the real `review` slice and focus it (so C5 can open the tooltip); Request
+// Changes mints the thread AND stages an ask that CLAIMS it (a distinct threadId, so the
+// exit counts once). Slice is read directly — no `useCodeComments()`, no `store?.`
+// (reconciliations 1 and 8).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The opener for an Explain thread — a question to the orchestrator, never a review verb. */

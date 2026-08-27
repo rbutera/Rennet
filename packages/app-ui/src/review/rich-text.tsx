@@ -5,17 +5,10 @@ import { CitationBlock } from "./code-tabs";
 import { ReferenceChip } from "./reference-chip";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The R45 markdown subset, base tier (C4, reconciliation 6/7). "A deliberate markdown
-// subset… not a general parser" — deliberately NOT react-markdown (reconciliation 5).
-// Renders: bold (**text** → real <strong>, never literal asterisks), bulleted paragraphs
-// (every line starting "- "), normative-grammar bolding (SHALL/MUST/WHEN/…), backticked
-// terms as plain monospace (never boxed pills), and `path:line` citations as reference
-// chips that reveal the cited span inline (click hydrates via the span-read seam, a
-// second click folds). An unreadable citation is one honest line, never a silent skip.
-//
-// Does NOT port the spike's QuoteHighlight (durable highlight + tooltip + reply +
-// overlap resolution): INVENTORY tags that block [ws:C5]. C5 wraps this component's
-// output with the highlight layer when it lands.
+// The R45 markdown subset, base tier (C4, reconciliation 6/7): a DELIBERATE subset, not
+// a general parser — deliberately NOT react-markdown (reconciliation 5). Citations
+// hydrate inline through the span-read seam. Durable quote highlights (the spike's
+// QuoteHighlight) are left for [ws:C5], which wraps this component's plain-prose output.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Matches a repo file citation like `packages/x/y.ts:244` or `y.ts:112-113`. */
