@@ -11,9 +11,10 @@ import { useBoardPatchsetId } from "./element-context";
 export function ProseElement({ element }: { readonly element: ElementOf<"prose"> }) {
   const patchsetId = useBoardPatchsetId();
   return (
-    <div data-kind="prose">
+    <div data-kind="prose" data-element-id={element.id}>
       <QuoteHighlightLayer
         text={element.data.markdown}
+        elementId={element.id}
         patchsetId={patchsetId}
         paragraphClassName="text-sm leading-relaxed text-foreground/90"
       />

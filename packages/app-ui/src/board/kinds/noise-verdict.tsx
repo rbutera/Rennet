@@ -1,6 +1,6 @@
 import { cn } from "@rennet/ui";
-import { RichText } from "../../review";
 import { useRennetStore } from "../../store";
+import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefOf } from "./element-context";
 
@@ -22,6 +22,7 @@ export function NoiseVerdictElement({ element }: { readonly element: ElementOf<"
     <div
       data-kind="noise_verdict"
       data-verdict={verdict}
+      data-element-id={element.id}
       className={cn("flex flex-col gap-1.5", noise && "opacity-70")}
     >
       <div className="flex items-center gap-2">
@@ -46,8 +47,9 @@ export function NoiseVerdictElement({ element }: { readonly element: ElementOf<"
           {staged ? "Staged · Not noise" : "Not noise"}
         </button>
       </div>
-      <RichText
+      <QuoteHighlightLayer
         text={reason}
+        elementId={element.id}
         patchsetId={patchsetId}
         paragraphClassName="text-foreground/85 text-sm leading-relaxed"
       />

@@ -19,9 +19,15 @@ interface BoardElements {
   readonly index: ReadonlyMap<string, HostElement>;
   /** The patchset prose citations resolve against — the first `code_ref`'s, or "". */
   readonly patchsetId: string;
+  /** The board's generation — half the durable-highlight scope key (finding 2). */
+  readonly generation: string;
 }
 
-const BoardElementsContext = createContext<BoardElements>({ index: new Map(), patchsetId: "" });
+const BoardElementsContext = createContext<BoardElements>({
+  index: new Map(),
+  patchsetId: "",
+  generation: "",
+});
 
 /** Map a `code_ref` element to the canonical {@link CodeRef} (snake_case wire → camel).
  *  The `code_ref` kind's attrs ARE the canonical CodeRef field-for-field (schema.ts). */
@@ -37,13 +43,16 @@ export function toCodeRef(element: ElementOf<"code_ref">): CodeRef {
   };
 }
 
-/** Supplies the board's element pool + patchset. Mounted by board-view (from the
- *  resolved board) and by cluster-3 tests (from a fixture element list). */
+/** Supplies the board's element pool + patchset + generation. Mounted by board-view
+ *  (from the resolved board) and by cluster-3 tests (from a fixture element list). */
 export function BoardElementsProvider({
   elements,
+  generation = "",
   children,
 }: {
   readonly elements: readonly HostElement[];
+  /** The board's generation — the durable-highlight scope key (finding 2). */
+  readonly generation?: string;
   readonly children: ReactNode;
 }) {
   const value = useMemo<BoardElements>(() => {
@@ -52,14 +61,20 @@ export function BoardElementsProvider({
     return {
       index,
       patchsetId: firstCodeRef?.kind === "code_ref" ? firstCodeRef.data.patchset_id : "",
+      generation,
     };
-  }, [elements]);
+  }, [elements, generation]);
   return <BoardElementsContext.Provider value={value}>{children}</BoardElementsContext.Provider>;
 }
 
 /** The patchset a board's prose citations resolve against. */
 export function useBoardPatchsetId(): string {
   return useContext(BoardElementsContext).patchsetId;
+}
+
+/** The board generation — half the durable-highlight scope key (finding 2). */
+export function useBoardGeneration(): string {
+  return useContext(BoardElementsContext).generation;
 }
 
 /** Resolve an element id to its element, or `undefined` (a dangling ref renders nothing). */

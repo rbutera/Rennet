@@ -1,5 +1,6 @@
 import { cn } from "@rennet/ui";
-import { AnchorReveal, RichText } from "../../review";
+import { AnchorReveal } from "../../review";
+import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefs } from "./element-context";
 
@@ -19,7 +20,12 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
   const patchsetId = useBoardPatchsetId();
   const citations = useCodeRefs(trace);
   return (
-    <div data-kind="requirement" data-coverage={coverage} className="flex flex-col gap-1.5">
+    <div
+      data-kind="requirement"
+      data-coverage={coverage}
+      data-element-id={element.id}
+      className="flex flex-col gap-1.5"
+    >
       <span
         className={cn(
           "w-fit rounded border px-1.5 py-0.5 font-medium text-2xs uppercase tracking-wide",
@@ -28,8 +34,9 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
       >
         {coverage}
       </span>
-      <RichText
+      <QuoteHighlightLayer
         text={shall}
+        elementId={element.id}
         patchsetId={patchsetId}
         keywords
         paragraphClassName="text-foreground/90 text-sm leading-relaxed"

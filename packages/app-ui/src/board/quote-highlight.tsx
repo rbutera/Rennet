@@ -2,6 +2,7 @@ import { cn } from "@rennet/ui";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { RichText } from "../review";
 import { type QuoteThread, useRennetStore } from "../store";
+import { useBoardGeneration } from "./kinds/element-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable quote highlights (C05 cluster 5, Objective clause 4 / Reconciliation 5).
@@ -197,6 +198,10 @@ function interweave(paragraph: string, matches: readonly KeyedThread[]): ReactNo
 
 export interface QuoteHighlightLayerProps {
   readonly text: string;
+  /** The element id this field belongs to — half the durable-highlight scope key
+   *  (finding 2): only threads targeting THIS element in THIS generation match, so a
+   *  span repeated on another element/lens/generation is never fabricated. */
+  readonly elementId: string;
   readonly patchsetId: string;
   readonly className?: string;
   readonly paragraphClassName?: string;
@@ -204,21 +209,35 @@ export interface QuoteHighlightLayerProps {
 }
 
 /**
- * Render board prose with durable quote highlights. When no thread anchor is present in
- * the prose (the common path), this is `RichText` verbatim — zero overhead, full
- * fidelity. When a thread anchors here, only the paragraph(s) it lands in interweave the
- * highlight; every other paragraph still renders through `RichText`.
+ * Render board prose with durable quote highlights. When no thread is anchored on THIS
+ * element in THIS generation (the common path), this is `RichText` verbatim — zero
+ * overhead, full fidelity. When a thread targets this element, only the paragraph(s)
+ * its `anchor` text lands in interweave the highlight; every other paragraph still
+ * renders through `RichText`.
+ *
+ * Matching is scoped by `(elementId, generation)` — the protocol-shaped anchor identity
+ * (`quote_target` + board generation, finding 2), NOT bare `text.includes`. The text
+ * check only LOCATES the span within this element's markdown once identity has already
+ * narrowed the thread to this element; it never widens across elements or generations.
  */
 export function QuoteHighlightLayer({
   text,
+  elementId,
   patchsetId,
   className,
   paragraphClassName,
   keywords,
 }: QuoteHighlightLayerProps) {
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
+  const generation = useBoardGeneration();
   const matches: KeyedThread[] = Object.entries(quoteThreads)
-    .filter(([, thread]) => thread.anchor.length > 0 && text.includes(thread.anchor))
+    .filter(
+      ([, thread]) =>
+        thread.target === elementId &&
+        thread.generation === generation &&
+        thread.anchor.length > 0 &&
+        text.includes(thread.anchor),
+    )
     .map(([id, thread]) => ({ id, thread }));
 
   if (matches.length === 0) {

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount } from "../test/dom";
-import { designBoard } from "../test/fixtures/boards";
+import { designBoard, designGen0Board } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
 import { BoardElement, BoardElementsProvider } from "./kinds";
 import { QuoteHighlightLayer } from "./quote-highlight";
@@ -16,14 +16,26 @@ import { QuoteHighlightLayer } from "./quote-highlight";
 const PROSE =
   "The adapter authenticates with the user's subscription and costs nothing per token.\n\nA separate paragraph with untouched prose.";
 
+const EL = "p1";
 const { addQuoteComment, setFocusedThread, resetReview } = useRennetStore.getState().reviewActions;
 
 beforeEach(() => resetReview());
 
+/** Seed a scoped thread on the test element (target=EL, the default "" generation the
+ *  bare layer reads) — the identity every durable highlight now requires (finding 2). */
+function seed(anchor: string, text: string, kind?: "comment" | "explain") {
+  return addQuoteComment(anchor, text, kind, { target: EL, generation: "" });
+}
+
 function render(text = PROSE) {
   return mount(
     <BridgeProvider bridge={new MemoryBridge({})}>
-      <QuoteHighlightLayer text={text} patchsetId="ps-1" paragraphClassName="prose-p" />
+      <QuoteHighlightLayer
+        text={text}
+        elementId={EL}
+        patchsetId="ps-1"
+        paragraphClassName="prose-p"
+      />
     </BridgeProvider>,
   );
 }
@@ -36,7 +48,7 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
   });
 
   it("an anchored quoteThread renders as a durable highlight over the span", () => {
-    addQuoteComment("costs nothing per token", "Is this actually free?");
+    seed("costs nothing per token", "Is this actually free?");
     const { container } = render();
     const hl = container.querySelector("[data-quote-highlight]");
     expect(hl).toBeTruthy();
@@ -44,7 +56,7 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
   });
 
   it("clicking a highlight opens the exchange; a reply appends via addQuoteReply", async () => {
-    const id = addQuoteComment("costs nothing per token", "Is this actually free?");
+    const id = seed("costs nothing per token", "Is this actually free?");
     const { container, user } = render();
     const hl = container.querySelector<HTMLElement>("[data-quote-highlight]");
     expect(hl).toBeTruthy();
@@ -66,8 +78,8 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
   });
 
   it("overlapping anchors stay reachable — the covered span carries both threads", async () => {
-    const a = addQuoteComment("authenticates with the user's", "who authenticates?");
-    const b = addQuoteComment("user's subscription", "which subscription?");
+    const a = seed("authenticates with the user's", "who authenticates?");
+    const b = seed("user's subscription", "which subscription?");
     const { container, user } = render();
     // The overlap segment ("user's") is covered by both threads.
     const stacked = container.querySelector<HTMLElement>(
@@ -80,7 +92,7 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
   });
 
   it("an Explain thread reads distinctly and stages no ask (never an exit)", async () => {
-    addQuoteComment("costs nothing per token", "Explain this passage.", "explain");
+    seed("costs nothing per token", "Explain this passage.", "explain");
     const { container, user } = render();
     const hl = container.querySelector<HTMLElement>('[data-quote-highlight][data-explain="true"]');
     expect(hl).toBeTruthy();
@@ -93,7 +105,7 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
   it("the selection-toolbar hand-off: focusing a fresh thread opens its popover, no click", () => {
     // The toolbar mints a thread then calls setFocusedThread(id) — the highlight opens
     // straight into the exchange and releases the focus.
-    const id = addQuoteComment("costs nothing per token", "why free?");
+    const id = seed("costs nothing per token", "why free?");
     setFocusedThread(id);
     const { container } = render();
     expect(container.textContent).toContain("why free?");
@@ -108,10 +120,15 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     const proseEl = designBoard.elements.find((el) => el.id === "change-why");
     expect(proseEl).toBeTruthy();
     if (!proseEl) return;
-    const id = addQuoteComment("Renewal was silent", "why was it silent?");
+    // The thread carries the protocol-shaped identity: target=the element, generation=the
+    // board's — so it lands on THIS element in THIS generation and nowhere else (finding 2).
+    const id = addQuoteComment("Renewal was silent", "why was it silent?", "comment", {
+      target: "change-why",
+      generation: designBoard.generation,
+    });
     const { container, user } = mount(
       <BridgeProvider bridge={new MemoryBridge({})}>
-        <BoardElementsProvider elements={designBoard.elements}>
+        <BoardElementsProvider elements={designBoard.elements} generation={designBoard.generation}>
           <BoardElement element={proseEl} />
         </BoardElementsProvider>
       </BridgeProvider>,
@@ -121,5 +138,31 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     if (hl) await user.click(hl);
     expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
     expect(container.textContent).toContain("why was it silent?");
+  });
+
+  it("does NOT fabricate the highlight on the same element id in another generation (finding 2)", () => {
+    // "Renewal was silent" and the element id `change-why` BOTH repeat in gen0 and gen1.
+    // A thread scoped to gen1 must not paint the gen0 board's identical span — the exact
+    // cross-generation fabrication finding 2 kills. Pre-fix (bare text.includes) this
+    // highlighted; scoped by (element, generation) it stays plain.
+    addQuoteComment("Renewal was silent", "why?", "comment", {
+      target: "change-why",
+      generation: "gen1",
+    });
+    const gen0Prose = designGen0Board.elements.find((el) => el.id === "change-why");
+    expect(gen0Prose).toBeTruthy();
+    if (!gen0Prose) return;
+    const { container } = mount(
+      <BridgeProvider bridge={new MemoryBridge({})}>
+        <BoardElementsProvider
+          elements={designGen0Board.elements}
+          generation={designGen0Board.generation}
+        >
+          <BoardElement element={gen0Prose} />
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+    expect(container.querySelector("[data-quote-highlight]")).toBeNull();
+    expect(container.textContent).toContain("Renewal was silent");
   });
 });

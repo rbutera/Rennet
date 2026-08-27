@@ -1,4 +1,5 @@
-import { AnchorReveal, RichText } from "../../review";
+import { AnchorReveal } from "../../review";
+import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefOf } from "./element-context";
 
@@ -11,10 +12,11 @@ export function AnnotationElement({ element }: { readonly element: ElementOf<"an
   const patchsetId = useBoardPatchsetId();
   const ref = useCodeRefOf(element.data.code_ref);
   return (
-    <div data-kind="annotation" className="flex flex-col gap-1.5">
+    <div data-kind="annotation" data-element-id={element.id} className="flex flex-col gap-1.5">
       {ref && <AnchorReveal citations={[ref]} />}
-      <RichText
+      <QuoteHighlightLayer
         text={element.data.body}
+        elementId={element.id}
         patchsetId={patchsetId}
         paragraphClassName="text-sm leading-relaxed text-foreground/90"
       />

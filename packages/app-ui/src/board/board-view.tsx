@@ -76,9 +76,13 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
       </div>
 
       {board ? (
-        <BoardElementsProvider elements={board.elements}>
+        <BoardElementsProvider elements={board.elements} generation={board.generation}>
           <ProseSelectionLayer>
-            <article data-lens={board.lens} className="flex flex-col gap-1">
+            <article
+              data-lens={board.lens}
+              data-generation={board.generation}
+              className="flex flex-col gap-1"
+            >
               <h1 className="mb-2 font-display text-2xl text-foreground">
                 {LENS_LABEL[board.lens]}
               </h1>

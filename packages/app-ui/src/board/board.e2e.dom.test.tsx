@@ -171,7 +171,14 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
   it("quote threads: an anchored thread renders as a durable highlight over real board prose", async () => {
     // Seed the thread on the real `review` slice BEFORE the lens mounts; the highlight
     // layer reads it wherever that prose renders — here through Section → ProseElement.
-    useRennetStore.getState().reviewActions.addQuoteComment("Renewal was silent", "why silent?");
+    // Scoped to the target element + generation (finding 2), the identity a real
+    // selection stamps: the highlight lands on gen1's `change-why` and nowhere else.
+    useRennetStore
+      .getState()
+      .reviewActions.addQuoteComment("Renewal was silent", "why silent?", "comment", {
+        target: "change-why",
+        generation: "gen1",
+      });
     const { container, user } = renderView("gen1");
     const design = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!design) throw new Error("no design tab");

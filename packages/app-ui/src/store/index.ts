@@ -39,6 +39,7 @@ export const useRennetStore = createRennetStore();
 export type {
   DispositionKind,
   QuoteMessage,
+  QuoteScope,
   QuoteThread,
   ReviewSlice,
   ReviewState,

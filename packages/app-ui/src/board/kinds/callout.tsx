@@ -1,7 +1,7 @@
 import { cn } from "@rennet/ui";
 import { Info, TriangleAlert } from "lucide-react";
 import { Icon } from "../../components/icon";
-import { RichText } from "../../review";
+import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId } from "./element-context";
 
@@ -17,6 +17,7 @@ export function CalloutElement({ element }: { readonly element: ElementOf<"callo
     <div
       data-kind="callout"
       data-variant={variant}
+      data-element-id={element.id}
       className={cn(
         "flex gap-2 rounded-md border px-3 py-2.5",
         warn ? "border-danger/40 bg-danger-soft" : "border-border bg-secondary/40",
@@ -26,8 +27,9 @@ export function CalloutElement({ element }: { readonly element: ElementOf<"callo
         icon={warn ? TriangleAlert : Info}
         className={cn("mt-0.5 size-4 shrink-0", warn ? "text-danger" : "text-muted-foreground")}
       />
-      <RichText
+      <QuoteHighlightLayer
         text={body}
+        elementId={element.id}
         patchsetId={patchsetId}
         paragraphClassName="text-sm leading-relaxed text-foreground/90"
       />

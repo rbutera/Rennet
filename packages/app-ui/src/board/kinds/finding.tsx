@@ -2,8 +2,9 @@ import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../../components/icon";
-import { AnchorReveal, RichText } from "../../review";
+import { AnchorReveal } from "../../review";
 import { useRennetStore } from "../../store";
+import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefs } from "./element-context";
 
@@ -61,7 +62,12 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
   const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[anchor]));
 
   return (
-    <div data-kind="finding" data-status={status} className={cn(dimmed && "opacity-60")}>
+    <div
+      data-kind="finding"
+      data-status={status}
+      data-element-id={element.id}
+      className={cn(dimmed && "opacity-60")}
+    >
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -91,8 +97,9 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
       </button>
       <Collapse open={open}>
         <div className="flex flex-col gap-2 pt-1 pl-5">
-          <RichText
+          <QuoteHighlightLayer
             text={body}
+            elementId={element.id}
             patchsetId={patchsetId}
             paragraphClassName="text-foreground/90 text-sm leading-relaxed"
           />
@@ -101,8 +108,9 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
               <span className="font-medium text-2xs text-muted-foreground uppercase tracking-wide">
                 Fix
               </span>
-              <RichText
+              <QuoteHighlightLayer
                 text={fix}
+                elementId={element.id}
                 patchsetId={patchsetId}
                 paragraphClassName="text-foreground/90 text-sm leading-relaxed"
               />

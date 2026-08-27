@@ -1,4 +1,5 @@
-import { CodeTabs, RichText } from "../../review";
+import { CodeTabs } from "../../review";
+import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefs } from "./element-context";
 
@@ -11,10 +12,11 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
   const patchsetId = useBoardPatchsetId();
   const citations = useCodeRefs(evidence);
   return (
-    <div data-kind="decision" className="flex flex-col gap-1.5">
+    <div data-kind="decision" data-element-id={element.id} className="flex flex-col gap-1.5">
       <p className="font-semibold text-foreground text-sm leading-snug">{statement}</p>
-      <RichText
+      <QuoteHighlightLayer
         text={why}
+        elementId={element.id}
         patchsetId={patchsetId}
         paragraphClassName="text-foreground/85 text-sm leading-relaxed"
       />
