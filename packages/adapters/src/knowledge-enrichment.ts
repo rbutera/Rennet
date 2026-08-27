@@ -2,8 +2,6 @@ import {
   type HarnessPort,
   type HarnessTurnResult,
   KNOWLEDGE_OUTPUT_SCHEMA,
-  type KnowledgeSnapshotContext,
-  type LoadedSnapshot,
   type RunKnowledgeDeltaPassResult,
   type RunKnowledgeEnrichmentResult,
   runKnowledgeDeltaPass,
@@ -12,6 +10,7 @@ import {
 import type { InvocationBudget } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 import type { KnowledgeStore } from "./knowledge-store";
+import { changedPathsBetween, snapshotContextFromLoaded } from "./knowledge-swarm";
 import type { ProjectContextReader } from "./project-context-reader";
 import { extractClaudeUsage, type MetricsCollector } from "./turn-metrics";
 
@@ -117,17 +116,6 @@ export function createKnowledgeRunTurn(
     } finally {
       await session.close();
     }
-  };
-}
-
-/** Project a materialized snapshot into the compact context the enrichment reasons over. */
-export function snapshotContextFromLoaded(loaded: LoadedSnapshot): KnowledgeSnapshotContext {
-  return {
-    repoKey: loaded.manifest.repoKey,
-    baseOid: loaded.manifest.baseOid,
-    snapshotFingerprint: loaded.manifest.fingerprint,
-    files: loaded.files.map((file) => ({ path: file.path, blobOid: file.blobOid })),
-    scopes: loaded.scopes.map((scope) => ({ name: scope.name, root: scope.root })),
   };
 }
 
@@ -252,22 +240,4 @@ export async function runKnowledgeDeltaForRepo(
     deps.knowledgeStore.save(deps.repoKey, result.set);
   }
   return { status: result.status, result };
-}
-
-/** The `from..to` changed-path closure via `git diff --name-only` (empty on any git error). */
-export async function changedPathsBetween(
-  git: GitExec,
-  root: string,
-  fromOid: string,
-  toOid: string,
-): Promise<string[]> {
-  if (fromOid === toOid) return [];
-  try {
-    const out = await git(root, ["diff", "--name-only", "-z", `${fromOid}..${toOid}`], {
-      reject: true,
-    });
-    return out.split("\0").filter((path) => path.length > 0);
-  } catch {
-    return [];
-  }
 }
