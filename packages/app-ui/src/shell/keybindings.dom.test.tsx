@@ -4,29 +4,21 @@
 // key owner; ⌘R passes through (R69); a remap persists through `settings.setKeybinding`
 // and fires on the NEW chord after a reload; ⌘K executes a registry command end-to-end
 // against a fixture registry; Escape priority resolves a dialog + the real menu.
-import type { SettingsView } from "@rennet/protocol";
-import { type ReactNode, useMemo } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { COMMAND_CATALOGUE, matchKeybinding, normalizeChord } from "../command/commands";
 import { KEY_ACTIONS } from "../command/key-actions";
-import { SettingsScreen } from "../components/settings-screen";
-import { BridgeProvider, useCommand } from "../data";
+import { BridgeProvider } from "../data";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, screen, waitFor } from "../test/dom";
 import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
+import { settingsBridge } from "../test/fixtures/settings";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { CommandMenu } from "./command-menu";
 import type { RegistryRowView } from "./command-menu-entries";
 import { KeyOwner } from "./key-owner";
-
-/** Renders the loaded keybinding overrides so a test can wait for a reload to settle. */
-function SettingsProbe() {
-  const { data } = useCommand("settings.get", {});
-  return <output data-testid="overrides">{JSON.stringify(data?.keybindings ?? null)}</output>;
-}
 
 function resetUi(): void {
   useRennetStore.setState((s) => ({
@@ -113,61 +105,44 @@ describe("keybindings — the six advertised binds fire through the one key owne
 });
 
 describe("keybind remapping (R70/#492) — remap persists and fires on the new chord after reload", () => {
-  /** A bridge whose `settings.get` reflects prior `settings.setKeybinding` writes. */
-  function mutableSettingsBridge(): MemoryBridge {
-    const keybindings: Record<string, string | null> = {};
-    return new MemoryBridge({
-      ...frontDoorHandlers([]),
-      "settings.get": (): SettingsView => ({ ...emptySettings(), keybindings: { ...keybindings } }),
-      "settings.setKeybinding": (input) => {
-        const { id, keybinding } = input as { id: string; keybinding?: string | null };
-        if (keybinding === undefined) delete keybindings[id];
-        else keybindings[id] = keybinding;
-        return { keybindings: { ...keybindings } };
-      },
-    });
-  }
+  // The shortcuts surface is now C10's Keyboard-Shortcuts page (the old tabbed
+  // `settings-screen` is deleted). `RennetRouterApp` mounts the ONE key owner above the
+  // outlet and the settings takeover in it, sharing one bridge + cache — the real live
+  // topology. `settingsBridge` is a stateful store, so a `settings.setKeybinding` write
+  // persists and `settings.get` re-reads it.
 
-  function Harness({ bridge, children }: { bridge: MemoryBridge; children: ReactNode }) {
-    const history = useMemo(() => memoryHistory("/"), []);
-    return (
-      <BridgeProvider bridge={bridge}>
-        <Router hook={history.hook} searchHook={history.searchHook}>
-          {children}
-        </Router>
-      </BridgeProvider>
+  /** Deep-link the app at the Keyboard-Shortcuts page over a stateful settings bridge. */
+  function mountShortcuts(bridge: MemoryBridge) {
+    return mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/settings/keybindings")} />,
     );
   }
 
+  /** Enter recording on the Toggle Sidebar row and record the given chord key. */
+  async function remapToggleSidebar(view: ReturnType<typeof mount>, key: string): Promise<void> {
+    await view.findByText("Toggle Sidebar");
+    fireEvent.click(view.getByLabelText("Change Toggle Sidebar"));
+    act(() => {
+      fireEvent.keyDown(view.getByLabelText("Press the new chord for Toggle Sidebar"), {
+        key,
+        metaKey: true,
+      });
+    });
+  }
+
   it("remap Toggle Sidebar → ⌘E fires LIVE with the key owner mounted alongside — no reload", async () => {
-    const bridge = mutableSettingsBridge();
+    const bridge = settingsBridge({ keybindings: {} });
 
     // The LIVE topology: the key owner and the shortcuts surface share ONE bridge +
     // cache, exactly as the real frame mounts them (the owner sits above the outlet and
     // never remounts). A remap must reach this live owner WITHOUT a reload — the write
     // invalidates `settings.get`, the owner's shared read refetches, the new bind arms.
-    const view = mount(
-      <Harness bridge={bridge}>
-        <KeyOwner>
-          <SettingsProbe />
-          <SettingsScreen bridge={bridge} onBack={vi.fn()} />
-        </KeyOwner>
-      </Harness>,
-    );
-    fireEvent.click(view.getByRole("tab", { name: "Keyboard" }));
-    await waitFor(() => expect(view.container.querySelector(".settings-keys")).not.toBeNull());
-    const row = [...view.container.querySelectorAll(".settings-key-row")].find((r) =>
-      r.textContent?.includes("Toggle Sidebar"),
-    );
-    fireEvent.click(row?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(view.getByLabelText("Press the new chord for Toggle Sidebar"), {
-      key: "e",
-      metaKey: true,
-    });
+    const view = mountShortcuts(bridge);
+    await remapToggleSidebar(view, "e");
 
     // The write invalidated `settings.get`; the SAME live owner refetches the override —
-    // the probe (which shares that read) shows ⌘E has arrived, with NO remount/reload.
-    await waitFor(() => expect(view.getByTestId("overrides").textContent).toContain("mod+e"));
+    // the row now shows ⌘E has arrived, with NO remount/reload.
+    await view.findByText("⌘e");
 
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
     // The OLD chord (⌘B) is dead — remapped away — against the STILL-MOUNTED owner.
@@ -179,47 +154,22 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
   });
 
   it("the boot path still holds: a fresh key owner loads the persisted override on mount", async () => {
-    const bridge = mutableSettingsBridge();
+    const bridge = settingsBridge({ keybindings: {} });
 
     // Persist the remap through the real shortcuts surface, then throw the surface away.
-    const remap = mount(
-      <Harness bridge={bridge}>
-        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
-      </Harness>,
-    );
-    fireEvent.click(remap.getByRole("tab", { name: "Keyboard" }));
-    await waitFor(() => expect(remap.container.querySelector(".settings-keys")).not.toBeNull());
-    const row = [...remap.container.querySelectorAll(".settings-key-row")].find((r) =>
-      r.textContent?.includes("Toggle Sidebar"),
-    );
-    fireEvent.click(row?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(remap.getByLabelText("Press the new chord for Toggle Sidebar"), {
-      key: "e",
-      metaKey: true,
-    });
-    await waitFor(() => {
-      const updated = [...remap.container.querySelectorAll(".settings-key-row")].find((r) =>
-        r.textContent?.includes("Toggle Sidebar"),
-      );
-      expect(updated?.textContent).toContain("⌘e");
-    });
+    const remap = mountShortcuts(bridge);
+    await remapToggleSidebar(remap, "e");
+    await remap.findByText("⌘e");
     remap.unmount();
     cleanup();
     resetUi();
 
-    // A fresh mount (the reload): the key owner loads the override on boot.
-    const reloaded = mount(
-      <Harness bridge={bridge}>
-        <KeyOwner>
-          <SettingsProbe />
-        </KeyOwner>
-      </Harness>,
-    );
-    await waitFor(() =>
-      expect(reloaded.getByTestId("overrides").textContent).toContain("toggle-sidebar"),
-    );
+    // A fresh mount (the reload) over the SAME stateful bridge: the key owner loads the
+    // persisted override on boot. The row rendering ⌘E confirms the fresh `settings.get`
+    // read has settled before we press.
+    const reloaded = mountShortcuts(bridge);
+    await reloaded.findByText("⌘e");
 
-    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
     press("b", { meta: true });
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
     press("e", { meta: true });
@@ -227,26 +177,16 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
   });
 
   it("a focused keybinding recorder preempts the window bubble listener — ⌘B does not toggle the sidebar", async () => {
-    const bridge = mutableSettingsBridge();
+    const bridge = settingsBridge({ keybindings: {} });
 
     // The REAL key owner over the REAL shortcuts surface. The window action listener is
     // BUBBLE-phase, so a focused element that consumes the key first (React `onKeyDown` +
     // `stopPropagation` — here the keybinding recorder) must preempt it. Every other
     // keybind test fires on `window` directly, bypassing this exact path.
-    const view = mount(
-      <Harness bridge={bridge}>
-        <KeyOwner>
-          <SettingsScreen bridge={bridge} onBack={vi.fn()} />
-        </KeyOwner>
-      </Harness>,
-    );
-    fireEvent.click(view.getByRole("tab", { name: "Keyboard" }));
-    await waitFor(() => expect(view.container.querySelector(".settings-keys")).not.toBeNull());
+    const view = mountShortcuts(bridge);
+    await view.findByText("Toggle Sidebar");
     // Enter recording on the Toggle Sidebar row: the recorder input mounts + auto-focuses.
-    const row = [...view.container.querySelectorAll(".settings-key-row")].find((r) =>
-      r.textContent?.includes("Toggle Sidebar"),
-    );
-    fireEvent.click(row?.querySelector("button") as HTMLButtonElement);
+    fireEvent.click(view.getByLabelText("Change Toggle Sidebar"));
     const recorder = view.getByLabelText("Press the new chord for Toggle Sidebar");
 
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);

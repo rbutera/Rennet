@@ -1,14 +1,22 @@
 // @vitest-environment happy-dom
 //
-// C10 §7 — the Keyboard Shortcuts page over the live settings seam. The registry
-// renders every catalogued command with its effective binding (default overlaid by
-// the override); the filter narrows by name; Escape in the filter clears it BEFORE it
-// can close settings (proven through the real takeover root); an empty result names
-// the query. Deep-linking the page proves it is the C3 Help destination.
-import { describe, expect, it } from "vitest";
+// C10 §7 — the Keyboard Shortcuts page over the live settings seam. The page lists the
+// SIX advertised app binds (`KEY_ACTIONS`, C11) that the ONE global key owner actually
+// fires — NOT the legacy `COMMAND_CATALOGUE` (whose rows the owner never binds). Each
+// row shows its effective binding (default overlaid by the override); the filter
+// narrows by name; Escape in the filter clears it BEFORE it can close settings (proven
+// through the real takeover root); an empty result names the query. Deep-linking the
+// page proves it is the C3 Help destination.
+//
+// The keyboard reconciliation (cluster 11): remapping a row writes through
+// `settings.setKeybinding`, which invalidates `settings.get`; the LIVE key owner shares
+// that read and rearms with no reload — so what the page advertises stays exactly what
+// fires once the old settings-screen is deleted.
+import { afterEach, describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
-import { cleanup, fireEvent, mount, waitFor } from "../test/dom";
+import { useRennetStore } from "../store";
+import { act, cleanup, fireEvent, mount, waitFor, within } from "../test/dom";
 import { settingsBridge } from "../test/fixtures/settings";
 
 function settingsNode(): HTMLElement | null {
@@ -16,12 +24,23 @@ function settingsNode(): HTMLElement | null {
 }
 
 function shortcutsBridge() {
-  // nav.settings is remapped; palette.toggle keeps its ⌘k default.
-  return settingsBridge({ keybindings: { "nav.settings": "mod+e" } });
+  // The `settings` bind is remapped to ⌘E; every other bind keeps its default chord.
+  return settingsBridge({ keybindings: { settings: "mod+e" } });
 }
 
-describe("ShortcutsPage — the keyboard registry", () => {
-  it("renders the registry with effective bindings (deep-linked as the C3 destination)", async () => {
+function resetUi(): void {
+  useRennetStore.setState((s) => ({
+    ui: { ...s.ui, sidebarOpen: true, chatOpen: false, openDialogs: [] },
+  }));
+}
+
+afterEach(() => {
+  cleanup();
+  resetUi();
+});
+
+describe("ShortcutsPage — the six advertised binds (KEY_ACTIONS)", () => {
+  it("renders the six binds with effective bindings (deep-linked as the C3 destination)", async () => {
     const { getByText, findByText } = mount(
       <RennetRouterApp
         bridge={shortcutsBridge()}
@@ -29,10 +48,24 @@ describe("ShortcutsPage — the keyboard registry", () => {
       />,
     );
     await waitFor(() => expect(settingsNode()).toBeTruthy());
-    // Every catalogued command appears; the palette default and the override both render.
-    expect(getByText("Toggle command palette")).toBeTruthy();
-    await findByText("⌘k"); // palette.toggle default
-    await findByText("⌘e"); // nav.settings override (mod+e)
+    // Every advertised bind appears; the default and the override both render.
+    expect(getByText("Toggle Sidebar")).toBeTruthy();
+    expect(getByText("Command Menu")).toBeTruthy();
+    await findByText("⌘b"); // toggle-sidebar default (mod+b)
+    await findByText("⌘e"); // settings override (mod+e)
+    cleanup();
+  });
+
+  it("does NOT render the legacy COMMAND_CATALOGUE rows (no advertised-but-dead bind)", async () => {
+    const { queryByText, findByText } = mount(
+      <RennetRouterApp
+        bridge={shortcutsBridge()}
+        history={memoryHistory("/settings/keybindings")}
+      />,
+    );
+    await findByText("Toggle Sidebar");
+    // "Toggle command palette" is a legacy COMMAND_CATALOGUE label the owner never fires.
+    expect(queryByText("Toggle command palette")).toBeNull();
     cleanup();
   });
 
@@ -40,21 +73,25 @@ describe("ShortcutsPage — the keyboard registry", () => {
     const { findByText } = mount(
       <RennetRouterApp bridge={shortcutsBridge()} history={memoryHistory("/settings/shortcuts")} />,
     );
-    await findByText("Toggle command palette");
+    await findByText("Toggle Sidebar");
     cleanup();
   });
 
   it("the filter narrows by name", async () => {
-    const { getByLabelText, getByText, queryByText, findByText, user } = mount(
+    const { getByLabelText, findByText, user } = mount(
       <RennetRouterApp
         bridge={shortcutsBridge()}
         history={memoryHistory("/settings/keybindings")}
       />,
     );
-    await findByText("Toggle command palette");
-    await user.type(getByLabelText("Filter commands"), "settings");
-    expect(getByText("Open Settings")).toBeTruthy();
-    expect(queryByText("Toggle command palette")).toBeNull();
+    await findByText("Toggle Sidebar");
+    await user.type(getByLabelText("Filter commands"), "toggle");
+    // Scope to the settings takeover — the app shell renders its own nav labels too.
+    const page = within(settingsNode() as HTMLElement);
+    expect(page.getByText("Toggle Sidebar")).toBeTruthy();
+    expect(page.getByText("Toggle Chat")).toBeTruthy();
+    expect(page.queryByText("Search")).toBeNull();
+    expect(page.queryByText("New Chat")).toBeNull();
     cleanup();
   });
 
@@ -65,7 +102,7 @@ describe("ShortcutsPage — the keyboard registry", () => {
         history={memoryHistory("/settings/keybindings")}
       />,
     );
-    await findByText("Toggle command palette");
+    await findByText("Toggle Sidebar");
     await user.type(getByLabelText("Filter commands"), "zzzznope");
     await findByText("No command matches “zzzznope”.");
     cleanup();
@@ -78,16 +115,64 @@ describe("ShortcutsPage — the keyboard registry", () => {
         history={memoryHistory("/settings/keybindings")}
       />,
     );
-    await findByText("Toggle command palette");
+    await findByText("Toggle Sidebar");
     const filter = getByLabelText("Filter commands") as HTMLInputElement;
     await user.type(filter, "zzzznope");
     await findByText("No command matches “zzzznope”.");
 
     // Escape on the non-empty filter clears it; settings stays open (the registry is back).
     fireEvent.keyDown(filter, { key: "Escape" });
-    await findByText("Toggle command palette");
+    await findByText("Toggle Sidebar");
     expect(settingsNode()).toBeTruthy();
     expect(filter.value).toBe("");
+    cleanup();
+  });
+});
+
+describe("ShortcutsPage — live remap (the cluster-11 keyboard reconciliation)", () => {
+  it("remapping a bind updates the row AND rearms the live key owner with no reload", async () => {
+    // The REAL live topology: `RennetRouterApp` mounts the ONE key owner above the outlet
+    // and the takeover in it, sharing one bridge + cache. A remap here must reach that
+    // live owner without a reload — the write invalidates `settings.get`, the owner's
+    // shared read refetches, the new bind arms.
+    const view = mount(
+      <RennetRouterApp
+        bridge={settingsBridge({ keybindings: {} })}
+        history={memoryHistory("/settings/keybindings")}
+      />,
+    );
+    await view.findByText("Toggle Sidebar");
+
+    // ⌘B toggles the sidebar today (the default bind is live).
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+    act(() => {
+      fireEvent.keyDown(window, { key: "b", metaKey: true });
+    });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
+    resetUi();
+
+    // Enter recording on Toggle Sidebar and press ⌘E — the recorder consumes the key
+    // (preventDefault + stopPropagation) so the owner does NOT toggle on this keystroke.
+    fireEvent.click(view.getByLabelText("Change Toggle Sidebar"));
+    const recorder = view.getByLabelText("Press the new chord for Toggle Sidebar");
+    act(() => {
+      fireEvent.keyDown(recorder, { key: "e", metaKey: true });
+    });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+
+    // The write invalidated `settings.get`; the row now shows ⌘E — proving the seam wrote
+    // and the same read re-rendered.
+    await view.findByText("⌘e");
+
+    // The OLD chord (⌘B) is dead; the NEW chord (⌘E) fires the action — live, no reload.
+    act(() => {
+      fireEvent.keyDown(window, { key: "b", metaKey: true });
+    });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+    act(() => {
+      fireEvent.keyDown(window, { key: "e", metaKey: true });
+    });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
     cleanup();
   });
 });
