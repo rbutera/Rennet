@@ -6,3 +6,4 @@
  * import surface.
  */
 export * from "./lint";
+export * from "./validate";
