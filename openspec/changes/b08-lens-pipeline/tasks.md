@@ -22,7 +22,7 @@ Serial clusters, each a separately-reviewable **sub-wave** (B08 is XL — the or
 
 ## Cluster 4 — composition mechanics (C1, C3)
 
-- [ ] 4.1 `packages/core/src/board/compose.ts`: the mechanical composition — the **coverage assertion** (across all lens boards every patchset hunk is taught by some lens or in some lens's `skippedHunks`; a hunk in neither fails the assert), **verbatim carry on stable element ids** (a carried element is byte-identical across generations), and **delta stamps** (`new`/`reworked` on sections; absent = carried). The lens boards ARE the reading surface — compose produces no sixth board (C3). Pure; reuse the carry/stamp shapes from `session/` (`SectionDeltaSchema`) — do not re-model.
+- [x] 4.1 `packages/core/src/board/compose.ts`: the mechanical composition — the **coverage assertion** (across all lens boards every patchset hunk is taught by some lens or in some lens's `skippedHunks`; a hunk in neither fails the assert), **verbatim carry on stable element ids** (a carried element is byte-identical across generations), and **delta stamps** (`new`/`reworked` on sections; absent = carried). The lens boards ARE the reading surface — compose produces no sixth board (C3). Pure; reuse the carry/stamp shapes from `session/` (`SectionDeltaSchema`) — do not re-model.
 - [ ] 4.2 Tests: full coverage passes; a hunk covered by no lens fails the assert; a stable-id element carries byte-identical; a new/reworked section carries its delta stamp; no composed board is emitted.
 - [ ] 4.3 Cluster gate green. Commit.
 
