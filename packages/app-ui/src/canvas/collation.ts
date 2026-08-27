@@ -1,6 +1,46 @@
-import type { AnchorSide, AnchorSpan, DispositionType } from "@rennet/protocol";
-import type { DispositionBatch } from "./authoring";
-import { anchorPathKey, type DispositionWrite } from "./logic";
+import type { AnchorSide, AnchorSpan } from "@rennet/protocol";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-contained disposition shapes (B2, #489). These once lived in the deleted
+// `authoring.ts`/`logic.ts` and in `@rennet/protocol` (whose Disposition family is
+// removed later this change). Collation is a B5 survivor, so it carries the exact
+// shapes it needs — nothing more.
+
+/** A disposition kind. */
+export type DispositionType = "approve" | "request-change" | "comment" | "question";
+
+/** One per-anchor L2 disposition write. `span`/`side` are all-or-none: present ⇒
+ *  span-grained (keyed by `path#L…@side`); absent ⇒ path-grained (one per file). */
+export interface DispositionWrite {
+  path: string;
+  type: DispositionType;
+  body: string;
+  span?: AnchorSpan;
+  side?: AnchorSide;
+}
+
+/** A staged draft entry — the shipped #17 batch is a list of these. */
+export interface DispositionDraft {
+  path: string;
+  type: DispositionType;
+  raw: string;
+}
+
+/** The shipped #17 batch: path-keyed staged drafts. Collation lifts FROM it. */
+export type DispositionBatch = DispositionDraft[];
+
+/**
+ * The stable identity of a disposition write — path-grained on `path`, span-grained
+ * on `path#L<start>-L<end>@<side>`. Mirrors the engine's own `anchorKey`, so the
+ * local draft keys a write exactly as the engine does.
+ */
+function anchorPathKey(write: Pick<DispositionWrite, "path" | "span" | "side">): string {
+  if (write.span && write.side) {
+    const end = write.span.endLine ?? write.span.startLine;
+    return `${write.path}#L${write.span.startLine}-L${end}@${write.side}`;
+  }
+  return write.path;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The COLLATION DRAFT model (issue #101; ruling R40) — pure functions, no React,

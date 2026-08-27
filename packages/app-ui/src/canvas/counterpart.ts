@@ -1,4 +1,22 @@
-import { CANVAS_ANGLES, type Canvas, type CanvasAngle } from "@rennet/protocol";
+// ─────────────────────────────────────────────────────────────────────────────
+// Local lens shapes (B2, #489). The protocol Canvas/CanvasAngle model is deleted
+// this change; B3 owns the real `LensKind` home. Counterpart is a B5 survivor, so
+// it carries a five-value lens union and the minimal canvas shape it reads.
+
+/** The five review lenses, pending B3's real `LensKind`. */
+export type CanvasAngle = "spec" | "sequence" | "decisions" | "noise" | "flagged";
+export const CANVAS_ANGLES: readonly CanvasAngle[] = [
+  "spec",
+  "sequence",
+  "decisions",
+  "noise",
+  "flagged",
+];
+
+/** The minimal canvas shape this resolver reads: its analysis elements' keys. */
+export interface CounterpartCanvas {
+  layers: { analysis: { elements: readonly { elementKey: string }[] } };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The implementation ↔ test counterpart jump (Rai, wireframes #7).
@@ -97,7 +115,7 @@ export type ElementPathsResolver = (elementKey: string) => readonly string[] | u
  * that path.
  */
 function locatePath(
-  canvases: Record<CanvasAngle, Canvas>,
+  canvases: Record<CanvasAngle, CounterpartCanvas>,
   currentAngle: CanvasAngle,
   path: string,
   pathsForElement: ElementPathsResolver,
@@ -127,7 +145,7 @@ function locatePath(
  *     by DIFF-PATH MEMBERSHIP, not by analysis ID or a single path), else null.
  */
 export function resolveCounterpart(
-  canvases: Record<CanvasAngle, Canvas>,
+  canvases: Record<CanvasAngle, CounterpartCanvas>,
   currentAngle: CanvasAngle,
   currentPath: string,
   pathsForElement: ElementPathsResolver,
