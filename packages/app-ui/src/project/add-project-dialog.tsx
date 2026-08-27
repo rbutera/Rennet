@@ -13,7 +13,7 @@ import {
   Separator,
 } from "@rennet/ui";
 import { Check, ChevronDown, Monitor, Plus, Server } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DirectoryBrowser } from "../components/directory-browser";
 import { Icon } from "../components/icon";
@@ -86,6 +86,11 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
     if (!pendingSource) return;
     setSource(pendingSource as ProjectSource);
     setSelectedPath(null);
+    // Reset the complete state on the handoff — Browse Its Projects reuses the mounted body
+    // (openDialog keeps it open), so a stale error/busy from a prior attempt must not survive
+    // into the fresh preselected browse (finding 14).
+    setError(undefined);
+    setBusy(false);
     clearAddProjectSource();
   }, [pendingSource, clearAddProjectSource]);
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -95,6 +100,17 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
   const choose = useMutation("repository.choose");
   const discover = useMutation("project.discover");
   const addProject = useMutation("projects.add", { invalidates: ["projects.list"] });
+
+  // A per-mount guard: this body remounts on each open, so an add() that resolves AFTER the
+  // user closed (and maybe reopened) the dialog must NOT run its post-await UI effects —
+  // otherwise a stale completion closes the freshly-reopened dialog and hijacks the route.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const current = sources.find((option) => option.id === source) ?? sources[0];
 
@@ -154,11 +170,15 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
         includedRepos: discovery.repos.map((repo) => repo.name),
         primaryBranch: discovery.primaryBranch,
       });
+      // A stale completion (the dialog was closed/reopened while this was in flight) must not
+      // close the reopened dialog or hijack the route — bail before any post-await UI effect.
+      if (!alive.current) return;
       // Persisted with no orchestrator turn; the sidebar (projects.list, invalidated above)
       // carries it. Straight to the indexing view — scout + map generation live there.
       onClose();
       navigate(projectIndexingPath(project.id));
     } catch (reason) {
+      if (!alive.current) return;
       setError(messageFrom(reason));
       setBusy(false);
     }
