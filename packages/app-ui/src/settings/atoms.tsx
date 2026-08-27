@@ -12,19 +12,25 @@ import { BackingFile } from "./backing-file";
 
 /**
  * A titled settings section. `caption` is the section's backing file (rendered as
- * the shared {@link BackingFile} mono caption, claim 578). `bare` drops the boxed
- * surface so children that bring their own card (the environment cards) sit flush.
+ * the shared {@link BackingFile} mono caption, claim 578). A section with NO backing
+ * file yet (a session-only client pref, not persisted to any file) OMITS `caption`
+ * and sets `sessionOnly`, so the header states that honestly instead of naming a file
+ * the value never reaches. `bare` drops the boxed surface so children that bring their
+ * own card (the environment cards) sit flush.
  */
 export function Section({
   title,
   titleExtra,
   caption,
+  sessionOnly,
   bare,
   children,
 }: {
   readonly title: string;
   readonly titleExtra?: ReactNode;
-  readonly caption: string;
+  readonly caption?: string;
+  /** No file backs this section yet (session-only); shown in place of a backing file. */
+  readonly sessionOnly?: boolean;
   readonly bare?: boolean;
   readonly children: ReactNode;
 }) {
@@ -35,7 +41,13 @@ export function Section({
           {title}
           {titleExtra}
         </span>
-        <BackingFile file={caption} />
+        {caption ? (
+          <BackingFile file={caption} />
+        ) : sessionOnly ? (
+          <span data-slot="session-only" className="text-2xs text-ink-faint italic">
+            session only
+          </span>
+        ) : null}
       </div>
       <div
         className={cn(

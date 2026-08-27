@@ -545,6 +545,18 @@ describe("Repository — multi-repo rows, write outcomes, and ladder controls", 
     cleanup();
   });
 
+  it("discloses a failed settings read distinctly from the 'not yet scanned' empty (P2-7)", async () => {
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [...PROJECTS] }),
+      "settings.get": () => {
+        throw new Error("daemon down");
+      },
+    });
+    const { findByText } = mountRepo(bridge);
+    expect(await findByText(/Couldn’t read settings: daemon down/)).toBeTruthy();
+    cleanup();
+  });
+
   it("offers Pin when the value inherits, and Reset when it resolves from the repo layer", async () => {
     // Inherited (builtin) ⇒ Pin freezes the current effective value at the repo layer.
     const inherited = repoBridge([

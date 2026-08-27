@@ -1,7 +1,7 @@
 import type { ProjectVisibility, ResolvedProvenance, SettingsProject } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { Monitor, Server } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Icon } from "../../components/icon";
 import type { SidebarHost, SidebarProject } from "../../shell/sidebar-data";
 import { Row, Section, Segmented } from "../atoms";
@@ -57,22 +57,43 @@ export function RepositorySection({
   readonly project: SidebarProject;
   readonly host: SidebarHost;
 }) {
-  const { data } = useSettingsView();
+  const { data, pending, error } = useSettingsView();
   // A project contributes ONE row per repo (a workspace ⇒ several); render them all so a
   // multi-repo project's other repos are reachable, not collapsed onto the first row.
   const rows = data?.projects.filter((p) => p.projectId === project.id) ?? [];
 
+  // A live-read that is in-flight or FAILED is shown as its own state — never masked as
+  // the genuine "not yet scanned" empty (which means the read succeeded with no repo row).
+  let body: ReactNode;
+  if (pending) {
+    body = (
+      <Row label="Review Context" hint="whether .rennet is visible to git">
+        <span className="text-xs text-ink-soft">Loading…</span>
+      </Row>
+    );
+  } else if (error) {
+    body = (
+      <Row label="Review Context" hint="whether .rennet is visible to git">
+        <span className="text-xs text-accent">
+          Couldn’t read settings: {error instanceof Error ? error.message : String(error)}
+        </span>
+      </Row>
+    );
+  } else if (rows.length === 0) {
+    body = (
+      <Row label="Review Context" hint="whether .rennet is visible to git">
+        <span className="text-xs text-ink-soft">not yet scanned</span>
+      </Row>
+    );
+  } else {
+    body = rows.map((row) => (
+      <RepoRow key={row.repoPath} row={row} host={host} showRepoLabel={rows.length > 1} />
+    ));
+  }
+
   return (
     <Section title="Repository" caption={`.rennet/ in ${project.name}`}>
-      {rows.length === 0 ? (
-        <Row label="Review Context" hint="whether .rennet is visible to git">
-          <span className="text-xs text-ink-soft">not yet scanned</span>
-        </Row>
-      ) : (
-        rows.map((row) => (
-          <RepoRow key={row.repoPath} row={row} host={host} showRepoLabel={rows.length > 1} />
-        ))
-      )}
+      {body}
     </Section>
   );
 }

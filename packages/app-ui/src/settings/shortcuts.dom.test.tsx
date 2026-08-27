@@ -13,11 +13,14 @@
 // that read and rearms with no reload — so what the page advertises stays exactly what
 // fires once the old settings-screen is deleted.
 import { afterEach, describe, expect, it } from "vitest";
+import { BridgeProvider } from "../data";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, waitFor, within } from "../test/dom";
 import { settingsBridge } from "../test/fixtures/settings";
+import { MemoryBridge } from "../test/memory-bridge";
+import { ShortcutsPage } from "./shortcuts";
 
 function settingsNode(): HTMLElement | null {
   return document.querySelector('[data-screen="settings"]');
@@ -173,6 +176,36 @@ describe("ShortcutsPage — live remap (the cluster-11 keyboard reconciliation)"
       fireEvent.keyDown(window, { key: "e", metaKey: true });
     });
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
+    cleanup();
+  });
+});
+
+describe("ShortcutsPage — backing file + honest read states (P2-8/P2-7)", () => {
+  it("names client-settings.json as the backing file, never the legacy config.json (P2-8)", async () => {
+    const { container, findByText } = mount(
+      <BridgeProvider bridge={settingsBridge({})}>
+        <ShortcutsPage />
+      </BridgeProvider>,
+    );
+    await findByText("Toggle Sidebar");
+    const backing = container.querySelector('[data-slot="backing-file"]')?.textContent;
+    expect(backing).toBe("~/.rennet/client-settings.json");
+    expect(container.textContent?.includes("~/.rennet/config.json")).toBe(false);
+    cleanup();
+  });
+
+  it("discloses a failed live read instead of masking it as no overrides (P2-7)", async () => {
+    const bridge = new MemoryBridge({
+      "settings.get": () => {
+        throw new Error("daemon down");
+      },
+    });
+    const { findByText } = mount(
+      <BridgeProvider bridge={bridge}>
+        <ShortcutsPage />
+      </BridgeProvider>,
+    );
+    expect(await findByText(/Couldn’t read your saved shortcuts: daemon down/)).toBeTruthy();
     cleanup();
   });
 });

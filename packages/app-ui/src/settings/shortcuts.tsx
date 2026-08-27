@@ -30,9 +30,10 @@ import { useSetKeybinding, useSettingsView } from "./data";
 // Escape in the filter clears the filter BEFORE it can close settings
 // (`stopPropagation`), so a reader filtering never loses the whole view to one Escape;
 // an already-empty filter lets Escape bubble to the takeover root and leave.
-// The binding backing file is `~/.rennet/config.json` (where the landed
-// `settings.setKeybinding` writes today) — NOT the `client-settings.json` B10's file
-// split will introduce (reconciliation; do not invent it).
+// The binding backing file is `~/.rennet/client-settings.json` — the store the landed
+// `settings.setKeybinding` writes today (the B10 split has landed; a legacy
+// `config.json` is migrated FROM at daemon boot, `create-server.ts`).
+// A failed live READ is shown as its own state, not masked as "no overrides".
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The static-title label for a catalogue row (settings is a context-independent surface). */
@@ -41,7 +42,7 @@ function catalogueLabel(def: CommandDef): string {
 }
 
 export function ShortcutsPage() {
-  const { data } = useSettingsView();
+  const { data, pending: loading, error: readError } = useSettingsView();
   const overrides = data?.keybindings ?? {};
   // A malformed config makes `settings.setKeybinding` REFUSE (Rule 75); the controls
   // disable so an edit never overwrites bytes we could not parse.
@@ -118,7 +119,7 @@ export function ShortcutsPage() {
   }
 
   return (
-    <Section title="Keyboard Shortcuts" caption="~/.rennet/config.json">
+    <Section title="Keyboard Shortcuts" caption="~/.rennet/client-settings.json">
       <div className="py-2.5">
         <Input
           type="text"
@@ -129,11 +130,21 @@ export function ShortcutsPage() {
           aria-label="Filter commands"
         />
       </div>
+      {/* A live-read failure is disclosed — the rows below show catalogue defaults, which
+          may NOT reflect saved overrides that could not be read (never a silent "none"). */}
+      {loading ? (
+        <div className="py-1 text-xs text-ink-soft">Loading shortcuts…</div>
+      ) : readError ? (
+        <div className="py-1 text-xs text-accent">
+          Couldn’t read your saved shortcuts:{" "}
+          {readError instanceof Error ? readError.message : String(readError)}
+        </div>
+      ) : null}
       {error ? <div className="py-1 text-xs text-accent">{error}</div> : null}
       {malformed ? (
         <div className="py-1 text-xs text-ink-soft">
-          <code className="font-mono">~/.rennet/config.json</code> is malformed — fix it to remap a
-          shortcut.
+          <code className="font-mono">~/.rennet/client-settings.json</code> is malformed — fix it to
+          remap a shortcut.
         </div>
       ) : null}
       {shown.length === 0 ? (

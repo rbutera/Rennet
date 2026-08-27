@@ -99,4 +99,15 @@ describe("PairingSection — device pairing on the local Environments card", () 
     await findByText("No devices paired yet.");
     cleanup();
   });
+
+  it("discloses a failed device read instead of masking it as none paired (P2-7)", async () => {
+    const { findByText } = mountEnvironments([LOCAL], {
+      "pairing.listDevices": () => {
+        throw new Error("bridge down");
+      },
+    });
+    // A live-read failure is its own state — never the honest "No devices paired yet."
+    expect(await findByText(/Couldn’t read paired devices: bridge down/)).toBeTruthy();
+    cleanup();
+  });
 });

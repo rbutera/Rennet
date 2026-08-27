@@ -18,7 +18,11 @@ import { CardSection } from "./detection-row";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function PairingSection() {
-  const { data } = useCommand("pairing.listDevices", {});
+  const {
+    data,
+    pending: loadingDevices,
+    error: devicesError,
+  } = useCommand("pairing.listDevices", {});
   const { mutate: mint, pending: minting } = useMutation("pairing.mint");
   const { mutate: revoke, pending: revoking } = useMutation("pairing.revokeDevice", {
     invalidates: ["pairing.listDevices"],
@@ -74,7 +78,15 @@ export function PairingSection() {
       </div>
       <div className="flex flex-col border-t border-line py-2">
         <span className="text-xs font-medium text-ink">Paired devices</span>
-        {devices.length === 0 ? (
+        {/* A live-read failure is its own state — never masked as the honest empty. */}
+        {loadingDevices ? (
+          <span className="pt-1 text-2xs text-ink-soft">Loading devices…</span>
+        ) : devicesError ? (
+          <span className="pt-1 text-2xs text-destructive">
+            Couldn’t read paired devices:{" "}
+            {devicesError instanceof Error ? devicesError.message : String(devicesError)}
+          </span>
+        ) : devices.length === 0 ? (
           <span className="pt-1 text-2xs text-ink-soft">No devices paired yet.</span>
         ) : (
           <ul className="m-0 mt-1 flex list-none flex-col gap-1.5 p-0">

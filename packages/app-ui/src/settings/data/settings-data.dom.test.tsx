@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../../data";
 import { cleanup, mount, waitFor } from "../../test/dom";
 import { settingsBridge } from "../../test/fixtures/settings";
+import { MemoryBridge } from "../../test/memory-bridge";
 import { AppearancePage } from "../appearance";
 import {
   EMPTY_SETTINGS_PROJECTION,
@@ -60,7 +61,8 @@ describe("settings data seam — live writes persist to the bridge", () => {
         <AppearancePage />
       </BridgeProvider>,
     );
-    await first.user.click(first.getByRole("button", { name: "Dark" }));
+    // The scheme control renders once the live read resolves (loading is its own state).
+    await first.user.click(await first.findByRole("button", { name: "Dark" }));
     await first.findByText("global: dark");
     first.unmount();
     cleanup();
@@ -78,6 +80,104 @@ describe("settings data seam — live writes persist to the bridge", () => {
         second.container.querySelector('[data-slot="provenance-chip"]')?.getAttribute("data-layer"),
       ).toBe("global"),
     );
+    cleanup();
+  });
+});
+
+describe("AppearancePage — reset-to-builtin, read/write states, backing files (P2-6/7/8)", () => {
+  it("a global scheme offers Reset, which clears it back to the builtin (P2-6)", async () => {
+    const { container, findByRole, queryByRole, user } = mount(
+      <BridgeProvider bridge={settingsBridge({ scheme: "dark" })}>
+        <AppearancePage />
+      </BridgeProvider>,
+    );
+    // A global override resolves ⇒ the Reset control appears.
+    const reset = await findByRole("button", { name: "Reset appearance to the system default" });
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-slot="provenance-chip"]')?.getAttribute("data-layer"),
+      ).toBe("global"),
+    );
+    // Reset sends `scheme: null` — the value falls back to the builtin and Reset disappears.
+    await user.click(reset);
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-slot="provenance-chip"]')?.getAttribute("data-layer"),
+      ).toBe("builtin"),
+    );
+    expect(queryByRole("button", { name: "Reset appearance to the system default" })).toBeNull();
+    cleanup();
+  });
+
+  it("a failed appearance WRITE is disclosed, not silently swallowed (P2-6)", async () => {
+    const bridge = new MemoryBridge({
+      "settings.get": () => ({
+        scheme: "system",
+        schemeProvenance: {
+          layer: "builtin",
+          contributions: [{ layer: "builtin", value: "system", effective: true }],
+        },
+        appearanceMalformed: false,
+        projects: [],
+      }),
+      "settings.setAppearance": () => {
+        throw new Error("disk full");
+      },
+    });
+    const { findByRole, findByText, user } = mount(
+      <BridgeProvider bridge={bridge}>
+        <AppearancePage />
+      </BridgeProvider>,
+    );
+    await user.click(await findByRole("button", { name: "Dark" }));
+    expect(await findByText(/The write failed: disk full/)).toBeTruthy();
+    cleanup();
+  });
+
+  it("a failed live READ shows an error state, not a false System default (P2-7)", async () => {
+    const bridge = new MemoryBridge({
+      "settings.get": () => {
+        throw new Error("daemon down");
+      },
+    });
+    const { findByText } = mount(
+      <BridgeProvider bridge={bridge}>
+        <AppearancePage />
+      </BridgeProvider>,
+    );
+    expect(await findByText(/Couldn’t read settings: daemon down/)).toBeTruthy();
+    cleanup();
+  });
+
+  it("an in-flight read shows Loading, distinct from a loaded empty (P2-7)", async () => {
+    // A never-resolving handler keeps the read pending — the honest loading state.
+    // A promise that never settles keeps the read pending (the honest loading state).
+    const neverSettles = new Promise<never>(() => undefined);
+    const bridge = new MemoryBridge({ "settings.get": () => neverSettles });
+    const { findByText } = mount(
+      <BridgeProvider bridge={bridge}>
+        <AppearancePage />
+      </BridgeProvider>,
+    );
+    expect(await findByText("Loading…")).toBeTruthy();
+    cleanup();
+  });
+
+  it("names client-settings.json as the backing file; theme sections are session-only (P2-8)", async () => {
+    const { findByText, container } = mount(
+      <BridgeProvider bridge={settingsBridge({ scheme: "light" })}>
+        <AppearancePage />
+      </BridgeProvider>,
+    );
+    await findByText("Theme Pack");
+    const backings = [...container.querySelectorAll('[data-slot="backing-file"]')].map(
+      (n) => n.textContent,
+    );
+    // The Appearance section names the REAL live store; no section names the legacy config.json.
+    expect(backings).toContain("~/.rennet/client-settings.json");
+    expect(backings.some((t) => t?.includes("config.json"))).toBe(false);
+    // Theme Pack + Code Theme carry no backing file — they are session-only.
+    expect(container.querySelectorAll('[data-slot="session-only"]').length).toBe(2);
     cleanup();
   });
 });
