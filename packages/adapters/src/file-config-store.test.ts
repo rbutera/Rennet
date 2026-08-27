@@ -57,6 +57,28 @@ describe("FileConfigStore (client settings)", () => {
     });
   });
 
+  it("classifies a persisted slice with an UNKNOWN mark id as malformed and refuses to overwrite it (finding 4, Rule 75)", () => {
+    // A hand-edited / future client-settings.json whose `coachmarks.seen` carries an id this
+    // build's markIdSchema does not know fails schema validation → malformed, NOT silently
+    // rewritten. Clobbering the viewer's real seen-state with a default is the data loss Rule 75 stops.
+    const path = tmpConfigPath();
+    const bogus = JSON.stringify({
+      version: CLIENT_SETTINGS_VERSION,
+      coachmarks: { seen: ["not-a-real-mark"], skipAll: false },
+    });
+    writeFileSync(path, bogus);
+    const store = createClientSettingsStore(path);
+    expect(store.readState().status).toBe("malformed");
+    expect(() =>
+      store.update((current) => ({
+        ...current,
+        coachmarks: { seen: ["new-chat"], skipAll: false },
+      })),
+    ).toThrow(/malformed/);
+    // The unknown-id doc is left byte-identical — never clobbered from a failed parse.
+    expect(readFileSync(path, "utf8")).toBe(bogus);
+  });
+
   it("refuses an UNSUPPORTED version doc rather than silently re-stamping it (finding 6)", () => {
     // A future (v2) doc must NOT be read as v1 and re-stamped — that strips every
     // field this version does not know and destroys the newer doc's data. The

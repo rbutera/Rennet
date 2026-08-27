@@ -105,3 +105,12 @@ Four findings upheld (3 P2 + 1 P3), fixed at their root, no gates added.
   by resolving `project.process`) and asserts each resolves through the typed registry;
   the static scan now counts occurrences per id and fails on any id with more than one
   call site. The S8 hook-level duplicate-throw control is sound and untouched.
+
+- **Finding 4 (P3) — malformed-MarkId negative coverage.** Two proofs added for the
+  refusal path that already existed but was untested end to end: a dispatch test
+  (`server/dispatch.test.ts`) shows an unknown id in `seen` is rejected at
+  `settings.setCoachmarks`'s `parseCommandInput` boundary and never reaches the dep,
+  and a file-store test (`adapters/file-config-store.test.ts`) shows a persisted
+  client-settings slice carrying an unknown id is classified malformed (Rule 75) and
+  left byte-identical rather than silently overwritten. No production change — the
+  guards were correct; the gap was proof.

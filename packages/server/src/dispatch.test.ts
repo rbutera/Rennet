@@ -3287,6 +3287,18 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     })) as { seen: string[]; skipAll: boolean };
     expect(settings.setCoachmarks).toHaveBeenCalledWith({ seen: ["start-review"], skipAll: true });
     expect(coach).toEqual({ seen: ["start-review"], skipAll: true });
+
+    // A malformed slice — an unknown MarkId in `seen` — is REJECTED at the command boundary
+    // (coachMarksSchema in parseCommandInput), so it never reaches the dep: no bogus id is
+    // persisted, no silent overwrite of the real seen-state (finding 4).
+    await expect(
+      dispatch("settings.setCoachmarks", {
+        seen: ["not-a-real-mark"],
+        skipAll: false,
+      } as unknown as CoachMarks),
+    ).rejects.toThrow();
+    // Still called exactly once — only the valid write above reached the dep.
+    expect(settings.setCoachmarks).toHaveBeenCalledTimes(1);
   });
 
   it("with NO settings dep wired, degrades to the builtin view + unresolved write (never throws)", async () => {
