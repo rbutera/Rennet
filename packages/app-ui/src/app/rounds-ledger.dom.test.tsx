@@ -6,7 +6,7 @@
 //   - rounds list newest-first, and selecting a row renders that round's report;
 //   - the round's FROZEN generation is reachable through C5's `GenerationSwitcher`;
 //   - a `?view=rounds` deep-link with NO completed round falls back to the board.
-import type { Review } from "@rennet/protocol";
+import type { Review, RoundRecord } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BoardSourceProvider } from "../board/board-data";
