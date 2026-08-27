@@ -109,6 +109,27 @@ describe("data seam", () => {
     await waitFor(() => expect(getByText("count:1")).toBeTruthy());
   });
 
+  it("a bridge swap gets a fresh cache — the new bridge answers, not the old cache", async () => {
+    const bridgeA = new MemoryBridge({ "projects.list": () => ({ projects: [project("a")] }) });
+    const bridgeB = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("a"), project("b")] }),
+    });
+    const { getByText, rerender } = mount(
+      <BridgeProvider bridge={bridgeA}>
+        <ProjectsCount />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(getByText("count:1")).toBeTruthy());
+    // Swap the bridge prop: cache identity is bound to bridge identity, so bridge B is
+    // invoked against a fresh cache rather than serving bridge A's cached count.
+    rerender(
+      <BridgeProvider bridge={bridgeB}>
+        <ProjectsCount />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(getByText("count:2")).toBeTruthy());
+  });
+
   it("an invoke rejection surfaces as error, not an unhandled throw", async () => {
     const bridge = new MemoryBridge({
       "projects.list": () => {

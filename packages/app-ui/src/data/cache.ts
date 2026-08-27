@@ -52,6 +52,10 @@ const IDLE: QueryState<unknown> = {
 interface Entry {
   snapshot: QueryState<unknown>;
   promise?: Promise<unknown>;
+  /** The latest fetcher for this key, retained so a mid-flight invalidation self-refetches. */
+  fetcher?: () => Promise<unknown>;
+  /** Bumped by `invalidate`; a fetch that completes at a stale generation refetches. */
+  generation: number;
   readonly listeners: Set<() => void>;
 }
 
@@ -61,7 +65,7 @@ export class CommandCache {
   #entry(key: string): Entry {
     let entry = this.#entries.get(key);
     if (!entry) {
-      entry = { snapshot: IDLE, listeners: new Set() };
+      entry = { snapshot: IDLE, generation: 0, listeners: new Set() };
       this.#entries.set(key, entry);
     }
     return entry;
@@ -73,9 +77,10 @@ export class CommandCache {
     for (const listener of [...entry.listeners]) listener();
   }
 
-  /** Stable per-key snapshot for `useSyncExternalStore`'s `getSnapshot`. */
+  /** Stable per-key snapshot for `useSyncExternalStore`'s `getSnapshot`. Never creates an
+   *  entry — a read must not mutate the store during render (an absent key is IDLE). */
   getSnapshot(key: string): QueryState<unknown> {
-    return this.#entry(key).snapshot;
+    return this.#entries.get(key)?.snapshot ?? IDLE;
   }
 
   subscribe(key: string, listener: () => void): () => void {
@@ -92,22 +97,44 @@ export class CommandCache {
    */
   ensure(key: string, fetcher: () => Promise<unknown>): void {
     const entry = this.#entry(key);
+    entry.fetcher = fetcher; // retain the latest fetcher for a self-refetch
     if (entry.promise) return; // in-flight: dedupe
     const snap = entry.snapshot;
     if (snap.data !== undefined && !snap.stale && snap.error === undefined) return; // fresh
-    this.#set(key, { data: snap.data, error: snap.error, fetching: true, stale: false });
+    this.#fetch(key, entry);
+  }
+
+  /** Start a fetch, tagging it with the entry's current generation. A completion at a
+   *  STALER generation (an `invalidate` landed mid-flight) cannot clear the stale flag —
+   *  it installs its result then refetches, so a mutation's invalidation is never erased.
+   *  Both settle paths preserve the entry's LIVE data (a stream may have folded newer
+   *  state during the flight), never a snapshot captured before the fetch began. */
+  #fetch(key: string, entry: Entry): void {
+    const fetcher = entry.fetcher;
+    if (!fetcher) return;
+    const generation = entry.generation;
+    this.#set(key, {
+      data: entry.snapshot.data,
+      error: entry.snapshot.error,
+      fetching: true,
+      stale: false,
+    });
     const promise = fetcher();
     entry.promise = promise;
     void promise.then(
       (data) => {
-        if (entry.promise !== promise) return; // superseded
+        if (entry.promise !== promise) return; // a newer #fetch owns the entry
         entry.promise = undefined;
-        this.#set(key, { data, error: undefined, fetching: false, stale: false });
+        const superseded = entry.generation !== generation;
+        this.#set(key, { data, error: undefined, fetching: false, stale: superseded });
+        if (superseded) this.#fetch(key, entry);
       },
       (error: unknown) => {
         if (entry.promise !== promise) return;
         entry.promise = undefined;
-        this.#set(key, { data: snap.data, error, fetching: false, stale: false });
+        const superseded = entry.generation !== generation;
+        this.#set(key, { data: entry.snapshot.data, error, fetching: false, stale: superseded });
+        if (superseded) this.#fetch(key, entry);
       },
     );
   }
@@ -127,6 +154,7 @@ export class CommandCache {
   invalidate(prefix: string): void {
     for (const [key, entry] of this.#entries) {
       if (key === prefix || key.startsWith(`${prefix}${SEP}`)) {
+        entry.generation += 1; // supersede any in-flight fetch so its completion refetches
         this.#set(key, { ...entry.snapshot, stale: true });
       }
     }
