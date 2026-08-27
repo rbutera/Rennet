@@ -95,6 +95,19 @@ describe("boards runtime", () => {
     expect(emitted).toHaveLength(1);
   });
 
+  it("a throwing listener cannot poison a committed apply", async () => {
+    const observed = createBoardsRuntime(projectRoot, () => {
+      throw new Error("socket exploded");
+    });
+    const boardId = await observed.createRennetBoard();
+    // The apply resolves ok — the write is persisted, the notification is post-commit.
+    await expect(
+      observed.service.apply(boardId, [proseOp("p1", "One.")], "actor"),
+    ).resolves.toEqual({ ok: true });
+    const { events } = await observed.service.getEvents(boardId);
+    expect(events.map((event) => event.seq)).toEqual([1]);
+  });
+
   it("persists under <projectRoot>/.rennet/boards/ and survives a fresh runtime", async () => {
     const boardId = await runtime.createRennetBoard();
     await runtime.service.apply(boardId, [proseOp("p1", "Durable.")], "actor");

@@ -40,7 +40,16 @@ export function createBoardsRuntime(
         getEvents: (boardId, afterSeq) => store.getEvents(boardId, afterSeq),
         append: async (boardId, entries) => {
           const events = await store.append(boardId, entries);
-          if (events.length > 0) onEvents(boardId, events as BoardEventFrame["events"]);
+          if (events.length > 0) {
+            try {
+              onEvents(boardId, events as BoardEventFrame["events"]);
+            } catch {
+              // Post-commit notification must not poison a persisted apply:
+              // the events are on disk, a dedup'd retry would emit nothing,
+              // and the client would report failure for a committed write.
+              // Live listeners re-sync via getEvents.
+            }
+          }
           return events;
         },
       };
