@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import { extname, normalize, resolve, sep } from "node:path";
 import type {
   AttentionItem,
+  BoardEventFrame,
   CommandName,
   ProjectProcessEvent,
   ProjectProgressEvent,
@@ -59,6 +60,7 @@ import {
   buildProjectionContext,
   type ProjectionContext,
   ProjectionResolveError,
+  projectBoardEvent,
   projectCommandOutput,
   projectProgressEvent,
   redactAbsolutePaths,
@@ -224,6 +226,12 @@ export interface WsListener {
   readonly host: string;
   /** Fan a rehydration/background progress event out to every connected socket (projected per connection class). */
   broadcastProgress(commandId: string, event: ProjectProcessEvent): void;
+  /**
+   * Fan newly appended board events out to every authorized socket (B4 broadcast).
+   * `private` (loopback) sockets receive the raw events; `projected` sockets receive
+   * the privacy-wrapped variant (`projectBoardEvent`); `pairing-only` is excluded.
+   */
+  broadcastBoardEvent(boardId: string, events: BoardEventFrame["events"]): void;
   /**
    * Ask ONE connection a question and resolve with its answer (issue #380, wire only).
    * Rejects if the connection is unknown or drops before answering. A `serverRequestResolved`
@@ -719,6 +727,39 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     }
   };
 
+  // B4 broadcast: newly appended board events ride the same fan-out as `broadcastProgress` —
+  // serialize once per class, raw to private (loopback) sockets, `projectBoardEvent`-wrapped
+  // to projected ones, `pairing-only` excluded. Fed by the boards runtime's append hook
+  // (the store is the single write choke point), so every accepted op reaches live clients.
+  const broadcastBoardEvent = (boardId: string, events: BoardEventFrame["events"]): void => {
+    if (events.length === 0) return;
+    const rawPayload = JSON.stringify({
+      type: "boardEvent",
+      boardId,
+      events,
+    } satisfies SessionFrame);
+    let projectedPayload: string | null = null;
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      if (connection.connectionClass === "projected") {
+        if (projectedPayload === null) {
+          const ctx = contextOf();
+          projectedPayload = JSON.stringify({
+            type: "boardEvent",
+            boardId,
+            events: events.map(
+              (event) => projectBoardEvent(event, ctx) as BoardEventFrame["events"][number],
+            ),
+          } satisfies SessionFrame);
+        }
+        connection.socket.send(projectedPayload);
+      } else if (connection.connectionClass === "private") {
+        connection.socket.send(rawPayload);
+      }
+    }
+  };
+
   // Broadcast a review's ask-stream delta to every live authorized socket by `reviewId`
   // (issue #389 server half). This is the read-side twin of `broadcastProgress`, and it is
   // what lets a mid-turn reconnect keep the live stream flowing to the fresh socket.
@@ -910,6 +951,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     port: boundPort,
     host: listenHost,
     broadcastProgress,
+    broadcastBoardEvent,
     askConnection,
     raiseAttention,
     acknowledgeAttention,

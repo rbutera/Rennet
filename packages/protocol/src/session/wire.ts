@@ -12,6 +12,7 @@
 // field never breaks an older decoder. This deliberately diverges from the
 // `.strict()` habit used for intra-process shapes elsewhere in this package.
 
+import { EventSchema as boardOpEventSchema } from "@wboard/core";
 import { z } from "zod";
 import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "../index";
 
@@ -263,6 +264,18 @@ export const attentionItemSchema = z
   });
 export type AttentionItem = z.infer<typeof attentionItemSchema>;
 
+/**
+ * Server → client: board events newly appended to the embedded board store (B4
+ * broadcast). The event payload is `@wboard/core`'s published `EventSchema` —
+ * the store's own wire shape, not a re-model. A `projected` connection receives
+ * the privacy-wrapped variant (same string shapes; scrubbed content).
+ */
+export const boardEventFrameSchema = z.object({
+  type: z.literal("boardEvent"),
+  boardId: z.string().min(1),
+  events: z.array(boardOpEventSchema).min(1),
+});
+
 /** Server → client: an attention item was raised, or one/more were cleared. */
 export const attentionEventFrameSchema = z
   .object({
@@ -301,6 +314,7 @@ export const sessionFrameSchema = z.discriminatedUnion("type", [
   serverRequestResolvedFrameSchema,
   presenceFrameSchema,
   attentionEventFrameSchema,
+  boardEventFrameSchema,
 ]);
 
 export type HelloFrame = z.infer<typeof helloFrameSchema>;
@@ -315,6 +329,7 @@ export type ServerResponseFrame = z.infer<typeof serverResponseFrameSchema>;
 export type ServerRequestResolvedFrame = z.infer<typeof serverRequestResolvedFrameSchema>;
 export type PresenceFrame = z.infer<typeof presenceFrameSchema>;
 export type AttentionEventFrame = z.infer<typeof attentionEventFrameSchema>;
+export type BoardEventFrame = z.infer<typeof boardEventFrameSchema>;
 export type SessionFrame = z.infer<typeof sessionFrameSchema>;
 
 /** Parse an untrusted value into a `SessionFrame`, throwing on an invalid frame. */

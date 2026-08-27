@@ -1,7 +1,10 @@
 import { join } from "node:path";
-import { BOARD_WIRE_SCHEMA } from "@rennet/protocol";
-import { BoardService } from "@wboard/server";
+import { BOARD_WIRE_SCHEMA, type BoardEventFrame } from "@rennet/protocol";
+import { BoardService, type BoardStore } from "@wboard/server";
 import { FileBoardStore } from "./file-board-store";
+
+/** Receives the events a successful apply just appended (B4 broadcast hook). */
+export type BoardEventsListener = (boardId: string, events: BoardEventFrame["events"]) => void;
 
 /**
  * The boards runtime: one embedded {@link BoardService} over a
@@ -10,8 +13,9 @@ import { FileBoardStore } from "./file-board-store";
  * verified against the repo `.gitignore`).
  *
  * No freeze/generation policy lives here (append-then-freeze is #457
- * lifecycle, owned by B8/B9) and no transport — broadcast wiring is the
- * privacy-seam cluster's business.
+ * lifecycle, owned by B8/B9). Broadcast: `onEvents` observes the store's
+ * `append` — the single write choke point every accepted op crosses — so
+ * whoever wires the runtime (create-server) can fan events to live clients.
  */
 export interface BoardsRuntime {
   /** The embedded board service — reads for anyone, writes only via whiteboard-client. */
@@ -21,8 +25,26 @@ export interface BoardsRuntime {
 }
 
 /** Construct the runtime for one review project rooted at `projectRoot`. */
-export function createBoardsRuntime(projectRoot: string): BoardsRuntime {
-  const service = new BoardService(new FileBoardStore(join(projectRoot, ".rennet", "boards")));
+export function createBoardsRuntime(
+  projectRoot: string,
+  onEvents?: BoardEventsListener,
+): BoardsRuntime {
+  const store = new FileBoardStore(join(projectRoot, ".rennet", "boards"));
+  // Observe append rather than wrapping `BoardService.apply`: append returns the
+  // events WITH their assigned seqs, and it is the one path every write takes.
+  const observed: BoardStore = !onEvents
+    ? store
+    : {
+        createBoard: (boardId, schema) => store.createBoard(boardId, schema),
+        getSchema: (boardId) => store.getSchema(boardId),
+        getEvents: (boardId, afterSeq) => store.getEvents(boardId, afterSeq),
+        append: async (boardId, entries) => {
+          const events = await store.append(boardId, entries);
+          if (events.length > 0) onEvents(boardId, events as BoardEventFrame["events"]);
+          return events;
+        },
+      };
+  const service = new BoardService(observed);
   return {
     service,
     createRennetBoard: () => service.createBoard(BOARD_WIRE_SCHEMA),
