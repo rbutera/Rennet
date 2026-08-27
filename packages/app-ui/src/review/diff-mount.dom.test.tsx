@@ -76,6 +76,8 @@ describe("diff deep-link ?file= (C6 task 4.1)", () => {
 
   beforeEach(() => {
     original = Element.prototype.scrollIntoView;
+    // vi.fn records each call's `this` in `mock.contexts`, so the test can prove the scroll
+    // fired on the named card element itself, not merely on some element on the page.
     scrollSpy = vi.fn();
     Element.prototype.scrollIntoView =
       scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
@@ -91,9 +93,11 @@ describe("diff deep-link ?file= (C6 task 4.1)", () => {
       FILE_B,
     ]);
     // The named card is in the DOM…
-    expect(container.querySelector(`[id="diff-${target}"]`)).toBeTruthy();
-    // …and the mount-only effect scrolled it into view.
+    const section = container.querySelector(`[id="diff-${target}"]`);
+    expect(section).toBeTruthy();
+    // …and the mount-only effect scrolled THAT section into view (not merely some element).
     expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy.mock.contexts[0]).toBe(section);
   });
 
   it("does not scroll when no ?file is present", () => {
