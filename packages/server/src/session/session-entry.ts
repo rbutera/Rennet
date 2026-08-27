@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { bindTarget, type MintSessionDeps, mintSession } from "@rennet/core";
-import type { Claim, SessionModel } from "@rennet/protocol";
+import type { Claim, Review, SessionModel } from "@rennet/protocol";
 
 /** A target a New-chat row resolves to: a branch and, when known, its PR number.
  *  The `Claim` the session binds is this same pair (branch + optional PR). */
@@ -47,6 +47,32 @@ export interface EntryResult {
 export function claimMatchesTarget(claim: Claim, target: Target): boolean {
   if (claim.branch === target.branch) return true;
   return claim.prNumber !== undefined && claim.prNumber === target.prNumber;
+}
+
+/**
+ * The session id a round for this review dispatched onto — the READ side of dispatchRound's
+ * mint (B9/B10 seam). A round serializes on the SessionEntry session claiming the review's
+ * target (branch + PR); this resolves that same session id READ-ONLY (never minting), so the
+ * `session.rounds` ledger read lines up with what a dispatch recorded. Mirrors dispatchRound's
+ * derivation exactly: the active patchset's branch (+ PR) is the target; a detached HEAD (no
+ * branch) or no claiming session yet ⇒ the review id, the identical fallback dispatchRound uses.
+ */
+export function resolveRoundSessionId(review: Review, sessions: readonly SessionModel[]): string {
+  const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
+  const branch = activePatchset?.repository.headRef;
+  if (branch === undefined) return review.id;
+  const target: Target = {
+    branch,
+    ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
+  };
+  const claiming = sessions.find(
+    (s) =>
+      s.archivedAt === undefined &&
+      s.projectId === review.repositoryRoot &&
+      s.claim !== undefined &&
+      claimMatchesTarget(s.claim, target),
+  );
+  return claiming?.id ?? review.id;
 }
 
 /** Mints and reattaches sessions from New-chat row clicks, and hides the rows a

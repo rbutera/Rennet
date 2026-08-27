@@ -31,6 +31,7 @@ import type {
   PrBodyDraftResult,
   RefinementResult,
   Review,
+  RoundRecord,
   SuccessorAccount,
   SymbolInspection,
 } from "@rennet/protocol";
@@ -537,6 +538,14 @@ export interface DispatchDeps {
     review: Review;
     workOrder: ComposedHandoffBundle;
   }) => Promise<void>;
+  /**
+   * The rounds-ledger read for `session.rounds` (B9/B10-deferred seam): the `RoundRecord[]`
+   * the live rounds runtime recorded for this review's session, resolved read-only (the READ
+   * side of `dispatchRound`'s mint — `resolveRoundSessionId`). Absent ⇒ no rounds runtime
+   * wired, so the read answers an honest empty ledger. Empty until a round RECORDS (`runRound`);
+   * the B11 dispatch WRITE runs the workers but the record wiring is a separate deferred piece.
+   */
+  readonly roundRecordsForReview?: (reviewId: string) => readonly RoundRecord[];
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never
