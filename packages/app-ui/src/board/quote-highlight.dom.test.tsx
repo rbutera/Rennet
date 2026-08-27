@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount } from "../test/dom";
+import { designBoard } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
+import { BoardElement, BoardElementsProvider } from "./kinds";
 import { QuoteHighlightLayer } from "./quote-highlight";
 
 // Cluster 5 (durable quote highlights). Threads live on the real `review` slice; the
@@ -97,5 +99,27 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     expect(container.textContent).toContain("why free?");
     expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
     expect(useRennetStore.getState().review.focusedThreadId).toBeNull();
+  });
+
+  it("highlights through the real board pipeline — a prose element on a fixture board", async () => {
+    // Not the layer in isolation: dispatch a real fixture prose element through
+    // BoardElement → ProseElement → QuoteHighlightLayer, proving the highlight surfaces
+    // wherever board prose renders.
+    const proseEl = designBoard.elements.find((el) => el.id === "change-why");
+    expect(proseEl).toBeTruthy();
+    if (!proseEl) return;
+    const id = addQuoteComment("Renewal was silent", "why was it silent?");
+    const { container, user } = mount(
+      <BridgeProvider bridge={new MemoryBridge({})}>
+        <BoardElementsProvider elements={designBoard.elements}>
+          <BoardElement element={proseEl} />
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+    const hl = container.querySelector<HTMLElement>("[data-kind=prose] [data-quote-highlight]");
+    expect(hl?.textContent).toBe("Renewal was silent");
+    if (hl) await user.click(hl);
+    expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
+    expect(container.textContent).toContain("why was it silent?");
   });
 });
