@@ -130,11 +130,13 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
 
   const effectiveVerdict = verdictOverride ?? arithmetic.proposed;
 
-  const [editingAnchor, setEditingAnchor] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [receipt, setReceipt] = useState<PostReceipt | null>(null);
 
-  const blockText = (ask: StagedAsk): string => draftEdits[ask.anchor] ?? ask.body;
+  // Inline edits are keyed by ask IDENTITY (id), not anchor — so an edit follows its ask and a
+  // deleted ask's edit is dropped rather than haunting a later ask that shares the anchor.
+  const blockText = (ask: StagedAsk): string => draftEdits[ask.id] ?? ask.body;
 
   // Selection steering matches a quoted span back to its body ask (the spike's fuzzy join over
   // the block text, tolerant of the browser trimming/extending the selection).
@@ -150,7 +152,7 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
       const ask = findBodyAsk(quote);
       if (!ask) return;
       retire(ask, "dropped by you");
-      unstageAsk(ask.anchor);
+      unstageAsk(ask.id);
     },
     explain: (quote) => {
       const ask = findBodyAsk(quote);
@@ -161,23 +163,23 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
   };
 
   function startEdit(ask: StagedAsk) {
-    setEditingAnchor(ask.anchor);
+    setEditingId(ask.id);
     setEditDraft(blockText(ask));
   }
   function saveEdit() {
-    if (editingAnchor === null) return;
+    if (editingId === null) return;
     const text = editDraft.trim();
-    if (text.length > 0) setDraftEdit(editingAnchor, text);
-    setEditingAnchor(null);
+    if (text.length > 0) setDraftEdit(editingId, text);
+    setEditingId(null);
     setEditDraft("");
   }
   function deleteAsk(ask: StagedAsk) {
     retire(ask, "deleted by you");
-    unstageAsk(ask.anchor);
+    unstageAsk(ask.id);
   }
   function restore(entryAsk: StagedAsk) {
     stageAsk(entryAsk);
-    restoreRetired(entryAsk.anchor);
+    restoreRetired(entryAsk.id);
   }
 
   if (receipt) {
@@ -231,7 +233,7 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
               </p>
             ) : (
               draft.body.map((ask) => (
-                <div key={ask.anchor} className="flex flex-col gap-1">
+                <div key={ask.id} className="flex flex-col gap-1">
                   <span className="flex items-center gap-1.5">
                     <IntentTag type={ask.type} />
                     <span className="truncate text-2xs text-muted-foreground/80 italic">
@@ -260,16 +262,16 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
                 <span className="font-mono text-2xs text-muted-foreground">{group.path}</span>
                 {group.comments.map((comment) => (
                   <LineCommentCard
-                    key={comment.ask.anchor}
+                    key={comment.ask.id}
                     comment={comment}
                     patchsetId={patchsetId}
                     body={blockText(comment.ask)}
-                    editing={editingAnchor === comment.ask.anchor}
+                    editing={editingId === comment.ask.id}
                     editDraft={editDraft}
                     onEditDraft={setEditDraft}
                     onStartEdit={() => startEdit(comment.ask)}
                     onSaveEdit={saveEdit}
-                    onCancelEdit={() => setEditingAnchor(null)}
+                    onCancelEdit={() => setEditingId(null)}
                     onDelete={() => deleteAsk(comment.ask)}
                   />
                 ))}
@@ -291,7 +293,7 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
               Retired
             </span>
             {retired.map((entry) => (
-              <span key={entry.ask.anchor} className="flex items-baseline gap-2">
+              <span key={entry.ask.id} className="flex items-baseline gap-2">
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground line-through">
                   {entry.ask.body}
                 </span>

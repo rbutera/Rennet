@@ -16,9 +16,17 @@ import type { RennetState } from "./index";
 /** A disposition kind (mirrors protocol's `dispositionType`; kept local to avoid coupling). */
 export type DispositionKind = "approve" | "request-change" | "comment" | "question";
 
-/** A staged ask against an anchor — the reviewer's pending request-change/comment/question. */
+/** A staged ask — the reviewer's pending request-change/comment/question. */
 export interface StagedAsk {
-  /** The ask's SOURCE anchor — a `path:line` code position, or the quoted prose span. */
+  /**
+   * The ask's stable IDENTITY — how the staged/retired/edit overlays key it. Distinct from
+   * `anchor` (provenance): two asks may share an anchor (two intents on one line, identical prose
+   * in two elements) and stay separate here, and a deleted ask's id never rebinds a later ask's
+   * edit. A staging site supplies an id stable for its own identity model (an element id for a
+   * toggle-once finding, `path:line` for a line editor, the minted thread id for a quote ask).
+   */
+  readonly id: string;
+  /** The ask's SOURCE anchor — a `path:line` code position, or the quoted prose span (provenance). */
   readonly anchor: string;
   readonly type: DispositionKind;
   readonly body: string;
@@ -82,7 +90,7 @@ let quoteThreadSeq = 0;
 const nextQuoteThreadId = (): string => `qt-${++quoteThreadSeq}`;
 
 export interface ReviewState {
-  /** Staged asks keyed by anchor id. */
+  /** Staged asks keyed by ask `id` (identity), NOT anchor — so same-anchor asks coexist. */
   readonly stagedAsks: Readonly<Record<string, StagedAsk>>;
   /** Per-line code comments, keyed path → line → body. */
   readonly codeComments: Readonly<Record<string, Readonly<Record<number, string>>>>;
@@ -102,7 +110,9 @@ export interface ReviewSlice {
   readonly review: ReviewState;
   readonly reviewActions: {
     stageAsk(ask: StagedAsk): void;
-    unstageAsk(anchor: string): void;
+    /** Remove a staged ask by its `id`, and drop any inline edit keyed to that id (so a later
+     *  ask staged at the same anchor never inherits it). */
+    unstageAsk(id: string): void;
     setCodeComment(path: string, line: number, body: string): void;
     clearCodeComment(path: string, line: number): void;
     /** Mint a quote thread on `anchor` with `text` as the opener; returns the new thread
@@ -119,10 +129,10 @@ export interface ReviewSlice {
     /** Drop a quote thread. */
     removeQuoteComment(threadId: string): void;
     setFocusedThread(threadId: string | null): void;
-    /** Retire a staged ask WHOLE (dropped/deleted) with its reason — dedup by `ask.anchor`. */
+    /** Retire a staged ask WHOLE (dropped/deleted) with its reason — dedup by `ask.id`. */
     retire(ask: StagedAsk, reason: string): void;
-    /** Restore a retired ask by its anchor — removes it from the ledger (the caller re-stages). */
-    restoreRetired(anchor: string): void;
+    /** Restore a retired ask by its `id` — removes it from the ledger (the caller re-stages). */
+    restoreRetired(id: string): void;
     setVerdictOverride(verdict: ReviewState["verdictOverride"]): void;
     setDraftEdit(blockId: string, body: string): void;
     resetReview(): void;
@@ -144,13 +154,17 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
   reviewActions: {
     stageAsk: (ask) =>
       set((s) => ({
-        review: { ...s.review, stagedAsks: { ...s.review.stagedAsks, [ask.anchor]: ask } },
+        review: { ...s.review, stagedAsks: { ...s.review.stagedAsks, [ask.id]: ask } },
       })),
-    unstageAsk: (anchor) =>
+    unstageAsk: (id) =>
       set((s) => {
         const rest = { ...s.review.stagedAsks };
-        delete rest[anchor];
-        return { review: { ...s.review, stagedAsks: rest } };
+        delete rest[id];
+        // Drop the inline edit keyed to this id too, so a later ask at the same anchor (a fresh id,
+        // or this id reused by a stable-id site) never inherits a withdrawn ask's edit.
+        const draftEdits = { ...s.review.draftEdits };
+        delete draftEdits[id];
+        return { review: { ...s.review, stagedAsks: rest, draftEdits } };
       }),
     setCodeComment: (path, line, body) =>
       set((s) => ({
@@ -217,15 +231,12 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
       set((s) => ({
         review: {
           ...s.review,
-          retired: [
-            ...s.review.retired.filter((e) => e.ask.anchor !== ask.anchor),
-            { ask, reason },
-          ],
+          retired: [...s.review.retired.filter((e) => e.ask.id !== ask.id), { ask, reason }],
         },
       })),
-    restoreRetired: (anchor) =>
+    restoreRetired: (id) =>
       set((s) => ({
-        review: { ...s.review, retired: s.review.retired.filter((e) => e.ask.anchor !== anchor) },
+        review: { ...s.review, retired: s.review.retired.filter((e) => e.ask.id !== id) },
       })),
     setVerdictOverride: (verdict) =>
       set((s) => ({ review: { ...s.review, verdictOverride: verdict } })),
@@ -241,11 +252,11 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
 /** How many asks are staged. DERIVED — the count is never a stored field. */
 export const selectStagedAskCount = (s: RennetState): number =>
   Object.keys(s.review.stagedAsks).length;
-/** The staged ask on `anchor`, or undefined. */
+/** The staged ask with `id`, or undefined. */
 export const selectStagedAsk =
-  (anchor: string) =>
+  (id: string) =>
   (s: RennetState): StagedAsk | undefined =>
-    s.review.stagedAsks[anchor];
+    s.review.stagedAsks[id];
 /** The per-line code comment on `path:line`, or undefined. */
 export const selectCodeComment =
   (path: string, line: number) =>

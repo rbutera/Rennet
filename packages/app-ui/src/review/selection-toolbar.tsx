@@ -162,7 +162,9 @@ export function ProseSelectionLayer({
       target: anchor.target,
       generation: anchor.generation,
     });
-    stageAsk({ anchor: anchor.quote, type: "request-change", body: text, threadId: id });
+    // Identity is the minted thread id — unique per selection, so two request-changes on identical
+    // prose (or the same span twice) stay separate asks instead of collapsing on the quote text.
+    stageAsk({ id, anchor: anchor.quote, type: "request-change", body: text, threadId: id });
     flight.signal(); // the quote request-change stages one ask and flies one bubble (batched)
     setFocusedThread(id);
     window.getSelection()?.removeAllRanges();

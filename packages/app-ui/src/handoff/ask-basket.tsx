@@ -54,7 +54,7 @@ function AskRow({ ask }: { ask: StagedAsk }) {
         size="icon"
         aria-label={`Unstage ${intent.label.toLowerCase()}`}
         className="shrink-0 text-muted-foreground hover:text-foreground"
-        onClick={() => unstageAsk(ask.anchor)}
+        onClick={() => unstageAsk(ask.id)}
       >
         <X aria-hidden="true" />
       </Button>
@@ -90,14 +90,14 @@ export function AskBasket({ className }: AskBasketProps) {
       {body.length > 0 && (
         <ul className="flex flex-col gap-2">
           {body.map((ask) => (
-            <AskRow key={ask.anchor} ask={ask} />
+            <AskRow key={ask.id} ask={ask} />
           ))}
         </ul>
       )}
       {line.length > 0 && (
         <ul className="flex flex-col gap-2">
           {line.map((ask) => (
-            <AskRow key={ask.anchor} ask={ask} />
+            <AskRow key={ask.id} ask={ask} />
           ))}
         </ul>
       )}

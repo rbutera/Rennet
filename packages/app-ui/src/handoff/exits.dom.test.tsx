@@ -56,7 +56,9 @@ const PAYLOAD = "canonical-review-bytes::v1";
 
 function stage(anchor: string, type: "comment" | "request-change" = "request-change") {
   act(() =>
-    useRennetStore.getState().reviewActions.stageAsk({ anchor, type, body: `ask ${anchor}` }),
+    useRennetStore
+      .getState()
+      .reviewActions.stageAsk({ id: anchor, anchor, type, body: `ask ${anchor}` }),
   );
 }
 

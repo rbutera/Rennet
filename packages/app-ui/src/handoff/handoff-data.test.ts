@@ -33,10 +33,30 @@ describe("handoff/handoff-data", () => {
     it("orders body asks and groups line comments by file path", () => {
       const store = createRennetStore();
       const { reviewActions } = store.getState();
-      reviewActions.stageAsk({ anchor: "the opener prose", type: "comment", body: "opener" });
-      reviewActions.stageAsk({ anchor: "src/a.ts:3", type: "request-change", body: "one" });
-      reviewActions.stageAsk({ anchor: "src/b.ts:9", type: "comment", body: "two" });
-      reviewActions.stageAsk({ anchor: "src/a.ts:20", type: "comment", body: "three" });
+      reviewActions.stageAsk({
+        id: "the opener prose",
+        anchor: "the opener prose",
+        type: "comment",
+        body: "opener",
+      });
+      reviewActions.stageAsk({
+        id: "src/a.ts:3",
+        anchor: "src/a.ts:3",
+        type: "request-change",
+        body: "one",
+      });
+      reviewActions.stageAsk({
+        id: "src/b.ts:9",
+        anchor: "src/b.ts:9",
+        type: "comment",
+        body: "two",
+      });
+      reviewActions.stageAsk({
+        id: "src/a.ts:20",
+        anchor: "src/a.ts:20",
+        type: "comment",
+        body: "three",
+      });
 
       const draft = selectLivingDraft(store.getState());
       expect(draft.body.map((a) => a.body)).toEqual(["opener"]);

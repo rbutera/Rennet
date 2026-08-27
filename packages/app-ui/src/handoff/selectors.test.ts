@@ -20,7 +20,12 @@ describe("handoff/selectors", () => {
     it("sums staged asks, unclaimed line comments, and unclaimed quote threads", () => {
       const store = createRennetStore();
       const { reviewActions } = store.getState();
-      reviewActions.stageAsk({ anchor: "the prose span", type: "comment", body: "a note" });
+      reviewActions.stageAsk({
+        id: "the prose span",
+        anchor: "the prose span",
+        type: "comment",
+        body: "a note",
+      });
       reviewActions.setCodeComment("src/a.ts", 3, "inline note");
       reviewActions.addQuoteComment("some span", "a thought", "comment");
       // 1 ask + 1 line comment + 1 thread
@@ -32,6 +37,7 @@ describe("handoff/selectors", () => {
       const { reviewActions } = store.getState();
       const threadId = reviewActions.addQuoteComment("highlighted span", "fix this", "comment");
       reviewActions.stageAsk({
+        id: threadId,
         anchor: "highlighted span",
         type: "request-change",
         body: "fix this",
@@ -46,7 +52,12 @@ describe("handoff/selectors", () => {
       const store = createRennetStore();
       const { reviewActions } = store.getState();
       reviewActions.setCodeComment("src/a.ts", 12, "note");
-      reviewActions.stageAsk({ anchor: "src/a.ts:12", type: "request-change", body: "note" });
+      reviewActions.stageAsk({
+        id: "src/a.ts:12",
+        anchor: "src/a.ts:12",
+        type: "request-change",
+        body: "note",
+      });
       expect(selectExitPipCount(store.getState())).toBe(1);
     });
 
@@ -60,7 +71,7 @@ describe("handoff/selectors", () => {
     it("decrements when a staged ask is undone", () => {
       const store = createRennetStore();
       const { reviewActions } = store.getState();
-      reviewActions.stageAsk({ anchor: "a1", type: "comment", body: "x" });
+      reviewActions.stageAsk({ id: "a1", anchor: "a1", type: "comment", body: "x" });
       expect(selectExitPipCount(store.getState())).toBe(1);
       reviewActions.unstageAsk("a1");
       expect(selectExitPipCount(store.getState())).toBe(0);
@@ -80,8 +91,12 @@ describe("handoff/selectors", () => {
 
     it("proposes Comment when only non-request-change asks are staged", () => {
       const store = createRennetStore();
-      store.getState().reviewActions.stageAsk({ anchor: "a1", type: "comment", body: "x" });
-      store.getState().reviewActions.stageAsk({ anchor: "a2", type: "question", body: "y" });
+      store
+        .getState()
+        .reviewActions.stageAsk({ id: "a1", anchor: "a1", type: "comment", body: "x" });
+      store
+        .getState()
+        .reviewActions.stageAsk({ id: "a2", anchor: "a2", type: "question", body: "y" });
       expect(selectVerdictArithmetic(store.getState())).toEqual({
         proposed: "COMMENT",
         requestChanges: 0,
@@ -91,8 +106,12 @@ describe("handoff/selectors", () => {
 
     it("proposes Request Changes when any request-change ask is staged", () => {
       const store = createRennetStore();
-      store.getState().reviewActions.stageAsk({ anchor: "a1", type: "comment", body: "x" });
-      store.getState().reviewActions.stageAsk({ anchor: "a2", type: "request-change", body: "y" });
+      store
+        .getState()
+        .reviewActions.stageAsk({ id: "a1", anchor: "a1", type: "comment", body: "x" });
+      store
+        .getState()
+        .reviewActions.stageAsk({ id: "a2", anchor: "a2", type: "request-change", body: "y" });
       expect(selectVerdictArithmetic(store.getState())).toEqual({
         proposed: "REQUEST_CHANGES",
         requestChanges: 1,
@@ -105,8 +124,18 @@ describe("handoff/selectors", () => {
     it("routes a code anchor to line comments and a prose anchor to the body", () => {
       const store = createRennetStore();
       const { reviewActions } = store.getState();
-      reviewActions.stageAsk({ anchor: "the opener prose", type: "comment", body: "b" });
-      reviewActions.stageAsk({ anchor: "src/a.ts:12", type: "request-change", body: "l" });
+      reviewActions.stageAsk({
+        id: "the opener prose",
+        anchor: "the opener prose",
+        type: "comment",
+        body: "b",
+      });
+      reviewActions.stageAsk({
+        id: "src/a.ts:12",
+        anchor: "src/a.ts:12",
+        type: "request-change",
+        body: "l",
+      });
       const { body, line } = selectBodyVsLineAsks(store.getState());
       expect(body.map((a) => a.anchor)).toEqual(["the opener prose"]);
       expect(line.map((a) => a.anchor)).toEqual(["src/a.ts:12"]);

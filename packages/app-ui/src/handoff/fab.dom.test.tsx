@@ -16,7 +16,7 @@ import { ExitFab } from "./fab";
 const noop = () => undefined;
 const store = () => useRennetStore.getState();
 function stage(anchor: string) {
-  act(() => store().reviewActions.stageAsk({ anchor, type: "comment", body: "b" }));
+  act(() => store().reviewActions.stageAsk({ id: anchor, anchor, type: "comment", body: "b" }));
 }
 const pip = (root: ParentNode) => root.querySelector('[data-pip="exit"]');
 

@@ -110,7 +110,7 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr }: RoundsLanesPro
       const ask = findAsk(quote);
       if (!ask) return;
       retire(ask, "dropped from the round");
-      unstageAsk(ask.anchor);
+      unstageAsk(ask.id);
     },
     explain: (quote) => {
       const ask = findAsk(quote);
@@ -178,7 +178,7 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr }: RoundsLanesPro
           <ProseSelectionLayer draftHandlers={draftHandlers}>
             <div className="flex flex-col gap-3">
               {asks.map((ask) => (
-                <AskCard key={ask.anchor} ask={ask} patchsetId={patchsetId} />
+                <AskCard key={ask.id} ask={ask} patchsetId={patchsetId} />
               ))}
             </div>
           </ProseSelectionLayer>

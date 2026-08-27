@@ -69,11 +69,12 @@ export function CodeBlock({
   // Lines with a staged request-change ask (anchor `${path}:${line}`) read danger red.
   const askLines = useMemo(() => {
     const lines = new Set<number>();
-    for (const [anchor, ask] of Object.entries(stagedAsks)) {
+    // Match by the ask's `anchor` (its provenance), never the map key (now the ask id, not anchor).
+    for (const ask of Object.values(stagedAsks)) {
       if (ask.type !== "request-change") continue;
-      const colon = anchor.lastIndexOf(":");
-      if (colon < 0 || anchor.slice(0, colon) !== path) continue;
-      const line = Number.parseInt(anchor.slice(colon + 1), 10);
+      const colon = ask.anchor.lastIndexOf(":");
+      if (colon < 0 || ask.anchor.slice(0, colon) !== path) continue;
+      const line = Number.parseInt(ask.anchor.slice(colon + 1), 10);
       if (!Number.isNaN(line)) lines.add(line);
     }
     return lines;
@@ -244,7 +245,9 @@ export function CodeBlock({
                         // A code line is a real diff position: the comment saves AND a
                         // request-change ask stages against `${path}:${line}` (R36).
                         setCodeComment(path, lineNumber, text);
+                        // Identity is `path:line` — one request-change per line (re-save replaces).
                         stageAsk({
+                          id: `${path}:${lineNumber}`,
                           anchor: `${path}:${lineNumber}`,
                           type: "request-change",
                           body: text,

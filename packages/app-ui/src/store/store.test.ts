@@ -50,7 +50,9 @@ describe("rennet store", () => {
   describe("review slice", () => {
     it("stages and unstages asks; per-line comments", () => {
       const store = createRennetStore();
-      store.getState().reviewActions.stageAsk({ anchor: "a1", type: "comment", body: "x" });
+      store
+        .getState()
+        .reviewActions.stageAsk({ id: "a1", anchor: "a1", type: "comment", body: "x" });
       expect(selectStagedAskCount(store.getState())).toBe(1);
       store.getState().reviewActions.setCodeComment("src/a.ts", 12, "note");
       expect(selectCodeComment("src/a.ts", 12)(store.getState())).toBe("note");
@@ -58,6 +60,51 @@ describe("rennet store", () => {
       expect(selectStagedAskCount(store.getState())).toBe(0);
       store.getState().reviewActions.clearCodeComment("src/a.ts", 12);
       expect(selectCodeComment("src/a.ts", 12)(store.getState())).toBeUndefined();
+    });
+
+    it("two asks on the SAME anchor coexist — identity is the id, not the anchor (finding 6)", () => {
+      const store = createRennetStore();
+      const a = store.getState().reviewActions;
+      // Two distinct intents sharing one anchor (a board finding and a manual line comment on the
+      // same line). Anchor-keyed, the second overwrote the first; id-keyed, both stand.
+      a.stageAsk({
+        id: "finding-7",
+        anchor: "src/a.ts:5",
+        type: "request-change",
+        body: "guard it",
+      });
+      a.stageAsk({
+        id: "src/a.ts:5",
+        anchor: "src/a.ts:5",
+        type: "comment",
+        body: "also note this",
+      });
+      expect(selectStagedAskCount(store.getState())).toBe(2);
+      const bodies = Object.values(store.getState().review.stagedAsks).map((x) => x.body);
+      expect(bodies).toContain("guard it");
+      expect(bodies).toContain("also note this");
+    });
+
+    it("a deleted ask's edit never haunts a later ask at the same anchor (finding 6)", () => {
+      const store = createRennetStore();
+      const a = store.getState().reviewActions;
+      // Stage, edit inline (draftEdits keyed by id), then delete (retire + unstage).
+      a.stageAsk({ id: "src/a.ts:5", anchor: "src/a.ts:5", type: "request-change", body: "orig" });
+      a.setDraftEdit("src/a.ts:5", "MY EDIT");
+      a.retire(
+        { id: "src/a.ts:5", anchor: "src/a.ts:5", type: "request-change", body: "orig" },
+        "deleted",
+      );
+      a.unstageAsk("src/a.ts:5");
+      // The edit is gone — unstage dropped it, so a fresh ask at the same anchor inherits nothing.
+      expect(store.getState().review.draftEdits["src/a.ts:5"]).toBeUndefined();
+      a.stageAsk({
+        id: "src/a.ts:5",
+        anchor: "src/a.ts:5",
+        type: "request-change",
+        body: "brand new",
+      });
+      expect(store.getState().review.draftEdits["src/a.ts:5"]).toBeUndefined();
     });
 
     it("mints quote threads, appends replies, and removes them; explain carries its kind", () => {
@@ -94,9 +141,12 @@ describe("rennet store", () => {
       const store = createRennetStore();
       const a = store.getState().reviewActions;
       // Seed EVERY pre-C04 field with a distinct value.
-      a.stageAsk({ anchor: "src/x.ts:3", type: "request-change", body: "fix" });
+      a.stageAsk({ id: "src/x.ts:3", anchor: "src/x.ts:3", type: "request-change", body: "fix" });
       a.setCodeComment("src/x.ts", 3, "note");
-      a.retire({ anchor: "ask-old", type: "comment", body: "old note" }, "dropped by you");
+      a.retire(
+        { id: "ask-old", anchor: "ask-old", type: "comment", body: "old note" },
+        "dropped by you",
+      );
       a.setVerdictOverride("REQUEST_CHANGES");
       a.setDraftEdit("pr-body", "draft text");
       a.setFocusedThread("qt-existing");
@@ -152,7 +202,7 @@ describe("rennet store", () => {
   it("reload semantics: a fresh store is clean, nothing rehydrated", () => {
     const first = createRennetStore();
     first.getState().uiActions.toggleSidebar();
-    first.getState().reviewActions.stageAsk({ anchor: "a1", type: "comment", body: "x" });
+    first.getState().reviewActions.stageAsk({ id: "a1", anchor: "a1", type: "comment", body: "x" });
     first.getState().runActions.setRoundProgress(0.9);
     // A brand-new store (the "reload") shares NO state with the first — no persist.
     const second = createRennetStore();
@@ -163,8 +213,10 @@ describe("rennet store", () => {
 
   it("derive-don't-store: the staged-ask count is computed, unmoved by unrelated actions", () => {
     const store = createRennetStore();
-    store.getState().reviewActions.stageAsk({ anchor: "a1", type: "comment", body: "x" });
-    store.getState().reviewActions.stageAsk({ anchor: "a2", type: "question", body: "y" });
+    store.getState().reviewActions.stageAsk({ id: "a1", anchor: "a1", type: "comment", body: "x" });
+    store
+      .getState()
+      .reviewActions.stageAsk({ id: "a2", anchor: "a2", type: "question", body: "y" });
     const before = selectStagedAskCount(store.getState());
     // Arbitrary unrelated mutations across other slices must not move a DERIVED count.
     store.getState().uiActions.toggleSidebar();

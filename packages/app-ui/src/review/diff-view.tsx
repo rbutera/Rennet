@@ -358,11 +358,12 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
   // reads danger red; a plain comment reads evidence green.
   const askLines = React.useMemo(() => {
     const set = new Set<number>();
-    for (const [anchor, ask] of Object.entries(stagedAsks)) {
+    // Match by the ask's `anchor` (its provenance), never the map key (now the ask id, not anchor).
+    for (const ask of Object.values(stagedAsks)) {
       if (ask.type !== "request-change") continue;
-      const colon = anchor.lastIndexOf(":");
-      if (colon < 0 || anchor.slice(0, colon) !== path) continue;
-      const line = Number.parseInt(anchor.slice(colon + 1), 10);
+      const colon = ask.anchor.lastIndexOf(":");
+      if (colon < 0 || ask.anchor.slice(0, colon) !== path) continue;
+      const line = Number.parseInt(ask.anchor.slice(colon + 1), 10);
       if (!Number.isNaN(line)) set.add(line);
     }
     return set;
@@ -480,7 +481,9 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
                     // ask stages against `${path}:${line}` — the SAME object a board
                     // excerpt's editor writes (R36).
                     setCodeComment(path, commentLine, text);
+                    // Identity is `path:line` — one request-change per line (re-save replaces it).
                     stageAsk({
+                      id: `${path}:${commentLine}`,
                       anchor: `${path}:${commentLine}`,
                       type: "request-change",
                       body: text,

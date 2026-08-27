@@ -52,7 +52,12 @@ function stage(anchor: string) {
   act(() =>
     useRennetStore
       .getState()
-      .reviewActions.stageAsk({ anchor, type: "request-change", body: `ask ${anchor}` }),
+      .reviewActions.stageAsk({
+        id: anchor,
+        anchor,
+        type: "request-change",
+        body: `ask ${anchor}`,
+      }),
   );
 }
 

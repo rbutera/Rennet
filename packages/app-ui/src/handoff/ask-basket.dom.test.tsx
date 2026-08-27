@@ -13,7 +13,9 @@ import { selectExitPipCount } from "./selectors";
 const store = () => useRennetStore.getState();
 const pip = () => selectExitPipCount(useRennetStore.getState());
 function stage(anchor: string, type: "comment" | "request-change" = "comment") {
-  act(() => store().reviewActions.stageAsk({ anchor, type, body: `body for ${anchor}` }));
+  act(() =>
+    store().reviewActions.stageAsk({ id: anchor, anchor, type, body: `body for ${anchor}` }),
+  );
 }
 
 afterEach(() => {

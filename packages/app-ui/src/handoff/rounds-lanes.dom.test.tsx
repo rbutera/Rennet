@@ -34,7 +34,7 @@ function stage(
   body = `body for ${anchor}`,
   type: "comment" | "request-change" = "comment",
 ) {
-  act(() => store().reviewActions.stageAsk({ anchor, type, body }));
+  act(() => store().reviewActions.stageAsk({ id: anchor, anchor, type, body }));
 }
 
 /** Select the contents of `el`, then release the mouse on it (the anchoring gesture). */

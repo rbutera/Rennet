@@ -32,7 +32,7 @@ function stage(
   type: "comment" | "request-change" = "comment",
   body = `body for ${anchor}`,
 ) {
-  act(() => store().reviewActions.stageAsk({ anchor, type, body }));
+  act(() => store().reviewActions.stageAsk({ id: anchor, anchor, type, body }));
 }
 
 /** Select the contents of `el`, then release the mouse on it (the anchoring gesture). */
@@ -143,6 +143,7 @@ describe("PostReviewLane", () => {
 
     fireEvent.click(r.getByRole("button", { name: /Restore/ }));
     expect(store().review.stagedAsks["src/a.ts:5"]).toEqual({
+      id: "src/a.ts:5",
       anchor: "src/a.ts:5",
       type: "request-change",
       body: "guard the boundary",

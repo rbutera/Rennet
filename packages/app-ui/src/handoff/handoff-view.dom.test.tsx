@@ -39,6 +39,7 @@ describe("HandoffView", () => {
   it("dispatches your own branch to the staged-ask surface", () => {
     act(() =>
       store().reviewActions.stageAsk({
+        id: "This is my change.",
         anchor: "This is my change.",
         type: "comment",
         body: "note to self",

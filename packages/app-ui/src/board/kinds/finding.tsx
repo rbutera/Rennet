@@ -61,7 +61,10 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
   // The ask's source anchor is the finding's first cited position, mirroring C4's
   // `path:line` anchor convention; with no citation it falls back to the element id.
   const anchor = citations[0] ? `${citations[0].path}:${citations[0].startLine}` : element.id;
-  const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[anchor]));
+  // The ask IDENTITY is the finding's element id — stable and unique per finding, so toggling is
+  // idempotent (one ask per finding) and two findings citing the same line never collapse.
+  const askId = element.id;
+  const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[askId]));
 
   return (
     <div
@@ -121,10 +124,10 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
                   type="button"
                   onClick={() => {
                     if (staged) {
-                      unstageAsk(anchor);
+                      unstageAsk(askId);
                       return;
                     }
-                    stageAsk({ anchor, type: "request-change", body: fix });
+                    stageAsk({ id: askId, anchor, type: "request-change", body: fix });
                     flight.signal(); // a real staging act flies one bubble to the FAB (never unstage)
                   }}
                   className={cn(

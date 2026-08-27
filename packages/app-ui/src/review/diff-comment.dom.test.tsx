@@ -65,6 +65,7 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     await user.click(getByText("Request Changes"));
     expect(useRennetStore.getState().review.codeComments[PATH]?.[1]).toBe("rename this");
     expect(useRennetStore.getState().review.stagedAsks[`${PATH}:1`]).toEqual({
+      id: `${PATH}:1`,
       anchor: `${PATH}:1`,
       type: "request-change",
       body: "rename this",
@@ -78,6 +79,7 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     useRennetStore.getState().reviewActions.setCodeComment(PATH, 1, "plain note");
     useRennetStore.getState().reviewActions.setCodeComment(PATH, 2, "ask body");
     useRennetStore.getState().reviewActions.stageAsk({
+      id: `${PATH}:2`,
       anchor: `${PATH}:2`,
       type: "request-change",
       body: "ask body",

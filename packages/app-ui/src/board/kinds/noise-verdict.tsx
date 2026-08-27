@@ -18,7 +18,9 @@ export function NoiseVerdictElement({ element }: { readonly element: ElementOf<"
   const { stageAsk, unstageAsk } = useRennetStore((s) => s.reviewActions);
   const flight = useFlightBatcher();
   const anchor = ref ? `${ref.path}:${ref.startLine}` : element.id;
-  const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[anchor]));
+  // Identity is the element id (stable, unique per hunk verdict) so the toggle is idempotent.
+  const askId = element.id;
+  const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[askId]));
   const noise = verdict === "noise";
   return (
     <div
@@ -41,10 +43,10 @@ export function NoiseVerdictElement({ element }: { readonly element: ElementOf<"
           type="button"
           onClick={() => {
             if (staged) {
-              unstageAsk(anchor);
+              unstageAsk(askId);
               return;
             }
-            stageAsk({ anchor, type: "comment", body: `not noise: ${reason}` });
+            stageAsk({ id: askId, anchor, type: "comment", body: `not noise: ${reason}` });
             flight.signal(); // a real staging act flies one bubble to the FAB (never unstage)
           }}
           className="ml-auto rounded border border-border px-2 py-0.5 text-muted-foreground text-xs hover:bg-secondary hover:text-foreground"
