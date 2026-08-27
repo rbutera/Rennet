@@ -19,9 +19,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 3. Live-narration sub-blocks (state-driven, not self-timed)
 
-- [ ] 3.1 `packages/app-ui/src/chat/streaming-prose.tsx` (port): per-word CSS-delay reveal, `animate=false` renders instantly (records replay, never re-arrive).
-- [ ] 3.2 `packages/app-ui/src/chat/thought-block.tsx` + `chat/action-step.tsx` (port): collapsing "Thinking → Thought for Ns" with manual re-expand; running-spinner → done-label. **Reconciliation 2:** the block's live/settled look follows the turn's real `status` (`streaming`/`complete`/`interrupted`) from the stream, NOT the spike's self-timed `setTimeout` fixture animation.
-- [ ] 3.3 DOM tests: a `streaming`-status thought block reads live and collapses on `complete`; an `interrupted` turn's blocks settle truthfully (no infinite spinner); `streaming-prose` renders instantly when `animate=false`. Cluster gate green. Commit.
+- [x] 3.1 `packages/app-ui/src/chat/streaming-prose.tsx` (port): per-word CSS-delay reveal, `animate=false` renders instantly (records replay, never re-arrive).
+- [x] 3.2 `packages/app-ui/src/chat/thought-block.tsx` + `chat/action-step.tsx` (port): collapsing "Thinking → Thought for Ns" with manual re-expand; running-spinner → done-label. **Reconciliation 2:** the block's live/settled look follows the turn's real `status` (`streaming`/`complete`/`interrupted`) from the stream, NOT the spike's self-timed `setTimeout` fixture animation.
+- [x] 3.3 DOM tests: a `streaming`-status thought block reads live and collapses on `complete`; an `interrupted` turn's blocks settle truthfully (no infinite spinner); `streaming-prose` renders instantly when `animate=false`. Cluster gate green. Commit.
 
 ## 4. Composer + badges + orchestrator presence
 
