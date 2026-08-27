@@ -12,7 +12,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 - [x] 2.1 `packages/adapters/src/related-context.ts` (first slice): `extractRefs({branchName, commitMessages, prTitle, prBody})` → typed refs (GitHub `#123` / `owner/repo#123` / issue URLs; JIRA `ABC-123` keys gated on a configured or plausibly-detected project prefix; Linear refs likewise) with provenance (which source string matched, where). Pure string logic, no I/O. Dedup preserving first-seen provenance.
 - [x] 2.2 The gh runner port: `GhRunner` execFile seam (`git-range-diff.ts`'s `GitExec` pattern — injected, tests never spawn). Fetchers: `gh pr view --json` for PR description+comments, `gh api` for issue title/state/body/comments and one-hop linked issues. Timeouts bounded (the `github-fetch.ts` deadline philosophy); a failed fetch is a typed per-ref failure, never a crash and never silently empty.
-- [ ] 2.3 Tests: extraction fixtures per source + provenance + dedup; gh fetchers against canned runner outputs (success, 404, timeout).
+- [x] 2.3 Tests: extraction fixtures per source + provenance + dedup; gh fetchers against canned runner outputs (success, 404, timeout).
 - [ ] 2.4 Gate green.
 
 ## Cluster 3 — retrieval worker + dossier build + durable store
