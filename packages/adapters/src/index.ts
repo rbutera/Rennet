@@ -8,6 +8,12 @@ export {
   type Timers,
   type WatchFn,
 } from "./baseline-advance-watcher";
+export {
+  type BoardMetaInput,
+  type BoardMetaRecord,
+  BoardMetaRecordSchema,
+  BoardMetaStore,
+} from "./board-meta-store";
 export { checkpointGitCommand, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 export {
   type ClaudeCiRefinementTurnOptions,
