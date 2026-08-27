@@ -90,16 +90,17 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     expect(r.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
   });
 
-  it("reaches the round's frozen generation through the generation switcher", async () => {
+  it("opens the round's own generation; the switcher stays hidden (no persisted predecessor)", () => {
+    // Finding 3: a PRODUCER-shaped `RoundRecord` carries one generation
+    // (`boardGeneration === mintedPatchsetGeneration` for a landed round), and the frozen
+    // predecessor is never persisted onto the record — so there is NO earlier generation id to
+    // hand the switcher. The ledger opens the round's own boards (gen2), and the generation
+    // switcher does not render. Frozen-predecessor reachability is parked pending a B9
+    // `RoundRecord` predecessor field (C09 ledger, F3) — asserting a gen1 tab here would claim
+    // a reachability production cannot deliver.
     const { r } = renderWorkspace("/s/s-1?view=rounds", fixtureCompletedRoundsSource);
-    // The switcher is present with the frozen (gen1) predecessor alongside the live (gen2).
-    const switcher = r.container.querySelector('[data-kind="generation-switcher"]');
-    expect(switcher).not.toBeNull();
-    const frozenTab = switcher?.querySelector('[data-generation="gen1"][data-frozen="true"]');
-    expect(frozenTab).not.toBeNull();
-    // Drilling to it renders the frozen generation's board — reachable, not just labelled.
-    await r.user.click(frozenTab as HTMLElement);
-    expect(r.container.querySelector('article[data-generation="gen1"]')).not.toBeNull();
+    expect(r.container.querySelector('article[data-generation="gen2"]')).not.toBeNull();
+    expect(r.container.querySelector('[data-kind="generation-switcher"]')).toBeNull();
   });
 
   it("falls back to the board on a ?view=rounds deep-link with no completed round", () => {

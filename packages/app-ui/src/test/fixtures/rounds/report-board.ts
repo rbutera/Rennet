@@ -97,14 +97,23 @@ export const FIXTURE_REPORT_BOARDS: Readonly<Record<string, LensBoard>> = {
 };
 
 /**
- * The completed round-1 record — the ledger row (C09 §6). It points at the report board
- * above, the generation it reported against (`gen1`), and the generation its worker's
- * commits minted (`gen2`, the frozen new generation reachable via the switcher).
+ * The completed round-1 record — the ledger row (C09 §6), PRODUCER-SHAPED (finding 3). A
+ * landed round reports against the generation its OWN worker just minted, so the real
+ * producer sets `boardGeneration === mintedPatchsetGeneration` — both the newly minted `gen2`
+ * (`server/src/runtime/rounds.ts:319`). The earlier draft fixture set them to two different
+ * ids (`gen1`/`gen2`) — a shape the producer never emits — which made the ledger's
+ * dedup-to-one look like a two-generation history it can never actually be.
+ *
+ * The frozen PREDECESSOR (the pre-round generation the reviewer would drill back to) is NOT
+ * on the `RoundRecord`: the runtime freezes it as `RoundOutcome.frozenPrevious` but does not
+ * persist it into the record. So a producer-shaped record carries exactly ONE generation, and
+ * frozen-generation reachability through the switcher is parked pending a B9 `RoundRecord`
+ * predecessor field (see the C09 ledger, F3).
  */
 export const completedRoundRecord: RoundRecord = {
   asksDispatched: ["ask-observability", "ask-network"],
   workerCommitRange: { from: "commit-from", to: "commit-to" },
   mintedPatchsetGeneration: "gen2",
-  boardGeneration: "gen1",
+  boardGeneration: "gen2",
   reportBoard: "report-round-1",
 };

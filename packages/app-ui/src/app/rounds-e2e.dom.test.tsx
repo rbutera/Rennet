@@ -155,10 +155,13 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     expect(r.container.querySelectorAll('[data-testid="delta-dot"]')).toHaveLength(2);
   });
 
-  it("the completed round is reachable in the ledger, its frozen generation drillable", async () => {
+  it("the completed round is reachable in the ledger, opening its own generation", () => {
     // After a round completes its record sits in the ledger; `?view=rounds` opens it —
-    // the row, its report, and its frozen generation, proven end to end over the real
-    // workspace + the completed-round source.
+    // the row, its report, and its own generation's boards, proven end to end over the real
+    // workspace + the completed-round source. Finding 3: a producer-shaped `RoundRecord`
+    // carries ONE generation (gen2), no persisted frozen predecessor — so the generation
+    // switcher does not render, and drilling back to the predecessor is parked pending a B9
+    // `RoundRecord` predecessor field (C09 ledger, F3).
     const history = memoryHistory("/s/s-1?view=rounds");
     const led = mount(
       <BridgeProvider bridge={new MemoryBridge({})}>
@@ -175,13 +178,9 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     expect(led.container.querySelector('[data-screen="rounds-ledger"]')).not.toBeNull();
     expect(led.container.querySelector('[data-round="1"]')).not.toBeNull();
     expect(led.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
-    // The frozen generation (gen1) is reachable through C5's generation switcher.
-    const switcher = led.container.querySelector('[data-kind="generation-switcher"]');
-    const frozenTab = switcher?.querySelector('[data-generation="gen1"][data-frozen="true"]');
-    expect(frozenTab).not.toBeNull();
-    const user = led.user;
-    await user.click(frozenTab as HTMLElement);
-    expect(led.container.querySelector('article[data-generation="gen1"]')).not.toBeNull();
+    // The round opens on its own generation (gen2); no frozen predecessor to switch to.
+    expect(led.container.querySelector('article[data-generation="gen2"]')).not.toBeNull();
+    expect(led.container.querySelector('[data-kind="generation-switcher"]')).toBeNull();
     led.unmount();
   });
 

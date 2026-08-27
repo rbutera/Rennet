@@ -15,11 +15,16 @@ import { useReportBoard } from "./rounds-data";
 // artefacts (INVENTORY §7.3):
 //   - its REPORT — the `RoundRecord.reportBoard`, rendered through cluster 2's shared
 //     `RoundReportBoard` (the same body the greeting mounts);
-//   - its FROZEN GENERATION — reachable through C5's `GenerationSwitcher` by handing
-//     `LensBoardView` the record's `[boardGeneration, mintedPatchsetGeneration]` (the
-//     #457 append-then-freeze pair: the generation it reported against, and the one its
-//     worker minted), so drilling back is just a generation id on the one board seam;
-//   - its DIFF — the diff surface, reachable by toggling `?view=diff`.
+//   - its GENERATION — the round's own boards, on the one `LensBoardView` seam. NOTE (finding
+//     3): a producer-shaped `RoundRecord` carries only ONE generation. The real producer sets
+//     `boardGeneration === mintedPatchsetGeneration` for a landed round (a round reports
+//     against the generation its own worker minted — `server/src/runtime/rounds.ts:319`), and
+//     the frozen PREDECESSOR is never persisted onto the record (the runtime freezes it as
+//     `RoundOutcome.frozenPrevious` only). So there is no earlier generation id to hand the
+//     switcher, and drilling BACK to the round's frozen predecessor is parked pending a B9
+//     `RoundRecord` predecessor field (see the C09 ledger, F3);
+//   - its DIFF — the diff surface, reachable by toggling `?view=diff` with the round's
+//     generation identity (finding 2).
 //
 // The ledger owns no round data of its own: records arrive from `useRoundRecords`
 // (read by the workspace, handed in as `records` — the workspace already needs the
@@ -50,12 +55,13 @@ export function RoundsLedger({
   if (!selected) return null; // the workspace guards `records.length > 0`; honest no-op otherwise.
 
   const { record } = selected;
-  const frozen = record.boardGeneration;
-  const minted = record.mintedPatchsetGeneration;
-  // oldest→newest, deduped: the generation the round reported against, then the one its
-  // worker minted (if anything landed). One id ⇒ nothing to drill into (switcher hides).
-  const generations = minted && minted !== frozen ? [frozen, minted] : [frozen];
-  const liveGeneration = minted ?? frozen;
+  // The round's own generation. A producer-shaped `RoundRecord` carries exactly ONE
+  // generation id: `boardGeneration` (and, when the round landed, an equal
+  // `mintedPatchsetGeneration`) — never an earlier, frozen predecessor (finding 3). So the
+  // ledger opens the round's boards on the single live generation; the generation switcher
+  // stays hidden (it needs ≥2 ids), and drilling back to the frozen predecessor is parked
+  // pending a B9 `RoundRecord` predecessor field.
+  const liveGeneration = record.boardGeneration;
 
   return (
     <section
@@ -116,7 +122,7 @@ export function RoundsLedger({
           Round diff
         </button>
 
-        <LensBoardView generation={liveGeneration} generations={generations} />
+        <LensBoardView generation={liveGeneration} />
       </div>
     </section>
   );
