@@ -18,7 +18,7 @@
 import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import type { HarnessTurnResult } from "../harness-run-turn";
-import type { KnowledgeProvenanceSeed, KnowledgeSnapshotContext } from "../knowledge-generation";
+import type { KnowledgeProvenanceSeed, KnowledgeSnapshotContext } from "./mint";
 import {
   dedupById,
   KNOWLEDGE_CONTRACT,

@@ -243,16 +243,6 @@ export {
   knowledgeBackend,
 } from "./knowledge-backend";
 export {
-  createKnowledgeRunTurn,
-  type EnrichKnowledgeDeps,
-  type EnrichKnowledgeOutcome,
-  enrichKnowledgeForRepo,
-  type KnowledgeDeltaDeps,
-  type KnowledgeDeltaOutcome,
-  type KnowledgeRunTurnOptions,
-  runKnowledgeDeltaForRepo,
-} from "./knowledge-enrichment";
-export {
   committedKnowledgeDir,
   type DiscoverKnowledgeResult,
   KNOWLEDGE_FILE,

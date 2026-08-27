@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HarnessTurnResult } from "../harness-run-turn";
-import type { KnowledgeSnapshotContext } from "../knowledge-generation";
+import type { KnowledgeSnapshotContext } from "./mint";
 import type { PartitionSlice } from "./partition";
 import { runMapVerify, runPartitionWorker } from "./swarm";
 

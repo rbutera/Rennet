@@ -1,9 +1,8 @@
 /**
- * Mint-time honesty helpers, extracted verbatim from `knowledge-generation.ts`
+ * Mint-time honesty helpers, extracted verbatim from the retired flat pass
  * (B06 cluster 3): the ONE implementation of anchor→blobOid resolution,
- * anchor-or-drop, hypothesis stamping, and statement parsing/dedup. Both the
- * flat pass (until its cluster-5 retirement) and the partition swarm mint
- * through here — no second implementation.
+ * anchor-or-drop, hypothesis stamping, and statement parsing/dedup. Every
+ * statement the swarm mints comes through here — no second implementation.
  *
  * The honesty contract is enforced at mint time, not asserted:
  *  - every emitted statement's evidence is resolved to authoritative `blobOid`s
@@ -22,8 +21,26 @@ import type {
   KnowledgeConfidence,
   KnowledgeStatement,
 } from "@rennet/protocol";
-import type { KnowledgeProvenanceSeed, KnowledgeSnapshotContext } from "../knowledge-generation";
 import { knowledgeStatementId } from "./read";
+
+/** A compact, model-facing projection of the snapshot the swarm reasons over. */
+export interface KnowledgeSnapshotContext {
+  readonly repoKey: string;
+  readonly baseOid: string;
+  readonly snapshotFingerprint: string;
+  /** The file inventory `path → blobOid`; the anchor-resolution authority. */
+  readonly files: readonly { readonly path: string; readonly blobOid: string }[];
+  /** Workspace scopes (name + root) — the natural subjects to enrich. */
+  readonly scopes: readonly { readonly name: string; readonly root: string }[];
+}
+
+/** The provenance a caller knows before the run; the model/apiKeySource is observed per turn. */
+export interface KnowledgeProvenanceSeed {
+  readonly model: string | null;
+  readonly apiKeySource: string | null;
+  /** Override the generator id (defaults to the swarm's). */
+  readonly generator?: string;
+}
 
 /**
  * The JSON output schema a statement-emitting session is constrained to (passed

@@ -549,17 +549,22 @@ async function enrichMap(input: {
   }
   io.out("Discovering harnesses");
   const { adapter } = await createClaudeHarness({ env });
+  // The hermetic harness-off hook (#386) covers the codex probe too — discovery
+  // must not spawn a login shell in a harness-disabled environment.
   const explicitBin = env.RENNET_CODEX_BIN;
-  const codexDiscovery = await discoverCodex(defaultCodexDiscoveryDeps(), {
-    ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
-  });
-  const codexExecutor = codexDiscovery.chosen
+  const codexChosen =
+    env.RENNET_DISABLE_HARNESS === "1"
+      ? null
+      : (
+          await discoverCodex(defaultCodexDiscoveryDeps(), {
+            ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
+          })
+        ).chosen;
+  const codexExecutor = codexChosen
     ? createCodexExecutor(defaultCodexExecEffects, {
-        bin: codexDiscovery.chosen.path,
-        harnessVersion: codexDiscovery.chosen.version,
-        ...(codexDiscovery.chosen.runtimePath === undefined
-          ? {}
-          : { runtimePath: codexDiscovery.chosen.runtimePath }),
+        bin: codexChosen.path,
+        harnessVersion: codexChosen.version,
+        ...(codexChosen.runtimePath === undefined ? {} : { runtimePath: codexChosen.runtimePath }),
       })
     : null;
   if (!adapter && !codexExecutor) {

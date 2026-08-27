@@ -27,6 +27,7 @@ import type {
 import { execaGit, type GitExec } from "./git-range-diff";
 import type { KnowledgeStore } from "./knowledge-store";
 import type { ProjectContextReader } from "./project-context-reader";
+import { extractClaudeUsage, type MetricsCollector } from "./turn-metrics";
 
 /**
  * The ADAPTER side of the partitioned knowledge swarm (#460, B06 cluster 5):
@@ -79,6 +80,10 @@ export interface SwarmTurnOptions {
   /** The read-only session's working directory (the repo root). Claude seats only. */
   readonly cwd: string;
   readonly signal?: AbortSignal;
+  /** Optional cost-metrics tap (the same seam the cost harness reads). */
+  readonly collector?: MetricsCollector;
+  /** The metrics label, e.g. "knowledge.worker". */
+  readonly label?: string;
 }
 
 /**
@@ -91,36 +96,68 @@ export function createClaudeSwarmTurn(
   model: string,
   outputSchema: unknown,
   options: SwarmTurnOptions,
+  now: () => number = Date.now,
 ): RunTurn {
-  return async function runTurn(prompt: string): Promise<HarnessTurnResult> {
+  const label = options.label ?? "knowledge.swarm";
+  return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
     const session = await port.createSession({
       cwd: options.cwd,
       outputSchema,
       model,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
+    const started = now();
+    let observedModel: string | null = null;
+    let apiKeySource: string | null = null;
+    const record = (
+      status: "emitted" | "failed",
+      usage: ReturnType<typeof extractClaudeUsage>,
+      error?: string,
+    ): void => {
+      options.collector?.record({
+        label,
+        docType: "review.hypothesis",
+        attempt,
+        model: observedModel,
+        apiKeySource,
+        status,
+        latencyMs: now() - started,
+        usage,
+        ...(error === undefined ? {} : { error }),
+      });
+    };
     try {
       await session.send({ prompt });
       for await (const event of session.events) {
-        if (event.kind === "error") return { status: "failed", message: event.error.message };
+        if (event.kind === "session.started") {
+          observedModel = event.model || null;
+          apiKeySource = event.apiKeySource ?? null;
+          continue;
+        }
+        if (event.kind === "error") {
+          record("failed", null, event.error.message);
+          return { status: "failed", message: event.error.message };
+        }
         if (event.kind !== "session.ended") continue;
         const outcome = event.outcome;
+        const usage = extractClaudeUsage(event.native);
         if (outcome.status === "completed") {
           if (outcome.structuredOutput === undefined) {
-            return {
-              status: "failed",
-              message: "the harness completed the swarm turn without structured output",
-            };
+            const message = "the harness completed the swarm turn without structured output";
+            record("failed", usage, message);
+            return { status: "failed", message };
           }
+          record("emitted", usage);
           return { status: "emitted", body: outcome.structuredOutput };
         }
-        return {
-          status: "failed",
-          message:
-            outcome.status === "failed" ? outcome.error.message : "the swarm turn was cancelled",
-        };
+        const message =
+          outcome.status === "failed" ? outcome.error.message : "the swarm turn was cancelled";
+        record("failed", usage, message);
+        return { status: "failed", message };
       }
-      return { status: "failed", message: "the harness stream ended without a terminal frame" };
+      const message = "the harness stream ended without a terminal frame";
+      record("failed", null, message);
+      return { status: "failed", message };
     } finally {
       await session.close();
     }
@@ -200,6 +237,8 @@ export interface KnowledgeSwarmDeps {
   readonly signal?: AbortSignal;
   readonly git?: GitExec;
   readonly onProgress?: (event: KnowledgeSwarmProgress) => void;
+  /** Optional cost-metrics tap for Claude-seat turns (the cost harness's seam). */
+  readonly collector?: MetricsCollector;
 }
 
 export type KnowledgeSwarmOutcome =
@@ -249,6 +288,8 @@ function turnFor(
   return {
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, schema, {
       cwd: deps.repoRoot,
+      label: jobId === "map-verify" ? "knowledge.verify" : "knowledge.worker",
+      ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
     }),
   };

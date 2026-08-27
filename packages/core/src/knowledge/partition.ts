@@ -1,4 +1,4 @@
-import type { KnowledgeSnapshotContext } from "../knowledge-generation";
+import type { KnowledgeSnapshotContext } from "./mint";
 
 /**
  * Partitioning is invisible plumbing (#460): slices exist only for the duration

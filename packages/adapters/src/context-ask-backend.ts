@@ -56,7 +56,7 @@ const DEFAULT_COUNCIL: CouncilResolveContext = { availability: { installed: ["cl
 
 /**
  * Build the injected `runTurn` for one ask turn, constrained to the ask output
- * schema (mirrors `createKnowledgeRunTurn`, leaner). The council-resolved model
+ * schema (mirrors `createClaudeSwarmTurn`, leaner). The council-resolved model
  * rides the session; the real model is negotiated by the harness. Any expected
  * failure (error frame, no structured output, cancellation) maps to a turn failure
  * the runner already handles.
