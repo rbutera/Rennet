@@ -14,8 +14,6 @@
  */
 
 import type {
-  Canvas,
-  CanvasAngle,
   Decomposition,
   Disposition,
   ElementDiffs,
@@ -40,11 +38,12 @@ export interface ReviewPipelineInput {
 
 export interface ReviewPipelineResult {
   /**
-   * The canvas set. EMPTY during the Board rebuild — the canvas projection was
-   * deleted (#489) and nothing live reads a built Canvas; the shape is retained so
-   * the surviving `reviewBackendCore` shell compiles until the Board replaces it.
+   * The canvas set. EMPTY during the Board rebuild — the canvas projection AND the
+   * protocol `Canvas`/`CanvasAngle` state model were deleted (#489, B2) and nothing
+   * live reads a built canvas; the field is retained (empty) so the result shape is
+   * stable for the B-series rewire.
    */
-  readonly canvases: Record<CanvasAngle, Canvas>;
+  readonly canvases: Record<string, never>;
   /** The per-element diff map. Empty with no canvases; the slicer survives standalone. */
   readonly elementDiffs: ElementDiffs;
   readonly decomposition: Decomposition;
@@ -83,7 +82,7 @@ export async function buildReviewCanvases(
   });
 
   return {
-    canvases: {} as Record<CanvasAngle, Canvas>,
+    canvases: {},
     elementDiffs: {},
     decomposition,
     routePlan,

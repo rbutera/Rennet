@@ -20,8 +20,6 @@
  */
 
 import type {
-  Canvas,
-  CanvasAngle,
   Decomposition,
   DecompositionProposalBody,
   ElementDiff,
@@ -32,6 +30,16 @@ import type {
   RspDocType,
 } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
+
+/**
+ * The slice of a canvas the diff slicer reads: its analysis elements' keys + anchors.
+ * Local shape — protocol's `Canvas`/`CanvasAngle` state model was deleted (#489, B2);
+ * the deterministic slicer survives standalone for the B-series to re-wire onto the
+ * Board surface. Only `elementKey` + `anchor` are read here.
+ */
+interface DiffSliceCanvas {
+  layers: { analysis: { elements: ReadonlyArray<{ elementKey: string; anchor: string }> } };
+}
 
 /**
  * An admitted RSP document, as the diff slicer consumes it: the adapter-minted
@@ -264,7 +272,7 @@ function renderDiff(
  * once — the map is deterministic regardless of canvas iteration order.
  */
 export function buildElementDiffs(
-  canvases: Record<CanvasAngle, Canvas>,
+  canvases: Record<string, DiffSliceCanvas>,
   decomposition: Decomposition,
   patchset: Patchset,
   admittedDocs: readonly AdmittedDocument[] = [],

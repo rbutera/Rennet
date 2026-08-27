@@ -1232,11 +1232,6 @@ export function createDispatch(
             compositionId,
           });
         }
-        case "review.canvases": {
-          // The five-angle canvas set is gone with the Board rebuild (B2); its Board
-          // replacement lands in a later track. Nothing serves this command today.
-          throw new Error("review.canvases is unavailable during the Board rebuild");
-        }
         // ── The front door: projects + discovery (issue #29) ──────────────────────
         case "harness.detect": {
           // The ambient detection line. Read-only, no repository, no index touch.
@@ -2133,49 +2128,6 @@ export function createDispatch(
             name,
             await deps.openInEditor({ review, path: input.path, line: input.line }),
           );
-        }
-        // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
-        case "canvas.disposition": {
-          // The sovereign L2 write maps directly onto the review's disposition path
-          // (#49 item 1/2 — the protocol input already uses `path`/`disposition`).
-          // A span/side (issue #78) makes it span-grained (the Spec view's per-node
-          // review); absent, it stays path-grained exactly as before.
-          const input = parseCommandInput(name, rawInput);
-          // Path safety at ingestion (#382 M2 finding 8): a disposition path must name a file INSIDE
-          // the repo. Refuse an absolute or traversing path so it can never be stored (and later
-          // composed into an outbound review). Diff paths are always repo-relative; this only
-          // rejects a crafted or corrupt one.
-          if (!isRepoRelativePath(input.path)) {
-            throw new Error(`Disposition refused: unsafe path (${input.path})`);
-          }
-          const review = service.setDisposition(
-            input.commandId,
-            input.reviewId,
-            input.patchsetId,
-            input.path,
-            input.disposition,
-            input.body,
-            input.span,
-            input.side,
-          );
-          return parseCommandOutput(name, { review });
-        }
-        case "canvas.adjudicateProposal": {
-          // L3 proposal resolution ack. Accepting a disposition proposal issues its
-          // L2 write as a separate `canvas.disposition` from the renderer (accepting
-          // is a user act); there is no durable L3 canvas-op store in this slice (#13).
-          const input = parseCommandInput(name, rawInput);
-          const review = requireReviewById(input.reviewId);
-          return parseCommandOutput(name, { review });
-        }
-        case "canvas.setCohortExpansion":
-        case "canvas.select":
-        case "canvas.pinAnnotation":
-        case "canvas.clearAnnotation": {
-          // L3 / view ops with no durable store in this slice (#13). Validate the
-          // input and acknowledge; the renderer holds the ephemeral view state.
-          parseCommandInput(name, rawInput);
-          return parseCommandOutput(name, { ok: true });
         }
         // ── Settings: the config ladder (wireframe #15) ───────────────────────────
         case "settings.get": {

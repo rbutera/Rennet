@@ -21,8 +21,6 @@ import {
   type ReviewStorePort,
 } from "@rennet/core";
 import type {
-  Canvas,
-  CanvasAngle,
   ComposedHandoffBundle,
   ContextManifest,
   FindingElement,
@@ -32,7 +30,6 @@ import type {
   Review,
 } from "@rennet/protocol";
 import {
-  CANVAS_ANGLES,
   type DetectedHarness,
   type DiscoveryResult,
   type ProcessedRepoSummary,
@@ -124,26 +121,6 @@ class InMemoryStore implements ReviewStorePort {
     this.#receipts.set(`${commandId}:${digest}`, result);
     return result;
   }
-}
-
-function canvasSet(): Record<CanvasAngle, Canvas> {
-  const one = (angle: CanvasAngle): Canvas => ({
-    canvasId: `cid-${angle}`,
-    reviewId: "review-1",
-    patchsetId: "patch-1",
-    angle,
-    layers: {
-      substrate: { chunks: [] },
-      analysis: { elements: [], cohorts: [], readingOrder: [] },
-      disposition: { dispositions: [] },
-      annotation: { annotations: [], proposals: [] },
-    },
-    overlay: [],
-  });
-  return Object.fromEntries(CANVAS_ANGLES.map((angle) => [angle, one(angle)])) as Record<
-    CanvasAngle,
-    Canvas
-  >;
 }
 
 /** A fake egress port that records posts, so a test can assert exactly one review. */
@@ -459,7 +436,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
       commandId: randomUUID(),
       repoPath: REPO,
     })) as { review: Review };
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: first.review.id,
       patchsetId: first.review.activePatchsetId,
@@ -530,67 +507,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   });
 });
 
-describe("createDispatch — canvas.* routing (issue #54)", () => {
-  it("routes canvas.disposition onto the review and returns the updated review", async () => {
-    const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-
-    const result = (await dispatch("canvas.disposition", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      patchsetId: review.activePatchsetId,
-      path: "src/a.ts",
-      disposition: "approve",
-      body: "looks right",
-    })) as { review: Review };
-
-    expect(result).not.toBeUndefined();
-    expect(result.review.dispositions).toHaveLength(1);
-    expect(result.review.dispositions[0]?.anchor.path).toBe("src/a.ts");
-    expect(result.review.dispositions[0]?.type).toBe("approve");
-  });
-
-  it("acknowledges the L3 ops rather than returning undefined", async () => {
-    const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-
-    const pin = await dispatch("canvas.pinAnnotation", {
-      commandId: randomUUID(),
-      canvasId: "cid-sequence",
-      annotationId: "ann-1",
-    });
-    const clear = await dispatch("canvas.clearAnnotation", {
-      commandId: randomUUID(),
-      canvasId: "cid-sequence",
-      annotationId: "ann-1",
-    });
-    const cohort = await dispatch("canvas.setCohortExpansion", {
-      commandId: randomUUID(),
-      canvasId: "cid-decisions",
-      cohortKey: "cohort:c1",
-      expanded: true,
-    });
-    const select = await dispatch("canvas.select", {
-      commandId: randomUUID(),
-      canvasId: "cid-sequence",
-      elementKey: "e1",
-    });
-
-    expect(pin).toEqual({ ok: true });
-    expect(clear).toEqual({ ok: true });
-    expect(cohort).toEqual({ ok: true });
-    expect(select).toEqual({ ok: true });
-
-    const adjudicate = (await dispatch("canvas.adjudicateProposal", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      canvasId: "cid-decisions",
-      proposalId: "prop-1",
-      outcome: "dismissed",
-    })) as { review: Review };
-    expect(adjudicate.review.id).toBe(review.id);
-  });
-
+describe("createDispatch — preserved command surface", () => {
   it("still serves the preserved MVP commands (app.bootstrap, review.setDisposition)", async () => {
     const { dispatch, startWatching } = harness();
     const review = await capturedReview(dispatch);
@@ -2037,7 +1954,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     // A postable review (postTarget = SANDBOX_TARGET) with a real disposition to collate.
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: review.id,
       patchsetId: review.activePatchsetId,
@@ -2099,7 +2016,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
   it("binds the composed artifact and refuses a stale-revision post (#382 M2 finding 2)", async () => {
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: review.id,
       patchsetId: review.activePatchsetId,
@@ -2125,7 +2042,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(consent.authorization).toBeTruthy();
     // A disposition edit lands AFTER the preview (another client edited) — the phone still holds
     // the old binding. The daemon recomputes it from the CURRENT dispositions and refuses.
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: review.id,
       patchsetId: review.activePatchsetId,
@@ -2161,16 +2078,6 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
   it("refuses a disposition with an unsafe path at ingestion (#382 M2 finding 8)", async () => {
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await expect(
-      dispatch("canvas.disposition", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        patchsetId: review.activePatchsetId,
-        path: "../../etc/passwd",
-        disposition: "comment",
-        body: "escape",
-      }),
-    ).rejects.toThrow(/unsafe path/i);
     await expect(
       dispatch("review.setDisposition", {
         commandId: randomUUID(),

@@ -1,16 +1,19 @@
-import type {
-  AnalysisElement,
-  Canvas,
-  CanvasAngle,
-  Decomposition,
-  Hunk,
-  PatchFile,
-  Patchset,
-} from "@rennet/protocol";
-import { CANVAS_ANGLES } from "@rennet/protocol";
+import type { Decomposition, Hunk, PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { decompose } from "./decomposition";
 import { type AdmittedDocument, buildElementDiffs } from "./element-diffs";
+
+// Local test shapes — protocol's `Canvas`/`CanvasAngle`/`AnalysisElement` state model
+// was deleted (#489, B2). The slicer reads only each canvas's analysis elements
+// (elementKey + anchor), so a minimal element + a plain angle→canvas record suffice.
+type TestElement = {
+  elementKey: string;
+  docId: string;
+  anchor: string;
+  kind: string;
+  title: string;
+};
+const ANGLES = ["spec", "sequence", "decisions", "noise", "flagged"] as const;
 
 const repository = {
   id: "repo",
@@ -48,32 +51,14 @@ const WIDGET = `@@ -1,3 +1,6 @@
  }
 +export const helper = () => widget();`;
 
-function blankCanvas(
-  angle: CanvasAngle,
-  elements: Canvas["layers"]["analysis"]["elements"],
-): Canvas {
-  return {
-    canvasId: `cid-${angle}`,
-    reviewId: "r1",
-    patchsetId: "patch-1",
-    angle,
-    layers: {
-      substrate: { chunks: [] },
-      analysis: { elements, cohorts: [], readingOrder: elements.map((el) => el.elementKey) },
-      disposition: { dispositions: [] },
-      annotation: { annotations: [], proposals: [] },
-    },
-    overlay: [],
-  };
+function blankCanvas(elements: readonly TestElement[]): {
+  layers: { analysis: { elements: readonly TestElement[] } };
+} {
+  return { layers: { analysis: { elements } } };
 }
 
-function setWith(
-  angle: CanvasAngle,
-  elements: Canvas["layers"]["analysis"]["elements"],
-): Record<CanvasAngle, Canvas> {
-  return Object.fromEntries(
-    CANVAS_ANGLES.map((a) => [a, blankCanvas(a, a === angle ? elements : [])]),
-  ) as Record<CanvasAngle, Canvas>;
+function setWith(angle: string, elements: readonly TestElement[]) {
+  return Object.fromEntries(ANGLES.map((a) => [a, blankCanvas(a === angle ? elements : [])]));
 }
 
 describe("buildElementDiffs", () => {
@@ -158,7 +143,7 @@ describe("buildElementDiffs", () => {
   it("resolves an agentic proposal chunk id (not in the floor) via the admitted docs", () => {
     const hunkId = decomposition.hunks[0]?.id ?? "";
     expect(hunkId).not.toBe("");
-    const element: AnalysisElement = {
+    const element: TestElement = {
       elementKey: "seq-el",
       docId: "pdoc",
       anchor: "rennet:chunk/agent-group",

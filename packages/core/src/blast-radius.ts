@@ -1,9 +1,19 @@
-import type {
-  BlastRadiusPaint,
-  BlastRadiusSignal,
-  OwnershipRule,
-  PatchFile,
-} from "@rennet/protocol";
+import type { BlastRadiusSignal, OwnershipRule, PatchFile } from "@rennet/protocol";
+
+/**
+ * A single amber blast-radius paint, targeting an element or anchor. Local shape —
+ * protocol's `BlastRadiusPaint` (a canvas-overlay type) was deleted (#489, B2); this
+ * deterministic producer survives standalone for the B-series to re-home. `assessed:
+ * false` marks a signal that was NOT computed (rendered "not assessed", never silently
+ * absent, so no-amber never reads as no-risk).
+ */
+export interface BlastRadiusPaint {
+  target: string;
+  docId?: string;
+  signal?: BlastRadiusSignal;
+  reason?: string;
+  assessed?: boolean;
+}
 
 // ── Blast-radius signal producer (issue #35) ─────────────────────────────────
 //
