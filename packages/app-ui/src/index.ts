@@ -100,16 +100,12 @@ export type {
 } from "./review";
 export {
   AnchorReveal,
-  CitationBlock,
   CodeBlock,
   CodeTabs,
   LineCommentEditor,
-  lineRef,
   ProseSelectionLayer,
-  parseRef,
   ReferenceChip,
   RichText,
-  spanToBlock,
   useSpanRead,
 } from "./review";
 // The router IS the running client now (C03 cutover): the desktop entries mount

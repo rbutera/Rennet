@@ -3,11 +3,14 @@
 // onto the real `review` store slice and the C01 data seam. Source hydration goes through
 // the span-read seam (citations.ts), never a filesystem read.
 
+// Public surface: the shared components, the CodeRef shape, and the span-read hook.
+// `lineRef`/`spanToBlock`/`parseRef`/`CitationBlock` are module-private helpers — the
+// review components below use them internally; nothing outside review/ imports them.
 export type { CodeRef, SpanRead } from "./citations";
-export { lineRef, spanToBlock, useSpanRead } from "./citations";
+export { useSpanRead } from "./citations";
 export { CodeBlock, type CodeBlockProps } from "./code-block";
-export { AnchorReveal, CitationBlock, CodeTabs } from "./code-tabs";
+export { AnchorReveal, CodeTabs } from "./code-tabs";
 export { LineCommentEditor, type LineCommentEditorProps } from "./line-comment-editor";
 export { ReferenceChip, type ReferenceChipProps } from "./reference-chip";
-export { parseRef, RichText, type RichTextProps } from "./rich-text";
+export { RichText, type RichTextProps } from "./rich-text";
 export { type DraftHandlers, ProseSelectionLayer } from "./selection-toolbar";
