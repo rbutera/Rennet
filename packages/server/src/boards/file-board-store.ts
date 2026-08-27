@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event, WireSchema } from "@wboard/core";
 import type { AppendEntry, BoardStore } from "@wboard/server";
@@ -102,8 +102,14 @@ export class FileBoardStore implements BoardStore {
     const { events, recovered } = await this.#readLog(boardId);
     if (recovered) {
       // Heal before anything appends after the garbage tail. Serialized-write
-      // context only (append); reads never rewrite.
-      await writeFile(join(this.#dir(boardId), "log.jsonl"), logLines(events));
+      // context only (append); reads never rewrite. Temp-then-rename so the
+      // heal itself is crash-safe: an in-place writeFile truncates first, and
+      // a crash in that window would lose the whole log. A crash before the
+      // rename leaves log.jsonl untouched (recovery just re-runs); rename is
+      // atomic on the same filesystem.
+      const dir = this.#dir(boardId);
+      await writeFile(join(dir, "log.jsonl.heal"), logLines(events));
+      await rename(join(dir, "log.jsonl.heal"), join(dir, "log.jsonl"));
     }
     const last = events.at(-1)?.seq ?? 0;
     this.#tail.set(boardId, last);

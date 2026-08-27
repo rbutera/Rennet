@@ -143,6 +143,25 @@ describe("FileBoardStore", () => {
       expect(next[0]?.seq).toBe(2);
     });
 
+    it("survives a crash interrupted mid-heal: stale temp file, log intact", async () => {
+      await store.createBoard("b1", SCHEMA);
+      await store.append("b1", [{ actor: "a", op: createOp("e1") }]);
+      // The state a crash between temp-write and rename leaves behind: the
+      // original log still carries its torn tail, and log.jsonl.heal exists.
+      await appendFile(logPath(), '{"end":3,"event":{"seq":2,"acto');
+      await writeFile(
+        join(root, Buffer.from("b1", "utf8").toString("base64url"), "log.jsonl.heal"),
+        "half-written heal",
+      );
+
+      const reopened = new FileBoardStore(root);
+      expect((await reopened.getEvents("b1", 0)).map((event) => event.seq)).toEqual([1]);
+      // Appending re-runs the heal (overwriting the stale temp) and continues seqs.
+      const next = await reopened.append("b1", [{ actor: "a", op: createOp("e2") }]);
+      expect(next[0]?.seq).toBe(2);
+      expect((await reopened.getEvents("b1", 0)).map((event) => event.seq)).toEqual([1, 2]);
+    });
+
     it("throws on mid-file corruption instead of returning a truncated log", async () => {
       await store.createBoard("b1", SCHEMA);
       await store.append("b1", [{ actor: "a", op: createOp("e1") }]);
