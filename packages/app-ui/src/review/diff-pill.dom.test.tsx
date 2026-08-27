@@ -72,6 +72,7 @@ function mountApp() {
     renameSession: () => undefined,
     setSessionPinned: () => undefined,
     archiveSession: () => undefined,
+    restoreSession: () => undefined,
     renameProject: () => undefined,
   };
   return mount(
