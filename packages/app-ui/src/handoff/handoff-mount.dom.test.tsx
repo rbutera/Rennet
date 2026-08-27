@@ -9,9 +9,11 @@ import type { PatchFile, Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
+import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { cleanup, mount } from "../test/dom";
+import { MemoryBridge } from "../test/memory-bridge";
 
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
 afterEach(cleanup);
@@ -43,12 +45,18 @@ function review(over: Partial<Review> = {}): Review {
   } as unknown as Review;
 }
 
+// The hand-off path wires the live `publish.*` exits (C08 cluster 6), so the route now needs a
+// bridge. These mount tests exercise the surface shape, not the egress — a bare MemoryBridge (no
+// publish handlers) is enough: the own-branch PR compose read simply rejects and the page stays
+// on its Changes / "Nothing staged yet." state, which is exactly what these assert.
 function mountWorkspace(path: string, r: Review = review()) {
   const history = memoryHistory(path);
   return mount(
-    <Router hook={history.hook} searchHook={history.searchHook}>
-      <ReviewWorkspace review={r} />
-    </Router>,
+    <BridgeProvider bridge={new MemoryBridge({})}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <ReviewWorkspace review={r} />
+      </Router>
+    </BridgeProvider>,
   );
 }
 

@@ -36,7 +36,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 6. Preview → direct Post + receipt-is-undo
 
-- [ ] 6.1 Wire the exits (Objective clauses 6, 10) through the registered, bound commands (Reconciliation 3): Post Review ⇒ `publish.compose(mode:"review")` → the previewed draft **is** the compose result → `publish.review` on the explicit sign-click (`dryRun` default true; real egress only on the click, bytes round-tripped); Open Pull Request ⇒ `publish.compose(mode:"pr")` → `publish.submitPr`. Use `useCommand` (`data/query.ts`) over the bridge. The posted/opened **receipt** names the verdict + line-comment count + body (or the PR number) and links out.
+- [x] 6.1 Wire the exits (Objective clauses 6, 10) through the registered, bound commands (Reconciliation 3): Post Review ⇒ `publish.compose(mode:"review")` → the previewed draft **is** the compose result → `publish.review` on the explicit sign-click (`dryRun` default true; real egress only on the click, bytes round-tripped); Open Pull Request ⇒ `publish.compose(mode:"pr")` → `publish.submitPr`. Use `useCommand` (`data/query.ts`) over the bridge. The posted/opened **receipt** names the verdict + line-comment count + body (or the PR number) and links out.
 - [ ] 6.2 Receipt-is-undo audit (Objective clause 9): every drop/retire/delete/verdict change reads back reversible from the store; only the final sign-click is irreversible. Record the audit here.
 - [ ] 6.3 DOM tests over `MemoryBridge`: Post at `dryRun:true` produces a compose preview and **no** real-post outcome (nothing leaves); the preview equals what posts (same bytes); a retrospective review offers no exit. Cluster gate green. Commit.
 

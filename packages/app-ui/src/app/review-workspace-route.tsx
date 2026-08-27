@@ -1,6 +1,7 @@
 import type { Review } from "@rennet/protocol";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
+import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
@@ -46,7 +47,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   return (
     <div className="relative min-h-screen bg-canvas">
       {view === "handoff" ? (
-        <HandoffView review={review} />
+        <HandoffMount review={review} />
       ) : view === "diff" ? (
         <DiffViewContainer review={review} />
       ) : (
@@ -61,5 +62,17 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
     </div>
+  );
+}
+
+// The hand-off, wired to its LIVE exits (C08 cluster 6). `useHandoffExits` names the registered,
+// bound `publish.*` commands over the bridge (compose → review / submitPr) — so this is the only
+// review-workspace path that needs a bridge, kept off the board/diff reading views. The lanes are
+// already fully live over the store; this threads the sign-click egress (and the composed own-branch
+// PR draft) through the `<HandoffView>` mount cluster 5 left taking no props.
+function HandoffMount({ review }: { review: Review }) {
+  const exits = useHandoffExits(review);
+  return (
+    <HandoffView review={review} onPost={exits.onPost} pr={exits.pr} onOpenPr={exits.onOpenPr} />
   );
 }
