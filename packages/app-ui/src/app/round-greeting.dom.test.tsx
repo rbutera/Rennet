@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BoardSourceProvider } from "../board/board-data";
 import { BridgeProvider } from "../data";
+import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
@@ -99,5 +100,54 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
     const { r } = renderWorkspace({ startTick: 0, armed: false }); // absent round, nothing armed
     expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
     expect(r.container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull();
+  });
+});
+
+// Finding 1: a composed round whose report does NOT resolve valid must NOT fall through to
+// the new-generation board. It gates the reveal — the failure shows honestly and the new
+// boards stay hidden. A composed state carries `newGeneration: "gen2"`, so a leak would
+// render the gen2 lens board; these assert it does not.
+function renderComposedWithReport(reportBoard: () => unknown) {
+  act(() => store().runActions.armGreeting(true));
+  const source: RoundsSource = {
+    roundState: () => ({
+      phase: "composed",
+      reportBoardId: "report-round-1",
+      newGeneration: "gen2",
+    }),
+    roundRecords: () => [],
+    reportBoard,
+  };
+  const history = memoryHistory("/s/s-1");
+  return mount(
+    <BridgeProvider bridge={new MemoryBridge({})}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <BoardSourceProvider value={fixtureBoardSource}>
+          <RoundsSourceProvider value={source}>
+            <ReviewWorkspace review={review} />
+          </RoundsSourceProvider>
+        </BoardSourceProvider>
+      </Router>
+    </BridgeProvider>,
+  );
+}
+
+describe("the report gates the reveal — a broken report never leaks the new boards (finding 1)", () => {
+  it("composed + MISSING report: honest missing state, no greeting, no gen2 leak", () => {
+    const r = renderComposedWithReport(() => undefined); // source has no board for the id
+    const unavailable = r.container.querySelector('[data-testid="report-unavailable"]');
+    expect(unavailable?.getAttribute("data-report-status")).toBe("missing");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull(); // reveal held back
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
+    expect(r.container.querySelector('[data-generation="gen2"]')).toBeNull(); // new boards hidden
+  });
+
+  it("composed + INVALID report: honest invalid state, no greeting, no gen2 leak", () => {
+    const r = renderComposedWithReport(() => ({ lens: "design", nope: true })); // schema-rejected
+    const unavailable = r.container.querySelector('[data-testid="report-unavailable"]');
+    expect(unavailable?.getAttribute("data-report-status")).toBe("invalid");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
+    expect(r.container.querySelector('[data-generation="gen2"]')).toBeNull();
   });
 });

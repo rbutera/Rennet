@@ -36,3 +36,9 @@ The round engine (B8/B9/B11) — the worker, the report drafter seat, the append
 - **Touched:** `routes/app.tsx` (replace the `sessionRun` `Interim`); `app/review-workspace-route.tsx` (the `rounds` view branch + thread `onDispatch`); `handoff/rounds-lanes.tsx` consumers (the seam-backed `onDispatch`, no change to the lane itself). `app-ui/src/index.ts` re-exports the rounds barrel.
 - **Docs:** `docs/developing/concepts/handoff-and-exits.md` (the rounds loop end to end), plus the INVENTORY §7-named pages (SCENARIOS / CONTEXT) as the surface lands.
 - **No new package; no protocol change.** The licenses/architecture gates pass over an unchanged dependency set.
+
+## Review findings — post-review amendments (PR #536)
+
+Dual review (opus APPROVE / Codex BLOCK) raised 6 findings; the orchestrator upheld all 6 under Rule Zero (none is a gate/ceremony/capability-removal). These are logic/honesty fixes on C09-owned machinery that is B11-gated at runtime (`ABSENT_ROUNDS_SOURCE`), fixed now because C09 owns it.
+
+- **F1 (High) — the report gates the reveal.** `review-workspace-route.tsx` branched on `greetingArmed && inReportPhase && report.status === "valid"`; a missing/invalid report fell through to `LensBoardView` at the composed generation, exposing the new boards WITHOUT the "View the New Boards" act and swallowing the report failure. Now branches on `greetingArmed && inReportPhase` first and renders honest `missing`/`invalid` states (`ReportUnavailable`), keeping the new generation hidden behind the reveal. Honest-failure surface, not a gate.

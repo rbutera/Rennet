@@ -101,12 +101,21 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         <DiffViewContainer review={review} />
       ) : view === "rounds" && roundRecords.length > 0 ? (
         <RoundsLedger slug={slug} records={roundRecords} />
-      ) : greetingArmed && inReportPhase && report.status === "valid" ? (
-        <RoundGreeting
-          board={report.board}
-          state={roundState}
-          onReveal={() => armGreeting(false)}
-        />
+      ) : greetingArmed && inReportPhase ? (
+        // Report phase with the greeting armed: the report GATES the reveal. A valid report
+        // leads the surface (regeneration streaming beneath); a missing or invalid report is
+        // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
+        // behind the reveal (finding 1). Falling through to `LensBoardView` here would open
+        // the composed generation with no "View the New Boards" act and hide the failure.
+        report.status === "valid" ? (
+          <RoundGreeting
+            board={report.board}
+            state={roundState}
+            onReveal={() => armGreeting(false)}
+          />
+        ) : (
+          <ReportUnavailable status={report.status} />
+        )
       ) : (
         <>
           <header className="border-border border-b px-6 py-3">
@@ -119,6 +128,42 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
     </div>
+  );
+}
+
+// The report-as-greeting failure surface (finding 1). When the greeting is armed and the
+// round is in a report phase but the report board does not resolve `valid`, the reviewer
+// sees an HONEST state instead of the new-generation board: `missing` (the source had no
+// board for this round's report id) and `invalid` (the source answered with data the schema
+// rejected) read distinctly. The reveal gate is preserved — the new boards stay hidden until
+// a valid report renders and the reviewer clicks through. This is honest failure, not a gate:
+// the ledger/diff views remain reachable through the top bar (they precede this branch).
+function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
+  return (
+    <>
+      <header className="border-border border-b px-6 py-3">
+        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+          ROUND REPORT
+        </p>
+      </header>
+      <section
+        data-testid="report-unavailable"
+        data-report-status={status}
+        role="status"
+        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+      >
+        <h1 className="font-display text-foreground text-xl">
+          {status === "invalid"
+            ? "This round's report could not be read."
+            : "No report for this round."}
+        </h1>
+        <p className="text-muted-foreground text-sm">
+          {status === "invalid"
+            ? "The round completed, but its report came back in a shape Rennet could not render. The new boards stay held back until a readable report arrives."
+            : "The round completed, but no report board resolved for it yet. The new boards stay held back until its report arrives."}
+        </p>
+      </section>
+    </>
   );
 }
 
