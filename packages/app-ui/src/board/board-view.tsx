@@ -1,7 +1,7 @@
 import type { LensKind } from "@rennet/protocol";
 import { useState } from "react";
 import { ProseSelectionLayer } from "../review";
-import { useLensBoards } from "./board-data";
+import { useBoardData, useLensBoards } from "./board-data";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider } from "./kinds/element-context";
 import { LENS_LABEL, LensSwitcher } from "./lens-switcher";
@@ -52,9 +52,16 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
         ? "flagged"
         : (present[0] ?? null);
 
-  const active = lenses.find((l) => l.lens === effectiveLens);
   // Flagged opens expanded (R44); every other lens folds all but its delta sections.
   const forceOpen = effectiveLens === "flagged" ? true : undefined;
+
+  // Resolve the board to SHOW through the same seam, so an INVALID board renders as an
+  // honest error rather than "no board yet" (finding 1). The display lens is the
+  // effective (valid) lens; with none present, probe the reviewer's pick or the R44
+  // default so a malformed board there still surfaces instead of vanishing.
+  const displayLens: LensKind = effectiveLens ?? pickedLens ?? "flagged";
+  const shown = useBoardData(selectedGeneration, displayLens);
+  const board = shown.status === "valid" ? shown.board : undefined;
 
   return (
     <main data-kind="lens-board-view" className="mx-auto flex max-w-[820px] flex-col gap-4 p-6">
@@ -68,19 +75,30 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
         <LensSwitcher lenses={lenses} selected={effectiveLens} onSelect={setPickedLens} />
       </div>
 
-      {active ? (
-        <BoardElementsProvider elements={active.board.elements}>
+      {board ? (
+        <BoardElementsProvider elements={board.elements}>
           <ProseSelectionLayer>
-            <article data-lens={active.board.lens} className="flex flex-col gap-1">
+            <article data-lens={board.lens} className="flex flex-col gap-1">
               <h1 className="mb-2 font-display text-2xl text-foreground">
-                {LENS_LABEL[active.board.lens]}
+                {LENS_LABEL[board.lens]}
               </h1>
-              {active.board.sections.map((entry) => (
+              {board.sections.map((entry) => (
                 <Section key={entry.ref} entry={entry} defaultOpen={forceOpen} />
               ))}
             </article>
           </ProseSelectionLayer>
         </BoardElementsProvider>
+      ) : shown.status === "invalid" ? (
+        <div data-kind="board-error" data-reason={shown.reason} className="text-danger text-sm">
+          <p className="font-medium">This board could not be read.</p>
+          <p className="text-muted-foreground">
+            {shown.reason === "identity"
+              ? "The source returned a board for a different lens or generation."
+              : shown.reason === "excluded-kind"
+                ? "The board carries an element kind that no lens board renders."
+                : "The board data did not match the expected shape."}
+          </p>
+        </div>
       ) : (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">
           No board for this generation yet.
