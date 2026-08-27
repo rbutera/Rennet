@@ -22,29 +22,70 @@ separately, so instructions and schema cannot drift apart.
 
 ## The drafting flow
 
+The scheduler lives in `packages/server/src/runtime/lens-pipeline.ts`
+(`runLensPipeline`); the pure logic it drives — lint, the validation loop,
+composition mechanics — lives in `packages/core/src/board/`. The scheduler is
+pure over injected seams (the harness ports, a prompt-file reader, and the
+whiteboard writer), so the whole path runs in tests against a fake `runTurn`
+with no live model call.
+
+0. **Round-report first** (on rounds only). When a review re-runs on a new
+   patchset generation, the `round-report` drafter runs *before* the lens
+   drafters. Its board is both the reviewer's greeting and the lens drafters'
+   input — it is threaded into every lens prompt. It funnels through the same
+   validation and post-process passes, but it is not a lens: it carries no
+   hunk-coverage obligation and is excluded from the coverage assertion.
 1. **Draft.** One agent per lens receives the delta context and its lens
-   prompt, and authors a draft board. The Flagged lens runs two independent
-   seats (Claude and Codex) on the same instructions.
-2. **Reconcile** (Flagged only). Findings that share a root cause merge;
-   cross-model concurrence is recorded per finding. Findings a seat rejects
-   with reasoning land in a cleared-concerns block, not on the finding list.
-3. **Lint.** A deterministic validation pass rejects a draft before any model
-   sees it again. The rules the prompts state are also enforced here, because
-   a prompt is a request and a validator is a guarantee:
-   - kind allowlist per lens — thread and message kinds never come from a
-     drafting agent;
-   - no code bytes — code on a board is a code ref (path plus line span) the
-     surface hydrates, so numbering cannot drift from the file it claims to
-     show;
-   - every citation resolves against the patchset;
-   - a `skippedHunks` list is present, and across all lenses every patchset
-     hunk lands in some lens's taught-or-skipped set;
-   - structured fields where structure is required: a finding carries its fix
-     as a field and its scenario members as subheaded details, never one prose
-     wall;
-   - a process-vocabulary screen flags prose that names lenses, boards,
-     agents, seats, or drafts.
-   A lint failure returns the draft to its agent with the violation named.
+   prompt, plus the host board schema derived once from the frozen
+   `DraftBoardSchema`, and returns a structured board. The host — never the
+   drafter — writes the board ops through `whiteboard-client` (the sole op
+   writer); drafters never call whiteboard tools. The Flagged lens runs two
+   independent seats (Claude and Codex) on the same instructions.
+2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
+   location: a matched pair collapses to the clearer finding carrying both
+   models' concurrence, a solo finding carries only the raising model's. The
+   result is folded into each finding's board-native `concurrence` tally
+   (`{ model, agree, total }` per seat). With only one harness available the
+   lens degrades to a single seat, stamped with honest single-model
+   concurrence.
+3. **Validate.** A deterministic loop guarantees every draft before a human
+   sees it, through **three gates in order**: **lint** (before post-process),
+   then an **immutability check** (typed data is untouched across the editor
+   pass), then the cross-lens **every-hunk composition check**. A lint failure
+   returns the draft to its seat as ZodError-shaped JSON pointers on one retry
+   channel; the seat returns a patch, and passing elements **freeze** — a
+   frozen element is never re-linted or re-drafted. An element that will not
+   pass escalates through a four-rung ladder to an **honest-omission exit**:
+   it is dropped and its hunks move to `skippedHunks` with a reason. The retry
+   count is capped at 10 (`RETRY_CAP`); on exhaustion the board ships anyway,
+   carrying the unresolved violations as labelled `blemishes` — **visible,
+   never blocking**.
+
+   The kind palette is enforced *structurally at parse time*: the frozen
+   `DraftBoardSchema` has no `thread`, `message`, or `code` kind, so an
+   out-of-palette kind is rejected with ZodError issues before any lint rule
+   runs. The lint rules the seat runs then enforce what parse cannot:
+   - **kind allowlist per lens** — each lens admits only its own element kinds;
+   - **no code bytes** — code inside legal prose is a lint error; code on a
+     board is a `code_ref` (path plus line span) the surface hydrates, so
+     numbering cannot drift from the file it claims to show (backticked
+     identifiers and patchset ids are exempt);
+   - **citation resolves** — every citation is well-formed and resolves against
+     the correct side of the patchset;
+   - **`skippedHunks` present** and its reasons specific;
+   - **decision-grounded** — a decision carries non-empty evidence and
+     alternatives;
+   - **a process-vocabulary screen** flags structural-field prose that names
+     lenses, boards, agents, seats, or drafts.
+
+   Cross-lens every-hunk coverage and the typed-data immutability check are the
+   other two gates, run once over the frozen board set rather than per draft.
+   The design target is "19 rules"; against the frozen 13-kind board schema the
+   faithful per-draft set is 16 — two of the nineteen (cross-lens coverage and
+   immutability) belong to the other two gates, and a handful reference fields
+   the frozen schema deliberately does not carry (they wait on a schema
+   follow-up rather than being enforced against absent data). The reviewer-voice
+   authored prose is screened by a separate, narrower register.
 4. **Post-process.** Every draft board passes through an editor agent running
    the post-process pass (`src/prompts/post-process.md`): a break-it-down step
    that reshapes dense prose into terse, scannable chunks — bullets for
@@ -54,20 +95,37 @@ separately, so instructions and schema cannot drift apart.
    prose fields only — and enforces the board voice editorially, deleting
    sentences about the review machinery that survive the lint's vocabulary
    screen. Typed data — paths, line numbers, counts, severities, concurrence
-   flags — is untouched. The orchestrator applies the same steps
-   write-through when authoring the review draft, in the reviewer's
-   first-person register (`src/prompts/review-draft-voice.md`).
+   flags — is untouched, and the immutability gate proves it. When no editor
+   seat resolves the pass is identity: prose is simply left unpolished, never
+   blocked.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
-   is no separate composed surface. Composition is the orchestrator's
-   connective authoring across those boards — the coverage assertion, section
-   carry with its delta stamps, the rollups, and the hand-off drafts.
+   is no separate composed surface. Composition is split. The **mechanical**
+   part lives in `core/board/`: the coverage assertion (every patchset hunk is
+   taught by some lens or listed in some lens's `skippedHunks`), verbatim carry
+   on stable element ids (a carried element is byte-identical across
+   generations), and `new`/`reworked` delta stamps on sections. The **authored**
+   part is the orchestrator's connective review prose, written write-through on
+   the versioned reviewer-voice prompt (`src/prompts/review-draft-voice.md`) in
+   the reviewer's first-person register; curation feedback from the prior
+   generation threads into that authoring turn. The authored prose is screened
+   by a narrower register lint (citations plus the machinery screen) — visible,
+   never blocking.
+
+As each board freezes and is persisted, the scheduler emits a **per-board
+arrival event** over the existing board-event broadcast. The rounds machinery
+consumes these to drive the progressive reveal; the pipeline only emits them.
 
 ## Related context in the delta
 
-The delta context every drafter receives includes the **related-context
-dossier**: the change's referenced issue-tracker tickets, the PR description
-and comments, and one-hop links, retrieved per patchset generation by a
-light-tier Model Council seat
+The drafting scheduler seeds every seat with the inlined **DeltaPacket** — the
+lens drafters' entire input. When the related-context retrieval work has landed,
+that packet also carries the **related-context dossier** described below; until
+then the drafters run on the DeltaPacket alone and degrade gracefully. The
+pipeline consumes the dossier, it does not build the retrieval.
+
+The related-context dossier holds the change's referenced issue-tracker
+tickets, the PR description and comments, and one-hop links, retrieved per
+patchset generation by a light-tier Model Council seat
 (`related-context-retrieval`) after a deterministic pass extracts issue refs
 from the branch name, commit messages, and PR body. GitHub is first-class via
 `gh`; JIRA and Linear work from per-project config (base URL plus a token
@@ -92,11 +150,11 @@ looks close enough.
 
 ## Three layers carry every rule
 
-The schema makes good structure the only
-expressible structure (a fix field exists, so a fix sentence buried in prose
-is a lint error, not a style preference); the lint makes the mechanical rules
-guarantees; the prompts and the post-process editor carry what only judgment can
-check. A rule that lives in a prompt alone is a wish.
+The schema makes good structure the only expressible structure (a finding's
+kind, severity, cited code, and concurrence are typed fields, so a claim in the
+wrong shape fails to parse, not merely reads badly); the lint makes the
+mechanical rules guarantees; the prompts and the post-process editor carry what
+only judgment can check. A rule that lives in a prompt alone is a wish.
 
 ## Honest states
 
@@ -105,6 +163,11 @@ A board says what it does not know as plainly as what it does.
 - A drafting seat that fails renders as **failed**, never as empty. The
   surface distinguishes a lens that ran and found nothing from a lens that did
   not run.
+- An element the validation loop could not make pass leaves a trace, never a
+  silent hole. If it was dropped, its hunks are in `skippedHunks` with a reason
+  (the honest-omission exit); if the retry cap was hit, its unresolved
+  violations ride along as labelled **blemishes** — shown to the reviewer, never
+  blocking the board.
 - Capture limits stay visible. Truncated files, binary files, and submodule
   blocking states keep their state on the board, so a review never implies it
   inspected bytes no runner ever saw.
