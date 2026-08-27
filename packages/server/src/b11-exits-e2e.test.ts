@@ -8,6 +8,7 @@ import {
   type ForgePublishPort,
   type ForgeReviewPost,
   foldAsks,
+  type ReviewCommentInput,
 } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
@@ -161,7 +162,7 @@ function recordingPublishPort(): ForgePublishPort & { posts: ForgeReviewPost[] }
 
 type ComposeReview = {
   status: "review";
-  comments: { path: string; line: number; side: string; type: string; body: string }[];
+  comments: ReviewCommentInput[];
   payload: string;
   verdict: string;
   compositionId: string;

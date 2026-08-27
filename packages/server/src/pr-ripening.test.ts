@@ -39,7 +39,7 @@ const OWN_BRANCH_REVIEW = {
 
 function harness(extra: Partial<DispatchDeps> = {}) {
   const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-pr-ripening-")));
-  const raiseAttention = vi.fn((_event: { family: string }) => "att-1" as string | undefined);
+  const raiseAttention = vi.fn<(event: { family: string }) => string | undefined>(() => "att-1");
   const rt = createDispatchRuntime({
     askLog: store,
     allowedRoots: new Set(["/repo"]),
