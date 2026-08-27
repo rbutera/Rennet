@@ -986,7 +986,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   async function runFlaggedReviewWithContextFeed(
     review: Review,
     deepReview: boolean,
-    contextFeed: ReviewContextFeed,
     session: ReviewIntelligenceSession,
   ): Promise<FlaggedReviewRun> {
     const patchset = activePatchset(review);
@@ -1121,7 +1120,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       onError: reportContextFeedError,
     });
     const completed = await runWithReviewContextFeed(contextFeed, () =>
-      runFlaggedReviewWithContextFeed(review, deepReview, contextFeed, session),
+      runFlaggedReviewWithContextFeed(review, deepReview, session),
     );
     return completed.result;
   }
