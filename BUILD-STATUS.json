@@ -56,8 +56,9 @@
     "passes": true
   },
   "b08": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PRs #521+#526 landed, 8 sub-wave-2 review fixes confirmed; composition-root wiring is B09's consuming turn (docs framed planned)"
   },
   "b09": {
     "status": "pending",
