@@ -21,12 +21,15 @@ interface BoardElements {
   readonly patchsetId: string;
   /** The board's generation — half the durable-highlight scope key (finding 2). */
   readonly generation: string;
+  /** The board's id — the viewed-delta scope key (finding 3). */
+  readonly boardId: string;
 }
 
 const BoardElementsContext = createContext<BoardElements>({
   index: new Map(),
   patchsetId: "",
   generation: "",
+  boardId: "",
 });
 
 /** Map a `code_ref` element to the canonical {@link CodeRef} (snake_case wire → camel).
@@ -48,11 +51,14 @@ export function toCodeRef(element: ElementOf<"code_ref">): CodeRef {
 export function BoardElementsProvider({
   elements,
   generation = "",
+  boardId = "",
   children,
 }: {
   readonly elements: readonly HostElement[];
   /** The board's generation — the durable-highlight scope key (finding 2). */
   readonly generation?: string;
+  /** The board's id — the viewed-delta scope key (finding 3). */
+  readonly boardId?: string;
   readonly children: ReactNode;
 }) {
   const value = useMemo<BoardElements>(() => {
@@ -62,8 +68,9 @@ export function BoardElementsProvider({
       index,
       patchsetId: firstCodeRef?.kind === "code_ref" ? firstCodeRef.data.patchset_id : "",
       generation,
+      boardId,
     };
-  }, [elements, generation]);
+  }, [elements, generation, boardId]);
   return <BoardElementsContext.Provider value={value}>{children}</BoardElementsContext.Provider>;
 }
 
@@ -75,6 +82,11 @@ export function useBoardPatchsetId(): string {
 /** The board generation — half the durable-highlight scope key (finding 2). */
 export function useBoardGeneration(): string {
   return useContext(BoardElementsContext).generation;
+}
+
+/** The board id — the viewed-delta scope key (finding 3). */
+export function useBoardId(): string {
+  return useContext(BoardElementsContext).boardId;
 }
 
 /** Resolve an element id to its element, or `undefined` (a dangling ref renders nothing). */

@@ -4,7 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
-import { useElement } from "./kinds/element-context";
+import { useBoardId, useElement } from "./kinds/element-context";
 import { BoardChildren } from "./kinds/renderers";
 import { selectDeltaViewed } from "./viewed-delta";
 
@@ -68,8 +68,9 @@ export function Section({
   readonly entry: LensSection;
   readonly defaultOpen?: boolean;
 }) {
+  const boardId = useBoardId();
   const el = useElement(entry.ref);
-  const viewed = useRennetStore(selectDeltaViewed(entry.ref));
+  const viewed = useRennetStore(selectDeltaViewed(boardId, entry.ref));
   const markViewed = useRennetStore((s) => s.viewedDeltaActions.markDeltaViewed);
   const [open, setOpen] = useState(defaultOpen ?? entry.delta !== undefined);
 
@@ -80,7 +81,7 @@ export function Section({
   const showDot = entry.delta !== undefined && !viewed;
   const interact = () => {
     setOpen((o) => !o);
-    if (entry.delta !== undefined) markViewed(entry.ref);
+    if (entry.delta !== undefined) markViewed(boardId, entry.ref);
   };
 
   return (

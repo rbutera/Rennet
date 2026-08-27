@@ -76,7 +76,11 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
       </div>
 
       {board ? (
-        <BoardElementsProvider elements={board.elements} generation={board.generation}>
+        <BoardElementsProvider
+          elements={board.elements}
+          generation={board.generation}
+          boardId={board.boardId}
+        >
           <ProseSelectionLayer>
             <article
               data-lens={board.lens}

@@ -6,6 +6,7 @@ import { mount } from "../test/dom";
 import { flaggedGen2Board } from "../test/fixtures/boards";
 import { BoardElementsProvider } from "./kinds/element-context";
 import { Section } from "./section";
+import { deltaKey } from "./viewed-delta";
 
 // Cluster 4 fold grammar over the gen2 flagged fixture — real delta variety:
 // `g2-open` is `reworked`, `g2-beyond` is `new`, `g2-gen1` carries no delta.
@@ -19,7 +20,7 @@ const entryFor = (ref: string): LensSection => {
 
 function renderSection(ref: string) {
   return mount(
-    <BoardElementsProvider elements={board.elements}>
+    <BoardElementsProvider elements={board.elements} boardId={board.boardId}>
       <Section entry={entryFor(ref)} />
     </BoardElementsProvider>,
   );
@@ -52,8 +53,11 @@ describe("Section fold grammar", () => {
     expect(getByText("reworked this round")).toBeTruthy();
 
     await user.click(getByText("Still Open")); // interact = toggle heading
-    // Store-driven clear, not local: the id lands in the viewed set and the dot is gone.
-    expect(useRennetStore.getState().viewedDelta.viewedDeltaSections["g2-open"]).toBe(true);
+    // Store-driven clear, not local: the board-scoped key lands in the viewed set (finding
+    // 3 — keyed by boardId::ref, not the bare ref) and the dot is gone.
+    expect(
+      useRennetStore.getState().viewedDelta.viewedDeltaSections[deltaKey(board.boardId, "g2-open")],
+    ).toBe(true);
     expect(queryByTestId("delta-dot")).toBeNull();
   });
 });

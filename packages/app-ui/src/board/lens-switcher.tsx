@@ -2,6 +2,7 @@ import type { LensKind } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
+import { deltaKey } from "./viewed-delta";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The lens switcher (C05 6.2, Objective clause 7) — a segmented control, one
@@ -42,7 +43,7 @@ export function LensSwitcher({
     <div role="tablist" aria-label="Lens" data-kind="lens-switcher" className="flex gap-1">
       {lenses.map(({ lens, board }) => {
         const unviewedDeltas = board.sections.filter(
-          (s) => s.delta !== undefined && !viewed[s.ref],
+          (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],
         ).length;
         const active = lens === selected;
         return (
