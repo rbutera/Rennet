@@ -19,7 +19,6 @@ import {
 import { v7 as uuidv7 } from "uuid";
 import { buildSuccessorAccount, changedPathsBetween } from "./successor-account";
 
-export * from "./blast-radius";
 export * from "./ci-classification";
 export * from "./ci-refinement";
 export * from "./codex-run-turn";
