@@ -9,7 +9,7 @@
 // dropping the `AppearanceSync` mount in app.tsx reddens the first assertion.
 import type { SettingsView } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
-import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
+import { act, cleanup, mount, waitFor } from "../test/dom";
 import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
 import { RennetRouterApp } from "./app";
