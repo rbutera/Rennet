@@ -311,6 +311,11 @@ export async function fetchPrView(
 export interface TrackerEndpointConfig {
   readonly baseUrl: string;
   readonly tokenEnvVar: string;
+  /** The project key prefixes that route to THIS endpoint (e.g. `["PROJ"]`,
+   * from the `trackerProjectKey` settings row / scout detection). A key whose
+   * prefix matches no configured endpoint stays `unknown` and surfaces as a
+   * missing-config fact — endpoints never claim keys by mere existence. */
+  readonly projectPrefixes?: readonly string[];
 }
 
 export interface TrackerConfig {
@@ -624,14 +629,14 @@ export async function retrieveRelatedContext(
   const fetchJson = deps.fetchJson ?? defaultFetchJson;
   const fetchedAt = (deps.now?.() ?? new Date()).toISOString();
   const config = deps.trackerConfig ?? {};
+  // Tracker kinds come from configuration, not guessing: a key routes to the
+  // endpoint whose configured prefixes claim it; everything else stays
+  // `unknown` and surfaces as a missing-config fact.
   const options: ExtractRefsOptions = {
-    jiraPrefixes: config.jira ? prefixesSeen(input) : [],
-    linearPrefixes: [],
+    jiraPrefixes: config.jira?.projectPrefixes ?? [],
+    linearPrefixes: config.linear?.projectPrefixes ?? [],
   };
-  // Tracker kinds come from configuration, not guessing: with a configured JIRA
-  // endpoint every seen prefix routes there; otherwise keys stay `unknown` and
-  // surface as missing-config facts. Linear prefixes route only via config too.
-  const refs = extractRefs(input, config.jira ? options : {});
+  const refs = extractRefs(input, options);
 
   const items = new Map<string, DossierItem>();
   const raw: RawContextPayload[] = [];
@@ -677,7 +682,7 @@ export async function retrieveRelatedContext(
     if (outcome.missing) missingConfig.push(outcome.missing);
   }
   if (hopTexts.length > 0) {
-    const hopRefs = extractRefs({ commitMessages: hopTexts }, config.jira ? options : {});
+    const hopRefs = extractRefs({ commitMessages: hopTexts }, options);
     for (const ref of hopRefs) {
       if (ref.kind !== "github") continue; // tracker keys one hop out: config story unchanged
       await fetchGithub(ref, "link-hop");
@@ -774,15 +779,4 @@ async function fetchTrackerKey(
       provenance: ref.provenance,
     },
   };
-}
-
-/** Every distinct tracker prefix seen across the input sources. */
-function prefixesSeen(input: ExtractRefsInput): string[] {
-  const seen = new Set<string>();
-  for (const [, text] of sources(input)) {
-    for (const match of text.matchAll(TRACKER_KEY)) {
-      seen.add((match[1] ?? "").toUpperCase());
-    }
-  }
-  return [...seen];
 }

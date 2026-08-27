@@ -255,7 +255,11 @@ describe("retrieveRelatedContext", () => {
           now,
           fetchJson,
           trackerConfig: {
-            jira: { baseUrl: "https://jira.example", tokenEnvVar: "B07_TEST_JIRA_TOKEN" },
+            jira: {
+              baseUrl: "https://jira.example",
+              tokenEnvVar: "B07_TEST_JIRA_TOKEN",
+              projectPrefixes: ["ABC"],
+            },
           },
         },
       );
@@ -280,7 +284,11 @@ describe("retrieveRelatedContext", () => {
         repo,
         now,
         trackerConfig: {
-          jira: { baseUrl: "https://jira.example", tokenEnvVar: "B07_TEST_JIRA_TOKEN" },
+          jira: {
+            baseUrl: "https://jira.example",
+            tokenEnvVar: "B07_TEST_JIRA_TOKEN",
+            projectPrefixes: ["ABC"],
+          },
         },
       },
     );
@@ -288,6 +296,95 @@ describe("retrieveRelatedContext", () => {
     expect(result.missingConfig).toEqual([
       expect.objectContaining({ tracker: "jira", missing: "token-env-value" }),
     ]);
+  });
+
+  it("routes Linear refs in a Linear-only configuration", async () => {
+    process.env.B07_TEST_LINEAR_TOKEN = "lin-secret";
+    try {
+      const fetchJson: JsonFetcher = async (_url, init) => {
+        expect(init.method).toBe("POST");
+        const key = (JSON.parse(init.body ?? "{}") as { variables?: { id?: string } }).variables
+          ?.id;
+        return {
+          data: {
+            issue: {
+              title: `Linear ${key}`,
+              description: "desc",
+              url: `https://linear.app/acme/issue/${key}`,
+              state: { name: "Todo" },
+            },
+          },
+        };
+      };
+      const result = await retrieveRelatedContext(
+        { prBody: "ENG-7 covers this", branchName: "eng-7-fix" },
+        {
+          gh: canned({}),
+          repo,
+          now,
+          fetchJson,
+          trackerConfig: {
+            linear: {
+              baseUrl: "https://api.linear.app/graphql",
+              tokenEnvVar: "B07_TEST_LINEAR_TOKEN",
+              projectPrefixes: ["ENG"],
+            },
+          },
+        },
+      );
+      expect(result.items).toEqual([
+        expect.objectContaining({ id: "linear:ENG-7", tracker: "linear" }),
+      ]);
+      expect(result.missingConfig).toEqual([]);
+    } finally {
+      delete process.env.B07_TEST_LINEAR_TOKEN;
+    }
+  });
+
+  it("routes mixed JIRA + Linear keys each to their own configured endpoint", async () => {
+    process.env.B07_TEST_JIRA_TOKEN = "j";
+    process.env.B07_TEST_LINEAR_TOKEN = "l";
+    try {
+      const calls: string[] = [];
+      const fetchJson: JsonFetcher = async (url, init) => {
+        calls.push(`${init.method} ${url}`);
+        if (init.method === "GET") {
+          return { fields: { summary: "jira item", status: { name: "Open" }, description: "" } };
+        }
+        return {
+          data: { issue: { title: "linear item", description: "", state: { name: "Todo" } } },
+        };
+      };
+      const result = await retrieveRelatedContext(
+        { prBody: "PROJ-1 plus ENG-2" },
+        {
+          gh: canned({}),
+          repo,
+          now,
+          fetchJson,
+          trackerConfig: {
+            jira: {
+              baseUrl: "https://jira.example",
+              tokenEnvVar: "B07_TEST_JIRA_TOKEN",
+              projectPrefixes: ["PROJ"],
+            },
+            linear: {
+              baseUrl: "https://api.linear.app/graphql",
+              tokenEnvVar: "B07_TEST_LINEAR_TOKEN",
+              projectPrefixes: ["ENG"],
+            },
+          },
+        },
+      );
+      expect(result.items.map((item) => item.id).sort()).toEqual(["jira:PROJ-1", "linear:ENG-2"]);
+      expect(calls.sort()).toEqual([
+        "GET https://jira.example/rest/api/2/issue/PROJ-1?fields=summary,status,description",
+        "POST https://api.linear.app/graphql",
+      ]);
+    } finally {
+      delete process.env.B07_TEST_JIRA_TOKEN;
+      delete process.env.B07_TEST_LINEAR_TOKEN;
+    }
   });
 
   it("applies enrichment trims, meters an exhausted budget as overage, never refuses", async () => {
