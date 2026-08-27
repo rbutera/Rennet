@@ -252,7 +252,9 @@ export {
   writeAtomic,
 } from "./knowledge-store";
 export {
+  type CouncilSeatDeps,
   changedPathsBetween,
+  councilSeatTurn,
   createClaudeSwarmTurn,
   createCodexSwarmTurn,
   type KnowledgeSwarmDeps,

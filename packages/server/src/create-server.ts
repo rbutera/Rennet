@@ -181,6 +181,7 @@ import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from ".
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
+import { createProjectScoutRuntime } from "./runtime/project-scout";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
@@ -1318,6 +1319,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
     },
   });
+  // The project-scout scheduler (#461 §4, B7 cluster 4): shares the processing
+  // progress push; the deterministic pass runs even with no harness installed.
+  const projectScoutRuntime = createProjectScoutRuntime({
+    store: snapshotStore,
+    gitForRepo,
+    resolveClaudePort: claudeAdapterForRepo,
+    resolveCodexExecutor: codexExecutorForRepo,
+    narrate: (event) => {
+      options.broadcastProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, event);
+      wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
+    },
+  });
   rehydration = createProactiveRehydration({
     store: snapshotStore,
     generator: snapshotGenerator,
@@ -1518,7 +1531,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // processing response, and a start failure can only leave the map un-warmed,
       // never break the process.
       const processed = projectStore.list().find((entry) => entry.id === input.projectId);
-      if (processed) void rehydration?.ensureForProject(processed);
+      if (processed) {
+        void rehydration?.ensureForProject(processed);
+        // The project scout (#461 §4, B7): runs at project add and on every
+        // re-process (re-runnable — determinism recomputes, the seat never
+        // overwrites detected facts). Fire-and-forget like the rehydration kick.
+        const scoutRoot = processed.openPath || processed.path;
+        void projectScoutRuntime.runForRepo({
+          repoKey: repoKeyForRoot(scoutRoot),
+          repoRoot: scoutRoot,
+        });
+      }
       return result;
     },
     discoverProject: ({ path, kind }) =>
