@@ -1,4 +1,9 @@
-import { type Connection, ConnectionHost, type ConnectionTarget } from "@rennet/app-ui";
+import {
+  browserHistory,
+  type Connection,
+  ConnectionHost,
+  type ConnectionTarget,
+} from "@rennet/app-ui";
 import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
 import type { RennetBridge } from "@rennet/protocol";
 import { StrictMode } from "react";
@@ -72,6 +77,10 @@ function createConnection(target: ConnectionTarget): Connection {
 
 createRoot(root).render(
   <StrictMode>
-    <ConnectionHost createConnection={createConnection} defaultTarget={DEFAULT_TARGET} />
+    <ConnectionHost
+      createConnection={createConnection}
+      defaultTarget={DEFAULT_TARGET}
+      history={browserHistory}
+    />
   </StrictMode>,
 );

@@ -1,6 +1,6 @@
 import "./index.css";
 
-export { RennetApp, ReviewWorkspace } from "./app";
+export { ReviewWorkspace } from "./app";
 // The collation draft (issue #101 / R40): the ordered, id-keyed editable draft — the
 // forming destination. Reorder / merge / split need a list, not #17's path-keyed map.
 // `collationItems` / `collationPayload` are the ordered outbound artifact the paper
@@ -85,3 +85,36 @@ export { CoverageMosaicView } from "./components/coverage";
 export { DirectoryBrowser } from "./components/directory-browser";
 export { FrontDoor } from "./components/front-door";
 export { SettingsScreen } from "./components/settings-screen";
+// The review layer (C4, #489): the shared machinery C5–C9 render — the one code
+// surface, the multi-site evidence viewer, the one line-comment editor, the prose
+// selection toolbar, the R45 markdown-subset renderer, reference chips, and the
+// span-read citations seam. See `review/index.ts`.
+export type {
+  CodeBlockProps,
+  CodeRef,
+  DraftHandlers,
+  LineCommentEditorProps,
+  ReferenceChipProps,
+  RichTextProps,
+  SpanRead,
+} from "./review";
+export {
+  AnchorReveal,
+  CodeBlock,
+  CodeTabs,
+  LineCommentEditor,
+  ProseSelectionLayer,
+  ReferenceChip,
+  RichText,
+  useSpanRead,
+} from "./review";
+// The router IS the running client now (C03 cutover): the desktop entries mount
+// `RennetRouterApp` inside `ConnectionHost`, with the host-selected history.
+export {
+  browserHistory,
+  hashHistory,
+  memoryHistory,
+  type RennetHistory,
+  RennetRouterApp,
+  type RennetRouterAppProps,
+} from "./routes";

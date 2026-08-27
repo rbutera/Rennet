@@ -1,9 +1,4 @@
 {
-  "packages/app-ui/src/app/shell.tsx": {
-    "rennet/no-direct-invoke": {
-      "count": 12
-    }
-  },
   "packages/app-ui/src/components/connection-host.tsx": {
     "rennet/no-direct-invoke": {
       "count": 1

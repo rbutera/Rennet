@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import {
+  type CodexExecutor,
   type ContextAssembly,
   escapePath,
   type HarnessPort,
@@ -7,6 +8,7 @@ import {
 } from "@rennet/core";
 import type {
   ContextManifest,
+  CouncilHarnessId,
   HypothesisRepoContext,
   InvocationBudget,
   Patchset,
@@ -15,10 +17,11 @@ import type {
 import { type ContextAskBackendPart, contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
+import { DossierStore } from "./dossier-store";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { type KnowledgeBackendPart, knowledgeBackend } from "./knowledge-backend";
 import { KnowledgeStore } from "./knowledge-store";
-import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import { councilSeatTurn, runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import { resolveMapSource } from "./map-travel";
 import { NestedProjectContext } from "./nested-project-context";
 import {
@@ -38,6 +41,13 @@ import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { projectSnapshotPinResolver } from "./project-snapshot-pin";
 import { type ResolvedBase, resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
+import {
+  execaGhFor,
+  type GhRunner,
+  RELATED_CONTEXT_ENRICH_SCHEMA,
+  retrieveRelatedContext,
+  type TrackerConfig,
+} from "./related-context";
 import { RepoCompositionStore } from "./repo-composition-store";
 import { SnapshotOverlayGenerator, SnapshotOverlayReader } from "./snapshot-overlay-generator";
 import { SnapshotOverlayStore } from "./snapshot-overlay-store";
@@ -274,6 +284,106 @@ export interface LiveBackendDeps {
   readonly compositionStore?: RepoCompositionStore;
   /** Override the pipeline's shared per-review invocation meter (tests/composition only). */
   readonly budget?: InvocationBudget;
+}
+
+/** Everything the review-open related-context kick needs (#461, B7). */
+export interface RelatedContextKickDeps {
+  readonly store: ProjectSnapshotStore;
+  /** Locus-aware harness resolvers (the scout-runtime template): each failure is
+   * isolated — a rejected discovery narrows availability, never skips retrieval. */
+  readonly resolveClaudePort?: (repoRoot: string) => Promise<HarnessPort | null>;
+  readonly resolveCodexExecutor?: (repoRoot: string) => Promise<CodexExecutor | null>;
+  /** The gh runner (defaults to `execaGhFor(review.repositoryRoot)`). Injected so
+   * tests never spawn a process. */
+  readonly gh?: GhRunner;
+  /**
+   * JIRA/Linear endpoints resolved off the settings ladder (scout-detected +
+   * global rung). Absent ⇒ GitHub-only retrieval; seen tracker keys surface as
+   * missing-config facts.
+   */
+  readonly trackerConfig?: TrackerConfig;
+  /** Budget-normal path: metered and reported, never a refusal (Rule Zero). */
+  readonly budget?: InvocationBudget;
+  readonly onError?: (error: unknown) => void;
+}
+
+/**
+ * The review-open related-context kick (#461, B7): dispatch fires this from
+ * `review.capture` / `review.openPr` — the ACTUAL review-open command paths.
+ * Fire-and-forget by construction: the returned promise never rejects (a
+ * failure reports through `onError`), so a review never blocks on retrieval.
+ * Keyed by target + patchset id: a stored record gates a refire on the same
+ * patchset, a re-capture (new patchset) re-runs naturally, and the PER-ROUND
+ * re-run is B8's round runner (same store, same keys). For a PR review the
+ * PR's live title/body/comments are fetched through the injected runner.
+ */
+export async function runRelatedContextRetrieval(
+  review: Review,
+  deps: RelatedContextKickDeps,
+): Promise<void> {
+  try {
+    const patchset = activePatchset(review);
+    const repoKey = repoKeyOf(review);
+    const dossierStore = new DossierStore(deps.store);
+    const dossierKey = {
+      target: review.postTarget
+        ? `pr-${review.postTarget.number}`
+        : (patchset.repository.headRef ?? "local"),
+      patchsetRef: patchset.id,
+    };
+    if (dossierStore.load(repoKey, dossierKey)) return;
+
+    // Honest availability (review P2): BOTH harnesses are resolved, each failure
+    // isolated to its own resolver, and the council sees exactly what resolved.
+    const [claudePort, codexExecutor] = await Promise.all([
+      deps.resolveClaudePort?.(review.repositoryRoot).catch(() => null) ?? Promise.resolve(null),
+      deps.resolveCodexExecutor?.(review.repositoryRoot).catch(() => null) ?? Promise.resolve(null),
+    ]);
+    const installed: CouncilHarnessId[] = [];
+    if (claudePort) installed.push("claude-code");
+    if (codexExecutor) installed.push("codex");
+    const seat =
+      installed.length === 0
+        ? null
+        : councilSeatTurn(
+            "related-context-retrieval",
+            RELATED_CONTEXT_ENRICH_SCHEMA,
+            {
+              claudePort,
+              codexExecutor,
+              repoRoot: review.repositoryRoot,
+              label: "related-context",
+            },
+            { availability: { installed } },
+          );
+    const intent = patchset.intent;
+    const result = await retrieveRelatedContext(
+      {
+        ...(patchset.repository.headRef ? { branchName: patchset.repository.headRef } : {}),
+        commitMessages: intent?.commitSubjects ?? [],
+        ...(intent?.prTitle ? { prTitle: intent.prTitle } : {}),
+        ...(intent?.prBody ? { prBody: intent.prBody } : {}),
+      },
+      {
+        gh: deps.gh ?? execaGhFor(review.repositoryRoot),
+        ...(review.postTarget
+          ? {
+              repo: {
+                owner: review.postTarget.repo.owner,
+                name: review.postTarget.repo.name,
+              },
+              prNumber: review.postTarget.number,
+            }
+          : {}),
+        ...(deps.trackerConfig ? { trackerConfig: deps.trackerConfig } : {}),
+        runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
+        ...(deps.budget ? { budget: deps.budget } : {}),
+      },
+    );
+    dossierStore.save(repoKey, dossierKey, result.items, result.raw);
+  } catch (error) {
+    deps.onError?.(error);
+  }
 }
 
 /** The outcome of the snapshot-on-open generation, for honest reporting/telemetry. */

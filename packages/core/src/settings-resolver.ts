@@ -114,12 +114,71 @@ const LOCUS_SETTING: SettingDeclaration<Locus> = {
   render: renderLocus,
 };
 
+/**
+ * The issue-tracker section (#461 resolution 2, B7 reconciliation 3): tracker
+ * keys ride the ladder like any other setting. The scout offers the `detected`
+ * layer where determinism can find a value; user answers land on `global`; the
+ * per-project store is the `repo` rung (the same rung `visibility` uses). Base
+ * URL and token env var NAME are config-only (#461 point 1 — the user supplies
+ * them; the token VALUE itself lives in the env, never in any store).
+ *
+ * §4 facts NOT declared here: default branch is already a resolved fact
+ * (project-discovery's origin/HEAD detection) — a settings row would be a
+ * second source of truth; PR conventions are deferred by #461 §4 verbatim.
+ */
+export type TrackerKind = "none" | "github" | "jira" | "linear";
+
+const trackerKind = (value: unknown): TrackerKind => {
+  if (value === "none" || value === "github" || value === "jira" || value === "linear") {
+    return value;
+  }
+  throw new Error(`trackerKind must be none|github|jira|linear, got ${JSON.stringify(value)}`);
+};
+
+/** A plain string setting; empty builtin default reads as "unset". */
+const stringSetting = (
+  key: string,
+  layers: readonly SettingsLayer[],
+): SettingDeclaration<string> => ({
+  key,
+  validate: (value) => {
+    if (typeof value !== "string") throw new Error(`${key} must be a string`);
+    return value.trim();
+  },
+  builtinDefault: "",
+  layers,
+  merge: "replace",
+  render: (value) => (value === "" ? "(unset)" : value),
+});
+
+const TRACKER_KIND_SETTING: SettingDeclaration<TrackerKind> = {
+  key: "trackerKind",
+  validate: trackerKind,
+  builtinDefault: "none",
+  layers: ["builtin", "detected", "global", "repo"],
+  merge: "replace",
+  render: identity,
+};
+
+const DETECTABLE: readonly SettingsLayer[] = ["builtin", "detected", "global", "repo"];
+const CONFIG_ONLY: readonly SettingsLayer[] = ["builtin", "global", "repo"];
+
 /** Every consumed setting, keyed by id. Adding a setting is one entry here. */
 export const SETTINGS_REGISTRY = {
   scheme: SCHEME_SETTING,
   visibility: VISIBILITY_SETTING,
   promoted: PROMOTED_SETTING,
   locus: LOCUS_SETTING,
+  // Issue-tracker section (#461 §4 + resolution 2).
+  trackerKind: TRACKER_KIND_SETTING,
+  trackerProjectKey: stringSetting("trackerProjectKey", DETECTABLE),
+  trackerBaseUrl: stringSetting("trackerBaseUrl", CONFIG_ONLY),
+  trackerTokenEnv: stringSetting("trackerTokenEnv", CONFIG_ONLY),
+  // §4 non-tracker facts the ladder does not already resolve.
+  worktreeBaseDir: stringSetting("worktreeBaseDir", DETECTABLE),
+  gateCommand: stringSetting("gateCommand", DETECTABLE),
+  // Cosmetic: settings/UI only, never agent context (#461 §4).
+  logoPath: stringSetting("logoPath", DETECTABLE),
 } as const;
 
 /**

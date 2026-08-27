@@ -53,6 +53,8 @@
   --rn-green: #41745b;
   --rn-green-soft: rgb(65 116 91 / 0.12);
   --rn-green-line: rgb(65 116 91 / 0.3);
+  /* verdigris — the machine's voice (R53): the unread-orchestrator dot. */
+  --rn-model: #2b7d6e;
   /* danger */
   --rn-danger: #b23b2b;
   --rn-danger-soft: rgb(178 59 43 / 0.1);
@@ -113,6 +115,7 @@
   --rn-green: #88bc9b;
   --rn-green-soft: rgb(136 188 155 / 0.14);
   --rn-green-line: rgb(136 188 155 / 0.36);
+  --rn-model: #9fd0c0;
   --rn-danger: #db7a6a;
   --rn-danger-soft: rgb(219 122 106 / 0.14);
   --rn-sheet: #1c1712;
@@ -160,6 +163,7 @@
     --rn-green: #88bc9b;
     --rn-green-soft: rgb(136 188 155 / 0.14);
     --rn-green-line: rgb(136 188 155 / 0.36);
+    --rn-model: #9fd0c0;
     --rn-danger: #db7a6a;
     --rn-danger-soft: rgb(219 122 106 / 0.14);
     --rn-sheet: #1c1712;

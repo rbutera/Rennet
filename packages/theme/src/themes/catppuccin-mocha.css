@@ -32,6 +32,7 @@
   --rn-accent-surface: #ecdcff;
   /* evidence green */
   --rn-green: #40a02b;
+  --rn-model: #179299;
   --rn-green-soft: rgb(64 160 43 / 0.12);
   --rn-green-line: rgb(64 160 43 / 0.3);
   /* danger */
@@ -85,6 +86,7 @@
   --rn-accent-surface: #2a2140;
   /* evidence green */
   --rn-green: #a6e3a1;
+  --rn-model: #94e2d5;
   --rn-green-soft: rgb(166 227 161 / 0.15);
   --rn-green-line: rgb(166 227 161 / 0.4);
   /* danger */

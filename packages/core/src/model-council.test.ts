@@ -375,6 +375,62 @@ describe("resolveAssignment — the board-rebuild drafting seats (#489 B08)", ()
   });
 });
 
+describe("resolveAssignment — the related-context jobs (#461)", () => {
+  it("resolves related-context-retrieval per scenario (Luna / Haiku / Luna) and degraded", () => {
+    expect(resolveAssignment("related-context-retrieval", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    expect(resolveAssignment("related-context-retrieval", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "haiku",
+      effort: "low",
+    });
+    expect(resolveAssignment("related-context-retrieval", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    const degraded = resolveAssignment("related-context-retrieval", ctx({ installed: [] }));
+    if (degraded.kind !== "model") throw new Error("expected a model resolution");
+    expect(degraded.trace.source).toBe("degraded");
+  });
+
+  it("resolves project-scout per scenario (Sonnet / Sonnet / Terra) and degraded", () => {
+    expect(resolveAssignment("project-scout", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("project-scout", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("project-scout", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+    const degraded = resolveAssignment("project-scout", ctx({ installed: [] }));
+    if (degraded.kind !== "model") throw new Error("expected a model resolution");
+    expect(degraded.trace.source).toBe("degraded");
+  });
+
+  it("related-context-retrieval is cross-harness under both (light on Codex, review on Claude)", () => {
+    const retrieval = resolveAssignment("related-context-retrieval", ctx(BOTH));
+    if (retrieval.kind !== "model") throw new Error("expected a model resolution");
+    expect(retrieval.trace.crossHarness).toBe(true);
+    // The scout runs ON the review harness — never cross-harness.
+    const scout = resolveAssignment("project-scout", ctx(BOTH));
+    if (scout.kind !== "model") throw new Error("expected a model resolution");
+    expect(scout.trace.crossHarness).toBeUndefined();
+  });
+});
+
 describe("resolveAssignment — deterministic tier + degraded", () => {
   it("a deterministic-tier job resolves to no model", () => {
     const resolved = resolveAssignment("rsp-validation", ctx(BOTH));

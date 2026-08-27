@@ -76,6 +76,14 @@ export function projectDetailPath(id: string): string {
   return `/projects/${encodeURIComponent(id)}`;
 }
 
+export function projectSettingsPath(id: string): string {
+  return settingsPath("projects", id);
+}
+
+export function archivedPath(): string {
+  return ROUTES.archived;
+}
+
 export function projectMapPath(id: string): string {
   return `/projects/${encodeURIComponent(id)}/map`;
 }
