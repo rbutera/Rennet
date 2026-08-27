@@ -155,7 +155,7 @@ describe("regeneration lanes render every status honestly — no false green che
 
   function renderGreeting() {
     return mount(
-      <RoundGreeting board={reportBoardFixture} state={composing} onReveal={() => {}} />,
+      <RoundGreeting board={reportBoardFixture} state={composing} onReveal={() => undefined} />,
     );
   }
 
