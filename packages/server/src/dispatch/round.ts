@@ -116,7 +116,10 @@ export function roundHandlers(rt: DispatchRuntime) {
  */
 function isOwnBranchReview(review: {
   retrospective?: boolean;
-  postTarget?: { viewerDidAuthor?: boolean };
+  // The index signature keeps this assignable from the concrete `Review.postTarget` (which
+  // has no `viewerDidAuthor` until origin/main folds in the own-PR ownership fact) while still
+  // reading the field structurally — no weak-type mismatch, and correct after the fold.
+  postTarget?: { viewerDidAuthor?: boolean; [k: string]: unknown };
 }): boolean {
   if (review.retrospective) return false;
   if (!review.postTarget) return true;
