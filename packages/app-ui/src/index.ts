@@ -4,25 +4,14 @@ export { ReviewWorkspace } from "./app";
 // The board surface (C05, #489): the lens board document, element registry, fold
 // grammar, quote highlights, and the lens/generation switchers. See `board/index.ts`.
 export {
-  BoardElement,
-  BoardElementsProvider,
   type BoardKind,
-  type BoardResolution,
-  type BoardSource,
-  BoardSourceProvider,
   type ElementOf,
   type ElementRegistry,
   type ElementRenderer,
   GenerationSwitcher,
-  LENS_LABEL,
-  type LensBoardEntry,
   LensBoardView,
   type LensBoardViewProps,
   LensSwitcher,
-  resolveBoard,
-  Section,
-  useBoardData,
-  useLensBoards,
 } from "./board";
 // The collation draft (issue #101 / R40): the ordered, id-keyed editable draft — the
 // forming destination. Reorder / merge / split need a list, not #17's path-keyed map.
