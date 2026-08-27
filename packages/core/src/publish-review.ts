@@ -1,4 +1,4 @@
-import type { Disposition, DispositionType } from "@rennet/protocol";
+import type { AskProjection, Disposition, DispositionType } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
 
@@ -149,6 +149,65 @@ export function reviewCommentsFromDispositions(
         body: disposition.body,
       };
     });
+}
+
+/**
+ * Parse a staged ask's `anchor` as a `path:line` code position, or `null` for a prose
+ * span. The trailing `:<digits>` is the line; everything before it is the path. This is
+ * the portable twin of app-ui's `parseLineAnchor` (`handoff/selectors.ts`) — core cannot
+ * import app-ui, and C9 converges the two on this copy when it swaps the client onto the
+ * durable projection.
+ */
+function parsePathLine(anchor: string): { path: string; line: number } | null {
+  const match = /^(.+):(\d+)$/.exec(anchor);
+  if (!match?.[1] || !match[2]) return null;
+  return { path: match[1], line: Number(match[2]) };
+}
+
+/**
+ * Compose the DEFAULT outbound review comments from the durable ASK PROJECTION (B11
+ * cluster 3, #458 R29–R36) — the projection equivalent of
+ * {@link reviewCommentsFromDispositions}. The durable projection is now the living-draft
+ * authority the desktop and phone share, so `publish.compose(mode:"review")` sources the
+ * outbound comments from HERE (superseding `review.dispositions`), and the post commands
+ * re-derive the same bytes off the same projection (single-source, R33).
+ *
+ * Two strata, GitHub's shape:
+ *   • LINE comments — a staged ask whose `anchor` is a `path:line` code position, plus
+ *     every `lineComments` entry (`path`→line→body). An ask and a bare line comment on the
+ *     SAME `path:line` collapse to ONE comment (the client's dual-claim rule): the ask
+ *     wins, since it carries the intent `type` and its own body.
+ *   • BODY prose — a staged ask whose anchor is a quoted prose span (no `path:line`) has no
+ *     repo path, so it is not a GitHub review COMMENT. It feeds the round work-order exit
+ *     (B11 cluster 4), not this one, and is excluded here rather than posted pathless.
+ *
+ * Deterministic order (path, then line) so the canonical payload is byte-stable regardless
+ * of the projection's Record key order — a projection round-tripped through disk composes
+ * identically.
+ */
+export function reviewCommentsFromProjection(projection: AskProjection): ReviewCommentInput[] {
+  const comments: ReviewCommentInput[] = [];
+  const claimed = new Set<string>();
+  for (const ask of Object.values(projection.stagedAsks)) {
+    const at = parsePathLine(ask.anchor);
+    if (!at) continue; // a prose ask has no repo path — the round-work-order exit's input, not this one
+    claimed.add(`${at.path}:${at.line}`);
+    comments.push({ path: at.path, line: at.line, side: "RIGHT", type: ask.type, body: ask.body });
+  }
+  for (const [path, lines] of Object.entries(projection.lineComments)) {
+    for (const [lineStr, body] of Object.entries(lines)) {
+      const line = Number(lineStr);
+      if (claimed.has(`${path}:${line}`)) continue; // a staged ask already claims this line
+      comments.push({ path, line, side: "RIGHT", type: "comment", body });
+    }
+  }
+  return comments.sort((left, right) =>
+    left.path !== right.path
+      ? left.path < right.path
+        ? -1
+        : 1
+      : (left.line ?? 0) - (right.line ?? 0),
+  );
 }
 
 /** A reference to the exact PR + head a review is pinned to. */

@@ -4,6 +4,7 @@ import type { AskLogStore } from "@rennet/adapters";
 import {
   type AskAnswer,
   canonicalReviewPayload,
+  emptyAskProjection,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
   type ForgePublishPort,
@@ -11,7 +12,7 @@ import {
   forgeTargetKey,
   type HandoffTurnOutcome,
   type ReviewService,
-  reviewCommentsFromDispositions,
+  reviewCommentsFromProjection,
 } from "@rennet/core";
 import type {
   AnchorSide,
@@ -587,6 +588,7 @@ export function toForgeReviewTarget(target: {
 }
 
 /**
+/**
  * The compose integrity binding (#382 M2 finding 2). A deterministic id over (reviewId, active
  * patchset, mode, canonical payload) — the payload already canonicalises the comments/submission,
  * so binding those four is enough to pin the artifact to one review AT one revision. `publish.compose`
@@ -609,21 +611,25 @@ export function publishCompositionId(fields: {
  * Refuse a post whose compose binding no longer matches the current review (#382 M2 finding 2).
  * A no-op when `compositionId` is absent (the desktop composes locally and posts without one —
  * additive/back-compat). For a team-PR "review" the expected binding is recomputed from the CURRENT
- * dispositions, so a disposition edit that landed between preview and post is caught (stale). For a
- * "pr" submission the payload is model-drafted (not re-derivable), so the binding is recomputed over
- * the posted payload + current patchset — catching a cross-review post or an advanced patchset; the
- * existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload to its content.
+ * durable ask projection (B11 cluster 3 — the same source `publish.compose` draws from, so the
+ * mirror holds), so an ask/line-comment/verdict edit that landed between preview and post is caught
+ * (stale). For a "pr" submission the payload is model-drafted (not re-derivable), so the binding is
+ * recomputed over the posted payload + current patchset — catching a cross-review post or an advanced
+ * patchset; the existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload.
  */
 export function assertCompositionFresh(
   review: Review,
   mode: "review" | "pr",
   payload: string,
   compositionId: string | undefined,
+  reviewProjection?: AskProjection,
 ): void {
   if (compositionId === undefined) return;
   const boundPayload =
     mode === "review"
-      ? canonicalReviewPayload(reviewCommentsFromDispositions(review.dispositions))
+      ? canonicalReviewPayload(
+          reviewCommentsFromProjection(reviewProjection ?? emptyAskProjection()),
+        )
       : payload;
   const expected = publishCompositionId({
     reviewId: review.id,

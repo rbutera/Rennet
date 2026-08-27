@@ -1953,16 +1953,13 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
   });
 
   it("publish.compose (mode review) composes a team-PR review the engine's publish.review posts byte-exact", async () => {
-    // A postable review (postTarget = SANDBOX_TARGET) with a real disposition to collate.
+    // A postable review (postTarget = SANDBOX_TARGET) with a real staged ask to collate. The
+    // durable ask projection — keyed by the review id — is the compose source (B11 cluster 3).
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await dispatch("review.setDisposition", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      patchsetId: review.activePatchsetId,
-      path: "src/a.ts",
-      disposition: "request-change",
-      body: "rename this",
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: { id: "a1", anchor: "src/a.ts:2", type: "request-change", body: "rename this" },
     });
 
     const composed = (await dispatch("publish.compose", {
@@ -1977,14 +1974,15 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       destination: string;
     };
     expect(composed.status).toBe("review");
-    // One-source: the composed comments come from the review's dispositions, the payload is core's
+    // One-source: the composed comments come from the durable ask projection, the payload is core's
     // canonical bytes, and the verdict is derived — exactly what publish.review re-verifies.
     expect(composed.comments.length).toBe(1);
     expect(composed.payload).toBe(canonicalReviewPayload(composed.comments));
-    // The daemon composed the comments straight off the review's disposition (one-source): a
-    // path-grained request-change becomes a file-level RIGHT comment carrying the body.
+    // The daemon composed the comments straight off the projection (one-source): a `path:line`
+    // request-change ask becomes a RIGHT line comment carrying the body.
     expect(composed.comments[0]).toMatchObject({
       path: "src/a.ts",
+      line: 2,
       side: "RIGHT",
       type: "request-change",
       body: "rename this",
@@ -2018,13 +2016,9 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
   it("binds the composed artifact and refuses a stale-revision post (#382 M2 finding 2)", async () => {
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await dispatch("review.setDisposition", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      patchsetId: review.activePatchsetId,
-      path: "src/a.ts",
-      disposition: "request-change",
-      body: "rename this",
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: { id: "a1", anchor: "src/a.ts:2", type: "request-change", body: "rename this" },
     });
     const composed = (await dispatch("publish.compose", {
       commandId: randomUUID(),
@@ -2042,14 +2036,11 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       compositionId: composed.compositionId,
     })) as { authorization: string };
     expect(consent.authorization).toBeTruthy();
-    // A disposition edit lands AFTER the preview (another client edited) — the phone still holds
-    // the old binding. The daemon recomputes it from the CURRENT dispositions and refuses.
-    await dispatch("review.setDisposition", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      patchsetId: review.activePatchsetId,
-      path: "src/a.ts",
-      disposition: "request-change",
+    // An ask edit lands AFTER the preview (another client edited) — the phone still holds the old
+    // binding. The daemon recomputes it from the CURRENT durable projection and refuses.
+    await dispatch("ask.edit", {
+      sessionId: review.id,
+      id: "a1",
       body: "actually, rename it to something else entirely",
     });
     await expect(

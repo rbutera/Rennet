@@ -3,10 +3,9 @@ import {
   buildForgeReviewPost,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
-  deriveReviewEvent,
   isRepoRelativePath,
   resolveReviewEvent,
-  reviewCommentsFromDispositions,
+  reviewCommentsFromProjection,
 } from "@rennet/core";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import { publishConsentKey } from "../publish-consent-authority";
@@ -45,7 +44,13 @@ export function publishHandlers(rt: DispatchRuntime) {
       // (the phone flow carries `compositionId`), recompute the binding from the CURRENT review
       // and refuse a stale-revision or cross-review mint. Recomputing from the current
       // dispositions is what catches a disposition edit landing between preview and post.
-      assertCompositionFresh(review, "review", input.payload, input.compositionId);
+      assertCompositionFresh(
+        review,
+        "review",
+        input.payload,
+        input.compositionId,
+        deps.askLog.readProjection(review.id),
+      );
       const target = toForgeReviewTarget(input.target);
       // Bind the mint to the review's OWN pull request (issue #21): a local capture
       // (no postTarget) or a mismatched target cannot even obtain a token, so the
@@ -82,7 +87,13 @@ export function publishHandlers(rt: DispatchRuntime) {
       // Compose-binding integrity (#382 M2 finding 2): a daemon-composed artifact carries its
       // binding; recompute it from the CURRENT review and refuse a stale/cross-review post
       // (dry-run included, so the fault surfaces as a refusal rather than a plausible request).
-      assertCompositionFresh(addressed, "review", input.payload, input.compositionId);
+      assertCompositionFresh(
+        addressed,
+        "review",
+        input.payload,
+        input.compositionId,
+        deps.askLog.readProjection(addressed.id),
+      );
 
       const target = toForgeReviewTarget(input.target);
 
@@ -245,6 +256,13 @@ export function publishHandlers(rt: DispatchRuntime) {
         });
       }
 
+      // The durable ask projection is the living-draft authority (B11 cluster 3): both exit
+      // modes source their outbound composition from it, keyed by the review's id (the ask
+      // log's session id — the contract the client honours when it calls `ask.*`). It
+      // supersedes `review.dispositions` as the compose source; the post commands re-derive
+      // the same bytes off the same projection, so the round-trip stays single-source.
+      const projection = deps.askLog.readProjection(review.id);
+
       if (input.mode === "review") {
         // A team-PR review posts a review event to a real PR. Only a review with a postTarget
         // can post one; a branch-only capture has no PR to comment on (it opens a PR instead).
@@ -255,10 +273,10 @@ export function publishHandlers(rt: DispatchRuntime) {
               "This review has no pull request to post to — open one from the own-branch flow instead.",
           });
         }
-        // Compose the DEFAULT (unedited) comments from the review's dispositions — the phone
+        // Compose the DEFAULT (unedited) comments from the durable ask projection — the phone
         // does not edit (publish decision 4), so the default IS the product. The payload and
         // verdict are core's, so publish.review re-verifies these very bytes (single-source).
-        const comments = reviewCommentsFromDispositions(review.dispositions);
+        const comments = reviewCommentsFromProjection(projection);
         // Path safety at compose (#382 M2 finding 8): refuse to compose an outbound review whose
         // comments carry an absolute or traversing path — such a path would post outside the
         // repo (or is corruption). Ingestion (`canvas.disposition`) already rejects them; this is
@@ -271,7 +289,9 @@ export function publishHandlers(rt: DispatchRuntime) {
           });
         }
         const payload = canonicalReviewPayload(comments);
-        const verdict = deriveReviewEvent(comments);
+        // Derive-first, overridable: the projection's explicit `verdictOverride` WINS; a null
+        // override defers to the verdict derived from the composed comments (R33).
+        const verdict = resolveReviewEvent(comments, projection.verdictOverride ?? undefined);
         const target = review.postTarget;
         const destination = `${target.repo.owner}/${target.repo.name}#${target.number}`;
         const compositionId = publishCompositionId({
@@ -315,8 +335,22 @@ export function publishHandlers(rt: DispatchRuntime) {
       // Draft the PR body (daemon-composed) when a drafter is wired; else a deterministic
       // title/body. Either way the payload is derived from the SAME submission returned, so
       // publish.submitPr round-trips it exactly (self-consistent, R33-honest).
+      // Feed the durable ask set into the PR-body drafter as its dispositions (B11 cluster 3):
+      // each staged ask is a `{ type, path, resolution }` drafting fact (the `:line` suffix
+      // trimmed to the bare path — drafting material for the model prompt, never egress). The
+      // verdict override is a GitHub review event and has no PR-body sink, so it does not ride
+      // here. `draftPrBody` produces text into a preview; it posts nothing (R33).
       const drafted = deps.draftPrBody
-        ? await deps.draftPrBody({ review, base, head: headRef, dispositions: [] })
+        ? await deps.draftPrBody({
+            review,
+            base,
+            head: headRef,
+            dispositions: Object.values(projection.stagedAsks).map((ask) => ({
+              type: ask.type,
+              path: ask.anchor.replace(/:\d+$/, ""),
+              resolution: ask.body,
+            })),
+          })
         : undefined;
       const title = drafted?.status === "drafted" ? drafted.title : headRef;
       const body = drafted?.status === "drafted" ? drafted.body : "";
