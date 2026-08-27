@@ -54,10 +54,14 @@ export function ContextMapView({
   bridge,
   projectId,
   onBack,
+  showAskRail = true,
 }: {
   bridge: RennetBridge;
   projectId: string;
   onBack(): void;
+  /** The project-scoped ask rail. The router-side map view (C12) hides it — the
+   *  session chat column plays that role there — and leaves it on elsewhere. */
+  showAskRail?: boolean;
 }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   useEffect(() => {
@@ -89,6 +93,7 @@ export function ContextMapView({
         map={state.map}
         knowledge={state.knowledge}
         onBack={onBack}
+        showAskRail={showAskRail}
       />
     );
   }
@@ -122,12 +127,14 @@ function ContextMap({
   map,
   knowledge,
   onBack,
+  showAskRail,
 }: {
   bridge: RennetBridge;
   projectId: string;
   map: ProjectMapPayload;
   knowledge: KnowledgeSetPayload | null;
   onBack(): void;
+  showAskRail: boolean;
 }) {
   const scopes = useMemo(() => buildScopes(map), [map]);
   const [selection, setSelection] = useState<Selection>(
@@ -245,12 +252,14 @@ function ContextMap({
             onDiscuss={discuss}
           />
         </section>
-        <section className="context-map-col flex flex-col min-w-0 w-[24rem]">
-          <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
-            Orchestrator — project session
-          </div>
-          <AskRail ref={askRef} bridge={bridge} projectId={projectId} />
-        </section>
+        {showAskRail ? (
+          <section className="context-map-col flex flex-col min-w-0 w-[24rem]">
+            <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
+              Orchestrator — project session
+            </div>
+            <AskRail ref={askRef} bridge={bridge} projectId={projectId} />
+          </section>
+        ) : null}
       </div>
     </div>
   );
