@@ -100,6 +100,12 @@ export interface ClaudeQueryOptions {
    */
   readonly outputSchema?: unknown;
   readonly appendSystemPrompt?: string;
+  /**
+   * The harness session id to resume (B09 cursor-resume). The composition root
+   * (`createClaudeQueryFn`) maps this to the SDK's `resume` option so the spawned
+   * `claude` continues that conversation. Absent ⇒ a fresh session.
+   */
+  readonly resume?: string;
 }
 
 export interface ClaudeQueryArgs {
@@ -194,6 +200,12 @@ export function mapClaudeError(code: string | null, message: string): HarnessErr
     aborted_streaming: { class: "cancelled", origin: "adapter", retryable: false },
     aborted_tools: { class: "cancelled", origin: "adapter", retryable: false },
     error_max_turns: { class: "max-turns", origin: "harness", retryable: false },
+    // The SDK's terminal execution-error result subtype. A resume against a
+    // transcript the CLI no longer has surfaces here (sdk.d.ts: resume is refused
+    // with an `error_during_execution` result). Preserved as `nativeCode` so the
+    // turn loop's resume-vanished discriminator keys on THIS exact subtype (B09
+    // F4) rather than the broad `invalid-request` class — non-retryable, harness-origin.
+    error_during_execution: { class: "invalid-request", origin: "harness", retryable: false },
   };
   const mapped = code !== null ? table[code] : undefined;
   if (mapped) {
@@ -225,6 +237,14 @@ function readStructuredOutput(record: Record<string, unknown>): unknown {
 function numField(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** A finite number field, or `undefined` when absent — the honest "not reported",
+ *  never `numField`'s substituted zero. Used where the harness may omit a figure
+ *  (the ask-don't-estimate compaction token counts). */
+function optNumField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /**
@@ -312,6 +332,29 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
         by: "policy",
         reason:
           stringField(record, "reason") ?? stringField(record, "message") ?? "denied by policy",
+      },
+    ];
+  }
+
+  if (type === "system" && subtype === "compact_boundary") {
+    // The harness compacted its own context (B09 cluster 3). Surface it honestly:
+    // the CLI owns the transcript and its compaction; Rennet maps the SDK's
+    // `compact_metadata` verbatim — trigger + its OWN pre/post token counts —
+    // carrying each figure only when reported (ask-don't-estimate: never a
+    // fabricated budget, never a substituted zero). trigger defaults to "auto":
+    // an unsolicited compaction is auto by nature, and the field is categorical,
+    // not a number we would be inventing.
+    const meta = asRecord(record.compact_metadata);
+    const trigger = meta !== null && stringField(meta, "trigger") === "manual" ? "manual" : "auto";
+    const preTokens = meta === null ? undefined : optNumField(meta, "pre_tokens");
+    const postTokens = meta === null ? undefined : optNumField(meta, "post_tokens");
+    return [
+      {
+        ...envelope(context, frame),
+        kind: "compact_boundary",
+        trigger,
+        ...(preTokens === undefined ? {} : { preTokens }),
+        ...(postTokens === undefined ? {} : { postTokens }),
       },
     ];
   }
@@ -413,18 +456,31 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
     // the completed outcome carries real counts through to the runner's provenance.
     const usage = extractResultUsage(record);
     const finalText = stringField(record, "result") ?? "";
+    // Cursor-resume (B09): the SDK stamps every frame — the terminal result
+    // included — with its own resumable `session_id`, and this frame's `uuid` is
+    // the tail chain-entry (a valid resume anchor). Surface both so the durable
+    // session persists them as its `HarnessCursor` and the next turn resumes.
+    // Absent from the frame ⇒ omitted, never invented (the cursor stays put).
+    const harnessSessionId = stringField(record, "session_id") ?? undefined;
+    const lastAssistantMessageAnchor = stringField(record, "uuid") ?? undefined;
+    const cursor = {
+      ...(harnessSessionId === undefined ? {} : { harnessSessionId }),
+      ...(lastAssistantMessageAnchor === undefined ? {} : { lastAssistantMessageAnchor }),
+    };
     const outcome =
       structuredOutput === undefined
         ? {
             status: "completed" as const,
             finalText,
             ...(usage === undefined ? {} : { usage }),
+            ...cursor,
           }
         : {
             status: "completed" as const,
             finalText,
             structuredOutput,
             ...(usage === undefined ? {} : { usage }),
+            ...cursor,
           };
     return [{ ...envelope(context, frame), kind: "session.ended", outcome }];
   }
@@ -437,6 +493,9 @@ const IMPLEMENTED_CAPABILITIES: readonly CapabilityName[] = [
   "toolGating",
   "interrupt",
   "textDeltas",
+  // B09: `SessionSpec.resume` maps to the SDK `resume` option and the completed
+  // outcome surfaces the harness session id — a real port path for cursor-resume.
+  "resume",
 ];
 
 export interface ClaudeAdapterConfig {
@@ -605,6 +664,10 @@ export class ClaudeAdapter implements HarnessPort {
       ...(spec.systemPrompt?.mode === "append"
         ? { appendSystemPrompt: spec.systemPrompt.text }
         : {}),
+      // Cursor-resume (B09): re-pass the harness session id every turn so the
+      // fresh `claude` process continues the prior conversation (the CLI owns the
+      // transcript; Rennet persists only this pointer). Absent ⇒ a fresh session.
+      ...(spec.resume === undefined ? {} : { resume: spec.resume.harnessSessionId }),
     };
   }
 }

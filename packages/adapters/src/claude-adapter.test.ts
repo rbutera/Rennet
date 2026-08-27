@@ -1,4 +1,10 @@
-import { createSeqCounter, type EnvelopeContext, type HarnessEvent } from "@rennet/core";
+import {
+  createSeqCounter,
+  type EnvelopeContext,
+  type HarnessEvent,
+  isResumeVanished,
+  type SessionOutcome,
+} from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import {
   ClaudeAdapter,
@@ -102,6 +108,46 @@ describe("normalizeClaudeFrame: denials and errors", () => {
   });
 });
 
+describe("normalizeClaudeFrame: compaction (B09 cluster 3)", () => {
+  it("maps the SDK compact_boundary frame to a compact_boundary event with the harness's own figures", () => {
+    const frame = {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 180_000, post_tokens: 42_000 },
+      uuid: "u1",
+      session_id: "abc",
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    const boundary = events[0];
+    expect(boundary?.kind).toBe("compact_boundary");
+    expect(boundary?.kind === "compact_boundary" && boundary.trigger).toBe("auto");
+    expect(boundary?.kind === "compact_boundary" && boundary.preTokens).toBe(180_000);
+    expect(boundary?.kind === "compact_boundary" && boundary.postTokens).toBe(42_000);
+    // The raw frame is carried verbatim, nothing lost.
+    expect(boundary?.native).toEqual(frame);
+  });
+
+  it("omits token figures the harness did not report — never a substituted zero", () => {
+    const frame = {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "manual" },
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const boundary = events[0];
+    expect(boundary?.kind === "compact_boundary" && boundary.trigger).toBe("manual");
+    expect(boundary?.kind === "compact_boundary" && boundary.preTokens).toBeUndefined();
+    expect(boundary?.kind === "compact_boundary" && boundary.postTokens).toBeUndefined();
+  });
+
+  it("defaults an unstated trigger to auto — an unsolicited compaction is auto by nature", () => {
+    const frame = { type: "system", subtype: "compact_boundary", compact_metadata: {} };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events[0]?.kind === "compact_boundary" && events[0].trigger).toBe("auto");
+  });
+});
+
 describe("normalizeClaudeFrame: passthrough and content", () => {
   it("surfaces an unmodelled frame as passthrough with its native payload", () => {
     const frame = { type: "some_future_frame", detail: 7 };
@@ -202,6 +248,57 @@ describe("mapClaudeError", () => {
       class: "unknown",
       origin: "harness",
     });
+  });
+
+  it("maps the SDK error_during_execution result subtype (B09 F4)", () => {
+    expect(mapClaudeError("error_during_execution", "resume rejected")).toMatchObject({
+      class: "invalid-request",
+      origin: "harness",
+      retryable: false,
+      nativeCode: "error_during_execution",
+    });
+  });
+});
+
+describe("resume-vanished detection through the real adapter mapping (B09 F4)", () => {
+  // Drives a raw SDK result frame through the ACTUAL frame normalizer, then the
+  // pure resume-vanished rule — not a hand-built HarnessError. If the mapping
+  // regresses (subtype no longer preserved as nativeCode), these reddens.
+  const outcomeOf = (frame: Record<string, unknown>): SessionOutcome => {
+    const ended = normalizeClaudeFrame(frame, context()).find((e) => e.kind === "session.ended");
+    if (ended?.kind !== "session.ended") throw new Error("no terminal outcome");
+    return ended.outcome;
+  };
+
+  it("treats a resumed error_during_execution result as a vanished transcript", () => {
+    const outcome = outcomeOf({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "resume rejected: no conversation found",
+    });
+    expect(outcome.status).toBe("failed");
+    expect(isResumeVanished(true, outcome)).toBe(true);
+  });
+
+  it("does NOT treat a resumed error_max_turns result as vanished", () => {
+    const outcome = outcomeOf({
+      type: "result",
+      subtype: "error_max_turns",
+      is_error: true,
+      result: "hit the turn ceiling",
+    });
+    expect(isResumeVanished(true, outcome)).toBe(false);
+  });
+
+  it("does not trigger the rebuild when the turn did not attempt resume", () => {
+    const outcome = outcomeOf({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "some execution error",
+    });
+    expect(isResumeVanished(false, outcome)).toBe(false);
   });
 });
 
@@ -319,11 +416,75 @@ describe("ClaudeAdapter session", () => {
     // Implemented by the adapter (mapping code exists and is tested).
     expect(caps.structuredOutput.implementedByAdapter).toBe(true);
     expect(caps.interrupt.implementedByAdapter).toBe(true);
-    // Not implemented in this slice: resume/fork stay false at every layer.
-    expect(caps.resume.implementedByAdapter).toBe(false);
+    // B09 wired cursor-resume: `resume` now has a real port path. `fork` is still
+    // a later slice and stays false at every layer.
+    expect(caps.resume.implementedByAdapter).toBe(true);
     expect(caps.fork.implementedByAdapter).toBe(false);
     // No conformance run and no live session yet, so these layers are all false.
     expect(caps.structuredOutput.advertisedByHarness).toBe(false);
     expect(caps.structuredOutput.availableInSession).toBe(false);
+  });
+
+  it("passes SessionSpec.resume through to the query options (cursor-resume, B09 task 2.1)", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const session = await adapter.createSession({
+      cwd: "/repo",
+      resume: { harnessSessionId: "harness-sess-42" },
+    });
+    await session.send({ prompt: "continue" });
+    const options: ClaudeQueryOptions | undefined = capturedArgs[0]?.options;
+    if (!options) throw new Error("queryFn was not invoked with options");
+    // RED-proof: drop the resume passthrough in `#buildOptions` and this reddens —
+    // the fresh `claude` process would start a new conversation instead of resuming.
+    expect(options.resume).toBe("harness-sess-42");
+  });
+
+  it("omits resume for a fresh session (no cursor invented)", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const session = await adapter.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "start" });
+    expect(capturedArgs[0]?.options.resume).toBeUndefined();
+  });
+
+  it("surfaces the harness session id + terminal anchor on the completed outcome (cursor, B09 task 2.1)", () => {
+    const frame = {
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "harness-sess-99",
+      uuid: "msg-uuid-tail",
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const ended = events[0];
+    expect(ended?.kind).toBe("session.ended");
+    if (ended?.kind !== "session.ended" || ended.outcome.status !== "completed") {
+      throw new Error("expected a completed session.ended outcome");
+    }
+    // The durable session persists these as its HarnessCursor.
+    expect(ended.outcome.harnessSessionId).toBe("harness-sess-99");
+    expect(ended.outcome.lastAssistantMessageAnchor).toBe("msg-uuid-tail");
+  });
+
+  it("omits the cursor when the result frame reports no session id (never fabricated)", () => {
+    const frame = { type: "result", subtype: "success", result: "done" };
+    const events = normalizeClaudeFrame(frame, context());
+    const ended = events[0];
+    if (ended?.kind !== "session.ended" || ended.outcome.status !== "completed") {
+      throw new Error("expected a completed session.ended outcome");
+    }
+    expect(ended.outcome.harnessSessionId).toBeUndefined();
+    expect(ended.outcome.lastAssistantMessageAnchor).toBeUndefined();
   });
 });

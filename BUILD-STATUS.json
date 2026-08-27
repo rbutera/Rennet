@@ -61,8 +61,9 @@
     "note": "PRs #521+#526 landed, 8 sub-wave-2 review fixes confirmed; composition-root wiring is B09's consuming turn (docs framed planned)"
   },
   "b09": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #531 landed; dual review upheld 8 findings (2 critical: durable restart idempotency, turn-loop lost-update), all fixed + confirmed. createRoundsRuntime is runLensPipeline's consuming turn; create-server/dispatch wiring deliberately deferred to the C9/B10 round trigger (5.1/6.2 ledger deferrals). Unblocks: B10 cluster 6, B11, C03/C07/C12 rename seams, C09 live rounds"
   },
   "b10": {
     "status": "done",

@@ -29,13 +29,20 @@ pure over injected seams (the harness ports, a prompt-file reader, and the
 whiteboard writer), so the whole path runs in tests against a fake `runTurn`
 with no live model call.
 
-`runLensPipeline` is built and exercised end-to-end against a real board
-service, but it is not yet invoked on a live review: the consuming turn — the
-rounds machinery that runs a generation and threads the round-report seat into
-the reveal — is wired by the rounds work (B09), the same seat that consumes the
-per-board arrival events this scheduler emits. Until that turn lands the
-pipeline is a tested pure projection with no non-test caller, exactly the seat
-B09 binds it to.
+`runLensPipeline`'s consuming turn is the **rounds runtime**.
+`createRoundsRuntime` (`packages/server/src/runtime/rounds.ts`) is the
+composition root that supplies the scheduler's open seams — `onBoardArrival` to
+the board-event broadcast, `persistBoardMeta` to the durable `BoardMeta` store,
+`composeTurn` to the orchestrator's authoring turn, `readPrompt` to the node
+prompt reader — and drives a generation: the round-report seat drafts first and
+gates the regeneration, the per-board arrival events this scheduler emits order
+the progressive reveal, and a `PipelineStartGuard` keyed on the session and
+patchset generation makes a re-entry mid-generation reattach rather than
+double-start. So the pipeline now has its non-test caller in the factory. The
+factory is the wiring, not yet the trigger: `create-server` does not instantiate
+the runtime on a live review — the round trigger that calls it is the own-branch
+round loop (C9/B10). The seams are bound; the pipeline lights up on a review
+when that trigger lands.
 
 0. **Round-report first** (on rounds only). When a review re-runs on a new
    patchset generation, the `round-report` drafter runs *before* the lens

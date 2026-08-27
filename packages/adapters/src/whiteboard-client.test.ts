@@ -39,7 +39,12 @@ describe("writer invariant (task 3.2) — WhiteboardClient is the only board-op 
     // become a second direct writer.
     const workspaceRoot = join(__dirname, "..", "..", "..");
     const allowed = new Set(["packages/adapters/src/whiteboard-client.ts"]);
-    const sanctionedCallers = new Set(["packages/server/src/runtime/lens-pipeline.ts"]);
+    const sanctionedCallers = new Set([
+      "packages/server/src/runtime/lens-pipeline.ts",
+      // B09 cluster 4: rework one-shot workers land their write through the injected
+      // WhiteboardClient (never a second writer); it imports no BoardService.
+      "packages/server/src/session/rework-queue.ts",
+    ]);
     const offenders: string[] = [];
     const directWriters: string[] = [];
     const walk = (dir: string): void => {
