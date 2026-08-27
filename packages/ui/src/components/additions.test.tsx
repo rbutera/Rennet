@@ -21,8 +21,8 @@ beforeAll(() => {
     setPointerCapture?: () => void;
     releasePointerCapture?: () => void;
   };
-  proto.setPointerCapture ??= () => {};
-  proto.releasePointerCapture ??= () => {};
+  proto.setPointerCapture ??= () => undefined;
+  proto.releasePointerCapture ??= () => undefined;
 });
 
 test("context-menu opens on contextmenu and an item fires its handler", async () => {
