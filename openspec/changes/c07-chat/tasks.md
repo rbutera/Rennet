@@ -13,9 +13,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 2. Transcript + turns
 
-- [ ] 2.1 `packages/app-ui/src/chat/conversation-pane.tsx` (port): the scroll region with bottom-anchored auto-scroll on append, mapping `chat-data.ts` rows to `Turn`s (and to `compaction-row` / `anchored-thread` rows added in cluster 4/5).
-- [ ] 2.2 `packages/app-ui/src/chat/turn.tsx` (port): user bubble vs orchestrator turn (lead prose, activity preface, body of prose/code blocks). Code blocks render through C4's `review/code-block.tsx` (reconciliation 4), never a local `CodeBlock`. The record-vs-arrival `animate` distinction is kept: historical turns replay instantly, live arrivals animate.
-- [ ] 2.3 DOM tests over `MemoryBridge`: a user turn and an orchestrator turn render their regions; a code block in a turn body is the shared `review/code-block.tsx` (a line comment written from it lands in `review.codeComments`, proving one path); historical turns do not animate, an appended live turn does. Cluster gate green. Commit.
+- [x] 2.1 `packages/app-ui/src/chat/conversation-pane.tsx` (port): the scroll region with bottom-anchored auto-scroll on append, mapping `chat-data.ts` rows to `Turn`s (and to `compaction-row` / `anchored-thread` rows added in cluster 4/5).
+- [x] 2.2 `packages/app-ui/src/chat/turn.tsx` (port): user bubble vs orchestrator turn (lead prose, activity preface, body of prose/code blocks). Code blocks render through C4's `review/code-block.tsx` (reconciliation 4), never a local `CodeBlock`. The record-vs-arrival `animate` distinction is kept: historical turns replay instantly, live arrivals animate.
+- [x] 2.3 DOM tests over `MemoryBridge`: a user turn and an orchestrator turn render their regions; a code block in a turn body is the shared `review/code-block.tsx` (a line comment written from it lands in `review.codeComments`, proving one path); historical turns do not animate, an appended live turn does. Cluster gate green. Commit.
 
 ## 3. Live-narration sub-blocks (state-driven, not self-timed)
 
