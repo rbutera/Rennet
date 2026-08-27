@@ -11,11 +11,14 @@ import { parseLineAnchor, partitionAsksByAnchor } from "./selectors";
 // the code line-comment stratum by PLACEMENT alone (selectBodyVsLineAsks, R36) — no chrome
 // copy explains the split, the two blocks ARE the statement.
 //
-// Findings never auto-stage: staging is always an act, and it lives in C5's finding renderer
-// and C4's toolbar (which already call `reviewActions.stageAsk`). The basket does not stage —
-// it renders the staged set and gives every ask its own undo (`unstageAsk`). So no flight
-// launch fires here (the pip is derived; the flight rides a staging gesture, which the basket
-// does not own — cluster 2's exit-flight batcher stays wired to the real staging call sites).
+// Findings never auto-stage: staging is always an act. The basket does not stage — it renders the
+// staged set and gives every ask its own undo (`unstageAsk`). So no flight launch fires here (the
+// pip is derived; the flight rides a staging GESTURE, which the basket does not own). The
+// `useFlightBatcher().signal()` calls live at the real staging sites that own the gesture: the
+// board finding renderer (`board/kinds/finding.tsx`), the noise-verdict "Not noise"
+// (`board/kinds/noise-verdict.tsx`), the diff and code-block line editors' request-change
+// (`review/diff-view.tsx`, `review/code-block.tsx`), and the quote toolbar's request-change
+// (`review/selection-toolbar.tsx`) — each firing the act then one signal, never on unstage.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The intent tag vocabulary — a label + a Badge variant per disposition kind. */

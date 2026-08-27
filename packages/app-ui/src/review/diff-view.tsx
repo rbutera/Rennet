@@ -15,6 +15,7 @@ import {
 import * as React from "react";
 import { useSearch } from "wouter";
 import { Icon } from "../components/icon";
+import { useFlightBatcher } from "../handoff/exit-flight";
 import { readSessionQuery } from "../routes/url";
 import { selectCodeComments, useRennetStore } from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
@@ -344,6 +345,7 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
   const comments = useRennetStore(selectCodeComments(path));
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const flight = useFlightBatcher();
   const [openLine, setOpenLine] = React.useState<number | null>(null);
 
   const language = React.useMemo(() => detectLanguage(path), [path]);
@@ -483,6 +485,7 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
                       type: "request-change",
                       body: text,
                     });
+                    flight.signal(); // the staging act flies one bubble to the FAB
                     setOpenLine(null);
                   }}
                 />

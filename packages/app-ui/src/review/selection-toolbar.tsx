@@ -3,6 +3,7 @@ import { GitPullRequestArrow, MessageSquare, Pencil, Sparkles, Trash2 } from "lu
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/icon";
+import { useFlightBatcher } from "../handoff/exit-flight";
 import { useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ export function ProseSelectionLayer({
   const [draft, setDraft] = useState("");
   const [explanation, setExplanation] = useState("");
   const { addQuoteComment, setFocusedThread, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const flight = useFlightBatcher();
 
   const dismiss = useCallback(() => {
     setAnchor(null);
@@ -154,6 +156,7 @@ export function ProseSelectionLayer({
       generation: anchor.generation,
     });
     stageAsk({ anchor: anchor.quote, type: "request-change", body: text, threadId: id });
+    flight.signal(); // the quote request-change stages one ask and flies one bubble (batched)
     setFocusedThread(id);
     window.getSelection()?.removeAllRanges();
     dismiss();

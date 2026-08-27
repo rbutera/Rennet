@@ -2,6 +2,7 @@ import { cn } from "@rennet/ui";
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Icon } from "../components/icon";
+import { useFlightBatcher } from "../handoff/exit-flight";
 import { selectCodeComments, useRennetStore } from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { LineCommentEditor } from "./line-comment-editor";
@@ -54,6 +55,7 @@ export function CodeBlock({
   const comments = useRennetStore(selectCodeComments(path));
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const flight = useFlightBatcher();
 
   const [copied, setCopied] = useState(false);
   const [openLine, setOpenLine] = useState<number | null>(null);
@@ -247,6 +249,7 @@ export function CodeBlock({
                           type: "request-change",
                           body: text,
                         });
+                        flight.signal(); // the staging act flies one bubble to the FAB
                         setOpenLine(null);
                       }}
                     />

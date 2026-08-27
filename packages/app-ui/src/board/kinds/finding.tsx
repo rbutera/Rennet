@@ -2,6 +2,7 @@ import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../../components/icon";
+import { useFlightBatcher } from "../../handoff/exit-flight";
 import { AnchorReveal } from "../../review";
 import { useRennetStore } from "../../store";
 import { QuoteHighlightLayer } from "../quote-highlight";
@@ -51,6 +52,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
   const citations = useCodeRefs(code);
   const [open, setOpen] = useState(status === "open");
   const { stageAsk, unstageAsk } = useRennetStore((s) => s.reviewActions);
+  const flight = useFlightBatcher();
 
   const { body, fix } = splitFix(concern);
   const summary = body.split("\n")[0];
@@ -117,11 +119,14 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
               <div className="flex justify-end pt-0.5">
                 <button
                   type="button"
-                  onClick={() =>
-                    staged
-                      ? unstageAsk(anchor)
-                      : stageAsk({ anchor, type: "request-change", body: fix })
-                  }
+                  onClick={() => {
+                    if (staged) {
+                      unstageAsk(anchor);
+                      return;
+                    }
+                    stageAsk({ anchor, type: "request-change", body: fix });
+                    flight.signal(); // a real staging act flies one bubble to the FAB (never unstage)
+                  }}
                   className={cn(
                     "rounded px-2.5 py-1 text-xs transition-colors",
                     staged
