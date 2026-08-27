@@ -50,6 +50,7 @@ import {
   type Generation,
   LENS_KINDS,
   type LensKind,
+  ROUND_NO_REGEN,
   type RoundRecord,
   type SessionModel,
 } from "@rennet/protocol";
@@ -191,13 +192,31 @@ export interface RoundsRuntimeDeps {
  *  `RoundInput`: the dispatch runs the coding-agent turn over the composed work-order; the
  *  board regeneration + `RoundRecord` are `runRound`'s (invoked once its lens-pipeline
  *  collation context is wired — a follow-on, kept out of the dispatch path). */
+/** What a dispatched round produced — the checkpoint-measured change and the honest
+ *  outcome classification, the substance the runtime pins into a `RoundRecord`. The
+ *  diff + changed paths come from `GitCheckpointStore` (via the injected worker turn),
+ *  not the worker's account of itself; a failed turn still carries the partial diff. */
+export interface DispatchRoundResult {
+  readonly outcome: "completed" | "failed";
+  readonly diff: string;
+  readonly changedPaths: readonly string[];
+  /** HEAD before → after the turn. Equal when the worker committed nothing (honest:
+   *  the checkpoint diff carries the change, no commit landed). */
+  readonly workerCommitRange: { readonly from: string; readonly to: string };
+}
+
 export interface RoundDispatchInput {
   readonly session: SessionModel;
   /** The composed work-order the dispatched asks folded into — the workers' input. */
   readonly workOrder: ComposedHandoffBundle;
   /** Run the composed work-order WATCHED LIVE (the injected coding-agent turn upstream);
-   *  the runtime owns only the per-session serialization, never the exec. */
-  readonly runWorkers: (workOrder: ComposedHandoffBundle) => Promise<void>;
+   *  the runtime owns the per-session serialization + recording, never the exec. Returns
+   *  the round's result so `dispatchRound` records a `RoundRecord`; a `void` return records
+   *  nothing (the serializer-only path used where no round result exists). */
+  // biome-ignore lint/suspicious/noConfusingVoidType: `void` is deliberate here — the union
+  // accepts a worker callback that legitimately returns nothing (the record-nothing path);
+  // `undefined` would reject a `Promise<void>`-returning callback.
+  readonly runWorkers: (workOrder: ComposedHandoffBundle) => Promise<DispatchRoundResult | void>;
 }
 
 export interface RoundsRuntime {
@@ -372,7 +391,38 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       return enqueue(input.session.id, () => runOnce(input));
     },
     dispatchRound(input: RoundDispatchInput): Promise<void> {
-      return enqueue(input.session.id, () => input.runWorkers(input.workOrder));
+      return enqueue(input.session.id, async () => {
+        const result = await input.runWorkers(input.workOrder);
+        // A void return is the serializer-only path (no round result to pin) — the
+        // per-session lock ran, nothing is recorded.
+        if (!result) return;
+        // Record the round. Part (a) is record-ONLY: no board is regenerated, so no
+        // generation is minted and no report board drafted — both generation fields carry
+        // the honest ROUND_NO_REGEN marker rather than a fabricated id (the mint is a
+        // separate workstream). The asks are the work-order's own ask ids; the diff +
+        // changed paths + commit range are the checkpoint-measured truth from the turn.
+        const record: RoundRecord = {
+          asksDispatched: input.workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
+          workerCommitRange: {
+            from: result.workerCommitRange.from,
+            to: result.workerCommitRange.to,
+          },
+          boardGeneration: ROUND_NO_REGEN,
+          reportBoard: ROUND_NO_REGEN,
+          outcome: result.outcome,
+          diff: result.diff,
+          changedPaths: [...result.changedPaths],
+        };
+        const records = ledger.get(input.session.id) ?? [];
+        records.push(record);
+        ledger.set(input.session.id, records);
+        // A FAILED round is RECORDED (its partial diff is on disk) but still REJECTS, so
+        // the dispatch command's per-key memo evicts and an identical re-dispatch retries
+        // (B11 finding 4). The session tail swallows the rejection — the queue is not wedged.
+        if (result.outcome === "failed") {
+          throw new Error("round worker turn failed");
+        }
+      });
     },
     ledger(sessionId: string): readonly RoundRecord[] {
       return ledger.get(sessionId) ?? [];
