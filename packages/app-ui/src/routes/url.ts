@@ -84,24 +84,6 @@ export function archivedPath(): string {
   return ROUTES.archived;
 }
 
-// ── Route classification (C03 §1.2) ──────────────────────────────────────────
-// A SESSION route (`/s/:slug`, plus its `/run`) is where the chat dock shows and
-// the 56px session top-bar renders; every other route is a TAKEOVER (settings, new
-// chat, archived, map, indexing, projects), full-width with no dock. The frame
-// keys the dock's visibility + `inert` on this, so the classifier is pure and
-// tested rather than a scattering of `startsWith("/s/")` checks.
-
-/** True when `path` (a location pathname, no query) is a review-session route. */
-export function isSessionPath(path: string): boolean {
-  return /^\/s\/[^/]+(?:\/run)?\/?$/.test(path);
-}
-
-/** The slug a session path carries, or null when `path` is not a session route. */
-export function sessionSlugFromPath(path: string): string | null {
-  const match = path.match(/^\/s\/([^/]+)(?:\/run)?\/?$/);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
-}
-
 export function projectMapPath(id: string): string {
   return `/projects/${encodeURIComponent(id)}/map`;
 }

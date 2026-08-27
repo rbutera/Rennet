@@ -1,0 +1,345 @@
+import { basename } from "node:path";
+import {
+  buildForgeReviewPost,
+  canonicalPrSubmissionPayload,
+  canonicalReviewPayload,
+  deriveReviewEvent,
+  isRepoRelativePath,
+  resolveReviewEvent,
+  reviewCommentsFromDispositions,
+} from "@rennet/core";
+import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import { publishConsentKey } from "../publish-consent-authority";
+import {
+  assertCompositionFresh,
+  type CommandHandler,
+  type DispatchRuntime,
+  publishCompositionId,
+  toForgeReviewTarget,
+} from "./runtime";
+
+export function publishHandlers(rt: DispatchRuntime) {
+  const {
+    deps,
+    requireReviewById,
+    assertTargetIsReviewOwn,
+    assertAllowedRepository,
+    activePatchsetOf,
+    realPostInFlight,
+    clearPublishReady,
+    raisePublishReady,
+  } = rt;
+  return {
+    "publish.requestConsent": async (rawInput) => {
+      const name = "publish.requestConsent" as const;
+      // The renderer REQUESTS approval to POST to GitHub; MAIN mints the token. It
+      // is bound to (review, target, payload) via `publishConsentKey`, so the token
+      // authorises exactly one payload onto exactly one PR (coordinates + node id +
+      // head) — the renderer must present the SAME target + payload at egress or the
+      // token cannot consume.
+      const input = parseCommandInput(name, rawInput);
+      // Refuse to mint a token for a stale or unknown review id; only the current
+      // review can be published from this session.
+      const review = requireReviewById(input.reviewId);
+      // Compose-binding integrity (#382 M2 finding 2): when the artifact was daemon-composed
+      // (the phone flow carries `compositionId`), recompute the binding from the CURRENT review
+      // and refuse a stale-revision or cross-review mint. Recomputing from the current
+      // dispositions is what catches a disposition edit landing between preview and post.
+      assertCompositionFresh(review, "review", input.payload, input.compositionId);
+      const target = toForgeReviewTarget(input.target);
+      // Bind the mint to the review's OWN pull request (issue #21): a local capture
+      // (no postTarget) or a mismatched target cannot even obtain a token, so the
+      // real-post path below can never receive one for the wrong PR.
+      assertTargetIsReviewOwn(review, target);
+      // Bind the resolved VERDICT into the token too, so an APPROVE/REQUEST_CHANGES
+      // cannot be swapped in after approval (the verdict is the one outbound field
+      // the payload bytes do not capture).
+      const key = publishConsentKey(review.id, target, input.payload, input.verdict);
+      return parseCommandOutput(name, { authorization: deps.publishConsent.grant(key) });
+    },
+    "publish.review": async (rawInput) => {
+      const name = "publish.review" as const;
+      // The FIRST real egress: a decomposed review leaving the machine onto a PR AS
+      // THE USER. Every dangerous part is gated here; the pipeline has no other path
+      // to egress (this command is reachable only from the trusted renderer origin).
+      const input = parseCommandInput(name, rawInput);
+
+      // (0) The RETROSPECTIVE gate (Rule 75, most-permissive-fault): a review opened
+      // read-only over an already-merged/any PR must NEVER egress. We resolve the
+      // addressed review from the persisted store (the latest, same authority the
+      // consent-minting and canvases paths use) and refuse the WHOLE command — dry
+      // run included — before any request is built. This is the structural half: the
+      // renderer also hides the sign affordance, but even a hand-crafted call cannot
+      // post from a retrospective review, in ANY permission mode, because this runs
+      // ahead of the mode/consent branch entirely. A single fault (forged mode,
+      // replayed token, renderer bug) cannot clear it — it is not on that circuit.
+      const addressed = requireReviewById(input.reviewId);
+      if (addressed.retrospective) {
+        throw new Error(
+          "Publish refused: this is a retrospective review — it is read-only and nothing can be posted.",
+        );
+      }
+      // Compose-binding integrity (#382 M2 finding 2): a daemon-composed artifact carries its
+      // binding; recompute it from the CURRENT review and refuse a stale/cross-review post
+      // (dry-run included, so the fault surfaces as a refusal rather than a plausible request).
+      assertCompositionFresh(addressed, "review", input.payload, input.compositionId);
+
+      const target = toForgeReviewTarget(input.target);
+
+      // (1) Egress-side "what you see is what leaves" (R33), the MAIN analogue of
+      // the #106 UI gate: the canonical bytes re-derived from `comments` must equal
+      // the signed `payload` EXACTLY (===, never prefix/substring). A disagreement
+      // fails CLOSED. This runs on dry-run TOO, so a corrupt payload surfaces as a
+      // refusal rather than a plausible-looking request.
+      if (canonicalReviewPayload(input.comments) !== input.payload) {
+        throw new Error("Publish refused: the review payload does not match its content");
+      }
+      // (2) An empty review is not a valid egress — refuse rather than post nothing.
+      if (input.comments.length === 0) {
+        throw new Error("Publish refused: the review has no content");
+      }
+
+      // (3) Assemble the forge-neutral post (event COMMENT — no APPROVE shape; every
+      // no-line fold ledgered, never a silent drop).
+      const post = buildForgeReviewPost(input.comments, {
+        reviewId: input.reviewId,
+        target,
+        payload: input.payload,
+        capabilities: deps.publishPort.capabilities,
+        // Derive-first, overridable: an explicit verdict wins; else it derives from
+        // the dispositions. `undefined` simply defers to the derived verdict.
+        ...(input.verdict ? { verdict: input.verdict } : {}),
+      });
+
+      if (input.dryRun === false) {
+        // (4) REAL egress. Posting a review to GitHub is an EXTERNAL act — a review
+        // leaving the machine AS THE USER — so unlike running a model (which just
+        // runs), a real send ALWAYS requires an explicit user confirmation.
+        //
+        // (4a) TARGET-BINDING gate (most-permissive-fault): the post must target the
+        // review's OWN pull request. A local capture (no postTarget) or a mismatched
+        // target is refused BEFORE the token is even looked at, so a token can never
+        // authorise a post to an arbitrary PR — it runs on the same authority
+        // (`addressed.postTarget`) the retrospective gate does.
+        assertTargetIsReviewOwn(addressed, target);
+        // (4b) The single-use CONSENT token MAIN minted for THIS (review, target,
+        // payload, VERDICT) via `publish.requestConsent`, verified + CONSUMED here.
+        // Absent / forged / replayed / target-payload-or-verdict-mismatched ⇒ refused,
+        // and NOTHING leaves. The verdict is resolved the SAME way it is for the post
+        // (`resolveReviewEvent`), so the token authorises exactly the event that ships.
+        const resolvedVerdict = resolveReviewEvent(input.comments, input.verdict);
+        const key = publishConsentKey(input.reviewId, target, input.payload, resolvedVerdict);
+        const authorization = input.authorization;
+        if (typeof authorization !== "string" || !deps.publishConsent.consume(key, authorization)) {
+          throw new Error("Publish refused: not authorized to post — confirm the send first");
+        }
+        // (4c) Single-flight by marker (double-sign race): refuse a concurrent real
+        // post of the same content while the first is still in flight, so two
+        // near-simultaneous signs cannot both pass the adapter's query-before-post
+        // check and double-post. A sequential retry (first already resolved) is not
+        // in the set and relies on the adapter's marker idempotency instead.
+        if (realPostInFlight.has(post.marker)) {
+          throw new Error("Publish refused: a publish for this review is already in progress.");
+        }
+        realPostInFlight.add(post.marker);
+        try {
+          const outcome = await deps.publishPort.publishReview(post);
+          // The post landed — clear any publish-ready attention on this review everywhere
+          // (#382 M2). The taxonomy clears publish-ready on the post happening, from any client.
+          clearPublishReady(input.reviewId);
+          return parseCommandOutput(name, {
+            dryRun: false,
+            request: deps.publishPort.buildReviewRequest(post),
+            marker: post.marker,
+            ledger: post.ledger,
+            outcome,
+          });
+        } finally {
+          realPostInFlight.delete(post.marker);
+        }
+      }
+
+      // Dry-run (the default): construct + return the EXACT request, post NOTHING.
+      // No mode/consent check — nothing leaves — and the descriptor carries no token.
+      return parseCommandOutput(name, {
+        dryRun: true,
+        request: deps.publishPort.buildReviewRequest(post),
+        marker: post.marker,
+        ledger: post.ledger,
+        outcome: null,
+      });
+    },
+    "publish.submitPr": async (rawInput) => {
+      const name = "publish.submitPr" as const;
+      // The own-branch submission (issue #257 / #107): push the review's own branch
+      // and open a real PR. The sign-click is the whole authorization — no consent
+      // token: pushing your own branch is not publishing (AGENTS.md).
+      const input = parseCommandInput(name, rawInput);
+      const review = requireReviewById(input.reviewId);
+      assertAllowedRepository(review.repositoryRoot);
+
+      // (0) A retrospective review is read-only over a merged/any PR — there is no
+      // own branch to submit. Refuse the whole command, matching the review egress.
+      if (review.retrospective) {
+        throw new Error(
+          "Submit refused: this is a retrospective review — it is read-only and has no branch to open a PR from.",
+        );
+      }
+
+      // (1) "What you see is what leaves" (R33): the canonical bytes re-derived from
+      // `submission` must equal the signed `payload` EXACTLY. A disagreement fails
+      // CLOSED, so the PR that opens is exactly the one the paper previewed.
+      if (canonicalPrSubmissionPayload(input.submission) !== input.payload) {
+        throw new Error("Submit refused: the PR submission payload does not match its content");
+      }
+      // Compose-binding integrity (#382 M2 finding 2): a daemon-composed submission carries its
+      // binding; recompute it over the posted payload + current patchset and refuse a
+      // cross-review or advanced-patchset (stale) submission before pushing anything.
+      assertCompositionFresh(review, "pr", input.payload, input.compositionId);
+
+      // (2) The head must be a real BRANCH ref (#107) — a detached HEAD has no branch
+      // to open a PR from. MAIN is authoritative on the branch to push: the persisted
+      // provenance's `headRef`, which must match the previewed `submission.head`
+      // (else the paper showed a head that is not the review's own branch — a lie).
+      const patchset = activePatchsetOf(review);
+      const headRef = patchset.repository.headRef;
+      if (headRef === undefined) {
+        throw new Error(
+          "Submit refused: HEAD is detached — there is no branch to push and open a pull request from.",
+        );
+      }
+      if (input.submission.head !== headRef) {
+        throw new Error("Submit refused: the PR head does not match the review's own branch.");
+      }
+
+      // (3) Push the branch + open the PR. Absent action ⇒ an honest failure, never a
+      // fabricated success (no coding harness / no auth composed it).
+      if (!deps.submitPullRequest) {
+        throw new Error(
+          "Submit refused: no GitHub PR submission is available (authentication or the coding harness is not configured).",
+        );
+      }
+      const outcome = await deps.submitPullRequest({
+        repoRoot: patchset.repository.root,
+        headRef,
+        submission: input.submission,
+      });
+      // The PR opened (or was reused) — clear any publish-ready attention on this review
+      // everywhere (#382 M2), the same clear-on-post the review egress does.
+      clearPublishReady(review.id);
+      return parseCommandOutput(name, outcome);
+    },
+    "publish.compose": async (rawInput) => {
+      const name = "publish.compose" as const;
+      // A projected client (the phone) cannot compose the byte-exact payload — the DOM ui
+      // layer owns the editable collation model and the mobile boundary forbids importing it.
+      // So the DAEMON composes it (core is node-free and in-boundary here) and the phone POSTS
+      // exactly these bytes. `mode` selects the loop; a mode that does not fit the review is
+      // honestly `unavailable`. Finding C ruling (a): BOTH loops end on the phone.
+      const input = parseCommandInput(name, rawInput);
+      const review = requireReviewById(input.reviewId);
+      if (review.retrospective) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason: "This is a retrospective review — it is read-only and posts nothing.",
+        });
+      }
+
+      if (input.mode === "review") {
+        // A team-PR review posts a review event to a real PR. Only a review with a postTarget
+        // can post one; a branch-only capture has no PR to comment on (it opens a PR instead).
+        if (!review.postTarget) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason:
+              "This review has no pull request to post to — open one from the own-branch flow instead.",
+          });
+        }
+        // Compose the DEFAULT (unedited) comments from the review's dispositions — the phone
+        // does not edit (publish decision 4), so the default IS the product. The payload and
+        // verdict are core's, so publish.review re-verifies these very bytes (single-source).
+        const comments = reviewCommentsFromDispositions(review.dispositions);
+        // Path safety at compose (#382 M2 finding 8): refuse to compose an outbound review whose
+        // comments carry an absolute or traversing path — such a path would post outside the
+        // repo (or is corruption). Ingestion (`canvas.disposition`) already rejects them; this is
+        // the defence-in-depth at the egress boundary.
+        const badPath = comments.find((c) => !isRepoRelativePath(c.path));
+        if (badPath) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason: `A review comment has an unsafe path (${badPath.path}); it cannot be posted.`,
+          });
+        }
+        const payload = canonicalReviewPayload(comments);
+        const verdict = deriveReviewEvent(comments);
+        const target = review.postTarget;
+        const destination = `${target.repo.owner}/${target.repo.name}#${target.number}`;
+        const compositionId = publishCompositionId({
+          reviewId: review.id,
+          patchsetId: review.activePatchsetId,
+          mode: "review",
+          payload,
+        });
+        // A composed draft is now ready to post (#382 M2, both modes): raise publish-ready so
+        // an away client learns it and deep-links to the preview. Idempotent by derived id.
+        raisePublishReady(review, destination, destination);
+        return parseCommandOutput(name, {
+          status: "review",
+          comments,
+          payload,
+          verdict,
+          destination,
+          title: destination,
+          compositionId,
+        });
+      }
+
+      // input.mode === "pr": the own-branch submission. A team-PR review posts a review, not a
+      // new PR; refuse "pr" there so the caller uses "review".
+      if (review.postTarget) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason:
+            'This is a team-PR review — post it as a review (mode "review"), not a new pull request.',
+        });
+      }
+      const patchset = activePatchsetOf(review);
+      const headRef = patchset.repository.headRef;
+      if (headRef === undefined) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason: "HEAD is detached — there is no branch to open a pull request from.",
+        });
+      }
+      const base = patchset.repository.baseRef;
+      // Draft the PR body (daemon-composed) when a drafter is wired; else a deterministic
+      // title/body. Either way the payload is derived from the SAME submission returned, so
+      // publish.submitPr round-trips it exactly (self-consistent, R33-honest).
+      const drafted = deps.draftPrBody
+        ? await deps.draftPrBody({ review, base, head: headRef, dispositions: [] })
+        : undefined;
+      const title = drafted?.status === "drafted" ? drafted.title : headRef;
+      const body = drafted?.status === "drafted" ? drafted.body : "";
+      const submission = { title, body, base, head: headRef, draft: true };
+      const payload = canonicalPrSubmissionPayload(submission);
+      const destination = `${basename(review.repositoryRoot)}:${headRef} → ${base}`;
+      const compositionId = publishCompositionId({
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        mode: "pr",
+        payload,
+      });
+      // A composed own-branch draft is now ready to post (#382 M2, both modes): raise
+      // publish-ready. Idempotent by derived id with the review.draftPrBody raise.
+      raisePublishReady(review, destination, title);
+      return parseCommandOutput(name, {
+        status: "pr",
+        submission,
+        payload,
+        destination,
+        title,
+        compositionId,
+      });
+    },
+  } satisfies Record<string, CommandHandler>;
+}
