@@ -1,4 +1,4 @@
-import { renderLayer } from "@rennet/instructions";
+import { renderLayer } from "@rennet/prompts";
 import type { ContextSendRecord } from "@rennet/protocol";
 import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";

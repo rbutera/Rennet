@@ -13,7 +13,7 @@
  *
  * It mirrors `runFindingAngle` (#32) and `runDecisionAngle` (#137): the offered
  * manifest an agent may cite (deterministic), the prompt contract that instructs it
- * (`NOISE_CONTRACT` from `@rennet/instructions`), and the RSP validator that decides
+ * (`NOISE_CONTRACT` from `@rennet/prompts`), and the RSP validator that decides
  * admission (from `@rennet/protocol`). The agent emits ONLY the body, schema-
  * constrained; this module builds the trustworthy envelope around it — minting the
  * `docId`, stamping `provenance` including `inputDigest` — so "agents never mint
@@ -56,7 +56,7 @@ import {
   renderBaseInstruction,
   renderConventionLayer,
   renderHypothesisLayer,
-} from "@rennet/instructions";
+} from "@rennet/prompts";
 import type {
   BudgetGrant,
   ConventionCatalogue,

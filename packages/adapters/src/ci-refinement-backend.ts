@@ -4,7 +4,7 @@ import type {
   CodexExecutor,
   HarnessPort,
 } from "@rennet/core";
-import { CI_CLASSIFICATION_OUTPUT_SCHEMA } from "@rennet/instructions";
+import { CI_CLASSIFICATION_OUTPUT_SCHEMA } from "@rennet/prompts";
 
 export interface ClaudeCiRefinementTurnOptions {
   readonly cwd: string;

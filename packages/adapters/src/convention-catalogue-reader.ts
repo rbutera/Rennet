@@ -9,7 +9,7 @@ import { findingSeveritySchema } from "@rennet/protocol";
  * Florence's /review-pr agents carry an injected anti-pattern + convention
  * checklist; Rennet's lens runners did not. This adapter sources that catalogue
  * from an OPTIONAL per-project file so the runners can be fed it as a checklist
- * layer (the pure `renderConventionLayer` in `@rennet/instructions`, threaded
+ * layer (the pure `renderConventionLayer` in `@rennet/prompts`, threaded
  * through `runFindingAngle` / `runDecisionAngle` / `runNoiseAngle`). File I/O
  * lives HERE, at the adapter boundary, so `@rennet/core` stays pure — the model
  * boundary the codebase holds to.

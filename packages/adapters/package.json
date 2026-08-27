@@ -9,7 +9,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@octokit/core": "7.0.7",
     "@rennet/core": "workspace:*",
-    "@rennet/instructions": "workspace:*",
+    "@rennet/prompts": "workspace:*",
     "@rennet/protocol": "workspace:*",
     "chokidar": "5.0.0",
     "execa": "10.0.0",

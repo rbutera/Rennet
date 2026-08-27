@@ -2,10 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  FINDING_VERIFICATION_CONTRACT,
-  renderFindingVerificationPrompt,
-} from "@rennet/instructions";
+import { FINDING_VERIFICATION_CONTRACT, renderFindingVerificationPrompt } from "@rennet/prompts";
 import { describe, expect, it } from "vitest";
 import { createClaudeHarness } from "./claude-query";
 import { createVerificationTurn } from "./finding-verification-backend";
