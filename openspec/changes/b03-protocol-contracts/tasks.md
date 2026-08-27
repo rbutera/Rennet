@@ -9,7 +9,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 - [x] 1.3 `DraftBoardSchema` **derived** from `HostBoardSchema` by `omit` of the curation-side kinds (the human/thread family — `message`, `review_comment`; settle the exact set against #462's tiers and record it in a comment) — never hand-written. Seam `parseDraft(unknown) → Result<DraftBoard, ZodIssue[]>`; export `Blemish` (a lint violation the retry ladder exhausted on — board ships flagged) and `Violation` (one lint-rule hit: rule id, element ref, message) shapes for B8's `lint(draft) → Violation[]`. Append-extension by B8 is allowed; hand-editing the derivation is not.
 - [x] 1.4 `src/board/index.ts` is the folder's only public seam; root `src/index.ts` re-exports it.
 - [x] 1.5 Tests: a fixture board exercising every kind parses through `HostBoardSchema`; a draft fixture through `parseDraft`; **drift test 1** — fails if `DraftBoardSchema` stops being the derivation (e.g. kind-set comparison: Draft kinds === Host kinds minus the recorded omit set, computed from the schemas, not from a hand-kept list); **drift test 2** — Zod → whiteboard wire: compile the host schema through the kit and validate against the kit's wire shape, failing on any silent divergence.
-- [ ] 1.6 Cluster gate green. Commit.
+- [x] 1.6 Cluster gate green. Commit.
 
 ## 2. manifests/ — ids as data; the temporary lens unions die
 
