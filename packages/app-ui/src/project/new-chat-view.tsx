@@ -1,5 +1,5 @@
 import type { Project, SmartListCi } from "@rennet/protocol";
-import { cn, Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
+import { cn, Popover, PopoverContent, PopoverTrigger, Toggle, ToggleGroup } from "@rennet/ui";
 import {
   ArrowUp,
   Check,
@@ -178,23 +178,22 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
           </h1>
 
           <div className="mt-7 flex items-center gap-2">
-            <div className="flex items-center gap-0.5 rounded-control border border-line bg-surface p-0.5">
+            {/* The tabs are a single-select segmented control — ToggleGroup, not a
+                hand-rolled aria-pressed group (no-handrolled-toggle, autopsy S6). */}
+            <ToggleGroup
+              value={[tab]}
+              onValueChange={(next: string[]) => {
+                if (next[0]) setTab(next[0] as SmartFilter);
+              }}
+              aria-label="Filter the review targets"
+            >
               {TABS.map(({ filter: value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setTab(value)}
-                  aria-pressed={tab === value}
-                  className={cn(
-                    "flex items-center gap-1.5 whitespace-nowrap rounded-chip px-2 py-1 text-xs font-medium transition-colors",
-                    tab === value ? "bg-raised text-ink" : "text-ink-soft hover:text-ink",
-                  )}
-                >
+                <Toggle key={value} value={value} size="sm">
                   {label}
                   <span className="text-2xs text-ink-faint">{counts[value]}</span>
-                </button>
+                </Toggle>
               ))}
-            </div>
+            </ToggleGroup>
             <label className="ml-auto flex h-7 w-52 items-center gap-1.5 rounded-control border border-line bg-surface px-2 focus-within:border-accent-line">
               <Icon icon={Search} className="size-3.5 shrink-0 text-ink-faint" />
               <input
