@@ -81,6 +81,33 @@ const spec = (session: SessionModel): Omit<SessionSpec, "resume"> => ({
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+describe("SessionTurnLoop: resume contract on the injected port (task 2.4)", () => {
+  it("hands the port the persisted cursor's harnessSessionId when resuming a reloaded session", async () => {
+    // A session already carrying a cursor, loaded fresh from the store (the
+    // restart-reattach path cluster 8's E2E exercises): the very first turn must
+    // resume that exact id, not start a new conversation.
+    const store = memoryStore({
+      ...mintSession("proj", { id: () => "s1", now: () => 1 }),
+      harnessCursor: {
+        harnessSessionId: "persisted-77",
+        lastAssistantMessageAnchor: "a",
+        turnCount: 9,
+      },
+    });
+    const specs: SessionSpec[] = [];
+    const loop = new SessionTurnLoop({
+      port: fakePort((s) => specs.push(s)),
+      store,
+      buildSpec: spec,
+    });
+
+    await loop.runTurn("s1", "resume me");
+    // RED-proof: if the loop dropped `planResume`, this reddens — the port would
+    // see no resume pointer and the harness would start a new conversation.
+    expect(specs[0]?.resume).toEqual({ harnessSessionId: "persisted-77" });
+  });
+});
+
 describe("SessionTurnLoop: cursor persistence (task 2.2)", () => {
   it("persists the harness-reported cursor after a completed turn", async () => {
     const session = mintSession("proj", { id: () => "s1", now: () => 1 });
