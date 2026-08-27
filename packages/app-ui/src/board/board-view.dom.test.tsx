@@ -1,0 +1,98 @@
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it } from "vitest";
+import { BridgeProvider } from "../data";
+import { useRennetStore } from "../store";
+import { mount } from "../test/dom";
+import { fixtureBoardSource } from "../test/fixtures/boards";
+import { MemoryBridge } from "../test/memory-bridge";
+import { BoardSourceProvider } from "./board-data";
+import { LensBoardView } from "./board-view";
+
+// Cluster 6 — the board document, lens switcher, and generation drill-down over the
+// fixture generations. gen0 = frozen propose-time Design only; gen1 = all five lenses;
+// gen2 = sequence + flagged, carrying deltas (flagged: g2-open reworked, g2-beyond new).
+
+const GENERATIONS = ["gen0", "gen1", "gen2"] as const;
+
+function renderView(generation: string, generations: readonly string[] = GENERATIONS) {
+  // An empty MemoryBridge stands in for unbound dispatch — board citations read the
+  // honest error, which the board document renders around (Reconciliation 2).
+  return mount(
+    <BridgeProvider bridge={new MemoryBridge({})}>
+      <BoardSourceProvider value={fixtureBoardSource}>
+        <LensBoardView generation={generation} generations={generations} />
+      </BoardSourceProvider>
+    </BridgeProvider>,
+  );
+}
+
+const lensOf = (c: HTMLElement) => c.querySelector("article[data-lens]")?.getAttribute("data-lens");
+
+beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
+
+describe("LensBoardView — board document, switchers, drill-down", () => {
+  it("renders a segment only for lenses present this generation (absent-not-disabled)", () => {
+    const { container } = renderView("gen2");
+    const tabs = container.querySelector("[data-kind=lens-switcher]");
+    // gen2 carries sequence + flagged; the other three lenses have no board — no segment.
+    expect(tabs?.querySelector("[data-lens=sequence]")).toBeTruthy();
+    expect(tabs?.querySelector("[data-lens=flagged]")).toBeTruthy();
+    expect(tabs?.querySelector("[data-lens=design]")).toBeNull();
+    expect(tabs?.querySelector("[data-lens=decisions]")).toBeNull();
+    expect(tabs?.querySelector("[data-lens=noise]")).toBeNull();
+  });
+
+  it("opens on the Flagged lens expanded (R44) and folds every section on another lens", async () => {
+    const { container, user } = renderView("gen1");
+    // R44: Flagged is the default lens and its sections arrive expanded.
+    expect(lensOf(container)).toBe("flagged");
+    const flaggedOpen = [...container.querySelectorAll("[data-kind=board-section]")];
+    expect(flaggedOpen.length).toBeGreaterThan(0);
+    expect(flaggedOpen.every((s) => s.getAttribute("data-open") === "true")).toBe(true);
+
+    // Switching to Design swaps the board; Design carries no deltas, so foldAll folds all.
+    const designTab = container.querySelector<HTMLButtonElement>("[data-lens=design]");
+    if (!designTab) throw new Error("no design tab");
+    await user.click(designTab);
+    expect(lensOf(container)).toBe("design");
+    const designSections = [...container.querySelectorAll("[data-kind=board-section]")];
+    expect(designSections.length).toBeGreaterThan(0);
+    expect(designSections.every((s) => s.getAttribute("data-open") === "false")).toBe(true);
+  });
+
+  it("rolls the section deltas up to a lens pip that clears as the sections are viewed", async () => {
+    const { container, getByText, user } = renderView("gen2");
+    const flaggedTab = container.querySelector("[data-lens=flagged]");
+    const pip = () => flaggedTab?.querySelector("[data-testid=lens-delta-pip]");
+    // Two unviewed delta sections (g2-open reworked, g2-beyond new) → the rollup reads 2.
+    expect(pip()?.getAttribute("data-delta-count")).toBe("2");
+
+    // Interacting with a delta section marks it viewed (store-driven) and drops the count.
+    await user.click(getByText("Still Open"));
+    expect(pip()?.getAttribute("data-delta-count")).toBe("1");
+    await user.click(getByText("Beyond the Asks"));
+    // Both viewed ⇒ the pip is gone entirely.
+    expect(pip()).toBeNull();
+  });
+
+  it("drills back to a frozen generation's board, marked frozen, through the same seam", async () => {
+    const { container, user } = renderView("gen2", GENERATIONS);
+    const gens = container.querySelector("[data-kind=generation-switcher]");
+    expect(gens).toBeTruthy();
+    // gen2 is live; gen0/gen1 are frozen predecessors (read-only drill targets).
+    expect(gens?.querySelector("[data-generation=gen2]")?.getAttribute("data-frozen")).toBeNull();
+    const gen0Tab = gens?.querySelector<HTMLButtonElement>("[data-generation=gen0]");
+    expect(gen0Tab?.getAttribute("data-frozen")).toBe("true");
+
+    if (!gen0Tab) throw new Error("no gen0 tab");
+    await user.click(gen0Tab);
+    // gen0 carries only the frozen Design board — the board swaps to it, resolved by id.
+    expect(lensOf(container)).toBe("design");
+    expect(container.querySelector("[data-lens=flagged]")).toBeNull();
+  });
+
+  it("hides the generation switcher when there is only one generation", () => {
+    const { container } = renderView("gen1", ["gen1"]);
+    expect(container.querySelector("[data-kind=generation-switcher]")).toBeNull();
+  });
+});

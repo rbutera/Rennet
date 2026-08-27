@@ -47,7 +47,7 @@ Each renderer is its own file under `packages/app-ui/src/board/kinds/`, ported f
 - [x] 6.2 `packages/app-ui/src/board/lens-switcher.tsx` (Objective clause 7): a segment per lens present in `generation.lensBoards` — a lens with no board yields **no segment** (absent, never disabled). Each segment carries the delta rollup (count of `new`/`reworked` sections, a gold pip clearing as they're viewed — the section dot rolled up). Selecting swaps the board via `board-data.ts`.
 - [x] 6.3 `packages/app-ui/src/board/generation-switcher.tsx` (Objective clause 9): drill from the current generation back to a frozen generation's boards (read-only), resolved through `board-data.ts` with the target generation id.
 - [x] 6.4 Mount the surface: replace `packages/app-ui/src/app/review-workspace-route.tsx`'s B2 stub with the mounted `LensBoardView` + switchers. `board/index.ts` barrels the public surface; `app-ui/src/index.ts` re-exports it.
-- [ ] 6.5 DOM tests: absent-lens yields no segment; switching lenses swaps the board; the delta rollup pip clears as sections are viewed; generation drill-down renders a frozen board read-only. Cluster gate green. Commit.
+- [x] 6.5 DOM tests: absent-lens yields no segment; switching lenses swaps the board; the delta rollup pip clears as sections are viewed; generation drill-down renders a frozen board read-only. Cluster gate green. Commit.
 
 ## 7. Barrels, dead-code fence, docs
 
