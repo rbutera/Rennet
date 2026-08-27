@@ -1,11 +1,6 @@
 import { z } from "zod";
 import type {
   CiSignal,
-  CompositionFreshness,
-  CompositionStaleMember,
-  ContextDocumentRecord,
-  ContextManifest,
-  ContextSendRecord,
   DeltaDigestResult,
   DispositionAnchor,
   FindingAgreement,
@@ -221,161 +216,6 @@ export const reviewSchema = z.object({
   // The delta re-review account (issue #73): stamped on a successor review, absent on
   // a first capture. Optional so every existing snapshot validates unchanged.
   successorAccount: successorAccountSchema.optional(),
-});
-
-// The rich decision detail (issue #137) carried on `kind:"decision"` elements.
-// A full, failing-capable schema so the IPC surface preserves (rather than
-// silently strips) the evidence chips + reconstructed why the decisions lens
-// renders. `reconstructed` is pinned to the literal `true` so a `why` can only
-// EXIST as reconstructed — the schema enforces the same guarantee as the type.
-const decisionEvidenceSchema = z.object({
-  kind: z.enum(["spec", "pr-body", "hunk"]),
-  label: z.string(),
-  detail: z.string(),
-});
-const decisionWhySchema = z.object({
-  reconstructed: z.literal(true),
-  text: z.string(),
-});
-const decisionDetailSchema = z.object({
-  evidence: z.array(decisionEvidenceSchema),
-  why: decisionWhySchema.optional(),
-  alternatives: z.array(z.string()),
-});
-
-// ── Per-element real diff map (issue #60) ────────────────────────────────────
-// Delivered ALONGSIDE the canvas set so the zoom surface renders the real
-// captured hunk text instead of the `demoDiff` fixture. Keyed by `elementKey`; a
-// doc-anchored element (flat angle, no code diff) simply has no entry. A full,
-// failing-capable schema (path + diff both required) so the IPC surface keeps a
-// real positive control.
-//
-// `hunkOccurrences` (issue #84) is REQUIRED, not optional — it is the mark↔row
-// mapping, and it MUST survive the IPC boundary or every content row reaches the
-// renderer identity-less and no occurrence mark can land. It was silently stripped
-// once because the field was absent from this schema; making it required (with `[]`
-// for genuinely identity-less patches) means the `z.ZodType<ElementDiffs>` annotation
-// below fails to compile if the schema ever omits it again.
-const renderedHunkOccurrenceSchema = z.object({
-  id: z.string(),
-  oldStart: z.number(),
-  oldLines: z.number(),
-  newStart: z.number(),
-  newLines: z.number(),
-});
-const elementDiffSchema = z.object({
-  path: z.string(),
-  paths: z.array(z.string()),
-  diff: z.string(),
-  hunkOccurrences: z.array(z.array(renderedHunkOccurrenceSchema)),
-});
-
-// ── Roll-up narration placement (issue #70) ──────────────────────────────────
-// Delivered ALONGSIDE the canvas set (like `elementDiffs`) so the zoom ladder
-// renders the agent's account at each altitude. A discriminated union keeps the
-// never-blank contract honest at the IPC boundary: a placement is a narrated
-// account or an explicit pending/failed state — there is no shape for "blank".
-const narrationEvidenceSchema = z.object({
-  anchor: z.string(),
-  quote: z.string(),
-});
-const narrationPlacementSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("narrated"),
-    oneLine: z.string(),
-    paragraph: z.string(),
-    evidence: z.array(narrationEvidenceSchema).optional(),
-  }),
-  z.object({ status: z.literal("pending") }),
-  z.object({ status: z.literal("failed") }),
-]);
-const reviewNarrationSchema = z.object({
-  rollup: narrationPlacementSchema,
-  cohorts: z.record(z.string(), narrationPlacementSchema),
-});
-
-// ── The engine provenance (real-AI-default honesty signal) ───────────────────
-// Delivered alongside the canvas set so the renderer can tell a real AI review
-// from the deterministic mechanical outline (no model installed) and say so
-// loudly. Optional on the wire so a desktop build that predates it still
-// validates (absence → the UI shows no engine claim, never a false "AI" badge).
-const reviewEngineSchema = z.object({
-  aiReview: z.boolean(),
-  claudeAvailable: z.boolean(),
-  codexAvailable: z.boolean(),
-});
-
-// ── ContextManifest (issue #30) ──────────────────────────────────────────────
-// The "what was sent" manifest crossing the desktop IPC boundary. An unlisted
-// optional field is silently STRIPPED by the strict command output objects, so the
-// manifest — and every one of its members — MUST be declared here, or the renderer
-// receives a manifest missing exactly the assembly records the panel exists to show.
-const compositionStaleMemberSchema: z.ZodType<CompositionStaleMember> = z.object({
-  path: z.string(),
-  repoRecordId: z.string(),
-  reason: z.enum(["absent", "oid-mismatch", "digest-mismatch"]),
-  expectedOid: z.string(),
-  expectedDigest: z.string().optional(),
-  observedOid: z.string().optional(),
-  observedDigest: z.string().optional(),
-});
-
-const compositionFreshnessSchema: z.ZodType<CompositionFreshness> = z.union([
-  z.object({ status: z.literal("current"), staleMembers: z.tuple([]) }),
-  z.object({ status: z.literal("stale"), staleMembers: z.array(compositionStaleMemberSchema) }),
-]);
-
-const repoMapReferenceSchema = z.object({
-  repoRecordId: z.string(),
-  pinnedOid: z.string(),
-  projectSnapshotId: z.string(),
-  contentDigest: z.string(),
-});
-
-const repoMapMemberSchema = z.union([
-  z.object({ status: z.literal("resolved"), path: z.string(), reference: repoMapReferenceSchema }),
-  z.object({
-    status: z.literal("absent"),
-    path: z.string(),
-    repoRecordId: z.string(),
-    pinnedOid: z.string(),
-  }),
-]);
-
-const contextDocumentRecordSchema: z.ZodType<ContextDocumentRecord> = z.object({
-  order: z.number().int().nonnegative(),
-  source: z.string(),
-  sourcePath: z.string(),
-  contentHash: z.string(),
-  originalBytes: z.number().int().nonnegative(),
-  bytes: z.number().int().nonnegative(),
-  state: z.enum(["included", "truncated", "dropped"]),
-});
-
-const contextSendRecordSchema: z.ZodType<ContextSendRecord> = z.object({
-  seat: z.string(),
-  harness: z.string(),
-  channel: z.enum(["prompt", "system-append"]),
-  attempt: z.number().int().nonnegative(),
-  promptBytes: z.number().int().nonnegative(),
-  promptDigest: z.string(),
-  contextIncluded: z.boolean(),
-  contextDigest: z.string().optional(),
-  sentAt: z.string(),
-});
-
-const contextManifestSchema: z.ZodType<ContextManifest> = z.object({
-  repoRecordId: z.string(),
-  projectSnapshotId: z.string(),
-  compositionDigest: z.string(),
-  freshness: compositionFreshnessSchema,
-  members: z.array(repoMapMemberSchema),
-  documents: z.array(contextDocumentRecordSchema),
-  totalBytes: z.number().int().nonnegative(),
-  assembledPromptDigest: z.string(),
-  exhaustive: z.boolean(),
-  unmanagedSources: z.array(z.string()),
-  sends: z.array(contextSendRecordSchema).optional(),
 });
 
 const commandIdSchema = z.uuid();
@@ -2082,7 +1922,11 @@ export type Review = z.infer<typeof reviewSchema>;
  * mechanical / contestable triage bucket here — judging a decision is the
  * reviewer's job, not a pre-chewed classification's.
  */
-export type DecisionEvidence = z.infer<typeof decisionEvidenceSchema>;
+export type DecisionEvidence = {
+  kind: "spec" | "pr-body" | "hunk";
+  label: string;
+  detail: string;
+};
 /**
  * A decision's reconstructed rationale (issue #137). `reconstructed` is a literal
  * `true`: the TYPE SYSTEM enforces that every `why` is marked reconstructed, so an
@@ -2090,14 +1934,7 @@ export type DecisionEvidence = z.infer<typeof decisionEvidenceSchema>;
  * discernible rationale simply has no `why` (it still renders — title + evidence —
  * rather than inventing one).
  */
-export type DecisionWhy = z.infer<typeof decisionWhySchema>;
-/**
- * The rich detail a decision carries beyond its id/anchor/title (issue #137):
- * the evidence chips it was drawn from, an optional reconstructed why, and the
- * alternatives not taken where the diff or PR body made them discernible. Carried
- * on the placed `AnalysisElement` so the existing decisions surface renders it.
- */
-export type DecisionDetail = z.infer<typeof decisionDetailSchema>;
+export type DecisionWhy = { reconstructed: true; text: string };
 /**
  * One occurrence (decomposition hunk) mapped onto a rendered `@@` hunk. `id` is the
  * hunk id an anchor references; the line range is the occurrence's own span, so a
@@ -2105,42 +1942,26 @@ export type DecisionDetail = z.infer<typeof decisionDetailSchema>;
  * shared raw hunk, never the whole hunk. `oldStart`/`newStart` are 1-based file
  * lines; `oldLines`/`newLines` the side counts — the same shape as `Hunk`.
  */
-export type RenderedHunkOccurrence = z.infer<typeof renderedHunkOccurrenceSchema>;
-export type ElementDiff = z.infer<typeof elementDiffSchema>;
+export type RenderedHunkOccurrence = {
+  id: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+};
+export type ElementDiff = {
+  path: string;
+  paths: string[];
+  diff: string;
+  hunkOccurrences: RenderedHunkOccurrence[][];
+};
 /**
  * An optional code citation on a narration entry: a `rennet:` code anchor plus the
  * byte-exact quote it stands on. The generic validator walk (V006) byte-verifies
  * every `{anchor, quote}` pair against the resolved span, so a fabricated quote is
  * rejected. Absent when a narration cites no specific code.
  */
-export type NarrationEvidence = z.infer<typeof narrationEvidenceSchema>;
-/**
- * The narration placed onto a review's canvases, keyed by the node the reader is
- * looking at (issue #70). `rollup` is the whole-changeset account; `cohorts` maps
- * each cohortKey to its account. Consumed by the renderer at the matching zoom
- * level (rollup zoom → `rollup`; cohort zoom → `cohorts[cohortKey]`).
- */
-export type ReviewNarration = z.infer<typeof reviewNarrationSchema>;
-/**
- * How the live canvas set was actually produced — the honesty signal the renderer
- * needs so it never passes the mechanical outline off as an AI review.
- *
- *   - `aiReview: true`  — at least one real model harness (the user's Claude
- *     and/or Codex) was installed and drove the enrichment turns. This is a real
- *     AI review.
- *   - `aiReview: false` — the model phase did NOT complete, for one of two
- *     reasons: no model was available (no `claude` binary, no `codex`), OR the
- *     model-invocation budget refused it (#260 — over budget pre-flight, or the
- *     shared ceiling exhausted by retries). Either way the canvases are the
- *     DETERMINISTIC mechanical outline of the diff: real structure, but not AI
- *     findings, and the UI must say so LOUDLY. A budget-exhausted review must
- *     never present as a completed AI review.
- *
- * `claudeAvailable` / `codexAvailable` let the UI name the cause: with no model
- * it points at the missing CLI; with a model present, `aiReview: false` means the
- * budget was the limit, so the UI names the budget rather than a missing binary.
- */
-export type ReviewEngine = z.infer<typeof reviewEngineSchema>;
+export type NarrationEvidence = { anchor: string; quote: string };
 /** One model's answer in a disagreement, labelled by the model that gave it. */
 export type FindingModelAnswer = z.infer<typeof findingModelAnswerSchema>;
 /**

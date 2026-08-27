@@ -22,7 +22,6 @@ import {
 } from "@rennet/core";
 import type {
   ComposedHandoffBundle,
-  ContextManifest,
   FindingElement,
   FlaggedReview,
   PatchFile,
