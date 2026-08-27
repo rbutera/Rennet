@@ -13,6 +13,7 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/icon";
 import { OSGlyph } from "../assets/os-glyphs";
 import { type SettingsHost, useSettingsProjection } from "../data";
+import { SourceControlSection } from "./source-control";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // One environment card (C10 §3, claims 585–594). The MACHINE, not its tooling:
@@ -159,6 +160,8 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
           </Button>
         ) : null}
       </div>
+
+      <SourceControlSection host={host} />
 
       <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
         <DialogContent>
