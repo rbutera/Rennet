@@ -201,7 +201,7 @@ window does not stop a daemon that remains resident.
 
 - [Architecture contracts](./architecture-contracts.md) defines the correctness
   rules behind immutable capture, provenance, lineage, persistence, and posting.
-- [The canvas model](./canvas-model.md) describes the shared review surfaces.
+- [Review lenses](./review-lenses.md) describe the five review surfaces.
 - [Context assembly](./context-assembly.md) explains the bounded primer and
   retrieval tools.
 - [The Model Council](./model-council.md) explains model assignment.

@@ -165,5 +165,5 @@ review behavior.
 | Model Council catalog and resolution | `packages/core/src/model-council.ts` |
 | Live daemon composition | `packages/server/src/create-server.ts` |
 
-See [the canvas model](./canvas-model.md) for the admitted projections and
+See [review lenses](./review-lenses.md) for the admitted review surfaces and
 [context assembly](./context-assembly.md) for retrieved repository context.

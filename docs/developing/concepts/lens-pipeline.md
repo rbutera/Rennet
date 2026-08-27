@@ -13,10 +13,8 @@ authority is the murder-board map
 architecture work is tracked in
 [#464](https://github.com/rbutera/rennet/issues/464) (drafting agents) and
 [#474](https://github.com/rbutera/rennet/issues/474) (the Design lens). The
-shipped canvas model this replaces is described in
-[the canvas model](./canvas-model.md) and
-[review lenses](./review-lenses.md); those pages describe the code on `main`
-until the cutover lands.
+deterministic review model these boards render is described in
+[review lenses](./review-lenses.md).
 
 ## The five lenses
 

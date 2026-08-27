@@ -27,7 +27,6 @@ reviews, and **Developing Rennet** for people who build Rennet.
 - [Start here](./developing/index.md)
 - Concepts: [architecture overview](./developing/concepts/architecture-overview.md),
   [architecture contracts](./developing/concepts/architecture-contracts.md),
-  [canvas model](./developing/concepts/canvas-model.md),
   [review lenses](./developing/concepts/review-lenses.md),
   [the lens pipeline (planned)](./developing/concepts/lens-pipeline.md),
   [hand off and the exits (planned)](./developing/concepts/handoff-and-exits.md),

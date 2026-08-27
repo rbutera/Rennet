@@ -205,6 +205,6 @@ Before a UI change is done, check:
 | Palette and contrast checks | `packages/theme/src/theme.test.ts`, `packages/theme/src/palette-sync.test.ts` |
 | Component ramp checks | `packages/ui/src/design-ramp.test.ts`, `packages/app-ui/src/design-ramp.test.ts` |
 
-See [canvas model](./canvas-model.md) for review layers and
+See [review lenses](./review-lenses.md) for the review lenses and
 [collation and publishing](./collation-and-publishing.md) for the draft and
 outbound preview.

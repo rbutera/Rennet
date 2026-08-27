@@ -115,6 +115,6 @@ context current. A changed repository can make stored context stale while the
 review's immutable patchset remains readable. Regeneration creates a successor
 capture and rebuilt artifacts; it does not silently retarget the existing review.
 
-See [Code intelligence](./code-intelligence.md) for the structural symbol tools,
-[The canvas model](./canvas-model.md) for canvas addressing, and [Architecture
-contracts](./architecture-contracts.md) for provenance and freshness rules.
+See [Code intelligence](./code-intelligence.md) for the structural symbol tools
+and [Architecture contracts](./architecture-contracts.md) for provenance and
+freshness rules.
