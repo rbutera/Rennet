@@ -570,6 +570,9 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "ask.setVerdictOverride.output.receipt.path",
     "ask.setLineComment.output.receipt.path",
     "ask.clearLineComment.output.receipt.path",
+    // Span rework (B11 cluster 5) echoes the same `AskEventBody` receipt (its
+    // `ask.edit` write), so its receipt's line-comment `path` arm is repo-relative too.
+    "review.reviseSpan.output.receipt.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",

@@ -39,7 +39,7 @@ const OWN_BRANCH_REVIEW = {
 
 function harness(extra: Partial<DispatchDeps> = {}) {
   const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-pr-ripening-")));
-  const raiseAttention = vi.fn(() => "att-1");
+  const raiseAttention = vi.fn((_event: { family: string }) => "att-1" as string | undefined);
   const rt = createDispatchRuntime({
     askLog: store,
     allowedRoots: new Set(["/repo"]),
@@ -81,7 +81,7 @@ describe("PR-lane ripening (B11 5.2) — re-compose + re-raise publish-ready ide
     // Publish-ready was raised on BOTH composes with a byte-identical event, so an
     // idempotent-by-id attention sink coalesces them to one item (positive control below).
     const publishReadyEvents = raiseAttention.mock.calls
-      .map(([e]) => e as { family: string })
+      .map(([e]) => e)
       .filter((e) => e.family === "publish-ready");
     expect(publishReadyEvents).toHaveLength(2);
     expect(publishReadyEvents[0]).toEqual(publishReadyEvents[1]);
