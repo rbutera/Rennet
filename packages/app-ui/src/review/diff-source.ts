@@ -9,8 +9,8 @@ import type { FileChangeStatus, PatchFile, Review } from "@rennet/protocol";
 // how C4 isolated the span-read behind `citations.ts`.
 //
 // The raw diff needs no filesystem and no span-read: `PatchFile.patch` carries its own
-// unified-diff text inline. This module (and `diff-parse.ts`) are grep-clean of
-// `node:fs`/`fs`/`readFile`/`node:path` — the review import-boundary test guards it.
+// unified-diff text inline. This module (and `diff-parse.ts`) touch no filesystem module —
+// the review import-boundary test guards that executably.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Re-exported so diff consumers type against `@rennet/protocol` through this one seam,

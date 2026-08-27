@@ -77,7 +77,8 @@ describe("diff deep-link ?file= (C6 task 4.1)", () => {
   beforeEach(() => {
     original = Element.prototype.scrollIntoView;
     scrollSpy = vi.fn();
-    Element.prototype.scrollIntoView = scrollSpy;
+    Element.prototype.scrollIntoView =
+      scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
   });
   afterEach(() => {
     Element.prototype.scrollIntoView = original;
