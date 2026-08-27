@@ -12,11 +12,12 @@
 import { autoCarries, normalizeQuote } from "@rennet/protocol";
 import { classifyLineage } from "../lineage-matcher";
 
-/** Split a draft into candidate blocks (blank-line-separated), each a match target. */
+/** Split a draft into candidate blocks (blank-line-separated), each a match target.
+ *  Normalise FIRST (CRLF→LF, trailing ws) so the split and the quote agree byte-for-byte. */
 function draftBlocks(draft: string): string[] {
-  return draft
+  return normalizeQuote(draft)
     .split(/\n[ \t]*\n/)
-    .map((block) => normalizeQuote(block).trim())
+    .map((block) => block.trim())
     .filter((block) => block.length > 0);
 }
 
