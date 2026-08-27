@@ -16,6 +16,16 @@ export type DraftOp = Op extends infer O
   : never;
 
 /**
+ * What {@link WhiteboardClient.apply} returns: the service's verbatim
+ * response plus the batch as actually sent — op ids minted where absent.
+ * `ops` is the replayable form: retry it unchanged and dedup holds.
+ */
+export interface ApplyResult {
+  readonly response: ApplyResponse;
+  readonly ops: readonly Op[];
+}
+
+/**
  * The five #455-locked whiteboard tools — `create`, `schema`, `apply`,
  * `describe`, `events` — as a typed client over an injected embedded
  * {@link BoardService}.
@@ -45,11 +55,16 @@ export class WhiteboardClient {
 
   /**
    * Apply a flat ordered ops list, all-or-nothing, attributed to `actor`.
-   * Ops without an `op_id` get one minted here; the service's rejection (or
-   * acceptance) is returned verbatim.
+   * Ops without an `op_id` get one minted here — ONCE, before the retry
+   * boundary: the result carries the enriched batch, and retrying a possibly
+   * applied batch means re-sending `result.ops` verbatim, which the service
+   * dedups by `op_id` (#453). Re-calling with the original id-less drafts
+   * would mint fresh ids and append again. The service's rejection (or
+   * acceptance) is returned verbatim in `result.response`.
    */
-  apply(boardId: string, ops: readonly DraftOp[], actor: string): Promise<ApplyResponse> {
-    return this.#service.apply(boardId, ops.map(withOpId), actor);
+  async apply(boardId: string, ops: readonly DraftOp[], actor: string): Promise<ApplyResult> {
+    const enriched = ops.map(withOpId);
+    return { response: await this.#service.apply(boardId, enriched, actor), ops: enriched };
   }
 
   /** Board metadata plus the implemented protocol version. */

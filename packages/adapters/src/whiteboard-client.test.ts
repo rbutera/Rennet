@@ -43,7 +43,8 @@ describe("WhiteboardClient — the five #455 tools", () => {
     const wb = client();
     const boardId = await wb.create(NOTE_SCHEMA);
     const result = await wb.apply(boardId, [note("n1", "first"), note("n2", "second")], "tester");
-    expect(result).toEqual({ ok: true });
+    expect(result.response).toEqual({ ok: true });
+    expect(result.ops.map((op) => op.op_id)).toHaveLength(2);
 
     const { events, cursor } = await wb.events(boardId);
     expect(events).toHaveLength(2);
@@ -69,7 +70,21 @@ describe("WhiteboardClient — the five #455 tools", () => {
 
     // Replay with the same op_id: idempotent, nothing appended (#453).
     const replay = await wb.apply(boardId, [note("n1", "first", "stable-op-1")], "tester");
-    expect(replay).toEqual({ ok: true });
+    expect(replay.response).toEqual({ ok: true });
+    expect((await wb.events(boardId)).events).toHaveLength(1);
+  });
+
+  it("returns the enriched batch so an id-less apply can be retried idempotently", async () => {
+    const wb = client();
+    const boardId = await wb.create(NOTE_SCHEMA);
+    const first = await wb.apply(boardId, [note("n1", "first")], "tester");
+    expect(first.response).toEqual({ ok: true });
+
+    // Retrying the RETURNED ops (ids minted once, before the retry boundary)
+    // dedups; re-sending the id-less draft would mint anew and append again.
+    const retry = await wb.apply(boardId, first.ops, "tester");
+    expect(retry.response).toEqual({ ok: true });
+    expect(retry.ops).toEqual(first.ops);
     expect((await wb.events(boardId)).events).toHaveLength(1);
   });
 
@@ -93,9 +108,9 @@ describe("WhiteboardClient — the five #455 tools", () => {
       [note("n1", "valid"), { op: "create", element: { id: "x1", kind: "mystery", data: {} } }],
       "tester",
     );
-    expect(rejected.ok).toBe(false);
-    if (rejected.ok === false) {
-      expect(rejected.code).toBe("unknown-kind");
+    expect(rejected.response.ok).toBe(false);
+    if (rejected.response.ok === false) {
+      expect(rejected.response.code).toBe("unknown-kind");
     }
     expect((await wb.events(boardId)).events).toHaveLength(0);
   });
