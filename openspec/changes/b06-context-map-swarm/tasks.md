@@ -24,7 +24,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 ## Cluster 4 — incremental delta (partition-routed)
 
 - [x] 4.1 `core/knowledge/incremental.ts`: `routeDelta(partitions, changedPaths)` → the owning partitions to re-run; `planReverify(knowledgeSet, changedPaths)` → statements whose cited evidence changed (cross-cutting statements re-verify when ANY cited path changed); everything else carried verbatim with the shipped carry semantics (reuse the carry logic from the flat delta pass — extract, don't rewrite).
-- [ ] 4.2 Tests: one changed file re-runs exactly its owning partition; untouched statements carry byte-identical; evidence-touched statements queued for re-verify; cross-cutting sensitivity.
+- [x] 4.2 Tests: one changed file re-runs exactly its owning partition; untouched statements carry byte-identical; evidence-touched statements queued for re-verify; cross-cutting sensitivity.
 - [ ] 4.3 Gate green.
 
 ## Cluster 5 — council-routed execution + scheduling + retirement
