@@ -162,7 +162,7 @@ exact shapes are documented in the
 [spec-format survey](../reference/spec-formats/openspec.md) (OpenSpec, Kiro,
 BMAD, Superpowers, grill-with-docs). Every discovered artifact gets a named
 region with a provenance chip; an absent artifact is honestly absent. The
-header carries the artifact set as jump chips, capability cards use an
+header carries the artifact set as jump chips, capability rows use an
 add-green edge, requirement rows keep normative language verbatim, and each
 requirement's coverage chip counts the hunks and tests that claim it — zero
 hunks renders as an honest "unimplemented".

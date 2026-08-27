@@ -104,7 +104,7 @@ export default defineConfig({
                   { label: "Harness adapters", link: "/developing/concepts/harness-adapters/" },
                   { label: "The WSL daemon", link: "/developing/concepts/wsl-daemon/" },
                   {
-                    label: "Delta re-review and lineage",
+                    label: "Delta and generations",
                     link: "/developing/concepts/delta-rereview-and-lineage/",
                   },
                   { label: "Design doctrine", link: "/developing/concepts/design-doctrine/" },

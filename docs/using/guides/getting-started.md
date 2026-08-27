@@ -90,7 +90,7 @@ frozen by earlier rounds.
 
 ## Read the boards
 
-Each review angle is its own board, and the header's centred switcher moves
+Each lens is its own board, and the header's centred switcher moves
 between them.
 
 | Board | Question |

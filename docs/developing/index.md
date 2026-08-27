@@ -48,7 +48,7 @@ Read these pages in order when you need the whole system:
 | Board drafting, lint, or lens lanes | [The lens pipeline](./concepts/lens-pipeline.md) |
 | Board storage, elements, or the whiteboard protocol | [How Rennet consumes `@wboard/*`](./reference/whiteboard-consumption.md) |
 | Asks, living drafts, or an exit | [Hand off and the exits](./concepts/handoff-and-exits.md) |
-| Coding-agent rounds and successor patchsets | [Hand off and the exits](./concepts/handoff-and-exits.md) and [delta re-review and lineage](./concepts/delta-rereview-and-lineage.md) |
+| Coding-agent rounds and successor patchsets | [Hand off and the exits](./concepts/handoff-and-exits.md) and [Delta and generations](./concepts/delta-rereview-and-lineage.md) |
 | Repository discovery or settings | [Repository bootstrap](./guides/repository-bootstrap.md) and [settings and setup](./guides/settings-and-setup.md) |
 | Interface behavior | [Design doctrine](./concepts/design-doctrine.md) and [the lens pipeline](./concepts/lens-pipeline.md) |
 | Dependencies or build configuration | [Dependency standard](./reference/dependency-standard.md) and [monorepo map](./reference/monorepo-map.md) |

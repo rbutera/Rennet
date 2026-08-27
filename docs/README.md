@@ -29,7 +29,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [architecture contracts](./developing/concepts/architecture-contracts.md),
   [the lens pipeline](./developing/concepts/lens-pipeline.md),
   [hand off and the exits](./developing/concepts/handoff-and-exits.md),
-  [delta re-review and lineage](./developing/concepts/delta-rereview-and-lineage.md),
+  [Delta and generations](./developing/concepts/delta-rereview-and-lineage.md),
   [context assembly](./developing/concepts/context-assembly.md),
   [code intelligence](./developing/concepts/code-intelligence.md),
   [Model Council](./developing/concepts/model-council.md),
