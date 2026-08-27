@@ -64,8 +64,11 @@ export function sessionRunPath(slug: string): string {
   return `/s/${encodeURIComponent(slug)}/run`;
 }
 
-export function newChatPath(project?: string): string {
-  return `/new-chat${queryString([["project", project]])}`;
+export function newChatPath(project?: string, ask?: string): string {
+  return `/new-chat${queryString([
+    ["project", project],
+    ["ask", ask],
+  ])}`;
 }
 
 export function settingsPath(page: string, project?: string): string {

@@ -49,12 +49,20 @@ guide, and any agent instruction files, then reports how many answers it
 detected and how many it guessed. Context-map generation starts when the scout
 returns. The header status reads *scouting*, then *indexing*, then *indexed*.
 
-While the map generates, a prefilled questionnaire asks whether the scout got it
-right: issue tracker, default branch, worktree location, gate command, and the
-project's mark. Every answer carries a chip reading **detected** or **guessed**
-and a line naming where it came from. Answer it, or skip it — the map finishes
-and the project works either way, and everything stays editable in
-**Settings → Projects**.
+While the map generates, a prefilled questionnaire offers the project's setup for
+a look: issue tracker, default branch, worktree location, gate command, and the
+project's mark. Every answer carries a chip reading **detected** or **guessed** —
+today only the default branch is genuinely detected (from the project's primary
+branch); the rest are honest guesses you set for real in **Settings → Projects**.
+Answer it or skip it — the map finishes and the project works either way.
+
+When generation finishes and the map is built, the processing view shows a
+**Context Map Ready** summary — its scope, file, and confirmed/rejected-claim
+counts — with **View Context Map** to open the [context map](./context-map.md),
+and a full-width **Start a Review** button beneath it that carries you into New
+Chat for the project you just added. If some repositories fail to index, the view
+says so honestly instead of claiming the map is ready — and **Start a Review** is
+offered regardless, because a rough index never blocks you.
 
 The project remembers which machine it lives on and reconnects there when you
 reopen it. See [Windows and WSL](./windows-and-wsl.md#wsl-requirements) for
