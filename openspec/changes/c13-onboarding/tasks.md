@@ -68,7 +68,7 @@ Serial clusters. Each cluster is one session. Search before implementing
       registers only when its element actually mounts (lens switcher only with lenses,
       highlight only with a board, fab only when the review has exits), which is the
       same "never elects until on screen" guarantee `enabled={false}` gives.
-- [ ] Wire sidebar "Replay Tour" (`shell/sidebar/sidebar.tsx:214`) to `replay()`.
+- [x] Wire sidebar "Replay Tour" (`shell/sidebar/sidebar.tsx:214`) to `replay()`.
 
 ## Cluster 5 — Packet verification
 
