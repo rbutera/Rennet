@@ -35,8 +35,8 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 5. Verification (packet)
 
-- [ ] 5.1 `pnpm check` green — format, architecture, licenses, lint, typecheck, test, build. Licences included: zero new packages, so the report is unchanged; confirm rather than assume.
-- [ ] 5.2 Collapse proof (2.5) passes with the positive control shown once (inert dropped → fail → reverted).
-- [ ] 5.3 S6 lint positive control fired against the real config (3.3 probe errored, deleted); the five quarantined files lint clean via the baseline.
-- [ ] 5.4 All six primitives resolve through `@rennet/ui`'s barrel and each has a passing test mount.
-- [ ] 5.5 `BUILD-STATUS.json` c02 → `{"status":"done","passes":true}`; emit `<promise>C02-COMPLETE</promise>`.
+- [x] 5.1 `pnpm check` green — format, architecture, licenses, lint, typecheck, test, build. Licences included: zero new packages, so the report is unchanged; confirm rather than assume.
+- [x] 5.2 Collapse proof (2.5) passes with the positive control shown once (inert dropped → fail → reverted).
+- [x] 5.3 S6 lint positive control fired against the real config (3.3 probe errored, deleted); the five quarantined files lint clean via the baseline.
+- [x] 5.4 All six primitives resolve through `@rennet/ui`'s barrel and each has a passing test mount.
+- [x] 5.5 `BUILD-STATUS.json` c02 → `{"status":"done","passes":true}`; emit `<promise>C02-COMPLETE</promise>`.
