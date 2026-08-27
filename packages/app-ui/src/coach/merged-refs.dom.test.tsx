@@ -6,7 +6,7 @@
 // detached node (fab.tsx reads `fabRef.current` for exit-flight geometry) and legacy
 // callback refs never received their null-invoke. These prove a live→null rerender clears
 // both ref kinds.
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { describe, expect, it } from "vitest";
 import { cleanup, mount, waitFor } from "../test/dom";
 import { useMergedRefs } from "./registry";
