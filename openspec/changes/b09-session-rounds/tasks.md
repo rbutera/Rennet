@@ -15,7 +15,7 @@ Serial clusters, each a separately-reviewable sub-wave sized for one implementer
 - [x] 2.2 `packages/server/src/session/turn-loop.ts` (new): Rennet owns the turn loop — **serialize turns per harness id** (one in flight at a time; a second turn for the same harness queues, never races), **re-pass options every turn** (model/tools/cwd/systemPrompt supplied afresh each turn, not assumed sticky across a fresh process), and persist the updated `HarnessCursor` (`harnessSessionId` + `lastAssistantMessageAnchor` + `turnCount`) to the `SessionStore` after each turn. The serializer is per-harness-id, not global (reuse the `LiveTurnRegistry` scope where it fits; do not build a second global lock).
 - [x] 2.3 Resume-vanished fallback: when `resume` targets a harness session the CLI no longer has (transcript gone), rebuild context honestly — surface a "context rebuilt" turn-stream row and start a fresh harness session, while the **boards stay canonical** (the reconstructed session re-reads boards from the event log; it never drops or re-drafts them). Pure decision in `core/session/`, wired in `turn-loop.ts`.
 - [x] 2.4 Tests: a resumed session passes the cursor's `harnessSessionId` to the adapter (contract test on the injected port); two turns for one harness id serialize (the second starts only after the first resolves); options are re-passed each turn; a vanished-transcript resume yields a "context rebuilt" row + fresh session with boards untouched. No live model call in the gate (inject the port).
-- [ ] 2.5 Cluster gate green. Commit.
+- [x] 2.5 Cluster gate green. Commit.
 
 ## Cluster 3 — compaction surfaced honestly (clause: compaction)
 

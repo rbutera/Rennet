@@ -116,7 +116,7 @@ export class SessionTurnLoop {
     const run = prior.then(() => this.#runOnce(sessionId, prompt));
     this.#tails.set(
       sessionId,
-      run.catch(() => {}),
+      run.catch(() => undefined),
     );
     return run;
   }

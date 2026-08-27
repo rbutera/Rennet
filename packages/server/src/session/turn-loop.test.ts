@@ -155,7 +155,7 @@ describe("SessionTurnLoop: cursor persistence (task 2.2)", () => {
     const store = memoryStore(session);
     let builds = 0;
     const loop = new SessionTurnLoop({
-      port: fakePort(() => {}),
+      port: fakePort(() => undefined),
       store,
       buildSpec: (s) => {
         builds += 1;
@@ -173,7 +173,9 @@ describe("SessionTurnLoop: cursor persistence (task 2.2)", () => {
     const session = mintSession("proj", { id: () => "s1", now: () => 1 });
     const store = memoryStore(session);
     const loop = new SessionTurnLoop({
-      port: fakePort(() => {}, { outcome: () => ({ status: "completed", finalText: "ok" }) }),
+      port: fakePort(() => undefined, {
+        outcome: () => ({ status: "completed", finalText: "ok" }),
+      }),
       store,
       buildSpec: spec,
     });
@@ -186,7 +188,7 @@ describe("SessionTurnLoop: cursor persistence (task 2.2)", () => {
     const session = mintSession("proj", { id: () => "s1", now: () => 1 });
     const store = memoryStore(session);
     const loop = new SessionTurnLoop({
-      port: fakePort(() => {}, {
+      port: fakePort(() => undefined, {
         outcome: () => ({
           status: "failed",
           error: {
@@ -220,7 +222,7 @@ describe("SessionTurnLoop: serialization per session (task 2.2)", () => {
     });
     let call = 0;
     const loop = new SessionTurnLoop({
-      port: fakePort(() => {}, {
+      port: fakePort(() => undefined, {
         gate: () => {
           call += 1;
           order.push(`start-${call}`);
@@ -250,7 +252,7 @@ describe("SessionTurnLoop: serialization per session (task 2.2)", () => {
     const store = memoryStore(session);
     let call = 0;
     const loop = new SessionTurnLoop({
-      port: fakePort(() => {}, {
+      port: fakePort(() => undefined, {
         gate: () => {
           call += 1;
           return call === 1 ? Promise.reject(new Error("boom")) : Promise.resolve();
@@ -327,7 +329,7 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
     const rows: TurnRow[] = [];
     // Resumed turn fails invalid-request (vanished); the fresh turn (no resume) succeeds.
     const loop = new SessionTurnLoop({
-      port: fakePort(() => {}, {
+      port: fakePort(() => undefined, {
         outcome: (s) =>
           s.resume !== undefined
             ? invalidRequest
@@ -381,7 +383,7 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
       },
     };
     const loop = new SessionTurnLoop({
-      port: fakePort(() => {}, { outcome: () => overloaded }),
+      port: fakePort(() => undefined, { outcome: () => overloaded }),
       store,
       buildSpec: spec,
       emit: (r) => rows.push(r),
