@@ -29,6 +29,14 @@ pure over injected seams (the harness ports, a prompt-file reader, and the
 whiteboard writer), so the whole path runs in tests against a fake `runTurn`
 with no live model call.
 
+`runLensPipeline` is built and exercised end-to-end against a real board
+service, but it is not yet invoked on a live review: the consuming turn — the
+rounds machinery that runs a generation and threads the round-report seat into
+the reveal — is wired by the rounds work (B09), the same seat that consumes the
+per-board arrival events this scheduler emits. Until that turn lands the
+pipeline is a tested pure projection with no non-test caller, exactly the seat
+B09 binds it to.
+
 0. **Round-report first** (on rounds only). When a review re-runs on a new
    patchset generation, the `round-report` drafter runs *before* the lens
    drafters. Its board is both the reviewer's greeting and the lens drafters'
