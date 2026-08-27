@@ -1,6 +1,6 @@
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle";
 import { cva, type VariantProps } from "class-variance-authority";
-import { cn } from "../lib/utils";
+import { mergeClassName } from "../lib/utils";
 
 // A two-state button (on/off). Used standalone or, with a `value`, as a member
 // of a ToggleGroup — the kit's answer to hand-rolled `aria-pressed` markup.
@@ -34,7 +34,7 @@ function Toggle({
   return (
     <TogglePrimitive
       data-slot="toggle"
-      className={cn(toggleVariants({ variant, size }), className)}
+      className={mergeClassName(toggleVariants({ variant, size }), className)}
       {...props}
     />
   );

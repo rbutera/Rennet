@@ -2,11 +2,10 @@ import type * as React from "react";
 import { cn } from "../lib/utils";
 
 /**
- * The one collapse primitive (R47): grid-rows 0fr→1fr animates open/close of
- * unknown-height content with no measurement. Content stays mounted — `inert`
- * keeps the closed state out of the tab order. Every folding surface (lens
- * sections, sidebar groups, diff cards, thoughts) goes through this rather
- * than a conditional render, so the motion is uniform.
+ * A collapse primitive: grid-rows 0fr→1fr animates open/close of unknown-height
+ * content with no measurement. Content stays mounted — `inert` keeps the closed
+ * state out of the tab order. Route every folding surface through this rather than
+ * a conditional render, so the motion stays uniform.
  */
 export function Collapse({
   open,

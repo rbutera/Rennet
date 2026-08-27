@@ -1,5 +1,5 @@
 import { ToggleGroup as ToggleGroupPrimitive } from "@base-ui/react/toggle-group";
-import { cn } from "../lib/utils";
+import { mergeClassName } from "../lib/utils";
 
 // Segmented control container. "No selection" is the empty array Base UI models
 // natively (`value={[]}` / `defaultValue={[]}`) — never the "" sentinel that the
@@ -9,8 +9,10 @@ function ToggleGroup({ className, ...props }: ToggleGroupPrimitive.Props) {
   return (
     <ToggleGroupPrimitive
       data-slot="toggle-group"
-      className={cn(
-        "inline-flex w-fit items-center gap-0.5 rounded-lg bg-muted p-0.75 data-vertical:flex-col",
+      className={mergeClassName(
+        // Base UI 1.7 emits data-orientation="vertical" (not data-vertical); a segmented
+        // control uses the 6px (rounded-md) radius per DESIGN.md.
+        "inline-flex w-fit items-center gap-0.5 rounded-md bg-muted p-0.75 data-[orientation=vertical]:flex-col",
         className,
       )}
       {...props}
