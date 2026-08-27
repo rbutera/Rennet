@@ -83,8 +83,13 @@ Serial clusters. Each cluster is one session. Search before implementing
       (`packages/server/src/settings.test.ts:377`) and the app-ui reload-survival seam
       (`coach/provider.dom.test.tsx`) already landed in clusters 3.
 - [ ] Replay from Help (sidebar Replay Tour) re-arms — every mark eligible again.
-- [ ] **Every anchor resolves**: a test over all nine `MarkId`s asserts each
-      elects a live registered element (no orphan).
+- [x] **Every anchor resolves**: a test over all nine `MarkId`s asserts each
+      elects a live registered element (no orphan). `coach/every-anchor.dom.test.tsx`:
+      a static scan proves the nine `MARKS` ids exactly match the real
+      `useCoachAnchor("…")` call sites (no orphan, no unknown id), and marks 4-9
+      (lenses, highlight, fab, verdict, draft, dispatch) resolve to live elements
+      on their real mounted surfaces — including the `useMergedRefs` fab site.
+      Marks 1-3 are proven on real hooks by `coach/anchors.dom.test.tsx` (cluster 4).
 - [ ] **Positive control (S8 regression)**: a deliberately duplicated anchor for
       one `MarkId` is caught by the registry guard — the test asserts it fails.
       A green run therefore proves the check can fail.
