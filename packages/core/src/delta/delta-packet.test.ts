@@ -1,4 +1,11 @@
-import type { DossierItem, KnowledgeSet, PatchFile, Patchset } from "@rennet/protocol";
+import { readFileSync } from "node:fs";
+import {
+  type DossierItem,
+  type KnowledgeSet,
+  type PatchFile,
+  type Patchset,
+  patchsetSchema,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { buildSuccessorAccount } from "../successor-account";
 import { buildDeltaPacket } from "./delta-packet";
@@ -120,5 +127,45 @@ describe("buildDeltaPacket", () => {
     expect(buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER)).toEqual(
       buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER),
     );
+  });
+});
+
+// The B05 packet's fixture test: a REAL captured patchset (frozen from this
+// repository's own commit 3228a4cc — the B04 heal fix, an impl+test pair; no
+// client code, per the fixture rule) through the whole seam.
+describe("e2e (B05 packet): real captured patchset", () => {
+  const realPatchset: Patchset = patchsetSchema.parse(
+    JSON.parse(readFileSync(new URL("./real-capture-fixture.json", import.meta.url), "utf8")),
+  );
+
+  it("hunk ids are stable across a re-run", () => {
+    const first = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
+    const second = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
+    expect(first.hunks.hunks.length).toBeGreaterThan(0);
+    expect(second.hunks.hunks.map((h) => h.id)).toEqual(first.hunks.hunks.map((h) => h.id));
+    expect(second).toEqual(first);
+  });
+
+  it("successor-account section is present iff a prior generation exists", () => {
+    const account = buildSuccessorAccount({
+      asks: [],
+      carried: [],
+      changedPaths: realPatchset.files.map((f) => f.path),
+    });
+    const withPrior = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER, account);
+    expect(withPrior.successorAccount).toEqual(account);
+
+    const firstGeneration = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
+    expect("successorAccount" in firstGeneration).toBe(false);
+  });
+
+  it("the real impl+test pair surfaces as a counterpart hint", () => {
+    const packet = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
+    expect(packet.counterpartHints).toEqual([
+      {
+        implPath: "packages/server/src/boards/file-board-store.ts",
+        testPath: "packages/server/src/boards/file-board-store.test.ts",
+      },
+    ]);
   });
 });

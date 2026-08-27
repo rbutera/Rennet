@@ -38,6 +38,8 @@ Drafter dispatch + composition incl. the every-hunk check (B8); knowledge genera
 
 7. **Amendment (cluster 4): two packet sections are patchset-only by the no-I/O rule.** The seam's pinned signature supplies only the patchset plus the three producer contracts, so (a) `blastRadius` is computed with no ownership rules and no fan-in index — both live with the project snapshot (I/O); blast-radius's own honest-absence design covers this (fan-in stays a NOT-ASSESSED mark, no CODEOWNERS ⇒ no ownership marks), and B8's dispatch, which owns the snapshot, feeds them in when it wires the real callers; (b) `openspec` is path grain (`{name, artifactPaths}` per touched change dir) — artifact TEXT is read off disk, so the full `parseOpenSpecChange` runs where the text lives (B8), over the same seam-exported parser. Neither weakens the packet contract; both are recorded at the seam's JSDoc.
 
+8. **Amendment (cluster 6): the "real captured patchset" fixture is frozen, not found.** Core's test corpus held no captured-patchset fixture (every existing test builds synthetic `Patchset`s), so cluster 6 froze one: `core/src/delta/real-capture-fixture.json`, a real per-file `git diff` capture of this repository's own commit 3228a4cc (the B04 heal fix — an impl+test pair), validated through `patchsetSchema` in the test. Own-repo code only; no client material (fixture rule).
+
 ## Verification (packet)
 
 `pnpm check` green. Fixture test: a real captured patchset produces a DeltaPacket whose hunk ids are **stable across a re-run** and whose successor-account section is **present iff** a prior generation exists. Positive control that can fail (mutate a hunk body → id changes; omit successorAccount → section absent).

@@ -37,8 +37,8 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 ## Cluster 6 — verification
 
-- [ ] 6.1 `pnpm check` → EXIT=0 captured on its own line, tail shown.
-- [ ] 6.2 Packet fixture test: a REAL captured patchset fixture (reuse an existing capture fixture from core's test corpus) → `buildDeltaPacket` → hunk ids identical across a second run; successor-account section present iff a prior generation exists (both arms exercised).
-- [ ] 6.3 Positive controls, fail-then-revert with evidence: (a) mutate a fixture hunk body → id assertion fails; (b) drop the `successorAccount` argument in the present-arm test → presence assertion fails. Revert, re-run green, tree clean.
-- [ ] 6.4 BUILD-STATUS.json: `b05` → `{"status":"done","passes":true}` (only that line). Commit, push, local == origin.
-- [ ] 6.5 Output the sigil: `<promise>B05-COMPLETE</promise>`
+- [x] 6.1 `pnpm check` → EXIT=0 captured on its own line, tail shown.
+- [x] 6.2 Packet fixture test: a REAL captured patchset fixture (none pre-existed — frozen from own commit 3228a4cc, amendment 8) → `buildDeltaPacket` → hunk ids identical across a second run; successor-account section present iff a prior generation exists (both arms exercised).
+- [x] 6.3 Positive controls, fail-then-revert with evidence: (a) mutate a fixture hunk body → id assertion fails; (b) drop the `successorAccount` argument in the present-arm test → presence assertion fails. Revert, re-run green, tree clean.
+- [x] 6.4 BUILD-STATUS.json: `b05` → `{"status":"done","passes":true}` (only that line). Commit, push, local == origin.
+- [x] 6.5 Output the sigil: `<promise>B05-COMPLETE</promise>`
