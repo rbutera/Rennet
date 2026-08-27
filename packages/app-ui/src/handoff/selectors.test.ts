@@ -61,6 +61,25 @@ describe("handoff/selectors", () => {
       expect(selectExitPipCount(store.getState())).toBe(1);
     });
 
+    it("the DUAL-CLAIM rule: one ask claiming both a thread and a code anchor counts once (finding 8)", () => {
+      // An ask that names BOTH a quote thread (threadId) AND a code position (its path:line anchor),
+      // with a matching thread and a matching code comment present. The ask claims both sources and
+      // counts once — it is ONE thing the reviewer wants, not three. This is the intended rule, not
+      // a miscount: 1 ask + 0 unclaimed threads + 0 unclaimed comments = 1.
+      const store = createRennetStore();
+      const { reviewActions } = store.getState();
+      const threadId = reviewActions.addQuoteComment("some span", "look here", "comment");
+      reviewActions.setCodeComment("src/a.ts", 5, "and here");
+      reviewActions.stageAsk({
+        id: "dual",
+        anchor: "src/a.ts:5",
+        type: "request-change",
+        body: "one intent, two anchors",
+        threadId,
+      });
+      expect(selectExitPipCount(store.getState())).toBe(1);
+    });
+
     it("excludes Explain threads from the count", () => {
       const store = createRennetStore();
       const { reviewActions } = store.getState();

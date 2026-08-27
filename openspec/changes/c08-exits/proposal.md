@@ -49,6 +49,16 @@ The fix loop resolves 8 upheld findings (2 critical), records 2 deferred-with-re
 
 - **A7 — A rejected exit surfaces its reason (small).** `HandoffAction` re-armed the control on a rejected `onSubmit` but rendered nothing, so a failed post looked indistinguishable from an untouched button — a silent lie. It now keeps the re-arm AND shows the rejection reason in a `role="alert"` beside the control (an `Error` message, or an honest default for a non-Error throw). `handoff-action.dom.test.tsx` proves the reason shows and the control re-arms for retry, and that a message-less rejection falls back to the default.
 
+- **A8 — The dual-claim pip rule is defined, not remodelled (small, documentation).** An ask that names both a quote thread (`threadId`) and a code position (`path:line` anchor) suppresses both sources and counts once. Codex flagged the ambiguity; the test settles it — this is the INTENDED "one claimed thing" (the two sources are facets of the single ask), not a miscount, so no discriminated-union remodel. `selectors.ts` now carries the rule at the claim-set construction, and `selectors.test.ts` names it with an explicit case (one ask + a matching thread + a matching code comment = 1). Today no staging site mints such an ask (a quote ask's anchor is prose, a line ask carries no thread); the rule is defined against a future site that legitimately anchors an ask to both.
+
+## Deferred with record (fix-loop resolutions)
+
+- **Own already-open PR resolves as teammate-pr (`handoff-data.ts` `resolveEntryMode`).** The frozen `Review` schema carries no ownership fact, only `postTarget` (present ⇒ a PR to post to) and `retrospective`. So a review of your OWN already-open PR — which does carry a `postTarget` — resolves as **teammate-pr** and shows the Post Review lane, when the reviewer may instead want the own-branch rounds lane. This is not fixable client-side without inventing data the snapshot does not carry: the resolver already documents itself as the single place to refine the split once an ownership signal is added. The consequence recorded here for the record: **until a B-track schema follow-up adds an ownership signal to `Review`, an own already-open PR is treated as a teammate PR** (it can still post a review of itself — a valid, if not the preferred, exit). No code change in C08; `resolveEntryMode` stays the one seam a future ownership fact refines.
+
+## Parked for Rai (unchanged by the fix loop)
+
+- **`publish.requestConsent`'s single-use token** (`exits.ts`) is a pre-existing protocol-internal requirement of `publish.review(dryRun:false)` (issue #21), not C08's addition — no UI dialog, no freeze, invisible to the reviewer (Rule Zero holds). Codex flags the token itself as ceremony worth deleting from the server; that is a server/protocol change only Rai rules on. C08 keeps calling the bound command exactly as the server requires — the fix loop did not touch it.
+
 ## Out of scope (packet)
 
 Round running and the round report (C9 — the Dispatch-Round button navigates there; the run view and report are C9's). The composition engine and its durable projections (B11 — C8 builds against the store + `publish.compose` and swaps to B11's living draft in the gated cluster). C4's components and C5's board/C6's diff (reused, not modified).

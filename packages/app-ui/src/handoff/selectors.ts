@@ -37,6 +37,12 @@ export function parseLineAnchor(anchor: string): LineAnchor | null {
  */
 export const selectExitPipCount = (s: RennetState): number => {
   const asks = Object.values(s.review.stagedAsks);
+  // THE DUAL-CLAIM RULE (finding 8): an ask counts ONCE and claims EVERY source it names — both
+  // the quote thread its `threadId` points at AND the code comment at its `path:line` anchor. So an
+  // ask carrying both suppresses both and still contributes one: it is ONE thing the reviewer wants,
+  // not two. This is not a miscount — the two "sources" are facets of the single ask. (Today no
+  // staging site mints such an ask: a quote ask's anchor is prose, a line ask carries no thread — so
+  // the rule is defined here against a future site that legitimately anchors an ask to both.)
   const claimedThreadIds = new Set(
     asks.map((ask) => ask.threadId).filter((id): id is string => id !== undefined),
   );
