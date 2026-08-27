@@ -75,17 +75,41 @@ export type ReportBoardResolution =
   | { readonly status: "invalid"; readonly detail: unknown };
 
 /**
- * Parse raw report-board data against `LensBoardSchema` — the pure core of the report
- * read. The client never trusts report shape it did not validate: a shape failure
- * resolves `invalid` (rendered distinctly), separate from `missing`. No excluded-kind
- * rejection here (the report board is exactly where `round_outcome` renders) and no
- * identity check (it is fetched by id, not by generation/lens).
+ * Parse raw report-board data against `LensBoardSchema` — the pure core of the report read,
+ * validated at the RUNTIME boundary (finding 4). The client never trusts report shape it did
+ * not validate: a shape failure resolves `invalid` (rendered distinctly), separate from
+ * `missing`. Two further runtime checks past the schema, because `LensBoardSchema` is a
+ * structural shape and admits data outside the report's rendering domain:
+ *
+ *   - IDENTITY: the resolved board's `boardId` must equal the `expectedId` requested. A source
+ *     that answers the wrong board (a cross-wire) is `invalid`, not silently rendered AS the
+ *     selected report. (Unlike a lens board, a report is fetched by id, so id — not
+ *     `(generation, lens)` — is the identity to check.)
+ *   - REPORT DOMAIN: the report renders every lens kind PLUS `round_outcome`, but NOT
+ *     `review_comment` — the one `HostKind` outside `ReportKind` (`BOARD_EXCLUDED_KINDS` minus
+ *     `round_outcome`; `board/registry.ts`). A schema-valid board carrying a `review_comment`
+ *     element parses fine but THROWS in `ReportElement` (`assertExcludedKind`); reject it here
+ *     as `invalid` data so the render boundary never crashes.
  */
-export function resolveReportBoard(raw: unknown): ReportBoardResolution {
+export function resolveReportBoard(raw: unknown, expectedId: string): ReportBoardResolution {
   if (raw === undefined) return { status: "missing" };
   const parsed = LensBoardSchema.safeParse(raw);
   if (!parsed.success) return { status: "invalid", detail: parsed.error };
-  return { status: "valid", board: parsed.data };
+  const board = parsed.data;
+  if (board.boardId !== expectedId) {
+    return {
+      status: "invalid",
+      detail: `report id mismatch: expected ${expectedId}, got ${board.boardId}`,
+    };
+  }
+  const excluded = board.elements.find((el) => el.kind === "review_comment");
+  if (excluded !== undefined) {
+    return {
+      status: "invalid",
+      detail: `report board carries a non-report kind: ${excluded.kind}`,
+    };
+  }
+  return { status: "valid", board };
 }
 
 /** The live round machine state for a session — honest-absent by default. */
@@ -98,9 +122,13 @@ export function useRoundRecords(slug: string): readonly RoundRecord[] {
   return useContext(RoundsSourceContext).roundRecords(slug);
 }
 
-/** Resolve a report `LensBoard` by id, validated against `LensBoardSchema`. */
+/** Resolve a report `LensBoard` by id, validated against `LensBoardSchema` plus the identity
+ *  and report-domain checks (finding 4) — the requested id IS the expected id. */
 export function useReportBoard(reportBoardId: string): ReportBoardResolution {
-  return resolveReportBoard(useContext(RoundsSourceContext).reportBoard(reportBoardId));
+  return resolveReportBoard(
+    useContext(RoundsSourceContext).reportBoard(reportBoardId),
+    reportBoardId,
+  );
 }
 
 /** The dispatch capability for the current source, or `undefined` when no live runtime

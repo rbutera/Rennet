@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import { mount } from "../test/dom";
-import { fixtureCompletedRoundsSource } from "../test/fixtures/rounds";
+import { fixtureCompletedRoundsSource, reportBoardFixture } from "../test/fixtures/rounds";
 import {
   type RoundsSource,
   RoundsSourceProvider,
+  resolveReportBoard,
   useReportBoard,
   useRoundDispatch,
   useRoundRecords,
@@ -77,6 +78,58 @@ describe("rounds-data seam — the single rounds resolution point", () => {
     expect(getByText("report:invalid")).toBeTruthy();
     // …and it is NOT mistaken for a missing round: the machine state still reads.
     expect(getByText("state:reporting")).toBeTruthy();
+  });
+
+  // Finding 4: `resolveReportBoard` is the runtime boundary. `LensBoardSchema` is a structural
+  // shape — it does not check the board's IDENTITY against the requested id, nor reject a
+  // `review_comment` (a schema-valid HostKind outside the report domain that THROWS in
+  // `ReportElement`). Both must resolve `invalid` DATA, never render as the selected report.
+  describe("resolveReportBoard runtime boundary (finding 4)", () => {
+    it("valid when the resolved board's id matches the requested report id", () => {
+      const res = resolveReportBoard(reportBoardFixture, reportBoardFixture.boardId);
+      expect(res.status).toBe("valid");
+    });
+
+    it("rejects a cross-wired board whose id does not match the requested id", () => {
+      // A source answering the WRONG board (right shape, wrong id) is invalid, not rendered as
+      // the selected report.
+      const res = resolveReportBoard(reportBoardFixture, "some-other-report-id");
+      expect(res.status).toBe("invalid");
+    });
+
+    it("rejects a schema-valid board carrying a review_comment (outside ReportKind)", () => {
+      const anchor = {
+        id: "rc-anchor",
+        kind: "code_ref",
+        data: {
+          author: { kind: "human", id: "reviewer" },
+          patchset_id: "ps-438",
+          path: "packages/adapters/src/github-auth.ts",
+          side: "head",
+          start_line: 1,
+          end_line: 1,
+        },
+      };
+      const reviewComment = {
+        id: "rc-1",
+        kind: "review_comment",
+        data: {
+          author: { kind: "human", id: "reviewer" },
+          body: "please fix",
+          code_ref: "rc-anchor",
+          status: "draft",
+          covers: ["greeting-prose"],
+        },
+      };
+      const withComment = {
+        ...reportBoardFixture,
+        boardId: "report-with-comment",
+        elements: [...reportBoardFixture.elements, anchor, reviewComment],
+      };
+      const res = resolveReportBoard(withComment, "report-with-comment"); // id matches — kind is why
+      expect(res.status).toBe("invalid");
+      if (res.status === "invalid") expect(String(res.detail)).toContain("review_comment");
+    });
   });
 
   it("exposes dispatch when the source binds one (cluster 4's Dispatch wiring)", () => {
