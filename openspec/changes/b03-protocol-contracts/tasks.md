@@ -16,7 +16,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 - [x] 2.1 Author `src/manifests/`: `LENS_KINDS`/`LensKind` moved verbatim from `packages/prompts/src/index.ts` (`design, sequence, decisions, flagged, noise` — display order, Design first; JSDoc intact); prompt ids as data (the five lens prompts + `report`, `post-process`, `review-draft-voice` — file paths/bytes stay in `prompts`); `CouncilJobId`/`CouncilJob` moved from `src/domain.ts`; the plan's job-id vocabulary added as data: `lens-draft`, `lens-draft-flagged`, `lens-draft-noise`, `board-post-process`, `round-report`, `partition-worker`, `map-verify`, `project-scout`, `related-context-retrieval` (council routing tables stay in `core` — B6/B7/B8 bind these).
 - [x] 2.2 Re-point `packages/prompts` to the protocol `LensKind` (it already has the `protocol` edge); `LENS_PROMPT_FILES` keys off it; delete the local union.
 - [x] 2.3 Close the B2 drift note: delete the temporary unions in `packages/app-ui/src/canvas/counterpart.ts` (`CanvasAngle`/`CANVAS_ANGLES`) and re-point it and `packages/app-ui/src/app/shared.tsx` to protocol `LensKind` — the stale `"spec"` value becomes `"design"` (reconciliation 4); update `counterpart.test.ts` fixtures. No behavior change beyond the id rename.
-- [ ] 2.4 Cluster gate green. Commit.
+- [x] 2.4 Cluster gate green. Commit.
 
 ## 3. board/ — the LensBoard projection shape
 
