@@ -66,6 +66,7 @@ const prData = {
         headRefName: "feature/thing",
         changedFiles: 3,
         id: "PR_kwabc",
+        viewerDidAuthor: false,
       },
     },
   },
@@ -83,6 +84,8 @@ describe("GitHubForgeAdapter.fetchPullRequest", () => {
     // The PR body is the stated intent (#136) — fetched, not just the title.
     expect(pr.body).toBe("Implements the thing.\n\nCloses #1.");
     expect(pr.forgeRef).toBe("PR_kwabc");
+    // The ownership fact is sourced from the authenticated PR fetch and mapped through.
+    expect(pr.viewerDidAuthor).toBe(false);
     expect(pr.sso).toEqual({ kind: "none" });
     // Clone URLs derived from owner/name identity (never a path guess) so the
     // worktree matcher can map them onto a local clone.
@@ -132,6 +135,7 @@ describe("GitHubForgeAdapter.fetchPullRequest", () => {
     expect(request?.body, "GraphQL request must send a body").toBeDefined();
     const payload = JSON.parse(request?.body ?? "{}") as { query?: string; variables?: unknown };
     expect(payload.query).toContain("pullRequest(number:$number)");
+    expect(payload.query).toContain("viewerDidAuthor");
     expect(payload.variables).toEqual({ owner: "acme", name: "widget", number: 42 });
   });
 });
