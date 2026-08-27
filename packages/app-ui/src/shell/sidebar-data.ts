@@ -1,6 +1,8 @@
 import type { Project } from "@rennet/protocol";
 import { createContext, useContext, useMemo } from "react";
+import { useRoute } from "wouter";
 import { useCommand, useMutation } from "../data";
+import { ROUTES } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The sidebar's SINGLE data-resolution point (C03, proposal reconciliation 2).
@@ -152,6 +154,44 @@ export function useSidebarTree(): SidebarTree {
   const projection = useSidebarSessionProjection();
   const hosts = useMemo(() => buildHosts(data?.projects ?? [], projection), [data, projection]);
   return { hosts, loading: pending };
+}
+
+// ── Active-route resolution (shared) ──────────────────────────────────────────
+
+/** What the current location says is active — the single derivation the sidebar's
+ *  rail, tree, and footer all read from, instead of each re-parsing the route. */
+export interface ActiveRoute {
+  /** The slug of the open session route (`/s/:slug`, or its `/run`), else null. */
+  readonly activeSlug: string | null;
+  /** The project that owns the active session, else null. */
+  readonly activeProjectId: string | null;
+  /** True when the location is "inside" a project (its session, map, or indexing). */
+  standingIn(projectId: string): boolean;
+}
+
+/** Resolve the active session/project from the route + the live tree. One place owns
+ *  the wouter parsing and the slug→project lookup, so nothing drills it around. */
+export function useActiveRoute(): ActiveRoute {
+  const [, sessionParams] = useRoute(ROUTES.session);
+  const [, runParams] = useRoute(ROUTES.sessionRun);
+  const [onMap, mapParams] = useRoute(ROUTES.projectMap);
+  const [onIndexing, indexingParams] = useRoute(ROUTES.projectIndexing);
+  const { hosts } = useSidebarTree();
+  const activeSlug = sessionParams?.slug
+    ? decodeURIComponent(sessionParams.slug)
+    : runParams?.slug
+      ? decodeURIComponent(runParams.slug)
+      : null;
+  const projects = hosts.flatMap((host) => host.projects);
+  const activeProjectId = activeSlug
+    ? (projects.find((p) => p.sessions.some((s) => s.slug === activeSlug))?.id ?? null)
+    : null;
+  const standingIn = (projectId: string): boolean => {
+    if (onMap && mapParams?.id === projectId) return true;
+    if (onIndexing && indexingParams?.id === projectId) return true;
+    return activeProjectId === projectId;
+  };
+  return { activeSlug, activeProjectId, standingIn };
 }
 
 /** The real `projects.remove` mutation — forgets a project, invalidating the tree.
