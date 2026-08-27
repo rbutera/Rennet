@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createViewedDeltaSlice, type ViewedDeltaSlice } from "../board/viewed-delta";
 import { createReviewSlice, type ReviewSlice } from "./review";
 import { createRunSlice, type RunSlice } from "./run";
 import { createSignalSlice, type SignalSlice } from "./signal";
@@ -21,7 +22,7 @@ import { createUiSlice, type UiSlice } from "./ui";
 // singleton.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type RennetState = UiSlice & ReviewSlice & RunSlice & SignalSlice;
+export type RennetState = UiSlice & ReviewSlice & RunSlice & SignalSlice & ViewedDeltaSlice;
 
 export const createRennetStore = () =>
   create<RennetState>()((...args) => ({
@@ -29,6 +30,7 @@ export const createRennetStore = () =>
     ...createReviewSlice(...args),
     ...createRunSlice(...args),
     ...createSignalSlice(...args),
+    ...createViewedDeltaSlice(...args),
   }));
 
 /** The app-singleton store. */
