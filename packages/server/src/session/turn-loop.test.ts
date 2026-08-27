@@ -36,6 +36,9 @@ interface FakePortOptions {
   /** Resolve each turn's createSession only when the returned trigger fires,
    *  so a test can hold a turn open and prove serialization. */
   readonly gate?: () => Promise<void>;
+  /** Events yielded on the stream BEFORE the terminal `session.ended` (e.g. a
+   *  harness `compact_boundary`), so a test can prove mid-stream row emission. */
+  readonly prelude?: (turn: number) => readonly HarnessEvent[];
 }
 
 function fakePort(onSpec: (spec: SessionSpec) => void, options: FakePortOptions = {}): HarnessPort {
@@ -57,6 +60,7 @@ function fakePort(onSpec: (spec: SessionSpec) => void, options: FakePortOptions 
             lastAssistantMessageAnchor: `anchor-${n}`,
           };
       const events: HarnessEvent[] = [
+        ...(options.prelude?.(n) ?? []),
         { kind: "session.ended", outcome } as unknown as HarnessEvent,
       ];
       return {
@@ -302,6 +306,57 @@ describe("SessionTurnLoop: serialization per session (task 2.2)", () => {
     expect(started).toEqual(["/repo/a", "/repo/b"]);
     releaseA();
     await Promise.all([pa, pb]);
+  });
+});
+
+describe("SessionTurnLoop: compaction surfaced honestly (task 3.1)", () => {
+  it("emits exactly one compact_boundary row carrying the harness's own figures", async () => {
+    const session = mintSession("proj", { id: () => "s1", now: () => 1 });
+    const store = memoryStore(session);
+    const rows: TurnRow[] = [];
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => undefined, {
+        prelude: () => [
+          {
+            kind: "compact_boundary",
+            trigger: "auto",
+            preTokens: 180_000,
+            postTokens: 42_000,
+          } as unknown as HarnessEvent,
+        ],
+      }),
+      store,
+      buildSpec: spec,
+      emit: (r) => rows.push(r),
+    });
+
+    const { outcome } = await loop.runTurn("s1", "hi");
+
+    expect(outcome.status).toBe("completed");
+    // Exactly one row, carrying the harness's own trigger + pre/post token counts.
+    expect(rows).toEqual([
+      { kind: "compact_boundary", trigger: "auto", preTokens: 180_000, postTokens: 42_000 },
+    ]);
+  });
+
+  it("carries only the figures the harness reported — an absent post_tokens stays absent", async () => {
+    const session = mintSession("proj", { id: () => "s1", now: () => 1 });
+    const store = memoryStore(session);
+    const rows: TurnRow[] = [];
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => undefined, {
+        // A manual compaction where the harness gave no post_tokens figure.
+        prelude: () => [{ kind: "compact_boundary", trigger: "manual" } as unknown as HarnessEvent],
+      }),
+      store,
+      buildSpec: spec,
+      emit: (r) => rows.push(r),
+    });
+
+    await loop.runTurn("s1", "hi");
+
+    // No fabricated zero: the row omits the token counts the harness never gave.
+    expect(rows).toEqual([{ kind: "compact_boundary", trigger: "manual" }]);
   });
 });
 

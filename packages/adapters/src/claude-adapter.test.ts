@@ -102,6 +102,46 @@ describe("normalizeClaudeFrame: denials and errors", () => {
   });
 });
 
+describe("normalizeClaudeFrame: compaction (B09 cluster 3)", () => {
+  it("maps the SDK compact_boundary frame to a compact_boundary event with the harness's own figures", () => {
+    const frame = {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 180_000, post_tokens: 42_000 },
+      uuid: "u1",
+      session_id: "abc",
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    const boundary = events[0];
+    expect(boundary?.kind).toBe("compact_boundary");
+    expect(boundary?.kind === "compact_boundary" && boundary.trigger).toBe("auto");
+    expect(boundary?.kind === "compact_boundary" && boundary.preTokens).toBe(180_000);
+    expect(boundary?.kind === "compact_boundary" && boundary.postTokens).toBe(42_000);
+    // The raw frame is carried verbatim, nothing lost.
+    expect(boundary?.native).toEqual(frame);
+  });
+
+  it("omits token figures the harness did not report — never a substituted zero", () => {
+    const frame = {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "manual" },
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const boundary = events[0];
+    expect(boundary?.kind === "compact_boundary" && boundary.trigger).toBe("manual");
+    expect(boundary?.kind === "compact_boundary" && boundary.preTokens).toBeUndefined();
+    expect(boundary?.kind === "compact_boundary" && boundary.postTokens).toBeUndefined();
+  });
+
+  it("defaults an unstated trigger to auto — an unsolicited compaction is auto by nature", () => {
+    const frame = { type: "system", subtype: "compact_boundary", compact_metadata: {} };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events[0]?.kind === "compact_boundary" && events[0].trigger).toBe("auto");
+  });
+});
+
 describe("normalizeClaudeFrame: passthrough and content", () => {
   it("surfaces an unmodelled frame as passthrough with its native payload", () => {
     const frame = { type: "some_future_frame", detail: 7 };
