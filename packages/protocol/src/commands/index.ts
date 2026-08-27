@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
-import { attentionFamilySchema } from "../session";
+import {
+  AskEventBodySchema,
+  AskProjectionSchema,
+  attentionFamilySchema,
+  QuoteThreadSchema,
+  StagedAskSchema,
+  VerdictOverrideSchema,
+} from "../session";
 import {
   appearanceSchemeSchema,
   askModeSchema,
@@ -1060,6 +1067,93 @@ const definitions = {
         message: "attention.acknowledge: provide a reviewId or an attentionId to clear",
       }),
     output: z.object({ cleared: z.number().int().nonnegative() }),
+  },
+  // ── Durable asks (B11 cluster 1, Q15) — the ONE write path ──────────────────
+  // Every reviewer interaction on an open review (stage/withdraw an ask, edit its
+  // body, retire/restore, open/reply/close a quote thread, set a per-line comment,
+  // override the verdict) is a command here that APPENDS one event to the session's
+  // ask log; the projection is `foldAsks(log)`, never a second stored copy. Each
+  // write returns a RECEIPT — the inverse event body — so a client implements undo
+  // by feeding the receipt straight back through `ask.apply`. `ask.read` is the
+  // projection read a reconnecting client rehydrates from; nothing is client-derived.
+  // Handlers + create-server wiring land in B11 cluster 2; these are the shapes.
+  "ask.stage": {
+    input: z.object({ sessionId: z.string().min(1), ask: StagedAskSchema }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.unstage": {
+    input: z.object({ sessionId: z.string().min(1), id: z.string().min(1) }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.edit": {
+    input: z.object({ sessionId: z.string().min(1), id: z.string().min(1), body: z.string() }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.retire": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      id: z.string().min(1),
+      reason: z.string(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.restore": {
+    input: z.object({ sessionId: z.string().min(1), id: z.string().min(1) }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.quoteOpen": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      threadId: z.string().min(1),
+      thread: QuoteThreadSchema,
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  // A reply is append-shaped at the command (author + text); the handler reads the
+  // thread's current messages, appends, and records the resulting list on the event.
+  "ask.quoteReply": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      threadId: z.string().min(1),
+      author: z.enum(["user", "orchestrator"]),
+      text: z.string(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.quoteClose": {
+    input: z.object({ sessionId: z.string().min(1), threadId: z.string().min(1) }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  // One command, nullable verdict: a value emits `verdict-override-set`, null emits
+  // `verdict-override-clear` (mirrors the client's single `setVerdictOverride`).
+  "ask.setVerdictOverride": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      verdict: VerdictOverrideSchema.nullable(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.setLineComment": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      path: z.string().min(1),
+      line: z.number().int().min(1),
+      body: z.string(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.clearLineComment": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      path: z.string().min(1),
+      line: z.number().int().min(1),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  // The projection read — the session-open / reconnect rehydrate.
+  "ask.read": {
+    input: z.object({ sessionId: z.string().min(1) }),
+    output: z.object({ projection: AskProjectionSchema }),
   },
 } as const;
 

@@ -547,6 +547,24 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "project.contextMap.output.knowledge.statements.evidence.path",
     "project.contextAsk.output.answer.evidence.path",
     "project.knowledgeDisposition.output.statement.evidence.path",
+    // Durable asks (B11): a per-line comment's `path` is the REVIEWED file's
+    // repo-relative path (like a disposition's), never a host-absolute path — so
+    // no remote projection translates it. Every write echoes its receipt (an
+    // `AskEventBody`, whose line-comment arms carry `path`), so each write command's
+    // `output.receipt.path` surfaces here too; all repo-relative.
+    "ask.setLineComment.input.path",
+    "ask.clearLineComment.input.path",
+    "ask.stage.output.receipt.path",
+    "ask.unstage.output.receipt.path",
+    "ask.edit.output.receipt.path",
+    "ask.retire.output.receipt.path",
+    "ask.restore.output.receipt.path",
+    "ask.quoteOpen.output.receipt.path",
+    "ask.quoteReply.output.receipt.path",
+    "ask.quoteClose.output.receipt.path",
+    "ask.setVerdictOverride.output.receipt.path",
+    "ask.setLineComment.output.receipt.path",
+    "ask.clearLineComment.output.receipt.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",

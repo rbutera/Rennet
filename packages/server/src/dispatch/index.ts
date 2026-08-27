@@ -37,6 +37,32 @@ export type {
 export { createDispatchRuntime } from "./runtime";
 
 /**
+ * Commands whose SHAPES are registered in the protocol command registry but whose HOST
+ * handlers land in a LATER cluster of the in-flight change. B11 cluster 1 registers the
+ * `ask.*` durable-asks command surface (so `parseCommandInput`/`Output` and typed client
+ * calls cover them); cluster 2 adds their handlers in `dispatch/ask.ts` and REMOVES each
+ * from this set the moment it lands. Listing them keeps BOTH coverage guards honest — the
+ * compile-time `MissingCommand` check and the runtime diff-empty test in `dispatch-map.test`
+ * — so a deferral is explicit and visible, never a silent gap and never a stub handler
+ * (BUILD-LOOP forbids stubs). The guards re-tighten per command as cluster 2 empties this set.
+ */
+export const DEFERRED_HOST_COMMANDS = [
+  "ask.stage",
+  "ask.unstage",
+  "ask.edit",
+  "ask.retire",
+  "ask.restore",
+  "ask.quoteOpen",
+  "ask.quoteReply",
+  "ask.quoteClose",
+  "ask.setVerdictOverride",
+  "ask.setLineComment",
+  "ask.clearLineComment",
+  "ask.read",
+] as const satisfies readonly CommandName[];
+export type DeferredHostCommand = (typeof DEFERRED_HOST_COMMANDS)[number];
+
+/**
  * The review-scoped turn commands whose run marks their review "running" (#383 batch, finding
  * 2). Each carries an existing `reviewId` in its input, so the review is already on a client's
  * list and can flip to running while the turn is in flight. `review.capture` (first capture)
@@ -86,7 +112,9 @@ export function buildDispatchTable(rt: DispatchRuntime) {
   // Compile-time exhaustiveness guard — the successor to the old `switch` default's `never`
   // assertion. If a registry command has no handler (or an id is renamed), `MissingCommand`
   // is that id and the assignment fails to type-check, so a route can never silently go missing.
-  type MissingCommand = Exclude<CommandName, keyof typeof table>;
+  // `DeferredHostCommand` is subtracted: those command shapes are registered but their handlers
+  // land in a later cluster of the in-flight change (see `DEFERRED_HOST_COMMANDS`).
+  type MissingCommand = Exclude<CommandName, keyof typeof table | DeferredHostCommand>;
   const _assertExhaustive: [MissingCommand] extends [never] ? true : { missing: MissingCommand } =
     true;
   void _assertExhaustive;

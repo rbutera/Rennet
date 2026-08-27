@@ -4,5 +4,6 @@
  * #466/#457 durable-session shapes. This is the folder's only public seam;
  * the root `src/index.ts` re-exports it.
  */
+export * from "./ask-log";
 export * from "./model";
 export * from "./wire";
