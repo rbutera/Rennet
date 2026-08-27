@@ -1,6 +1,7 @@
 import type { Project } from "@rennet/protocol";
 import { createContext, useContext, useMemo } from "react";
 import { useCommand, useMutation } from "../data";
+import { selectProcessingProjectIds, useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The sidebar's SINGLE data-resolution point (C03, proposal reconciliation 2).
@@ -110,8 +111,11 @@ function hostForSource(source: string): { id: string; label: string; kind: "loca
 function buildHosts(
   projects: readonly Project[],
   projection: SidebarSessionProjection,
+  processingProjectIds: readonly string[],
 ): SidebarHost[] {
-  const indexing = new Set(projection.indexingProjectIds ?? []);
+  // The live client's indexing spinner rides the `ui` slice's processing set (C12's
+  // flow); the projection's `indexingProjectIds` remains for B9's session projection.
+  const indexing = new Set([...(projection.indexingProjectIds ?? []), ...processingProjectIds]);
   const byHost = new Map<
     string,
     { label: string; kind: "local" | "remote"; rows: SidebarProject[] }
@@ -150,7 +154,11 @@ export interface SidebarTree {
 export function useSidebarTree(): SidebarTree {
   const { data, pending } = useCommand("projects.list", {});
   const projection = useSidebarSessionProjection();
-  const hosts = useMemo(() => buildHosts(data?.projects ?? [], projection), [data, projection]);
+  const processing = useRennetStore(selectProcessingProjectIds);
+  const hosts = useMemo(
+    () => buildHosts(data?.projects ?? [], projection, processing),
+    [data, projection, processing],
+  );
   return { hosts, loading: pending };
 }
 

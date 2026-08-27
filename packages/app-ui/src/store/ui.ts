@@ -29,6 +29,14 @@ export interface UiState {
    * consumed (and cleared) by the Add Project body. Absent ⇒ Add Project opens on Local.
    */
   readonly pendingAddProjectSource?: string;
+  /**
+   * Projects with a `project.process` run the client kicked off still in flight — the
+   * sidebar row's "indexing" spinner (C12 §10.6). NOT derivable from the projection
+   * cache: it is genuine client-initiated ephemeral state (like `openDialogs`), set by
+   * the indexing view on start and cleared when the run resolves, so leaving the view
+   * never cancels it (the spinner tracks the real run, not the mounted screen).
+   */
+  readonly processingProjectIds: readonly string[];
 }
 
 export interface UiSlice {
@@ -46,6 +54,8 @@ export interface UiSlice {
     openAddProjectForSource(source: string): void;
     /** Clear the pending preselection once the Add Project body has consumed it. */
     clearAddProjectSource(): void;
+    /** Mark (or unmark) a project as processing — drives the sidebar indexing spinner. */
+    setProjectProcessing(projectId: string, processing: boolean): void;
   };
 }
 
@@ -58,6 +68,7 @@ const initialUi: UiState = {
   chatWidth: 420,
   commandMenuOpen: false,
   openDialogs: [],
+  processingProjectIds: [],
 };
 
 export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) => ({
@@ -91,6 +102,15 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
       })),
     clearAddProjectSource: () =>
       set((s) => ({ ui: { ...s.ui, pendingAddProjectSource: undefined } })),
+    setProjectProcessing: (projectId, processing) =>
+      set((s) => {
+        const has = s.ui.processingProjectIds.includes(projectId);
+        if (processing === has) return s; // idempotent — no spurious re-render.
+        const next = processing
+          ? [...s.ui.processingProjectIds, projectId]
+          : s.ui.processingProjectIds.filter((id) => id !== projectId);
+        return { ui: { ...s.ui, processingProjectIds: next } };
+      }),
   },
 });
 
@@ -102,3 +122,6 @@ export const selectFolded = (nodeId: string) => (s: RennetState) =>
 export const selectDialogOpen = (id: string) => (s: RennetState) => s.ui.openDialogs.includes(id);
 /** The frontmost open dialog id, or null. DERIVED — never stored as its own field. */
 export const selectTopDialog = (s: RennetState): string | null => s.ui.openDialogs.at(-1) ?? null;
+/** The projects currently processing (sidebar indexing spinner). */
+export const selectProcessingProjectIds = (s: RennetState): readonly string[] =>
+  s.ui.processingProjectIds;

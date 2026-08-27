@@ -6,6 +6,7 @@ import { useLocation } from "wouter";
 import { Icon } from "../../components/icon";
 import { useBridge, useCommand, useMutation } from "../../data";
 import { newChatPath, projectMapPath } from "../../routes/url";
+import { useRennetStore } from "../../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Project indexing view (C12 §10.4/§10.5, cluster 3: scout phase + questionnaire).
@@ -111,6 +112,15 @@ function narrationLabel(event: ProjectProcessEvent): { label: string; detail?: s
       return { label: event.note, detail: event.detail };
     case "repo-start":
       return { label: `Building ${event.repo}`, detail: `${event.index}/${event.total}` };
+    case "repo-done": {
+      // Real counts from the built snapshot summary — never scripted (the spike's
+      // "456 files · 12 scopes" was fixture text; these come off the wire).
+      const parts = [
+        event.summary.files != null ? `${event.summary.files} files` : null,
+        event.summary.symbols != null ? `${event.summary.symbols} symbols` : null,
+      ].filter(Boolean);
+      return { label: `Built ${event.repo}`, detail: parts.length ? parts.join(" · ") : undefined };
+    }
     case "repo-error":
       return { label: `${event.repo} failed`, detail: event.message };
     default:
@@ -170,10 +180,15 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
       startedFor.current = projectId;
       setEvents([]);
       setPhase("running");
-      void process({ commandId, projectId }).then(
-        () => setPhase("done"),
-        () => setPhase("done"),
-      );
+      // The sidebar's indexing spinner tracks THIS run, not this mounted screen:
+      // set on start, cleared only when the run resolves — leaving never cancels it.
+      const setProcessing = useRennetStore.getState().uiActions.setProjectProcessing;
+      setProcessing(projectId, true);
+      const settle = () => {
+        setPhase("done");
+        setProcessing(projectId, false);
+      };
+      void process({ commandId, projectId }).then(settle, settle);
     }
     return () => unsubscribe?.();
   }, [bridge, projectId, process]);
