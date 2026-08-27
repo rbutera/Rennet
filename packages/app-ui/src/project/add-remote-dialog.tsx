@@ -124,7 +124,7 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
             />
             <p className="text-xs text-ink-faint">
               Run <code className="rounded bg-raised px-1">rennet pair</code> on the machine for a
-              code — or paste the link it prints to fill both fields.
+              one-time code.
             </p>
           </div>
         </div>
