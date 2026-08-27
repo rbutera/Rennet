@@ -3,18 +3,19 @@ import type { ConventionCatalogueLoad } from "@rennet/adapters";
 import {
   detectLocus,
   escapePath,
-  type Locus,
-  resolveLocus,
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
   SETTINGS_REGISTRY,
 } from "@rennet/core";
 import type {
-  GlobalConfig,
+  ClientSettings,
+  DaemonHostSection,
+  DaemonSettings,
+  PairedDevice,
   Project,
+  ProjectSource,
   ProjectVisibility,
-  SetRepoLocusOutcome,
   SetRepoVisibilityOutcome,
   SettingsGuidance,
   SettingsProject,
@@ -44,12 +45,32 @@ export interface SettingsCompositionDeps {
     | { status: "absent" | "malformed"; config: null }
     | {
         status: "ok";
-        config: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus };
+        // A stale `locus` may still sit in an old config; it is ignored — execution
+        // locus is a detected fact now (#476), read straight off the repo path.
+        config: { visibility?: ProjectVisibility; promoted?: boolean };
       };
-  /** The global (app-side) config state. */
-  readGlobalState(): { status: "absent" | "ok" | "malformed"; config: GlobalConfig };
-  /** Persist a global-config edit. MUST itself refuse a malformed file (throw). */
-  updateGlobal(update: (current: GlobalConfig) => GlobalConfig): GlobalConfig;
+  /** The viewer's client-settings state (appearance, keybindings). */
+  readGlobalState(): { status: "absent" | "ok" | "malformed"; config: ClientSettings };
+  /**
+   * This host's daemon-settings (the global ladder rung as it exists on the host this
+   * daemon runs on, #476). Its `daemon.listen` rung is the only host rung locally
+   * readable; remote/WSL hosts keep theirs on that host.
+   */
+  readDaemonSettings(): DaemonSettings;
+  /**
+   * Every paired device (newest first), the source for project-less remote hosts on
+   * the settings surface (#476, finding 9). A device paired but not yet routing a
+   * project still gets a host section, so it is visible before its first project.
+   */
+  listPairedDevices(): PairedDevice[];
+  /** Persist a client-settings edit. MUST itself refuse a malformed file (throw). */
+  updateGlobal(update: (current: ClientSettings) => ClientSettings): ClientSettings;
+  /**
+   * Persist a daemon-settings edit — the host's global ladder rung (#476). The
+   * issue-tracker section (#461, B7) is a global-rung host fact, so it is written
+   * HERE, not in client settings. MUST itself refuse a malformed file (throw).
+   */
+  updateDaemon(update: (current: DaemonSettings) => DaemonSettings): DaemonSettings;
   /**
    * Resolve a working path to its realpath-canonical git TOP LEVEL — the same
    * identity the snapshot generator keys on — or `null` when it is not a git
@@ -66,11 +87,6 @@ export interface SettingsCompositionDeps {
     repoRoot: string;
     target: ProjectVisibility;
   }): Promise<{ changed: boolean; gitignorePath: string }>;
-  /**
-   * Persist a repo's execution-locus override, or clear it (`locus: null` ⇒ back to
-   * auto-detection). A plain config write — never a gate (Rule Zero).
-   */
-  applyLocus(input: { repoKey: string; locus: Locus | null }): void;
   /**
    * Delete a repo-scoped config field, dropping the repo-layer entry so the value
    * falls back down the ladder (Reset). A plain config write — never a gate. The
@@ -109,17 +125,12 @@ export interface SettingsComposition {
   setTrackerValue(input: {
     key: "kind" | "projectKey" | "baseUrl" | "tokenEnv";
     value: string | null;
-  }): NonNullable<GlobalConfig["tracker"]>;
+  }): NonNullable<DaemonSettings["tracker"]>;
   setRepoVisibility(input: {
     projectId: string;
     repoPath: string;
     visibility: ProjectVisibility;
   }): Promise<SetRepoVisibilityOutcome>;
-  setRepoLocus(input: {
-    projectId: string;
-    repoPath: string;
-    locus: Locus | null;
-  }): Promise<SetRepoLocusOutcome>;
   resetRepoValue(input: {
     projectId: string;
     repoPath: string;
@@ -188,9 +199,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     const config = configState.status === "ok" ? configState.config : null;
     const visibility = resolveVisibility(config?.visibility);
     const promoted = resolvePromoted(config?.promoted);
-    // Locus resolves THROUGH the ladder (detected < repo), not around it —
-    // `locusOverridden` is derived from the resolved layer, not a side-channel.
-    const locus = resolveLocus(detectLocus(target.repoPath), config?.locus);
+    // Execution locus is a DETECTED FACT now (#476) — where the harness runs, read
+    // straight off the repo path, not a stored/overridable ladder value.
+    const locus = detectLocus(target.repoPath);
+    const locusValue = locus.kind === "host" ? "host" : `WSL · ${locus.distro}`;
     return {
       projectId: project.id,
       name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
@@ -199,9 +211,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       visibilityProvenance: visibility.provenance,
       promoted: promoted.value,
       promotedProvenance: promoted.provenance,
-      locus: locus.value,
-      locusOverridden: locus.layer === "repo",
-      locusProvenance: locus.provenance,
+      locus,
+      locusProvenance: {
+        layer: "detected",
+        contributions: [{ layer: "detected", value: locusValue, effective: true }],
+      },
       configMalformed,
     };
   };
@@ -221,13 +235,47 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     return { project, target, multiRepo: targets.length > 1 };
   };
 
+  // Every daemon host the surface covers (#476): the LOCAL host first (its
+  // `daemon-settings` listener rung is the only one locally readable), then the UNION
+  // of every distinct non-local `source` the projects route to AND every paired
+  // device (finding 9 — a device paired but with no project yet would otherwise be
+  // invisible). A remote/WSL host is LISTED so it is visible, but its rung lives on
+  // that host — not fabricated here (no `listen`), which IS the unreadable-remote state.
+  const daemonHostSections = (projects: Project[]): DaemonHostSection[] => {
+    const listen = deps.readDaemonSettings().daemon?.listen;
+    // A paired device's friendly name, keyed by its `remote:<deviceId>` source, so a
+    // remote host reads "Remote · <name>" whether or not a project routes to it.
+    const deviceNames = new Map<ProjectSource, string>();
+    for (const device of deps.listPairedDevices()) {
+      deviceNames.set(`remote:${device.deviceId}`, device.name);
+    }
+    const label = (source: ProjectSource): string => {
+      if (source === "local") return "This machine";
+      if (source.startsWith("wsl:")) return `WSL · ${source.slice("wsl:".length)}`;
+      return `Remote · ${deviceNames.get(source) ?? source.slice("remote:".length)}`;
+    };
+    const hosts: DaemonHostSection[] = [
+      { source: "local", label: "This machine", isLocal: true, ...(listen ? { listen } : {}) },
+    ];
+    const seen = new Set<ProjectSource>(["local"]);
+    const add = (source: ProjectSource): void => {
+      if (seen.has(source)) return;
+      seen.add(source);
+      hosts.push({ source, label: label(source), isLocal: false });
+    };
+    for (const project of projects) add(project.source);
+    for (const source of deviceNames.keys()) add(source);
+    return hosts;
+  };
+
   return {
     get: async (): Promise<SettingsView> => {
       const schemeState = deps.readGlobalState();
       const scheme = resolveScheme(schemeState.config);
       const projects: SettingsProject[] = [];
       const emittedRepoPaths = new Set<string>();
-      for (const project of deps.listProjects()) {
+      const allProjects = deps.listProjects();
+      for (const project of allProjects) {
         const targets = await targetsFor(project);
         const multiRepo = targets.length > 1;
         for (const target of targets) {
@@ -243,6 +291,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         projects,
         // The stored override map, verbatim (#44). Additive: absent field ⇒ omitted.
         ...(schemeState.config.keybindings ? { keybindings: schemeState.config.keybindings } : {}),
+        // Every daemon host the surface covers (#476), local first (§4.2).
+        daemonHosts: daemonHostSections(allProjects),
       };
     },
 
@@ -303,9 +353,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return written.keybindings ?? {};
     },
 
-    setTrackerValue: (input): NonNullable<GlobalConfig["tracker"]> => {
+    setTrackerValue: (input): NonNullable<DaemonSettings["tracker"]> => {
       // Validate through the registry declaration the resolver reads — the write
-      // and the read cannot disagree on what a legal value is. `null` resets.
+      // and the read cannot disagree on what a legal value is. `null` resets. The
+      // tracker is a GLOBAL-rung host fact (#461, B7), so it writes to DAEMON
+      // settings, the same store `resolveTrackerConfig` reads it back from.
       const declaration = {
         kind: SETTINGS_REGISTRY.trackerKind,
         projectKey: SETTINGS_REGISTRY.trackerProjectKey,
@@ -313,7 +365,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         tokenEnv: SETTINGS_REGISTRY.trackerTokenEnv,
       }[input.key];
       const value = input.value === null ? null : declaration.validate(input.value);
-      const written = deps.updateGlobal((current) => {
+      const written = deps.updateDaemon((current) => {
         const tracker = { ...current.tracker };
         if (value === null) delete tracker[input.key];
         else tracker[input.key] = value as never;
@@ -364,47 +416,13 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       };
     },
 
-    setRepoLocus: async (input: {
-      projectId: string;
-      repoPath: string;
-      locus: Locus | null;
-    }): Promise<SetRepoLocusOutcome> => {
-      const live = await liveTarget(input.projectId, input.repoPath);
-      if (!live) {
-        const locus = resolveLocus(detectLocus(input.repoPath), undefined);
-        return {
-          status: "unresolved",
-          locus: locus.value,
-          locusOverridden: false,
-          project: null,
-        };
-      }
-      // Refuse a malformed config before any write (Rule 75), mirroring visibility.
-      if (deps.loadConfigState(live.target.repoKey).status === "malformed") {
-        const locus = resolveLocus(detectLocus(live.target.repoPath), undefined);
-        return {
-          status: "malformed",
-          locus: locus.value,
-          locusOverridden: false,
-          project: null,
-        };
-      }
-      deps.applyLocus({ repoKey: live.target.repoKey, locus: input.locus });
-      const project = resolveRow(live.project, live.target, live.multiRepo);
-      return {
-        status: "applied",
-        locus: project.locus,
-        locusOverridden: project.locusOverridden,
-        project,
-      };
-    },
-
     // Reset a repo-scoped value to inheritance: drop the repo-layer entry so the
-    // value falls back down the ladder. For VISIBILITY this also re-applies the
-    // gitignore switch toward the newly effective value FIRST, so `.rennet/.gitignore`
-    // matches the value the row will now resolve to — a reset that changed the
-    // effective value without applying it would be a lie in the UI (design Dec. 4).
-    // Both mirror `setRepoVisibility`'s live re-resolution and Rule-75 refusal.
+    // value falls back down the ladder. For VISIBILITY (the only repo-layer key now —
+    // execution locus is a detected fact, #476) this also re-applies the gitignore
+    // switch toward the newly effective value FIRST, so `.rennet/.gitignore` matches
+    // the value the row will now resolve to — a reset that changed the effective value
+    // without applying it would be a lie in the UI (design Dec. 4). Mirrors
+    // `setRepoVisibility`'s live re-resolution and Rule-75 refusal.
     resetRepoValue: async (input: {
       projectId: string;
       repoPath: string;
@@ -433,9 +451,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     },
 
     // Pin a repo-scoped value at the repo layer: write the CURRENT effective value
-    // explicitly, so a change in a lower layer or in detection no longer moves it
-    // (chiefly: freeze an auto-detected locus). Set-to-current-effective, so it
-    // reuses the SAME setters the explicit controls use — no new write path.
+    // explicitly, so a change in a lower layer no longer moves it. Set-to-current-
+    // effective, reusing the SAME setter the explicit control uses — no new write path.
+    // `visibility` is the only pinnable key (locus is a detected fact now, #476).
     pinRepoValue: async (input: {
       projectId: string;
       repoPath: string;
@@ -449,15 +467,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // Resolve the value at command time (not the renderer's snapshot), then write
       // it at the repo layer through the setter that owns that key's side effects.
       const current = resolveRow(live.project, live.target, live.multiRepo);
-      if (input.key === "visibility") {
-        await deps.applyVisibility({
-          repoKey: live.target.repoKey,
-          repoRoot: live.target.repoRoot,
-          target: current.visibility,
-        });
-      } else {
-        deps.applyLocus({ repoKey: live.target.repoKey, locus: current.locus });
-      }
+      await deps.applyVisibility({
+        repoKey: live.target.repoKey,
+        repoRoot: live.target.repoRoot,
+        target: current.visibility,
+      });
       return {
         status: "applied",
         key: input.key,
