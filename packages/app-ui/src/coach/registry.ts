@@ -1,5 +1,5 @@
 import { type RefCallback, useCallback, useSyncExternalStore } from "react";
-import { useCoachRegistry, useCoachStore } from "./context";
+import { useCoachOptional } from "./context";
 import type { MarkId } from "./marks";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,28 +72,32 @@ export function createCoachRegistry(): CoachRegistry {
  * surface that has not landed yet) keeps the mark out entirely — it never elects.
  */
 export function useCoachAnchor(id: MarkId, enabled = true): RefCallback<Element> {
-  const store = useCoachStore();
-  const registry = useCoachRegistry();
+  // Optional context: before the provider mounts (store awaits `settings.get`, Cluster
+  // 3) the ref no-ops. When the provider appears, `coach` changes identity → React
+  // re-invokes the ref with the live element → it registers. No crash, no orphan.
+  const coach = useCoachOptional();
   return useCallback(
     (el: Element | null) => {
-      if (!enabled || el === null) return;
-      registry.register(id, el); // throws on duplicate before the store mutates
-      store.getState().register(id);
+      if (!enabled || el === null || !coach) return;
+      coach.registry.register(id, el); // throws on duplicate before the store mutates
+      coach.store.getState().register(id);
       return () => {
-        registry.unregister(id, el);
-        store.getState().unregister(id);
+        coach.registry.unregister(id, el);
+        coach.store.getState().unregister(id);
       };
     },
-    [id, enabled, registry, store],
+    [id, enabled, coach],
   );
 }
 
-/** The live element a mark points at, or null while its surface is unmounted. */
+const NOOP_SUBSCRIBE = () => () => undefined;
+
+/** The live element a mark points at, or null while its surface (or provider) is absent. */
 export function useCoachElement(id: MarkId): Element | null {
-  const registry = useCoachRegistry();
+  const coach = useCoachOptional();
   return useSyncExternalStore(
-    registry.subscribe,
-    () => registry.get(id),
+    coach ? coach.registry.subscribe : NOOP_SUBSCRIBE,
+    () => coach?.registry.get(id) ?? null,
     () => null,
   );
 }

@@ -48,7 +48,7 @@ Serial clusters. Each cluster is one session. Search before implementing
       write, first click, no ceremony, refuses a malformed config (Rule 75).
 - [x] Core handler: write the slice through B10's file-config-store
       client-settings path (do NOT rebuild the engine). Register the command.
-- [ ] `coach/` data wiring: read initial `{seen,skipAll}` from
+- [x] `coach/` data wiring: read initial `{seen,skipAll}` from
       `useCommand("settings.get")`, persist via `useMutation("settings.setCoachmarks")`
       invalidating `settings.get`. No `bridge.invoke` in components (data seam).
 

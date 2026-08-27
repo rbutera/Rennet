@@ -2,9 +2,10 @@ import { Popover, PopoverContent } from "@rennet/ui";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useCoachStore } from "./context";
+import { useCoachOptional, useCoachStore } from "./context";
 import { MARK_BY_ID, type MarkId } from "./marks";
 import { useCoachElement } from "./registry";
+import type { CoachStore } from "./store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The coach mark surface (C13 Cluster 2). Ported from the reviewed spike
@@ -63,7 +64,17 @@ function useAnchorBox(el: Element | null): AnchorBox {
 
 /** The shell-mounted surface: renders whichever mark the store has elected. */
 export function Coachmark() {
-  const active = useCoachStore()((s) => s.active);
+  // Optional context: before the provider mounts (the store awaits `settings.get`,
+  // Cluster 3) there is no store to subscribe to. Read it non-throwingly and render
+  // nothing until it appears — a conditional store subscription would break the rules
+  // of hooks, so the subscription lives in the inner component behind this guard.
+  const coach = useCoachOptional();
+  if (!coach) return null;
+  return <ElectedCoachmark store={coach.store} />;
+}
+
+function ElectedCoachmark({ store }: { store: CoachStore }) {
+  const active = store((s) => s.active);
   if (!active) return null;
   return <ActiveCoachmark key={active} id={active} />;
 }

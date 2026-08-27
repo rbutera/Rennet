@@ -43,6 +43,17 @@ function useCoach(): CoachContextValue {
   return value;
 }
 
+/**
+ * The coach context or `null` when no provider is mounted yet. The anchor hooks
+ * (`useCoachAnchor`/`useCoachElement`) use this rather than the throwing `useCoach`:
+ * an anchored surface may render in the brief window before the provider mounts (the
+ * store is created only once `settings.get` resolves, C13 Cluster 3), so its anchor
+ * ref must no-op until the provider appears, then register — never crash the surface.
+ */
+export function useCoachOptional(): CoachContextValue | null {
+  return useContext(CoachContext);
+}
+
 /** The elected-mark store — read reactively with a selector: `useCoachStore()(s => s.active)`. */
 export function useCoachStore(): CoachStore {
   return useCoach().store;
