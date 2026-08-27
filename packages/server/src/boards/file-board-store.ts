@@ -5,22 +5,28 @@ import type { AppendEntry, BoardStore } from "@wboard/server";
 
 /**
  * Durable {@link BoardStore} over a directory: per board, `schema.json`
- * (written once by {@link createBoard}) and `log.jsonl` (one event per line,
+ * (written once by {@link createBoard}) and `log.jsonl` (one line per event,
  * contiguous seqs from 1). The runtime roots it at `.rennet/boards/` under the
  * project — local, never staged. Restart = replay: a fresh instance over the
  * same directory serves the identical log.
  *
  * Matches the reference `InMemoryBoardStore` semantics: duplicate
  * `createBoard` and unknown-board `append` reject; unknown-board reads yield
- * empty/undefined. The ownership rule is honoured by construction — every
- * event crosses a JSON serialization boundary on write and read, so nothing
- * the caller holds aliases stored state.
+ * empty/undefined — and ONLY unknown boards do: any other I/O failure or
+ * corruption propagates rather than masquerading as absent data. The
+ * ownership rule is honoured by construction — every event crosses a JSON
+ * serialization boundary on write and read, so nothing the caller holds
+ * aliases stored state.
  *
- * A batch is appended as one `appendFile` call so it lands contiguously or
- * not at all.
- * ponytail: single-write O_APPEND atomicity assumes one process owns the log
- * (true — the embedded BoardService is the single writer); move to a lockfile
- * if a second writing process ever appears.
+ * Batch atomicity is a recovery property, not a filesystem one: each line is
+ * `{"end": <terminal seq of its batch>, "event": {...}}` and a whole batch
+ * goes down in one `appendFile` call. A crash can still tear the tail of the
+ * file, so readers drop (a) an unparseable final line and (b) a trailing
+ * batch whose terminal seq never landed — the observable log is always
+ * whole batches. Torn-tail recovery applies to the FINAL line only;
+ * corruption anywhere else in the file throws.
+ * ponytail: single-writer O_APPEND assumed (the embedded BoardService is the
+ * only writer); move to a lockfile if a second writing process ever appears.
  */
 export class FileBoardStore implements BoardStore {
   readonly #root: string;
@@ -50,23 +56,55 @@ export class FileBoardStore implements BoardStore {
     return next;
   }
 
-  async #readLog(boardId: string): Promise<Event[]> {
+  /**
+   * Committed events, with crash recovery: a torn final line and a trailing
+   * uncommitted batch are dropped (`recovered: true` tells the write path to
+   * heal the file before appending). Mid-file corruption throws — that is
+   * damage, not a crash tail. Only ENOENT reads as "no log yet".
+   */
+  async #readLog(boardId: string): Promise<{ events: Event[]; recovered: boolean }> {
+    const path = join(this.#dir(boardId), "log.jsonl");
     let raw: string;
     try {
-      raw = await readFile(join(this.#dir(boardId), "log.jsonl"), "utf8");
-    } catch {
-      return [];
+      raw = await readFile(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { events: [], recovered: false };
+      }
+      throw error;
     }
-    return raw
-      .split("\n")
-      .filter((line) => line !== "")
-      .map((line) => JSON.parse(line) as Event);
+    const lines = raw.split("\n").filter((line) => line !== "");
+    let recovered = false;
+    const parsed: { end: number; event: Event }[] = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      try {
+        parsed.push(JSON.parse(lines[i] as string) as { end: number; event: Event });
+      } catch (error) {
+        if (i === lines.length - 1) {
+          recovered = true; // torn tail: the crash interrupted the final write
+          break;
+        }
+        throw new Error(`corrupted board log: ${path} line ${i + 1}`, { cause: error });
+      }
+    }
+    const last = parsed.at(-1);
+    if (last !== undefined && last.event.seq !== last.end) {
+      // The final batch never landed its terminal event: drop the whole batch.
+      recovered = true;
+      while (parsed.at(-1)?.end === last.end) parsed.pop();
+    }
+    return { events: parsed.map((line) => line.event), recovered };
   }
 
   async #lastSeq(boardId: string): Promise<number> {
     const known = this.#tail.get(boardId);
     if (known !== undefined) return known;
-    const events = await this.#readLog(boardId);
+    const { events, recovered } = await this.#readLog(boardId);
+    if (recovered) {
+      // Heal before anything appends after the garbage tail. Serialized-write
+      // context only (append); reads never rewrite.
+      await writeFile(join(this.#dir(boardId), "log.jsonl"), logLines(events));
+    }
     const last = events.at(-1)?.seq ?? 0;
     this.#tail.set(boardId, last);
     return last;
@@ -92,12 +130,15 @@ export class FileBoardStore implements BoardStore {
   }
 
   async getSchema(boardId: string): Promise<WireSchema | undefined> {
+    let raw: string;
     try {
-      const raw = await readFile(join(this.#dir(boardId), "schema.json"), "utf8");
-      return JSON.parse(raw) as WireSchema;
-    } catch {
-      return undefined;
+      raw = await readFile(join(this.#dir(boardId), "schema.json"), "utf8");
+    } catch (error) {
+      // undefined is the contract's "unknown board" — nothing else may hide in it.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
     }
+    return JSON.parse(raw) as WireSchema;
   }
 
   append(boardId: string, entries: readonly AppendEntry[]): Promise<Event[]> {
@@ -117,8 +158,14 @@ export class FileBoardStore implements BoardStore {
         op: entry.op,
       }));
       if (appended.length > 0) {
-        const lines = `${appended.map((event) => JSON.stringify(event)).join("\n")}\n`;
-        await appendFile(join(this.#dir(boardId), "log.jsonl"), lines);
+        try {
+          await appendFile(join(this.#dir(boardId), "log.jsonl"), logLines(appended));
+        } catch (error) {
+          // The file may now hold a partial batch: forget the tail so the next
+          // append re-reads and heals before writing anything after it.
+          this.#tail.delete(boardId);
+          throw error;
+        }
         this.#tail.set(boardId, base + appended.length);
       }
       return structuredClone(appended);
@@ -126,7 +173,14 @@ export class FileBoardStore implements BoardStore {
   }
 
   async getEvents(boardId: string, afterSeq: number): Promise<Event[]> {
-    const events = await this.#readLog(boardId);
+    const { events } = await this.#readLog(boardId);
     return events.filter((event) => event.seq > afterSeq);
   }
+}
+
+/** Serialize whole batches: every line carries its batch's terminal seq. */
+function logLines(events: readonly Event[]): string {
+  if (events.length === 0) return "";
+  const end = events.at(-1)?.seq;
+  return `${events.map((event) => JSON.stringify({ end, event })).join("\n")}\n`;
 }

@@ -1,3 +1,4 @@
+import * as fsPromises from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,6 +107,60 @@ describe("FileBoardStore", () => {
     // And the reopened store continues the seq line, not restarts it.
     const next = await reopened.append("b1", [{ actor: "a", op: createOp("e3") }]);
     expect(next[0]?.seq).toBe(3);
+  });
+
+  describe("crash recovery and corruption", () => {
+    const logPath = () => join(root, Buffer.from("b1", "utf8").toString("base64url"), "log.jsonl");
+    const { appendFile, writeFile, readFile } = fsPromises;
+
+    it("drops a torn final line and continues seqs after recovery", async () => {
+      await store.createBoard("b1", SCHEMA);
+      await store.append("b1", [{ actor: "a", op: createOp("e1") }]);
+      await appendFile(logPath(), '{"end":3,"event":{"seq":2,"acto'); // crash mid-write
+
+      const reopened = new FileBoardStore(root);
+      expect((await reopened.getEvents("b1", 0)).map((event) => event.seq)).toEqual([1]);
+      const next = await reopened.append("b1", [{ actor: "a", op: createOp("e2") }]);
+      expect(next[0]?.seq).toBe(2);
+      // The healed log parses cleanly end to end.
+      expect((await reopened.getEvents("b1", 0)).map((event) => event.seq)).toEqual([1, 2]);
+    });
+
+    it("drops a complete-prefix of an uncommitted batch", async () => {
+      await store.createBoard("b1", SCHEMA);
+      await store.append("b1", [{ actor: "a", op: createOp("e1") }]);
+      // A 3-event batch (end seq 4) whose last event never landed.
+      const partial = [2, 3]
+        .map((seq) =>
+          JSON.stringify({ end: 4, event: { seq, actor: "a", op: createOp(`p${seq}`) } }),
+        )
+        .join("\n");
+      await appendFile(logPath(), `${partial}\n`);
+
+      const reopened = new FileBoardStore(root);
+      expect((await reopened.getEvents("b1", 0)).map((event) => event.seq)).toEqual([1]);
+      const next = await reopened.append("b1", [{ actor: "a", op: createOp("e2") }]);
+      expect(next[0]?.seq).toBe(2);
+    });
+
+    it("throws on mid-file corruption instead of returning a truncated log", async () => {
+      await store.createBoard("b1", SCHEMA);
+      await store.append("b1", [{ actor: "a", op: createOp("e1") }]);
+      const intact = await readFile(logPath(), "utf8");
+      await writeFile(logPath(), `not json\n${intact}`);
+
+      const reopened = new FileBoardStore(root);
+      await expect(reopened.getEvents("b1", 0)).rejects.toThrow(/corrupted board log/);
+    });
+
+    it("throws on corrupted schema.json instead of reporting an unknown board", async () => {
+      await store.createBoard("b1", SCHEMA);
+      const schemaPath = join(root, Buffer.from("b1", "utf8").toString("base64url"), "schema.json");
+      await writeFile(schemaPath, "{ definitely not json");
+
+      const reopened = new FileBoardStore(root);
+      await expect(reopened.getSchema("b1")).rejects.toThrow();
+    });
   });
 
   it("keeps dot-segment and separator-bearing board ids inside the root", async () => {
