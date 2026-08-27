@@ -81,7 +81,7 @@ export class FileBoardStore implements BoardStore {
         await writeFile(join(dir, "schema.json"), copy, { flag: "wx" });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-          throw new Error(`board already exists: ${boardId}`);
+          throw new Error(`board already exists: ${boardId}`, { cause: error });
         }
         throw error;
       }
