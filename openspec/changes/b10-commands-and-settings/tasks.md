@@ -47,7 +47,7 @@ The ladder resolution is unchanged; only the storage splits. Not B9-gated.
 
 - [x] 5.1 Update `docs/developing/guides/settings-and-setup.md`: the two-file split (`client-settings.json` / `daemon-settings.json`), the mechanical `config.json` v1 migration, "Runs on" as a detected fact. Do not narrate the old single-blob history (docs describe current Rennet).
 - [x] 5.2 Update `docs/developing/concepts/surfacing-and-routing.md`: the registry is the single source for dispatch, the `app_*` agent tools, and the menu; the dispatch map replaces the switch; `exposure.agent` gates the agent surface. Add a `mermaid` fence if a picture clarifies the three-reader registry flow.
-- [ ] 5.3 Full gate `sh -c 'pnpm check'` green (dispatch + settings touch server entries — run the whole gate, not just affected).
+- [x] 5.3 Full gate `sh -c 'pnpm check'` green (dispatch + settings touch server entries — run the whole gate, not just affected).
 - [ ] 5.4 E2E proof 1 (packet): every **non-session** `exposure.agent` entry is invocable through a **live orchestrator turn**. Proof 2: `config.json` v1 fixture migrates losslessly to the split files. Proof 3: dispatch-map-vs-switch enumeration diffs empty (cluster 1.4 control). Evidence shown, never asserted.
 
 ---
