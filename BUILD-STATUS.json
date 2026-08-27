@@ -104,16 +104,18 @@
     "note": "PR #529 landed; live session-transcript projection B9-gated (one-file swap in chat-data.ts). Dock identity + live-turn fold + compaction all work now over MemoryBridge"
   },
   "c08": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. Cluster 8 daemon-swap stays B11-gated (REVISE_WIRED one-bool flip). Deferred w/ record: own-PR resolves teammate-pr (no ownership fact in frozen schema — B-track follow-up). Parked for Rai: publish.requestConsent token"
   },
   "c09": {
     "status": "pending",
     "passes": false
   },
   "c10": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #532 landed; dual-seat review (Codex restored) caught+fixed 9 findings incl. dropped pin/reset+appearance-reset port regressions. Honest-empty ledger: only agentsByHost is live-backed; model-council/glyph/worktree/tracker/guidance-write/remote-host detection await future backends. Pairing error-color nit deferred to A/B pass"
   },
   "c11": {
     "status": "done",

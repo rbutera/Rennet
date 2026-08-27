@@ -71,6 +71,7 @@ describe("diff-line and board-excerpt comments are one object", () => {
     await diff.user.click(diff.getByText("Request Changes"));
     expect(useRennetStore.getState().review.codeComments[PATH]?.[1]).toBe("guard this");
     expect(useRennetStore.getState().review.stagedAsks[`${PATH}:1`]).toEqual({
+      id: `${PATH}:1`,
       anchor: `${PATH}:1`,
       type: "request-change",
       body: "guard this",

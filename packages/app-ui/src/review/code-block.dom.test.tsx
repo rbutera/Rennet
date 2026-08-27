@@ -45,6 +45,7 @@ describe("CodeBlock — the one code surface", () => {
     await user.click(getByText("Request Changes"));
     expect(useRennetStore.getState().review.codeComments[PATH]?.[2]).toBe("rename");
     expect(useRennetStore.getState().review.stagedAsks[`${PATH}:2`]).toEqual({
+      id: `${PATH}:2`,
       anchor: `${PATH}:2`,
       type: "request-change",
       body: "rename",

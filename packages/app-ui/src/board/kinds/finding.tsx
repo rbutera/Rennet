@@ -2,6 +2,7 @@ import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../../components/icon";
+import { useFlightBatcher } from "../../handoff/exit-flight";
 import { AnchorReveal } from "../../review";
 import { useRennetStore } from "../../store";
 import { QuoteHighlightLayer } from "../quote-highlight";
@@ -51,6 +52,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
   const citations = useCodeRefs(code);
   const [open, setOpen] = useState(status === "open");
   const { stageAsk, unstageAsk } = useRennetStore((s) => s.reviewActions);
+  const flight = useFlightBatcher();
 
   const { body, fix } = splitFix(concern);
   const summary = body.split("\n")[0];
@@ -59,7 +61,10 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
   // The ask's source anchor is the finding's first cited position, mirroring C4's
   // `path:line` anchor convention; with no citation it falls back to the element id.
   const anchor = citations[0] ? `${citations[0].path}:${citations[0].startLine}` : element.id;
-  const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[anchor]));
+  // The ask IDENTITY is the finding's element id — stable and unique per finding, so toggling is
+  // idempotent (one ask per finding) and two findings citing the same line never collapse.
+  const askId = element.id;
+  const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[askId]));
 
   return (
     <div
@@ -117,11 +122,14 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
               <div className="flex justify-end pt-0.5">
                 <button
                   type="button"
-                  onClick={() =>
-                    staged
-                      ? unstageAsk(anchor)
-                      : stageAsk({ anchor, type: "request-change", body: fix })
-                  }
+                  onClick={() => {
+                    if (staged) {
+                      unstageAsk(askId);
+                      return;
+                    }
+                    stageAsk({ id: askId, anchor, type: "request-change", body: fix });
+                    flight.signal(); // a real staging act flies one bubble to the FAB (never unstage)
+                  }}
                   className={cn(
                     "rounded px-2.5 py-1 text-xs transition-colors",
                     staged

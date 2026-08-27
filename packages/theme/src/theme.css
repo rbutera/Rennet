@@ -15,6 +15,23 @@
 @import "@fontsource-variable/newsreader";
 @import "./palette.css";
 
+/* User-selectable theme packs + code themes (issue #481, C10 §6.2). Each is a
+ * COLOUR-only re-binding of --rn-* scoped under [data-rn-theme] / [data-rn-code-theme]
+ * — attributes the app stamps on the document root when the reader picks a pack or a
+ * code theme (clearing the attribute = the default Affineur's Bench / follow-theme).
+ * Loaded HERE in the Tailwind face, which only packages/ui + packages/app-ui import;
+ * the marketing and docs bundles import palette.css directly, so they never pull these
+ * — the packs stay scoped to the app bundle. Packs load before code themes so a code
+ * theme's --rn-syn-* win by source order (equal specificity), per code-themes/*.css. */
+@import "./themes/catppuccin-mocha.css";
+@import "./themes/dracula.css";
+@import "./themes/github.css";
+@import "./themes/one-dark-pro.css";
+@import "./code-themes/catppuccin-mocha.css";
+@import "./code-themes/dracula.css";
+@import "./code-themes/github.css";
+@import "./code-themes/one-dark-pro.css";
+
 @theme inline {
   /* grounds */
   --color-canvas: var(--rn-canvas);
