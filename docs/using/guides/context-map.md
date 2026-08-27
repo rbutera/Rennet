@@ -9,7 +9,16 @@ a model verification seat confirms or rejects it against the cited code. You can
 override a verdict, or discuss a claim with the orchestrator; nothing waits for
 your confirmation.
 
-Open the map from the **Context Map** button in a project's header.
+Reach the map from **View Context Map** on the ready summary shown when a new
+project finishes indexing, or from the **Map** control in a project's New Chat
+header. It opens as a full view; leaving it lands on that project's New Chat.
+
+The map generates the first time you add a project. A prefilled questionnaire
+about the project runs alongside that generation and is never a gate: the map
+completes and its exits appear whether or not you answer it, and every answer
+stays editable later in **Settings → Projects**. See
+[Getting started](./getting-started.md#what-happens-after-you-add-it) for that
+flow.
 
 ## What the view contains
 
@@ -17,15 +26,14 @@ The left pane contains the project tree. It starts with scopes, then shows
 directories and files with their rolled-up file counts.
 
 The center pane contains two related views. The neighborhood graph shows direct
-manifest and import relationships around the selected scope. The detail view
-shows the selected node's stored claims with their evidence, their confidence,
-and whether you have confirmed or rejected them.
+manifest and import relationships around the selected scope, with its nodes
+clickable and keyboard-activatable to re-center. The detail view shows the
+selected node's stored claims with their evidence, their confidence, and whether
+you have confirmed or rejected them.
 
-The right pane contains the orchestrator ask rail, titled **Orchestrator**.
-Selecting an item in the tree updates the graph, details, and evidence available
-to that conversation.
-
-A freshness badge identifies the snapshot used to build the map.
+The standalone map has no ask rail of its own: you read structure and assess
+claims here, and questioning a claim carries it into the project's session
+conversation. A freshness badge identifies the snapshot used to build the map.
 
 ## Assess a claim
 
@@ -36,7 +44,8 @@ never a required step:
 - **Confirm** records that you accept the claim.
 - **Reject** records that the claim is wrong and excludes it from context sent to
   the orchestrator.
-- **Discuss** places the claim in the ask rail so you can question it.
+- **Discuss** raises the claim in the project's session conversation so you can
+  question it.
 
 Your confirmations and rejections persist. During later enrichment, Rennet
 re-evaluates claims whose cited paths changed and carries your verdict on
@@ -44,9 +53,10 @@ untouched claims forward.
 
 ## Ask about the project
 
-The ask rail answers from the stored snapshot and knowledge claims. Each answer
-includes the files and claims used as evidence. When the available evidence does
-not support an answer, the result is `unanswered` and includes a reason.
+Within a session, the chat column beside the surface answers from the stored
+snapshot and knowledge claims. Each answer includes the files and claims used as
+evidence. When the available evidence does not support an answer, the result is
+`unanswered` and includes a reason.
 
 ## Build the map
 
