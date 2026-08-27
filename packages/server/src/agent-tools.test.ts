@@ -51,6 +51,19 @@ describe("app_* agent tool surface (#465)", () => {
     expect(dispatch).toHaveBeenCalledWith("projects.add", { path: "/x" }, undefined);
   });
 
+  it("surfaces the settings ops as app_* tools — the settings surface acts through the same projection (#476, task 4.1)", () => {
+    // The settings ops carry `exposure.agent`, so they ride the SAME registry projection
+    // as every other agent tool — no separate settings bridge, no per-op allow/deny. The
+    // narration boundary (UI acts don't narrate, conversational ones do) is prompt-level
+    // discipline, NOT a mechanical gate here: this bridge exposes every agent-flagged
+    // settings op unconditionally (Rule Zero). Written over the LIVE flag, not a frozen
+    // id list, so 4.3's demotion of `settings.setRepoLocus` needs no edit here.
+    const settingsAgentOps = agentRows.filter((id) => id.startsWith("settings."));
+    expect(settingsAgentOps.length).toBeGreaterThan(0);
+    const toolIds = new Set(buildAppTools(noop).map((t) => t.commandId));
+    for (const op of settingsAgentOps) expect(toolIds.has(op)).toBe(true);
+  });
+
   it("does not fold in the whiteboard five — every tool is a registry command, app_-prefixed", () => {
     const tools = buildAppTools(noop);
     for (const t of tools) {

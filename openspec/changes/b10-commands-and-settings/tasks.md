@@ -38,7 +38,7 @@ The ladder resolution is unchanged; only the storage splits. Not B9-gated.
 
 ## 4. Settings tool surface + "Runs on" demotion (#476)
 
-- [ ] 4.1 Confirm the settings ops (`settings.get`, `settings.setAppearance`, `settings.setKeybinding`, `settings.setRepoVisibility`, `settings.setRepoLocus`, `settings.resetRepoValue`, `settings.pinRepoValue` — already in `AGENT_EXPOSED`) surface as `app_*` tools through cluster 2's bridge. UI-originated settings acts do not narrate; conversational (agent-turn) ones do — verify the narration boundary holds.
+- [x] 4.1 Confirm the settings ops (`settings.get`, `settings.setAppearance`, `settings.setKeybinding`, `settings.setRepoVisibility`, `settings.setRepoLocus`, `settings.resetRepoValue`, `settings.pinRepoValue` — already in `AGENT_EXPOSED`) surface as `app_*` tools through cluster 2's bridge. UI-originated settings acts do not narrate; conversational (agent-turn) ones do — verify the narration boundary holds. (Test asserts every `settings.*` agent-flagged op projects to an `app_*` tool; narration boundary is prompt-level, not a mechanical gate — the bridge exposes them unconditionally, Rule Zero. Note: 4.3 demotes `settings.setRepoLocus`, so the test is written over the live flag set, not a frozen id list.)
 - [ ] 4.2 The settings surface lists **every paired host's** `daemon-settings` section (not just local) — expose it through the settings composition/projection.
 - [ ] 4.3 Demote "Runs on": remove it as a stored/selectable ladder value; surface it as a displayed **detected fact** (where the harness runs), not a knob. Update the settings projection/read path accordingly.
 - [ ] 4.4 Test: paired-host sections enumerate; "Runs on" is read-only detected, not settable. Cluster gate green. Commit.
