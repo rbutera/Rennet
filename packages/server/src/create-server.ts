@@ -26,19 +26,23 @@ import {
   contextAskBackend,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
+  createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
   createCodexTurnTransport,
   createCodexUtilityAdapter,
   createCoverageTurn,
+  createDaemonSettingsStore,
   createGitHubOctokit,
   createGitHubProjectPrSource,
   createRefPinner,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
+  defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
   defaultCodexTransportEffects,
+  defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
   defaultFsListDirDeps,
   defaultGlobalConfigPath,
@@ -55,7 +59,6 @@ import {
   ensurePrWorktree,
   execaGitFor,
   executeExternalCommand,
-  FileConfigStore,
   FileProjectStore,
   FileThreadStore,
   GITHUB_REQUEST_TIMEOUT_MS,
@@ -72,6 +75,7 @@ import {
   loadConventionCatalogue,
   loadProjectDetail,
   matchWorktree,
+  migrateLegacyGlobalConfig,
   NoveltyLifecycleRegistry,
   ProjectContextReader,
   type ProjectPrSource,
@@ -1346,10 +1350,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
     listProjects: () => projectStore.list(),
   });
-  // The global (app-side, personal) config store — layer 1 of the settings ladder
-  // (wireframe #15). A plain document at `~/.rennet/config.json`, sibling to the
-  // project snapshot store; holds the reviewer's scheme, never a repo fact.
-  const configStore = new FileConfigStore(defaultGlobalConfigPath());
+  // The app-side settings stores (B10 #476): viewer preferences (appearance,
+  // keybindings) in `client-settings.json`, the host's global ladder rung (the
+  // listener bind) in `daemon-settings.json`. A legacy `config.json` v1 blob is
+  // migrated mechanically into the two on first construction — one-way, idempotent,
+  // lossless. Both are sibling to the project snapshot store; neither is a repo fact.
+  const clientSettingsPath = defaultClientSettingsPath();
+  const daemonSettingsPath = defaultDaemonSettingsPath();
+  migrateLegacyGlobalConfig({
+    legacyPath: defaultGlobalConfigPath(),
+    clientPath: clientSettingsPath,
+    daemonPath: daemonSettingsPath,
+  });
+  const clientSettingsStore = createClientSettingsStore(clientSettingsPath);
+  const daemonSettingsStore = createDaemonSettingsStore(daemonSettingsPath);
   // The device pairing store (issue #380): server-side secret store for remote
   // device tokens (hashed at rest in `~/.rennet/devices.json`). Shared between the
   // `pairing.*` commands (below) and the WS listener's handshake token check.
@@ -1864,8 +1878,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     settings: createSettingsComposition({
       listProjects: () => projectStore.list(),
       loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
-      readGlobalState: () => configStore.readState(),
-      updateGlobal: (update) => configStore.update(update),
+      readGlobalState: () => clientSettingsStore.readState(),
+      updateGlobal: (update) => clientSettingsStore.update(update),
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {
@@ -1971,7 +1985,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       };
     },
     // Opt-in bind beyond loopback (default stays 127.0.0.1:0).
-    listen: configStore.read().daemon?.listen,
+    listen: daemonSettingsStore.read().daemon?.listen,
     // The served browser UI (#381); absent ⇒ headless.
     uiDist: options.uiDist,
   });

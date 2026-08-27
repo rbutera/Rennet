@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { detectLocus, escapePath, type Locus, resolveLocus } from "@rennet/core";
-import type { GlobalConfig, Project, ProjectVisibility } from "@rennet/protocol";
+import type { ClientSettings, Project, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
 
@@ -411,7 +411,7 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
 
   it("setKeybinding persists a set, an unbind, and a reset — survival re-read (#44)", async () => {
     // A STATEFUL fake store so a write is re-readable (the restart criterion).
-    let stored: GlobalConfig = { version: 1 };
+    let stored: ClientSettings = { version: 1 };
     const { deps } = makeDeps({
       readGlobalState: () => ({ status: "ok", config: stored }),
       updateGlobal: (update) => {

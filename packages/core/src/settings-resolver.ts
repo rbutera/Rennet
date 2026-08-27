@@ -1,7 +1,7 @@
 import {
   type AppearanceScheme,
   appearanceSchemeSchema,
-  type GlobalConfig,
+  type ClientSettings,
   type Locus,
   locusSchema,
   type ProjectVisibility,
@@ -161,11 +161,11 @@ export function resolve<T>(
 }
 
 /**
- * Resolve the appearance scheme: builtin `system`, overridden by the global
- * personal config. There is no repo layer for a personal preference.
+ * Resolve the appearance scheme: builtin `system`, overridden by the viewer's
+ * personal client settings. There is no repo layer for a personal preference.
  */
-export function resolveScheme(global: GlobalConfig): Resolved<AppearanceScheme> {
-  return resolve(SCHEME_SETTING, { global: global.appearance?.scheme });
+export function resolveScheme(client: ClientSettings): Resolved<AppearanceScheme> {
+  return resolve(SCHEME_SETTING, { global: client.appearance?.scheme });
 }
 
 /**

@@ -32,9 +32,9 @@ Grows the orchestrator's `app_*` tools by iterating the registry. Whiteboard fiv
 The ladder resolution is unchanged; only the storage splits. Not B9-gated.
 
 - [x] 3.1 Define `client-settings.json` (viewer prefs — appearance/scheme, keybindings; **outside** the ladder) and `daemon-settings.json` (the global rung as it exists **on its host**) shapes in `protocol` (schemas beside `globalConfigSchema`). Version them.
-- [ ] 3.2 Split the stores: `packages/adapters/src/file-config-store.ts` (and `packages/server/src/settings.ts` composition) read/write the two files. Viewer prefs go to `client-settings.json`; the host-global rung to `daemon-settings.json`. Ladder resolution semantics (per-repo over global, pin/reset) unchanged — prove with the existing ladder tests still green.
-- [ ] 3.3 Mechanical v1 migration: on first read of a legacy `config.json` v1, split it losslessly and deterministically into the two files (one-way). Round-trip test over a `config.json` v1 fixture: every field lands in the correct target file, nothing dropped. **Positive control**: remove one migrated field's mapping, watch the round-trip assert fail, revert.
-- [ ] 3.4 Cluster gate green. Commit.
+- [x] 3.2 Split the stores: `packages/adapters/src/file-config-store.ts` (and `packages/server/src/settings.ts` composition) read/write the two files. Viewer prefs go to `client-settings.json`; the host-global rung to `daemon-settings.json`. Ladder resolution semantics (per-repo over global, pin/reset) unchanged — prove with the existing ladder tests still green.
+- [x] 3.3 Mechanical v1 migration: on first read of a legacy `config.json` v1, split it losslessly and deterministically into the two files (one-way). Round-trip test over a `config.json` v1 fixture: every field lands in the correct target file, nothing dropped. **Positive control**: remove one migrated field's mapping, watch the round-trip assert fail, revert.
+- [x] 3.4 Cluster gate green. Commit.
 
 ## 4. Settings tool surface + "Runs on" demotion (#476)
 

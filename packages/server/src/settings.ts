@@ -10,7 +10,7 @@ import {
   resolveVisibility,
 } from "@rennet/core";
 import type {
-  GlobalConfig,
+  ClientSettings,
   Project,
   ProjectVisibility,
   SetRepoLocusOutcome,
@@ -45,10 +45,10 @@ export interface SettingsCompositionDeps {
         status: "ok";
         config: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus };
       };
-  /** The global (app-side) config state. */
-  readGlobalState(): { status: "absent" | "ok" | "malformed"; config: GlobalConfig };
-  /** Persist a global-config edit. MUST itself refuse a malformed file (throw). */
-  updateGlobal(update: (current: GlobalConfig) => GlobalConfig): GlobalConfig;
+  /** The viewer's client-settings state (appearance, keybindings). */
+  readGlobalState(): { status: "absent" | "ok" | "malformed"; config: ClientSettings };
+  /** Persist a client-settings edit. MUST itself refuse a malformed file (throw). */
+  updateGlobal(update: (current: ClientSettings) => ClientSettings): ClientSettings;
   /**
    * Resolve a working path to its realpath-canonical git TOP LEVEL — the same
    * identity the snapshot generator keys on — or `null` when it is not a git

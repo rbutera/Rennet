@@ -1,4 +1,4 @@
-import type { GlobalConfig, Locus } from "@rennet/protocol";
+import type { ClientSettings, Locus } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_SCHEME,
@@ -25,7 +25,7 @@ describe("resolveScheme", () => {
   });
 
   it("lets the global layer override the builtin, carrying both contributions", () => {
-    const global: GlobalConfig = { version: 1, appearance: { scheme: "light" } };
+    const global: ClientSettings = { version: 1, appearance: { scheme: "light" } };
     const resolved = resolveScheme(global);
     expect(resolved.value).toBe("light");
     expect(resolved.layer).toBe("global");
