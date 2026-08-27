@@ -186,10 +186,37 @@ describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () =>
       { model: "Claude", agree: 1, total: 1 },
       { model: "Codex", agree: 0, total: 1 },
     ]);
-    expect(concurrenceOf(merged, "f2")).toEqual([
+    // Seat B is namespaced (finding 7) — its solo finding keeps its raising model's concurrence under `b:f2`.
+    expect(concurrenceOf(merged, "b:f2")).toEqual([
       { model: "Claude", agree: 0, total: 1 },
       { model: "Codex", agree: 1, total: 1 },
     ]);
+  });
+
+  it("namespaces seat B so its finding never resolves seat A's colliding id (finding 7)", () => {
+    // Both seats independently minted the id `c1` for DIFFERENT code regions.
+    const a = mkBoard([
+      mkFinding("f1", "Claude's concern in auth", ["c1"]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    const b = mkBoard([
+      mkFinding("f2", "Codex's concern in a DIFFERENT file", ["c1"]),
+      mkCodeRef("c1", "src/other.ts", 3, 4),
+    ]);
+    const merged = reconcileFlaggedBoards(a, b, labels);
+
+    // Both solo findings survive (different anchors).
+    expect(merged.elements.filter((e) => e.kind === "finding")).toHaveLength(2);
+    // Seat B's finding must cite seat B's OWN code_ref (other.ts), not seat A's c1 (auth.ts).
+    const f2 = merged.elements.find((e) =>
+      (e.data as { concern?: string } | undefined)?.concern?.includes("DIFFERENT"),
+    );
+    const citedId = (f2?.data as { code: string[] } | undefined)?.code[0] ?? "";
+    const cited = merged.elements.find((e) => e.id === citedId);
+    expect((cited?.data as { path: string } | undefined)?.path).toBe("src/other.ts");
+    // Seat A's c1 (auth.ts) survives untouched under its own id.
+    const seatAref = merged.elements.find((e) => e.id === "c1");
+    expect((seatAref?.data as { path: string } | undefined)?.path).toBe("src/auth.ts");
   });
 });
 
@@ -392,8 +419,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     const flagged = result.boards.find((b) => b.lens === "flagged");
     expect(flagged?.failure).toBeUndefined();
-    // Both models concurred on the matched finding.
-    const conc = concurrenceOf(flagged?.board as DraftBoard, "f1");
+    // Both models concurred on the matched finding — it collapses to ONE (its id is
+    // whichever seat's summary was clearer, so look it up by kind, not a fixed id).
+    const flaggedBoard = flagged?.board as DraftBoard | undefined;
+    const matched = (flaggedBoard?.elements ?? []).filter((e) => e.kind === "finding");
+    expect(matched).toHaveLength(1);
+    const conc = concurrenceOf(flaggedBoard as DraftBoard, matched[0]?.id ?? "");
     expect(conc).toEqual([
       { model: "Claude", agree: 1, total: 1 },
       { model: "Codex", agree: 1, total: 1 },

@@ -38,6 +38,7 @@ import {
   type FindingElement,
   LENS_KINDS,
   type LensKind,
+  parseDraft,
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
@@ -185,17 +186,46 @@ function mergeSkips(boardA: DraftBoard, boardB: DraftBoard): { hunk: string; rea
 }
 
 /**
+ * Namespace every element id in a board (and every INTRA-board reference to it)
+ * under `prefix`, so two independently-drafted seats can never share an id. The
+ * two flagged seats mint ids independently, so both may author a `c1` for
+ * DIFFERENT code — without this, seat B's finding would resolve its `code:["c1"]`
+ * against seat A's `c1` after the merge (finding 7). Hunk ids in `skippedHunks`
+ * are patchset ids, not element ids, so they are left untouched. Pure.
+ */
+export function namespaceBoard(board: DraftBoard, prefix: string): DraftBoard {
+  const ids = new Set(board.elements.map((el) => el.id));
+  const rename = (v: string): string => (ids.has(v) ? prefix + v : v);
+  const elements = board.elements.map((el) => {
+    const data = el.data as Record<string, unknown>;
+    const next: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(data)) {
+      if (typeof val === "string") next[k] = rename(val);
+      else if (Array.isArray(val))
+        next[k] = val.map((x) => (typeof x === "string" ? rename(x) : x));
+      else next[k] = val;
+    }
+    return { ...el, id: prefix + el.id, data: next } as DraftElement;
+  });
+  return { ...(board as object), elements } as DraftBoard;
+}
+
+/**
  * Reconcile two flagged-seat boards into one: `reconcileFindings` folds their
  * findings by location (per-finding cross-model concurrence, J2), a matched pair
  * collapses to the clearer one with both models' concurrence, a solo carries the
- * raising model's concurrence. Non-finding elements union by id (seat A wins a
- * clash); skippedHunks merge. Pure.
+ * raising model's concurrence. Seat B's ids are NAMESPACED first (finding 7), so
+ * a seat can never cite the other seat's code; matching is by synthesized
+ * location anchor, not id, so namespacing does not disturb it. Non-finding
+ * elements then union by id (now collision-free); skippedHunks merge. Pure.
  */
 export function reconcileFlaggedBoards(
-  boardA: DraftBoard,
-  boardB: DraftBoard,
+  boardArg: DraftBoard,
+  boardBArg: DraftBoard,
   labels: { a: string; b: string },
 ): DraftBoard {
+  const boardA = boardArg;
+  const boardB = namespaceBoard(boardBArg, "b:");
   const aFindings = boardFindings(boardA);
   const bFindings = boardFindings(boardB);
   const reconciled = reconcileFindings(
@@ -676,10 +706,21 @@ async function runFlaggedDual(
     ),
   ]);
   const labels = { a: DEFAULT_SEAT_LABELS["claude-code"], b: DEFAULT_SEAT_LABELS.codex };
+  const merged = reconcileFlaggedBoards(a.board, b.board, labels);
+  // Wire-validate the merged board (finding 7): a reconciliation that produced a
+  // structurally-invalid board surfaces as a labeled blemish, never ships silently.
+  const wire = parseDraft(merged);
+  const mergeBlemishes: Violation[] = wire.ok
+    ? []
+    : wire.issues.map((i) => ({
+        ruleId: "schema-invalid",
+        elementRef: `/${(i.path as (string | number)[]).join("/")}`,
+        message: i.message,
+      }));
   return {
-    board: reconcileFlaggedBoards(a.board, b.board, labels),
+    board: merged,
     omissions: [...a.omissions, ...b.omissions],
-    blemishes: [...a.blemishes, ...b.blemishes],
+    blemishes: [...a.blemishes, ...b.blemishes, ...mergeBlemishes],
     immutability: [...a.immutability, ...b.immutability],
   };
 }
