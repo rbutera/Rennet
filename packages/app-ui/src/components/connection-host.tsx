@@ -1,7 +1,8 @@
 import type { ProjectKind, ProjectSource, RennetBridge } from "@rennet/protocol";
 import { Popover, PopoverContent, PopoverTrigger, Toaster } from "@rennet/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RennetApp } from "../app";
+import { RennetRouterApp } from "../routes/app";
+import type { RennetHistory } from "../routes/history";
 import type { SourceOption } from "./source-switcher";
 
 // The connections surface (issue #381, design D3). ONE component both shells mount —
@@ -164,6 +165,12 @@ export interface ConnectionHostProps {
    * (no WSL, no preload) — then the switcher offers only Local plus any saved remotes.
    */
   readonly listWslDistros?: () => Promise<string[]>;
+  /**
+   * The router history the mounted `RennetRouterApp` drives (C03 cutover): hash in the
+   * Electron renderer (file:// origin), browser in the served tab. Omitted ⇒ the wouter
+   * browser default. The host picks it exactly as it picks the bridge (C01 §4.1).
+   */
+  readonly history?: RennetHistory;
 }
 
 const DEFAULT_STORAGE_KEY = "rennet.daemons";
@@ -368,6 +375,7 @@ export function ConnectionHost({
   resolveDaemonTarget,
   logWslConnect,
   listWslDistros,
+  history,
 }: ConnectionHostProps) {
   const key = storageKey ?? DEFAULT_STORAGE_KEY;
   // Normalise the two seams to one stable factory: prefer `createConnection`, else adapt the
@@ -865,28 +873,26 @@ export function ConnectionHost({
       </div>
     );
 
+  // The WSL / source-aware add-flow plumbing above (connectDaemonForPath,
+  // connectSource, sources, activeSource, the pending-* handoffs) fed the LEGACY
+  // RennetApp's add flow. The C03 cutover mounts the #480 router instead, which has
+  // no counterpart for it until C12 (projects-flow) rebuilds that flow onto the new
+  // frame. The machinery stays here — dormant, not deleted — so C12 rewires it in
+  // one place; a single reference keeps the strangler-fig plumbing honest until then.
+  void [connectDaemonForPath, connectSource, sources, activeSource, logWslConnect];
+  void [pendingRepoPath, pendingAddPath, pendingSourceBrowse];
+
   return bridge ? (
     <>
-      <RennetApp
-        key={activeId}
-        bridge={bridge}
-        connectionSlot={connectionBar}
-        connectDaemonForPath={resolveDaemonTarget ? connectDaemonForPath : undefined}
-        pendingRepoPath={pendingRepoPath ?? undefined}
-        onPendingRepoConsumed={() => setPendingRepoPath(null)}
-        pendingAddPath={pendingAddPath ?? undefined}
-        onPendingAddConsumed={() => setPendingAddPath(null)}
-        sources={sources}
-        activeSource={activeSource}
-        connectSource={connectSource}
-        pendingSourceBrowse={pendingSourceBrowse ?? undefined}
-        onPendingSourceBrowseConsumed={() => setPendingSourceBrowse(null)}
-        logWslConnect={logWslConnect}
-      />
+      <RennetRouterApp key={activeId} bridge={bridge} history={history} />
+      {/* The daemon switcher — a fixed overlay in the interim (C03 cutover): the router
+          frame has no chrome slot for it until a later surface change gives it a home.
+          It keeps daemon switching reachable — a capable client is the product. */}
+      <div className="fixed bottom-3 right-4 z-40">{connectionBar}</div>
       {daemonBanner}
       {/* One app-root toast channel (issue: transient feedback). The manager is a
           module singleton, so any `toast(...)` in the tree routes here; mounted
-          above the remount-keyed RennetApp so toasts survive a daemon switch. */}
+          above the remount-keyed app so toasts survive a daemon switch. */}
       <Toaster />
     </>
   ) : null;
