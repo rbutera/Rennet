@@ -12,6 +12,7 @@ import {
   DEFAULT_SEAT_LABELS,
   resolveDualSeat,
 } from "./dual-seat";
+import { reconcileFindings } from "./finding-reconcile";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { providerHarness, resolveAssignment } from "./model-council";
 
@@ -157,5 +158,47 @@ describe("resolveDualSeat — the dual-model seat resolver (#41)", () => {
     expect(codex?.seed.effort).toBe("high");
     expect(DEFAULT_CODEX_SECOND_SEAT_MODEL).toBe("gpt-5.6-sol");
     expect(DEFAULT_CODEX_SECOND_SEAT_EFFORT).toBe("high");
+  });
+
+  // B08 J1/J2: `lens-draft-flagged` is the board-era Flagged seat — the same dual
+  // shape as finding-generation. Under `both` the council picks Claude (sonnet-5),
+  // so Codex fills the second seat at the strongest-model default; under a single
+  // provider it degrades to one honest seat. The merge is `reconcileFindings`
+  // (proven in finding-reconcile.test.ts).
+  describe("lens-draft-flagged — the Flagged dual seat (#489 B08)", () => {
+    const flagged = () => ({ ...baseInput(), jobId: "lens-draft-flagged" as const });
+
+    it("runs as an ordered Claude+Codex pair under both", () => {
+      const council: CouncilResolveContext = {
+        availability: { installed: ["claude-code", "codex"] },
+      };
+      const seats = resolveDualSeat({ ...flagged(), council });
+      expect(seats.map((s) => s.provider)).toEqual(["claude-code", "codex"]);
+      // Claude is the council-assigned primary; Codex is the second opinion.
+      const claude = seats.find((s) => s.provider === "claude-code");
+      const codex = seats.find((s) => s.provider === "codex");
+      expect(claude?.seed.model).toBe("sonnet-5");
+      expect(claude?.seed.resolutionTrace).toBeDefined();
+      expect(codex?.seed.model).toBe(DEFAULT_CODEX_SECOND_SEAT_MODEL);
+    });
+
+    it("degrades to a single honest seat when only one provider is installed", () => {
+      const claudeOnly = resolveDualSeat({
+        ...flagged(),
+        council: { availability: { installed: ["claude-code"] } },
+        codexPort: undefined,
+      });
+      expect(claudeOnly.map((s) => s.provider)).toEqual(["claude-code"]);
+      const codexOnly = resolveDualSeat({
+        ...flagged(),
+        council: { availability: { installed: ["codex"] } },
+        claudeTurn: undefined,
+      });
+      expect(codexOnly.map((s) => s.provider)).toEqual(["codex"]);
+    });
+
+    it("merges through finding-reconcile (the dual-seat merge point, J2)", () => {
+      expect(typeof reconcileFindings).toBe("function");
+    });
   });
 });

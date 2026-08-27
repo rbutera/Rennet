@@ -313,6 +313,68 @@ describe("resolveAssignment — the context-map swarm jobs (#460)", () => {
   });
 });
 
+describe("resolveAssignment — the board-rebuild drafting seats (#489 B08)", () => {
+  const BOARD_SEATS = [
+    "lens-draft",
+    "lens-draft-flagged",
+    "lens-draft-noise",
+    "board-post-process",
+    "round-report",
+  ] as const;
+
+  it("resolves all five board seats under every scenario + degraded", () => {
+    for (const jobId of BOARD_SEATS) {
+      for (const availability of [BOTH, CLAUDE_ONLY, CODEX_ONLY, { installed: [] }] as const) {
+        const resolved = resolveAssignment(jobId, ctx(availability));
+        if (resolved.kind !== "model") throw new Error(`${jobId} should resolve to a model`);
+        // Harness always follows the resolved model — never an incoherent pin.
+        expect(resolved.harness).toBe(providerHarness(resolved.model));
+      }
+      // Degraded (no council harness) falls to the harness default, honestly traced.
+      const degraded = resolveAssignment(jobId, ctx({ installed: [] }));
+      if (degraded.kind !== "model") throw new Error(`${jobId} degraded should be a model`);
+      expect(degraded.trace.source).toBe("degraded");
+    }
+  });
+
+  it("routes the heavy drafting seats to Claude under both (the reading surface stays on Claude, R39)", () => {
+    expect(resolveAssignment("lens-draft", ctx(BOTH))).toMatchObject({
+      harness: "claude-code",
+      model: "opus-4.8",
+    });
+    expect(resolveAssignment("lens-draft-flagged", ctx(BOTH))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+    });
+    expect(resolveAssignment("round-report", ctx(BOTH))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+    });
+  });
+
+  it("the two light board seats cross to Codex under both; the heavy seats do not", () => {
+    for (const jobId of ["lens-draft-noise", "board-post-process"] as const) {
+      const light = resolveAssignment(jobId, ctx(BOTH));
+      if (light.kind !== "model") throw new Error("expected a model resolution");
+      expect(light.harness).toBe("codex");
+      expect(light.trace.crossHarness).toBe(true);
+    }
+    for (const jobId of ["lens-draft", "lens-draft-flagged", "round-report"] as const) {
+      const heavy = resolveAssignment(jobId, ctx(BOTH));
+      if (heavy.kind !== "model") throw new Error("expected a model resolution");
+      expect(heavy.trace.crossHarness).toBeUndefined();
+    }
+  });
+
+  it("resolves the Codex-only board seats to Codex models", () => {
+    for (const jobId of BOARD_SEATS) {
+      const resolved = resolveAssignment(jobId, ctx(CODEX_ONLY));
+      if (resolved.kind !== "model") throw new Error("expected a model resolution");
+      expect(resolved.harness).toBe("codex");
+    }
+  });
+});
+
 describe("resolveAssignment — deterministic tier + degraded", () => {
   it("a deterministic-tier job resolves to no model", () => {
     const resolved = resolveAssignment("rsp-validation", ctx(BOTH));
