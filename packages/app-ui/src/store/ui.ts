@@ -43,7 +43,9 @@ const initialUi: UiState = {
   sidebarOpen: true,
   sidebarFolds: {},
   chatOpen: false,
-  chatWidth: 360,
+  // 420 — the INVENTORY §1 double-click reset, made the default too (proposal
+  // reconciliation 8: C01's interim 360 corrected here, one number, inventory wins).
+  chatWidth: 420,
   commandMenuOpen: false,
   openDialogs: [],
 };
