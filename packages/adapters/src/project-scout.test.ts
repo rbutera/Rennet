@@ -58,6 +58,24 @@ describe("scoutDeterministic", () => {
     expect(facts.trackerProjectKey?.value).toBe("ABC");
   });
 
+  it("a linear.app link outranks the generic key shape; the prefix classifies Linear", async () => {
+    const repo = tempRepo();
+    // ENG-… keys are the generic ABC-123 shape Linear also uses; the explicit
+    // linear.app link is the tracker-specific evidence and must win.
+    writeFileSync(
+      join(repo, "README.md"),
+      "Work at https://linear.app/acme/team/ENG — see ENG-12 and ENG-34.",
+    );
+    const facts = await scoutDeterministic({
+      repoRoot: repo,
+      git: gitStub({ config: "git@github.com:o/r.git", log: "fix ENG-56 widget" }),
+    });
+    expect(facts.trackerKind?.value).toBe("linear");
+    expect(facts.trackerKind?.source).toBe("linear.app link");
+    expect(facts.trackerProjectKey?.value).toBe("ENG");
+    expect(facts.trackerProjectKey?.provenance).toBe("detected");
+  });
+
   it("detects the gate command from package.json scripts + lockfile", async () => {
     const repo = tempRepo();
     writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { check: "nx check" } }));

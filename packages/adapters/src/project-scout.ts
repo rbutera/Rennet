@@ -149,7 +149,19 @@ export async function scoutDeterministic(
   const jira = dominantJiraPrefix(markerTexts);
   const linear = markerTexts.some((text) => text.includes("linear.app"));
 
-  if (jira && jira.hits >= 2) {
+  // Tracker-specific URL evidence outranks the key shape: `ABC-123` is the
+  // generic shape BOTH trackers use, so a linear.app link decides Linear and
+  // the dominant prefix classifies as the Linear project key.
+  if (linear) {
+    facts.trackerKind = { value: "linear", provenance: "detected", source: "linear.app link" };
+    if (jira && jira.hits >= 2) {
+      facts.trackerProjectKey = {
+        value: jira.prefix,
+        provenance: "detected",
+        source: `${jira.hits}× ${jira.prefix}-… keys + linear.app link`,
+      };
+    }
+  } else if (jira && jira.hits >= 2) {
     facts.trackerKind = {
       value: "jira",
       provenance: "detected",
@@ -160,8 +172,6 @@ export async function scoutDeterministic(
       provenance: "detected",
       source: `${jira.hits}× ${jira.prefix}-… keys`,
     };
-  } else if (linear) {
-    facts.trackerKind = { value: "linear", provenance: "detected", source: "linear.app link" };
   } else if (github) {
     facts.trackerKind = {
       value: "github",
