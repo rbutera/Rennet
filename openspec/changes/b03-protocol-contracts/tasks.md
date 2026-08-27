@@ -22,7 +22,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 - [x] 3.1 Author the `LensBoard` Zod shape in `src/board/` (client asset risk 1 — the client must not invent it): lens identity (`LensKind`), generation stamp, board id, section list carrying fold grammar, gist, and the `delta: new|reworked` mark, element tree in the 13-kind vocabulary with stable element ids, skipped-hunk data. Compose it FROM the cluster-1 kind schemas and `manifests/` ids — re-modeling any kind inline is a defect. The command that returns it is B4/B10's business; B3 freezes the shape.
 - [x] 3.2 Test: a full fixture projection parses; a type/schema-level assertion that `LensBoard`'s element vocabulary is exactly the host kind set (drifts with cluster 1's drift test, not independently).
-- [ ] 3.3 Cluster gate green. Commit.
+- [x] 3.3 Cluster gate green. Commit.
 
 ## 4. commands/ — one registry table
 
