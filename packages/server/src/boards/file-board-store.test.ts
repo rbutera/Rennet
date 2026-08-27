@@ -108,6 +108,23 @@ describe("FileBoardStore", () => {
     expect(next[0]?.seq).toBe(3);
   });
 
+  it("keeps dot-segment and separator-bearing board ids inside the root", async () => {
+    // encodeURIComponent left "." and ".." intact — these ids used to escape.
+    for (const id of [".", "..", "../escapee", "a/b"]) {
+      await store.createBoard(id, SCHEMA);
+      expect(await store.getSchema(id)).toEqual(SCHEMA);
+    }
+    // Everything landed under the root as flat base64url dirs: the parent of
+    // the root gained nothing, and the root holds only non-dot entries.
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir(root);
+    expect(entries).toHaveLength(4);
+    for (const entry of entries) {
+      expect(entry).toMatch(/^[A-Za-z0-9_-]+$/);
+    }
+    expect(await readdir(join(root, ".."))).not.toContain("schema.json");
+  });
+
   it("keeps boards isolated under one root", async () => {
     await store.createBoard("b1", SCHEMA);
     await store.createBoard("b2", SCHEMA);

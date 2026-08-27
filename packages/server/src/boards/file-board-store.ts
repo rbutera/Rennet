@@ -35,8 +35,10 @@ export class FileBoardStore implements BoardStore {
 
   #dir(boardId: string): string {
     // Board ids are service-minted, but the id is a trust boundary for path
-    // construction — encode so no id can escape the root.
-    return join(this.#root, encodeURIComponent(boardId));
+    // construction. base64url is segment-safe AND reversible: unlike
+    // encodeURIComponent it cannot emit ".", "..", or any path separator, so
+    // no id can name a directory outside the root.
+    return join(this.#root, Buffer.from(boardId, "utf8").toString("base64url"));
   }
 
   #serialize<T>(boardId: string, work: () => Promise<T>): Promise<T> {
