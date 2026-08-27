@@ -12,10 +12,13 @@ flowchart LR
   stores["Durable state<br/>patchset + Repo Map + ledger"]
   tools["Context tools<br/>targeted retrieval"]
   ask["Live ask flow<br/>selection-aware"]
+  packet["Delta packet<br/>inlined drafter input"]
   answer["Answer<br/>evidence + freshness"]
+  prompts["Drafting prompts"]
 
   stores --> tools --> answer
   stores --> ask --> answer
+  stores --> packet --> prompts
 ```
 
 ## Repo Map context
@@ -51,6 +54,21 @@ large query without confusing a truncated answer with a complete one.
 `context.file` and the symbol tools read the pinned repository context.
 `context.knowledge` returns evidence-backed project claims. Retrieval never
 mutates review state.
+
+## The Delta packet
+
+Lens drafters do not retrieve their primary input through tools.
+`buildDeltaPacket()` in `packages/core/src/delta/` assembles the drafters'
+entire input from durable state: the hunk index with stable content-derived
+ids, the element differ's output, blast-radius signals, deterministic noise
+pre-classification, test-to-implementation counterpart hints, the knowledge
+set, the bounded dossier, and — on re-review rounds — the successor account.
+The packet is inlined into drafting prompts rather than fetched mid-draft, so
+a drafter's evidence is pinned and reproducible. Facts that need the project
+snapshot, such as ownership rules and fan-in, appear as explicit not-assessed
+marks until dispatch supplies them, and openspec artifacts enter at path grain
+with the full parse running where the artifact text lives. Raw payloads and
+follow-up questions stay behind the context tools above.
 
 ## Selection-aware questions
 

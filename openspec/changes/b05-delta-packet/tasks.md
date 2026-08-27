@@ -32,7 +32,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 ## Cluster 5 — docs
 
 - [x] 5.1 `docs/developing/concepts/delta-rereview-and-lineage.md`: name `core/delta/` as the home of the hunk index + differ; successor account feeds `buildDeltaPacket` on rounds.
-- [ ] 5.2 `docs/developing/concepts/context-assembly.md`: the DeltaPacket is the drafters' inlined input (#464: inlined, not tool-fetched) — one paragraph + updated flow if the page draws one. Sweep `docs/` for stale claims about the moved files' paths (code-map rows included).
+- [x] 5.2 `docs/developing/concepts/context-assembly.md`: the DeltaPacket is the drafters' inlined input (#464: inlined, not tool-fetched) — one paragraph + updated flow if the page draws one. Sweep `docs/` for stale claims about the moved files' paths (code-map rows included).
 - [ ] 5.3 Gate green (docs test inside).
 
 ## Cluster 6 — verification
