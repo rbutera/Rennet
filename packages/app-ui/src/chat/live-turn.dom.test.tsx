@@ -127,3 +127,62 @@ describe("a live turn streams into the transcript (task 8.2)", () => {
     expect(transcript.textContent?.match(/once/g)?.length).toBe(1);
   });
 });
+
+describe("the reviewer's own message echoes into the transcript (Fix #1)", () => {
+  it("renders the sent user bubble instantly, in the same mount (no orchestrator reply needed)", async () => {
+    const { bridge: _bridge, getByTestId, user } = mountLive();
+    // Settle the initial reattach, then send — the ask stream yields only orchestrator turns,
+    // so without the optimistic echo the reviewer's own message would never render.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const transcript = getByTestId("chat-dock-transcript");
+    await user.type(
+      screen.getByLabelText("Message the orchestrator"),
+      "does the reorder touch public routes?",
+    );
+    await user.click(screen.getByLabelText("Send"));
+    await waitFor(() =>
+      expect(transcript.textContent).toContain("does the reorder touch public routes?"),
+    );
+    // The composer clears after send; the transcript keeps the bubble.
+    expect((screen.getByLabelText("Message the orchestrator") as HTMLTextAreaElement).value).toBe(
+      "",
+    );
+  });
+});
+
+describe("a delta that arrives before reattach settles is not lost (Fix #2)", () => {
+  it("buffers the join-mid-reply delta and folds it once reattach resolves — text survives", async () => {
+    const { bridge, getByTestId } = mountLive();
+    const transcript = getByTestId("chat-dock-transcript");
+    // The join-mid-reply race: a delta lands BEFORE the initial reattach fetch has resolved.
+    // Pre-fix this folded into the entry, was clobbered by the settling snapshot, and its seq
+    // was recorded — so the re-delivered copy below was then rejected and the text lost.
+    emit(bridge, {
+      kind: "ask-delta",
+      threadId: THREAD,
+      turnId: TURN,
+      channel: "orchestrator",
+      delta: "mid-reply token",
+      seq: 0,
+    });
+    // Now let reattach settle; the buffered delta flushes onto the reloaded snapshot.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(transcript.textContent).toContain("mid-reply token"));
+
+    // A re-delivered copy of that same delta (a reconnect replay) must NOT double it — the seq
+    // was recorded at flush time, not prematurely, so idempotence holds without losing the text.
+    emit(bridge, {
+      kind: "ask-delta",
+      threadId: THREAD,
+      turnId: TURN,
+      channel: "orchestrator",
+      delta: "mid-reply token",
+      seq: 0,
+    });
+    expect(transcript.textContent?.match(/mid-reply token/g)?.length).toBe(1);
+  });
+});

@@ -1,7 +1,8 @@
 import type { ReattachResult, ReviewAskStreamEvent, TurnStatus } from "@rennet/protocol";
 import type { LucideIcon } from "lucide-react";
-import { createContext, useCallback, useContext, useMemo, useRef } from "react";
-import { useCommand, useCommandStream, useMutation } from "../data";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
+import { useBridgeContext } from "../data/bridge";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The chat dock's SINGLE data-resolution point (C07, proposal reconciliation 3),
@@ -322,6 +323,9 @@ function appendMessage(
 ): ReattachResult["threads"] {
   const existing = result.threads.find((t) => t.threadId === threadId);
   if (existing) {
+    // Idempotent by message id: a re-applied optimistic echo (settle-flush) or a doubled
+    // settle never appends the same message twice.
+    if (existing.messages.some((m) => m.id === message.id)) return result.threads;
     return result.threads.map((thread) =>
       thread.threadId === threadId
         ? { ...thread, messages: [...thread.messages, message] }
@@ -363,6 +367,12 @@ export interface ChatDockModel {
 export function useChatDock(): ChatDockModel {
   const projection = useSessionTranscript();
   const reviewId = projection.reviewId;
+  // chat-data is the dock's single data-resolution point (see this file's header). It folds
+  // THREE things into the one `review.reattach` entry the transcript reads: live deltas
+  // (useCommandStream, below), the reviewer's optimistic echo, and the buffered pre-settle
+  // deltas. The latter two are time-shifted folds the event-driven `useCommandStream` cannot
+  // express, so they go through the same `cache.setData` primitive it uses — not `.invoke`.
+  const { cache } = useBridgeContext();
 
   // A deterministic, stable commandId per review — `review.reattach` is idempotent, so no
   // uuid churn is needed (unlike a progress-correlated command). A fresh review key remints it.
@@ -370,22 +380,90 @@ export function useChatDock(): ChatDockModel {
     () => ({ commandId: reviewId ? `reattach-${reviewId}` : "reattach", reviewId: reviewId ?? "" }),
     [reviewId],
   );
+  const reattachKey = useMemo(() => commandKey("review.reattach", reattachInput), [reattachInput]);
 
-  const { data } = useCommand("review.reattach", reattachInput, {
+  const { data, error } = useCommand("review.reattach", reattachInput, {
     enabled: reviewId !== undefined,
   });
 
-  // The seq map lives across renders so the fold can reject replayed deltas by turn.
+  // Per-review live-fold state. `seenSeq` rejects replayed deltas by turn; `buffer` holds
+  // stream events that arrive BEFORE the initial reattach settles; `optimistic` holds
+  // reviewer echoes sent in that same pre-settle window. All reset when the review (hence the
+  // reattach key) changes, so no seq/buffer/settle state leaks across reviews.
   const seenSeq = useRef(new Map<string, number>());
+  const buffer = useRef<ReviewAskStreamEvent[]>([]);
+  const optimistic = useRef<Array<{ threadId: string; id: string; body: string }>>([]);
+  const settledRef = useRef(false);
+  const keyRef = useRef(reattachKey);
+  if (keyRef.current !== reattachKey) {
+    keyRef.current = reattachKey;
+    seenSeq.current = new Map();
+    buffer.current = [];
+    optimistic.current = [];
+    settledRef.current = false;
+  }
+
+  // Fold one reviewer "you" turn into the reattach entry (the optimistic echo, Fix #1).
+  const foldEcho = useCallback(
+    (echo: { threadId: string; id: string; body: string }) => {
+      cache.setData(reattachKey, (prev) => {
+        const base = (prev as ReattachResult | undefined) ?? EMPTY_REATTACH;
+        return {
+          ...base,
+          threads: appendMessage(base, echo.threadId, {
+            id: echo.id,
+            author: "you",
+            body: echo.body,
+            status: "complete",
+          }),
+        };
+      });
+    },
+    [cache, reattachKey],
+  );
+
+  // Fix #2 (join-mid-reply): a delta that folds into the reattach entry BEFORE the initial
+  // fetch resolves is overwritten when cache.ts installs the server snapshot, and its seq is
+  // recorded — so a re-delivered delta is then rejected as a replay and the text is lost
+  // forever. We BUFFER stream events until reattach settles (leaving the entry untouched so
+  // `data` stays undefined and settle isn't tripped early), then flush them in order onto the
+  // settled snapshot. The daemon streams only deltas newer than the snapshot's coalesced
+  // bodies, so a flushed delta appends cleanly.
   useCommandStream({
     channel: "askStream",
     subscriptionKey: reviewId,
     command: { name: "review.reattach", input: reattachInput },
-    fold: (prev, event) => foldAskStream(prev, event, seenSeq.current),
+    fold: (prev, event) => {
+      if (!settledRef.current) {
+        buffer.current.push(event);
+        return prev as ReattachResult; // undefined until the real fetch lands — don't clobber
+      }
+      return foldAskStream(prev, event, seenSeq.current);
+    },
   });
 
-  // No `invalidates`: a reattach refetch would clobber the folded stream (the cache installs
-  // the server snapshot on settle). The daemon persists the turn; the reply arrives on the stream.
+  const reattachSettled = reviewId !== undefined && (data !== undefined || error !== undefined);
+  useEffect(() => {
+    if (!reattachSettled || settledRef.current) return;
+    settledRef.current = true;
+    const buffered = buffer.current;
+    const echoes = optimistic.current;
+    buffer.current = [];
+    optimistic.current = [];
+    // Buffered deltas first (in arrival order), then any pre-settle reviewer echo — so the
+    // transcript order matches send/receive order. Both fold onto the settled snapshot.
+    for (const event of buffered) {
+      cache.setData(reattachKey, (prev) =>
+        foldAskStream(prev as ReattachResult | undefined, event, seenSeq.current),
+      );
+    }
+    for (const echo of echoes) foldEcho(echo);
+  }, [reattachSettled, cache, reattachKey, foldEcho]);
+
+  // No `invalidates`: a reattach refetch would overwrite the folded stream — cache.ts's
+  // fetch-success installs the server snapshot, discarding live folds (the same clobber Fix #2
+  // gates against). The turn settles via the `ask-complete` fold ON THE STREAM, not a server
+  // read; the daemon persists it out-of-band.
   const ask = useMutation("review.ask");
 
   // Turns that were streaming at least once this mount animate on arrival; the initial
@@ -405,6 +483,19 @@ export function useChatDock(): ChatDockModel {
     (message: string) => {
       const text = message.trim();
       if (!text || reviewId === undefined) return;
+      const threadId = crypto.randomUUID();
+      const turnId = crypto.randomUUID();
+      // Fix #1: optimistic user-turn echo. The ask stream yields ONLY orchestrator turns and
+      // send() deliberately does not refetch reattach (that would clobber folded deltas), so
+      // without this the reviewer's own message would never render this mount. We append the
+      // "you" turn into the SAME reattach entry the transcript reads, under a distinct id (the
+      // daemon persists the orchestrator turn under `turnId`), so it renders instantly and in
+      // order — the user bubble ahead of the streaming reply. When the authoritative transcript
+      // later supplies the persisted "you" message, `appendMessage`'s id-guard keeps it from
+      // doubling. If reattach has not settled yet, the settle-flush applies the echo afterwards.
+      const echo = { threadId, id: `you-${turnId}`, body: text };
+      if (settledRef.current) foldEcho(echo);
+      else optimistic.current.push(echo);
       // One ask, dispatch-bound (#251): the daemon persists the reviewer's turn under these
       // ids and streams the orchestrator reply over `onAskStream`. No staging (C8), no
       // command effects (B10). The stream fold above renders the growing turn.
@@ -412,12 +503,12 @@ export function useChatDock(): ChatDockModel {
         commandId: crypto.randomUUID(),
         reviewId,
         question: text,
-        threadId: crypto.randomUUID(),
-        turnId: crypto.randomUUID(),
+        threadId,
+        turnId,
         turnBody: text,
       });
     },
-    [ask, reviewId],
+    [ask, foldEcho, reviewId],
   );
 
   return {
