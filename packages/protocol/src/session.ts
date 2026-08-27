@@ -80,7 +80,9 @@ export const serverInfoFrameSchema = z.object({
 export const requestFrameSchema = z.object({
   type: z.literal("request"),
   requestId: z.string().min(1),
-  command: z.string().refine(isCommandName, { message: "unknown command" }),
+  // Closure (not a bare reference): `session` and `commands` sit in an import cycle
+  // through the root seam, so the registry binding resolves at parse time, not here.
+  command: z.string().refine((value) => isCommandName(value), { message: "unknown command" }),
   input: z.unknown(),
 });
 
