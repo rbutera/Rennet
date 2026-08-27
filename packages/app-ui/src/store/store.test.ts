@@ -62,6 +62,48 @@ describe("rennet store", () => {
       store.getState().reviewActions.removeQuoteComment(id);
       expect(store.getState().review.quoteThreads[id]).toBeUndefined();
     });
+
+    it("a missing-thread reply is a proven no-op — review state is byte-identical", () => {
+      const store = createRennetStore();
+      store.getState().reviewActions.addQuoteComment("span", "opener");
+      const before = store.getState().review;
+      store.getState().reviewActions.addQuoteReply("qt-does-not-exist", "user", "dropped");
+      // Same reference: the no-op never produced a new review object.
+      expect(store.getState().review).toBe(before);
+    });
+
+    it("the new quote actions never disturb any pre-C04 review field (invariant)", () => {
+      const store = createRennetStore();
+      const a = store.getState().reviewActions;
+      // Seed EVERY pre-C04 field with a distinct value.
+      a.stageAsk({ anchor: "src/x.ts:3", type: "request-change", body: "fix" });
+      a.setCodeComment("src/x.ts", 3, "note");
+      a.retire("ask-old");
+      a.setVerdictOverride("REQUEST_CHANGES");
+      a.setDraftEdit("pr-body", "draft text");
+      a.setFocusedThread("qt-existing");
+      const seeded = store.getState().review;
+      const snapshot = {
+        stagedAsks: seeded.stagedAsks,
+        codeComments: seeded.codeComments,
+        retired: seeded.retired,
+        verdictOverride: seeded.verdictOverride,
+        draftEdits: seeded.draftEdits,
+        focusedThreadId: seeded.focusedThreadId,
+      };
+      // Exercise every NEW (C04) quote action.
+      const id = a.addQuoteComment("quoted span", "opener", "comment");
+      a.addQuoteReply(id, "orchestrator", "reply");
+      a.removeQuoteComment(id);
+      // Every pre-C04 field is untouched — same references, not merely equal values.
+      const after = store.getState().review;
+      expect(after.stagedAsks).toBe(snapshot.stagedAsks);
+      expect(after.codeComments).toBe(snapshot.codeComments);
+      expect(after.retired).toBe(snapshot.retired);
+      expect(after.verdictOverride).toBe(snapshot.verdictOverride);
+      expect(after.draftEdits).toBe(snapshot.draftEdits);
+      expect(after.focusedThreadId).toBe(snapshot.focusedThreadId);
+    });
   });
 
   describe("run slice", () => {
