@@ -7,7 +7,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 - [x] 1.1 `packages/core/src/delta/hunk-index.ts`: parse each `PatchFile.patch` into hunks (`@@` header + interleaved body, verbatim slices — reuse/extract the existing parse in `decomposition.ts`/`element-diffs.ts` rather than writing a third parser). `buildHunkIndex(patchset) → HunkIndex` where each hunk carries `{id: HunkId, path, header, body, spans}`. `id = sha256Hex(path + "\n" + header + "\n" + body)` (protocol's `sha256Hex`); a patch containing `DIFF_TRUNCATION_MARKER` yields hunks flagged content-lossy (id still minted, flag recorded — mirrors the existing fail-closed carry rule). `packages/core/src/delta/index.ts` is the folder's only import surface.
 - [x] 1.2 Tests: same patchset twice → identical ids (stability); body mutation → id changes; truncated patch → lossy flag; empty/binary files → no hunks, no throw.
 - [x] 1.3 Protocol one-liner: `SkippedHunkSchema.hunk` in `board/lens-board.ts` re-points from plain `z.string().min(1)` to `hunkIdSchema` (B03 hand-off note honored; observable behavior unchanged).
-- [ ] 1.4 Gate green; check boxes; commit per task.
+- [x] 1.4 Gate green; check boxes; commit per task.
 
 ## Cluster 2 — move the survivors under core/delta
 
