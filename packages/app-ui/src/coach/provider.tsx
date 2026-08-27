@@ -47,9 +47,10 @@ export function CoachDataProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  const store = storeRef.current;
-  // Until `settings.get` resolves, render children plain — the anchor hooks read an
-  // optional context, so their refs no-op and self-heal the moment this provider mounts.
-  if (!store) return <>{children}</>;
-  return <CoachProvider store={store}>{children}</CoachProvider>;
+  // Render the provider UNCONDITIONALLY, store or not: before `settings.get` resolves the
+  // store is null and the context value is null (anchors read it optionally and no-op, then
+  // self-heal when it flips). Rendering a Fragment in the meantime would swap the wrapper's
+  // element type on the flip and remount every child — at the shell that unmounts the
+  // chat-dock slot mid-session (risk 4). A stable wrapper keeps the frame mounted throughout.
+  return <CoachProvider store={storeRef.current}>{children}</CoachProvider>;
 }

@@ -30,10 +30,26 @@ const CoachContext = createContext<CoachContextValue | null>(null);
  * at the shell: it creates the store from `settings.get` with a `persist` that
  * calls `settings.setCoachmarks`, then renders `<CoachProvider store={…}>`. The
  * registry is created here — the provider owns it, so it is never module state.
+ *
+ * `store` is nullable so this wrapper is rendered UNCONDITIONALLY from the first
+ * render — before `settings.get` resolves the value is null (`useCoachOptional`
+ * returns null, anchors no-op), then it flips to the real store WITHOUT changing
+ * the element type. That stability matters at the shell: swapping this wrapper for
+ * a Fragment on the load flip would remount the whole frame, unmounting the
+ * chat-dock slot whose lifetime IS the transcript-identity guarantee (risk 4).
  */
-export function CoachProvider({ store, children }: { store: CoachStore; children: ReactNode }) {
+export function CoachProvider({
+  store,
+  children,
+}: {
+  store: CoachStore | null;
+  children: ReactNode;
+}) {
   const [registry] = useState(createCoachRegistry);
-  const value = useMemo<CoachContextValue>(() => ({ store, registry }), [store, registry]);
+  const value = useMemo<CoachContextValue | null>(
+    () => (store ? { store, registry } : null),
+    [store, registry],
+  );
   return <CoachContext value={value}>{children}</CoachContext>;
 }
 
