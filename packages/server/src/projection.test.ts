@@ -537,6 +537,11 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "review.handoff.run.input.bundle.tasks.asks.path",
     "review.handoff.compose.input.dispositions.path",
     "review.handoff.compose.output.bundle.tasks.asks.path",
+    // The round exit (B11 cluster 4): the composed work-order's task asks carry the ask's
+    // `path` — a code ask's repo-relative path (from its `path:line` anchor) or a prose
+    // ask's quoted anchor text. Never a host-absolute path, so no remote projection
+    // translates it — the same shape/handling as the handoff-compose bundle above.
+    "round.dispatch.output.workOrder.tasks.asks.path",
     // The Context Map surface (add-context-map-view): every path in the Repo Map, the
     // knowledge set, and a context-ask answer is a git-blob path relative to the repo
     // root — never a host-absolute path, so no remote projection translates them.
