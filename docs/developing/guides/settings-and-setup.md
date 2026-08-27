@@ -53,13 +53,21 @@ after the project draft is confirmed.
 
 ## Global settings
 
-Global settings live in `~/.rennet/config.json`.
+Global settings live in two machine-local files, split by who owns the value:
 
-| Setting | Values | Behavior |
-|---|---|---|
-| Appearance | system, dark, light | Applies the selected color scheme to the app. |
-| Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
-| Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
+| File | Holds | Setting | Values | Behavior |
+|---|---|---|---|---|
+| `~/.rennet/client-settings.json` | Viewer preferences, **outside** the config ladder | Appearance | system, dark, light | Applies the selected color scheme to the app. |
+| `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
+| `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
+
+Appearance and keybindings are personal, app-side choices — never a repo fact,
+never written into a working tree — so they sit outside the ladder in
+`client-settings.json`. The daemon listener is the host's global rung and lives
+in `daemon-settings.json`; the settings surface lists **every paired host's**
+`daemon-settings` section, not just the local one. The local host's listener rung
+is read directly; a remote or WSL host is listed so it is visible, but its rung
+lives on that host and is not read from here.
 
 Settings has four tabs: Global, Repo, Keyboard, and Pairing. The Global tab
 edits appearance; the Keyboard tab edits keybindings. The keybinding recorder
@@ -68,9 +76,20 @@ combinations. It shows shortcut collisions but still stores them; the first
 matching command wins. An invalid stored shortcut falls back to the catalogue
 default or remains unbound.
 
-If `~/.rennet/config.json` is malformed, Rennet uses built-in values and disables
+If either settings file is malformed, Rennet uses built-in values and disables
 writes that would replace the unreadable file. Fix or move the file, then reopen
 Settings.
+
+### Migration from `config.json`
+
+Earlier Rennet stored these values in one `~/.rennet/config.json` blob that mixed
+viewer preferences with the host's daemon rung. On first read, Rennet migrates
+that legacy file **mechanically and losslessly** into the two split files —
+appearance and keybindings to `client-settings.json`, the daemon rung to
+`daemon-settings.json`. The migration is one-way and deterministic: every field
+lands in exactly one target and nothing is dropped. The legacy `config.json` is
+left in place, and the presence of either split file means the migration has
+already run, so it never repeats.
 
 ## Repository settings
 
@@ -128,7 +147,8 @@ repository references rather than host paths.
 
 ```text
 ~/.rennet/
-├── config.json
+├── client-settings.json
+├── daemon-settings.json
 ├── devices.json
 ├── push-tokens.sqlite
 └── projects/
@@ -166,8 +186,8 @@ that app instance.
 The daemon data directory contains its discovery claim, log, GitHub credential,
 project registry, pull-request worktree index, and review database.
 `RENNET_USER_DATA` or `--data-dir` selects that directory for a development or
-test daemon. It does not relocate the machine-wide `~/.rennet/config.json`,
-device stores, or path-keyed Repo Maps.
+test daemon. It does not relocate the machine-wide `~/.rennet/client-settings.json`,
+`daemon-settings.json`, device stores, or path-keyed Repo Maps.
 
 The desktop launcher and `rennet serve` set `UV_THREADPOOL_SIZE` to `16` before
 the daemon starts when the variable is absent. An explicit operator value wins.
