@@ -54,7 +54,7 @@ Serial clusters. Each cluster is one session. Search before implementing
 
 ## Cluster 4 — Anchor the marks + mount + replay
 
-- [ ] Mount one active `Coachmark` at the shell (reads the elected mark).
+- [x] Mount one active `Coachmark` at the shell (reads the elected mark).
 - [ ] Attach `useCoachAnchor` at each of the nine anchors on landed surfaces —
       chrome only, never board content (marks anchor to buttons/switchers/
       containers): `start-review` (indexing ready CTA), `new-chat` + `smart-list`
