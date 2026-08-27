@@ -7,7 +7,8 @@ import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
 import { DiffViewContainer } from "../review";
-import { ROUTES, readSessionQuery, viewToggle } from "../routes/url";
+import { useRoundDispatch } from "../rounds/rounds-data";
+import { ROUTES, readSessionQuery, sessionRunPath, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 
 // The review workspace route (B2 stub → Track C rebuild, #489). The canvas-era surface
@@ -62,7 +63,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   return (
     <div className="relative min-h-screen bg-canvas">
       {view === "handoff" ? (
-        <HandoffMount review={review} />
+        <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
         <DiffViewContainer review={review} />
       ) : (
@@ -85,14 +86,38 @@ export function ReviewWorkspace({ review }: { review: Review }) {
 // review-workspace path that needs a bridge, kept off the board/diff reading views. The lanes are
 // already fully live over the store; this threads the sign-click egress (and the composed own-branch
 // PR draft) through the `<HandoffView>` mount cluster 5 left taking no props.
-function HandoffMount({ review }: { review: Review }) {
+//
+// Dispatch wiring (C09 cluster 4): `onDispatch` closes C8's seam — reset the run slice at the
+// dispatch act (NOT on the run route's cold reattach), fire the rounds seam's `dispatch(slug)`,
+// then take over the live run route. Over the honest-absent source `dispatch` is undefined ⇒
+// `onDispatch` stays undefined ⇒ C8's Dispatch button stays disabled (the truth today, no fake
+// enablement). No dead click that lies.
+function HandoffMount({
+  review,
+  slug,
+  navigate,
+}: {
+  review: Review;
+  slug: string;
+  navigate: (to: string) => void;
+}) {
   const exits = useHandoffExits(review);
+  const dispatch = useRoundDispatch();
+  const resetRun = useRennetStore((s) => s.runActions.resetRun);
+  const onDispatch = dispatch
+    ? () => {
+        resetRun();
+        dispatch(slug);
+        navigate(sessionRunPath(slug));
+      }
+    : undefined;
   return (
     <HandoffView
       review={review}
       onPost={exits.onPost}
       reviewDraft={exits.reviewDraft}
       pr={exits.pr}
+      onDispatch={onDispatch}
       onOpenPr={exits.onOpenPr}
     />
   );
