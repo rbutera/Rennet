@@ -37,7 +37,7 @@ Each renderer is its own file under `packages/app-ui/src/board/kinds/`, ported f
 
 ## 5. Prose selection controls + durable quote highlights
 
-- [ ] 5.1 `packages/app-ui/src/board/quote-highlight.tsx` (Objective clause 4, Reconciliation 5): wrap C4's `RichText` output with the durable highlight layer — anchored quote ranges from the `review` slice's `quoteThreads` render as highlights; click opens a tooltip showing the thread `messages` with a reply input (`reviewActions.addQuoteReply`); an Explain thread (`kind: "explain"`) reads distinctly and raises no exit count; overlapping highlights resolve to a readable stack.
+- [x] 5.1 `packages/app-ui/src/board/quote-highlight.tsx` (Objective clause 4, Reconciliation 5): wrap C4's `RichText` output with the durable highlight layer — anchored quote ranges from the `review` slice's `quoteThreads` render as highlights; click opens a tooltip showing the thread `messages` with a reply input (`reviewActions.addQuoteReply`); an Explain thread (`kind: "explain"`) reads distinctly and raises no exit count; overlapping highlights resolve to a readable stack.
 - [ ] 5.2 Board-view selection wiring (Objective clause 5): the board document mounts inside C4's `ProseSelectionLayer` so a selection raises Comment/Explain/Request-Changes (C4 already writes `addQuoteComment`/`stageAsk`); C5 renders the resulting highlight+thread via 5.1. No duplicate toolbar logic.
 - [ ] 5.3 DOM tests over `MemoryBridge`-backed `useRennetStore`: a `quoteThreads` entry renders a highlight; clicking opens the exchange; reply appends via `addQuoteReply`; overlapping anchors both remain reachable; Explain thread doesn't count as an exit. Cluster gate green. Commit.
 
