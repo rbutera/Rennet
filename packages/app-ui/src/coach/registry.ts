@@ -1,4 +1,4 @@
-import { type RefCallback, useCallback, useSyncExternalStore } from "react";
+import { type Ref, type RefCallback, useCallback, useSyncExternalStore } from "react";
 import { useCoachOptional } from "./context";
 import type { MarkId } from "./marks";
 
@@ -88,6 +88,37 @@ export function useCoachAnchor(id: MarkId, enabled = true): RefCallback<Element>
     },
     [id, enabled, coach],
   );
+}
+
+/**
+ * Attach one element to several refs at once — object refs and cleanup-returning
+ * callback refs alike (React 19). Needed where an anchor lands on an element that
+ * already carries a ref: the FAB (`fabRef` drives the exit-flight geometry) and the
+ * indexing CTA (`ctaRef` scrolls it into view). Memoized on the ref list, so while the
+ * inputs are stable the merged callback is too — the coach anchor stays registered
+ * across renders instead of re-registering (which the registry's duplicate guard would
+ * otherwise see churn through). The `useCoachAnchor` ref changes identity only when the
+ * provider mounts, so a re-merge then is exactly the intended one registration.
+ */
+export function useMergedRefs<T extends Element>(
+  ...refs: Array<Ref<T> | undefined>
+): RefCallback<T> {
+  const merged = (node: T | null) => {
+    const cleanups = refs.map((ref) => {
+      if (typeof ref === "function") return ref(node);
+      if (ref) (ref as { current: T | null }).current = node;
+      return undefined;
+    });
+    return () => {
+      for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+    };
+  };
+  // The ref list IS the dependency set: the merged callback must change identity when
+  // any input ref does (the inner `useCoachAnchor` ref re-identities when the provider
+  // mounts — that identity change is what re-invokes this ref with the live element and
+  // registers the anchor). A stable-forever callback would never register post-mount.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs is the intended, spread dep set.
+  return useCallback(merged, refs);
 }
 
 const NOOP_SUBSCRIBE = () => () => undefined;

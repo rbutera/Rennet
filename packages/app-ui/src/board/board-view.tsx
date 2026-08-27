@@ -1,5 +1,6 @@
 import type { LensKind } from "@rennet/protocol";
 import { useState } from "react";
+import { useCoachAnchor } from "../coach/registry";
 import { ProseSelectionLayer } from "../review";
 import { useBoardData, useLensBoards } from "./board-data";
 import { GenerationSwitcher } from "./generation-switcher";
@@ -38,6 +39,9 @@ export interface LensBoardViewProps {
 export function LensBoardView({ generation, generations = [generation] }: LensBoardViewProps) {
   const [selectedGeneration, setSelectedGeneration] = useState(generation);
   const [pickedLens, setPickedLens] = useState<LensKind | null>(null);
+  // The `highlight` coach mark anchors the prose document (centered on the region) — it
+  // only registers once a board actually renders, so an empty/error board never elects it.
+  const highlightRef = useCoachAnchor("highlight");
 
   const lenses = useLensBoards(selectedGeneration);
   const present = lenses.map((l) => l.lens);
@@ -88,6 +92,7 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
                 Remounting on boardId resets fold state to the new board's foldAll. */}
             <article
               key={board.boardId}
+              ref={highlightRef}
               data-lens={board.lens}
               data-generation={board.generation}
               className="flex flex-col gap-1"

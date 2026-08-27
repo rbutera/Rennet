@@ -2,6 +2,7 @@ import type { Review } from "@rennet/protocol";
 import { Badge, cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, GitPullRequest, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useCoachAnchor } from "../coach/registry";
 import {
   AnchorReveal,
   type CodeRef,
@@ -134,6 +135,11 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
   const [editDraft, setEditDraft] = useState("");
   const [receipt, setReceipt] = useState<PostReceipt | null>(null);
 
+  // Coach marks on the post-review lane: `verdict` (the proposed-verdict control) and
+  // `draft` (the living draft body). Both anchor the wrapper element around their region.
+  const verdictRef = useCoachAnchor("verdict");
+  const draftRef = useCoachAnchor("draft");
+
   // Inline edits are keyed by ask IDENTITY (id), not anchor — so an edit follows its ask and a
   // deleted ask's edit is dropped rather than haunting a later ask that shares the anchor.
   const blockText = (ask: StagedAsk): string => draftEdits[ask.id] ?? ask.body;
@@ -215,41 +221,46 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
           </h1>
         </div>
 
-        <VerdictControl
-          arithmetic={arithmetic}
-          verdictOverride={verdictOverride}
-          setVerdictOverride={setVerdictOverride}
-        />
+        <div ref={verdictRef}>
+          <VerdictControl
+            arithmetic={arithmetic}
+            verdictOverride={verdictOverride}
+            setVerdictOverride={setVerdictOverride}
+          />
+        </div>
 
-        {/* The living draft body: sans-face prose, steered by selection (R32) — no wrapper. */}
-        <ProseSelectionLayer draftHandlers={draftHandlers}>
-          <div className="flex flex-col gap-4">
-            <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-              Review Body
-            </span>
-            {draft.body.length === 0 ? (
-              <p className="text-sm text-muted-foreground/70">
-                No review body yet — staged prose asks compose it.
-              </p>
-            ) : (
-              draft.body.map((ask) => (
-                <div key={ask.id} className="flex flex-col gap-1">
-                  <span className="flex items-center gap-1.5">
-                    <IntentTag type={ask.type} />
-                    <span className="truncate text-2xs text-muted-foreground/80 italic">
-                      {ask.anchor}
+        {/* The living draft body: sans-face prose, steered by selection (R32). The coach
+            `draft` mark anchors this wrapper; the prose itself carries no extra chrome. */}
+        <div ref={draftRef}>
+          <ProseSelectionLayer draftHandlers={draftHandlers}>
+            <div className="flex flex-col gap-4">
+              <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                Review Body
+              </span>
+              {draft.body.length === 0 ? (
+                <p className="text-sm text-muted-foreground/70">
+                  No review body yet — staged prose asks compose it.
+                </p>
+              ) : (
+                draft.body.map((ask) => (
+                  <div key={ask.id} className="flex flex-col gap-1">
+                    <span className="flex items-center gap-1.5">
+                      <IntentTag type={ask.type} />
+                      <span className="truncate text-2xs text-muted-foreground/80 italic">
+                        {ask.anchor}
+                      </span>
                     </span>
-                  </span>
-                  <RichText
-                    text={blockText(ask)}
-                    patchsetId={patchsetId}
-                    paragraphClassName="text-base leading-[1.7] text-foreground/90"
-                  />
-                </div>
-              ))
-            )}
-          </div>
-        </ProseSelectionLayer>
+                    <RichText
+                      text={blockText(ask)}
+                      patchsetId={patchsetId}
+                      paragraphClassName="text-base leading-[1.7] text-foreground/90"
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </ProseSelectionLayer>
+        </div>
 
         {/* Line comments: the discrete objects, grouped by file path (GitHub's shape). */}
         {draft.lineGroups.length > 0 && (

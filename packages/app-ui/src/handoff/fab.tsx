@@ -1,6 +1,7 @@
 import { Button, cn } from "@rennet/ui";
 import { ArrowRight, GitPullRequest } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useCoachAnchor, useMergedRefs } from "../coach/registry";
 import { useRennetStore } from "../store";
 import { type EntryMode, modeHasExits } from "./handoff-data";
 import { selectExitPipCount } from "./selectors";
@@ -99,6 +100,9 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const fabRef = useRef<HTMLButtonElement | null>(null);
   const pipRef = useRef<HTMLSpanElement | null>(null);
+  // The `fab` coach mark anchors this button. Merge with `fabRef` — the exit-flight effect
+  // reads `fabRef.current` for the pip landing geometry, so both must ride the one element.
+  const fabAnchorRef = useMergedRefs<HTMLButtonElement>(fabRef, useCoachAnchor("fab"));
 
   useExitFlight(fabRef);
 
@@ -152,7 +156,7 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
   return (
     <div ref={rootRef} className="pointer-events-none absolute inset-0 z-40">
       <Button
-        ref={fabRef}
+        ref={fabAnchorRef}
         variant="default"
         onClick={onToggle}
         aria-label={accessibleName}

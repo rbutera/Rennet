@@ -55,14 +55,19 @@ Serial clusters. Each cluster is one session. Search before implementing
 ## Cluster 4 — Anchor the marks + mount + replay
 
 - [x] Mount one active `Coachmark` at the shell (reads the elected mark).
-- [ ] Attach `useCoachAnchor` at each of the nine anchors on landed surfaces —
+- [x] Attach `useCoachAnchor` at each of the nine anchors on landed surfaces —
       chrome only, never board content (marks anchor to buttons/switchers/
       containers): `start-review` (indexing ready CTA), `new-chat` + `smart-list`
       (new-chat-view), `lenses` (board lens switcher), `highlight` (board prose
       region), `fab` (handoff FAB), `verdict` (handoff-action / post-review-lane),
       `draft` (draft block), `dispatch` (rounds-lanes).
-- [ ] Any anchor whose surface has not landed (blocked-by C3/C8/C12) passes
+- [x] Any anchor whose surface has not landed (blocked-by C3/C8/C12) passes
       `enabled={false}` — the mark simply never elects; no orphan, no crash.
+      All nine surfaces have landed (indexing, new-chat, board, handoff post-review
+      + rounds lanes are all live components), so no anchor is disabled — each simply
+      registers only when its element actually mounts (lens switcher only with lenses,
+      highlight only with a board, fab only when the review has exits), which is the
+      same "never elects until on screen" guarantee `enabled={false}` gives.
 - [ ] Wire sidebar "Replay Tour" (`shell/sidebar/sidebar.tsx:214`) to `replay()`.
 
 ## Cluster 5 — Packet verification
