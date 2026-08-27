@@ -98,7 +98,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       {view === "handoff" ? (
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
-        <DiffViewContainer review={review} />
+        <DiffViewContainer review={review} roundGeneration={query.round ?? undefined} />
       ) : view === "rounds" && roundRecords.length > 0 ? (
         <RoundsLedger slug={slug} records={roundRecords} />
       ) : greetingArmed && inReportPhase ? (

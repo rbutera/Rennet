@@ -109,7 +109,8 @@ export function RoundsLedger({
         <button
           type="button"
           data-testid="round-diff-link"
-          onClick={() => navigate(sessionPath(slug, { view: "diff" }))}
+          data-round-generation={liveGeneration}
+          onClick={() => navigate(sessionPath(slug, { view: "diff", round: liveGeneration }))}
           className="self-start text-model text-sm underline-offset-2 hover:underline"
         >
           Round diff

@@ -109,3 +109,71 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     expect(r.container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull();
   });
 });
+
+describe("the round-diff link resolves the SELECTED round, never silently the latest (finding 2)", () => {
+  // A producer-shaped landed round: the worker minted `gen`, and the round reported against it,
+  // so `mintedPatchsetGeneration === boardGeneration` (server/src/runtime/rounds.ts:319).
+  const landedRound = (gen: string): RoundRecord => ({
+    asksDispatched: ["ask-1"],
+    workerCommitRange: { from: "commit-from", to: "commit-to" },
+    mintedPatchsetGeneration: gen,
+    boardGeneration: gen,
+    reportBoard: "report-round-1",
+  });
+
+  // A review whose ACTIVE patchset carries a recognizable file — if the link regressed to
+  // "latest", this filename would render in the diff surface. It must not.
+  const reviewWithPatchset = {
+    id: "led-diff",
+    activePatchsetId: "ps-latest",
+    repositoryRoot: "/home/dev/rennet",
+    patchsets: [
+      {
+        id: "ps-latest",
+        files: [
+          {
+            path: "LATEST_PATCHSET_MARKER.ts",
+            status: "modified",
+            additions: 1,
+            deletions: 0,
+            binary: false,
+            patch: "@@ -1 +1 @@\n-a\n+b",
+          },
+        ],
+      },
+    ],
+  } as unknown as Review;
+
+  it("clicking an older round's Round-diff carries ITS generation and shows no latest diff", async () => {
+    const twoRounds: RoundsSource = {
+      roundState: () => ({ phase: "absent" }),
+      roundRecords: () => [landedRound("g1"), landedRound("g2")], // oldest→newest
+      reportBoard: (id) => FIXTURE_REPORT_BOARDS[id],
+    };
+    const history = memoryHistory("/s/s-1?view=rounds");
+    const r = mount(
+      <BridgeProvider bridge={new MemoryBridge({})}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <BoardSourceProvider value={fixtureBoardSource}>
+            <RoundsSourceProvider value={twoRounds}>
+              <ReviewWorkspace review={reviewWithPatchset} />
+            </RoundsSourceProvider>
+          </BoardSourceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+
+    // Select the OLDER round (round 1 = g1), then follow its Round-diff link.
+    await r.user.click(r.container.querySelector('[data-round="1"]') as HTMLElement);
+    const link = r.getByTestId("round-diff-link");
+    expect(link.getAttribute("data-round-generation")).toBe("g1"); // the selected round's identity
+    await r.user.click(link);
+
+    // The URL carries the round's generation, and the diff surface is the honest round-diff
+    // state for g1 — NOT the latest patchset (its marker file must be absent).
+    expect(history.history.at(-1)).toContain("round=g1");
+    const pending = r.container.querySelector('[data-testid="round-diff-pending"]');
+    expect(pending?.getAttribute("data-round-generation")).toBe("g1");
+    expect(r.container.textContent).not.toContain("LATEST_PATCHSET_MARKER.ts");
+  });
+});
