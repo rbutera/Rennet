@@ -13,10 +13,11 @@
 // renderers absorbed from the deleted `@rennet/instructions` package (B02).
 export * from "./prompt-contracts";
 
-/** The five lenses, in display order: Design first, then the reading walk. */
-export const LENS_KINDS = ["design", "sequence", "decisions", "flagged", "noise"] as const;
+// The lens id vocabulary lives in @rennet/protocol's manifests seam (B3, #489);
+// this package keeps the prompt FILES and re-exports the ids its manifest keys off.
+import type { LensKind } from "@rennet/protocol";
 
-export type LensKind = (typeof LENS_KINDS)[number];
+export { LENS_KINDS, type LensKind } from "@rennet/protocol";
 
 /** Prompt file for each lens's drafting agent, relative to this package's src/. */
 export const LENS_PROMPT_FILES: Record<LensKind, string> = {
