@@ -139,10 +139,49 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
     );
   }
 
-  it("remap Toggle Sidebar → ⌘E via the shortcuts page, reload, and ⌘E fires (⌘B does not)", async () => {
+  it("remap Toggle Sidebar → ⌘E fires LIVE with the key owner mounted alongside — no reload", async () => {
     const bridge = mutableSettingsBridge();
 
-    // 1. Remap through the real Keyboard Shortcuts surface (persists via setKeybinding).
+    // The LIVE topology: the key owner and the shortcuts surface share ONE bridge +
+    // cache, exactly as the real frame mounts them (the owner sits above the outlet and
+    // never remounts). A remap must reach this live owner WITHOUT a reload — the write
+    // invalidates `settings.get`, the owner's shared read refetches, the new bind arms.
+    const view = mount(
+      <Harness bridge={bridge}>
+        <KeyOwner>
+          <SettingsProbe />
+          <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+        </KeyOwner>
+      </Harness>,
+    );
+    fireEvent.click(view.getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(view.container.querySelector(".settings-keys")).not.toBeNull());
+    const row = [...view.container.querySelectorAll(".settings-key-row")].find((r) =>
+      r.textContent?.includes("Toggle Sidebar"),
+    );
+    fireEvent.click(row?.querySelector("button") as HTMLButtonElement);
+    fireEvent.keyDown(view.getByLabelText("Press the new chord for Toggle Sidebar"), {
+      key: "e",
+      metaKey: true,
+    });
+
+    // The write invalidated `settings.get`; the SAME live owner refetches the override —
+    // the probe (which shares that read) shows ⌘E has arrived, with NO remount/reload.
+    await waitFor(() => expect(view.getByTestId("overrides").textContent).toContain("mod+e"));
+
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+    // The OLD chord (⌘B) is dead — remapped away — against the STILL-MOUNTED owner.
+    press("b", { meta: true });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+    // The NEW chord (⌘E) fires the action — live, no reload.
+    press("e", { meta: true });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
+  });
+
+  it("the boot path still holds: a fresh key owner loads the persisted override on mount", async () => {
+    const bridge = mutableSettingsBridge();
+
+    // Persist the remap through the real shortcuts surface, then throw the surface away.
     const remap = mount(
       <Harness bridge={bridge}>
         <SettingsScreen bridge={bridge} onBack={vi.fn()} />
@@ -158,7 +197,6 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
       key: "e",
       metaKey: true,
     });
-    // The row now advertises the new chord (⌘E), persisted through setKeybinding.
     await waitFor(() => {
       const updated = [...remap.container.querySelectorAll(".settings-key-row")].find((r) =>
         r.textContent?.includes("Toggle Sidebar"),
@@ -169,7 +207,7 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
     cleanup();
     resetUi();
 
-    // 2. A fresh mount (the reload): the key owner loads the override on boot.
+    // A fresh mount (the reload): the key owner loads the override on boot.
     const reloaded = mount(
       <Harness bridge={bridge}>
         <KeyOwner>
@@ -177,17 +215,55 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
         </KeyOwner>
       </Harness>,
     );
-    // Wait until settings.get resolved with the override (the key owner shares this read).
     await waitFor(() =>
       expect(reloaded.getByTestId("overrides").textContent).toContain("toggle-sidebar"),
     );
 
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
-    // The OLD chord (⌘B) is dead — remapped away.
     press("b", { meta: true });
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
-    // The NEW chord (⌘E) fires the action.
     press("e", { meta: true });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
+  });
+
+  it("a focused keybinding recorder preempts the window bubble listener — ⌘B does not toggle the sidebar", async () => {
+    const bridge = mutableSettingsBridge();
+
+    // The REAL key owner over the REAL shortcuts surface. The window action listener is
+    // BUBBLE-phase, so a focused element that consumes the key first (React `onKeyDown` +
+    // `stopPropagation` — here the keybinding recorder) must preempt it. Every other
+    // keybind test fires on `window` directly, bypassing this exact path.
+    const view = mount(
+      <Harness bridge={bridge}>
+        <KeyOwner>
+          <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+        </KeyOwner>
+      </Harness>,
+    );
+    fireEvent.click(view.getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(view.container.querySelector(".settings-keys")).not.toBeNull());
+    // Enter recording on the Toggle Sidebar row: the recorder input mounts + auto-focuses.
+    const row = [...view.container.querySelectorAll(".settings-key-row")].find((r) =>
+      r.textContent?.includes("Toggle Sidebar"),
+    );
+    fireEvent.click(row?.querySelector("button") as HTMLButtonElement);
+    const recorder = view.getByLabelText("Press the new chord for Toggle Sidebar");
+
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+    // ⌘B dispatched ON THE FOCUSED RECORDER bubbles through React's `onKeyDown`, which
+    // `preventDefault`+`stopPropagation`s it — the window bubble listener must NEVER see
+    // it, so the global sidebar toggle does not fire.
+    act(() => {
+      fireEvent.keyDown(recorder, { key: "b", metaKey: true });
+    });
+    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
+
+    // Positive control: the SAME ⌘B dispatched on `window` (bypassing the recorder)
+    // DOES toggle — proving the bind is live and the only thing that stopped it above was
+    // the focused consumer's preemption, not an inert chord.
+    act(() => {
+      fireEvent.keyDown(window, { key: "b", metaKey: true });
+    });
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
   });
 });
