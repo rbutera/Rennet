@@ -110,8 +110,9 @@
     "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. Cluster 8 daemon-swap stays B11-gated (REVISE_WIRED one-bool flip). Deferred w/ record: own-PR resolves teammate-pr (no ownership fact in frozen schema — B-track follow-up). Parked for Rai: publish.requestConsent token"
   },
   "c09": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #536 landed (squash da8f815e); dual review opus APPROVE / Codex BLOCK, 6 findings upheld + fixed + confirmed by fresh opus. F1 reveal-gate, F4 report-identity validation, F5 lane honesty, F6 delta classification closed. F2 (per-round diff) + F3 (frozen-gen switcher) confirmed GENUINE B9 RoundRecord gaps (producer sets boardGeneration===mintedPatchsetGeneration at rounds.ts:319; no predecessor field) — parked as B9 follow-ups, code made honest (round-diff-pending + hidden switcher). Cluster 8 live swap B11-gated (single provider value in routes/app.tsx, seam bodies in rounds-data.ts)"
   },
   "c10": {
     "status": "done",
