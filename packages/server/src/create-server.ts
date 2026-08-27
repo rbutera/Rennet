@@ -84,10 +84,13 @@ import {
   readSetupStatus,
   refreshGitHubCredential,
   repoHasSubmodules,
+  repoKeyOf,
   resolveForgeRemote,
   resolveGitHubAuth,
+  resolveTrackerConfig,
   runGitHubDeviceFlow,
   runPrWorktreeSetup,
+  runRelatedContextRetrieval,
   SqliteReviewStore,
   snapshotStoreFor,
   validateGitHubToken,
@@ -1423,6 +1426,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const dispatch = createDispatch({
     service,
     allowedRoots,
+    // Related-context retrieval (#461, B7): kicked at the REAL review-open
+    // commands (capture / openPr), fire-and-forget — the kick's own promise
+    // never rejects, both harness ports resolve failure-isolated (honest
+    // council availability), and the tracker endpoints resolve off the
+    // settings ladder (scout-detected offers under the global rung).
+    onReviewOpened: (review) => {
+      // The hook must never throw into the command path (`repoKeyOf` realpaths).
+      try {
+        void runRelatedContextRetrieval(review, {
+          store: snapshotStore,
+          resolveClaudePort: claudeAdapterForRepo,
+          resolveCodexExecutor: codexExecutorForRepo,
+          trackerConfig: resolveTrackerConfig(
+            snapshotStore,
+            repoKeyOf(review),
+            configStore.readState().config,
+          ),
+        });
+      } catch {
+        // Retrieval is garnish on the open — a failed kick never surfaces here.
+      }
+    },
     // Revoking a device deletes its push token too, so a revoked device is silently
     // un-pushable (attention-notifications: "revoke stops pushes").
     pairing: {
