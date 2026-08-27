@@ -71,8 +71,9 @@
     "note": "clusters 1-5 landed (PR #523, 11 review fixes confirmed); cluster 6 live-turn wiring B9-gated"
   },
   "b11": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #537 landed (squash 5caaf247). Deep dual review: opus REQUEST-CHANGES + Codex BLOCK w/ adversarial probes → 10 findings (2 P0 + 6 P1 + 2 P2) all fixed + confirmed by fresh opus (CAS positive control proven red by mutation). Durable append-only ask log (sole write path, receipt-is-undo, corrupt→refuse not silent-empty, fsync), body+line two-strata compose (partition, LEFT-side restored), round.dispatch deterministic-key coalesce + own-branch-only routing (viewerDidAuthor), CAS+splice span rework. 5.1 ask-log architecture SOUND. Ledgered follow-ups: 3c durable cross-restart dispatch-identity (NOT-REACHABLE — no auto-replay, user-triggered only), 7-range multi-line comments (NET-NEW not regression, needs C9 client). Unblocks: C08 c8 REVISE_WIRED, C09 c8 live swap, session.transcript dispatch seam (C07+sidebar), C14 step-0 deferred-swap sweep"
   },
   "c01": {
     "status": "done",
