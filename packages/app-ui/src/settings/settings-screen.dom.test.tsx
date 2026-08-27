@@ -86,3 +86,74 @@ describe("SettingsScreen — the takeover shell", () => {
     cleanup();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C10 §12.2 (packet verification) — the cold deep-link sweep. EVERY settings page
+// renders its OWN real page from a cold mount (no prior navigation), driven purely
+// by the `/settings/:page` route param over the real `RennetRouterApp` — the whole
+// point of autopsy S2 (a page is a route, never a shadowed `useState`). Each case
+// asserts (a) the settings nav marks that page current and (b) a body marker only
+// that page renders — so if the param were ignored and a default page shown, the
+// non-target deep-links would surface the WRONG body and fail. That failure mode IS
+// the positive control: the sweep passes ONLY because the param drives the page.
+// The `/archived` sibling is a main-surface route, not a settings page
+// (reconciliation 2), so it renders OUTSIDE the takeover.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("cold deep-link — the route param drives the page (autopsy S2)", () => {
+  const PAGES: readonly {
+    readonly slug: string;
+    readonly nav: RegExp;
+    /** A body marker ONLY this page renders (never the shared nav label). */
+    readonly body: (root: HTMLElement) => boolean;
+  }[] = [
+    {
+      slug: "environments",
+      nav: /Environments/,
+      // The synthesised local card — never present on any other page.
+      body: (r) => r.textContent?.includes("This Machine") ?? false,
+    },
+    {
+      slug: "appearance",
+      nav: /Appearance/,
+      // The Theme Pack section — an appearance-only heading (not in the nav).
+      body: (r) => r.textContent?.includes("Theme Pack") ?? false,
+    },
+    {
+      slug: "keybindings",
+      nav: /Keyboard Shortcuts/,
+      // A KEY_ACTIONS row — only the shortcuts page lists the live binds.
+      body: (r) => r.textContent?.includes("Toggle Sidebar") ?? false,
+    },
+    {
+      slug: "projects",
+      nav: /Projects/,
+      // The projects page tags its own body node regardless of empty/populated.
+      body: (r) => r.querySelector('[data-settings-page="projects"]') != null,
+    },
+  ];
+
+  for (const { slug, nav, body } of PAGES) {
+    it(`/settings/${slug} renders its own page cold`, async () => {
+      const history = memoryHistory(`/settings/${slug}`);
+      const { getByRole } = mount(<RennetRouterApp bridge={frontDoorBridge()} history={history} />);
+      await waitFor(() => expect(settingsNode()).toBeTruthy());
+      const root = settingsNode() as HTMLElement;
+
+      // The route param made THIS nav item current — the structural proof.
+      expect(getByRole("button", { name: nav }).getAttribute("aria-current")).toBe("page");
+      // …and the page's own body actually rendered (not a default page's body).
+      await waitFor(() => expect(body(settingsNode() as HTMLElement)).toBe(true));
+      expect(body(root)).toBe(true);
+      cleanup();
+    });
+  }
+
+  it("/archived renders the sibling surface cold, OUTSIDE the settings takeover", async () => {
+    const history = memoryHistory("/archived");
+    const { findByText } = mount(<RennetRouterApp bridge={frontDoorBridge()} history={history} />);
+    // The honest empty archived surface renders cold; it is NOT a settings page.
+    await findByText("Nothing archived.");
+    expect(settingsNode()).toBeNull();
+    cleanup();
+  });
+});

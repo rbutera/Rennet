@@ -48,6 +48,38 @@ describe("settings data seam — live writes persist to the bridge", () => {
     );
     cleanup();
   });
+
+  it("the scheme write survives a remount of the SAME bridge (packet §12.3)", async () => {
+    // One stateful bridge instance across two mounts — the real persistence contract:
+    // a `settings.setAppearance` write must still be there when the page mounts again
+    // (over MemoryBridge now; over the split `client-settings.json` at the B10 fold).
+    const bridge = settingsBridge({ scheme: "system" });
+
+    const first = mount(
+      <BridgeProvider bridge={bridge}>
+        <AppearancePage />
+      </BridgeProvider>,
+    );
+    await first.user.click(first.getByRole("button", { name: "Dark" }));
+    await first.findByText("global: dark");
+    first.unmount();
+    cleanup();
+
+    // Remount over the SAME bridge — the persisted Dark scheme resolves from the global
+    // rung on a fresh `settings.get`, with no second write.
+    const second = mount(
+      <BridgeProvider bridge={bridge}>
+        <AppearancePage />
+      </BridgeProvider>,
+    );
+    await second.findByText("global: dark");
+    await waitFor(() =>
+      expect(
+        second.container.querySelector('[data-slot="provenance-chip"]')?.getAttribute("data-layer"),
+      ).toBe("global"),
+    );
+    cleanup();
+  });
 });
 
 describe("toProvenance — the {value, layer} keep contract lifts into the chip shape", () => {
