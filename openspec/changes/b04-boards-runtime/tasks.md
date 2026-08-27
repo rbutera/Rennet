@@ -11,7 +11,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 2. server/boards/ runtime
 
-- [ ] 2.1 Author `packages/server/src/boards/boards-runtime.ts`: owns one `BoardService` over a `FileBoardStore` rooted under the review project's `.rennet/boards/`; exposes the service plus `createRennetBoard()` minting a board with `BOARD_WIRE_SCHEMA` from `@rennet/protocol`. No freeze/generation policy (B8/B9 own lifecycle); no transport. Confirm `.rennet/` remains ignored-by-default (no gitignore change should be needed — verify, don't assume).
+- [x] 2.1 Author `packages/server/src/boards/boards-runtime.ts`: owns one `BoardService` over a `FileBoardStore` rooted under the review project's `.rennet/boards/`; exposes the service plus `createRennetBoard()` minting a board with `BOARD_WIRE_SCHEMA` from `@rennet/protocol`. No freeze/generation policy (B8/B9 own lifecycle); no transport. Confirm `.rennet/` remains ignored-by-default (no gitignore change should be needed — verify, don't assume).
 - [ ] 2.2 Tests: in-process round-trip — `createRennetBoard` → `apply` ops valid under the host schema (use a fixture from protocol's board tests as a model) → `getEvents` → `getState`/`project` shows the applied elements; an op invalid under the host schema rejects the whole batch and appends nothing; op_id replay appends nothing (idempotent per #453).
 - [ ] 2.3 Cluster gate green. Commit.
 
