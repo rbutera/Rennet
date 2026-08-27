@@ -2,11 +2,17 @@ import { describe, expect, it } from "vitest";
 import type { HarnessEvent } from "./harness";
 import { harnessEventsToRows, type ScrubPath } from "./harness-transcript";
 
-// Minimal event builder — stamps the envelope base every HarnessEvent carries.
+// Minimal event builder — stamps the envelope base every HarnessEvent carries. The input type
+// distributes the Omit over each union arm so an object literal matches its own `kind` exactly
+// (the built-in Omit over a union keeps only the shared keys, which rejects arm-specific fields).
+type BaseKeys = "seq" | "harness" | "sessionId" | "turnId" | "receivedAt" | "native";
+type EventInput = HarnessEvent extends infer E
+  ? E extends HarnessEvent
+    ? Omit<E, BaseKeys>
+    : never
+  : never;
 let seq = 0;
-function ev(
-  partial: Omit<HarnessEvent, "seq" | "harness" | "sessionId" | "turnId" | "receivedAt" | "native">,
-): HarnessEvent {
+function ev(partial: EventInput): HarnessEvent {
   return {
     seq: seq++,
     harness: "claude-code",
