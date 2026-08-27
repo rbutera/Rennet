@@ -8,13 +8,12 @@ assertPnpmCommandShape();
 const allowed = new Map([
   ["@rennet/theme", new Set()],
   ["@rennet/protocol", new Set()],
-  ["@rennet/instructions", new Set(["@rennet/protocol"])],
-  ["@rennet/lens-instructions", new Set()],
-  ["@rennet/core", new Set(["@rennet/protocol", "@rennet/instructions"])],
-  ["@rennet/adapters", new Set(["@rennet/protocol", "@rennet/instructions", "@rennet/core"])],
+  ["@rennet/prompts", new Set(["@rennet/protocol"])],
+  ["@rennet/core", new Set(["@rennet/protocol", "@rennet/prompts"])],
+  ["@rennet/adapters", new Set(["@rennet/protocol", "@rennet/prompts", "@rennet/core"])],
   [
     "@rennet/server",
-    new Set(["@rennet/protocol", "@rennet/instructions", "@rennet/core", "@rennet/adapters"]),
+    new Set(["@rennet/protocol", "@rennet/prompts", "@rennet/core", "@rennet/adapters"]),
   ],
   ["@rennet/ui", new Set(["@rennet/protocol", "@rennet/theme"])],
   ["@rennet/app-ui", new Set(["@rennet/protocol", "@rennet/theme", "@rennet/ui"])],

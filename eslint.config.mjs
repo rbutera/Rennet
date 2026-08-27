@@ -19,25 +19,21 @@ export default [
               onlyDependOnLibsWithTags: ["layer:protocol"],
             },
             {
-              sourceTag: "layer:instructions",
-              onlyDependOnLibsWithTags: ["layer:protocol", "layer:instructions"],
-            },
-            {
-              // @rennet/lens-instructions: a leaf prompt-text package that imports
-              // no Rennet package (renamed to @rennet/prompts in B02). Its own tag
-              // keeps it off layer:instructions' protocol grant — a real backstop.
-              sourceTag: "layer:lens-instructions",
-              onlyDependOnLibsWithTags: ["layer:lens-instructions"],
+              // @rennet/prompts: the prompt-text + RSP prompt-contract package. It
+              // absorbed the deleted @rennet/instructions surface in B02, so it may
+              // import @rennet/protocol (for the contract types) and nothing else.
+              sourceTag: "layer:prompts",
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:prompts"],
             },
             {
               sourceTag: "layer:core",
-              onlyDependOnLibsWithTags: ["layer:protocol", "layer:instructions", "layer:core"],
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:prompts", "layer:core"],
             },
             {
               sourceTag: "layer:adapter",
               onlyDependOnLibsWithTags: [
                 "layer:protocol",
-                "layer:instructions",
+                "layer:prompts",
                 "layer:core",
                 "layer:adapter",
               ],
@@ -46,7 +42,7 @@ export default [
               sourceTag: "layer:server",
               onlyDependOnLibsWithTags: [
                 "layer:protocol",
-                "layer:instructions",
+                "layer:prompts",
                 "layer:core",
                 "layer:adapter",
                 "layer:server",
@@ -90,7 +86,7 @@ export default [
               sourceTag: "layer:app",
               onlyDependOnLibsWithTags: [
                 "layer:protocol",
-                "layer:instructions",
+                "layer:prompts",
                 "layer:core",
                 "layer:adapter",
                 "layer:server",
