@@ -1,5 +1,6 @@
 import type {
   AppearanceScheme,
+  CoachMarks,
   ResolvedProvenance,
   SettingsGuidance,
   SettingsProject,
@@ -44,6 +45,8 @@ export interface SettingsFixtureSeed {
   readonly projects?: readonly SettingsProject[];
   /** Per-repoPath guidance catalogues (`settings.guidance` reads by repoPath). */
   readonly guidance?: Readonly<Record<string, SettingsGuidance>>;
+  /** The persisted onboarding coach-mark slice (C13) the coach provider seeds from. */
+  readonly coachmarks?: CoachMarks;
 }
 
 const EMPTY_GUIDANCE: SettingsGuidance = { rules: [], reason: "absent", dropped: 0 };
@@ -60,6 +63,7 @@ export class SettingsStore {
   #keybindings: Record<string, string | null>;
   #projects: SettingsProject[];
   readonly #guidance: Record<string, SettingsGuidance>;
+  #coachmarks: CoachMarks | undefined;
 
   constructor(seed: SettingsFixtureSeed = {}) {
     this.#scheme = seed.scheme ?? "system";
@@ -67,6 +71,7 @@ export class SettingsStore {
     this.#keybindings = { ...(seed.keybindings ?? {}) };
     this.#projects = [...(seed.projects ?? [])];
     this.#guidance = { ...(seed.guidance ?? {}) };
+    this.#coachmarks = seed.coachmarks ? { ...seed.coachmarks } : undefined;
   }
 
   #view(): SettingsView {
@@ -81,6 +86,7 @@ export class SettingsStore {
       appearanceMalformed: this.#appearanceMalformed,
       projects: this.#projects,
       keybindings: Object.keys(this.#keybindings).length > 0 ? { ...this.#keybindings } : undefined,
+      coachmarks: this.#coachmarks ? { ...this.#coachmarks } : undefined,
     };
   }
 
@@ -97,6 +103,10 @@ export class SettingsStore {
         if (keybinding === undefined) delete this.#keybindings[id];
         else this.#keybindings[id] = keybinding;
         return { keybindings: { ...this.#keybindings } };
+      },
+      "settings.setCoachmarks": (input) => {
+        this.#coachmarks = { ...input };
+        return { ...input };
       },
     };
   }

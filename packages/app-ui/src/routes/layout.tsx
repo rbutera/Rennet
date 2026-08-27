@@ -2,6 +2,8 @@ import { cn, ResizeHandle } from "@rennet/ui";
 import { type ReactNode, useEffect, useState } from "react";
 import { useRoute } from "wouter";
 import { ChatDock } from "../chat/chat-dock";
+import { Coachmark } from "../coach/coachmark";
+import { CoachDataProvider } from "../coach/provider";
 import { AppDialogs } from "../shell/app-dialogs";
 import { CommandMenu } from "../shell/command-menu";
 import {
@@ -75,60 +77,71 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
     // The ONE global key owner wraps the frame + outlet, so every overlay (the command
     // menu here, C5/C12's later ones) shares one keydown authority + Escape priority stack.
     <KeyOwner>
-      <div className="rennet-layout fixed inset-0 flex overflow-hidden bg-canvas text-ink">
-        {/* The ⌘P/⌘K command menu — mounted once, outside the outlet, so the sidebar
+      {/* The coach provider sits HIGH in the shell so every anchor-bearing surface
+          (sidebar Replay control, the outlet's surfaces) shares one store + registry.
+          It renders children plain until `settings.get` resolves (the store awaits its
+          seed), so the anchors' null-safe refs no-op then self-heal. One `<Coachmark/>`
+          mounts inside it — the single shell-level surface that renders the elected mark. */}
+      <CoachDataProvider>
+        <div className="rennet-layout fixed inset-0 flex overflow-hidden bg-canvas text-ink">
+          {/* The ⌘P/⌘K command menu — mounted once, outside the outlet, so the sidebar
             Search row + rail button (C3) drive this single controlled instance. */}
-        <CommandMenu />
+          <CommandMenu />
 
-        {/* Sidebar region — the host/project/session tree is a projection (C3). */}
-        <Sidebar />
+          {/* Sidebar region — the host/project/session tree is a projection (C3). */}
+          <Sidebar />
 
-        {/* The chat-dock SLOT — the SAME always-mounted element OUTSIDE the outlet, so
+          {/* The chat-dock SLOT — the SAME always-mounted element OUTSIDE the outlet, so
           navigating never unmounts it (risk 4). Hidden by width-0 + `inert` off a
           session route or with the chat closed; C7 fills the dock's internals. */}
-        <div
-          data-slot="chat-dock"
-          data-testid="chat-dock-slot"
-          data-open={dockOpen}
-          inert={!dockOpen}
-          style={{ width: dockOpen ? effectiveChatWidth : 0 }}
-          className={cn(
-            "rennet-chat-dock flex-none overflow-hidden border-r border-line bg-surface",
-            !resizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-          )}
-        >
-          {/* C7 fills the dock's internals; the slot's lifetime IS the transcript-identity
+          <div
+            data-slot="chat-dock"
+            data-testid="chat-dock-slot"
+            data-open={dockOpen}
+            inert={!dockOpen}
+            style={{ width: dockOpen ? effectiveChatWidth : 0 }}
+            className={cn(
+              "rennet-chat-dock flex-none overflow-hidden border-r border-line bg-surface",
+              !resizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+            )}
+          >
+            {/* C7 fills the dock's internals; the slot's lifetime IS the transcript-identity
               guarantee — the dock mounts once here and never unmounts on navigation. */}
-          <ChatDock />
-        </div>
+            <ChatDock />
+          </div>
 
-        {/* The divider — only on a session route with the chat open. */}
-        {dockOpen ? (
-          <ResizeHandle
-            aria-label="Resize chat column"
-            value={effectiveChatWidth}
-            min={MIN_CHAT_WIDTH}
-            max={maxChatWidth}
-            defaultValue={DEFAULT_CHAT_WIDTH}
-            onPointerDown={() => setResizing(true)}
-            onPointerUp={() => setResizing(false)}
-            onPointerCancel={() => setResizing(false)}
-            onLostPointerCapture={() => setResizing(false)}
-            onChange={setChatWidth}
-          />
-        ) : null}
+          {/* The divider — only on a session route with the chat open. */}
+          {dockOpen ? (
+            <ResizeHandle
+              aria-label="Resize chat column"
+              value={effectiveChatWidth}
+              min={MIN_CHAT_WIDTH}
+              max={maxChatWidth}
+              defaultValue={DEFAULT_CHAT_WIDTH}
+              onPointerDown={() => setResizing(true)}
+              onPointerUp={() => setResizing(false)}
+              onPointerCancel={() => setResizing(false)}
+              onLostPointerCapture={() => setResizing(false)}
+              onChange={setChatWidth}
+            />
+          ) : null}
 
-        {/* The outlet — the ONLY part navigation swaps — under the session top-bar. */}
-        <main data-region="outlet" className="rennet-outlet flex min-w-0 flex-1 flex-col">
-          {isSessionRoute ? <TopBar /> : null}
-          <div className="min-h-0 flex-1">{children}</div>
-        </main>
+          {/* The outlet — the ONLY part navigation swaps — under the session top-bar. */}
+          <main data-region="outlet" className="rennet-outlet flex min-w-0 flex-1 flex-col">
+            {isSessionRoute ? <TopBar /> : null}
+            <div className="min-h-0 flex-1">{children}</div>
+          </main>
 
-        {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
+          {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
             its own visibility to `ui.openDialogs` and portals over the frame. Inside the
             KeyOwner so their open/Escape participates in the one priority stack. */}
-        <AppDialogs />
-      </div>
+          <AppDialogs />
+
+          {/* The one active coach mark for the whole shell — reads the elected mark from
+            the store and renders that single card + spotlight, or nothing. */}
+          <Coachmark />
+        </div>
+      </CoachDataProvider>
     </KeyOwner>
   );
 }

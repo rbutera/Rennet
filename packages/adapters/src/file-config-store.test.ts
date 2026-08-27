@@ -40,6 +40,45 @@ describe("FileConfigStore (client settings)", () => {
     expect(createClientSettingsStore(path).read().appearance?.scheme).toBe("light");
   });
 
+  it("persists the coachmarks slice and reads it back over a fresh store (C13 restart)", () => {
+    // Skip-all + seen marks are the onboarding survival criterion: a restart is a NEW store
+    // over the SAME file, and the coach provider re-seeds from what `settings.get` reads back.
+    const path = tmpConfigPath();
+    const store = createClientSettingsStore(path);
+    const written = store.update((current) => ({
+      ...current,
+      coachmarks: { seen: ["start-review", "new-chat"], skipAll: true },
+    }));
+    expect(written.coachmarks).toEqual({ seen: ["start-review", "new-chat"], skipAll: true });
+    // A fresh store over the same path — the restart — still carries skip-all: no mark re-fires.
+    expect(createClientSettingsStore(path).read().coachmarks).toEqual({
+      seen: ["start-review", "new-chat"],
+      skipAll: true,
+    });
+  });
+
+  it("classifies a persisted slice with an UNKNOWN mark id as malformed and refuses to overwrite it (finding 4, Rule 75)", () => {
+    // A hand-edited / future client-settings.json whose `coachmarks.seen` carries an id this
+    // build's markIdSchema does not know fails schema validation → malformed, NOT silently
+    // rewritten. Clobbering the viewer's real seen-state with a default is the data loss Rule 75 stops.
+    const path = tmpConfigPath();
+    const bogus = JSON.stringify({
+      version: CLIENT_SETTINGS_VERSION,
+      coachmarks: { seen: ["not-a-real-mark"], skipAll: false },
+    });
+    writeFileSync(path, bogus);
+    const store = createClientSettingsStore(path);
+    expect(store.readState().status).toBe("malformed");
+    expect(() =>
+      store.update((current) => ({
+        ...current,
+        coachmarks: { seen: ["new-chat"], skipAll: false },
+      })),
+    ).toThrow(/malformed/);
+    // The unknown-id doc is left byte-identical — never clobbered from a failed parse.
+    expect(readFileSync(path, "utf8")).toBe(bogus);
+  });
+
   it("refuses an UNSUPPORTED version doc rather than silently re-stamping it (finding 6)", () => {
     // A future (v2) doc must NOT be read as v1 and re-stamped — that strips every
     // field this version does not know and destroys the newer doc's data. The
