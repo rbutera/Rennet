@@ -20,7 +20,8 @@
  */
 
 import { z } from "zod";
-import type { AnchorKind, OfferedManifest, RspDocType, ValidationError } from "./domain";
+import type { OfferedManifest, RspDocType, ValidationError } from "../domain";
+import type { AnchorKind } from "./citations";
 
 /**
  * The closed set of angles a chunk may be assigned to. Excludes `noise` (verified

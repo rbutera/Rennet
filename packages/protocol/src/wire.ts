@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { CommandInput, CommandName, CommandOutput } from "./commands";
+import type { AnchorSpan, RenderedHunkOccurrence } from "./delta/citations";
+import { anchorSideSchema, anchorSpanSchema } from "./delta/citations";
 import type {
   CiSignal,
   DeltaDigestResult,
@@ -12,7 +14,6 @@ import type {
   UiVerification,
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
-
 import type { AttentionEventFrame } from "./session";
 
 const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
@@ -86,13 +87,6 @@ export const patchsetSchema = z.object({
 });
 
 export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
-
-/** A 1-based file-line span (issue #78). Shared by the disposition anchor + command inputs. */
-export const anchorSpanSchema = z.object({
-  startLine: z.number().int().min(1),
-  endLine: z.number().int().min(1).optional(),
-});
-export const anchorSideSchema = z.enum(["additions", "deletions", "context"]);
 
 const dispositionAnchorSchema: z.ZodType<DispositionAnchor> = z
   .object({
@@ -1865,8 +1859,6 @@ export type PatchsetSpecSnapshot = z.infer<typeof patchsetSpecSnapshotSchema>;
  */
 export type PatchsetIntent = z.infer<typeof patchsetIntentSchema>;
 export type Patchset = z.infer<typeof patchsetSchema>;
-/** A 1-based line span WITHIN the anchored unit (never absolute file lines). */
-export type AnchorSpan = z.infer<typeof anchorSpanSchema>;
 /**
  * A reviewer action taken against an anchor. In this model a file/chunk is
  * "read" iff it carries a disposition: reading is an action, never scroll/dwell.
@@ -1927,20 +1919,6 @@ export type DecisionEvidence = {
  * rather than inventing one).
  */
 export type DecisionWhy = { reconstructed: true; text: string };
-/**
- * One occurrence (decomposition hunk) mapped onto a rendered `@@` hunk. `id` is the
- * hunk id an anchor references; the line range is the occurrence's own span, so a
- * mark anchored to an oversize-split (R18) FRAGMENT resolves within its slice of the
- * shared raw hunk, never the whole hunk. `oldStart`/`newStart` are 1-based file
- * lines; `oldLines`/`newLines` the side counts — the same shape as `Hunk`.
- */
-export type RenderedHunkOccurrence = {
-  id: string;
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-};
 export type ElementDiff = {
   path: string;
   paths: string[];

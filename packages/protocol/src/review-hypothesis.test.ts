@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { computeInputDigest, validateDocument } from "./delta/rsp";
 import type { OfferedManifest, PatchsetRef } from "./index";
-import { computeInputDigest, validateDocument } from "./rsp";
 
 // The `review.hypothesis` validator (issue #178): an ATOMIC doc — any body error
 // rejects the whole document. Its rules: a non-empty domain (V150), a non-empty

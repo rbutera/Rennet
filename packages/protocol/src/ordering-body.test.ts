@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { bodyJsonSchema } from "./bodies";
+import { bodyJsonSchema } from "./delta/bodies";
+import { computeInputDigest, validateDocument } from "./delta/rsp";
 import type { OfferedManifest, OrderingBody, PatchsetRef } from "./index";
-import { computeInputDigest, validateDocument } from "./rsp";
 
 // ── Fixtures: three offered CHUNKS (not hunks), one valid ordering, mutated ────
 

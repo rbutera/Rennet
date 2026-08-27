@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { findingVerificationJsonSchema } from "./bodies";
+import { findingVerificationJsonSchema } from "./delta/bodies";
+import { computeInputDigest, validateDocument } from "./delta/rsp";
 import type { OfferedManifest, PatchsetRef } from "./index";
-import { computeInputDigest, validateDocument } from "./rsp";
 
 // The additive `finding.verification` field (issue #179): a finding with no
 // verification validates exactly as before (the additive-superset guarantee); a

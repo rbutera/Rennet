@@ -16,14 +16,9 @@
  */
 
 import { z } from "zod";
-import { validateBodyRules } from "./bodies";
 import type {
   AdmissionKind,
-  AnchorKind,
-  AnchorSide,
   OfferedManifest,
-  ParsedAnchor,
-  PatchsetRef,
   RejectedItem,
   Resolution,
   RspDocType,
@@ -32,10 +27,11 @@ import type {
   SizeLimits,
   ValidationError,
   ValidationReport,
-} from "./domain";
-import { autoCarries } from "./domain";
-import type { AnchorSpan } from "./index";
-import { sha256Hex } from "./sha256";
+} from "../domain";
+import { autoCarries } from "../domain";
+import { sha256Hex } from "../sha256";
+import { validateBodyRules } from "./bodies";
+import type { AnchorKind, AnchorSide, AnchorSpan, ParsedAnchor, PatchsetRef } from "./citations";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

@@ -1,10 +1,8 @@
 import { z } from "zod";
-
+import { anchorSideSchema, anchorSpanSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
 import { attentionFamilySchema } from "../session";
 import {
-  anchorSideSchema,
-  anchorSpanSchema,
   appearanceSchemeSchema,
   askModeSchema,
   askReviewResultSchema,
