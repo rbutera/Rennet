@@ -170,6 +170,7 @@ function harness(
     projectContextMap?: DispatchDeps["projectContextMap"];
     projectContextAsk?: DispatchDeps["projectContextAsk"];
     knowledgeDisposition?: DispatchDeps["knowledgeDisposition"];
+    onReviewOpened?: DispatchDeps["onReviewOpened"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -298,6 +299,7 @@ function harness(
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
+    ...(extra.onReviewOpened ? { onReviewOpened: extra.onReviewOpened } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -3248,6 +3250,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
           ? {}
           : { [input.id]: input.keybinding },
       ),
+      setTrackerValue: vi.fn(() => ({})),
     };
     const { dispatch } = harness(undefined, { settings });
 
@@ -4507,5 +4510,41 @@ describe("createDispatch — project.contextMap / contextAsk / knowledgeDisposit
       disposition: "rejected",
     });
     expect(out).toEqual({ status: "not-found", statementId: "ghost" });
+  });
+});
+
+describe("createDispatch — onReviewOpened (#461, B7)", () => {
+  it("fires on review.capture and review.openPr with the opened review — the retrieval kick point", async () => {
+    const opened: string[] = [];
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        onReviewOpened: (review) => opened.push(review.id),
+      },
+    );
+
+    const captured = await capturedReview(dispatch);
+    expect(opened).toEqual([captured.id]);
+
+    const pr = (await dispatch("review.openPr", {
+      commandId: randomUUID(),
+      ref: "rbutera/orbital#7",
+    })) as { review: Review };
+    expect(opened).toEqual([captured.id, pr.review.id]);
+  });
+
+  it("review.load does NOT fire it — a reopen is a pure read, not a review open", async () => {
+    const opened: string[] = [];
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        onReviewOpened: (review) => opened.push(review.id),
+      },
+    );
+    const captured = await capturedReview(dispatch);
+    await dispatch("review.load", { commandId: randomUUID(), reviewId: captured.id });
+    expect(opened).toEqual([captured.id]);
   });
 });

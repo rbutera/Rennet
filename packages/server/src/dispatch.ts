@@ -133,6 +133,13 @@ export interface DispatchDeps {
    * running tracking (running reads false).
    */
   readonly inFlightReviews?: { enter(reviewId: string): void; leave(reviewId: string): void };
+  /**
+   * Fired after a review OPENS (`review.capture` / `review.openPr` return their
+   * review) — the real review-open choke point (#461, B7). The composition root
+   * kicks related-context retrieval here, fire-and-forget: the hook is sync-void
+   * and must never throw; a review never blocks on it.
+   */
+  readonly onReviewOpened?: (review: Review) => void;
   /** Repositories the user has granted review access to (renderer-origin guard). */
   readonly allowedRoots: Set<string>;
   /** Resolve a repository to review (Electron dialog, or the test-repo env). `null` = cancelled. */
@@ -837,6 +844,7 @@ export function createDispatch(
           deps.setRepositoryDirty(false);
           deps.startWatching(review.repositoryRoot);
           raiseReviewFinished(review);
+          deps.onReviewOpened?.(review);
           return parseCommandOutput(name, { review });
         }
         case "review.openPr": {
@@ -857,6 +865,7 @@ export function createDispatch(
           );
           allowedRoots.add(review.repositoryRoot);
           raiseReviewFinished(review);
+          deps.onReviewOpened?.(review);
           return parseCommandOutput(name, { review });
         }
         case "review.load": {

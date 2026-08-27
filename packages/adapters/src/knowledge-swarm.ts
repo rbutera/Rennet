@@ -21,6 +21,7 @@ import {
 } from "@rennet/core";
 import type {
   CouncilHarnessId,
+  CouncilJobId,
   CouncilResolveContext,
   KnowledgeSet,
   KnowledgeStatement,
@@ -274,11 +275,26 @@ export type KnowledgeSwarmOutcome =
   | { readonly status: "failed"; readonly reason: string }
   | { readonly status: "snapshot-unavailable"; readonly reason: string };
 
-/** Resolve one swarm job to a concrete `runTurn`, or an honest failure reason. */
-function turnFor(
-  jobId: "partition-worker" | "map-verify",
+/** The ports + options a council seat needs to become a concrete `runTurn`. */
+export interface CouncilSeatDeps {
+  readonly claudePort?: HarnessPort | null;
+  readonly codexExecutor?: CodexExecutor | null;
+  readonly repoRoot: string;
+  readonly collector?: MetricsCollector;
+  readonly signal?: AbortSignal;
+  /** The metrics label for a Claude seat, e.g. "knowledge.worker". */
+  readonly label?: string;
+}
+
+/**
+ * Resolve one council job to a concrete `runTurn` on the resolved harness, or
+ * an honest failure reason. Shared by the knowledge swarm and the project
+ * scout (B7): the routing IS the council's, the ports are the caller's.
+ */
+export function councilSeatTurn(
+  jobId: CouncilJobId,
   schema: unknown,
-  deps: KnowledgeSwarmDeps,
+  deps: CouncilSeatDeps,
   council: CouncilResolveContext,
 ): { runTurn: RunTurn; model: string } | { failure: string } {
   const resolution = resolveAssignment(jobId, council);
@@ -310,11 +326,33 @@ function turnFor(
     model: resolution.model,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, schema, {
       cwd: deps.repoRoot,
-      label: jobId === "map-verify" ? "knowledge.verify" : "knowledge.worker",
+      ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
     }),
   };
+}
+
+/** The swarm's seat resolution: `councilSeatTurn` with the swarm's labels. */
+function turnFor(
+  jobId: "partition-worker" | "map-verify",
+  schema: unknown,
+  deps: KnowledgeSwarmDeps,
+  council: CouncilResolveContext,
+): { runTurn: RunTurn; model: string } | { failure: string } {
+  return councilSeatTurn(
+    jobId,
+    schema,
+    {
+      claudePort: deps.claudePort,
+      codexExecutor: deps.codexExecutor,
+      repoRoot: deps.repoRoot,
+      label: jobId === "map-verify" ? "knowledge.verify" : "knowledge.worker",
+      ...(deps.collector === undefined ? {} : { collector: deps.collector }),
+      ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+    },
+    council,
+  );
 }
 
 /** Run `tasks` with at most `limit` in flight (order of completion is irrelevant). */
