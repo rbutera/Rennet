@@ -76,8 +76,12 @@ Serial clusters. Each cluster is one session. Search before implementing
       build).
 - [ ] E2E on the real app — fresh profile shows the chain **in system order**,
       one mark at a time, chained per surface.
-- [ ] Skip-all **persists across restart**: skip, reload, `settings.get` returns
+- [x] Skip-all **persists across restart**: skip, reload, `settings.get` returns
       `skipAll:true`, no mark fires. Prove the `settings.setCoachmarks` round-trip.
+      Real-file round-trip added in `packages/adapters/src/file-config-store.test.ts`
+      (a fresh store over the same path IS the restart); the composition-level round-trip
+      (`packages/server/src/settings.test.ts:377`) and the app-ui reload-survival seam
+      (`coach/provider.dom.test.tsx`) already landed in clusters 3.
 - [ ] Replay from Help (sidebar Replay Tour) re-arms — every mark eligible again.
 - [ ] **Every anchor resolves**: a test over all nine `MarkId`s asserts each
       elects a live registered element (no orphan).

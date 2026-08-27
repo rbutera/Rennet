@@ -40,6 +40,23 @@ describe("FileConfigStore (client settings)", () => {
     expect(createClientSettingsStore(path).read().appearance?.scheme).toBe("light");
   });
 
+  it("persists the coachmarks slice and reads it back over a fresh store (C13 restart)", () => {
+    // Skip-all + seen marks are the onboarding survival criterion: a restart is a NEW store
+    // over the SAME file, and the coach provider re-seeds from what `settings.get` reads back.
+    const path = tmpConfigPath();
+    const store = createClientSettingsStore(path);
+    const written = store.update((current) => ({
+      ...current,
+      coachmarks: { seen: ["start-review", "new-chat"], skipAll: true },
+    }));
+    expect(written.coachmarks).toEqual({ seen: ["start-review", "new-chat"], skipAll: true });
+    // A fresh store over the same path — the restart — still carries skip-all: no mark re-fires.
+    expect(createClientSettingsStore(path).read().coachmarks).toEqual({
+      seen: ["start-review", "new-chat"],
+      skipAll: true,
+    });
+  });
+
   it("refuses an UNSUPPORTED version doc rather than silently re-stamping it (finding 6)", () => {
     // A future (v2) doc must NOT be read as v1 and re-stamped — that strips every
     // field this version does not know and destroys the newer doc's data. The
