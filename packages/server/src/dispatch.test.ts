@@ -29,6 +29,7 @@ import type {
   Review,
 } from "@rennet/protocol";
 import {
+  type CoachMarks,
   type DetectedHarness,
   type DiscoveryResult,
   type ProcessedRepoSummary,
@@ -3237,6 +3238,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
           ? {}
           : { [input.id]: input.keybinding },
       ),
+      setCoachmarks: vi.fn((input: CoachMarks) => input),
       setTrackerValue: vi.fn(() => ({})),
     };
     const { dispatch } = harness(undefined, { settings });
@@ -3277,6 +3279,14 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     })) as { keybindings: Record<string, string | null> };
     expect(settings.setKeybinding).toHaveBeenCalledWith({ id: "nav.back", keybinding: "mod+e" });
     expect(kb.keybindings).toEqual({ "nav.back": "mod+e" });
+
+    // setCoachmarks threads the whole slice to the dep and echoes the stored result (C13).
+    const coach = (await dispatch("settings.setCoachmarks", {
+      seen: ["start-review"],
+      skipAll: true,
+    })) as { seen: string[]; skipAll: boolean };
+    expect(settings.setCoachmarks).toHaveBeenCalledWith({ seen: ["start-review"], skipAll: true });
+    expect(coach).toEqual({ seen: ["start-review"], skipAll: true });
   });
 
   it("with NO settings dep wired, degrades to the builtin view + unresolved write (never throws)", async () => {

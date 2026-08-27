@@ -46,7 +46,7 @@ Serial clusters. Each cluster is one session. Search before implementing
 - [x] Add `settings.setCoachmarks` command (input `{ seen, skipAll }`, output the
       stored slice) mirroring `settings.setAppearance`/`setKeybinding`: a plain
       write, first click, no ceremony, refuses a malformed config (Rule 75).
-- [ ] Core handler: write the slice through B10's file-config-store
+- [x] Core handler: write the slice through B10's file-config-store
       client-settings path (do NOT rebuild the engine). Register the command.
 - [ ] `coach/` data wiring: read initial `{seen,skipAll}` from
       `useCommand("settings.get")`, persist via `useMutation("settings.setCoachmarks")`

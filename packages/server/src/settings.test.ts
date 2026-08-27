@@ -373,6 +373,49 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
       createSettingsComposition(deps).setKeybinding({ id: "nav.back", keybinding: "mod+e" }),
     ).toThrow(/malformed/i);
   });
+
+  it("setCoachmarks persists skip-all + seen and survives a re-read (C13 reload survival)", async () => {
+    // A STATEFUL fake store so a write is re-readable — the reload criterion: the
+    // coach store re-seeds from `settings.get` after a restart.
+    let stored: ClientSettings = { version: 1 };
+    const { deps } = makeDeps({
+      readGlobalState: () => ({ status: "ok", config: stored }),
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+
+    // A fresh install reads no slice — the client defaults it to empty/false.
+    expect((await composition.get()).coachmarks).toBeUndefined();
+
+    // Skip-all + a couple of seen marks persist and read back verbatim (survives reload).
+    const written = composition.setCoachmarks({
+      seen: ["start-review", "new-chat"],
+      skipAll: true,
+    });
+    expect(written).toEqual({ seen: ["start-review", "new-chat"], skipAll: true });
+    expect((await composition.get()).coachmarks).toEqual({
+      seen: ["start-review", "new-chat"],
+      skipAll: true,
+    });
+
+    // Replay clears the slice (seen empty, skip-all false) — also durable.
+    composition.setCoachmarks({ seen: [], skipAll: false });
+    expect((await composition.get()).coachmarks).toEqual({ seen: [], skipAll: false });
+  });
+
+  it("setCoachmarks REFUSES a malformed config (Rule 75), writing nothing (C13)", () => {
+    const { deps } = makeDeps({
+      updateGlobal: () => {
+        throw new Error("refused: malformed global config");
+      },
+    });
+    expect(() =>
+      createSettingsComposition(deps).setCoachmarks({ seen: ["fab"], skipAll: false }),
+    ).toThrow(/malformed/i);
+  });
 });
 
 describe("createSettingsComposition — daemon host sections (#476, §4.2)", () => {
