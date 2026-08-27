@@ -30,9 +30,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 5. `selection-toolbar.tsx` — `ProseSelectionLayer`
 
-- [ ] 5.1 `packages/app-ui/src/review/selection-toolbar.tsx`: port `ProseSelectionLayer`, mode union kept verbatim (`"toolbar" | "comment" | "comment-rc" | "revise" | "explain"`). Floating toolbar above the selection, flips below near the viewport top, positioned inside the scrolling container, dismissed by Escape or outside click. `draftHandlers` prop (Revise/Drop/Explain) kept as host-supplied callbacks, unchanged.
-- [ ] 5.2 Rewire onto the extended `review` slice (cluster 1): Comment/Explain call `reviewActions.addQuoteComment` (Explain sets `kind: "explain"`) and `setFocusedThread(newId)` so the state is ready when C5 renders the tooltip; Request Changes calls `addQuoteComment` then `stageAsk` with the quote as provenance and the new `threadId`, so the ask claims that thread (counts once). No `useCodeComments()`, no `store?.` anywhere.
-- [ ] 5.3 DOM tests over `MemoryBridge`-backed `useRennetStore`: selecting text shows the toolbar; Comment/Explain/Request-Changes each write the correct `review` fields; Escape and outside-click dismiss; the toolbar flips placement near the top. Cluster gate green. Commit.
+- [x] 5.1 `packages/app-ui/src/review/selection-toolbar.tsx`: port `ProseSelectionLayer`, mode union kept verbatim (`"toolbar" | "comment" | "comment-rc" | "revise" | "explain"`). Floating toolbar above the selection, flips below near the viewport top, positioned inside the scrolling container, dismissed by Escape or outside click. `draftHandlers` prop (Revise/Drop/Explain) kept as host-supplied callbacks, unchanged.
+- [x] 5.2 Rewire onto the extended `review` slice (cluster 1): Comment/Explain call `reviewActions.addQuoteComment` (Explain sets `kind: "explain"`) and `setFocusedThread(newId)` so the state is ready when C5 renders the tooltip; Request Changes calls `addQuoteComment` then `stageAsk` with the quote as provenance and the new `threadId`, so the ask claims that thread (counts once). No `useCodeComments()`, no `store?.` anywhere.
+- [x] 5.3 DOM tests over `MemoryBridge`-backed `useRennetStore`: selecting text shows the toolbar; Comment/Explain/Request-Changes each write the correct `review` fields; Escape and outside-click dismiss; the toolbar flips placement near the top. Cluster gate green. Commit.
 
 ## 6. `rich-text.tsx` — R45 markdown subset (base tier)
 
