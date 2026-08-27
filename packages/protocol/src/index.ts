@@ -15,6 +15,7 @@ import { MAX_UI_EVIDENCE_DATA_URL_LENGTH, MAX_UI_SCREENSHOTS_PER_RUN } from "./d
 import type { AttentionEventFrame } from "./session";
 import { attentionFamilySchema } from "./session";
 
+export * from "./board";
 export * from "./bodies";
 export * from "./domain";
 export * from "./rsp";
