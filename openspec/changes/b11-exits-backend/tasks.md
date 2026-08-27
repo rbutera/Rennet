@@ -8,7 +8,7 @@ Serial clusters; one cluster per session; each ends on a green gate + commit. Cl
 - [x] 1.2 `packages/core/src/exits/ask-projection.ts` (new): the pure **fold** — `foldAsks(events): AskProjection` collapsing the event log to current `{ stagedAsks, lineComments, quoteThreads, retired, verdictOverride }`, and `receiptFor(event): AskEvent` producing the inverse event (receipt-is-undo: stage↔retire-as-undo, edit↔prior-body, quote-reply↔drop-last, override-set↔prior-value). Pure, no I/O. `core/src/exits/index.ts` is the folder surface (the packet's `core/exits/`).
 - [x] 1.3 `packages/adapters/src/ask-log-store.ts` (new): a file-backed append-only per-session `AskLog` (`append`/`read`/`readProjection`), following B10's persistence-engine precedent (same serialization + schema-parse on read as `session-store.ts`/`file-thread-store.ts`). Append is the ONLY mutation; the projection is `foldAsks(read())`, never a second stored copy.
 - [x] 1.4 Tests: `ask-projection.test.ts` — every event folds; a receipt applied after its event returns the projection to the prior state (receipt-is-undo, per event kind); seq is monotonic. `ask-log-store.test.ts` — round-trips a log through disk, schema validates on read, append is additive (no rewrite).
-- [ ] 1.5 Cluster gate green. Commit.
+- [x] 1.5 Cluster gate green. Commit.
 
 ## Cluster 2 — ask command surface + create-server wiring; reload survival (clause: one write path; survive reload)
 
