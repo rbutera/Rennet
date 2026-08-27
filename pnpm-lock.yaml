@@ -435,6 +435,12 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@wboard/core':
+        specifier: 0.1.0-alpha.2
+        version: 0.1.0-alpha.2
+      '@wboard/server':
+        specifier: 0.1.0-alpha.2
+        version: 0.1.0-alpha.2
       ws:
         specifier: 8.21.1
         version: 8.21.1
@@ -4220,6 +4226,9 @@ packages:
 
   '@wboard/core@0.1.0-alpha.2':
     resolution: {integrity: sha512-XY+bhE+NbqF0XvuOpG9PMx+0dXVWTXn2rn5Aqr/5LeuKh69lfQEzbWcOjBv6vOKU5AjIrdeo32Tiy6PRncnkCA==}
+
+  '@wboard/server@0.1.0-alpha.2':
+    resolution: {integrity: sha512-Vup9gAypXLQ1niayQQ4O8sMjGiyDM810tVCDAs3Ds8FArpO4+F9C+piki9N562j2d+asTaKQ7fvTzfmPAI7ysA==}
 
   '@webassemblyjs/ast@1.14.1':
     resolution: {integrity: sha512-nuBEDgQfm1ccRp/8bCQrx1frohyufl4JlbMMZ4P1wpeOfDhF6FQkxZJ1b/e+PLwr6X1Nhw6OLme5usuBWYBvuQ==}
@@ -14305,6 +14314,10 @@ snapshots:
   '@wboard/core@0.1.0-alpha.2':
     dependencies:
       zod: 4.4.3
+
+  '@wboard/server@0.1.0-alpha.2':
+    dependencies:
+      '@wboard/core': 0.1.0-alpha.2
 
   '@webassemblyjs/ast@1.14.1':
     dependencies:
