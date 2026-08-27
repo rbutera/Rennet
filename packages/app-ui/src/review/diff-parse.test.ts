@@ -84,11 +84,28 @@ describe("parsePatch", () => {
 });
 
 describe("hunkHeader", () => {
-  it("reconstructs @@ -o,n +o,n @@ with counts derived from the parsed lines", () => {
+  it("returns the raw @@ header line verbatim (not a reconstruction from line counts)", () => {
     const [h0] = parsePatch(PATCH);
-    // 5 lines: context, del, add, add, context ⇒ old side = 3 (not add), new side = 4 (not del).
-    expect(hunkHeader(h0 as NonNullable<typeof h0>)).toBe("@@ -1,3 +1,4 @@");
-    expect(hunkHeader(h0 as NonNullable<typeof h0>)).toMatch(/^@@ -\d+,\d+ \+\d+,\d+ @@$/);
+    // The source header is `@@ -1,4 +1,5 @@` — displayed verbatim, NOT the -1,3 +1,4 that
+    // a reconstruction from the parsed line counts would produce.
+    expect(hunkHeader(h0 as NonNullable<typeof h0>)).toBe("@@ -1,4 +1,5 @@");
+  });
+
+  it("preserves git's trailing function-context tail on the header", () => {
+    const withContext = [
+      "@@ -18,6 +19,7 @@ export function scopeGuard(): Scope {",
+      " export function scopeGuard() {",
+      "-  const scope = DEFAULT",
+      "+  const scope = header",
+    ].join("\n");
+    const [h] = parsePatch(withContext);
+    // Numbering still comes from the parsed counts…
+    expect(h).toMatchObject({ oldStart: 18, newStart: 19 });
+    // …but the displayed header keeps the ` @@ export function scopeGuard(): Scope {` tail
+    // that a count-based reconstruction drops.
+    expect(hunkHeader(h as NonNullable<typeof h>)).toBe(
+      "@@ -18,6 +19,7 @@ export function scopeGuard(): Scope {",
+    );
   });
 });
 

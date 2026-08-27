@@ -17,10 +17,13 @@ export interface DiffLine {
   readonly text: string;
 }
 
-/** One `@@` hunk: the old/new starting line numbers and the ordered body lines. */
+/** One `@@` hunk: the old/new starting line numbers, the raw `@@ … @@` header line
+ *  exactly as git emitted it (section-heading context tail included), and the ordered
+ *  body lines. */
 export interface Hunk {
   readonly oldStart: number;
   readonly newStart: number;
+  readonly header: string;
   readonly lines: readonly DiffLine[];
 }
 
@@ -38,14 +41,24 @@ export interface NumberedLine extends DiffLine {
  * patch parses to `[]`.
  */
 export function parsePatch(patch: string): Hunk[] {
-  const hunks: Array<{ oldStart: number; newStart: number; lines: DiffLine[] }> = [];
-  let current: { oldStart: number; newStart: number; lines: DiffLine[] } | null = null;
+  const hunks: Array<{ oldStart: number; newStart: number; header: string; lines: DiffLine[] }> =
+    [];
+  let current: { oldStart: number; newStart: number; header: string; lines: DiffLine[] } | null =
+    null;
   // Strip exactly one trailing newline so the split does not mint a phantom blank line.
   const body = patch.endsWith("\n") ? patch.slice(0, -1) : patch;
   for (const raw of body.split("\n")) {
     const header = HUNK_HEADER_RE.exec(raw);
     if (header) {
-      current = { oldStart: Number(header[1]), newStart: Number(header[3]), lines: [] };
+      // Numbering comes from the parsed counts; the DISPLAYED header is the raw source
+      // line verbatim, so git's trailing section-heading context survives (real git emits
+      // `@@ -a,b +c,d @@ <function context>`, which a reconstruction from counts drops).
+      current = {
+        oldStart: Number(header[1]),
+        newStart: Number(header[3]),
+        header: raw,
+        lines: [],
+      };
       hunks.push(current);
       continue;
     }
@@ -60,12 +73,11 @@ export function parsePatch(patch: string): Hunk[] {
   return hunks;
 }
 
-/** The `@@ -o,n +o,n @@` header string — old/new counts derived from the parsed lines
- *  (a context line counts to both sides; add to new only, del to old only). */
+/** The hunk's `@@ … @@` header for display — the raw source line verbatim, so git's
+ *  trailing section-heading context (`@@ -a,b +c,d @@ <function context>`) is preserved
+ *  rather than dropped by reconstructing from the parsed line counts. */
 export function hunkHeader(hunk: Hunk): string {
-  const oldCount = hunk.lines.filter((l) => l.type !== "add").length;
-  const newCount = hunk.lines.filter((l) => l.type !== "del").length;
-  return `@@ -${hunk.oldStart},${oldCount} +${hunk.newStart},${newCount} @@`;
+  return hunk.header;
 }
 
 /** Added/deleted line totals for a file. Prefers the projection's own counts
