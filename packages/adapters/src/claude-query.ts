@@ -92,6 +92,9 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
       schema: options.outputSchema as Record<string, unknown>,
     };
   }
+  // Cursor-resume (B09): the adapter's `resume` (a harness session id) is the
+  // SDK's `resume` option — loads that conversation's history and continues it.
+  if (options.resume !== undefined) sdkOptions.resume = options.resume;
   return sdkOptions;
 }
 

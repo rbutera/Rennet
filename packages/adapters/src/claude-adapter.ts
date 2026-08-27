@@ -100,6 +100,12 @@ export interface ClaudeQueryOptions {
    */
   readonly outputSchema?: unknown;
   readonly appendSystemPrompt?: string;
+  /**
+   * The harness session id to resume (B09 cursor-resume). The composition root
+   * (`createClaudeQueryFn`) maps this to the SDK's `resume` option so the spawned
+   * `claude` continues that conversation. Absent ⇒ a fresh session.
+   */
+  readonly resume?: string;
 }
 
 export interface ClaudeQueryArgs {
@@ -413,18 +419,31 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
     // the completed outcome carries real counts through to the runner's provenance.
     const usage = extractResultUsage(record);
     const finalText = stringField(record, "result") ?? "";
+    // Cursor-resume (B09): the SDK stamps every frame — the terminal result
+    // included — with its own resumable `session_id`, and this frame's `uuid` is
+    // the tail chain-entry (a valid resume anchor). Surface both so the durable
+    // session persists them as its `HarnessCursor` and the next turn resumes.
+    // Absent from the frame ⇒ omitted, never invented (the cursor stays put).
+    const harnessSessionId = stringField(record, "session_id") ?? undefined;
+    const lastAssistantMessageAnchor = stringField(record, "uuid") ?? undefined;
+    const cursor = {
+      ...(harnessSessionId === undefined ? {} : { harnessSessionId }),
+      ...(lastAssistantMessageAnchor === undefined ? {} : { lastAssistantMessageAnchor }),
+    };
     const outcome =
       structuredOutput === undefined
         ? {
             status: "completed" as const,
             finalText,
             ...(usage === undefined ? {} : { usage }),
+            ...cursor,
           }
         : {
             status: "completed" as const,
             finalText,
             structuredOutput,
             ...(usage === undefined ? {} : { usage }),
+            ...cursor,
           };
     return [{ ...envelope(context, frame), kind: "session.ended", outcome }];
   }
@@ -437,6 +456,9 @@ const IMPLEMENTED_CAPABILITIES: readonly CapabilityName[] = [
   "toolGating",
   "interrupt",
   "textDeltas",
+  // B09: `SessionSpec.resume` maps to the SDK `resume` option and the completed
+  // outcome surfaces the harness session id — a real port path for cursor-resume.
+  "resume",
 ];
 
 export interface ClaudeAdapterConfig {
@@ -605,6 +627,10 @@ export class ClaudeAdapter implements HarnessPort {
       ...(spec.systemPrompt?.mode === "append"
         ? { appendSystemPrompt: spec.systemPrompt.text }
         : {}),
+      // Cursor-resume (B09): re-pass the harness session id every turn so the
+      // fresh `claude` process continues the prior conversation (the CLI owns the
+      // transcript; Rennet persists only this pointer). Absent ⇒ a fresh session.
+      ...(spec.resume === undefined ? {} : { resume: spec.resume.harnessSessionId }),
     };
   }
 }

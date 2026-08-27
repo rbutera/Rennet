@@ -319,11 +319,75 @@ describe("ClaudeAdapter session", () => {
     // Implemented by the adapter (mapping code exists and is tested).
     expect(caps.structuredOutput.implementedByAdapter).toBe(true);
     expect(caps.interrupt.implementedByAdapter).toBe(true);
-    // Not implemented in this slice: resume/fork stay false at every layer.
-    expect(caps.resume.implementedByAdapter).toBe(false);
+    // B09 wired cursor-resume: `resume` now has a real port path. `fork` is still
+    // a later slice and stays false at every layer.
+    expect(caps.resume.implementedByAdapter).toBe(true);
     expect(caps.fork.implementedByAdapter).toBe(false);
     // No conformance run and no live session yet, so these layers are all false.
     expect(caps.structuredOutput.advertisedByHarness).toBe(false);
     expect(caps.structuredOutput.availableInSession).toBe(false);
+  });
+
+  it("passes SessionSpec.resume through to the query options (cursor-resume, B09 task 2.1)", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const session = await adapter.createSession({
+      cwd: "/repo",
+      resume: { harnessSessionId: "harness-sess-42" },
+    });
+    await session.send({ prompt: "continue" });
+    const options: ClaudeQueryOptions | undefined = capturedArgs[0]?.options;
+    if (!options) throw new Error("queryFn was not invoked with options");
+    // RED-proof: drop the resume passthrough in `#buildOptions` and this reddens —
+    // the fresh `claude` process would start a new conversation instead of resuming.
+    expect(options.resume).toBe("harness-sess-42");
+  });
+
+  it("omits resume for a fresh session (no cursor invented)", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const session = await adapter.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "start" });
+    expect(capturedArgs[0]?.options.resume).toBeUndefined();
+  });
+
+  it("surfaces the harness session id + terminal anchor on the completed outcome (cursor, B09 task 2.1)", () => {
+    const frame = {
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "harness-sess-99",
+      uuid: "msg-uuid-tail",
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const ended = events[0];
+    expect(ended?.kind).toBe("session.ended");
+    if (ended?.kind !== "session.ended" || ended.outcome.status !== "completed") {
+      throw new Error("expected a completed session.ended outcome");
+    }
+    // The durable session persists these as its HarnessCursor.
+    expect(ended.outcome.harnessSessionId).toBe("harness-sess-99");
+    expect(ended.outcome.lastAssistantMessageAnchor).toBe("msg-uuid-tail");
+  });
+
+  it("omits the cursor when the result frame reports no session id (never fabricated)", () => {
+    const frame = { type: "result", subtype: "success", result: "done" };
+    const events = normalizeClaudeFrame(frame, context());
+    const ended = events[0];
+    if (ended?.kind !== "session.ended" || ended.outcome.status !== "completed") {
+      throw new Error("expected a completed session.ended outcome");
+    }
+    expect(ended.outcome.harnessSessionId).toBeUndefined();
+    expect(ended.outcome.lastAssistantMessageAnchor).toBeUndefined();
   });
 });

@@ -8,8 +8,9 @@
  *
  * Scope note: this is the consumed subset of the full Wingman Harness Adapter
  * Protocol. Disagreement / N=3 self-consistency machinery, session persistence,
- * fork/resume, the utility tier, and the cross-adapter conformance runner are
- * deliberately out of this slice.
+ * fork, the utility tier, and the cross-adapter conformance runner are
+ * deliberately out of this slice; cursor-resume (`SessionSpec.resume`) is wired
+ * in B09, the consuming turn of the frozen `HarnessCursor`.
  */
 
 import type { RspTokenUsage } from "@rennet/protocol";
@@ -190,6 +191,17 @@ export type SessionOutcome =
        * substituted zero — a turn that carried no usage is not one that used none).
        */
       readonly usage?: RspTokenUsage;
+      /**
+       * The harness's own resumable session id and the anchor of the turn's last
+       * message (B09 cursor-resume, #466 res. 3), when the harness reported them on
+       * its terminal frame. The durable session persists these as its
+       * `HarnessCursor` so the NEXT turn resumes this conversation (the CLI owns the
+       * transcript; Rennet re-passes only this pointer). Absent when the harness
+       * reported no resumable id — the cursor is then NOT advanced, an honest "no
+       * durable resume point" rather than a fabricated id.
+       */
+      readonly harnessSessionId?: string;
+      readonly lastAssistantMessageAnchor?: string;
     }
   | { readonly status: "cancelled"; readonly partial: boolean }
   | { readonly status: "failed"; readonly error: HarnessError };
@@ -293,6 +305,16 @@ export interface SessionSpec {
   readonly allowedTools?: readonly string[];
   readonly outputSchema?: unknown;
   readonly signal?: AbortSignal;
+  /**
+   * Resume a prior harness conversation (B09 cursor-resume, #466 res. 3). When
+   * present, `createSession` continues the harness session named by
+   * `harnessSessionId` (the SDK `resume` param) instead of starting fresh — the
+   * CLI owns the transcript, Rennet re-passes only this pointer each turn. Absent
+   * ⇒ a fresh conversation. Only an adapter advertising the `resume` capability
+   * honours it; one that does not starts fresh (honest — never a silent
+   * half-resume). The persisted shape is the frozen `HarnessCursor`.
+   */
+  readonly resume?: { readonly harnessSessionId: string };
 }
 
 export interface TurnInput {
@@ -300,9 +322,10 @@ export interface TurnInput {
 }
 
 /**
- * The port an adapter implements. Slice 1 covers descriptor + health +
- * single-session creation; resume/fork are a later slice and are absent by
- * design rather than stubbed.
+ * The port an adapter implements: descriptor + health + session creation. A
+ * session may resume a prior harness conversation (`SessionSpec.resume`, B09
+ * cursor-resume) when the adapter advertises the `resume` capability; `fork` is
+ * still a later slice and is absent by design rather than stubbed.
  */
 export interface HarnessPort {
   readonly descriptor: HarnessDescriptor;
