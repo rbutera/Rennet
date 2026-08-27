@@ -34,7 +34,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 - [x] 5.1 Retrieval at review-session start (reconciliation 8): wire the seam at the existing choke point with the same deps pattern as the swarm runner; record the actual point in the ledger. Per-round re-run is B8's — leave the seam documented, not wired. DONE: `createLiveCanvasOpsBackend` is the point (amendment 10); fire-and-forget beside the B6 knowledge seed, dossier persisted keyed `target@patchsetId`.
 - [x] 5.2 `docs/developing/concepts/context-assembly.md`: the dossier's source (deterministic extraction → gh → light-tier enrich), residence (L1, `.rennet/` store), delivery (inlined verbatim via the DeltaPacket; raw payloads behind the context tools). Sweep docs/ for stale claims (settings pages if registry rows are user-visible; `docs/using/guides/` if any page describes project add). SWEEP: lens-pipeline.md's dossier section already accurate; getting-started.md already narrates the scout at project add; no registry-row page exists; zero stale claims found.
-- [ ] 5.3 Gate green (docs test inside).
+- [x] 5.3 Gate green (docs test inside): `pnpm nx affected -t lint,typecheck,test` EXIT=0, "Successfully ran targets lint, typecheck, test for 5 projects and 10 tasks they depend on", "Documentation structure is valid."
 
 ## Cluster 6 — verification
 
