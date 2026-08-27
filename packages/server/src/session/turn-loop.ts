@@ -38,12 +38,27 @@ import {
 import type { SessionModel } from "@rennet/protocol";
 
 /**
- * A row on the turn stream the reader sees. `context_rebuilt` is the honest
- * marker that a resumed conversation's transcript was gone and context was
- * rebuilt (B09 task 2.3) — a fact surfaced, never a gate. Cluster 3 extends this
- * union with the harness's own `compact_boundary`.
+ * A row on the turn stream the reader sees. Two honest discontinuity markers,
+ * kept distinct:
+ *
+ *   - `context_rebuilt` (task 2.3): the harness lost this conversation's
+ *     transcript, so Rennet rebuilt context from the canonical boards — context
+ *     was LOST and reconstructed.
+ *   - `compact_boundary` (task 3.1): the harness SUMMARIZED its own context in
+ *     place — nothing lost, the CLI compacted its transcript. `trigger` says
+ *     auto vs. user-asked; `preTokens`/`postTokens` are the harness's OWN figures
+ *     (ask-don't-estimate), carried only when it reported them.
+ *
+ * Both are facts surfaced, never gates.
  */
-export type TurnRow = { readonly kind: "context_rebuilt"; readonly reason: string };
+export type TurnRow =
+  | { readonly kind: "context_rebuilt"; readonly reason: string }
+  | {
+      readonly kind: "compact_boundary";
+      readonly trigger: "auto" | "manual";
+      readonly preTokens?: number;
+      readonly postTokens?: number;
+    };
 
 /** The session persistence the loop reads the cursor from and writes it back to.
  *  The file-backed `SessionStore` (adapters) satisfies this; tests pass a fake. */
@@ -86,11 +101,27 @@ const STREAM_ENDED_WITHOUT_TERMINAL: HarnessError = {
 
 /** Drive one turn to its terminal outcome, always closing the session. The
  *  adapter emits `session.ended` for every terminal (completed OR failed); a
- *  stream that ends without one is surfaced as a failed outcome, never a hang. */
-async function runTurnToOutcome(session: HarnessSession, prompt: string): Promise<SessionOutcome> {
+ *  stream that ends without one is surfaced as a failed outcome, never a hang.
+ *  Each harness `compact_boundary` seen mid-stream is surfaced to the reader as
+ *  one `compact_boundary` row (task 3.1) — the harness's own figures, forwarded
+ *  verbatim, never estimated. */
+async function runTurnToOutcome(
+  session: HarnessSession,
+  prompt: string,
+  onRow?: (row: TurnRow) => void,
+): Promise<SessionOutcome> {
   try {
     await session.send({ prompt });
     for await (const event of session.events) {
+      if (event.kind === "compact_boundary") {
+        onRow?.({
+          kind: "compact_boundary",
+          trigger: event.trigger,
+          ...(event.preTokens === undefined ? {} : { preTokens: event.preTokens }),
+          ...(event.postTokens === undefined ? {} : { postTokens: event.postTokens }),
+        });
+        continue;
+      }
       if (event.kind === "session.ended") return event.outcome;
     }
     return { status: "failed", error: STREAM_ENDED_WITHOUT_TERMINAL };
@@ -167,6 +198,6 @@ export class SessionTurnLoop {
     };
     return this.deps.port
       .createSession(spec)
-      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt));
+      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt, this.deps.emit));
   }
 }

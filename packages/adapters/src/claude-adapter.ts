@@ -233,6 +233,14 @@ function numField(record: Record<string, unknown>, key: string): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/** A finite number field, or `undefined` when absent — the honest "not reported",
+ *  never `numField`'s substituted zero. Used where the harness may omit a figure
+ *  (the ask-don't-estimate compaction token counts). */
+function optNumField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 /**
  * Extract the token accounting off a Claude `result` frame's `usage` block into
  * the RSP `RspTokenUsage` shape (issue #186). Pure and defensive: every count
@@ -318,6 +326,29 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
         by: "policy",
         reason:
           stringField(record, "reason") ?? stringField(record, "message") ?? "denied by policy",
+      },
+    ];
+  }
+
+  if (type === "system" && subtype === "compact_boundary") {
+    // The harness compacted its own context (B09 cluster 3). Surface it honestly:
+    // the CLI owns the transcript and its compaction; Rennet maps the SDK's
+    // `compact_metadata` verbatim — trigger + its OWN pre/post token counts —
+    // carrying each figure only when reported (ask-don't-estimate: never a
+    // fabricated budget, never a substituted zero). trigger defaults to "auto":
+    // an unsolicited compaction is auto by nature, and the field is categorical,
+    // not a number we would be inventing.
+    const meta = asRecord(record.compact_metadata);
+    const trigger = meta !== null && stringField(meta, "trigger") === "manual" ? "manual" : "auto";
+    const preTokens = meta === null ? undefined : optNumField(meta, "pre_tokens");
+    const postTokens = meta === null ? undefined : optNumField(meta, "post_tokens");
+    return [
+      {
+        ...envelope(context, frame),
+        kind: "compact_boundary",
+        trigger,
+        ...(preTokens === undefined ? {} : { preTokens }),
+        ...(postTokens === undefined ? {} : { postTokens }),
       },
     ];
   }

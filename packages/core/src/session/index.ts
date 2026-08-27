@@ -4,5 +4,6 @@
  * Node — the adapters' file-backed `SessionStore` persists what these return.
  * This is the folder's import surface; the root `src/index.ts` re-exports it.
  */
+export * from "./context-meter";
 export * from "./resume";
 export * from "./state";

@@ -258,6 +258,23 @@ export type HarnessEvent = HarnessEventBase &
         readonly apiKeySource: ApiKeySource;
         readonly message: string;
       }
+    /**
+     * The harness compacted its own context (B09 cluster 3, #466 res. 3 ripple).
+     * The CLI owns the transcript and its compaction; Rennet surfaces the fact
+     * HONESTLY — never hidden, never estimated. `trigger` says whether the harness
+     * auto-compacted or the user asked. `preTokens`/`postTokens` are the harness's
+     * OWN figures for the context window before/after compaction, each carried
+     * only when the harness reported it (absent, never a substituted zero — a
+     * boundary that gave no figure is not one at zero tokens). This is the
+     * ask-don't-estimate rule at the event layer: what the harness stated, nothing
+     * fabricated.
+     */
+    | {
+        readonly kind: "compact_boundary";
+        readonly trigger: "auto" | "manual";
+        readonly preTokens?: number;
+        readonly postTokens?: number;
+      }
     | { readonly kind: "error"; readonly error: HarnessError }
     /** An unmodelled native frame, surfaced rather than swallowed. */
     | { readonly kind: "passthrough"; readonly nativeKind: string }
