@@ -43,7 +43,6 @@ export * from "./harness-conformance";
 export * from "./harness-run-turn";
 export * from "./invocation-budget";
 export * from "./knowledge";
-export * from "./knowledge-generation";
 export * from "./lineage-matcher";
 export * from "./lineage-matcher-fixtures";
 export * from "./locus";

@@ -176,14 +176,16 @@ The pool is shared by filesystem work and GitHub name resolution.
 rennet serve
 rennet status
 rennet stop
-rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich] [--model <id>]
+rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]
 ```
 
 `serve`, `status`, and `stop` operate on the daemon. `map` runs without the
 daemon, builds the same deterministic Repo Map used by project processing, and
 stores it under the path-keyed local project directory. `--json` exports the map.
-`--enrich` runs the model-backed knowledge pass after the deterministic map has
-landed and exits non-zero when no usable Claude harness is available.
+`--enrich` runs the model-backed knowledge swarm after the deterministic map has
+landed. The Model Council assigns the worker and verify seats from the harnesses
+the CLI discovers, and the command exits non-zero when no usable harness is
+available.
 
 ## Diagnose setup
 

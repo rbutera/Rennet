@@ -243,24 +243,23 @@ export {
   knowledgeBackend,
 } from "./knowledge-backend";
 export {
-  changedPathsBetween,
-  createKnowledgeRunTurn,
-  type EnrichKnowledgeDeps,
-  type EnrichKnowledgeOutcome,
-  enrichKnowledgeForRepo,
-  type KnowledgeDeltaDeps,
-  type KnowledgeDeltaOutcome,
-  type KnowledgeRunTurnOptions,
-  runKnowledgeDeltaForRepo,
-  snapshotContextFromLoaded,
-} from "./knowledge-enrichment";
-export {
   committedKnowledgeDir,
   type DiscoverKnowledgeResult,
   KNOWLEDGE_FILE,
   KnowledgeStore,
   type PromoteKnowledgeResult,
 } from "./knowledge-store";
+export {
+  changedPathsBetween,
+  createClaudeSwarmTurn,
+  createCodexSwarmTurn,
+  type KnowledgeSwarmDeps,
+  type KnowledgeSwarmOutcome,
+  type KnowledgeSwarmProgress,
+  runKnowledgeSwarmForRepo,
+  type SwarmTurnOptions,
+  snapshotContextFromLoaded,
+} from "./knowledge-swarm";
 export {
   activePatchset,
   type BuildReviewContextManifestDeps,

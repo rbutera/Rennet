@@ -44,6 +44,13 @@ export interface CodexExecRequest {
   /** The JSON schema constraining the output (`--output-schema`); omitted when the
    *  docType has no body schema in this slice. */
   readonly outputSchema?: unknown;
+  /**
+   * The turn's working directory (locus-native). Absent ⇒ a plain temp dir — the
+   * classic no-repo utility call. A repo-rooted caller (the knowledge swarm's
+   * evidence-reading seats, #460) passes the checkout so the agent can read the
+   * files it is asked to reason about.
+   */
+  readonly cwd?: string;
   readonly signal?: AbortSignal;
 }
 

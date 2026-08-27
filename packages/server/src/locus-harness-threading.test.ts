@@ -24,8 +24,10 @@ describe("locus threading in MAIN", () => {
     const calls = callArgs("getClaudeHarness");
     // Exactly the read-pipeline + handoff + project-contextAsk sites that survive the
     // Board rebuild (B2), all `(locus, distroCwd)`. Exact, not `>=`: a new host-default
-    // site added later must fail this, not slip under a floor.
-    expect(calls).toHaveLength(8);
+    // site added later must fail this, not slip under a floor. (B06 dropped the
+    // knowledge-pass site: the swarm scheduler routes through claudeAdapterForRepo,
+    // which is itself one of the counted locus-threading call sites.)
+    expect(calls).toHaveLength(7);
     for (const arg of calls) {
       // Every call threads the repo-resolved `locus` variable — never `HOST_LOCUS`,
       // never a zero-arg host default.

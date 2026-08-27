@@ -4,8 +4,10 @@ description: Inspect project structure, assess stored claims, and ask questions 
 ---
 
 The Context Map shows a project's scopes, files, dependency edges, and stored
-claims about what each part does. A generated claim begins as a hypothesis. You
-can confirm it, reject it, or discuss it with the orchestrator.
+claims about what each part does. A generated claim begins as a hypothesis, and
+a model verification seat confirms or rejects it against the cited code. You can
+override a verdict, or discuss a claim with the orchestrator; nothing waits for
+your confirmation.
 
 Open the map from the **Context Map** button in a project's header.
 
@@ -27,7 +29,9 @@ A freshness badge identifies the snapshot used to build the map.
 
 ## Assess a claim
 
-Each hypothesis has three actions:
+A verification seat re-reads each hypothesis's cited spans and records
+`confirmed` or `rejected` on its own. Your assessment is an optional override,
+never a required step:
 
 - **Confirm** records that you accept the claim.
 - **Reject** records that the claim is wrong and excludes it from context sent to
@@ -50,12 +54,20 @@ The deterministic layer contains scopes, files, and dependency edges read from
 the repository. The knowledge layer contains model-generated claims with
 evidence.
 
+Generation runs as a partitioned swarm. Rennet slices the repository along its
+detected scopes, light-tier workers read each slice and emit anchored claims,
+and the verification seat confirms hypotheses and adds cross-cutting claims that
+span slices. The partitions are invisible plumbing: the map shows scopes and
+claims, not worker slices. Every in-scope file is read — there is no file cap —
+and the Model Council picks the models for both seats. On a baseline advance,
+only workers whose slice contains changed paths re-run; untouched claims carry
+forward.
+
 Build either layer from the CLI without starting the daemon:
 
 ```sh
 rennet map .
 rennet map . --enrich
-rennet map . --enrich --model claude-sonnet-5
 ```
 
 The first command stores the deterministic map. `--enrich` creates or updates

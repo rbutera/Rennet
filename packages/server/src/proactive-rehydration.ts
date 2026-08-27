@@ -78,7 +78,6 @@ export interface ResolvedRepo {
 interface KnowledgeAdvance {
   readonly repoKey: string;
   readonly repoRoot: string;
-  readonly fromOid: string;
   readonly toOid: string;
 }
 
@@ -112,11 +111,15 @@ export interface StartRepoRehydrationDeps {
   readonly narrate: (event: ProjectProcessEvent) => void;
   /** A resolve/build error — logged, never thrown into the watcher. */
   readonly onError?: (error: unknown) => void;
-  /** Background knowledge upkeep composed onto the same coalesced baseline advance. */
+  /**
+   * Background knowledge upkeep: fired once when the watcher starts (the initial
+   * run — the swarm itself no-ops when the set is already current) and again on
+   * each coalesced baseline advance. The swarm derives its own delta base from
+   * the prior set's identity, so the advance carries only the target OID.
+   */
   readonly runKnowledgePass?: (advance: {
     readonly repoKey: string;
     readonly repoRoot: string;
-    readonly fromOid: string;
     readonly toOid: string;
   }) => Promise<boolean | undefined>;
   /** Deterministic in-flight novelty reclassification after the structural advance. */
@@ -157,20 +160,13 @@ export async function startRepoRehydration(
   let knowledgeRunning = false;
   const restoreFailedKnowledge = (failed: KnowledgeAdvance): boolean => {
     const queued: KnowledgeAdvance | undefined = pendingKnowledge;
-    pendingKnowledge = queued
-      ? {
-          repoKey: queued.repoKey,
-          repoRoot: queued.repoRoot,
-          fromOid: failed.fromOid,
-          toOid: queued.toOid,
-        }
-      : failed;
+    // The swarm derives its own delta base from the stored prior set, so a
+    // failed pass needs no from-OID bookkeeping — just keep the newest target.
+    pendingKnowledge = queued ?? failed;
     return queued !== undefined;
   };
   const scheduleKnowledge = (advance: KnowledgeAdvance): void => {
-    pendingKnowledge = pendingKnowledge
-      ? { ...advance, fromOid: pendingKnowledge.fromOid }
-      : advance;
+    pendingKnowledge = advance;
     if (knowledgeRunning || !deps.runKnowledgePass) return;
     knowledgeRunning = true;
     void (async () => {
@@ -208,7 +204,6 @@ export async function startRepoRehydration(
   const advanceDeps: BaselineAdvanceDeps = {
     ...base,
     runDeltaPass: async () => {
-      const fromOid = deps.store.loadManifest(resolved.repoKey)?.baseOid;
       deps.narrate({ kind: "repo-start", repo: repoLabel, index: 1, total: 1 });
       try {
         const result = await deps.generator.generate(resolved.root, {
@@ -234,11 +229,10 @@ export async function startRepoRehydration(
         };
         await deps.runNoveltyPass?.(resolved.repoKey);
         deps.narrate({ kind: "repo-done", repo: repoLabel, summary });
-        if (fromOid && deps.runKnowledgePass) {
+        if (deps.runKnowledgePass) {
           scheduleKnowledge({
             repoKey: resolved.repoKey,
             repoRoot: resolved.root,
-            fromOid,
             toOid: result.manifest.baseOid,
           });
         }
@@ -259,6 +253,18 @@ export async function startRepoRehydration(
     coordinator,
     deps.watch ? { watch: deps.watch } : {},
   );
+  // The INITIAL knowledge run (task 5.2, review P1): a freshly-processed project
+  // gets its first swarm here, without waiting for a baseline advance. The swarm
+  // itself no-ops (`skipped`) when the stored set is already current, so this is
+  // idempotent across app launches.
+  const manifest = deps.store.loadManifest(resolved.repoKey);
+  if (manifest && deps.runKnowledgePass) {
+    scheduleKnowledge({
+      repoKey: resolved.repoKey,
+      repoRoot: resolved.root,
+      toOid: manifest.baseOid,
+    });
+  }
   let closed = false;
   return {
     repoKey: resolved.repoKey,

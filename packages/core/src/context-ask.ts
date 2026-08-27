@@ -3,8 +3,8 @@
  * answer document, composed from the ALREADY-BUILT deterministic reads plus one
  * injected model turn.
  *
- * This is a pure, node-free runner in the mould of `runKnowledgeEnrichment`
- * (`knowledge-generation.ts`): the model turn is an INJECTED `runTurn(prompt,
+ * This is a pure, node-free runner in the mould of the knowledge swarm passes
+ * (`knowledge/swarm.ts`): the model turn is an INJECTED `runTurn(prompt,
  * attempt)` so the concrete harness call lives in adapters and `core` never
  * imports it. It composes context from the existing pure reads —
  * `queryKnowledge` (`knowledge.ts`) plus `queryProjectMap` / `queryFileContext`

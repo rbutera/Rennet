@@ -351,7 +351,7 @@ describe("rennet map (daemonless repo-map build)", () => {
     const code = await runSourceCli(["map", "one", "two"], captured.io, {}, noDeps);
     expect(code).toBe(2);
     expect(captured.err.at(-1)).toBe(
-      "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich] [--model <id>]",
+      "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]",
     );
   });
 
@@ -375,7 +375,7 @@ describe("rennet map (daemonless repo-map build)", () => {
       noDeps,
     );
     expect(code).toBe(1);
-    expect(captured.err.at(-1)).toContain("no Claude harness available");
+    expect(captured.err.at(-1)).toContain("no harness available");
     // The deterministic build still persisted before the enrichment refusal.
     expect(readdirSync(projectsDir)).toHaveLength(1);
   }, 30_000);

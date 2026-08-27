@@ -18,13 +18,14 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
   createClaudeHarness,
-  enrichKnowledgeForRepo,
+  createCodexExecutor,
+  defaultCodexDiscoveryDeps,
+  defaultCodexExecEffects,
+  discoverCodex,
   type GenerateResult,
   KnowledgeStore,
-  ProjectContextReader,
   ProjectSnapshotGenerator,
   type ProjectSnapshotStore,
-  runKnowledgeDeltaForRepo,
   snapshotStoreFor,
 } from "@rennet/adapters";
 import { materializeSnapshot, queryFileOverview, queryProjectMap } from "@rennet/core";
@@ -33,6 +34,7 @@ import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
 import { WebSocket } from "ws";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
+import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { findHealthyDaemon } from "./supervise";
 
 export interface CliIo {
@@ -71,9 +73,8 @@ const HELP = [
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
   "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
   "(default: the current directory) and stores it under ~/.rennet/projects/.",
-  "`--enrich` additionally runs the model-backed knowledge pass (initial or delta)",
-  "through your installed Claude harness — one bounded turn, on your subscription.",
-  "`--model <id>` picks the harness model for that turn (e.g. claude-sonnet-5).",
+  "`--enrich` additionally runs the council-routed knowledge swarm (full or delta)",
+  "on your installed harnesses — model choice is the Model Council's.",
 ].join("\n");
 
 /** Route argv to a subcommand. Returns a process exit code (serve never returns). */
@@ -143,7 +144,6 @@ export async function runCli(
           json?: string;
           "projects-dir"?: string;
           enrich?: boolean;
-          model?: string;
         };
         positionals: string[];
       };
@@ -157,14 +157,13 @@ export async function runCli(
             json: { type: "string" },
             "projects-dir": { type: "string" },
             enrich: { type: "boolean" },
-            model: { type: "string" },
           },
         });
         if (parsed.positionals.length > 1) throw new Error("expected at most one repository path");
       } catch (error) {
         io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
         io.err(
-          "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich] [--model <id>]",
+          "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]",
         );
         return 2;
       }
@@ -175,7 +174,6 @@ export async function runCli(
           json: parsed.values.json,
           projectsDir: parsed.values["projects-dir"],
           enrich: parsed.values.enrich === true,
-          model: parsed.values.model,
         },
         io,
         env,
@@ -454,7 +452,6 @@ async function buildMap(
     json?: string;
     projectsDir?: string;
     enrich?: boolean;
-    model?: string;
   },
   io: CliIo,
   env: NodeJS.ProcessEnv = process.env,
@@ -483,15 +480,7 @@ async function buildMap(
   io.out(`  stored: ${store.paths(manifest.repoKey).mapDir}`);
   const knowledgeStore = new KnowledgeStore(store);
   if (opts.enrich) {
-    const enrichExit = await enrichMap({
-      store,
-      knowledgeStore,
-      manifest,
-      root,
-      io,
-      env,
-      model: opts.model,
-    });
+    const enrichExit = await enrichMap({ store, manifest, root, io, env });
     if (enrichExit !== 0) return enrichExit;
   }
   if (opts.json) {
@@ -531,80 +520,72 @@ async function buildMap(
 }
 
 /**
- * The `--enrich` leg: run the model-backed knowledge pass against the just-built
- * snapshot through the user's own Claude harness (their subscription, one bounded
- * turn — the same pass the daemon runs after a snapshot advance). Initial when no
- * prior set exists, delta when the prior set is pinned to an older OID, honest
- * no-op when the set is already current.
+ * The `--enrich` leg: run the council-routed knowledge swarm (#460) against the
+ * just-built snapshot — the same scheduler the daemon runs after a snapshot
+ * advance. The swarm decides skip vs delta vs full from the stored prior set's
+ * identity. Model choice is the council's (the map path takes no --model).
  */
 async function enrichMap(input: {
   store: ProjectSnapshotStore;
-  knowledgeStore: KnowledgeStore;
   manifest: ProjectSnapshotManifest;
   root: string;
   io: CliIo;
   env: NodeJS.ProcessEnv;
-  model?: string;
 }): Promise<number> {
-  const { store, knowledgeStore, manifest, root, io, env, model } = input;
-  const prior = knowledgeStore.loadLocal(manifest.repoKey);
-  if (prior && prior.baseOid === manifest.baseOid) {
-    io.out(`  knowledge: already current at this base OID (${prior.statements.length} statements)`);
-    return 0;
-  }
-  io.out("Discovering the Claude harness");
-  const { adapter, discovery } = await createClaudeHarness({ env });
-  if (!adapter) {
-    const health = discovery.health;
-    const why =
-      health.state === "unavailable"
-        ? health.detail || health.reason
-        : health.state === "degraded"
-          ? health.reason
-          : "unknown";
-    io.err(`rennet map: no Claude harness available (${why})`);
+  const { store, manifest, root, io, env } = input;
+  io.out("Discovering harnesses");
+  const { adapter } = await createClaudeHarness({ env });
+  // The hermetic harness-off hook (#386) covers the codex probe too — discovery
+  // must not spawn a login shell in a harness-disabled environment.
+  const explicitBin = env.RENNET_CODEX_BIN;
+  const codexChosen =
+    env.RENNET_DISABLE_HARNESS === "1"
+      ? null
+      : (
+          await discoverCodex(defaultCodexDiscoveryDeps(), {
+            ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
+          })
+        ).chosen;
+  const codexExecutor = codexChosen
+    ? createCodexExecutor(defaultCodexExecEffects, {
+        bin: codexChosen.path,
+        harnessVersion: codexChosen.version,
+        ...(codexChosen.runtimePath === undefined ? {} : { runtimePath: codexChosen.runtimePath }),
+      })
+    : null;
+  if (!adapter && !codexExecutor) {
+    io.err("rennet map: no harness available (neither claude nor codex resolved)");
     return 1;
   }
-  const common = {
-    reader: new ProjectContextReader(store),
-    knowledgeStore,
-    port: adapter,
+  const runtime = createKnowledgeSwarmRuntime({
+    store,
+    resolveClaudePort: async () => adapter ?? null,
+    resolveCodexExecutor: async () => codexExecutor,
+    narrate: (event) => {
+      if (event.kind === "stage")
+        io.out(`  ${event.note}${event.detail ? ` (${event.detail})` : ""}`);
+    },
+  });
+  io.out(`Running the knowledge swarm at ${manifest.baseOid.slice(0, 12)}`);
+  const outcome = await runtime.runForRepo({
     repoKey: manifest.repoKey,
     repoRoot: root,
-    baseOid: manifest.baseOid,
-    ...(model === undefined ? {} : { model }),
-  };
-  const outcome = prior
-    ? await (async () => {
-        io.out(
-          `Running the knowledge delta pass (${prior.baseOid.slice(0, 12)} → ${manifest.baseOid.slice(0, 12)})`,
-        );
-        return runKnowledgeDeltaForRepo({ ...common, fromOid: prior.baseOid });
-      })()
-    : await (async () => {
-        io.out("Running the initial knowledge enrichment (one model turn)");
-        return enrichKnowledgeForRepo(common);
-      })();
+    toOid: manifest.baseOid,
+  });
   if (outcome.status === "snapshot-unavailable") {
     io.err(`rennet map: snapshot unavailable for enrichment (${outcome.reason})`);
     return 1;
   }
-  if (outcome.status === "no-prior-set") {
-    // Unreachable: the delta leg only runs when a prior set was loaded.
-    io.err("rennet map: knowledge delta found no prior set");
-    return 1;
-  }
   if (outcome.status === "skipped") {
-    io.out("  knowledge: no changed paths touch the set; unchanged");
+    io.out(`  knowledge: ${outcome.reason}; unchanged`);
     return 0;
   }
   if (outcome.status !== "ok") {
-    io.err(
-      `rennet map: knowledge enrichment failed: ${outcome.result.failureReason ?? "the model turn did not complete"}`,
-    );
+    io.err(`rennet map: knowledge swarm failed: ${outcome.reason}`);
     return 1;
   }
-  const set = knowledgeStore.loadLocal(manifest.repoKey);
-  io.out(`  knowledge: ${set?.statements.length ?? 0} statements minted`);
+  io.out(
+    `  knowledge: ${outcome.set.statements.length} statements (${outcome.ranPartitions}/${outcome.totalPartitions} partitions ran, ${outcome.carried} carried)`,
+  );
   return 0;
 }

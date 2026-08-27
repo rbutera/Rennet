@@ -195,9 +195,11 @@ export function createCodexExecutor(
         matched: 0,
       });
     };
-    // A utility call does no repo interaction, so it runs in a plain temp cwd — no
-    // scratch files, no git-repo requirement (the whole turn rides stdio).
-    const cwd = locus.kind === "wsl" ? "/tmp" : tmpdir();
+    // Default utility call: no repo interaction, plain temp cwd — no scratch
+    // files, no git-repo requirement (the whole turn rides stdio). A caller that
+    // NEEDS the agent reading real files (the knowledge swarm's seats) passes a
+    // locus-native `cwd` and the turn roots there instead.
+    const cwd = req.cwd ?? (locus.kind === "wsl" ? "/tmp" : tmpdir());
     const args = buildAppServerArgs();
     const program = runtimePath ?? bin;
     const programArgs = runtimePath === undefined ? args : [bin, ...args];
