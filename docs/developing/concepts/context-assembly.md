@@ -91,12 +91,16 @@ settings write, and the review proceeds meanwhile.
 
 Retrieval fires in the background when a review opens and persists beside the
 project snapshot under `~/.rennet/projects/`, keyed by review target and
-patchset — a re-capture re-runs it, and re-review rounds re-run it per round.
-Every item is structured (id, tracker, title, state, bounded body, acceptance
-criteria, URL, provenance, fetched-at) and size-bounded, so the whole dossier
-inlines verbatim into drafting prompts through the Delta packet. Full comment
-threads and linked-ticket payloads persist beside the dossier for depth on
-demand behind the context tools — they never enter the dossier itself.
+patchset — a re-capture (new patchset) re-runs it. Per-round re-runs arrive
+with round scheduling (planned). Every item is structured (id, tracker, title,
+state, bounded body, acceptance criteria, URL, provenance, fetched-at) and
+bounded twice — per item and dossier-wide, dropping whole items with the
+omission recorded — so the dossier can inline verbatim through the Delta
+packet's dossier seam; the drafting prompts that consume it arrive with round
+scheduling (planned). Full comment threads and linked-ticket payloads persist
+in the same store record for depth on demand — they never enter the dossier
+itself, and the command binding that serves them to agents lands with dispatch
+binding (planned).
 
 ## Selection-aware questions
 

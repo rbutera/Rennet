@@ -26,7 +26,9 @@ describe("createProjectScoutRuntime", () => {
           : Promise.reject(new Error(`no ${args[0]}`)),
       resolveClaudePort: () => Promise.reject(new Error("claude discovery exploded")),
       resolveCodexExecutor: () => Promise.reject(new Error("codex discovery exploded")),
-      narrate: () => {},
+      narrate: () => {
+        /* progress lines are irrelevant to this test */
+      },
     });
 
     const result = await runtime.runForRepo({ repoKey: "repo", repoRoot: tempDir() });

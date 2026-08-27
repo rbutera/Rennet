@@ -49,6 +49,8 @@ Add-project UI (C12); standing tracker knowledge through the swarm (B6 owns the 
 
 17. **The dossier pair publishes atomically, and persisted state is parsed, never cast (Codex 11 + 12).** The store now writes ONE envelope (`record.json`: canonical `serializeDossier` bytes + raw payloads) through the existing atomic write — a crash cannot leave a dossier whose raw depth is missing, and the refire gate cannot see a torn pair. Both the record and `scout.json` are zod-parsed at load: a malformed or hand-forged file (e.g. an out-of-vocabulary provenance) reads as an honest absence instead of walking typed into the settings ladder. Format changed freely — no durable records pre-B7.
 
+18. **Docs describe B07's shipped state (Codex 13).** `context-assembly.md` no longer claims per-round re-runs, drafter-prompt consumption, or agent-facing context-tool binding as present — each is marked planned for its owning workstream (B8/B10). The dossier-wide bound and single-record persistence are documented as they now are.
+
 ## Verification (packet)
 
 `pnpm check` green. E2E (ruled approach, reconciliation 4): against the frozen real-Rennet-PR fixture, extraction → retrieval produces a dossier where every item carries provenance + fetched-at, total serialized size respects the bound, and the dossier inlines into a B05 `buildDeltaPacket` call without truncation. Positive controls that can fail: oversize body → bounded (schema rejects / item truncated per the shape's rule); drop provenance from a fixture item → schema rejects; break the ref extractor → zero items and the e2e's item-count assert fails.
