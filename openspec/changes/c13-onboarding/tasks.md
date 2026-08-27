@@ -22,7 +22,7 @@ Serial clusters. Each cluster is one session. Search before implementing
 
 ## Cluster 2 — Typed anchor registry + Coachmark component
 
-- [ ] `coach/registry.ts` (or a store slice): a `MarkId`-keyed registry.
+- [x] `coach/registry.ts` (or a store slice): a `MarkId`-keyed registry.
       `useCoachAnchor(id)` returns a ref callback that registers/unregisters the
       element; the registry is closed over the `MarkId` union — an unknown id is
       a compile error, a **duplicate registration for one id is detected** (the
