@@ -97,6 +97,19 @@ export { CoverageMosaicView } from "./components/coverage";
 export { DirectoryBrowser } from "./components/directory-browser";
 export { FrontDoor } from "./components/front-door";
 export { SettingsScreen } from "./components/settings-screen";
+// The hand-off layer (C08, #489): the review's leaving surfaces — the exit FAB + derived pip,
+// the mode-dispatched hand-off view, and the egress-return / draft types the exits speak. See
+// `handoff/index.ts`.
+export type {
+  DraftedPr,
+  EntryMode,
+  ExitFabProps,
+  HandoffViewProps,
+  PostReceipt,
+  ProposedVerdict,
+  PrReceipt,
+} from "./handoff";
+export { ExitFab, HandoffView, modeHasExits, resolveEntryMode } from "./handoff";
 // The review layer (C4, #489): the shared machinery C5–C9 render — the one code
 // surface, the multi-site evidence viewer, the one line-comment editor, the prose
 // selection toolbar, the R45 markdown-subset renderer, reference chips, and the
