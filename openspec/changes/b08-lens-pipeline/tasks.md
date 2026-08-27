@@ -38,7 +38,7 @@ Serial clusters, each a separately-reviewable **sub-wave** (B08 is XL — the or
 ## Cluster 6 — concurrency measurement (M1, engine asset risk 3)
 
 - [x] 6.1 Measure the **warm-session concurrency cost** against real harness sessions before trusting the cap-10 fan-out (packet-required). Record the measurement — the numbers and the verdict (keep 10, or the revised cap) — in `proposal.md` §Concurrency measurement. If the measurement moves the cap, update the cluster-5 runtime concurrency in the same commit.
-- [ ] 6.2 Cluster gate green. Commit.
+- [x] 6.2 Cluster gate green. Commit.
 
 ## Cluster 7 — docs (definition of done)
 
