@@ -46,6 +46,10 @@ export interface SettingsHost {
   /** The dial address; absent for the local machine (there is nothing to dial). */
   readonly address?: string;
   readonly daemon: DaemonInfo;
+  /** Projects Rennet holds on this host — the blast radius the Remove confirmation names. */
+  readonly projectCount?: number;
+  /** Sessions across those projects — named alongside the projects when nonzero. */
+  readonly sessionCount?: number;
 }
 
 // ── Detection rows (§4 source control, §5 agents — one shape) ──────────────────

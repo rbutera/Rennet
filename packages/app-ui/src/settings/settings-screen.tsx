@@ -5,6 +5,7 @@ import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
 import { settingsPath } from "../routes/url";
 import { AppearancePage } from "./appearance";
+import { EnvironmentsPage } from "./environments/environments-page";
 import {
   parseSettingsPage,
   SETTINGS_PAGE_BY_ID,
@@ -46,6 +47,7 @@ function SettingsPagePending({ page }: { readonly page: SettingsPageMeta }) {
 }
 
 function ActivePage({ page }: { readonly page: SettingsPageMeta }) {
+  if (page.id === "environments") return <EnvironmentsPage />;
   if (page.id === "appearance") return <AppearancePage />;
   return <SettingsPagePending page={page} />;
 }
