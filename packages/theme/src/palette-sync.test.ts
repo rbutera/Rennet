@@ -97,10 +97,11 @@ describe("theme packs are complete re-bindings", () => {
   // The set is real (40 semantic roles), so the equality checks below cannot pass
   // vacuously, and the roles the design contract names all survive the mapping.
   it("the reference token set carries every semantic role", () => {
-    expect(referenceTokens.length).toBe(40);
+    expect(referenceTokens.length).toBe(41);
     for (const role of [
       "accent",
       "green",
+      "model",
       "danger",
       "add",
       "del",

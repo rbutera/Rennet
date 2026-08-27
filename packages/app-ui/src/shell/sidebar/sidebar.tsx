@@ -1,0 +1,884 @@
+import type { UpdateReadyInfo } from "@rennet/protocol";
+import {
+  Button,
+  Collapse,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  cn,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Kbd,
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@rennet/ui";
+import {
+  Archive,
+  Check,
+  ChevronDown,
+  CircleHelp,
+  FolderPlus,
+  Layers,
+  Loader2,
+  Map as MapIcon,
+  MessageSquarePlus,
+  Monitor,
+  PanelLeft,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+  Settings,
+  Settings2,
+  Trash2,
+} from "lucide-react";
+import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
+import { useLocation, useRoute } from "wouter";
+import { Icon } from "../../components/icon";
+import { useUpdateReady } from "../../components/update-ready";
+import { useBridge } from "../../data";
+import {
+  archivedPath,
+  newChatPath,
+  projectMapPath,
+  projectSettingsPath,
+  ROUTES,
+  sessionPath,
+  settingsPath,
+} from "../../routes/url";
+import { useRennetStore } from "../../store";
+import {
+  type SidebarProject,
+  type SidebarSession,
+  useRemoveProject,
+  useSidebarSessionProjection,
+  useSidebarTree,
+} from "../sidebar-data";
+import { RennetLockup } from "./lockup";
+import { TargetIcon } from "./target-icon";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The app sidebar (C03 §2–3, R35 rewrite — autopsy S5 dies here). ZERO props:
+// the tree resolves through `sidebar-data`, fold state lives in the `ui` slice,
+// the active-session highlight is DERIVED from the route (wouter + slug), every
+// mutation goes through the seam, dialogs dispatch through `ui.openDialog`, and
+// navigation rides `routes/url.ts` builders. Nothing is threaded from the frame.
+//
+// One persistent element animates 256px panel ↔ 48px rail; the content swaps
+// inside it, and both states carry the collapse control. Sessions are B9's
+// projection — until it lands the live client shows an honest empty state and the
+// row/mutation proofs run over the projection context (reconciliation 2).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DOCS_URL = "https://docs.rennet.dev";
+const ISSUES_URL = "https://github.com/rbutera/rennet/issues/new";
+
+/** The Update dialog — driven by the real `UpdateReadyInfo`, listing exactly what it
+ *  carries (just the version today; no invented bullets — reconciliation 7). */
+function UpdateDialog({
+  info,
+  open,
+  onOpenChange,
+  onApply,
+}: {
+  readonly info: UpdateReadyInfo;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onApply: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Update Available</DialogTitle>
+          <DialogDescription>
+            {info.version
+              ? `Rennet ${info.version} is downloaded and ready. Restart to apply it.`
+              : "A new version of Rennet is downloaded and ready. Restart to apply it."}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" />}>Later</DialogClose>
+          <Button onClick={onApply}>Update Now</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The Help popover — Documentation, Keyboard Shortcuts (→ keybindings settings),
+ *  Replay Tour (C13 wires the re-arm), Report an Issue. No "Contact support". */
+function HelpPopover({
+  trigger,
+  align = "start",
+}: {
+  readonly trigger: ReactElement;
+  readonly align?: "start" | "end";
+}) {
+  const [open, setOpen] = useState(false);
+  const [, navigate] = useLocation();
+  const rowClass =
+    "flex h-8 items-center rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink";
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={trigger} />
+      <PopoverContent align={align} className="w-52 gap-0.5 p-1">
+        <PopoverHeader className="px-2 pt-1">
+          <PopoverTitle className="text-xs text-ink-soft">Help</PopoverTitle>
+        </PopoverHeader>
+        <a href={DOCS_URL} target="_blank" rel="noreferrer" className={rowClass}>
+          Documentation
+        </a>
+        <button
+          type="button"
+          className={rowClass}
+          onClick={() => {
+            setOpen(false);
+            navigate(settingsPath("keybindings"));
+          }}
+        >
+          Keyboard Shortcuts
+        </button>
+        {/* Replay Tour re-arms the coach marks — wired when C13's tour store exists. */}
+        <button type="button" className={rowClass} disabled>
+          Replay Tour
+        </button>
+        <a href={ISSUES_URL} target="_blank" rel="noreferrer" className={rowClass}>
+          Report an Issue
+        </a>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** The searchable New-Chat project picker (kit Command in a Popover), with a
+ *  "New Project" escape. Picking navigates to the project's new-chat route. */
+function NewChatPicker({
+  trigger,
+  projects,
+  onPick,
+  onNewProject,
+}: {
+  readonly trigger: ReactNode;
+  readonly projects: readonly SidebarProject[];
+  readonly onPick: (projectId: string) => void;
+  readonly onNewProject: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={trigger as ReactElement} />
+      <PopoverContent align="start" className="w-64 p-0">
+        <Command>
+          <CommandInput placeholder="Search projects" />
+          <CommandList>
+            <CommandEmpty>No projects found.</CommandEmpty>
+            <CommandGroup heading="Projects">
+              {projects.map((project) => (
+                <CommandItem
+                  key={project.id}
+                  value={project.name}
+                  onSelect={() => {
+                    setOpen(false);
+                    onPick(project.id);
+                  }}
+                >
+                  <Icon icon={Layers} className="size-3.5 text-ink-soft" />
+                  <span>{project.name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            <CommandSeparator />
+            <CommandGroup>
+              <CommandItem
+                value="New Project"
+                onSelect={() => {
+                  setOpen(false);
+                  onNewProject();
+                }}
+              >
+                <Icon icon={FolderPlus} className="size-3.5 text-ink-soft" />
+                <span>New Project</span>
+              </CommandItem>
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** One session line — used by the project list AND the Pinned section. Highlight is
+ *  DERIVED (`active`), never stored; inline rename keeps the target icon showing. */
+function SessionRow({
+  session,
+  sublabel,
+  active,
+  onOpen,
+  onArchive,
+}: {
+  readonly session: SidebarSession;
+  readonly sublabel: string;
+  readonly active: boolean;
+  readonly onOpen: () => void;
+  readonly onArchive: () => void;
+}) {
+  const projection = useSidebarSessionProjection();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Take focus + select the instant the field opens (the a11y-safe form of autoFocus).
+  useEffect(() => {
+    if (!editing) return;
+    const el = inputRef.current;
+    el?.focus();
+    el?.select();
+  }, [editing]);
+
+  function commit() {
+    // An emptied title keeps the old one (R67).
+    projection.renameSession(session.id, draft.trim() || session.title);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="flex min-h-8 items-center gap-1.5 rounded-chip bg-raised px-2 py-1">
+        {/* Reviewed keeps the plain target icon (the tick is a separate glyph, R36). */}
+        <TargetIcon
+          kind={session.target}
+          state={session.targetState === "reviewed" ? undefined : session.targetState}
+          className="size-3"
+        />
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commit();
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setEditing(false);
+            }
+          }}
+          aria-label="Session name"
+          className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger render={<div className="flex flex-col" />}>
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-current={active}
+          className={cn(
+            "flex min-h-8 w-full flex-col justify-center gap-0.5 rounded-chip px-2 py-1 text-left transition-colors hover:bg-raised",
+            active && "bg-raised",
+          )}
+        >
+          <span className="flex items-center gap-1.5">
+            {/* The leading icon is always the target KIND (accent when needs-you);
+                reviewed is a separate green tick beside the title, not a recolor (R36). */}
+            <TargetIcon
+              kind={session.target}
+              state={session.targetState === "reviewed" ? undefined : session.targetState}
+              className="size-3"
+            />
+            <span
+              className={cn(
+                "truncate text-sm leading-tight",
+                active ? "text-ink" : "text-ink-soft",
+              )}
+            >
+              {session.title}
+            </span>
+            {session.targetState === "reviewed" ? (
+              <Icon
+                icon={Check}
+                aria-label="Reviewed"
+                aria-hidden={false}
+                className="size-3 shrink-0 text-green"
+              />
+            ) : null}
+            {session.pinned ? (
+              <Icon
+                icon={Pin}
+                aria-label="Pinned"
+                aria-hidden={false}
+                className="size-3 shrink-0 text-ink-faint"
+              />
+            ) : null}
+            {/* Unread orchestrator activity — verdigris, the machine's register. The
+                ACTIVE row never shows it: being there means it has been read. */}
+            {session.unread && !active ? (
+              <span
+                role="img"
+                className="size-1.5 shrink-0 rounded-full bg-model"
+                aria-label="Unread updates"
+              />
+            ) : null}
+          </span>
+          <span className="pl-[18px] text-2xs text-ink-faint">{sublabel}</span>
+        </button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => projection.setSessionPinned(session.id, !session.pinned)}>
+          <Icon icon={session.pinned ? PinOff : Pin} />
+          {session.pinned ? "Unpin" : "Pin"}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            setDraft(session.title);
+            setEditing(true);
+          }}
+        >
+          <Icon icon={Pencil} />
+          Rename
+        </ContextMenuItem>
+        <ContextMenuItem onClick={onArchive}>
+          <Icon icon={Archive} />
+          Archive
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/** The collapsed rail — Search over New Chat at the top; Update, Help, Settings
+ *  bottom-anchored in that order (R15/R16). */
+function Rail({
+  projects,
+  onExpand,
+  onSearch,
+  onPick,
+  onNewProject,
+  onOpenSettings,
+  update,
+}: {
+  readonly projects: readonly SidebarProject[];
+  readonly onExpand: () => void;
+  readonly onSearch: () => void;
+  readonly onPick: (projectId: string) => void;
+  readonly onNewProject: () => void;
+  readonly onOpenSettings: () => void;
+  readonly update: ReactNode;
+}) {
+  const iconBtn =
+    "flex size-7 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink";
+  return (
+    <div className="flex h-full w-12 flex-col items-center py-2">
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-label="Expand sidebar"
+        className={cn(iconBtn, "mb-2")}
+      >
+        <Icon icon={PanelLeft} className="size-3.5" />
+      </button>
+      <nav className="flex flex-col items-center gap-1" aria-label="App">
+        <button
+          type="button"
+          aria-label="Search"
+          title="Search"
+          onClick={onSearch}
+          className={iconBtn}
+        >
+          <Icon icon={Search} className="size-4" />
+        </button>
+        <NewChatPicker
+          projects={projects}
+          onPick={onPick}
+          onNewProject={onNewProject}
+          trigger={
+            <button type="button" aria-label="New Chat" title="New Chat" className={iconBtn}>
+              <Icon icon={MessageSquarePlus} className="size-4" />
+            </button>
+          }
+        />
+      </nav>
+      <div className="mt-auto flex flex-col items-center gap-1">
+        {update}
+        <HelpPopover
+          trigger={
+            <button type="button" aria-label="Help" title="Help" className={iconBtn}>
+              <Icon icon={CircleHelp} className="size-4" />
+            </button>
+          }
+        />
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          onClick={onOpenSettings}
+          className={iconBtn}
+        >
+          <Icon icon={Settings} className="size-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function Sidebar() {
+  const open = useRennetStore((s) => s.ui.sidebarOpen);
+  const setSidebarOpen = useRennetStore((s) => s.uiActions.setSidebarOpen);
+  const folds = useRennetStore((s) => s.ui.sidebarFolds);
+  const toggleFold = useRennetStore((s) => s.uiActions.toggleFold);
+  const setCommandMenuOpen = useRennetStore((s) => s.uiActions.setCommandMenuOpen);
+  const openDialog = useRennetStore((s) => s.uiActions.openDialog);
+  const setChatOpen = useRennetStore((s) => s.uiActions.setChatOpen);
+
+  const [, navigate] = useLocation();
+  const [, sessionParams] = useRoute(ROUTES.session);
+  const [, runParams] = useRoute(ROUTES.sessionRun);
+  const [onMap, mapParams] = useRoute(ROUTES.projectMap);
+  const [onIndexing, indexingParams] = useRoute(ROUTES.projectIndexing);
+  const activeSlug = sessionParams?.slug
+    ? decodeURIComponent(sessionParams.slug)
+    : runParams?.slug
+      ? decodeURIComponent(runParams.slug)
+      : null;
+
+  const { hosts } = useSidebarTree();
+  const projection = useSidebarSessionProjection();
+  const removeProject = useRemoveProject();
+
+  // The real update-ready channel, moved off the deleted legacy shell into the
+  // frame: the host bridge pushes readiness; the sidebar's Update control opens on it.
+  const bridge = useBridge();
+  const updateReady = useUpdateReady((s) => s.ready);
+  const markReady = useUpdateReady((s) => s.markReady);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  useEffect(() => bridge.onUpdateReady?.((info) => markReady(info)), [bridge, markReady]);
+
+  const projects = hosts.flatMap((host) => host.projects);
+  const activeProjectId = activeSlug
+    ? (projects.find((p) => p.sessions.some((s) => s.slug === activeSlug))?.id ?? null)
+    : null;
+  const pinned = projects.flatMap((project) =>
+    project.sessions
+      .filter((s) => s.pinned && !s.archived)
+      .map((session) => ({ session, project })),
+  );
+  const archivedCount = projects.reduce(
+    (count, project) => count + project.sessions.filter((s) => s.archived).length,
+    0,
+  );
+
+  // Inline project rename + remove-confirmation state (local, ephemeral).
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [projectDraft, setProjectDraft] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<SidebarProject | null>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
+  // Focus + select the inline project-rename field on open (a11y-safe autoFocus).
+  useEffect(() => {
+    if (!renamingProjectId) return;
+    const el = projectInputRef.current;
+    el?.focus();
+    el?.select();
+  }, [renamingProjectId]);
+
+  function standingIn(projectId: string): boolean {
+    if (onMap && mapParams?.id === projectId) return true;
+    if (onIndexing && indexingParams?.id === projectId) return true;
+    return activeProjectId === projectId;
+  }
+
+  function openSession(session: SidebarSession) {
+    setChatOpen(true);
+    navigate(sessionPath(session.slug));
+  }
+
+  function archiveSession(session: SidebarSession) {
+    projection.archiveSession(session.id);
+    // Archiving the session you are viewing pulls it out of the tree — move on.
+    if (session.slug === activeSlug) navigate(newChatPath());
+  }
+
+  function confirmRemove(project: SidebarProject) {
+    const standing = standingIn(project.id);
+    void removeProject(project.id);
+    setRemoveTarget(null);
+    if (standing) navigate(newChatPath());
+  }
+
+  function commitProjectRename(project: SidebarProject) {
+    projection.renameProject(project.id, projectDraft.trim() || project.fallbackName);
+    setRenamingProjectId(null);
+  }
+
+  const updateControlPanel = updateReady ? (
+    <button
+      type="button"
+      onClick={() => setUpdateDialogOpen(true)}
+      className="ml-auto flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-sm font-medium text-update-ink transition-colors hover:brightness-110"
+    >
+      <Icon icon={RefreshCw} className="size-3.5 shrink-0" />
+      <span>Update</span>
+    </button>
+  ) : null;
+
+  const updateControlRail = updateReady ? (
+    <button
+      type="button"
+      aria-label="Update Available"
+      title="Update Available"
+      onClick={() => setUpdateDialogOpen(true)}
+      className="flex size-7 items-center justify-center rounded-chip bg-update text-update-ink transition-colors hover:brightness-110"
+    >
+      <Icon icon={RefreshCw} className="size-4" />
+    </button>
+  ) : null;
+
+  return (
+    <aside
+      data-region="sidebar"
+      data-open={open}
+      className={cn(
+        "rennet-sidebar h-full shrink-0 overflow-hidden border-r border-line bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        open ? "w-64" : "w-12",
+      )}
+    >
+      {open ? (
+        <div className="flex h-full min-h-0 w-64 flex-col">
+          {/* Header — the real lockup (scheme-swapped vector artwork, never a font). */}
+          <div className="flex h-10 shrink-0 items-center justify-between px-3">
+            <RennetLockup size={16} className="w-auto" />
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Collapse sidebar"
+              className="flex size-6 items-center justify-center rounded-chip text-ink-soft hover:bg-raised hover:text-ink"
+            >
+              <Icon icon={PanelLeft} className="size-3.5" />
+            </button>
+          </div>
+
+          {/* Action block: Search → New Chat → Add Project → Add Environment. */}
+          <div className="flex flex-col gap-0.5 px-2">
+            <button
+              type="button"
+              onClick={() => setCommandMenuOpen(true)}
+              className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+            >
+              <Icon icon={Search} className="size-3.5 shrink-0" />
+              <span className="flex-1">Search</span>
+              <Kbd>⌘P</Kbd>
+            </button>
+            <NewChatPicker
+              projects={projects}
+              onPick={(id) => navigate(newChatPath(id))}
+              onNewProject={() => openDialog("add-project")}
+              trigger={
+                <button
+                  type="button"
+                  className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                >
+                  <Icon icon={MessageSquarePlus} className="size-3.5 shrink-0" />
+                  <span>New Chat</span>
+                </button>
+              }
+            />
+            <button
+              type="button"
+              onClick={() => openDialog("add-project")}
+              className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+            >
+              <Icon icon={FolderPlus} className="size-3.5 shrink-0" />
+              <span>Add Project</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => openDialog("add-environment")}
+              className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+            >
+              <Icon icon={Plus} className="size-3.5 shrink-0" />
+              <span>Add Environment</span>
+            </button>
+          </div>
+
+          {/* The tree — Pinned (only when non-empty), then host groups. */}
+          <div className="mt-5 flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
+            <div className="flex flex-col gap-0.5 pb-2">
+              {pinned.length > 0 ? (
+                <div className="flex flex-col">
+                  <div className="flex h-6 items-center gap-1.5 px-2">
+                    <Icon icon={Pin} className="size-3 shrink-0 text-accent" />
+                    <span className="truncate text-2xs font-medium uppercase tracking-wide text-ink-faint">
+                      Pinned
+                    </span>
+                  </div>
+                  {pinned.map(({ session, project }) => (
+                    <SessionRow
+                      key={session.id}
+                      session={session}
+                      sublabel={`${project.name} · ${session.time}`}
+                      active={session.slug === activeSlug}
+                      onOpen={() => openSession(session)}
+                      onArchive={() => archiveSession(session)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+
+              {hosts.map((host) => (
+                <div key={host.id} className="flex flex-col pt-5 first:pt-0">
+                  <div className="flex h-6 items-center gap-1.5 px-2">
+                    <Icon
+                      icon={host.kind === "local" ? Monitor : Server}
+                      className="size-3 shrink-0 text-ink-faint"
+                    />
+                    <span className="truncate text-2xs font-medium uppercase tracking-wide text-ink-faint">
+                      {host.label}
+                    </span>
+                  </div>
+
+                  {host.projects.map((project) => {
+                    const expanded = folds[project.id] !== true || project.id === activeProjectId;
+                    const activeCount = project.sessions.filter((s) => !s.archived).length;
+                    return (
+                      <ContextMenu key={project.id}>
+                        <ContextMenuTrigger render={<div className="flex flex-col" />}>
+                          {renamingProjectId === project.id ? (
+                            <div className="flex h-7 items-center gap-1.5 rounded-chip bg-raised px-2">
+                              <Icon
+                                icon={ChevronDown}
+                                className={cn(
+                                  "size-3 shrink-0 text-ink-faint transition-transform",
+                                  !expanded && "-rotate-90",
+                                )}
+                              />
+                              <Icon icon={Layers} className="size-3.5 shrink-0 text-ink-faint" />
+                              <input
+                                ref={projectInputRef}
+                                value={projectDraft}
+                                onChange={(event) => setProjectDraft(event.target.value)}
+                                onBlur={() => commitProjectRename(project)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") commitProjectRename(project);
+                                  if (event.key === "Escape") {
+                                    event.stopPropagation();
+                                    setRenamingProjectId(null);
+                                  }
+                                }}
+                                aria-label="Project name"
+                                placeholder={project.fallbackName}
+                                className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
+                              />
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => toggleFold(project.id)}
+                              aria-expanded={expanded}
+                              className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised"
+                            >
+                              <Icon
+                                icon={ChevronDown}
+                                className={cn(
+                                  "size-3 shrink-0 text-ink-faint transition-transform",
+                                  !expanded && "-rotate-90",
+                                )}
+                              />
+                              <Icon icon={Layers} className="size-3.5 shrink-0 text-ink-faint" />
+                              <span className="flex-1 truncate">{project.name}</span>
+                              {project.indexing ? (
+                                <span className="flex items-center gap-1 text-2xs text-ink-faint">
+                                  <Icon icon={Loader2} className="size-3 animate-spin" />
+                                  indexing
+                                </span>
+                              ) : (
+                                <span className="text-2xs text-ink-faint">{activeCount}</span>
+                              )}
+                            </button>
+                          )}
+
+                          <Collapse open={expanded}>
+                            {/* biome-ignore lint/a11y/noStaticElementInteractions: stops the row context menu leaking to session rows. */}
+                            <div
+                              className="ml-3 flex flex-col gap-0.5 border-l border-line pb-1 pl-2"
+                              onContextMenu={(event) => event.stopPropagation()}
+                            >
+                              {project.sessions
+                                .filter((session) => !session.archived)
+                                .map((session) => (
+                                  <SessionRow
+                                    key={session.id}
+                                    session={session}
+                                    sublabel={session.time}
+                                    active={session.slug === activeSlug}
+                                    onOpen={() => openSession(session)}
+                                    onArchive={() => archiveSession(session)}
+                                  />
+                                ))}
+                              <button
+                                type="button"
+                                onClick={() => navigate(newChatPath(project.id))}
+                                className="group/newchat flex h-7 items-center gap-1.5 rounded-chip px-2 text-left text-xs text-ink-faint transition-colors hover:bg-accent-soft hover:text-accent"
+                              >
+                                <Icon
+                                  icon={Plus}
+                                  className="size-3 shrink-0 transition-transform duration-200 group-hover/newchat:rotate-90"
+                                />
+                                <span>New Chat</span>
+                              </button>
+                            </div>
+                          </Collapse>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => navigate(projectMapPath(project.id))}>
+                            <Icon icon={MapIcon} />
+                            View Context Map
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => {
+                              setProjectDraft(project.name);
+                              setRenamingProjectId(project.id);
+                            }}
+                          >
+                            <Icon icon={Pencil} />
+                            Rename
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => navigate(projectSettingsPath(project.id))}
+                          >
+                            <Icon icon={Settings2} />
+                            Project Settings
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            variant="destructive"
+                            onClick={() => setRemoveTarget(project)}
+                          >
+                            <Icon icon={Trash2} />
+                            Remove project…
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Footer — Archived (when > 0), then Settings · Help · Update. */}
+          <div className="flex flex-col gap-0.5 border-t border-line px-2 py-2">
+            {archivedCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => navigate(archivedPath())}
+                className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              >
+                <Icon icon={Archive} className="size-3.5 shrink-0" />
+                <span className="flex-1">Archived</span>
+                <span className="text-2xs text-ink-faint">{archivedCount}</span>
+              </button>
+            ) : null}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="Settings"
+                title="Settings"
+                onClick={() => navigate(settingsPath("appearance"))}
+                className="flex size-8 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              >
+                <Icon icon={Settings} className="size-3.5" />
+              </button>
+              <HelpPopover
+                trigger={
+                  <button
+                    type="button"
+                    aria-label="Help"
+                    title="Help"
+                    className="flex size-8 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                  >
+                    <Icon icon={CircleHelp} className="size-3.5" />
+                  </button>
+                }
+              />
+              {updateControlPanel}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <Rail
+          projects={projects}
+          onExpand={() => setSidebarOpen(true)}
+          onSearch={() => setCommandMenuOpen(true)}
+          onPick={(id) => navigate(newChatPath(id))}
+          onNewProject={() => openDialog("add-project")}
+          onOpenSettings={() => navigate(settingsPath("appearance"))}
+          update={updateControlRail}
+        />
+      )}
+
+      {/* Remove-project confirmation — names the project + its session count
+          (archived included), states the repo on disk is untouched (R66). */}
+      <Dialog
+        open={removeTarget !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setRemoveTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {removeTarget?.name}?</DialogTitle>
+            <DialogDescription>
+              {removeTarget && removeTarget.sessions.length > 0
+                ? `This removes the project and its ${removeTarget.sessions.length} session${removeTarget.sessions.length === 1 ? "" : "s"}, archived included, from Rennet. `
+                : "This removes the project from Rennet. "}
+              The repository on disk is not touched.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => removeTarget && confirmRemove(removeTarget)}
+            >
+              Remove Project
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {updateReady ? (
+        <UpdateDialog
+          info={updateReady}
+          open={updateDialogOpen}
+          onOpenChange={setUpdateDialogOpen}
+          onApply={() => {
+            bridge.applyUpdate?.();
+            setUpdateDialogOpen(false);
+          }}
+        />
+      ) : null}
+    </aside>
+  );
+}
