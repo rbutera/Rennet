@@ -48,12 +48,18 @@ describe("url grammar", () => {
   });
 
   it("readSessionQuery applies fallbacks across the whole grammar", () => {
-    const search = new URLSearchParams("view=bogus&lens=noise&file=x.ts");
-    expect(readSessionQuery(search)).toEqual({ view: DEFAULT_VIEW, lens: "noise", file: "x.ts" });
+    const search = new URLSearchParams("view=bogus&lens=noise&file=x.ts&round=gen2");
+    expect(readSessionQuery(search)).toEqual({
+      view: DEFAULT_VIEW,
+      lens: "noise",
+      file: "x.ts",
+      round: "gen2", // the round-diff identity (finding 2) round-trips through the grammar
+    });
     expect(readSessionQuery(new URLSearchParams())).toEqual({
       view: DEFAULT_VIEW,
       lens: DEFAULT_LENS,
       file: null,
+      round: null,
     });
   });
 
