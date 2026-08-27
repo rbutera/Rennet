@@ -78,7 +78,7 @@ describe("rennet store", () => {
       // Seed EVERY pre-C04 field with a distinct value.
       a.stageAsk({ anchor: "src/x.ts:3", type: "request-change", body: "fix" });
       a.setCodeComment("src/x.ts", 3, "note");
-      a.retire("ask-old");
+      a.retire({ anchor: "ask-old", type: "comment", body: "old note" }, "dropped by you");
       a.setVerdictOverride("REQUEST_CHANGES");
       a.setDraftEdit("pr-body", "draft text");
       a.setFocusedThread("qt-existing");

@@ -1,6 +1,6 @@
 import type { Review } from "@rennet/protocol";
 import type { RennetState, StagedAsk } from "../store";
-import { parseLineAnchor, selectBodyVsLineAsks } from "./selectors";
+import { parseLineAnchor, partitionAsksByAnchor } from "./selectors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The hand-off resolution seam (C08 cluster 1, Reconciliation 1/3) — the SINGLE point
@@ -67,12 +67,12 @@ export interface LivingDraft {
  * are the swap this function absorbs (cluster 8); every lane reads THIS, never the store
  * directly, so the swap touches this file alone.
  */
-export const selectLivingDraft = (s: RennetState): LivingDraft => {
-  const { body, line } = selectBodyVsLineAsks(s);
+export const composeLivingDraft = (asks: Readonly<Record<string, StagedAsk>>): LivingDraft => {
+  const { body, line } = partitionAsksByAnchor(asks);
   const byPath = new Map<string, LineComment[]>();
   for (const ask of line) {
     const parsed = parseLineAnchor(ask.anchor);
-    if (!parsed) continue; // selectBodyVsLineAsks already proved the parse; guard for types
+    if (!parsed) continue; // partitionAsksByAnchor already proved the parse; guard for types
     const group = byPath.get(parsed.path) ?? [];
     group.push({ path: parsed.path, line: parsed.line, ask });
     byPath.set(parsed.path, group);
@@ -83,3 +83,26 @@ export const selectLivingDraft = (s: RennetState): LivingDraft => {
   }));
   return { body, lineGroups };
 };
+
+/**
+ * Compose the living draft off the store's staged asks. A surface subscribing to the stable
+ * `stagedAsks` map memoizes `composeLivingDraft` over it directly; this selector is the
+ * whole-state reader for non-render call sites. Both share the one composition.
+ */
+export const selectLivingDraft = (s: RennetState): LivingDraft =>
+  composeLivingDraft(s.review.stagedAsks);
+
+/**
+ * The span-rework seam (Objective clause 4) — the SINGLE point selection-steer Revise reaches.
+ * Cluster 8 binds it to B11/B9's real span-rework command (exactly as `selectLivingDraft` is the
+ * living-draft-source swap); until they land the affordance renders (task 4.3) and execution is
+ * deliberately gated. No call site reworks a span itself — every Revise routes through here.
+ */
+export function reviseDraftSpan(span: string, instruction: string): void {
+  // ponytail: gated boundary — the real rework command lands in cluster 8 (B11/B9). Wiring it
+  // here (and nowhere else) is the seam's whole reason to exist; not a hollow pass of a
+  // completable task — a genuinely blocked one, left un-wired on purpose. The args are named
+  // so cluster 8's binding is a body swap, not a signature change.
+  void span;
+  void instruction;
+}

@@ -77,14 +77,19 @@ export interface VerdictArithmetic {
  * M comments" beside itself. This is the PROPOSAL only — the reviewer's `verdictOverride`
  * is applied where the control renders (it stays flippable, an approving review first-class).
  */
-export const selectVerdictArithmetic = (s: RennetState): VerdictArithmetic => {
-  const asks = Object.values(s.review.stagedAsks);
-  const requestChanges = asks.filter((ask) => ask.type === "request-change").length;
-  const comments = asks.length - requestChanges;
+export const verdictArithmeticFromAsks = (
+  asks: Readonly<Record<string, StagedAsk>>,
+): VerdictArithmetic => {
+  const list = Object.values(asks);
+  const requestChanges = list.filter((ask) => ask.type === "request-change").length;
+  const comments = list.length - requestChanges;
   const proposed: ProposedVerdict =
-    requestChanges > 0 ? "REQUEST_CHANGES" : asks.length > 0 ? "COMMENT" : "APPROVE";
+    requestChanges > 0 ? "REQUEST_CHANGES" : list.length > 0 ? "COMMENT" : "APPROVE";
   return { proposed, requestChanges, comments };
 };
+
+export const selectVerdictArithmetic = (s: RennetState): VerdictArithmetic =>
+  verdictArithmeticFromAsks(s.review.stagedAsks);
 
 /** The proposed verdict alone (the arithmetic's `proposed`). */
 export const selectProposedVerdict = (s: RennetState): ProposedVerdict =>

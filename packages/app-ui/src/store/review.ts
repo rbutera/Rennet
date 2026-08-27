@@ -30,6 +30,17 @@ export interface StagedAsk {
   readonly threadId?: string;
 }
 
+/**
+ * A retired draft block — the ask the reviewer withdrew from the staged set, kept WHOLE
+ * (intent, source anchor, body, claimed thread) with the reason it left, so Restore
+ * re-stages it exactly (C08 §4.2). The ledger holds the ask, not a bare id: an unstaged
+ * ask is gone from `stagedAsks`, so its provenance must live here or restore cannot rebuild it.
+ */
+export interface RetiredEntry {
+  readonly ask: StagedAsk;
+  readonly reason: string;
+}
+
 /** One message in a quote thread — the reviewer's, or the orchestrator's reply. */
 export interface QuoteMessage {
   readonly author: "user" | "orchestrator";
@@ -79,8 +90,8 @@ export interface ReviewState {
   readonly quoteThreads: Readonly<Record<string, QuoteThread>>;
   /** The focused thread id, or null. */
   readonly focusedThreadId: string | null;
-  /** The retired ledger: ids the reviewer withdrew from the staged set. */
-  readonly retired: readonly string[];
+  /** The retired ledger: whole asks the reviewer withdrew, newest last, each with its reason. */
+  readonly retired: readonly RetiredEntry[];
   /** An explicit verdict override, or null (derive from dispositions). */
   readonly verdictOverride: "APPROVE" | "REQUEST_CHANGES" | "COMMENT" | null;
   /** Draft-block edits keyed by block id (the PR body / handoff draft blocks). */
@@ -108,7 +119,10 @@ export interface ReviewSlice {
     /** Drop a quote thread. */
     removeQuoteComment(threadId: string): void;
     setFocusedThread(threadId: string | null): void;
-    retire(id: string): void;
+    /** Retire a staged ask WHOLE (dropped/deleted) with its reason — dedup by `ask.anchor`. */
+    retire(ask: StagedAsk, reason: string): void;
+    /** Restore a retired ask by its anchor — removes it from the ledger (the caller re-stages). */
+    restoreRetired(anchor: string): void;
     setVerdictOverride(verdict: ReviewState["verdictOverride"]): void;
     setDraftEdit(blockId: string, body: string): void;
     resetReview(): void;
@@ -199,9 +213,19 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
       }),
     setFocusedThread: (threadId) =>
       set((s) => ({ review: { ...s.review, focusedThreadId: threadId } })),
-    retire: (id) =>
+    retire: (ask, reason) =>
       set((s) => ({
-        review: { ...s.review, retired: [...s.review.retired.filter((r) => r !== id), id] },
+        review: {
+          ...s.review,
+          retired: [
+            ...s.review.retired.filter((e) => e.ask.anchor !== ask.anchor),
+            { ask, reason },
+          ],
+        },
+      })),
+    restoreRetired: (anchor) =>
+      set((s) => ({
+        review: { ...s.review, retired: s.review.retired.filter((e) => e.ask.anchor !== anchor) },
       })),
     setVerdictOverride: (verdict) =>
       set((s) => ({ review: { ...s.review, verdictOverride: verdict } })),

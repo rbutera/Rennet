@@ -42,6 +42,7 @@ export type {
   QuoteMessage,
   QuoteScope,
   QuoteThread,
+  RetiredEntry,
   ReviewSlice,
   ReviewState,
   StagedAsk,
