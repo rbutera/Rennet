@@ -80,6 +80,23 @@ describe("buildPartitions", () => {
     expect(slices.map((s) => s.id)).toEqual(["dir:.", "dir:docs", "dir:src"]);
   });
 
+  it("keeps duplicate scope NAMES distinct: exactly-once coverage, collision-free ids", () => {
+    const dupNames = [
+      { name: "app", root: "apps/web" },
+      { name: "app", root: "apps/desktop" },
+    ];
+    const inventory = [file("apps/web/a.ts"), file("apps/desktop/b.ts")];
+    const slices = buildPartitions({ files: inventory, scopes: dupNames }, 120);
+    assertTotalCoverage(slices, inventory);
+    expect(slices.map((s) => s.id)).toEqual(["app:apps/desktop", "app:apps/web"]);
+    // A fully duplicated scope entry collapses to one group, never a double emit.
+    const dupEntry = buildPartitions(
+      { files: inventory, scopes: [...dupNames, dupNames[0] as never] },
+      120,
+    );
+    assertTotalCoverage(dupEntry, inventory);
+  });
+
   it("is deterministic: same snapshot yields identical slices regardless of input order", () => {
     const inventory = [...files("packages/core/src", 5), ...files("docs", 2), file("ROOT.md")];
     const shuffled = [...inventory].reverse();

@@ -38,6 +38,8 @@ Lens agents consuming statements (B8); project-scout (B7); the context-map UI (C
 
 13. **Partition isolation enforced at mint.** `runPartitionWorker` resolved anchors against the whole snapshot inventory, so isolation was prompt-only. The worker's anchor index is now built from `slice.files` — an off-slice citation drops by the same anchor-or-drop rule as an invented path. The verify seat keeps the whole-inventory index (cross-cutting statements span slices by design).
 
+14. **Ownership keyed by scope root, not name.** Two scopes sharing a name previously merged into one group and emitted its files once per same-named scope, breaking exactly-once coverage. Grouping now keys on the root (the identity prefix matching actually uses); slice ids stay the scope name where unique and become `name:root` on a name collision; a fully duplicated scope entry collapses to one group.
+
 ## Verification (packet)
 
 `pnpm check` green. E2E against this repo itself: partitions cover every in-scope file exactly once; emitted statements carry anchors that resolve against the snapshot; a second run after a small commit re-processes only touched partitions (carry visible in the output). Positive controls that can fail (drop a file from every slice → coverage assert fails; break anchor resolution → mint drops the statement and the assert fails; touch one file → exactly the owning partition re-runs).

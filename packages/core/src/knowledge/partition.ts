@@ -81,7 +81,19 @@ export function buildPartitions(
   const scopes = [...snapshot.scopes].sort(
     (a, b) => b.root.length - a.root.length || (a.root < b.root ? -1 : a.root > b.root ? 1 : 0),
   );
-  const byScope = new Map<string, FileEntry[]>();
+  // Ownership is keyed by ROOT (the identity prefix matching actually uses);
+  // two scopes sharing a name stay distinct, and a duplicated root collapses to
+  // one group instead of emitting its files twice. Slice ids stay the scope
+  // name where unique, `name:root` where names collide.
+  const scopeByRoot = new Map<string, { name: string; root: string }>();
+  for (const scope of scopes) if (!scopeByRoot.has(scope.root)) scopeByRoot.set(scope.root, scope);
+  const nameCount = new Map<string, number>();
+  for (const scope of scopeByRoot.values())
+    nameCount.set(scope.name, (nameCount.get(scope.name) ?? 0) + 1);
+  const sliceId = (scope: { name: string; root: string }): string =>
+    nameCount.get(scope.name) === 1 ? scope.name : `${scope.name}:${scope.root}`;
+
+  const byRoot = new Map<string, FileEntry[]>();
   const unscoped: FileEntry[] = [];
   const sortedFiles = [...snapshot.files].sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
@@ -92,18 +104,20 @@ export function buildPartitions(
       unscoped.push(file);
       continue;
     }
-    const group = byScope.get(owner.name);
-    if (group === undefined) byScope.set(owner.name, [file]);
+    const group = byRoot.get(owner.root);
+    if (group === undefined) byRoot.set(owner.root, [file]);
     else group.push(file);
   }
 
   const out: PartitionSlice[] = [];
-  for (const scope of [...scopes].sort((a, b) =>
-    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
-  )) {
-    const group = byScope.get(scope.name);
+  for (const scope of [...scopeByRoot.values()].sort((a, b) => {
+    const ida = sliceId(a);
+    const idb = sliceId(b);
+    return ida < idb ? -1 : ida > idb ? 1 : 0;
+  })) {
+    const group = byRoot.get(scope.root);
     if (group === undefined || group.length === 0) continue;
-    splitGroup(scope.name, scope.root, group, cap, out);
+    splitGroup(sliceId(scope), scope.root, group, cap, out);
   }
   if (unscoped.length > 0) {
     const byTop = new Map<string, FileEntry[]>();
