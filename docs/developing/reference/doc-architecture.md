@@ -68,7 +68,7 @@ to reconcile rather than a reason to pick whichever sentence is convenient.
 | Stable product and architecture decisions | [Contracts and rulings](../decisions/contracts-and-rulings.md) |
 | Runtime and persistence invariants | [Architecture contracts](../concepts/architecture-contracts.md) |
 | Allowed packages and tool ownership | [Dependency standard](./dependency-standard.md) |
-| The review interaction model | [Canvas model](../concepts/canvas-model.md) |
+| The review interaction model | [Review lenses](../concepts/review-lenses.md) |
 | How model jobs are assigned | [Model council](../concepts/model-council.md) |
 | How context reaches models | [Context assembly](../concepts/context-assembly.md) |
 | How a review becomes an outbound artifact | [Collation and publishing](../concepts/collation-and-publishing.md) |

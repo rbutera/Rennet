@@ -160,8 +160,6 @@ network.
 | Concern | Owner |
 | --- | --- |
 | Ordered draft and editing transforms | `packages/app-ui/src/canvas/collation.ts` |
-| Local and outbound lane rules | `packages/app-ui/src/canvas/staging.ts` |
-| Desktop and browser destination projections | `packages/app-ui/src/canvas/publish.ts` |
 | Shared draft and preview interaction | `packages/app-ui/src/app.tsx` |
 | Protocol commands and payload schemas | `packages/protocol/src/index.ts` |
 | Forge-neutral review and pull request payloads | `packages/core/src/publish-review.ts`, `packages/core/src/publish-submission.ts` |

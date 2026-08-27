@@ -231,7 +231,7 @@ async function seedAskKnowledge(
 }
 
 describe("createLiveCanvasOpsBackend — the live end-to-end review backend", () => {
-  it("meters production context.ask on the shared review budget and appends run.ledger", async () => {
+  it("meters production context.ask on the shared review budget", async () => {
     const repo = workspaceRepo();
     git(repo.root, "reset", "--hard", repo.oid1);
     const store = freshStore();
@@ -250,17 +250,9 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     const result = await backend.ask({ question: "what does scope a export?" });
     expect(result.status).toBe("answered");
     expect(pipeline.invocationBudget.consumed).toBe(before + 1);
-    expect(backend.runLedger()).toEqual([
-      expect.objectContaining({
-        purpose: "context-ask:quick:attempt-0",
-        admitted: 1,
-        rejected: 0,
-        budgetSpent: 1,
-      }),
-    ]);
   });
 
-  it("runs a no-headroom thorough production ask and reports overage in its ledger", async () => {
+  it("runs a no-headroom thorough production ask and reports overage", async () => {
     const repo = workspaceRepo();
     git(repo.root, "reset", "--hard", repo.oid1);
     const store = freshStore();
@@ -293,15 +285,6 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     expect(result.answer.cost).toEqual(
       expect.objectContaining({ budgetGranted: false, overage: true, turns: 1 }),
     );
-    expect(backend.runLedger()).toEqual([
-      expect.objectContaining({
-        purpose: "context-ask:thorough:attempt-0",
-        tier: "heavy",
-        admitted: 1,
-        budgetSpent: 0,
-        budgetRemaining: 0,
-      }),
-    ]);
   });
 
   it("serves gitlink advances through the public live novelty accessor", async () => {
@@ -590,13 +573,6 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     const file = backend.fileContext("packages/a/src/index.ts");
     expect(file.ok).toBe(false);
     if (!file.ok) expect(file.reason).toBe("snapshot-unavailable");
-
-    // The PRODUCER path is untouched: the lenses/canvases render from the diff,
-    // with no dependency on the snapshot (the vital "lenses still render" contract).
-    expect(backend.identity().reviewId).toBe(review.id);
-    expect(backend.decomposition().hunks.length).toBeGreaterThan(0);
-    expect(backend.canvas()).toBeDefined();
-    expect(backend.angles().length).toBeGreaterThan(0);
   });
 
   it("refuses a snapshot at the WRONG OID as stale, never serving a mismatched map", async () => {

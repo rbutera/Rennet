@@ -13,10 +13,8 @@ authority is the murder-board map
 architecture work is tracked in
 [#464](https://github.com/rbutera/rennet/issues/464) (drafting agents) and
 [#474](https://github.com/rbutera/rennet/issues/474) (the Design lens). The
-shipped canvas model this replaces is described in
-[the canvas model](./canvas-model.md) and
-[review lenses](./review-lenses.md); those pages describe the code on `main`
-until the cutover lands.
+deterministic review model these boards render is described in
+[review lenses](./review-lenses.md).
 
 ## The five lenses
 
@@ -25,7 +23,7 @@ first. Design was previously called the spec lens; Sequence was previously
 called reading order. Each lens is a board of typed blocks drafted by a review
 agent on a fixed prompt.
 
-The prompts live in `packages/lens-instructions` (`@rennet/lens-instructions`),
+The prompts live in `packages/prompts` (`@rennet/prompts`),
 one markdown file per lens plus the post-process editor pass. The package exports a
 typed manifest; the pipeline reads the files and supplies the board schema
 separately, so instructions and schema cannot drift apart.

@@ -1,6 +1,3 @@
-import type { CanvasAngle } from "@rennet/protocol";
-import { CANVAS_ANGLES } from "@rennet/protocol";
-import type { ZoomLevel } from "../canvas/logic";
 import {
   crumb,
   type RecentSurface,
@@ -8,6 +5,11 @@ import {
   type SurfaceLabels,
   surfaceIdentity,
 } from "../nav/history";
+
+// The canvas review surface — lens/zoom/appearance/view-toggle commands and the
+// review.* actions — was deleted in the B2 delete-first cutover (#489). The review
+// route is a stub; Track C rebuilds the review command surface. What stays here is
+// navigation, settings, recents, and the start-a-review door.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The command registry (wireframes screen 16: "⌘K, every action a named
@@ -66,49 +68,17 @@ export interface CommandContext {
   canForward: boolean;
   canGoToProject: boolean;
   retrospective: boolean;
-  /** The Canvases view is showing a loaded review, so the lens/zoom/scheme act live. */
-  canvasReady: boolean;
-  view: "review" | "canvases";
-  deepReviewOn: boolean;
-  overlayOn: boolean;
-  scheme: "dark" | "light";
-  angle: CanvasAngle;
-  /** The live zoom altitude — used to omit the zoom command that would clamp (no-op). */
-  zoomLevel: ZoomLevel;
 
-  // Navigation + review actions (app.tsx handlers).
+  // Navigation actions (shell handlers).
   back(): void;
   forward(): void;
   goToProjects(): void;
   goToProject(): void;
-  goToDraft(): void;
-  goToPaper(): void;
   goToRecent(surface: RecentSurface): void;
   openSettings(): void;
-  showFiles(): void;
-  showCanvases(): void;
   reviewDirectly(): void;
   chooseRepository(): void;
-  retryReview(): void;
-  regenerate(): void;
-  toggleDeepReview(): void;
-
-  // Canvas view-store actions (the same methods the lens switcher + zoom bar call).
-  goToAngle(angle: CanvasAngle): void;
-  zoomIn(): void;
-  zoomOut(): void;
-  toggleOverlay(): void;
-  toggleScheme(): void;
 }
-
-/** The lens titles, in the canonical angle order. */
-const ANGLE_LABELS: Partial<Record<CanvasAngle, string>> = {
-  spec: "Spec",
-  sequence: "Sequence",
-  decisions: "Decisions",
-  noise: "Noise",
-  flagged: "Flagged",
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The catalogue — the SINGLE source of every stable command's title, group, and
@@ -137,30 +107,9 @@ export const COMMAND_CATALOGUE: readonly CommandDef[] = [
   { id: "nav.forward", title: "Forward", group: "Navigate", keybinding: "mod+]" },
   { id: "nav.projects", title: "Back to projects", group: "Navigate" },
   { id: "nav.project", title: "Go to project…", group: "Navigate" },
-  { id: "nav.draft", title: "Go to Draft", group: "Navigate" },
-  { id: "nav.paper", title: "Go to Paper", group: "Navigate" },
   { id: "nav.settings", title: "Open Settings", group: "Navigate", keybinding: "mod+," },
   { id: "nav.openReview", title: "Open review…", group: "Navigate" },
   { id: "nav.reviewDirectly", title: "Review directly", group: "Navigate" },
-  { id: "nav.files", title: "Show Files view", group: "Navigate" },
-  { id: "nav.canvases", title: "Show Canvases view", group: "Navigate" },
-  { id: "review.retry", title: "Retry the AI review", group: "Review" },
-  { id: "review.regenerate", title: "Regenerate the review", group: "Review" },
-  {
-    id: "review.dual",
-    group: "Review",
-    title: (ctx) =>
-      ctx.deepReviewOn
-        ? "Dual-model review: switch to quick single-model"
-        : "Dual-model review: switch back on",
-  },
-  { id: "zoom.in", title: "Zoom in", group: "Zoom", keybinding: "l" },
-  { id: "zoom.out", title: "Zoom out", group: "Zoom", keybinding: "h" },
-  {
-    id: "view.scheme",
-    group: "Appearance",
-    title: (ctx) => (ctx.scheme === "dark" ? "Switch to light" : "Switch to dark"),
-  },
   { id: "door.choose", title: "Choose a repository", group: "Start" },
 ];
 
@@ -229,65 +178,12 @@ export function buildCommands(ctx: CommandContext): Command[] {
   if (ctx.canGoToProject && ctx.surfaceKind !== "project") {
     commands.push(mk("nav.project", ctx, ctx.goToProject));
   }
-  if (
-    !ctx.retrospective &&
-    (ctx.surfaceKind === "review" || ctx.surfaceKind === "draft" || ctx.surfaceKind === "paper")
-  ) {
-    if (ctx.surfaceKind !== "draft") {
-      commands.push(mk("nav.draft", ctx, ctx.goToDraft));
-    }
-    if (ctx.surfaceKind !== "paper") {
-      commands.push(mk("nav.paper", ctx, ctx.goToPaper));
-    }
-  }
   commands.push(mk("nav.settings", ctx, ctx.openSettings));
   if (ctx.screen === "projectDetail") {
     commands.push(mk("nav.openReview", ctx, ctx.reviewDirectly));
   }
   if (ctx.screen === "frontDoor") {
     commands.push(mk("nav.reviewDirectly", ctx, ctx.reviewDirectly));
-  }
-
-  if (ctx.screen === "workspace") {
-    // A view command is offered only when it CHANGES the view — the destination that
-    // is already shown would be inert, so it is omitted (never a dead entry).
-    if (ctx.view !== "review") {
-      commands.push(mk("nav.files", ctx, ctx.showFiles));
-    }
-    if (ctx.view !== "canvases") {
-      commands.push(mk("nav.canvases", ctx, ctx.showCanvases));
-    }
-    commands.push(
-      mk("review.retry", ctx, ctx.retryReview),
-      mk("review.regenerate", ctx, ctx.regenerate),
-      mk("review.dual", ctx, ctx.toggleDeepReview),
-    );
-
-    // The diff-canvas commands act on the live view store; they are only meaningful
-    // while the Canvases view is showing a loaded review (the lens switcher + zoom
-    // bar are on screen). Absent otherwise, never a dead entry.
-    if (ctx.canvasReady) {
-      // Every lens EXCEPT the one already active — "go to the lens I'm on" is inert.
-      for (const angle of CANVAS_ANGLES) {
-        const label = ANGLE_LABELS[angle];
-        if (angle === ctx.angle || label === undefined) continue;
-        commands.push({
-          id: `lens.${angle}`,
-          title: `Go to ${label} lens`,
-          group: "Lens",
-          run: () => ctx.goToAngle(angle),
-        });
-      }
-      // Zoom clamps at the ends (zoomReducer), so the clamped direction is omitted:
-      // no "Zoom in" at the deepest (diff) altitude, no "Zoom out" at the roll-up.
-      if (ctx.zoomLevel !== "diff") {
-        commands.push(mk("zoom.in", ctx, ctx.zoomIn));
-      }
-      if (ctx.zoomLevel !== "rollup") {
-        commands.push(mk("zoom.out", ctx, ctx.zoomOut));
-      }
-      commands.push(mk("view.scheme", ctx, ctx.toggleScheme));
-    }
   }
 
   if (ctx.screen === "directEntry") {

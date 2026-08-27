@@ -18,7 +18,7 @@
  * angle's always-present deterministic floor stands.
  */
 
-import { renderLayer } from "@rennet/instructions";
+import { renderLayer } from "@rennet/prompts";
 import type {
   ContextSendRecord,
   RspCapabilitySnapshot,

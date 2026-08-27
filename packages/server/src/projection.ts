@@ -360,7 +360,6 @@ export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]
   "review.openPr": ["repoPath"],
   "review.checkFreshness": ["repoPath"],
   "review.regenerate": ["repoPath"],
-  "review.canvases": ["repoPath"],
   "project.discover": ["path"],
   "settings.guidance": ["repoPath"],
   "settings.setRepoVisibility": ["repoPath"],
@@ -377,7 +376,6 @@ export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]
  */
 export const INBOUND_REPO_RELATIVE_PATH_FIELDS: Readonly<Record<string, readonly string[]>> = {
   "review.setDisposition": ["path"],
-  "canvas.disposition": ["path"],
   "review.uiEvidence": ["path"],
   "review.refine": ["path"],
   "review.openInEditor": ["path"],

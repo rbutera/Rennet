@@ -181,11 +181,11 @@ describe("carry seam — orphaned survives the IPC command-output boundary", () 
 });
 
 // ── The delta re-review account at the fold (issue #73) ───────────────────────
-// A successor activation that carries asks stamps `Review.deltaAccount`: each ask is
+// A successor activation that carries asks stamps `Review.successorAccount`: each ask is
 // classified (addressed / partially / untouched) and every changed-but-unasked path
 // is surfaced beyond-asks. Also crosses the REAL command-output boundary, so an
 // unlisted-optional strip (the hunkOccurrences hole) cannot silently drop it.
-describe("delta account — stamped on a successor activation (#73)", () => {
+describe("successor account — stamped on a successor activation (#73)", () => {
   function withThree(): Review {
     let review = created(
       patchsetOf("p1", [file("a.ts", "A1"), file("b.ts", "B1"), file("c.ts", "C1")]),
@@ -208,7 +208,7 @@ describe("delta account — stamped on a successor activation (#73)", () => {
         file("d.ts", "D1"),
       ]),
     );
-    const account = successor.deltaAccount;
+    const account = successor.successorAccount;
     expect(account).toBeDefined();
     const status = (path: string) => account?.asks.find((entry) => entry.path === path)?.status;
     expect(status("a.ts")).toBe("addressed");
@@ -219,7 +219,7 @@ describe("delta account — stamped on a successor activation (#73)", () => {
 
   it("a first capture (no predecessor asks) carries no account (back-compat)", () => {
     const first = created(patchsetOf("p1", [file("a.ts", "A1")]));
-    expect(first.deltaAccount).toBeUndefined();
+    expect(first.successorAccount).toBeUndefined();
   });
 
   it("survives the real command-output boundary (parseCommandOutput('review.capture'))", () => {
@@ -233,10 +233,10 @@ describe("delta account — stamped on a successor activation (#73)", () => {
       ]),
     );
     // Precondition: the fold really produced an account (else the boundary test is vacuous).
-    expect(successor.deltaAccount?.beyondAsks).toEqual(["d.ts"]);
+    expect(successor.successorAccount?.beyondAsks).toEqual(["d.ts"]);
     const parsed = parseCommandOutput("review.capture", { review: successor });
-    expect(parsed.review.deltaAccount).toBeDefined();
-    expect(parsed.review.deltaAccount).toEqual(successor.deltaAccount);
+    expect(parsed.review.successorAccount).toBeDefined();
+    expect(parsed.review.successorAccount).toEqual(successor.successorAccount);
   });
 });
 
@@ -264,7 +264,7 @@ describe("carryDispositionsByLineage", () => {
   });
 });
 
-describe("delta account — handoff task attribution on a traced activation (#73 wave 3)", () => {
+describe("successor account — handoff task attribution on a traced activation (#73 wave 3)", () => {
   function withA(): Review {
     let review = created(patchsetOf("p1", [file("a.ts", "A1")]));
     review = withDisposition(review, "a.ts", "A1");
@@ -289,19 +289,19 @@ describe("delta account — handoff task attribution on a traced activation (#73
     const successor = activateWithHandoff(withA(), patchsetOf("p2", [file("a.ts", "A2")]), [
       { id: "d0", path: "a.ts", type: "approve", taskIndex: 1, taskTitle: "Fix the export" },
     ]);
-    const ask = successor.deltaAccount?.asks.find((entry) => entry.path === "a.ts");
+    const ask = successor.successorAccount?.asks.find((entry) => entry.path === "a.ts");
     expect(ask?.handoffTask).toEqual({ index: 1, title: "Fix the export" });
   });
 
   it("carries no attribution on a regenerate (no handoff on the activation)", () => {
     const successor = activate(withA(), patchsetOf("p2", [file("a.ts", "A2")]));
-    expect(successor.deltaAccount?.asks[0]?.handoffTask).toBeUndefined();
+    expect(successor.successorAccount?.asks[0]?.handoffTask).toBeUndefined();
   });
 
   it("an unmatched trace ask degrades to no attribution (belt-and-braces)", () => {
     const successor = activateWithHandoff(withA(), patchsetOf("p2", [file("a.ts", "A2")]), [
       { id: "d1", path: "other.ts", type: "approve", taskIndex: 3, taskTitle: "Unrelated" },
     ]);
-    expect(successor.deltaAccount?.asks[0]?.handoffTask).toBeUndefined();
+    expect(successor.successorAccount?.asks[0]?.handoffTask).toBeUndefined();
   });
 });

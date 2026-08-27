@@ -12,8 +12,8 @@ are changing.
 ```mermaid
 flowchart LR
   capture[Capture an immutable patchset] --> review[Run deterministic and model review jobs]
-  review --> canvas[Project results onto canvases]
-  canvas --> draft[Edit the collation draft]
+  review --> lenses[Project results onto review lenses]
+  lenses --> draft[Edit the collation draft]
   draft --> preview[Build the outbound preview]
   preview --> github[Post a review or open a pull request]
   preview --> handoff[Run a coding-agent handoff]
@@ -27,13 +27,11 @@ Read these pages in order when you need the whole system:
    packages, processes, and review loop.
 2. [Architecture contracts](./concepts/architecture-contracts.md) defines the
    rules for patchsets, project context, persistence, and outbound work.
-3. [Canvas model](./concepts/canvas-model.md) explains how source material,
-   analysis, dispositions, and orchestrator annotations share a review.
-4. [Review lenses](./concepts/review-lenses.md) explains the Spec, Sequence,
-   Decisions, Noise, and Flagged views.
-5. [Surfacing and routing](./concepts/surfacing-and-routing.md) covers model
+3. [Review lenses](./concepts/review-lenses.md) explains the Spec, Sequence,
+   Decisions, Noise, and Flagged views and how each shapes the shared patchset.
+4. [Surfacing and routing](./concepts/surfacing-and-routing.md) covers model
    output, validation, instructions, and model assignment.
-6. [Collation and publishing](./concepts/collation-and-publishing.md) follows
+5. [Collation and publishing](./concepts/collation-and-publishing.md) follows
    review state into a GitHub review or pull request.
 
 ## Find a subsystem
@@ -46,7 +44,7 @@ Read these pages in order when you need the whole system:
 | Coding-agent work after review | [Agent handoff](./concepts/agent-handoff.md) and [delta re-review and lineage](./concepts/delta-rereview-and-lineage.md) |
 | Draft editing or comment wording | [Comment refinement](./concepts/comment-refinement.md) and [collation and publishing](./concepts/collation-and-publishing.md) |
 | Repository discovery or settings | [Repository bootstrap](./guides/repository-bootstrap.md) and [settings and setup](./guides/settings-and-setup.md) |
-| Interface behavior | [Design doctrine](./concepts/design-doctrine.md), [canvas model](./concepts/canvas-model.md), and [review lenses](./concepts/review-lenses.md) |
+| Interface behavior | [Design doctrine](./concepts/design-doctrine.md) and [review lenses](./concepts/review-lenses.md) |
 | Dependencies or build configuration | [Dependency standard](./reference/dependency-standard.md) and [monorepo map](./reference/monorepo-map.md) |
 
 ## Source and authority

@@ -116,7 +116,7 @@ codex app-server -c mcp_servers=<inline TOML>
 ```
 
 The override replaces the user's complete `mcp_servers` table for that child. It
-contains Rennet's `canvasOps` server when the turn needs it, or an empty table.
+contains Rennet's loopback MCP server when the turn needs it, or an empty table.
 Other user Codex configuration remains available. The app-server command does not
 accept `--ignore-user-config`.
 

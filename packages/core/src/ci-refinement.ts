@@ -2,7 +2,7 @@ import {
   CI_CLASSIFICATION_CONTRACT,
   type CiClassificationContract,
   renderCiClassificationPrompt,
-} from "@rennet/instructions";
+} from "@rennet/prompts";
 import type { CiFailure, InvocationBudget, RspTokenUsage } from "@rennet/protocol";
 import { absentBudgetGrant } from "./invocation-budget";
 

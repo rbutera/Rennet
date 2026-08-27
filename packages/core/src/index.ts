@@ -17,33 +17,22 @@ import {
   type ReviewPostTarget,
 } from "@rennet/protocol";
 import { v7 as uuidv7 } from "uuid";
-import { buildDeltaAccount, changedPathsBetween } from "./delta-account";
+import { buildSuccessorAccount, changedPathsBetween } from "./successor-account";
 
-export * from "./adjudication-corpus";
-export * from "./angle-generation";
 export * from "./blast-radius";
-export * from "./canvas";
-export * from "./canvas-change-feed";
-export * from "./canvas-ops";
 export * from "./ci-classification";
 export * from "./ci-refinement";
 export * from "./codex-run-turn";
 export * from "./codex-utility-port";
 export * from "./context-ask";
 export * from "./context-assembly";
-export * from "./context-update-stream";
 export * from "./coverage-mapping";
-export * from "./decision-generation";
 export * from "./decomposition";
-export * from "./delta-account";
 export * from "./delta-digest";
 export * from "./draft-pr-body";
-export * from "./dual-finding-review";
 export * from "./dual-seat";
 export * from "./element-diffs";
 export * from "./escape-path";
-export * from "./finding-adjudication";
-export * from "./finding-generation";
 export * from "./finding-reconcile";
 export * from "./finding-verification";
 export * from "./forge-port";
@@ -53,7 +42,6 @@ export * from "./handoff-loop";
 export * from "./harness";
 export * from "./harness-conformance";
 export * from "./harness-run-turn";
-export * from "./hypothesis-generation";
 export * from "./invocation-budget";
 export * from "./knowledge";
 export * from "./knowledge-generation";
@@ -64,10 +52,8 @@ export * from "./model-council";
 export * from "./noise-generation";
 export * from "./novelty-ledger";
 export * from "./novelty-lifecycle";
+export * from "./offered-manifest";
 export * from "./openspec-change";
-export * from "./orchestrator-primer";
-export * from "./orchestrator-session";
-export * from "./ordering-pass";
 export * from "./patchset-intent";
 export * from "./pipeline";
 export * from "./project-context";
@@ -77,13 +63,12 @@ export * from "./publish-submission";
 export * from "./refine-comment";
 export * from "./repo-composition";
 export * from "./review-ask";
-export * from "./review-backend";
 export * from "./review-intelligence-budget";
 export * from "./risk-crosscheck";
-export * from "./rollup-narration";
 export * from "./route-plan";
 export * from "./settings-resolver";
 export * from "./snapshot-overlay";
+export * from "./successor-account";
 export * from "./ui-verification";
 export * from "./wsl-bundle";
 export * from "./wsl-distros";
@@ -108,7 +93,7 @@ export type ReviewEvent =
       patchset: Patchset;
       /**
        * The handoff run's ask trace (issue #73 wave 3): the verified bundle's per-ask
-       * traceMap + task titles, so the fold's delta account can attribute each ask to
+       * traceMap + task titles, so the fold's successor account can attribute each ask to
        * the composed task that carried it. Present ONLY when a handoff run captured this
        * activation; absent for every regenerate and every existing persisted event, so
        * version stays 1 and the field replays as absent (no attribution).
@@ -673,9 +658,9 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
       const priorPatchset = current.patchsets.find(
         (patchset) => patchset.id === current.activePatchsetId,
       );
-      const deltaAccount =
+      const successorAccount =
         priorPatchset && priorPatchset.id !== event.patchset.id && current.dispositions.length > 0
-          ? buildDeltaAccount({
+          ? buildSuccessorAccount({
               asks: current.dispositions,
               carried,
               changedPaths: changedPathsBetween(priorPatchset, event.patchset),
@@ -705,7 +690,7 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         dispositions: carried,
         // Stamped only on a successor with asks to account for; absent otherwise so a
         // first capture and every existing snapshot validate unchanged (like `orphaned`).
-        ...(deltaAccount ? { deltaAccount } : { deltaAccount: undefined }),
+        ...(successorAccount ? { successorAccount } : { successorAccount: undefined }),
         // The orphan tray is recomputed for THIS activation and is authoritative:
         // set the fresh set, or `undefined` to clear any stale tray inherited from
         // `base` (a vanished-then-returned occurrence must not stay orphaned). An
@@ -807,7 +792,7 @@ export class ReviewService {
     reviewId?: string,
     /**
      * The handoff run's ask trace (issue #73 wave 3): the verified bundle's per-ask
-     * traceMap + task titles, threaded so the successor's delta account can attribute
+     * traceMap + task titles, threaded so the successor's successor account can attribute
      * each ask to the composed task that ran it. Only the handoff-run path supplies it;
      * a plain capture/regenerate omits it (its digest and event stay byte-identical).
      */

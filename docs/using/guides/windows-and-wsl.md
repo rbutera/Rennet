@@ -110,7 +110,7 @@ Because the daemon runs inside the distro, everything happens on native Linux:
   comment refinement, pull request drafting, delta summaries, and handoff
   composition.
 - Codex app-server turns when Codex is installed inside the distro. An agentic
-  Codex turn connects to Rennet's canvas over the distro's own loopback, so no
+  Codex turn connects to Rennet over the distro's own loopback, so no
   cross-boundary networking is involved.
 
 ## Filesystem and editor access

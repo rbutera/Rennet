@@ -42,7 +42,7 @@ import {
   FINDING_VERIFICATION_CONTRACT,
   renderFindingVerificationPrompt,
   type VerificationContract,
-} from "@rennet/instructions";
+} from "@rennet/prompts";
 import type {
   BudgetGrant,
   FindingElement,

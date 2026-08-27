@@ -1,8 +1,8 @@
 import type {
-  DeltaAccount,
   DeltaAskStatus,
   DeltaBeyondHunk,
   DeltaDigestResult,
+  SuccessorAccount,
 } from "@rennet/protocol";
 
 export type { DeltaDigestResult };
@@ -25,10 +25,10 @@ function describeBeyondHunk(hunk: DeltaBeyondHunk): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// review.deltaDigest — the light-tier prose over the delta account (#73 / M25,
+// review.deltaDigest — the light-tier prose over the successor account (#73 / M25,
 // Model Council job `delta-rereview-summary`).
 //
-// N2 shipped the DETERMINISTIC delta account: per staged ask addressed / partially /
+// N2 shipped the DETERMINISTIC successor account: per staged ask addressed / partially /
 // untouched, plus the paths the successor changed beyond the asks. This module is the
 // optional light-tier LLM rephrasing of that account into one or two plain-English
 // sentences, rendered ON TOP of the facts. The accountability guarantee stays intact
@@ -77,7 +77,7 @@ const STATUS_PHRASE: Record<DeltaAskStatus, string> = {
  * rephrase what the account already states, never invent a change. The reviewer reads
  * the one-liner then the facts below it, so the prompt asks for a tight, honest gist.
  */
-export function buildDeltaDigestPrompt(account: DeltaAccount): string {
+export function buildDeltaDigestPrompt(account: SuccessorAccount): string {
   const lines: string[] = [
     "You are writing a ONE- or TWO-SENTENCE plain-English summary of what a coding agent did to a code review's requests, for the reviewer to read at a glance.",
     "",
@@ -129,7 +129,7 @@ export function buildDeltaDigestPrompt(account: DeltaAccount): string {
  * turn returns that state, and the panel shows the facts with no headline.
  */
 export async function draftDeltaDigest(
-  account: DeltaAccount,
+  account: SuccessorAccount,
   port: DeltaDigestPort,
   model: string,
 ): Promise<DeltaDigestResult> {

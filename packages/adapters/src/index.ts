@@ -1,16 +1,4 @@
 export {
-  type ClaudeAdjudicationTurnOptions,
-  createClaudeAdjudicationTurn,
-  createCodexAdjudicationTurn,
-} from "./adjudication-backend";
-export {
-  type AdjudicationCalibration,
-  adjudicationCalibrationArtifactPath,
-  type ClassCalibrationRecord,
-  isEmptyAdjudicationCalibration,
-  readAdjudicationCalibration,
-} from "./adjudication-calibration";
-export {
   BaselineAdvanceCoordinator,
   type BaselineAdvanceDeps,
   type BaselineWatchHandle,
@@ -20,20 +8,6 @@ export {
   type Timers,
   type WatchFn,
 } from "./baseline-advance-watcher";
-export {
-  type AttachedCodexOrchestratorSession,
-  attachCodexOrchestratorSession,
-  type CanvasOpsExternalServer,
-  startCanvasOpsExternalServer,
-} from "./canvas-ops-external";
-export {
-  buildCanvasOpsTools,
-  CANVAS_OPS_INSTRUCTIONS,
-  CANVAS_OPS_SERVER_NAME,
-  CANVAS_OPS_SERVER_VERSION,
-  createCanvasOpsServer,
-  type LoadCanvasOpsSdk,
-} from "./canvas-ops-server";
 export { checkpointGitCommand, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 export {
   type ClaudeCiRefinementTurnOptions,
@@ -139,12 +113,6 @@ export {
 } from "./convention-catalogue-reader";
 export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
 export {
-  decisionsRecordFixture,
-  emptyDecisionsRecordFixture,
-  failedDecisionsRunStatus,
-  okDecisionsRunStatus,
-} from "./decisions-fixture";
-export {
   createExecObservingTurn,
   EXEC_OUTPUT_TAIL,
   type ExecObservingTurnOptions,
@@ -179,12 +147,6 @@ export {
   type VerificationFileReaderOptions,
   type VerificationTurnOptions,
 } from "./finding-verification-backend";
-export {
-  emptyFlaggedReviewFixture,
-  failedFlaggedReviewFixture,
-  flaggedReviewFixture,
-  noChecksFlaggedReviewFixture,
-} from "./flagged-fixture";
 export {
   defaultFsListDirDeps,
   type FsListDirDeps,
@@ -338,11 +300,6 @@ export {
 } from "./map-visibility";
 export { NestedProjectContext } from "./nested-project-context";
 export {
-  emptyNoiseReviewFixture,
-  failedNoiseReviewFixture,
-  noiseReviewFixture,
-} from "./noise-fixture";
-export {
   type NoveltyBackendPart,
   noveltyBackend,
   type ResolvedNoveltyContext,
@@ -380,22 +337,6 @@ export {
   renderOmpMcpConfig,
 } from "./omp-turn-transport";
 export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
-export {
-  type AttachedOrchestratorSession,
-  attachOrchestratorSession,
-} from "./orchestrator-session-server";
-export {
-  type CodexOrchestratorTurnDeps,
-  deriveOrchestratorPrimerState,
-  type LoadSdkQuery,
-  type OmpOrchestratorTurnDeps,
-  type OrchestratorToolCall,
-  type OrchestratorTurnDeps,
-  type OrchestratorTurnResult,
-  runCodexOrchestratorTurn,
-  runOmpOrchestratorTurn,
-  runOrchestratorTurn,
-} from "./orchestrator-turn";
 export {
   ensurePrWorktree,
   prWorktreePath,
@@ -507,17 +448,6 @@ export {
   type MetricsCollector,
   type TurnMetric,
 } from "./turn-metrics";
-export {
-  beginUiEvidenceRun,
-  bindUiEvidenceRun,
-  completeUiEvidenceRun,
-  createUiVerificationTurn,
-  inspectUiEvidence,
-  MAX_RETAINED_UI_EVIDENCE_PATCHSETS,
-  readUiEvidence,
-  type UiEvidenceRun,
-  type UiVerificationTurnOptions,
-} from "./ui-verification-backend";
 export {
   discoverWorktreeIdentities,
   type LocalWorktree,

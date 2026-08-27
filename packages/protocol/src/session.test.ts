@@ -17,7 +17,7 @@ import {
 } from "./index";
 
 // A real command name, so the `request` frame's `isCommandName` refinement passes.
-const REAL_COMMAND = "canvas.disposition";
+const REAL_COMMAND = "review.regenerate";
 
 const hello = { type: "hello", clientId: "c1", clientType: "desktop", protocolVersion: 1 } as const;
 const serverInfo = {

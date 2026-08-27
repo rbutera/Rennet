@@ -20,7 +20,7 @@ const FILES = [
   "apps/marketing/package.json",
   "packages/adapters/package.json",
   "packages/core/package.json",
-  "packages/instructions/package.json",
+  "packages/prompts/package.json",
   "packages/protocol/package.json",
   "packages/ui/package.json",
   "packages/app-ui/package.json",

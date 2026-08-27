@@ -45,7 +45,6 @@ knowledge:
 |---|---|---|
 | Project snapshot | Files, packages, entry points, exported symbols, identifier references, and dependencies | Pinned Git OID and content hashes |
 | Knowledge layer | Project explanations, claims, evidence, confidence, and freshness | Project and source evidence |
-| Primer | A small deterministic summary of review and context state | Version and SHA-256 digest |
 
 Snapshots and knowledge are composed by the live server. Multi-repository
 contexts refer to member maps and their pinned identities instead of flattening
@@ -115,7 +114,7 @@ external service as part of a requested operation.
 Coding-agent handoff is an acting path. The agent receives a digest-bound bundle,
 works in the repository, and may write, test, commit, and push. Rennet then
 captures the resulting repository state as a successor and presents a
-deterministic delta account. The handoff does not grant model output permission
+deterministic successor account. The handoff does not grant model output permission
 to rewrite the identity of the review it started from.
 
 ## Client projection

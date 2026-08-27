@@ -3,11 +3,11 @@ title: Surfacing and routing
 description: How Rennet constrains model output, validates review documents, and assigns model jobs.
 ---
 
-Models do not write directly into a Rennet canvas. A review job supplies a
+Models do not write directly into a Rennet review surface. A review job supplies a
 versioned instruction and offered anchors, a harness returns structured output,
 and deterministic code decides what the product may use.
 
-## The path from job to canvas
+## The path from job to review surface
 
 ```mermaid
 flowchart LR
@@ -16,7 +16,7 @@ flowchart LR
   prompt --> harness[Harness turn]
   harness --> document[RSP document]
   document --> validate[Deterministic validation]
-  validate -->|admitted| canvas[Canvas projection]
+  validate -->|admitted| surface[Review surface]
   validate -->|rejected| report[Validation report]
   report --> harness
 ```
@@ -25,7 +25,7 @@ Three modules own distinct decisions:
 
 1. `@rennet/protocol` defines Rennet Surfacing Protocol, anchors, schemas, and
    validation.
-2. `@rennet/instructions` defines the base instruction for each implemented
+2. `@rennet/prompts` defines the base instruction for each implemented
    model job and assembles prompt layers.
 3. `@rennet/core` resolves Model Council assignments and runs review logic over
    injected harness ports.
@@ -119,7 +119,7 @@ chunks. Other implemented bodies have their own rules in `bodies.ts`.
 
 ## Instructions and context
 
-`@rennet/instructions` owns the base contracts used by implemented review jobs.
+`@rennet/prompts` owns the base contracts used by implemented review jobs.
 The base instruction names the role, expected document, evidence rules, and
 failure shape. The JSON schema remains the wire authority.
 
@@ -130,8 +130,8 @@ flowchart TB
   base[Base instruction] --> hypothesis[Review hypothesis]
   hypothesis --> conventions[Project conventions]
   conventions --> general[General guidance]
-  general --> angle[Lens guidance]
-  angle --> task[Task guidance]
+  general --> lens[Lens guidance]
+  lens --> task[Task guidance]
   task --> files[Repository guidance files]
   files --> context[Retrieved context]
   context --> payload[Review payload]
@@ -160,10 +160,10 @@ review behavior.
 | RSP envelope, registry, anchors, and validator | `packages/protocol/src/rsp.ts` |
 | Body schemas and semantic checks | `packages/protocol/src/bodies.ts` |
 | Shared RSP and lineage types | `packages/protocol/src/index.ts` |
-| Base instructions and prompt assembly | `packages/instructions/src/index.ts` |
+| Base instructions and prompt assembly | `packages/prompts/src/index.ts` |
 | Harness-turn adapter used by core jobs | `packages/core/src/harness-run-turn.ts` |
 | Model Council catalog and resolution | `packages/core/src/model-council.ts` |
 | Live daemon composition | `packages/server/src/create-server.ts` |
 
-See [the canvas model](./canvas-model.md) for the admitted projections and
+See [review lenses](./review-lenses.md) for the admitted review surfaces and
 [context assembly](./context-assembly.md) for retrieved repository context.

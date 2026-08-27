@@ -1,9 +1,6 @@
 // Types owned by the wire schemas in ./index (protocol is the source of truth).
 import type {
-  AnalysisCohort,
-  AnalysisElement,
   AnchorSpan,
-  Annotation,
   CiFailure,
   DecisionEvidence,
   DecisionWhy,
@@ -19,10 +16,8 @@ import type {
   OpenSpecScenario,
   OpenSpecSource,
   Patchset,
-  Proposal,
   ReviewHypothesis,
   RiskCrossCheck,
-  SubstrateChunkRef,
   UiScreenshot,
 } from "./index";
 
@@ -853,22 +848,6 @@ export interface RollupNarrationBody {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The five canvas angles. `blast-radius` is deliberately NOT here: it is an
- * overlay, not a canvas (Canvas Paradigm §1 — promoting it to a sixth canvas
- * would silently turn the overlay into a writable queue).
- */
-export type CanvasAngle = "spec" | "sequence" | "decisions" | "noise" | "flagged";
-
-/** The canvas angles as a frozen list, in a stable order. */
-export const CANVAS_ANGLES: readonly CanvasAngle[] = [
-  "spec",
-  "sequence",
-  "decisions",
-  "noise",
-  "flagged",
-] as const;
-
-/**
  * The canvas-facing shape of a decision. `decisionId`, `anchor`, and `title` are
  * all the projector needs for PLACEMENT (grouping by anchored chunk — the chunk's
  * title IS the theme label the lens shows, e.g. "Storage and state"); the richer
@@ -1174,9 +1153,9 @@ export type PrBodyDraftResult =
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
-// ─── review.deltaDigest: the light-tier prose over the delta account (#73/M25) ─
+// ─── review.deltaDigest: the light-tier prose over the successor account (#73/M25) ─
 //
-// The deterministic delta account (N2, `DeltaAccount`) is the ground truth: per-ask
+// The deterministic successor account (N2, `SuccessorAccount`) is the ground truth: per-ask
 // addressed/partially/untouched + the paths changed beyond the asks. This is the
 // optional light-tier LLM rephrasing of that account into a one/two-sentence
 // plain-English TL;DR, rendered ON TOP of the facts (never replacing them). The
@@ -1184,7 +1163,7 @@ export type PrBodyDraftResult =
 // so a scope-creep detector's headline cannot hallucinate. Like `PrBodyDraftResult`,
 // the shape has NO field for a fabricated success:
 //   - `drafted`     — the turn produced a non-empty digest. `model` records who wrote it.
-//   - `unavailable` — no model seat is installed / the review carries no delta account.
+//   - `unavailable` — no model seat is installed / the review carries no successor account.
 //   - `failed`      — a turn ran and produced no usable text.
 // On anything but `drafted` the panel simply shows no headline and the facts are
 // unchanged — an honest "no summary this time", never a blank card and never a guess.
@@ -1398,42 +1377,6 @@ export type NoiseReview =
   | { status: "ok"; groups: NoiseGroup[] }
   | { status: "failed"; reason: string };
 
-/** L0 substrate layer: read-only, owned entirely by deterministic ingest. */
-export interface SubstrateLayer {
-  chunks: SubstrateChunkRef[];
-}
-
-/**
- * L1 analysis layer. `elements` are in canvas order; `cohorts` group them for the
- * decisions canvas (empty for the flat canvases); `readingOrder` is the ordered
- * list of cohort keys (decisions) or element keys (flat) the canvas presents.
- */
-export interface AnalysisLayer {
-  elements: AnalysisElement[];
-  cohorts: AnalysisCohort[];
-  readingOrder: string[];
-}
-
-/** L2 disposition layer: the user's dispositions relevant to this canvas. */
-export interface DispositionLayer {
-  dispositions: Disposition[];
-}
-
-/** The orchestrator's L3 mark kinds (glass — chrome, visually distinct). */
-export type AnnotationKind = "highlight" | "callout" | "link";
-
-/** The kinds of proposal the orchestrator may raise (a suggestion — user decides). */
-export type ProposalKind = "disposition" | "regroup" | "split";
-
-/** A proposal's lifecycle: pending until the user accepts or dismisses it. */
-export type ProposalStatus = "pending" | "accepted" | "dismissed";
-
-/** L3 annotation layer: the orchestrator's marks and proposals. */
-export interface AnnotationLayer {
-  annotations: Annotation[];
-  proposals: Proposal[];
-}
-
 /**
  * The blast-radius signals (issue #35). A signal is a deterministic, one-line-
  * explainable reason a change carries risk. Blast radius is PAINT: it MARKS these,
@@ -1467,20 +1410,6 @@ export type NarrationPlacement =
   | { status: "narrated"; oneLine: string; paragraph: string; evidence?: NarrationEvidence[] }
   | { status: "pending" }
   | { status: "failed" };
-
-/**
- * A canvas-scoped post-commit change notification (R35's ONE change feed, canvas
- * half). Keyed `(reviewId, canvasId, elementKey)` with the covering `seqRange`;
- * a conflated notification names the seq range it covers. This is an
- * INVALIDATION HINT — truth stays the store; a consumer that misses one
- * re-queries the projection. Never a raw event; never a private row.
- */
-export interface CanvasChangeNotification {
-  reviewId: string;
-  canvasId: string;
-  elementKey: string;
-  seqRange: { from: number; to: number };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Model Council (issue #69)
@@ -2668,7 +2597,7 @@ export interface OpenSpecRequirementCoverage {
 /**
  * The ask trace a handoff run hands to the successor capture (issue #73 wave 3) — the
  * verified bundle's `traceMap` and task titles MATERIALISED per ask, projected down to
- * exactly what the delta account needs to attribute each ask to its composed task. One
+ * exactly what the successor account needs to attribute each ask to its composed task. One
  * entry per bundle ask: its stable id, anchor identity (path + span + side + type, so
  * the fold matches it to a review disposition), and the `taskIndex` plus preview
  * `taskTitle` the traceMap assigns it. Deliberately a SMALL projection — no prompts, no

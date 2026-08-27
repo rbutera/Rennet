@@ -17,20 +17,15 @@ import { join } from "node:path";
 import type { Octokit } from "@octokit/core";
 import {
   applyVisibilitySwitch,
-  beginUiEvidenceRun,
-  bindUiEvidenceRun,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   CodexAdapter,
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
-  completeUiEvidenceRun,
   contextAskBackend,
-  createClaudeAdjudicationTurn,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
-  createCodexAdjudicationTurn,
   createCodexCiRefinementTurn,
   createCodexExecutor,
   createCodexTurnTransport,
@@ -38,9 +33,7 @@ import {
   createCoverageTurn,
   createGitHubOctokit,
   createGitHubProjectPrSource,
-  createOmpTurnTransport,
   createRefPinner,
-  createUiVerificationTurn,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
   defaultCodexDiscoveryDeps,
@@ -49,15 +42,12 @@ import {
   defaultDiscoveryDeps,
   defaultFsListDirDeps,
   defaultGlobalConfigPath,
-  defaultOmpDiscoveryDeps,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
   deriveCodexImplementedEvidence,
-  deriveOmpImplementedEvidence,
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
-  discoverOmp,
   discoverProject,
   discoverWorktreeIdentities,
   enrichKnowledgeForRepo,
@@ -77,7 +67,6 @@ import {
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
   gitForRepoFactory,
-  inspectUiEvidence,
   isGitHubNetworkError,
   KnowledgeStore,
   listDir,
@@ -85,22 +74,17 @@ import {
   loadProjectDetail,
   matchWorktree,
   NoveltyLifecycleRegistry,
-  OmpAdapter,
   ProjectContextReader,
   type ProjectPrSource,
   ProjectSnapshotGenerator,
   parseGitHubPrRef,
-  projectHypothesisRepoContext,
   prWorktreePath,
   RepoWatcher,
   readOpenSpecChange,
   readSetupLogTail,
   readSetupStatus,
-  readUiEvidence,
   refreshGitHubCredential,
   repoHasSubmodules,
-  repoRecordOf,
-  resolveBaseRef,
   resolveForgeRemote,
   resolveGitHubAuth,
   runGitHubDeviceFlow,
@@ -112,8 +96,6 @@ import {
   wslDiscoveryDeps,
 } from "@rennet/adapters";
 import {
-  type AdmittedDocument,
-  adjudicateFlaggedReview,
   attachRiskCrossCheck,
   buildOfferedManifest,
   buildReviewCanvases,
@@ -127,10 +109,8 @@ import {
   decompose,
   detectLocus,
   escapePath,
-  type FanInIndex,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
-  fanInIndexFromSnapshot,
   guardSeatTurn,
   type HarnessPort,
   type HarnessTurnResult,
@@ -138,51 +118,34 @@ import {
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
-  patchsetIntentToReviewIntent,
   queryKnowledge,
   queryProjectMap,
   ReviewService,
   recordSeatSend,
   resolveAssignment,
-  resolveDualSeat,
   resolveLocus,
   runCoverageMapping,
-  runDecisionAngle,
-  runDualFindingReview,
   runHandoffTurn as runHandoffTurnCore,
-  runHypothesisPass,
   runNoiseAngle,
-  runUiVerification,
   toDistroPath,
   toWindowsView,
   verifyFlaggedReview,
 } from "@rennet/core";
 import type {
-  Canvas,
-  CanvasAngle,
-  ContextManifest,
   ConventionCatalogue,
   CouncilHarnessId,
-  DecisionsRunStatus,
   DetectedHarness,
-  ElementDiffs,
   FlaggedReview,
   GitHubAuthStatus,
   GitHubConnectPoll,
-  HypothesisStructure,
-  InvocationBudget,
   KnowledgeDispositionResult,
   NoiseReview,
   OpenSpecCoverage,
-  OwnershipRule,
   Patchset,
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
   Review,
-  ReviewEngine,
-  ReviewHypothesis,
-  ReviewNarration,
 } from "@rennet/protocol";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
@@ -204,7 +167,6 @@ import {
   performOpenInEditor,
   resolveEditorExecutables,
 } from "./open-in-editor";
-import { createOrchestratorTurnRunner, resolveOrchestratorHarnessSelection } from "./orchestrator";
 import { PairingStore } from "./pairing-store";
 import {
   createProactiveRehydration,
@@ -219,8 +181,6 @@ import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
-import { loadReviewOwnership } from "./review-ownership";
-import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
@@ -502,54 +462,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   async function codexExecutorForRepo(repoRoot: string): Promise<CodexExecutor | null> {
     const { locus } = locusContextForRepo(repoRoot);
     return (await getCodexResolution(locus)).executor;
-  }
-
-  // ── The omp resolution (#26) ───────────────────────────────────────────────────
-  // omp is the THIRD harness slot (R23). It serves the orchestrator seat ONLY when
-  // neither Claude nor Codex is installed (see `resolveHarness`) — the deliberately
-  // minimal selection policy. Resolution mirrors the Codex one exactly: discover an
-  // `omp` binary AND a runnable Bun (a missing Bun is honest DEGRADED health that names
-  // the runtime, never a crash), derive the hermetic conformance evidence once, and
-  // expose an `agenticPort(mcpServers)` factory that builds an `OmpAdapter` wired to the
-  // REAL `omp --mode rpc` transport with the loopback canvasOps@2 URL — the same
-  // external-MCP contract Codex uses, no harness conditional in the canvasOps layer.
-  // Composed LAZILY and memoized so the login-shell + probe work runs on first use.
-  interface OmpResolution {
-    readonly agenticPort:
-      | ((mcpServers: Readonly<Record<string, { readonly url: string }>>) => HarnessPort)
-      | null;
-    readonly version: string | null;
-  }
-  let ompResolution: Promise<OmpResolution> | null = null;
-  function getOmpResolution(): Promise<OmpResolution> {
-    ompResolution ??= (async (): Promise<OmpResolution> => {
-      // The hermetic-test hook (#386): see createClaudeHarness.
-      if (env.RENNET_DISABLE_HARNESS === "1") return { agenticPort: null, version: null };
-      const explicitBin = env.RENNET_OMP_BIN;
-      const result = await discoverOmp(defaultOmpDiscoveryDeps(), {
-        ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
-      });
-      const chosen = result.chosen;
-      if (!chosen?.runtimePath) {
-        // omp missing, or omp present but Bun absent — the Bun-aware health already
-        // carries the reason. No orchestrator seat against the slot.
-        return { agenticPort: null, version: null };
-      }
-      const transport = createOmpTurnTransport(chosen.path, chosen.runtimePath);
-      const capabilityEvidence = await deriveOmpImplementedEvidence(chosen.path);
-      return {
-        agenticPort: (mcpServers) =>
-          new OmpAdapter({
-            binaryPath: chosen.path,
-            transport,
-            version: chosen.version,
-            ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
-            mcpServers,
-          }),
-        version: chosen.version,
-      };
-    })();
-    return ompResolution;
   }
 
   // The ambient first-run detection line (issue #29): which harnesses are on the
@@ -1014,195 +926,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   /**
-   * The harness-backed live pipeline: decompose the review's active patchset,
-   * gate on the Brita budget, and (when the user's `claude` is discoverable) drive
-   * the decomposition angle + ordering pass on their subscription OAuth. With no
-   * harness the deterministic floor still populates real canvases from the diff.
-   */
-  async function buildCanvasesForReviewWithContextFeed(
-    review: Review,
-    contextFeed: ReviewContextFeed,
-    session: ReviewIntelligenceSession,
-  ): Promise<{
-    canvases: Record<CanvasAngle, Canvas>;
-    elementDiffs: ElementDiffs;
-    narration?: ReviewNarration;
-    engine: ReviewEngine;
-    /** How the Decisions lens's producer ran (issue #137): discerned vs failed. */
-    decisionsRun: DecisionsRunStatus;
-    /** The committed hypothesis (#178), when one was produced; the human's reading frame. */
-    hypothesis?: ReviewHypothesis;
-    /** The captured context-composition manifest; absent ⇒ honestly not available. */
-    contextManifest?: ContextManifest;
-  }> {
-    const patchset = activePatchset(review);
-    const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
-    const codexResolution = await getCodexResolution(locus);
-    const codex = codexResolution.availability;
-    const codexPort = codexResolution.port;
-    // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
-    // read-only harness runs with `cwd` on the live mutable checkout rather than
-    // an immutable materialisation, because that layer is not built yet and the
-    // "Claude CLI isolation" evidence gate is openly Blocked. Follow-up: materialise
-    // the active patchset to an app-owned cache and point `cwd` there. Do NOT read
-    // this as a satisfied contract.
-    const runDecompositionTurn = adapter
-      ? createHarnessRunTurn(adapter, {
-          docType: "decomposition.proposal",
-          cwd: review.repositoryRoot,
-        })
-      : undefined;
-    const runOrderingTurn = adapter
-      ? createHarnessRunTurn(adapter, { docType: "ordering", cwd: review.repositoryRoot })
-      : undefined;
-    // Roll-up narration (#70) is a light-tier council-routed seat. Under `both` the
-    // council routes it to cheap Codex ($0) via the port; under claude-only it uses
-    // this injected Claude turn. Absent an adapter it stays pending (never faked).
-    const runNarrationTurn = adapter
-      ? createHarnessRunTurn(adapter, { docType: "rollup-narration", cwd: review.repositoryRoot })
-      : undefined;
-
-    // The Model Council availability is the honestly-probed installed set: Claude
-    // iff its binary was discovered, Codex iff `codex --version` answered. The
-    // Codex port is passed IFF codex is installed — so a Codex resolution is always
-    // executable (the invariant the pipeline's fail-closed floor relies on).
-    const installed: CouncilHarnessId[] = [];
-    if (adapter) installed.push("claude-code");
-    if (codex.available) installed.push("codex");
-
-    // The Decisions lens (issue #137): the LIVE decision-extraction runner replaces
-    // `decisionsRecordFixture()` behind the unchanged `decisionDocs` boundary. It
-    // reasons over {the offered hunks + the change's stated intent} and emits real
-    // `decision.record` docs the existing projector groups by theme. On a runner
-    // failure it yields an empty doc set + a LOUD `failed` status, kept strictly
-    // apart from "ran, nothing discerned" (an ok run with no decisions).
-    // ① The hypothesis-first pre-read pass (#178): produce the committed prior ONCE
-    // per review — BEFORE the lens producers reason over hunks — from the change's
-    // structure (deterministic decomposition chunk titles + changed files). Live
-    // intent capture (#136) and the ProjectSnapshot context feed are deferred seams,
-    // so the pass degrades honestly (structure-only) today, exactly as the decision
-    // runner reasons over the diff alone until #136. Its committed hypothesis feeds
-    // the Decisions runner as disconfirmation criteria and rides the result as the
-    // human's reading frame. Absent an adapter (or on a failed pass) it is undefined
-    // and every lens runs exactly as before. It is drawn from the per-review
-    // intelligence session (#316): the canvas and flagged flows share ONE hypothesis
-    // and ONE ceiling for the current review turn, so the turn spends the hypothesis
-    // once, not once per flow. Re-entry starts a fresh session even at the same key.
-    const hypothesis = await session.hypothesis((budget) =>
-      computeReviewHypothesis(review, patchset, adapter, contextFeed, budget),
-    );
-
-    // The per-project convention checklist (#180), sourced once and fed to the
-    // Decisions runner as a labelled layer. Absent (no catalogue file), the runner
-    // reasons exactly as before.
-    const conventions = loadReviewConventions(review);
-
-    const decisions = await runDecisionsForReview(
-      review,
-      patchset,
-      adapter,
-      contextFeed,
-      session.budget,
-      hypothesis,
-      conventions,
-    );
-
-    // The blast-radius CODEOWNERS-overlap signal (issue #35) fires only when handed
-    // the review's ownership rules. Read them off the built ProjectSnapshot; absent a
-    // snapshot they are `[]` and the signal degrades honestly (never fires).
-    const ownership = await loadReviewOwnershipRules(review);
-    // The fan-in index (#200), materialized off the built snapshot; undefined ⇒ fan-in
-    // stays NOT-ASSESSED (the populated guard lives in the loader), never a silent zero.
-    const fanIn = await loadReviewFanInIndex(review);
-    // Assemble the pipeline input at the ONE testable composition seam (F4): this is
-    // where `ownership` reaches the pipeline, so the guard against dropping it lives on
-    // `buildReviewCanvasesInput`, not on the loader beneath it. The Decisions lens
-    // (issue #137) rides `decisionDocs`: real `decision.record` docs placed by the
-    // existing projector; the runner reasons over the diff alone until #136 intent
-    // capture lands (it fully supports intent, proven by the live {diff, PR body} dogfood).
-    const result = await buildReviewCanvases(
-      buildReviewCanvasesInput({
-        reviewId: review.id,
-        patchset,
-        dispositions: review.dispositions,
-        ownership,
-        ...(fanIn ? { fanIn } : {}),
-        installed,
-        decisionDocs: decisions.docs,
-        budget: session.budget,
-        ...(codexPort ? { codexPort } : {}),
-        ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
-        ...(runOrderingTurn ? { runOrderingTurn } : {}),
-        ...(runNarrationTurn ? { runNarrationTurn } : {}),
-        ...(contextFeed.assembledContext === undefined
-          ? {}
-          : { assembledContext: contextFeed.assembledContext }),
-        onSend: contextFeed.onSend,
-      }),
-    );
-    // The honesty signal for the renderer (real-AI-default): a review is a REAL AI
-    // review iff at least one model harness was installed AND the budget actually
-    // let a turn run. With neither claude nor codex — or a refused budget — the set
-    // is the deterministic mechanical outline of the diff, and the UI must say so.
-    const engine: ReviewEngine = {
-      claudeAvailable: adapter !== undefined,
-      codexAvailable: codex.available,
-      aiReview: installed.length > 0 && !result.budgetRefused,
-    };
-    return {
-      canvases: result.canvases,
-      elementDiffs: result.elementDiffs,
-      narration: result.narration,
-      engine,
-      decisionsRun: decisions.status,
-      ...(hypothesis ? { hypothesis } : {}),
-    };
-  }
-
-  async function buildCanvasesForReview(
-    review: Review,
-    _deepReview: boolean,
-    session: ReviewIntelligenceSession,
-  ): ReturnType<typeof buildCanvasesForReviewWithContextFeed> {
-    const contextFeed = await createDesktopReviewContextFeed(review, {
-      onError: reportContextFeedError,
-    });
-    const completed = await runWithReviewContextFeed(contextFeed, () =>
-      buildCanvasesForReviewWithContextFeed(review, contextFeed, session),
-    );
-    return {
-      ...completed.result,
-      ...(completed.contextManifest ? { contextManifest: completed.contextManifest } : {}),
-    };
-  }
-
-  // The provenance seed for a live hypothesis pass (issue #178), mirroring the
-  // finding/decision seeds. Provenance is stamped on the RSP document but not read
-  // by the reading-frame derivation (which consumes the extracted hypothesis body),
-  // so a placeholder model is honest for placement; the capability layers are true
-  // because this path DOES constrain structured output through the adapter.
-  const HYPOTHESIS_PROVENANCE_SEED = {
-    harness: "claude-code",
-    harnessVersion: "unknown",
-    adapterVersion: "0.0.0",
-    model: "unknown",
-    modelReportedBy: "unknown" as const,
-    capability: {
-      structuredOutput: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-      perCallModelSelection: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-    },
-  };
-
-  /**
    * Source the per-project convention / anti-pattern catalogue (#180) for a review
    * from `<repositoryRoot>/.rennet/conventions.json`. Honest degradation: an absent,
    * unreadable, empty, or all-malformed file yields `undefined` and every lens runs
@@ -1213,63 +936,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    */
   function loadReviewConventions(review: Review): ConventionCatalogue | undefined {
     return loadConventionCatalogue(review.repositoryRoot).catalogue;
-  }
-
-  /**
-   * The CODEOWNERS rules for a review (issue #35, F4), read off its built
-   * ProjectSnapshot so the blast-radius CODEOWNERS-overlap signal can actually fire
-   * in the real app. Honest degradation: no built snapshot (or an unresolvable repo)
-   * ⇒ `[]`, so the overlap signal simply does not fire — never a false single-owner
-   * claim. `resolveBaseRef` throws when it cannot pin a default branch; that is
-   * caught to a null key rather than crashing the canvas build.
-   */
-  function loadReviewOwnershipRules(review: Review): Promise<readonly OwnershipRule[]> {
-    return loadReviewOwnership(
-      {
-        loadManifest: (repoKey) => snapshotStoreFor().loadManifest(repoKey),
-        loadShard: (repoKey, digest) => snapshotStoreFor().loadShard(repoKey, digest),
-        resolveRepoKey: async (repositoryRoot) => {
-          try {
-            return (await resolveBaseRef(repositoryRoot, { git: gitForRepo(repositoryRoot) }))
-              .repoKey;
-          } catch (error) {
-            if (error instanceof LocusDistroMismatchError) throw error;
-            return null;
-          }
-        },
-      },
-      review,
-    );
-  }
-
-  /**
-   * The fan-in index for a review (#200 → #35 follow-on), materialized off its built
-   * ProjectSnapshot so the blast-radius fan-in signal is ASSESSED in the real app — the
-   * "read beyond the diff" the dogfood flagged Rennet cannot do.
-   *
-   * ⭐ The POPULATED GUARD is the load-bearing part: fan-in is supplied ONLY when the
-   * manifest actually carries reference shards. No repo key, no snapshot, a stale/absent
-   * snapshot, or an EMPTY reference index ⇒ `undefined`, and fan-in stays a NOT-ASSESSED
-   * chip — never a silent zero that would read as "checked, nothing depends on anything".
-   */
-  async function loadReviewFanInIndex(review: Review): Promise<FanInIndex | undefined> {
-    const root = review.repositoryRoot;
-    if (!root) return undefined;
-    let repoKey: string | null;
-    try {
-      repoKey = (await resolveBaseRef(root, { git: gitForRepo(root) })).repoKey;
-    } catch (error) {
-      if (error instanceof LocusDistroMismatchError) throw error;
-      return undefined;
-    }
-    if (!repoKey) return undefined;
-    const store = snapshotStoreFor();
-    const manifest = store.loadManifest(repoKey);
-    // Only assess fan-in when the reference index is genuinely POPULATED (#200).
-    if (!manifest || manifest.references.length === 0) return undefined;
-    const gated = new ProjectContextReader(store).loadFresh(repoKey, manifest.baseOid);
-    if (!gated.ok) return undefined;
-    return fanInIndexFromSnapshot(gated.snapshot);
   }
 
   function reportContextFeedError(error: unknown): void {
@@ -1285,201 +951,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       recordSeatSend(runTurn, { seat, harness: "claude-code" }, feed.onSend, feed.assembledContext),
     );
   }
-
-  /**
-   * Produce the committed hypothesis for a review (issue #178), once, before the
-   * lens producers run. It decomposes the active patchset for identity + structure
-   * (the chunk titles + changed-file list — NOT the hunk bodies, so the prior is
-   * genuine), runs the hypothesis pass on the user's `claude` (subscription OAuth),
-   * budget-gated as its own live action, and returns the extracted hypothesis or
-   * `undefined` when the pass could not complete. The change's stated intent (#136)
-   * is now projected from the frozen capture on the patchset and fed in; the
-   * ProjectSnapshot context feed remains a deferred seam. When no intent surface was
-   * captured (a no-PR working-tree review that touched no spec), the pass degrades
-   * honestly to a structure-only prior. A failed pass is never surfaced as an empty
-   * hypothesis — the review simply proceeds with no reading frame.
-   */
-  async function computeReviewHypothesis(
-    review: Review,
-    patchset: Patchset,
-    adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
-    contextFeed: ReviewContextFeed,
-    budget: InvocationBudget,
-  ): Promise<ReviewHypothesis | undefined> {
-    if (!adapter) return undefined;
-    const decomposition = decompose(patchset);
-    const manifest = buildOfferedManifest(decomposition);
-    const structure: HypothesisStructure = {
-      changedFiles: patchset.files.map((file) => file.path),
-      chunkTitles: decomposition.chunks.map((chunk) => chunk.title),
-    };
-    // KNOWN §7 DEVIATION (as elsewhere): the read-only harness runs with `cwd` on the
-    // live mutable checkout rather than an immutable materialisation. Do NOT read as
-    // satisfied.
-    const runHypothesisTurn = createHarnessRunTurn(adapter, {
-      docType: "review.hypothesis",
-      cwd: review.repositoryRoot,
-    });
-    // The change's stated intent (#136), projected from the frozen capture on the
-    // patchset. Absent (a no-PR working-tree review with no spec touched) it is
-    // undefined and the pass runs on structure + repo context alone — the honest
-    // degrade, unchanged from before intent capture landed.
-    const intent = patchsetIntentToReviewIntent(patchset.intent);
-    const repoContext = projectHypothesisRepoContext(
-      new ProjectContextReader(snapshotStoreFor()),
-      repoRecordOf(review),
-      patchset.files.map((file) => file.path),
-    );
-    const result = await runHypothesisPass({
-      patchsetId: patchset.id,
-      manifest,
-      structure,
-      ...(intent ? { intent } : {}),
-      ...(repoContext ? { repoContext } : {}),
-      provenance: HYPOTHESIS_PROVENANCE_SEED,
-      // A thrown/rejected turn (a session/transport construction exception, #96)
-      // degrades to a turn-failure rather than crashing the command.
-      runTurn: recordedDesktopSeatTurn(runHypothesisTurn, "hypothesis", contextFeed),
-      budget,
-      maxRetries: 0,
-      ...(contextFeed.assembledContext === undefined
-        ? {}
-        : { assembledContext: contextFeed.assembledContext }),
-    });
-    return result.status === "ok" ? result.hypothesis : undefined;
-  }
-
-  // The provenance seed for a live decision run (issue #137), mirroring the finding
-  // seed. Provenance is stamped on the RSP document but not read by the decisions
-  // projector (which consumes docId/docType/body), so a placeholder model is honest
-  // for placement; the capability layers are true because this path DOES constrain
-  // structured output through the adapter.
-  const DECISION_PROVENANCE_SEED = {
-    harness: "claude-code",
-    harnessVersion: "unknown",
-    adapterVersion: "0.0.0",
-    model: "unknown",
-    modelReportedBy: "unknown" as const,
-    capability: {
-      structuredOutput: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-      perCallModelSelection: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-    },
-  };
-
-  /**
-   * The live Decisions lens producer (issue #137), replacing `decisionsRecordFixture`.
-   * Decomposes the review's active patchset into the offered hunk manifest and runs
-   * the decision angle on the user's `claude` (subscription OAuth), budget-gated by
-   * the same review-turn budget as the hypothesis and canvas model phase. On `ok`
-   * its emitted `decision.record` document is returned as the
-   * `decisionDocs` the projector groups; on a runner failure/budget refusal the doc
-   * set is empty and the status is the LOUD `failed` state — "ran, nothing discerned"
-   * (an ok run with an empty set) is never faked from "did not run".
-   *
-   * The change's stated intent (PR title/body + spec) is captured with the patchset
-   * (#136) and projected onto the runner's intent seam here, so the runner reasons
-   * over {diff, intent}. When no intent surface was captured it degrades to the diff
-   * alone — the honest fallback, unchanged from before capture landed.
-   */
-  async function runDecisionsForReview(
-    review: Review,
-    patchset: Patchset,
-    adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
-    contextFeed: ReviewContextFeed,
-    budget: InvocationBudget,
-    hypothesis?: ReviewHypothesis,
-    conventions?: ConventionCatalogue,
-  ): Promise<{ docs: AdmittedDocument[]; status: DecisionsRunStatus }> {
-    if (!adapter) {
-      return {
-        docs: [],
-        status: { status: "failed", reason: "no model harness is available to discern decisions" },
-      };
-    }
-    const decomposition = decompose(patchset);
-    const manifest = buildOfferedManifest(decomposition);
-    // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
-    // with `cwd` on the live mutable checkout rather than an immutable materialisation,
-    // because that layer is not built yet. Follow-up: materialise the active patchset
-    // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
-    const runDecisionTurn = createHarnessRunTurn(adapter, {
-      docType: "decision.record",
-      cwd: review.repositoryRoot,
-    });
-    // The change's stated intent (#136), projected from the frozen capture on the
-    // patchset (PR title/body + the spec set). Absent, the runner reasons over the
-    // diff alone — the honest degrade. `DecisionIntent` is structurally identical to
-    // the mapped `ReviewIntent`, so the same projection feeds both runners.
-    const intent = patchsetIntentToReviewIntent(patchset.intent);
-    const result = await runDecisionAngle({
-      patchsetId: patchset.id,
-      manifest,
-      ...(intent ? { intent } : {}),
-      // The committed hypothesis (#178), when produced, feeds the runner as
-      // disconfirmation criteria — so a decision can surface where the change diverges
-      // from what we'd have chosen. Absent, the runner reasons exactly as before.
-      ...(hypothesis ? { hypothesis } : {}),
-      // The per-project convention catalogue (#180), when sourced, feeds the runner
-      // as a checklist layer — a decision can surface where the change diverges from
-      // an established convention, reporting the reason (never a rule number).
-      ...(conventions ? { conventions } : {}),
-      provenance: DECISION_PROVENANCE_SEED,
-      // A thrown/rejected turn (a session/transport construction exception, #96)
-      // degrades to a turn-failure rather than crashing the command.
-      runTurn: recordedDesktopSeatTurn(runDecisionTurn, "decisions", contextFeed),
-      budget,
-      ...(contextFeed.assembledContext === undefined
-        ? {}
-        : { assembledContext: contextFeed.assembledContext }),
-    });
-    if (result.status === "ok") {
-      const doc = result.document;
-      const docs: AdmittedDocument[] =
-        doc && doc.docId !== undefined
-          ? [{ docId: doc.docId, docType: doc.docType, body: doc.body }]
-          : [];
-      return { docs, status: { status: "ok" } };
-    }
-    return {
-      docs: [],
-      status: {
-        status: "failed",
-        reason: result.failureReason ?? "the decision runner did not complete",
-      },
-    };
-  }
-
-  // The provenance seed for a live finding run. Provenance is stamped on the RSP
-  // document but not read by the Flagged lens (findings map straight to the lens),
-  // so a placeholder model is honest for placement; the capability layers are set
-  // true because this path DOES constrain structured output through the adapter.
-  const FINDING_PROVENANCE_SEED = {
-    harness: "claude-code",
-    harnessVersion: "unknown",
-    adapterVersion: "0.0.0",
-    model: "unknown",
-    modelReportedBy: "unknown" as const,
-    capability: {
-      structuredOutput: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-      perCallModelSelection: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-    },
-  };
 
   /**
    * The live Flagged lens runner (issue #32/#138 + dual-model #41), replacing
@@ -1513,19 +984,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const sharedBudget = session.budget;
     const codexResolution = await getCodexResolution(locus);
     const codex = codexResolution.availability;
-    const codexPort = codexResolution.port;
     const decomposition = decompose(patchset);
     const manifest = buildOfferedManifest(decomposition);
-    // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
-    // with `cwd` on the live mutable checkout rather than an immutable materialisation,
-    // because that layer is not built yet. Follow-up: materialise the active patchset
-    // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
-    const claudeTurn = adapter
-      ? createHarnessRunTurn(adapter, { docType: "finding", cwd: review.repositoryRoot })
-      : undefined;
 
-    // The honestly-probed installed set: the Codex port is passed IFF codex is
-    // installed, so a Codex seat is always executable (the resolver's invariant).
+    // The honestly-probed installed set (drives the CI-classification seat below).
     const installed: CouncilHarnessId[] = [];
     if (adapter) installed.push("claude-code");
     if (codex.available) installed.push("codex");
@@ -1548,57 +1010,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               })
             : undefined;
 
-    // The ordered dual seats (Claude first, Codex second), each with its honest
-    // provenance seed and executor. Under a single provider this is one seat.
-    const seats = resolveDualSeat({
-      council: { availability: { installed } },
-      jobId: "finding-generation",
-      docType: "finding",
-      patchsetId: patchset.id,
-      manifest,
-      baseSeed: FINDING_PROVENANCE_SEED,
-      ...(claudeTurn ? { claudeTurn } : {}),
-      ...(codexPort ? { codexPort } : {}),
-    });
-
-    // Hypothesis, both finding seats, and verification draw from ONE review budget:
-    // the ceiling stops spend, never the review. The dual runner guards each seat's
-    // turn (a thrown Codex spawn degrades to a failed seat, then the reconcile
-    // degrades) and owns the reconcile + the honest single-provider degradation.
-    // The per-project convention checklist (#180), fed to BOTH seats as a labelled
-    // layer. Absent (no catalogue file), each seat assembles exactly as before.
-    const conventions = loadReviewConventions(review);
-
-    // The committed hypothesis (#178) and the change's stated intent (#136), fed to
-    // BOTH finding seats so the Flagged lens reasons over the same disconfirmation
-    // prior + PR intent the Decisions runner already gets (issue #210) — the whole
-    // point of hypothesis-first is that it shapes EVERY finding, not just decisions.
-    // The hypothesis is produced ONCE per review turn by the intelligence session
-    // (#316) and shared with the canvas flow — never recomputed here (from the
-    // change's structure + intent + repo context, never the hunk bodies, so the prior
-    // stays genuine); absent an adapter or on a failed pass it is undefined. The intent
-    // is projected from the frozen capture on the patchset; absent a captured surface
-    // it is undefined. With BOTH undefined the finding assembly is byte-identical to
-    // before this change (no regression).
-    const hypothesis = await session.hypothesis((budget) =>
-      computeReviewHypothesis(review, patchset, adapter, contextFeed, budget),
-    );
-    const intent = patchsetIntentToReviewIntent(patchset.intent);
-
-    const { review: flagged } = await runDualFindingReview({
-      deepReview,
-      patchsetId: patchset.id,
-      manifest,
-      seats,
-      budget: sharedBudget,
-      ...(intent ? { intent } : {}),
-      ...(hypothesis ? { hypothesis } : {}),
-      ...(conventions ? { conventions } : {}),
-      ...(contextFeed.assembledContext === undefined
-        ? {}
-        : { assembledContext: contextFeed.assembledContext }),
-      onSend: contextFeed.onSend,
-    });
+    // The model finding generator (the dual-seat `runFindingAngle` path) died with
+    // the Board rebuild (#489); B8's drafters replace it. Until then the flagged lens
+    // degrades to no findings — the deterministic CI signal, incomplete-ingestion
+    // blocking states, and $0 UI-surface classifier below still stamp the honest
+    // render-only chrome, and deep-review verification simply has nothing to verify.
+    const flagged: FlaggedReview = { status: "ok", findings: [] };
 
     // ── Per-finding verification (#179): a DEEP-REVIEW feature, alongside dual-model ──
     // Quick review stays single-Claude with NO verification (byte-identical to before).
@@ -1611,7 +1028,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // DEEP review that absence must ANNOUNCE itself (P0-3, below), never surface a chipless
     // finding that reads as "nothing to check."
     let surfacedReview: FlaggedReview;
-    let adjudicationOptions: Parameters<typeof adjudicateFlaggedReview>[1] | undefined;
     if (deepReview && adapter) {
       const readFileWindow = createVerificationFileReaderForPatchset({
         patchset,
@@ -1633,43 +1049,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         budget: sharedBudget,
         maxVerifications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.verification.maxVerifications,
       });
-      // Cross-harness adjudication (#41): AFTER verification, on the surviving rows
-      // (a refuted row is already dropped). When the two seats DISAGREED, one fresh
-      // turn per contested row on the seat the council resolves for the `adjudication`
-      // job asks the real code who is right — a genuine third opinion, drawn from the
-      // SAME shared review budget. The verdict rides the disagree arm; it never drops,
-      // hides, or gates a row (Rule Zero). Absent an executor for the resolved harness,
-      // rows surface unadjudicated (honest degradation).
-      const adjResolution = resolveAssignment("adjudication", { availability: { installed } });
-      const adjudicationTurn =
-        adjResolution.kind !== "model"
-          ? undefined
-          : adjResolution.harness === "codex" && codexResolution.executor
-            ? createCodexAdjudicationTurn(codexResolution.executor, {
-                model: adjResolution.model,
-                effort: adjResolution.effort,
-              })
-            : adjResolution.harness === "claude-code" && adapter
-              ? createClaudeAdjudicationTurn(adapter, {
-                  cwd: review.repositoryRoot,
-                  model: adjResolution.model,
-                })
-              : undefined;
-      if (adjResolution.kind === "model" && adjudicationTurn) {
-        adjudicationOptions = {
-          manifest,
-          readFileWindow,
-          runTurn: adjudicationTurn,
-          adjudicatedBy: `${adjResolution.model} (${adjResolution.harness})`,
-          budget: sharedBudget,
-          maxAdjudications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.adjudication.maxAdjudications,
-        };
-      }
-      // The predicted-risk cross-check (#181), the LAST transform: reconcile the
-      // hypothesis's predicted risks against the surfaced findings, so a risk marked
-      // `confirmed` is addressed by a finding that actually surfaces. Deterministic,
-      // $0 — absent a hypothesis it returns the review unchanged.
-      surfacedReview = attachRiskCrossCheck(verified, hypothesis);
+      // The predicted-risk cross-check (#181), the LAST transform. Deterministic, $0 —
+      // absent a hypothesis it returns the review unchanged.
+      surfacedReview = attachRiskCrossCheck(verified, undefined);
     } else {
       // Reaching here under DEEP review means there is no Claude verifier (e.g. a
       // Codex-only review). Announce that honestly: every finding that WOULD have been
@@ -1677,7 +1059,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // because it never promised verification. The cross-check is a free deterministic
       // step over whichever honest surface applies.
       const surfaced = projectUnavailableDeepVerification(flagged, deepReview);
-      surfacedReview = attachRiskCrossCheck(surfaced, hypothesis);
+      surfacedReview = attachRiskCrossCheck(surfaced, undefined);
     }
 
     const withCiSignal = await attachCiSignal({
@@ -1700,14 +1082,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // Flagged lens + PublishSheet disclose it as render-only honest copy; it NEVER
     // gates the sign (Rule Zero). Mirrors the #160 patchsetId stamp.
     const stamped = stampBlockingStates(withCiSignal, decomposition);
-    // ── verify-ui (#183): mount the changed UI surface, screenshot, a11y, intent ──
-    // The classifier is deterministic and $0. A backend-only changeset records the
-    // distinct `not-ui` status SYNCHRONOUSLY (no turn, no enrichment cycle) — "not
-    // applicable", never an all-clear. A UI-touching deep review with a Claude adapter
-    // gets ONE budget-bounded turn, but that turn is SLOW (install/build/mount), so it
-    // rides the SAME non-blocking late-enrichment channel as adjudication (#349 lesson):
-    // it NEVER delays the immediate row/canvas delivery, and its observations (ordinary
-    // findings) + status replace the rows via `flagged.adjudication` when it lands.
+    // The deterministic UI-surface classifier is $0 and records the honest immediate
+    // status (not-ui / pending / verifier-unavailable). The live verify-ui model turn
+    // and the cross-harness adjudication turn are gone with the Board rebuild (B2), so
+    // no late enrichment is scheduled — the immediate rows are the whole result.
     const uiClassification = classifyUiSurface(patchset.files);
     const immediate = applyImmediateUiVerification(stamped, {
       touchesUi: uiClassification.touchesUi,
@@ -1715,50 +1093,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       deepReview,
       verifierAvailable: Boolean(adapter),
     });
-    const uiVerification =
-      immediate.status === "ok" && deepReview && adapter && uiClassification.touchesUi
-        ? (async () => {
-            const evidenceRun = await beginUiEvidenceRun(
-              join(dataDir, "ui-evidence"),
-              review.id,
-              patchset.id,
-            );
-            try {
-              const uiResult = await runUiVerification({
-                files: patchset.files,
-                hunks: decomposition.hunks,
-                ...(intent ? { intent } : {}),
-                evidenceDir: evidenceRun.directory,
-                runTurn: createUiVerificationTurn(adapter, { cwd: review.repositoryRoot }),
-                budget: sharedBudget,
-                inspectEvidence: (path) => inspectUiEvidence(evidenceRun.directory, path),
-                maxTurns: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.uiVerification.maxTurns,
-              });
-              const bound = bindUiEvidenceRun(uiResult, evidenceRun);
-              await completeUiEvidenceRun(
-                evidenceRun,
-                bound.status.status === "ran" && bound.status.screenshots.length > 0,
-              );
-              return bound;
-            } catch (error) {
-              await completeUiEvidenceRun(evidenceRun, false);
-              throw error;
-            }
-          })()
-        : null;
-    const adjudicated =
-      adjudicationOptions &&
-      immediate.status === "ok" &&
-      immediate.findings.some((finding) => finding.agreement.kind === "disagree")
-        ? adjudicateFlaggedReview(immediate, adjudicationOptions).then(({ review }) => review)
-        : null;
-    // The two late passes start independently and compose only when their results are
-    // ready. The immediate response says late enrichment was scheduled, so an all-concur
-    // or zero-row renderer polls too; neither turn delays row delivery (Rule Zero).
     const composed = composeFlaggedLateEnrichment({
       immediate,
-      adjudication: adjudicated,
-      uiVerification,
+      adjudication: null,
+      uiVerification: null,
     });
     return { review: composed.review, adjudication: composed.enrichment };
   }
@@ -2058,74 +1396,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   };
   const publishConsent = createPublishConsentAuthority();
-  // The live orchestrator turn runner resolves the `orchestrator-chat` council seat
-  // across both real HarnessPort adapters. Claude receives the in-process canvasOps
-  // server; a Codex-selected path receives the same backend through the external
-  // loopback transport. It reuses the memoized discoveries and the app-owned store under
-  // `~/.rennet/projects/` (issue #188 — `baseDir` omitted, so it inherits
-  // `defaultProjectsBaseDir()`). It is wired into the command-router composition
-  // here; the conversational command that would drive a turn per user question is
-  // the DEFERRED UI loop.
-  const orchestratorTurn = createOrchestratorTurnRunner({
-    resolveLocus: locusForRepo,
-    resolveHarness: async (repoRoot) => {
-      const { locus, distroCwd } = locusContextForRepo(repoRoot);
-      const claude = await getClaudeHarness(locus, distroCwd);
-      const codex = await getCodexResolution(locus);
-      const claudePresent = claude.adapter !== null;
-      const codexPresent = codex.agenticPort !== null;
-      // omp fallback (#26): the deliberately minimal selection policy lives in the pure
-      // `resolveOrchestratorHarnessSelection` — omp serves the seat ONLY when neither
-      // Claude nor Codex is installed (where today the seat was null); otherwise the
-      // council decision below is returned UNCHANGED. The omp resolution is memoized like
-      // the others and only awaited on the sole-installed path (never a probe when the
-      // council already has a seat).
-      const ompResolvePort =
-        claudePresent || codexPresent
-          ? null
-          : await (async () => {
-              const ompPort = (await getOmpResolution()).agenticPort;
-              return ompPort
-                ? (mcpServers: Readonly<Record<string, { readonly url: string }>>) =>
-                    Promise.resolve(ompPort(mcpServers))
-                : null;
-            })();
-      return resolveOrchestratorHarnessSelection({
-        claudePresent,
-        codexPresent,
-        ompResolvePort,
-        council: () => {
-          const installed: CouncilHarnessId[] = [];
-          if (claudePresent) installed.push("claude-code");
-          if (codexPresent) installed.push("codex");
-          const assignment = resolveAssignment("orchestrator-chat", {
-            availability: { installed },
-          });
-          if (assignment.kind !== "model") return null;
-          const agenticPort = codex.agenticPort;
-          if (assignment.harness === "codex" && agenticPort) {
-            return {
-              harness: "codex",
-              model: assignment.model,
-              resolvePort: (mcpServers) => Promise.resolve(agenticPort(mcpServers)),
-            };
-          }
-          const claudePath = claude.discovery.chosen?.path;
-          return assignment.harness === "claude-code" && claudePath
-            ? { harness: "claude-code", claudePath, model: assignment.model }
-            : null;
-        },
-      });
-    },
-    env,
-    backend: {
-      resolveKnowledgePort: async (repoRoot) => {
-        const { locus, distroCwd } = locusContextForRepo(repoRoot);
-        return (await getClaudeHarness(locus, distroCwd)).adapter;
-      },
-      noveltyLifecycle: liveNoveltyLifecycle,
-    },
-  });
   // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
   // (reload persisted threads, crash-recovered) and persistence (write a streaming
   // placeholder that recovers as interrupted if this process dies mid-answer).
@@ -2162,7 +1432,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // A review-scoped turn marks its review running for the duration (#383 batch) — the real
     // source of the projected `attention.running`, read by the listener's projection context.
     inFlightReviews,
-    orchestratorTurn,
     publishPort,
     submitPullRequest,
     publishConsent,
@@ -2215,7 +1484,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     setRepositoryDirty: (value: boolean) => {
       repositoryDirty = value;
     },
-    buildCanvases: buildCanvasesForReview,
     // The front door (issue #29): the persisted projects list, read-only discovery
     // over the chosen path, and the ambient harness detection. MAIN derives the
     // stored project shape from the confirmed discovery so the renderer cannot
@@ -2413,12 +1681,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // DEFAULT now (Rai's mandate, 2026-08-11); an explicit opt-down gives single-Claude
     // quick. The boundary is unchanged.
     flaggedReview: runFlaggedReview,
-    // The verify-ui screenshot read (#183): confined to the review's own evidence
-    // directory under the app's user-data dir — the SAME `<userData>/ui-evidence/
-    // <reviewId>/` the verify-ui turn wrote its PNGs into. Fail-closed (escape/missing
-    // → null), no spend, no egress.
-    readUiEvidence: (reviewId, path) =>
-      readUiEvidence(join(dataDir, "ui-evidence"), reviewId, path),
     // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
     // rule vs noise job. This is the LIVE noise-classification runner — a real model
     // turn over the review's diff, replacing the fixture, behind the unchanged
@@ -2492,18 +1754,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         locus: locusForRepo(review.repositoryRoot),
       }),
     reviewAsk: createLiveReviewAskPorts({
-      // Dispatch resolves + freshness-pins the review (and its patchset) and hands the
-      // SAME snapshot to both legs, so the ports never re-resolve. The pipeline is a
-      // deterministic-floor build (no lens/model turns): the ask's model spend is the
-      // ONE orchestrator turn, not a fresh lens review.
-      buildPipeline: (review) =>
-        buildReviewCanvases({
-          reviewId: review.id,
-          patchset: activePatchset(review),
-          dispositions: review.dispositions,
-          budget: createInvocationBudget(0),
-        }),
-      orchestratorTurn,
       askCodex: async ({ review, question, abortController }) => {
         // The ask executor is bound to the RESOLVED absolute codex, same as the
         // pipeline seat (bead workspace-6qp15), and to the review's locus (#334) so a
@@ -2551,7 +1801,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       codexExecutor: codexExecutorForRepo,
     }),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
-    // Rephrases the successor review's DETERMINISTIC delta account into a one-glance
+    // Rephrases the successor review's DETERMINISTIC successor account into a one-glance
     // TL;DR shown ON TOP of the facts, on WHICHEVER seat the council resolves for
     // `delta-rereview-summary` — the SAME probes the drafter uses. Degrades to an honest
     // `unavailable` (the facts still render, no headline) when neither seat is installed.

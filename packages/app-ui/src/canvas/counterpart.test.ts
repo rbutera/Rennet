@@ -1,6 +1,11 @@
-import type { Canvas, CanvasAngle } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { implementationPathFor, isTestPath, resolveCounterpart, testPathsFor } from "./counterpart";
+import {
+  type CanvasAngle,
+  implementationPathFor,
+  isTestPath,
+  resolveCounterpart,
+  testPathsFor,
+} from "./counterpart";
 
 // A review canvas set plus a resolver from elementKey → the SET of paths its diff
 // renders — mirroring the real `buildElementDiffs` output (`ElementDiff.paths`).
@@ -11,15 +16,9 @@ import { implementationPathFor, isTestPath, resolveCounterpart, testPathsFor } f
 //   • substrate is EMPTY and element anchors are PROPOSAL-style ids matching no
 //     floor/substrate id — resolution must not depend on the id shape;
 //   • only the given angles carry elements, so the cross-lens fallback is exercised.
-function reviewCanvases(
-  fileGroups: string[][],
-  anglesWithElements: CanvasAngle[],
-): {
-  canvases: Record<CanvasAngle, Canvas>;
-  pathsForElement: (key: string) => readonly string[] | undefined;
-} {
+function reviewCanvases(fileGroups: string[][], anglesWithElements: CanvasAngle[]) {
   const pathsByElement = new Map<string, string[]>();
-  const build = (angle: CanvasAngle): Canvas => {
+  const build = (angle: CanvasAngle) => {
     const withElements = anglesWithElements.includes(angle);
     const elements = withElements
       ? fileGroups.map((group, index) => {
@@ -57,7 +56,7 @@ function reviewCanvases(
       noise: build("noise"),
       flagged: build("flagged"),
     },
-    pathsForElement: (key) => pathsByElement.get(key),
+    pathsForElement: (key: string) => pathsByElement.get(key),
   };
 }
 

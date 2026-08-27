@@ -7,7 +7,7 @@ import { Button } from "@rennet/ui";
 // included/truncated/dropped state, plus the assembled-prompt digest and (when
 // available) the byte-identical assembled prompt itself.
 //
-// Modelled on `delta-account-panel.tsx`: deterministic, model-free, and gate-free
+// Modelled on `successor-account-panel.tsx`: deterministic, model-free, and gate-free
 // (Rule Zero). It gates NOTHING — repo guidance already fed the pipeline; honesty
 // is provided by SHOWING the truth (what was composed, what was cut), never by
 // restricting what may be composed. There is no accept/trust/consent affordance

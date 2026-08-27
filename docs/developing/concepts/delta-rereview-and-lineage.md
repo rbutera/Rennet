@@ -90,9 +90,9 @@ The distinction between the fuzzy graph and this byte comparison is deliberate
 and visible in the code. Similarity can help describe a successor; it does not
 stand in for byte evidence when carrying a disposition.
 
-## The delta account
+## The successor account
 
-When a successor has prior asks, `buildDeltaAccount()` creates a deterministic
+When a successor has prior asks, `buildSuccessorAccount()` creates a deterministic
 account. It records:
 
 - `addressed`, `partially-addressed`, or `untouched` for each ask;
@@ -107,7 +107,7 @@ successor review itself. The account uses that carry result to classify its asks
 sequenceDiagram
   participant Capture
   participant Fold as Review fold
-  participant Account as Delta account
+  participant Account as Successor account
   participant UI
 
   Capture->>Fold: Activate successor patchset
@@ -139,9 +139,9 @@ a particular hunk.
 | Anchor resolution over a lineage graph | `packages/protocol/src/rsp.ts` |
 | Fuzzy occurrence classifier | `packages/core/src/lineage-matcher.ts` |
 | Live disposition carry and successor fold | `packages/core/src/index.ts` |
-| Path and hunk delta account | `packages/core/src/delta-account.ts` |
+| Path and hunk successor account | `packages/core/src/successor-account.ts` |
 | Optional delta digest turn | `packages/server/src/delta-digest-live.ts` |
-| Delta account rendering | `packages/app-ui/src/components/delta-account-panel.tsx` |
+| Successor account rendering | `packages/app-ui/src/components/successor-account-panel.tsx` |
 
 See [agent handoff](./agent-handoff.md) for the acting loop and
 [architecture contracts](./architecture-contracts.md) for the patchset

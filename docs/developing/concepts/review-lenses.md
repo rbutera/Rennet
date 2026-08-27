@@ -142,6 +142,5 @@ Every lens preserves these rules:
 5. Blast radius adds evidence-backed emphasis without becoming a separate review
    queue.
 
-See [The canvas model](./canvas-model.md) for layers and element identities and
-[Architecture contracts](./architecture-contracts.md) for patchset and lineage
-rules.
+See [Architecture contracts](./architecture-contracts.md) for patchset and
+lineage rules.

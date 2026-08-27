@@ -12,15 +12,21 @@
 
 import { buildRowRegistry, type Mark, placeMarks } from "@rennet/app-ui";
 import { type AdmittedDocument, buildElementDiffs, decompose } from "@rennet/core";
-import {
-  type AnalysisElement,
-  CANVAS_ANGLES,
-  type Canvas,
-  type CanvasAngle,
-  type PatchFile,
-  type Patchset,
-} from "@rennet/protocol";
+import type { PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+
+// Local test shapes — protocol's `Canvas`/`CanvasAngle`/`AnalysisElement` state model
+// was deleted (#489, B2). `buildElementDiffs` reads only each canvas's analysis
+// elements (elementKey + anchor), so a minimal element + a plain angle→canvas record
+// exercise the same seam.
+type TestElement = {
+  elementKey: string;
+  docId: string;
+  anchor: string;
+  kind: string;
+  title: string;
+};
+const ANGLES = ["spec", "sequence", "decisions", "noise", "flagged"] as const;
 
 const repository = {
   id: "repo",
@@ -47,26 +53,14 @@ function patchsetOf(id: string, files: PatchFile[]): Patchset {
   };
 }
 
-function blankCanvas(angle: CanvasAngle, elements: AnalysisElement[]): Canvas {
-  return {
-    canvasId: `cid-${angle}`,
-    reviewId: "r1",
-    patchsetId: "patch",
-    angle,
-    layers: {
-      substrate: { chunks: [] },
-      analysis: { elements, cohorts: [], readingOrder: elements.map((el) => el.elementKey) },
-      disposition: { dispositions: [] },
-      annotation: { annotations: [], proposals: [] },
-    },
-    overlay: [],
-  };
+function blankCanvas(elements: readonly TestElement[]): {
+  layers: { analysis: { elements: readonly TestElement[] } };
+} {
+  return { layers: { analysis: { elements } } };
 }
 
-function setWith(angle: CanvasAngle, elements: AnalysisElement[]): Record<CanvasAngle, Canvas> {
-  return Object.fromEntries(
-    CANVAS_ANGLES.map((a) => [a, blankCanvas(a, a === angle ? elements : [])]),
-  ) as Record<CanvasAngle, Canvas>;
+function setWith(angle: string, elements: readonly TestElement[]) {
+  return Object.fromEntries(ANGLES.map((a) => [a, blankCanvas(a === angle ? elements : [])]));
 }
 
 /** The registry row a single-row span resolved to, by its exact text — the strongest

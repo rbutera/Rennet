@@ -29,15 +29,36 @@ import type {
   CouncilJobId,
   CouncilResolveContext,
   OfferedManifest,
+  ResolutionTrace,
+  RspCapabilitySnapshot,
   RspDocType,
+  RspModelReportedBy,
 } from "@rennet/protocol";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
-import type { FindingProvenanceSeed } from "./finding-generation";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { providerHarness, resolveAssignment } from "./model-council";
 
 type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
+
+/**
+ * A model-seat provenance seed: the harness/model/effort a seat runs under, stamped
+ * onto every RSP document it emits. Inlined from the deleted `finding-generation`
+ * pass (B2) — `dual-seat` is its surviving home; the seat resolver is the only code
+ * that still shapes it. The council overwrites `harness`/`model`/`effort` per seat.
+ */
+export interface FindingProvenanceSeed {
+  readonly harness: string;
+  readonly harnessVersion: string;
+  readonly adapterVersion: string;
+  readonly model: string;
+  readonly modelReportedBy: RspModelReportedBy;
+  readonly capability: RspCapabilitySnapshot;
+  /** The Model Council effort for this seat, when the council resolved it (#69). */
+  readonly effort?: string;
+  /** The Model Council resolution trace, when the council resolved this seat (#69). */
+  readonly resolutionTrace?: ResolutionTrace;
+}
 
 /** The default display labels for the two provider seats. */
 export const DEFAULT_SEAT_LABELS: Readonly<Record<CouncilHarnessId, string>> = {

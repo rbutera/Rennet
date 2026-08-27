@@ -105,7 +105,7 @@ locations, lens changes, zoom, review regeneration, appearance, settings, and
 outbound draft actions.
 
 `Command+[` and `Command+]` move backward and forward through navigation history.
-On a loaded canvas, `l` zooms in and `h` zooms out. A command that cannot run in
+In a loaded review, `l` zooms in and `h` zooms out. A command that cannot run in
 the current state is omitted.
 
 ### Remap shortcuts
@@ -137,7 +137,7 @@ not show a separate application menu strip.
 ## Reopen a review
 
 Captured reviews are persisted locally. Reopening one restores its patchset,
-read state, dispositions, delta account, and conversation threads without
+read state, dispositions, successor account, and conversation threads without
 running the review again.
 
 If the original worktree is gone, the captured review remains readable. Commands

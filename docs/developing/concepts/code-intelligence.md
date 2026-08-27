@@ -62,9 +62,9 @@ and can miss a relationship that does not preserve the identifier text.
 
 ## Review integration
 
-The orchestrator reaches the same backend through `context.symbol` and
-`context.references`. Responses use the `canvasOps@2` envelope, including
-freshness, evidence, totals, and truncation where applicable. The UI symbol
+Review context reaches the same backend through `context.symbol` and
+`context.references`. Responses carry freshness, evidence, totals, and
+truncation where applicable. The UI symbol
 inspector presents the definition candidates, references, and file neighbors
 without upgrading textual evidence to semantic certainty.
 

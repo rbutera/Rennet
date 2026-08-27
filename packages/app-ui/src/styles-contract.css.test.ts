@@ -30,35 +30,8 @@ describe("the app stylesheet scans the vendored @rennet/ui kit", () => {
   });
 });
 
-describe("hold-to-sign fill contract (critique P1-C)", () => {
-  // Post-Tailwind conversion the fill's resting geometry rides utilities on the component
-  // and the sign-hold-fill KEYFRAME + its `.is-holding` arming rule live in index.css (a
-  // "report, don't inline" keyframe). styles.css is deleted, so the two invariants it pinned
-  // are now pinned against the COMPONENT SOURCE: the fill is inert at rest (width 0, no
-  // animation), and only the hold state arms it. The runtime toggling of `.is-holding` is
-  // exercised behaviourally in publish-hold-progress.dom.test.tsx.
-  const component = readFileSync(
-    fileURLToPath(new URL("./components/publish-sheet.tsx", import.meta.url)),
-    "utf8",
-  );
-
-  it("the resting fill is empty and inert — width 0, no animation utility", () => {
-    // The fill span's utility class list carries `w-0` (resting width 0) and arms no
-    // animation. RED-proof: change `w-0` to `w-full`, or add an `animate-*`, and this fires.
-    const fill = /className="(publish-sheet-sign-fill[^"]*)"/.exec(component)?.[1] ?? "";
-    expect(fill).toMatch(/\bw-0\b/);
-    expect(fill).not.toMatch(/\banimate-/);
-    expect(fill).not.toContain("is-holding");
-  });
-
-  it("only the hold state arms the fill — `.is-holding` is applied conditionally", () => {
-    // The `.is-holding` class (which arms the CSS animation in index.css) is added ONLY when
-    // the button is holding, never statically. RED-proof: put `is-holding` in the base class
-    // list and drop the conditional and this fires.
-    expect(component).toMatch(/holding \? " is-holding" : ""/);
-    expect(component).not.toMatch(/publish-sheet-sign [^"]*\bis-holding\b/);
-  });
-});
+// The hold-to-sign fill contract pinned the deleted `publish-sheet.tsx` component
+// source (B2, #489 — the canvas publish surface is gone); its invariants left with it.
 
 describe("running-review progress track radius (critique review item 1)", () => {
   // Re-pinned against the component source after the Tailwind conversion (styles.css is

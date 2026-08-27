@@ -20,17 +20,47 @@
  */
 
 import type {
-  Canvas,
-  CanvasAngle,
   Decomposition,
+  DecompositionProposalBody,
   ElementDiff,
   ElementDiffs,
   Hunk,
   Patchset,
   RenderedHunkOccurrence,
+  RspDocType,
 } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
-import { type AdmittedDocument, isProposalBody } from "./canvas";
+
+/**
+ * The slice of a canvas the diff slicer reads: its analysis elements' keys + anchors.
+ * Local shape — protocol's `Canvas`/`CanvasAngle` state model was deleted (#489, B2);
+ * the deterministic slicer survives standalone for the B-series to re-wire onto the
+ * Board surface. Only `elementKey` + `anchor` are read here.
+ */
+interface DiffSliceCanvas {
+  layers: { analysis: { elements: ReadonlyArray<{ elementKey: string; anchor: string }> } };
+}
+
+/**
+ * An admitted RSP document, as the diff slicer consumes it: the adapter-minted
+ * `docId`, the `docType`, and the validator-admitted `body`. Inlined from the
+ * deleted `canvas.ts` projector (B2) — the slicer is its only surviving consumer.
+ */
+export interface AdmittedDocument {
+  docId: string;
+  docType: RspDocType;
+  body: unknown;
+}
+
+/** Whether an admitted body is a decomposition proposal (carries chunks + reading order). */
+function isProposalBody(body: unknown): body is DecompositionProposalBody {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    Array.isArray((body as { chunks?: unknown }).chunks) &&
+    Array.isArray((body as { readingOrder?: unknown }).readingOrder)
+  );
+}
 
 /** A verbatim `@@` hunk sliced from a file patch: its line ranges + exact text. */
 interface RawHunk {
@@ -242,7 +272,7 @@ function renderDiff(
  * once — the map is deterministic regardless of canvas iteration order.
  */
 export function buildElementDiffs(
-  canvases: Record<CanvasAngle, Canvas>,
+  canvases: Record<string, DiffSliceCanvas>,
   decomposition: Decomposition,
   patchset: Patchset,
   admittedDocs: readonly AdmittedDocument[] = [],

@@ -1,283 +1,50 @@
 /**
- * The live review pipeline (issue #54).
+ * The deterministic review-pipeline floor (issue #54, reduced for the Board rebuild — B2).
  *
- * This is the wire that turns a captured changeset into the five-angle canvas
- * set the reviewer reads. Every piece already exists and is tested in isolation;
- * this module introduces them to each other:
- *
- *   decompose (#7)  →  buildRoutePlan Brita gate (#8)  →  runDecompositionAngle
- *   (#8)  →  runOrderingPass (#9)  →  buildCanvas per angle (#10)
- *
- * Two properties are load-bearing:
- *   - The Brita budget filter is consulted BEFORE any model turn. An over-budget
- *     route plan refuses, and on a refusal no turn runs and the pipeline stands
- *     on the deterministic floor — so the <5-invocation ceiling is a real gate on
- *     the first metered-adjacent calls, never a sentence in a document (R10).
- *   - The pipeline is a pure function of its inputs plus the injected model turns.
- *     The turns are injected (`createHarnessRunTurn` supplies the real ones,
- *     mocks supply CI ones), so this module has no harness or SDK dependency and
- *     stays fully testable. With no turn, or a refusal, the deterministic floor
- *     still populates real canvases from the captured diff (substrate +
- *     deterministic sequence) — the agentic proposal only enriches them.
+ * The model-backed generation passes (decomposition / finding / decision /
+ * hypothesis / ordering / roll-up-narration angles) and the canvas projection were
+ * deleted in the canvas-deletion cutover (#489): the Board (B-series) replaces the
+ * canvas-projection review surface. What remains is the DETERMINISTIC spine the
+ * live context / symbol backend still stands on — decompose the captured patchset
+ * and run the Brita route-plan budget gate. No model turns, no canvas projection:
+ * `canvases` and `elementDiffs` are empty (nothing live reads a built Canvas after
+ * this change), and the deterministic producers (`blast-radius`, `element-diffs`,
+ * `openspec-change`, `finding-reconcile`, `noise-generation`) survive as standalone
+ * units for the B-series to re-wire onto the Board surface.
  */
 
-import {
-  DECOMPOSITION_PROPOSAL_CONTRACT,
-  ORDERING_CONTRACT,
-  type PromptContract,
-  REVIEW_HYPOTHESIS_CONTRACT,
-  ROLLUP_NARRATION_CONTRACT,
-} from "@rennet/instructions";
 import type {
-  Canvas,
-  CanvasAngle,
-  ContextSendRecord,
-  CouncilJobId,
-  CouncilResolveContext,
   Decomposition,
-  DecompositionProposalBody,
   Disposition,
   ElementDiffs,
-  FindingElement,
-  HypothesisRepoContext,
-  HypothesisStructure,
   InvocationBudget,
-  OfferedManifest,
-  OwnershipRule,
   Patchset,
-  ResolutionTrace,
-  ReviewHypothesis,
-  ReviewIntent,
-  ReviewNarration,
-  RiskCrossCheck,
   RoutePlanResult,
-  RspCapabilitySnapshot,
-  RspDocType,
-  RspModelReportedBy,
 } from "@rennet/protocol";
-import { CANVAS_ANGLES } from "@rennet/protocol";
-import {
-  buildOfferedManifest,
-  type DecompositionTurnResult,
-  type RunDecompositionAngleResult,
-  runDecompositionAngle,
-} from "./angle-generation";
-import { computeBlastRadius, type FanInIndex } from "./blast-radius";
-import { type AdmittedDocument, buildCanvas, type CanvasEvent } from "./canvas";
-import { createCodexRunTurn } from "./codex-run-turn";
-import type { CodexUtilityPort } from "./codex-utility-port";
 import { type DecomposeOptions, decompose } from "./decomposition";
-import { runDualFindingReview } from "./dual-finding-review";
-import { resolveDualSeat } from "./dual-seat";
-import { buildElementDiffs } from "./element-diffs";
-import type { FindingIntent } from "./finding-generation";
-import {
-  markVerificationUnavailable,
-  type RunFindingVerificationInput,
-  runFindingVerification,
-  type VerificationFileReader,
-  type VerificationTurn,
-} from "./finding-verification";
-import { guardSeatTurn, type HarnessTurnResult, recordSeatSend } from "./harness-run-turn";
-import {
-  type HypothesisTurnResult,
-  type RunHypothesisResult,
-  runHypothesisPass,
-} from "./hypothesis-generation";
+import type { AdmittedDocument } from "./element-diffs";
 import { normalizeMaxInvocations } from "./invocation-budget";
-import { resolveAssignment } from "./model-council";
-import {
-  buildChunkManifest,
-  type OrderingTurnResult,
-  type RunOrderingPassResult,
-  resolveLiveOrder,
-  runOrderingPass,
-} from "./ordering-pass";
-import {
-  DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
-  type ReviewIntelligenceBudget,
-} from "./review-intelligence-budget";
-import { crossCheckRisks } from "./risk-crosscheck";
-import {
-  buildReviewNarration,
-  offeredNarrationNodes,
-  type RunRollupNarrationResult,
-  runRollupNarration,
-} from "./rollup-narration";
 import { buildRoutePlan, type RoutePlanOptions } from "./route-plan";
-
-/** The provenance a caller knows before the run; the rest is stamped per attempt. */
-export interface PipelineProvenanceSeed {
-  readonly harness: string;
-  readonly harnessVersion: string;
-  readonly adapterVersion: string;
-  readonly model: string;
-  readonly modelReportedBy: RspModelReportedBy;
-  readonly capability: RspCapabilitySnapshot;
-  /** The Model Council effort for this seat, when the council resolved it (#69). */
-  readonly effort?: string;
-  /** The Model Council resolution trace, when the council resolved this seat (#69). */
-  readonly resolutionTrace?: ResolutionTrace;
-}
-
-const NO_CAPABILITY: RspCapabilitySnapshot = {
-  structuredOutput: {
-    implementedByAdapter: false,
-    advertisedByHarness: false,
-    availableInSession: false,
-  },
-  perCallModelSelection: {
-    implementedByAdapter: false,
-    advertisedByHarness: false,
-    availableInSession: false,
-  },
-};
-
-/**
- * The default provenance seed. Provenance is stamped on the RSP document but is
- * NOT read by the canvas projector (which consumes `docId`/`docType`/`body`), so
- * a placeholder seed is honest for placement; a caller with a live harness
- * descriptor can pass a richer one.
- */
-const DEFAULT_PROVENANCE_SEED: PipelineProvenanceSeed = {
-  harness: "claude-code",
-  harnessVersion: "unknown",
-  adapterVersion: "0.0.0",
-  model: "unknown",
-  modelReportedBy: "unknown",
-  capability: NO_CAPABILITY,
-};
-
-export interface ReviewHypothesisConfig {
-  readonly runTurn: (prompt: string, attempt: number) => Promise<HypothesisTurnResult>;
-  readonly contract?: PromptContract;
-  readonly intent?: ReviewIntent;
-  readonly repoContext?: HypothesisRepoContext;
-}
-
-export interface ReviewDualModelConfig {
-  readonly deepReviewOn: boolean;
-  readonly runFindingTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
-  readonly contract?: PromptContract;
-  readonly intent?: FindingIntent;
-  /** The second-seat Codex executor; scoped to the lens so unrelated seats do not run. */
-  readonly codexPort?: CodexUtilityPort;
-}
-
-export interface ReviewVerificationConfig {
-  readonly readFileWindow: VerificationFileReader;
-  readonly runTurn: VerificationTurn;
-  readonly contract?: RunFindingVerificationInput["contract"];
-}
 
 export interface ReviewPipelineInput {
   readonly reviewId: string;
   readonly patchset: Patchset;
   readonly dispositions: Disposition[];
-  readonly assembledContext?: string;
-  /** Captures exact per-attempt sends after council routing resolves the executing harness. */
-  readonly onSend?: (record: ContextSendRecord) => void;
-  /**
-   * CODEOWNERS rules for the blast-radius CODEOWNERS-overlap signal (issue #35).
-   * Optional: absent ⇒ the overlap signal simply does not fire (the other three
-   * signals still compute from the changeset). A caller threads this from the
-   * project snapshot's ownership when available.
-   */
-  readonly ownership?: readonly OwnershipRule[];
-  /**
-   * The fan-in index for the blast-radius fan-in signal (#200 → #35 follow-on). Present
-   * ⇒ fan-in is ASSESSED (per-file dependent counts); absent ⇒ it stays a NOT-ASSESSED
-   * chip, never a silent zero. The composition supplies it only when the reference index
-   * is populated, so absence is honest. A caller threads it from the project snapshot.
-   */
-  readonly fanIn?: FanInIndex;
-  /** L3 canvas-op events (session-scoped); empty for a fresh review. */
-  readonly canvasEvents?: CanvasEvent[];
   readonly decomposeOptions?: DecomposeOptions;
   readonly routePlanOptions?: RoutePlanOptions;
   /** The one review-turn budget supplied by the composition; no pipeline-local default. */
   readonly budget: InvocationBudget;
-  readonly reviewIntelligenceBudget?: ReviewIntelligenceBudget;
-  readonly hypothesisConfig?: ReviewHypothesisConfig;
-  readonly dualModelConfig?: ReviewDualModelConfig;
-  readonly verificationConfig?: ReviewVerificationConfig;
-  readonly provenance?: PipelineProvenanceSeed;
-  /**
-   * The Model Council context (installed harnesses + user overrides). When
-   * present, the pipeline resolves the model for the `decomposition-proposal`
-   * and `comprehension-ordering` seats and stamps `{ model, effort,
-   * resolutionTrace }` into each phase's provenance — so every model invocation
-   * records which mind ran it and why. Absent, the caller-supplied provenance
-   * model stands (prior behaviour).
-   */
-  readonly council?: CouncilResolveContext;
-  /**
-   * The Codex seat executor (#66). When a seat resolves to a Codex model (R39,
-   * cross-harness), the pipeline routes that seat's turn through this port
-   * instead of the injected Claude turn — so the council's Codex routing is
-   * EXECUTED, not merely stamped. The runner still owns the shared budget and
-   * retry loop (the port runs one attempt per turn). Absent, a Codex-resolved
-   * seat has no executor and stands on the deterministic floor (the composition
-   * root provides the port iff `codex` is in `council.availability.installed`).
-   */
-  readonly codexPort?: CodexUtilityPort;
-  /**
-   * Drives the decomposition angle's model turn. Absent (or a budget refusal)
-   * means the deterministic floor stands — no model runs.
-   */
-  readonly runDecompositionTurn?: (
-    prompt: string,
-    attempt: number,
-  ) => Promise<DecompositionTurnResult>;
-  readonly decompositionContract?: PromptContract;
-  /** Drives the comprehension-ordering pass. Absent means the #8 baseline order stands. */
-  readonly runOrderingTurn?: (prompt: string, attempt: number) => Promise<OrderingTurnResult>;
-  readonly orderingContract?: PromptContract;
-  /**
-   * Drives the roll-up narration pass (#70). Absent (or a Codex resolution with no
-   * port, or a budget refusal) means every node's narration is the honest
-   * `pending` state — never a fabricated account. Narration draws from the SAME
-   * shared budget, so its turns count toward the configured review ceiling.
-   */
-  readonly runNarrationTurn?: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
-  readonly narrationContract?: PromptContract;
-  /**
-   * The decision-extraction runner's output (issue #137): admitted
-   * `decision.record` documents to place on the decisions canvas. The projector
-   * groups them by anchored chunk; each decision carries its evidence chips +
-   * reconstructed why for the lens. Supplied independently of the model phase, so
-   * decisions are admitted on BOTH the live and the deterministic-floor paths.
-   * The LIVE runner that reasons over {spec, PR body, diff} is deferred (it
-   * depends on #136's intent capture); a fixture stands behind this boundary now.
-   */
-  readonly decisionDocs?: readonly AdmittedDocument[];
-  /**
-   * Drives the hypothesis-first pre-read pass (#178). Absent (or a budget refusal)
-   * means no hypothesis is produced and the result carries none — every lens then
-   * runs exactly as it does today. When present, the pass runs FIRST (before the
-   * decomposition angle reads a hunk) over the change's intent + structure +
-   * repo context, and its committed hypothesis rides the result for the lens
-   * runners to disconfirm against and for the human's reading frame. It draws from
-   * the SAME shared budget, so its turn counts toward the configured review ceiling.
-   */
-  readonly runHypothesisTurn?: (prompt: string, attempt: number) => Promise<HypothesisTurnResult>;
-  readonly hypothesisContract?: PromptContract;
-  /** The change's stated intent, fed to the hypothesis pass (PR title/body, spec). */
-  readonly intent?: ReviewIntent;
-  /** A compact ProjectSnapshot projection fed to the hypothesis pass; absent → degrades honestly. */
-  readonly repoContext?: HypothesisRepoContext;
-  /** Deterministic id hooks (tests); default to the random minters. */
-  readonly mintDocId?: () => string;
-  readonly newRunId?: () => string;
 }
 
 export interface ReviewPipelineResult {
-  readonly canvases: Record<CanvasAngle, Canvas>;
   /**
-   * The real per-element diff map (issue #60), keyed by `elementKey`. Sliced
-   * verbatim from the captured patch, delivered alongside the canvas set so the
-   * zoom surface renders real code instead of the `demoDiff` fixture.
+   * The canvas set. EMPTY during the Board rebuild — the canvas projection AND the
+   * protocol `Canvas`/`CanvasAngle` state model were deleted (#489, B2) and nothing
+   * live reads a built canvas; the field is retained (empty) so the result shape is
+   * stable for the B-series rewire.
    */
+  readonly canvases: Record<string, never>;
+  /** The per-element diff map. Empty with no canvases; the slicer survives standalone. */
   readonly elementDiffs: ElementDiffs;
   readonly decomposition: Decomposition;
   readonly routePlan: RoutePlanResult;
@@ -285,50 +52,23 @@ export interface ReviewPipelineResult {
   readonly invocationBudget: InvocationBudget;
   /**
    * True when the model budget refused — pre-flight (the Brita route plan judged
-   * the diff shape over budget before any spend) OR at runtime (the shared
-   * ceiling was exhausted mid-review by retries). Either way the model phase did
-   * not complete, so the surface must present the review as degraded, never as a
-   * completed AI review (#260).
+   * the diff shape over budget) OR at runtime. On the deterministic floor no model
+   * runs, but the verdict is still reported honestly for the surface.
    */
   readonly budgetRefused: boolean;
-  readonly decompositionResult?: RunDecompositionAngleResult;
-  readonly orderingResult?: RunOrderingPassResult;
-  /** The admitted documents placed onto the canvases (empty on the floor path). */
+  /** The admitted documents. Empty on the deterministic floor (no model phase). */
   readonly admittedDocs: AdmittedDocument[];
-  /**
-   * The roll-up narration placed onto the canvases (issue #70), delivered
-   * ALONGSIDE the canvas set (never embedded on a `Canvas`, so the projection
-   * stays byte-identical for replay). Every node above a chunk resolves to a
-   * narrated account or an honest pending/failed state — never a silent blank.
-   */
-  readonly narration: ReviewNarration;
-  /** The narration run result (for provenance / telemetry); absent when it did not run. */
-  readonly narrationResult?: RunRollupNarrationResult;
-  /**
-   * The committed hypothesis (#178), delivered ALONGSIDE the canvas set (never
-   * embedded on a `Canvas`, so the projection stays byte-identical for replay).
-   * Present only when the hypothesis pass ran AND produced an admitted hypothesis;
-   * absent when no pass ran, the budget refused, or the pass failed. The lens
-   * runners consume it as disconfirmation criteria and the surface renders it as
-   * the human's reading frame.
-   */
-  readonly hypothesis?: ReviewHypothesis;
-  /** The hypothesis pass result (for provenance / telemetry); absent when it did not run. */
-  readonly hypothesisResult?: RunHypothesisResult;
-  /** Deterministic predicted-risk cross-check over the final surfaced findings. */
-  readonly crossCheckRisks?: readonly RiskCrossCheck[];
 }
 
 /**
- * Run the live pipeline for one captured patchset and return the five-angle
- * canvas set plus the intermediate results (for provenance / telemetry).
+ * Run the deterministic floor for one captured patchset: decompose it and run the
+ * Brita route-plan budget gate. Returns an empty canvas set (the projection is
+ * gone) plus the captured decomposition and route plan the live backend reads.
  */
 export async function buildReviewCanvases(
   input: ReviewPipelineInput,
 ): Promise<ReviewPipelineResult> {
   const decomposition = decompose(input.patchset, input.decomposeOptions ?? {});
-  const intelligenceBudget = input.reviewIntelligenceBudget ?? DEFAULT_REVIEW_INTELLIGENCE_BUDGET;
-  const deepReviewOn = input.dualModelConfig?.deepReviewOn ?? true;
   // The composition-created session budget is canonical. The legacy route-plan
   // knob may tighten its ceiling but can never raise it.
   const legacyCeiling = input.routePlanOptions?.maxHarnessInvocations;
@@ -340,353 +80,14 @@ export async function buildReviewCanvases(
     ...(input.routePlanOptions ?? {}),
     maxHarnessInvocations: maxInvocations,
   });
-  const seed = input.provenance ?? DEFAULT_PROVENANCE_SEED;
-
-  // The exact session budget is threaded through every runner. It may already carry
-  // hypothesis/decision spend from the desktop composition.
-  const budget = input.budget;
-  const manifest = buildOfferedManifest(decomposition);
-
-  type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
-  interface ResolvedSeat {
-    readonly seed: PipelineProvenanceSeed;
-    readonly runTurn: RunTurn | undefined;
-  }
-
-  const recordedTurn = (runTurn: RunTurn, seat: string, harness: string): RunTurn =>
-    input.onSend
-      ? recordSeatSend(runTurn, { seat, harness }, input.onSend, input.assembledContext)
-      : runTurn;
-
-  /**
-   * Resolve one model-facing seat: the Model Council's assignment (or none), the
-   * provenance seed with the resolved model AND harness (so `harness` follows the
-   * model — no `model=codex`/`harness=claude` contradiction), and the executor
-   * for the resolved harness — the injected Claude turn for a `claude-code` seat,
-   * a port-backed turn for a `codex` seat. A Codex seat with no port has no
-   * executor and stands on the deterministic floor (never a dishonest Claude run).
-   */
-  const resolveSeat = (
-    jobId: CouncilJobId,
-    docType: RspDocType,
-    seatManifest: OfferedManifest,
-    claudeTurn: RunTurn | undefined,
-  ): ResolvedSeat => {
-    if (input.council === undefined) return { seed, runTurn: claudeTurn };
-    const resolution = resolveAssignment(jobId, input.council);
-    if (resolution.kind !== "model") return { seed, runTurn: claudeTurn };
-    // The resolver derives the harness after all model/effort resolution, so the
-    // executing seat and its provenance consume one coherent pair.
-    const execHarness = resolution.harness;
-    const seatSeed: PipelineProvenanceSeed = {
-      ...seed,
-      harness: execHarness,
-      model: resolution.model,
-      modelReportedBy: "config",
-      effort: resolution.effort,
-      resolutionTrace: resolution.trace,
-    };
-    if (execHarness === "codex") {
-      const runTurn =
-        input.codexPort === undefined
-          ? undefined
-          : createCodexRunTurn(input.codexPort, {
-              docType,
-              patchset: { id: decomposition.patchsetId },
-              manifest: seatManifest,
-              model: resolution.model,
-              effort: resolution.effort,
-            });
-      return { seed: seatSeed, runTurn };
-    }
-    return { seed: seatSeed, runTurn: claudeTurn };
-  };
-
-  let admittedDocs: AdmittedDocument[] = [];
-  let decompositionResult: RunDecompositionAngleResult | undefined;
-  let orderingResult: RunOrderingPassResult | undefined;
-
-  const decompositionSeat = resolveSeat(
-    "decomposition-proposal",
-    "decomposition.proposal",
-    manifest,
-    input.runDecompositionTurn,
-  );
-
-  // The Brita gate: run the model phase ONLY when the decomposition seat has an
-  // executor for its resolved harness (Claude turn OR Codex port) AND the budget
-  // permits it. A refusal skips the whole model phase — no spend, floor stands.
-  const preflightBudgetRefused = routePlan.refused;
-
-  // ① The hypothesis-first pre-read pass (#178). It runs FIRST — before the
-  // decomposition angle reads a hunk — over the change's intent + STRUCTURE (the
-  // deterministic decomposition's chunk titles + the changed-file list, never the
-  // hunk bodies) + repo context, so its risks are a genuine prior rather than a
-  // diff summary. It draws from the SAME shared budget as every other stage, so a
-  // refusal (route plan OR the counter exhausted) leaves the review with no
-  // hypothesis and every lens runs unchanged — never a fabricated one.
-  let hypothesisResult: RunHypothesisResult | undefined;
-  let hypothesis: ReviewHypothesis | undefined;
-  const hypothesisConfig: ReviewHypothesisConfig | undefined =
-    input.hypothesisConfig ??
-    (input.runHypothesisTurn
-      ? {
-          runTurn: input.runHypothesisTurn,
-          ...(input.hypothesisContract ? { contract: input.hypothesisContract } : {}),
-          ...(input.intent ? { intent: input.intent } : {}),
-          ...(input.repoContext ? { repoContext: input.repoContext } : {}),
-        }
-      : undefined);
-  if (hypothesisConfig && !preflightBudgetRefused) {
-    const structure: HypothesisStructure = {
-      changedFiles: input.patchset.files.map((file) => file.path),
-      chunkTitles: decomposition.chunks.map((chunk) => chunk.title),
-    };
-    hypothesisResult = await runHypothesisPass({
-      patchsetId: decomposition.patchsetId,
-      manifest,
-      structure,
-      ...(hypothesisConfig.intent ? { intent: hypothesisConfig.intent } : {}),
-      ...(hypothesisConfig.repoContext ? { repoContext: hypothesisConfig.repoContext } : {}),
-      contract: hypothesisConfig.contract ?? REVIEW_HYPOTHESIS_CONTRACT,
-      provenance: seed,
-      // A thrown hypothesis turn degrades to the honest failed state (no hypothesis)
-      // rather than crashing the whole run (#96).
-      runTurn: guardSeatTurn(recordedTurn(hypothesisConfig.runTurn, "hypothesis", seed.harness)),
-      budget,
-      maxRetries: Math.max(0, Math.floor(intelligenceBudget.hypothesis.maxTurns) - 1),
-      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
-      ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
-      ...(input.newRunId ? { newRunId: input.newRunId } : {}),
-    });
-    if (hypothesisResult.status === "ok") hypothesis = hypothesisResult.hypothesis;
-  }
-
-  if (decompositionSeat.runTurn && !preflightBudgetRefused) {
-    decompositionResult = await runDecompositionAngle({
-      decomposition,
-      contract: input.decompositionContract ?? DECOMPOSITION_PROPOSAL_CONTRACT,
-      manifest,
-      provenance: decompositionSeat.seed,
-      // A thrown/rejected turn (e.g. a session/transport construction exception,
-      // #96) is caught and degraded to a turn-failure, so a construction throw
-      // falls to the deterministic floor instead of crashing the whole run.
-      runTurn: guardSeatTurn(
-        recordedTurn(decompositionSeat.runTurn, "decomposition", decompositionSeat.seed.harness),
-      ),
-      budget,
-      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
-      ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
-      ...(input.newRunId ? { newRunId: input.newRunId } : {}),
-    });
-
-    const proposalDoc = decompositionResult.document;
-    // The angle always mints a docId (RspEnvelope types it optional); a missing
-    // one would collapse canvas element identity, so fail loud rather than place
-    // an empty-keyed document.
-    if (proposalDoc.docId === undefined) {
-      throw new Error("the decomposition proposal document is missing its minted docId");
-    }
-    const proposalBody = proposalDoc.body as DecompositionProposalBody;
-    let readingOrder = proposalBody.readingOrder;
-
-    // Ordering → canvas: the comprehension pass refines the reading order the
-    // sequence canvas presents. It covers exactly the proposal's chunk set (the
-    // validator guarantees it), so applying its live order to the placed proposal
-    // is safe. The ordering seat resolves independently — under `both` it lands on
-    // the Codex port while the proposal stayed on Claude (R39, live). Absent or
-    // fallen-back, the #8 baseline order stands.
-    const orderingManifest = buildChunkManifest(proposalBody);
-    const orderingSeat = resolveSeat(
-      "comprehension-ordering",
-      "ordering",
-      orderingManifest,
-      input.runOrderingTurn,
-    );
-    if (orderingSeat.runTurn) {
-      orderingResult = await runOrderingPass({
-        proposal: proposalBody,
-        patchsetId: decomposition.patchsetId,
-        contract: input.orderingContract ?? ORDERING_CONTRACT,
-        provenance: orderingSeat.seed,
-        // A thrown ordering turn degrades to the #8 baseline order (#96).
-        runTurn: guardSeatTurn(
-          recordedTurn(orderingSeat.runTurn, "ordering", orderingSeat.seed.harness),
-        ),
-        budget,
-        ...(input.assembledContext === undefined
-          ? {}
-          : { assembledContext: input.assembledContext }),
-        ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
-        ...(input.newRunId ? { newRunId: input.newRunId } : {}),
-      });
-      readingOrder = resolveLiveOrder(orderingResult).readingOrder;
-    }
-
-    admittedDocs = [
-      {
-        docId: proposalDoc.docId,
-        docType: proposalDoc.docType,
-        body: { ...proposalBody, readingOrder },
-      },
-    ];
-  }
-
-  // Admit the decision-extraction runner's `decision.record` docs (issue #137)
-  // alongside the decomposition/ordering output, on BOTH paths (the model phase
-  // above may not have run). The projector routes them to the decisions canvas
-  // and groups them by anchored chunk; no other angle admits them.
-  if (input.decisionDocs && input.decisionDocs.length > 0) {
-    admittedDocs = [...admittedDocs, ...input.decisionDocs];
-  }
-
-  let finalFindings: FindingElement[] = [];
-  if (input.dualModelConfig && !preflightBudgetRefused) {
-    const seats = resolveDualSeat({
-      council: input.council,
-      jobId: "finding-generation",
-      docType: "finding",
-      patchsetId: decomposition.patchsetId,
-      manifest,
-      baseSeed: seed,
-      claudeTurn: input.dualModelConfig.runFindingTurn,
-      ...((input.dualModelConfig.codexPort ?? input.codexPort)
-        ? { codexPort: input.dualModelConfig.codexPort ?? input.codexPort }
-        : {}),
-    });
-    const dualEnabled =
-      deepReviewOn &&
-      intelligenceBudget.dualModel.enabled &&
-      intelligenceBudget.dualModel.lenses.includes("flagged");
-    const findingRun = await runDualFindingReview({
-      deepReview: dualEnabled,
-      patchsetId: decomposition.patchsetId,
-      manifest,
-      seats,
-      budget,
-      ...(input.dualModelConfig.intent ? { intent: input.dualModelConfig.intent } : {}),
-      ...(hypothesis ? { hypothesis } : {}),
-      ...(input.dualModelConfig.contract ? { contract: input.dualModelConfig.contract } : {}),
-      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
-      ...(input.onSend ? { onSend: input.onSend } : {}),
-      ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
-      ...(input.newRunId ? { newRunId: input.newRunId } : {}),
-    });
-
-    if (findingRun.review.status === "ok") {
-      finalFindings = findingRun.review.findings;
-      if (deepReviewOn && input.verificationConfig) {
-        const verification = await runFindingVerification({
-          findings: finalFindings,
-          manifest,
-          readFileWindow: input.verificationConfig.readFileWindow,
-          runTurn: input.verificationConfig.runTurn,
-          budget,
-          maxVerifications: intelligenceBudget.verification.maxVerifications,
-          ...(input.verificationConfig.contract
-            ? { contract: input.verificationConfig.contract }
-            : {}),
-        });
-        finalFindings = verification.findings;
-      } else if (deepReviewOn) {
-        const unavailable = markVerificationUnavailable(findingRun.review);
-        if (unavailable.status === "ok") finalFindings = unavailable.findings;
-      }
-
-      const sourceDocId = findingRun.seatRuns
-        .map((seatRun) => seatRun.result.document?.docId)
-        .find((docId): docId is string => docId !== undefined);
-      admittedDocs = [
-        ...admittedDocs,
-        {
-          docId: sourceDocId ?? `finding:${decomposition.patchsetId}`,
-          docType: "finding",
-          body: { findings: finalFindings },
-        },
-      ];
-    }
-  }
-
-  const riskCrossChecks = hypothesis ? crossCheckRisks(hypothesis, finalFindings) : undefined;
-
-  const canvasEvents = input.canvasEvents ?? [];
-  // The deterministic blast-radius overlay (issue #35): computed once from the
-  // changeset + CODEOWNERS and painted identically onto every angle's canvas. It
-  // is DATA the overlay renders amber — never an ordering input (the ordering pass
-  // has no blast-radius parameter) and never a gate.
-  const blastRadius = computeBlastRadius({
-    files: input.patchset.files,
-    ownership: input.ownership ?? [],
-    ...(input.fanIn ? { fanIn: input.fanIn } : {}),
-  });
-  const entries = CANVAS_ANGLES.map((angle): [CanvasAngle, Canvas] => [
-    angle,
-    buildCanvas({
-      reviewId: input.reviewId,
-      patchsetId: decomposition.patchsetId,
-      angle,
-      admittedDocs,
-      decomposition,
-      dispositions: input.dispositions,
-      canvasEvents,
-      blastRadius,
-    }),
-  ]);
-  const canvases = Object.fromEntries(entries) as Record<CanvasAngle, Canvas>;
-  const elementDiffs = buildElementDiffs(canvases, decomposition, input.patchset, admittedDocs);
-
-  // Roll-up narration (#70): the zoom ladder's own voice, produced AFTER the
-  // canvases exist (it accounts for their nodes). It is a council-routed light-tier
-  // seat drawing from the SAME shared budget — so its turns count toward the configured
-  // ceiling, and a budget refusal (route plan OR the shared counter exhausted by
-  // the decomposition/ordering phase) leaves every node's narration `pending`,
-  // never a fabricated account. The offered node set is always ≥1 (the rollup).
-  const narrationNodes = offeredNarrationNodes(canvases);
-  const narrationManifest = buildOfferedManifest(decomposition);
-  const narrationSeat = resolveSeat(
-    "rollup-narration",
-    "rollup-narration",
-    narrationManifest,
-    input.runNarrationTurn,
-  );
-  let narrationResult: RunRollupNarrationResult | undefined;
-  if (narrationSeat.runTurn && !preflightBudgetRefused) {
-    narrationResult = await runRollupNarration({
-      nodes: narrationNodes,
-      decomposition,
-      patchsetId: decomposition.patchsetId,
-      contract: input.narrationContract ?? ROLLUP_NARRATION_CONTRACT,
-      provenance: narrationSeat.seed,
-      // A thrown narration turn degrades every node to the honest pending/failed
-      // floor instead of crashing the run (#96).
-      runTurn: guardSeatTurn(
-        recordedTurn(narrationSeat.runTurn, "narration", narrationSeat.seed.harness),
-      ),
-      budget,
-      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
-      ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
-      ...(input.newRunId ? { newRunId: input.newRunId } : {}),
-    });
-  }
-  const narration = buildReviewNarration(narrationNodes, narrationResult);
 
   return {
-    canvases,
-    elementDiffs,
+    canvases: {},
+    elementDiffs: {},
     decomposition,
     routePlan,
-    invocationBudget: budget,
-    // Pre-flight refusal (the route plan gated it before any spend) OR a runtime
-    // exhaustion of the shared ceiling by retries (#260). Either means no complete
-    // model phase ran, so the surface degrades the review rather than faking done.
-    budgetRefused: preflightBudgetRefused || budget.refused,
-    ...(decompositionResult ? { decompositionResult } : {}),
-    ...(orderingResult ? { orderingResult } : {}),
-    admittedDocs,
-    narration,
-    ...(narrationResult ? { narrationResult } : {}),
-    ...(hypothesis ? { hypothesis } : {}),
-    ...(hypothesisResult ? { hypothesisResult } : {}),
-    ...(riskCrossChecks ? { crossCheckRisks: riskCrossChecks } : {}),
+    invocationBudget: input.budget,
+    budgetRefused: routePlan.refused || input.budget.refused,
+    admittedDocs: [],
   };
 }

@@ -1,5 +1,3 @@
-import type { Disposition } from "@rennet/protocol";
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-state (issue #17) — pure, event-sourced, no React, no DOM.
 //
@@ -47,6 +45,12 @@ export function foldReadState(events: ViewEvent[]): Map<string, ReadState> {
     state.set(path, value >= 2 ? "read" : value >= 1 ? "skimmed" : "unread");
   }
   return state;
+}
+
+/** The minimal disposition shape this fold reads: its anchor path (B2, #489 — the
+ *  protocol `Disposition` is removed this change). */
+export interface Disposition {
+  anchor: { path: string };
 }
 
 /**

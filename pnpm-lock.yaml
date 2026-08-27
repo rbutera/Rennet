@@ -319,9 +319,9 @@ importers:
       '@rennet/core':
         specifier: workspace:*
         version: link:../core
-      '@rennet/instructions':
+      '@rennet/prompts':
         specifier: workspace:*
-        version: link:../instructions
+        version: link:../prompts
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -399,9 +399,9 @@ importers:
 
   packages/core:
     dependencies:
-      '@rennet/instructions':
+      '@rennet/prompts':
         specifier: workspace:*
-        version: link:../instructions
+        version: link:../prompts
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -409,13 +409,11 @@ importers:
         specifier: 14.0.1
         version: 14.0.1
 
-  packages/instructions:
+  packages/prompts:
     dependencies:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
-
-  packages/lens-instructions: {}
 
   packages/protocol:
     dependencies:

@@ -1,0 +1,11 @@
+{
+  "name": "@rennet/prompts",
+  "version": "0.3.36",
+  "private": true,
+  "type": "module",
+  "license": "LicenseRef-FSL-1.1-MIT",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@rennet/protocol": "workspace:*"
+  }
+}

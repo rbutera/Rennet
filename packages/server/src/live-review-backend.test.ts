@@ -107,9 +107,6 @@ describe("createDesktopReviewBackend — the desktop composition root", () => {
     const map = backend.projectMap();
     expect(map.ok).toBe(true);
     if (map.ok) expect(map.map.baseOid).toBe(repo.oid);
-
-    // And the lenses render regardless (the producer path is snapshot-independent).
-    expect(backend.decomposition().hunks.length).toBeGreaterThan(0);
   });
 
   it("snapshotStoreFor composes a store over the injected base dir", () => {

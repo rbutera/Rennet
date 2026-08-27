@@ -21,10 +21,7 @@ import {
   type ReviewStorePort,
 } from "@rennet/core";
 import type {
-  Canvas,
-  CanvasAngle,
   ComposedHandoffBundle,
-  ContextManifest,
   FindingElement,
   FlaggedReview,
   PatchFile,
@@ -32,7 +29,6 @@ import type {
   Review,
 } from "@rennet/protocol";
 import {
-  CANVAS_ANGLES,
   type DetectedHarness,
   type DiscoveryResult,
   type ProcessedRepoSummary,
@@ -126,26 +122,6 @@ class InMemoryStore implements ReviewStorePort {
   }
 }
 
-function canvasSet(): Record<CanvasAngle, Canvas> {
-  const one = (angle: CanvasAngle): Canvas => ({
-    canvasId: `cid-${angle}`,
-    reviewId: "review-1",
-    patchsetId: "patch-1",
-    angle,
-    layers: {
-      substrate: { chunks: [] },
-      analysis: { elements: [], cohorts: [], readingOrder: [] },
-      disposition: { dispositions: [] },
-      annotation: { annotations: [], proposals: [] },
-    },
-    overlay: [],
-  });
-  return Object.fromEntries(CANVAS_ANGLES.map((angle) => [angle, one(angle)])) as Record<
-    CanvasAngle,
-    Canvas
-  >;
-}
-
 /** A fake egress port that records posts, so a test can assert exactly one review. */
 function fakePublishPort(
   overrides: Partial<ForgePublishPort> = {},
@@ -184,7 +160,6 @@ function harness(
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
     flaggedReview?: DispatchDeps["flaggedReview"];
-    readUiEvidence?: DispatchDeps["readUiEvidence"];
     repositoryExists?: DispatchDeps["repositoryExists"];
     pushTokens?: DispatchDeps["pushTokens"];
     acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
@@ -202,7 +177,6 @@ function harness(
   store: InMemoryStore;
   allowedRoots: Set<string>;
   startWatching: ReturnType<typeof vi.fn>;
-  buildCanvases: ReturnType<typeof vi.fn>;
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
   publishConsent: PublishConsentAuthority;
   reviewAsk: {
@@ -225,20 +199,6 @@ function harness(
   const allowedRoots = new Set<string>();
   const startWatching = vi.fn<(root: string) => void>();
   let dirty = false;
-  const buildCanvases = vi.fn<DispatchDeps["buildCanvases"]>(() =>
-    Promise.resolve({
-      canvases: canvasSet(),
-      elementDiffs: {
-        e1: {
-          path: "src/a.ts",
-          paths: ["src/a.ts"],
-          diff: "@@ -1,1 +1,2 @@\n+x",
-          hunkOccurrences: [],
-        },
-      },
-      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
-    }),
-  );
   const publishConsent = createPublishConsentAuthority();
   // review.ask ports (issue #139) as recording spies, so a test can assert the
   // orchestrator is asked exactly once and Codex only in "both" mode — the whole
@@ -327,7 +287,6 @@ function harness(
     setRepositoryDirty: (value) => {
       dirty = value;
     },
-    buildCanvases,
     publishPort,
     publishConsent,
     ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
@@ -397,7 +356,6 @@ function harness(
     // A test may override the runner (e.g. to stamp #309 blockingStates like the live
     // runner does) via `extra.flaggedReview`.
     flaggedReview: extra.flaggedReview ?? flaggedReviewSpy,
-    readUiEvidence: extra.readUiEvidence ?? (() => Promise.resolve(null)),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     threadPersistence: extra.threadPersistence ?? threadPersistence,
@@ -416,7 +374,6 @@ function harness(
     store,
     allowedRoots,
     startWatching,
-    buildCanvases,
     publishPort,
     publishConsent,
     reviewAsk,
@@ -443,70 +400,9 @@ async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Prom
   return result.review;
 }
 
-describe("createDispatch — review.uiEvidence (#183)", () => {
-  it("returns the confined screenshot as an ok data URL for the addressed review", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      {
-        readUiEvidence: (reviewId, path) =>
-          Promise.resolve({
-            status: "ok",
-            dataUrl: `data:image/png;base64,${reviewId}:${path}`,
-          }),
-      },
-    );
-    const review = await capturedReview(dispatch);
-    const result = await dispatch("review.uiEvidence", { reviewId: review.id, path: "a.png" });
-    expect(result).toEqual({ status: "ok", dataUrl: `data:image/png;base64,${review.id}:a.png` });
-  });
-
-  it("preserves an oversized evidence status without reading bytes into IPC", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      { readUiEvidence: () => Promise.resolve({ status: "oversized" }) },
-    );
-    const review = await capturedReview(dispatch);
-    await expect(
-      dispatch("review.uiEvidence", { reviewId: review.id, path: "huge.png" }),
-    ).resolves.toEqual({ status: "oversized" });
-  });
-
-  it("returns not-found when the evidence read yields null (missing/escaping — honest, not a crash)", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      {
-        readUiEvidence: () => Promise.resolve(null),
-      },
-    );
-    const review = await capturedReview(dispatch);
-    const result = await dispatch("review.uiEvidence", {
-      reviewId: review.id,
-      path: "../escape.png",
-    });
-    expect(result).toEqual({ status: "not-found" });
-  });
-
-  it("refuses an unknown review id (the store gate, not a verify-ui concern)", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      {
-        readUiEvidence: () =>
-          Promise.resolve({ status: "ok", dataUrl: "data:image/png;base64,AAAA" }),
-      },
-    );
-    await expect(
-      dispatch("review.uiEvidence", { reviewId: "nope", path: "a.png" }),
-    ).rejects.toThrow();
-  });
-});
-
 describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   // A capture port that yields a DISTINCT successor on regenerate, so the fold stamps a
-  // delta account: a.ts changes (addressed), b.ts is new (beyond-asks).
+  // successor account: a.ts changes (addressed), b.ts is new (beyond-asks).
   function twoPatchsetCapture(): PatchsetCapturePort {
     let n = 0;
     const file = (path: string, patch: string, status: "modified" | "added" = "modified") => ({
@@ -539,7 +435,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
       commandId: randomUUID(),
       repoPath: REPO,
     })) as { review: Review };
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: first.review.id,
       patchsetId: first.review.activePatchsetId,
@@ -555,7 +451,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
     return regen.review;
   }
 
-  it("calls the producer with the review's delta account and returns its digest", async () => {
+  it("calls the producer with the review's successor account and returns its digest", async () => {
     const draftDeltaDigest = vi.fn<NonNullable<DispatchDeps["draftDeltaDigest"]>>(async () => ({
       status: "drafted",
       text: "Fixed a, and also touched b nobody asked about.",
@@ -570,7 +466,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
       },
     );
     const review = await successorReview(dispatch);
-    expect(review.deltaAccount).toBeDefined(); // precondition: the fold stamped an account
+    expect(review.successorAccount).toBeDefined(); // precondition: the fold stamped an account
 
     const out = await dispatch("review.deltaDigest", {
       commandId: randomUUID(),
@@ -582,14 +478,14 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
       model: "haiku",
     });
     expect(draftDeltaDigest).toHaveBeenCalledOnce();
-    expect(draftDeltaDigest.mock.calls[0]?.[0].account).toEqual(review.deltaAccount);
+    expect(draftDeltaDigest.mock.calls[0]?.[0].account).toEqual(review.successorAccount);
   });
 
-  it("answers unavailable when the review carries no delta account (a first capture)", async () => {
+  it("answers unavailable when the review carries no successor account (a first capture)", async () => {
     const draftDeltaDigest = vi.fn<NonNullable<DispatchDeps["draftDeltaDigest"]>>();
     const { dispatch } = harness(fakePublishPort(), {}, { draftDeltaDigest });
     const review = await capturedReview(dispatch); // one capture, no predecessor → no account
-    expect(review.deltaAccount).toBeUndefined();
+    expect(review.successorAccount).toBeUndefined();
     const out = (await dispatch("review.deltaDigest", {
       commandId: randomUUID(),
       reviewId: review.id,
@@ -601,7 +497,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   it("answers unavailable (never throws) when no producer is wired but an account exists", async () => {
     const { dispatch } = harness(fakePublishPort(), {}, { capturePort: twoPatchsetCapture() });
     const review = await successorReview(dispatch);
-    expect(review.deltaAccount).toBeDefined();
+    expect(review.successorAccount).toBeDefined();
     const out = (await dispatch("review.deltaDigest", {
       commandId: randomUUID(),
       reviewId: review.id,
@@ -610,174 +506,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   });
 });
 
-describe("createDispatch — canvas.* routing (issue #54)", () => {
-  it("routes canvas.disposition onto the review and returns the updated review", async () => {
-    const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-
-    const result = (await dispatch("canvas.disposition", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      patchsetId: review.activePatchsetId,
-      path: "src/a.ts",
-      disposition: "approve",
-      body: "looks right",
-    })) as { review: Review };
-
-    expect(result).not.toBeUndefined();
-    expect(result.review.dispositions).toHaveLength(1);
-    expect(result.review.dispositions[0]?.anchor.path).toBe("src/a.ts");
-    expect(result.review.dispositions[0]?.type).toBe("approve");
-  });
-
-  it("acknowledges the L3 ops rather than returning undefined", async () => {
-    const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-
-    const pin = await dispatch("canvas.pinAnnotation", {
-      commandId: randomUUID(),
-      canvasId: "cid-sequence",
-      annotationId: "ann-1",
-    });
-    const clear = await dispatch("canvas.clearAnnotation", {
-      commandId: randomUUID(),
-      canvasId: "cid-sequence",
-      annotationId: "ann-1",
-    });
-    const cohort = await dispatch("canvas.setCohortExpansion", {
-      commandId: randomUUID(),
-      canvasId: "cid-decisions",
-      cohortKey: "cohort:c1",
-      expanded: true,
-    });
-    const select = await dispatch("canvas.select", {
-      commandId: randomUUID(),
-      canvasId: "cid-sequence",
-      elementKey: "e1",
-    });
-
-    expect(pin).toEqual({ ok: true });
-    expect(clear).toEqual({ ok: true });
-    expect(cohort).toEqual({ ok: true });
-    expect(select).toEqual({ ok: true });
-
-    const adjudicate = (await dispatch("canvas.adjudicateProposal", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      canvasId: "cid-decisions",
-      proposalId: "prop-1",
-      outcome: "dismissed",
-    })) as { review: Review };
-    expect(adjudicate.review.id).toBe(review.id);
-  });
-
-  it("routes review.canvases to the injected builder", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-
-    // Running the harness just runs — no consent token, no permission mode.
-    const result = (await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    })) as {
-      canvases: Record<CanvasAngle, Canvas>;
-      elementDiffs: Record<string, { path: string; diff: string }>;
-    };
-
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-    expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
-    // The per-element real diff map (#60) is delivered with the canvas set.
-    expect(result.elementDiffs.e1?.diff).toContain("+x");
-  });
-
-  it("composes review.canvases and flagged.review onto one exact turn budget", async () => {
-    const { dispatch, buildCanvases, flaggedReviewSpy } = harness();
-    const review = await capturedReview(dispatch);
-
-    const canvasResult = {
-      canvases: canvasSet(),
-      elementDiffs: {
-        e1: {
-          path: "src/a.ts",
-          paths: ["src/a.ts"],
-          diff: "@@ -1,1 +1,2 @@\n+x",
-          hunkOccurrences: [],
-        },
-      },
-      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
-    };
-    buildCanvases.mockImplementationOnce(async (_review, _deepReview, session) => {
-      session.budget.tryConsume("canvas-pipeline");
-      return canvasResult;
-    });
-
-    await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-      deepReview: false,
-    });
-    const canvasSession = buildCanvases.mock.calls[0]?.[2];
-    expect(canvasSession?.budget.max).toBe(6);
-
-    flaggedReviewSpy.mockImplementationOnce(async (_review, _deepReview, session) => {
-      session.budget.tryConsume("flagged-pipeline");
-      return { review: { status: "ok", findings: [] }, adjudication: null };
-    });
-    await dispatch("flagged.review", { reviewId: review.id, deepReview: false });
-    const flaggedSession = flaggedReviewSpy.mock.calls[0]?.[2];
-
-    expect(flaggedSession).toBe(canvasSession);
-    expect(flaggedSession?.budget).toBe(canvasSession?.budget);
-    expect(flaggedSession?.budget.consumed).toBe(2);
-  });
-
-  it("carries the REAL contextManifest through the review.canvases command boundary (#30)", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-    // The manifest the builder produced for THIS review; it must reach the renderer
-    // intact through the strict Zod command output (an undeclared field is stripped
-    // here — that is the exact IPC-fidelity failure the declared field guards).
-    const manifest: ContextManifest = {
-      repoRecordId: "/repo",
-      projectSnapshotId: "fp-1",
-      compositionDigest: "comp-1",
-      freshness: { status: "current", staleMembers: [] },
-      members: [],
-      documents: [
-        {
-          order: 0,
-          source: "claude-md",
-          sourcePath: "CLAUDE.md",
-          contentHash: "a".repeat(64),
-          originalBytes: 120,
-          bytes: 64,
-          state: "truncated",
-        },
-      ],
-      totalBytes: 64,
-      assembledPromptDigest: "b".repeat(64),
-      exhaustive: false,
-      unmanagedSources: ["harness ambient file reads (context-isolation probe not yet run)"],
-    };
-    buildCanvases.mockResolvedValueOnce({
-      canvases: canvasSet(),
-      elementDiffs: {},
-      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
-      contextManifest: manifest,
-    });
-
-    const result = (await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    })) as { contextManifest?: ContextManifest };
-
-    expect(result.contextManifest).toEqual(manifest);
-    expect(result.contextManifest?.documents[0]?.state).toBe("truncated");
-  });
-
+describe("createDispatch — preserved command surface", () => {
   it("still serves the preserved MVP commands (app.bootstrap, review.setDisposition)", async () => {
     const { dispatch, startWatching } = harness();
     const review = await capturedReview(dispatch);
@@ -800,19 +529,6 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
       body: "",
     })) as { review: Review };
     expect(set.review.dispositions).toHaveLength(1);
-  });
-
-  it("denies review.canvases for a repository that was never granted", async () => {
-    const { dispatch, allowedRoots } = harness();
-    const review = await capturedReview(dispatch);
-    allowedRoots.delete(review.repositoryRoot);
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        repoPath: review.repositoryRoot,
-      }),
-    ).rejects.toThrow(/access was not granted/);
   });
 });
 
@@ -1185,13 +901,6 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
       reviewId: older.id,
     });
     expect(reattached).toEqual({ threads: [], inFlight: [] });
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: older.repositoryRoot,
-      }),
-    ).resolves.toBeDefined();
   });
 
   it("fails plainly for an unknown id", async () => {
@@ -1217,14 +926,6 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
     expect(result.repositoryPresent).toBe(false);
     expect(allowedRoots.has(older.repositoryRoot)).toBe(false);
     expect(startWatching).not.toHaveBeenCalled();
-    // A repo-touching command against the absent root is refused (not granted by load).
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: older.repositoryRoot,
-      }),
-    ).rejects.toThrow(/Repository access was not granted/);
   });
 
   it("bootstrap reports a deleted latest root without granting or watching it", async () => {
@@ -1247,7 +948,7 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
   });
 
   it("binds freshness and canvases to the addressed review's stored repository root", async () => {
-    const { dispatch, allowedRoots, buildCanvases } = harnessWith({
+    const { dispatch, allowedRoots } = harnessWith({
       repositoryExists: () => true,
     });
     const { older } = await twoReviews(dispatch);
@@ -1261,28 +962,12 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
       }),
     ).rejects.toThrow(/does not match this review/i);
     await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: "/allowed-but-unrelated",
-      }),
-    ).rejects.toThrow(/does not match this review/i);
-    expect(buildCanvases).not.toHaveBeenCalled();
-
-    await expect(
       dispatch("review.checkFreshness", {
         commandId: randomUUID(),
         reviewId: older.id,
         repoPath: older.repositoryRoot,
       }),
     ).resolves.toEqual({ review: older });
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: older.repositoryRoot,
-      }),
-    ).resolves.toBeDefined();
   });
 });
 
@@ -2268,7 +1953,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     // A postable review (postTarget = SANDBOX_TARGET) with a real disposition to collate.
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: review.id,
       patchsetId: review.activePatchsetId,
@@ -2330,7 +2015,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
   it("binds the composed artifact and refuses a stale-revision post (#382 M2 finding 2)", async () => {
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: review.id,
       patchsetId: review.activePatchsetId,
@@ -2356,7 +2041,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(consent.authorization).toBeTruthy();
     // A disposition edit lands AFTER the preview (another client edited) — the phone still holds
     // the old binding. The daemon recomputes it from the CURRENT dispositions and refuses.
-    await dispatch("canvas.disposition", {
+    await dispatch("review.setDisposition", {
       commandId: randomUUID(),
       reviewId: review.id,
       patchsetId: review.activePatchsetId,
@@ -2392,16 +2077,6 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
   it("refuses a disposition with an unsafe path at ingestion (#382 M2 finding 8)", async () => {
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    await expect(
-      dispatch("canvas.disposition", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        patchsetId: review.activePatchsetId,
-        path: "../../etc/passwd",
-        disposition: "comment",
-        body: "escape",
-      }),
-    ).rejects.toThrow(/unsafe path/i);
     await expect(
       dispatch("review.setDisposition", {
         commandId: randomUUID(),
@@ -2643,12 +2318,6 @@ function frontDoorHarness(seed: {
     startWatching: () => undefined,
     isRepositoryDirty: () => false,
     setRepositoryDirty: () => undefined,
-    buildCanvases: () =>
-      Promise.resolve({
-        canvases: canvasSet(),
-        elementDiffs: {},
-        engine: { aiReview: false, claudeAvailable: false, codexAvailable: false },
-      }),
     publishPort: fakePublishPort(),
     publishConsent: createPublishConsentAuthority(),
     projects: {
@@ -2710,7 +2379,6 @@ function frontDoorHarness(seed: {
     prWorktree: () => Promise.resolve(null),
     flaggedReview: () =>
       Promise.resolve({ review: { status: "ok", findings: [] }, adjudication: null }),
-    readUiEvidence: () => Promise.resolve(null),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk: {
       askOrchestrator: () =>
@@ -3792,7 +3460,7 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   });
 
   it("run's captured review attributes each ask to its composed task (traceMap consumed, #73 wave 3)", async () => {
-    // A capture yielding a distinct successor so the fold stamps a delta account: p1 has
+    // A capture yielding a distinct successor so the fold stamps a successor account: p1 has
     // src/a.ts; the successor changes it (addressed).
     let calls = 0;
     const capturePort: PatchsetCapturePort = {
@@ -3860,7 +3528,7 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
 
     expect(out.status).toBe("ran");
     // The traceMap is consumed: the ask names the composed task that ran it.
-    const ask = out.result.review.deltaAccount?.asks.find((entry) => entry.path === "src/a.ts");
+    const ask = out.result.review.successorAccount?.asks.find((entry) => entry.path === "src/a.ts");
     expect(ask?.handoffTask).toBeDefined();
     expect(ask?.handoffTask?.index).toBe(0);
     // R28 still holds: the prior patchset survives byte-identical alongside the successor.

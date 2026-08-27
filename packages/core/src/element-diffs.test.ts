@@ -1,30 +1,19 @@
-import type {
-  AnalysisElement,
-  Canvas,
-  CanvasAngle,
-  Decomposition,
-  Hunk,
-  InvocationBudget,
-  PatchFile,
-  Patchset,
-} from "@rennet/protocol";
-import { CANVAS_ANGLES } from "@rennet/protocol";
+import type { Decomposition, Hunk, PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { type AdmittedDocument, buildCanvas } from "./canvas";
 import { decompose } from "./decomposition";
-import { buildElementDiffs } from "./element-diffs";
-import { createInvocationBudget } from "./invocation-budget";
-import {
-  buildReviewCanvases as buildReviewCanvasesCore,
-  type ReviewPipelineInput,
-} from "./pipeline";
+import { type AdmittedDocument, buildElementDiffs } from "./element-diffs";
 
-type TestPipelineInput = Omit<ReviewPipelineInput, "budget"> & { budget?: InvocationBudget };
-
-function buildReviewCanvases(input: TestPipelineInput) {
-  const { budget = createInvocationBudget(12), ...rest } = input;
-  return buildReviewCanvasesCore({ ...rest, budget });
-}
+// Local test shapes — protocol's `Canvas`/`CanvasAngle`/`AnalysisElement` state model
+// was deleted (#489, B2). The slicer reads only each canvas's analysis elements
+// (elementKey + anchor), so a minimal element + a plain angle→canvas record suffice.
+type TestElement = {
+  elementKey: string;
+  docId: string;
+  anchor: string;
+  kind: string;
+  title: string;
+};
+const ANGLES = ["spec", "sequence", "decisions", "noise", "flagged"] as const;
 
 const repository = {
   id: "repo",
@@ -62,54 +51,15 @@ const WIDGET = `@@ -1,3 +1,6 @@
  }
 +export const helper = () => widget();`;
 
-function blankCanvas(
-  angle: CanvasAngle,
-  elements: Canvas["layers"]["analysis"]["elements"],
-): Canvas {
-  return {
-    canvasId: `cid-${angle}`,
-    reviewId: "r1",
-    patchsetId: "patch-1",
-    angle,
-    layers: {
-      substrate: { chunks: [] },
-      analysis: { elements, cohorts: [], readingOrder: elements.map((el) => el.elementKey) },
-      disposition: { dispositions: [] },
-      annotation: { annotations: [], proposals: [] },
-    },
-    overlay: [],
-  };
+function blankCanvas(elements: readonly TestElement[]): {
+  layers: { analysis: { elements: readonly TestElement[] } };
+} {
+  return { layers: { analysis: { elements } } };
 }
 
-function setWith(
-  angle: CanvasAngle,
-  elements: Canvas["layers"]["analysis"]["elements"],
-): Record<CanvasAngle, Canvas> {
-  return Object.fromEntries(
-    CANVAS_ANGLES.map((a) => [a, blankCanvas(a, a === angle ? elements : [])]),
-  ) as Record<CanvasAngle, Canvas>;
+function setWith(angle: string, elements: readonly TestElement[]) {
+  return Object.fromEntries(ANGLES.map((a) => [a, blankCanvas(a === angle ? elements : [])]));
 }
-
-describe("buildReviewCanvases delivers real element diffs", () => {
-  it("delivers the real captured hunk for a sequence chunk element (not demoDiff)", async () => {
-    const patchset = patchsetOf("patch-1", [file("src/widget.ts", WIDGET)]);
-    const result = await buildReviewCanvases({ reviewId: "r1", patchset, dispositions: [] });
-
-    const element = result.canvases.sequence.layers.analysis.elements[0];
-    expect(element).toBeDefined();
-    const entry = result.elementDiffs[element?.elementKey ?? ""];
-
-    expect(entry).toBeDefined();
-    expect(entry?.path).toBe("src/widget.ts");
-    // BYTE-EXACT to the captured patch: header + interleaved body, verbatim. This
-    // is the load-bearing faithfulness assertion — a reordered or fabricated diff
-    // (all dels then all adds, or a line changed) is NOT byte-equal to WIDGET and
-    // fails here, which the earlier per-line `toContain` checks could not detect.
-    expect(entry?.diff).toBe(WIDGET);
-    // The demoDiff fixture is gone from the real path.
-    expect(entry?.diff).not.toContain("legacy");
-  });
-});
 
 describe("buildElementDiffs", () => {
   const patchset = patchsetOf("patch-1", [file("src/widget.ts", WIDGET)]);
@@ -193,7 +143,7 @@ describe("buildElementDiffs", () => {
   it("resolves an agentic proposal chunk id (not in the floor) via the admitted docs", () => {
     const hunkId = decomposition.hunks[0]?.id ?? "";
     expect(hunkId).not.toBe("");
-    const element: AnalysisElement = {
+    const element: TestElement = {
       elementKey: "seq-el",
       docId: "pdoc",
       anchor: "rennet:chunk/agent-group",
@@ -230,17 +180,24 @@ describe("buildElementDiffs", () => {
     expect(diffs["seq-el"]?.diff).toBe(WIDGET);
   });
 
-  // #250 real-shape PROVENANCE: this pins the exact producer output the workspace
-  // mark index (packages/app-ui) must own — a proposal chunk element whose anchor is
-  // NOT in the floor substrate, the floor hunk that IS in the substrate (so the
-  // coarse verdict says "placed"), and the diff's `hunkOccurrences` carrying that
-  // floor hunk (the ownership signal the fix reads). The UI component test
-  // (workspace-mark-orphan.dom.test.tsx) asserts the orphan behavior over exactly
-  // this shape; this test is why that fixture is faithful to the live pipeline and
-  // not a self-agreeing hand-shape.
-  it("REAL SHAPE (#250): a proposal element sits outside the substrate while its diff carries the floor hunk", () => {
+  // #250 real-shape PROVENANCE (ported to B2's local-shape fixtures): a proposal chunk
+  // element whose anchor is NOT a floor chunk, mapped through the admitted docs onto the
+  // floor hunk. The workspace mark index (packages/app-ui) reads this ownership signal off
+  // the diff, so the geometry-complete occurrence AND the SOLE ownership are pinned on
+  // buildElementDiffs' output. `buildCanvas` (the old producer that once built the real
+  // sequence canvas here) died with the Board rebuild (#489, B2); the element + admitted
+  // shapes are hand-built, but the element-diffs assertions are carried as-is.
+  it("REAL SHAPE (#250): the regrouped floor hunk maps onto the proposal element, geometry-complete and sole-owned", () => {
     const floorHunkId = decomposition.hunks[0]?.id ?? "";
     expect(floorHunkId).not.toBe("");
+    const element: TestElement = {
+      elementKey: "seq-250",
+      docId: "pdoc",
+      anchor: "rennet:chunk/agent-group",
+      kind: "chunk",
+      title: "Agent group",
+    };
+    const set = setWith("sequence", [element]);
     const admitted: AdmittedDocument[] = [
       {
         docId: "pdoc",
@@ -261,46 +218,15 @@ describe("buildElementDiffs", () => {
         },
       },
     ];
-    // The REAL sequence canvas from the REAL producer.
-    const sequence = buildCanvas({
-      reviewId: "r1",
-      patchsetId: "patch-1",
-      angle: "sequence",
-      admittedDocs: admitted,
-      decomposition,
-      dispositions: [],
-      canvasEvents: [],
-    });
-    const element = sequence.layers.analysis.elements[0];
-    // (1) The proposal element anchors to the agent chunk id — NOT a substrate chunk.
-    expect(element?.anchor).toBe("rennet:chunk/agent-group");
-    expect(sequence.layers.substrate.chunks.map((chunk) => chunk.chunkId)).not.toContain(
-      "agent-group",
-    );
-    // (2) The floor hunk IS in the substrate (so the workspace coarse verdict says placed).
-    expect(sequence.layers.substrate.chunks.flatMap((chunk) => chunk.hunkIds)).toContain(
-      floorHunkId,
-    );
-    // (3) The diff producer maps the regrouped floor hunk onto the proposal element —
-    // the ownership signal the mark index must read but the substrate lookup misses.
-    const set = Object.fromEntries(
-      CANVAS_ANGLES.map((angle) => [
-        angle,
-        angle === "sequence" ? sequence : blankCanvas(angle, []),
-      ]),
-    ) as Record<CanvasAngle, Canvas>;
     const diffs = buildElementDiffs(set, decomposition, patchset, admitted);
     // Pin the COMPLETE occurrence descriptor (ranges included), derived from the source
-    // hunk, not just its id. The prior `.map(occ => occ.id)` reduction let a producer
-    // GEOMETRY drift stay green (a `newStart + 10` at the emission keeps the id, so both
-    // this test and the UI's own hard-coded-geometry fixture agreed) while a real
-    // cross-layer probe false-orphaned a valid mark. Deriving the expected ranges from
-    // the source hunk makes any geometry drift at the producer redden here. #250 r2 F3.
+    // hunk, not just its id. A producer GEOMETRY drift (a `newStart + 10` that keeps the
+    // id) reddens here rather than agreeing with a hard-coded-geometry UI fixture. #250 r2 F3.
     const floorHunk = decomposition.hunks.find((hunk) => hunk.id === floorHunkId);
     expect(floorHunk).toBeDefined();
-    const occurrence = element
-      ? diffs[element.elementKey]?.hunkOccurrences.flat().find((occ) => occ.id === floorHunkId)
-      : undefined;
+    const occurrence = diffs["seq-250"]?.hunkOccurrences
+      .flat()
+      .find((occ) => occ.id === floorHunkId);
     expect(occurrence).toEqual({
       id: floorHunkId,
       oldStart: floorHunk?.oldStart,
@@ -308,14 +234,13 @@ describe("buildElementDiffs", () => {
       newStart: floorHunk?.newStart,
       newLines: floorHunk?.newLines,
     });
-    // Opus caveat folded in: pin that the proposal element is the SOLE owner of the floor
-    // hunk, not merely that elements[0] carries it. A producer change that duplicated the
-    // hunk onto a second element's diff would redden here rather than slip past a
-    // single-element check. #250 r2 F3.
+    // The proposal element is the SOLE owner of the floor hunk — a producer change that
+    // duplicated the hunk onto a second element's diff would redden here rather than slip
+    // past a single-element check. #250 r2 F3.
     const ownersOfFloorHunk = Object.entries(diffs)
       .filter(([, entry]) => entry?.hunkOccurrences.flat().some((occ) => occ.id === floorHunkId))
       .map(([key]) => key);
-    expect(ownersOfFloorHunk).toEqual([element?.elementKey]);
+    expect(ownersOfFloorHunk).toEqual(["seq-250"]);
   });
 
   // Oversize-split fragments: two decomposition hunks (splitOf fragments) that

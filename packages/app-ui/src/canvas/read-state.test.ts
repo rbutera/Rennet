@@ -1,7 +1,7 @@
-import type { Disposition } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   coverageMosaic,
+  type Disposition,
   dispositionsToViewEvents,
   foldReadState,
   nextUnread,
@@ -45,8 +45,8 @@ describe("foldReadState — read-state is defined by actions only", () => {
 describe("dispositionsToViewEvents — read is tied to L2 actions only", () => {
   it("turns each disposition into an Actioned event on its anchor path", () => {
     const dispositions: Disposition[] = [
-      { anchor: { path: "a.ts", contentDigest: "x" }, type: "approve", body: "" },
-      { anchor: { path: "b.ts", contentDigest: "y" }, type: "comment", body: "hi" },
+      { anchor: { path: "a.ts" } },
+      { anchor: { path: "b.ts" } },
     ];
     const events = dispositionsToViewEvents(dispositions);
     expect(events).toEqual([

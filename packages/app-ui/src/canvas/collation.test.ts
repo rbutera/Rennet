@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { DispositionBatch } from "./authoring";
 import {
   type CollationDraft,
   type CollationItem,
   clearRefined,
   collationItems,
   collationPayload,
+  type DispositionBatch,
+  type DispositionWrite,
   draftFromBatch,
   effectiveBody,
   ingestWrites,
@@ -19,7 +20,6 @@ import {
   withdrawItem,
   withdrawPath,
 } from "./collation";
-import type { DispositionWrite } from "./logic";
 
 const batch: DispositionBatch = [
   { path: "src/beta.ts", type: "request-change", raw: "rename x" },

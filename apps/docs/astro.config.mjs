@@ -83,7 +83,6 @@ export default defineConfig({
                     label: "Architecture contracts",
                     link: "/developing/concepts/architecture-contracts/",
                   },
-                  { label: "Canvas model", link: "/developing/concepts/canvas-model/" },
                   { label: "Review lenses", link: "/developing/concepts/review-lenses/" },
                   {
                     label: "The lens pipeline (planned)",

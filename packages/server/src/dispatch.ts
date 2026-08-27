@@ -27,15 +27,9 @@ import {
 import type {
   AnchorSide,
   AnchorSpan,
-  Canvas,
-  CanvasAngle,
   ComposedHandoffBundle,
-  ContextManifest,
-  DecisionsRunStatus,
-  DeltaAccount,
   DeltaDigestResult,
   DispositionType,
-  ElementDiffs,
   FlaggedReview,
   HandoffAskTrace,
   HandoffBundle,
@@ -47,8 +41,7 @@ import type {
   PrBodyDraftResult,
   RefinementResult,
   Review,
-  ReviewEngine,
-  ReviewNarration,
+  SuccessorAccount,
   SymbolInspection,
 } from "@rennet/protocol";
 import {
@@ -80,7 +73,6 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { deepLinkFor, type RaisedAttention } from "./attention-planner";
-import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
 import {
   createReviewIntelligenceSessions,
@@ -141,14 +133,6 @@ export interface DispatchDeps {
    * running tracking (running reads false).
    */
   readonly inFlightReviews?: { enter(reviewId: string): void; leave(reviewId: string): void };
-  /**
-   * The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
-   * backend + the lean primer + a real `claude` turn over the in-process
-   * canvasOps@2 MCP server. Held here so the orchestrator capability is part of the
-   * live command-router composition; the conversational command that drives a turn
-   * per user question is the DEFERRED UI loop, so no command routes to it yet.
-   */
-  readonly orchestratorTurn?: OrchestratorTurnRunner;
   /** Repositories the user has granted review access to (renderer-origin guard). */
   readonly allowedRoots: Set<string>;
   /** Resolve a repository to review (Electron dialog, or the test-repo env). `null` = cancelled. */
@@ -187,35 +171,6 @@ export interface DispatchDeps {
   repositoryExists?(root: string): boolean;
   isRepositoryDirty(): boolean;
   setRepositoryDirty(dirty: boolean): void;
-  /**
-   * Build the live five-angle canvas set for a review (harness-backed pipeline),
-   * plus the per-element real diff map (#60) delivered with it.
-   */
-  buildCanvases(
-    review: Review,
-    deepReview: boolean,
-    session: ReviewIntelligenceSession,
-  ): Promise<{
-    canvases: Record<CanvasAngle, Canvas>;
-    elementDiffs: ElementDiffs;
-    /** The roll-up narration placed onto the canvases (issue #70), when produced. */
-    narration?: ReviewNarration;
-    /** How the set was produced (real-AI-default): AI review vs mechanical outline. */
-    engine: ReviewEngine;
-    /**
-     * How the Decisions lens's producer ran (issue #137): `ok` (discerned a
-     * possibly-empty set) vs `failed` (the runner did not complete). Optional so a
-     * caller that does not run decisions omits it; the renderer surface that paints
-     * the failed state distinctly is a follow-up.
-     */
-    decisionsRun?: DecisionsRunStatus;
-    /**
-     * The context-composition manifest (issue #30): the deterministic,
-     * byte-budgeted context Rennet assembled, recorded per document. Optional so a
-     * caller that has no captured composition omits it.
-     */
-    contextManifest?: ContextManifest;
-  }>;
   /**
    * The forge egress port (issue #21). `buildReviewRequest` is pure and network-free
    * (the dry-run evidence, no credential); `publishReview` performs the real, gated
@@ -373,17 +328,6 @@ export interface DispatchDeps {
     session: ReviewIntelligenceSession,
   ): Promise<FlaggedReviewRun>;
   /**
-   * The verify-ui evidence read (issue #183): return one screenshot the verify-ui pass
-   * captured for a review, base64 data-URL encoded, so the Flagged lens strip renders
-   * it as a thumbnail without the bytes riding the review snapshot. Fail-closed: an
-   * escaping path or a missing file returns `null` (the strip shows a missing-evidence
-   * note). A pure read confined to the review's evidence directory — no spend, no egress.
-   */
-  readUiEvidence(
-    reviewId: string,
-    path: string,
-  ): Promise<{ status: "ok"; dataUrl: string } | { status: "oversized" } | null>;
-  /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
    * review, each group tagged rule vs noise job. The LIVE noise-classification runner
    * (#34) is wired behind this — it decomposes the review's active patchset and runs a
@@ -489,7 +433,7 @@ export interface DispatchDeps {
   }) => Promise<PrBodyDraftResult>;
   /**
    * The delta re-review digest producer (issue #73 / M25): rephrase a successor
-   * review's deterministic `deltaAccount` into a one/two-sentence TL;DR shown ON TOP
+   * review's deterministic `successorAccount` into a one/two-sentence TL;DR shown ON TOP
    * of the facts. Optional so a composition without it (no coding harness) answers an
    * honest `unavailable` and the panel simply shows no headline. Built from ONLY the
    * account, it can add no fact the facts don't carry; it posts NOTHING and gates
@@ -497,7 +441,7 @@ export interface DispatchDeps {
    */
   readonly draftDeltaDigest?: (input: {
     review: Review;
-    account: DeltaAccount;
+    account: SuccessorAccount;
   }) => Promise<DeltaDigestResult>;
   /**
    * Reload the persisted conversation threads for a review, plus any turn still
@@ -1288,32 +1232,6 @@ export function createDispatch(
             compositionId,
           });
         }
-        case "review.canvases": {
-          const input = parseCommandInput(name, rawInput);
-          const review = requireReviewById(input.reviewId);
-          assertReviewRepository(review, input.repoPath);
-          const deepReview = input.deepReview ?? true;
-          const intelligenceSession = intelligenceSessions.enter(review, deepReview, "canvases");
-          // Running the review harness (the model spend) is Rennet's entire job — it
-          // just runs. No permission mode, no consent token: opening Canvases composes
-          // the model turn directly.
-          const { canvases, elementDiffs, narration, engine, decisionsRun, contextManifest } =
-            await deps.buildCanvases(review, deepReview, intelligenceSession);
-          return parseCommandOutput(name, {
-            canvases,
-            elementDiffs,
-            ...(narration ? { narration } : {}),
-            engine,
-            // The Decisions runner's status (issue #137/#160): carried so the renderer
-            // can paint a FAILED decisions pass distinctly from "ran, found nothing".
-            // Absent ⇒ the UI defaults to `ok` (the pre-#160 shape).
-            ...(decisionsRun ? { decisionsRun } : {}),
-            // The context-composition manifest (issue #30): carried to the renderer intact
-            // (declared in the Zod output schema, so it survives — an undeclared
-            // optional would be silently stripped here).
-            ...(contextManifest ? { contextManifest } : {}),
-          });
-        }
         // ── The front door: projects + discovery (issue #29) ──────────────────────
         case "harness.detect": {
           // The ambient detection line. Read-only, no repository, no index touch.
@@ -1559,15 +1477,10 @@ export function createDispatch(
           return parseCommandOutput(name, { status: "complete", review: result.review });
         }
         case "review.uiEvidence": {
-          // The verify-ui screenshot read (#183). A PURE READ confined to the review's
-          // own evidence directory: an escaping path or a missing file is `not-found`
-          // (the strip shows a plain missing-evidence note), never a crash, never a read
-          // outside the review's directory, no spend. We resolve the review to reuse the
-          // repository-access gate the store already enforces before touching disk.
-          const input = parseCommandInput(name, rawInput);
-          requireReviewById(input.reviewId);
-          const evidence = await deps.readUiEvidence(input.reviewId, input.path);
-          return parseCommandOutput(name, evidence ?? { status: "not-found" });
+          // The verify-ui evidence backend is gone with the Board rebuild (B2); no
+          // screenshots are captured today, so the strip shows its missing-evidence note.
+          parseCommandInput(name, rawInput);
+          return parseCommandOutput(name, { status: "not-found" });
         }
         // ── Ask the AI a question about the review (issue #139) ────────────────────
         case "review.ask": {
@@ -2010,7 +1923,7 @@ export function createDispatch(
           // fuzzy occurrence matcher deliberately does NOT drive this carry (issue #254 / #16).
           //
           // Hand the verified bundle's ask trace to the capture (issue #73 wave 3): the
-          // traceMap + task titles MATERIALISED per ask, so the successor's delta account
+          // traceMap + task titles MATERIALISED per ask, so the successor's successor account
           // attributes each ask to the composed task that ran it. A SMALL projection —
           // ask id + anchor identity + task index + preview title, NO prompts/bodies/contexts
           // — so nothing an agent executes enters the event log.
@@ -2101,9 +2014,9 @@ export function createDispatch(
           return parseCommandOutput(name, drafted);
         }
         case "review.deltaDigest": {
-          // Rephrase the successor review's DETERMINISTIC delta account into a one-glance
+          // Rephrase the successor review's DETERMINISTIC successor account into a one-glance
           // TL;DR. Resolve the CURRENT review ONCE (stale/unknown id refused), read its
-          // OWN `deltaAccount` (absent ⇒ honest `unavailable` — a first capture carries
+          // OWN `successorAccount` (absent ⇒ honest `unavailable` — a first capture carries
           // no account), and run the council-routed light turn. ⚠️ EGRESS: the account's
           // paths/statuses ARE sent to the harness (a per-turn egress) — but ONLY the
           // account, never diff or repo content, so the digest can add no fact the facts
@@ -2111,11 +2024,11 @@ export function createDispatch(
           // failed/absent turn, the renderer shows the facts with no headline.
           const input = parseCommandInput(name, rawInput);
           const review = requireReviewById(input.reviewId);
-          const account = review.deltaAccount;
+          const account = review.successorAccount;
           if (account === undefined) {
             return parseCommandOutput(name, {
               status: "unavailable",
-              reason: "this review carries no delta account to summarise",
+              reason: "this review carries no successor account to summarise",
             });
           }
           if (!deps.draftDeltaDigest) {
@@ -2215,49 +2128,6 @@ export function createDispatch(
             name,
             await deps.openInEditor({ review, path: input.path, line: input.line }),
           );
-        }
-        // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
-        case "canvas.disposition": {
-          // The sovereign L2 write maps directly onto the review's disposition path
-          // (#49 item 1/2 — the protocol input already uses `path`/`disposition`).
-          // A span/side (issue #78) makes it span-grained (the Spec view's per-node
-          // review); absent, it stays path-grained exactly as before.
-          const input = parseCommandInput(name, rawInput);
-          // Path safety at ingestion (#382 M2 finding 8): a disposition path must name a file INSIDE
-          // the repo. Refuse an absolute or traversing path so it can never be stored (and later
-          // composed into an outbound review). Diff paths are always repo-relative; this only
-          // rejects a crafted or corrupt one.
-          if (!isRepoRelativePath(input.path)) {
-            throw new Error(`Disposition refused: unsafe path (${input.path})`);
-          }
-          const review = service.setDisposition(
-            input.commandId,
-            input.reviewId,
-            input.patchsetId,
-            input.path,
-            input.disposition,
-            input.body,
-            input.span,
-            input.side,
-          );
-          return parseCommandOutput(name, { review });
-        }
-        case "canvas.adjudicateProposal": {
-          // L3 proposal resolution ack. Accepting a disposition proposal issues its
-          // L2 write as a separate `canvas.disposition` from the renderer (accepting
-          // is a user act); there is no durable L3 canvas-op store in this slice (#13).
-          const input = parseCommandInput(name, rawInput);
-          const review = requireReviewById(input.reviewId);
-          return parseCommandOutput(name, { review });
-        }
-        case "canvas.setCohortExpansion":
-        case "canvas.select":
-        case "canvas.pinAnnotation":
-        case "canvas.clearAnnotation": {
-          // L3 / view ops with no durable store in this slice (#13). Validate the
-          // input and acknowledge; the renderer holds the ephemeral view state.
-          parseCommandInput(name, rawInput);
-          return parseCommandOutput(name, { ok: true });
         }
         // ── Settings: the config ladder (wireframe #15) ───────────────────────────
         case "settings.get": {

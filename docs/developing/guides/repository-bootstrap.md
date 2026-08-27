@@ -34,7 +34,7 @@ The production workspace contains four apps and nine packages:
 | Area | Projects |
 |---|---|
 | Apps | `rennet-desktop`, `rennet-docs`, `rennet-marketing`, `rennet-mobile` |
-| Product packages | `rennet-protocol`, `rennet-instructions`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-app-ui`, `rennet-theme` |
+| Product packages | `rennet-protocol`, `rennet-prompts`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-app-ui`, `rennet-theme` |
 
 `rennet-docs-content` represents the canonical Markdown library under `docs/`.
 The root `rennet` project owns repository-wide checks. Spikes have their own Nx
@@ -48,7 +48,7 @@ The [monorepo map](../reference/monorepo-map.md) lists each project and its role
 flowchart TD
   theme["@rennet/theme"]
   protocol["@rennet/protocol"]
-  instructions["@rennet/instructions"]
+  prompts["@rennet/prompts"]
   core["@rennet/core"]
   adapters["@rennet/adapters"]
   server["@rennet/server"]
@@ -58,13 +58,14 @@ flowchart TD
   desktop["apps/desktop"]
   mobile["apps/mobile"]
 
-  instructions --> protocol
+  prompts --> protocol
   core --> protocol
-  core --> instructions
+  core --> prompts
   adapters --> protocol
-  adapters --> instructions
+  adapters --> prompts
   adapters --> core
   server --> protocol
+  server --> prompts
   server --> core
   server --> adapters
   client --> protocol

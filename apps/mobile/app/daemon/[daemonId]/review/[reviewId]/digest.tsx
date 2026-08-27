@@ -8,7 +8,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { type ReactNode, useEffect, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { Card, Screen, SectionLabel, StatTile } from "../../../../../src/components/ui";
-import { type DeltaAccountLike, deltaCounts } from "../../../../../src/lib/delta-counts";
+import { deltaCounts, type SuccessorAccountLike } from "../../../../../src/lib/delta-counts";
 import { newCommandId } from "../../../../../src/lib/ids";
 import {
   useConnection,
@@ -26,10 +26,10 @@ export default function Digest(): ReactNode {
   useReviewFocus(daemonId, reviewId, "review-finished");
   const connection = useConnection(daemonId);
   const loaded = useReviewLoad(daemonId, reviewId);
-  // The count tiles derive CLIENT-SIDE from the review's own delta account (#382 M2, task 6.3) —
+  // The count tiles derive CLIENT-SIDE from the review's own successor account (#382 M2, task 6.3) —
   // an absent account (a first capture) reads an honest zero, never a fabricated number.
   const counts = deltaCounts(
-    (loaded.review as { deltaAccount?: DeltaAccountLike } | undefined)?.deltaAccount,
+    (loaded.review as { successorAccount?: SuccessorAccountLike } | undefined)?.successorAccount,
   );
   const [digest, setDigest] = useState<string | null>(null);
 

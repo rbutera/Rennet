@@ -1,8 +1,8 @@
-import type { DeltaAccount } from "@rennet/protocol";
+import type { SuccessorAccount } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { buildDeltaDigestPrompt, type DeltaDigestPort, draftDeltaDigest } from "./delta-digest";
 
-const account: DeltaAccount = {
+const account: SuccessorAccount = {
   asks: [
     {
       path: "src/rate/keys.ts",
@@ -90,7 +90,7 @@ describe("draftDeltaDigest — the honesty floor (#73/M25)", () => {
 });
 
 describe("buildDeltaDigestPrompt — hunk-grain facts (#73 wave 3)", () => {
-  const hunkAccount: DeltaAccount = {
+  const hunkAccount: SuccessorAccount = {
     asks: account.asks,
     beyondAsks: ["src/metrics/emit.ts"],
     beyondAskHunks: [
@@ -134,7 +134,7 @@ describe("buildDeltaDigestPrompt — hunk-grain facts (#73 wave 3)", () => {
   });
 
   it("caps enumeration with an honest 'and N more' on a large delta", () => {
-    const many: DeltaAccount = {
+    const many: SuccessorAccount = {
       asks: [],
       beyondAsks: [],
       beyondAskHunks: Array.from({ length: 14 }, (_unused, index) => ({

@@ -1,0 +1,15 @@
+{
+  "name": "rennet-prompts",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/prompts/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:prompts"],
+  "targets": {
+    "build": { "command": "pnpm exec tsc -p packages/prompts/tsconfig.json" },
+    "lint": {
+      "command": "pnpm exec eslint packages/prompts/src --max-warnings=0 && pnpm exec biome check packages/prompts/src"
+    },
+    "typecheck": { "command": "pnpm exec tsc -p packages/prompts/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run packages/prompts/src" }
+  }
+}
