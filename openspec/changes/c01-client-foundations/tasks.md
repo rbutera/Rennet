@@ -22,10 +22,10 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 3. The store — `app-ui/src/store/`
 
-- [ ] 3.1 One zustand store (`zustand@5.0.14`, already a dependency of `app-ui`), created in `store/index.ts` from four slice files: `ui` (sidebar open + fold state, chat open, chat width, dialog flags, command-menu open), `review` (staged asks, per-line code comments keyed path→line, quote threads, focused thread, retired ledger, verdict override, draft-block edits), `run` (live round progress, greeting armed, regeneration lane states), `signal` (FAB flight/pip batching, transient 80ms window). **No persist middleware. No `sidebar` slice** — the tree is a server projection and its mutations are commands (C3's business); active-session highlight is derived from the route, never stored.
-- [ ] 3.2 Selectors live beside their slice (same file or a sibling `selectors.ts` per slice). **Derive-don't-store**: no field may duplicate anything computable from the projection cache + other fields — counts, tallies, highlights are selectors. Delete-on-sight rule recorded as a comment at the store root.
-- [ ] 3.3 Store unit tests: each slice's actions and selectors; a reload-semantics test (fresh `create` = clean state, nothing rehydrated); a derive test (e.g. a staged-asks count selector reads the same after arbitrary unrelated actions — it is computed, not stored).
-- [ ] 3.4 Cluster gate green. Commit.
+- [x] 3.1 One zustand store (`zustand@5.0.14`), created in `store/index.ts` from four slice files: `ui` (sidebar open + fold state, chat open, chat width, dialogs, command-menu open), `review` (staged asks, per-line code comments keyed path→line, quote threads, focused thread, retired ledger, verdict override, draft-block edits), `run` (round progress, greeting armed, regeneration lane states), `signal` (FAB flight/landed pip batching). **No persist middleware. No `sidebar` slice** — the tree is a server projection; fold state lives in `ui`. Active-session highlight is derived from the route, never stored. (review/run are foundation shapes with real mutators + selectors; their richer domain grows with C3+.)
+- [x] 3.2 Selectors live beside their slice. **Derive-don't-store**: counts/tallies/running-state are selectors (`selectStagedAskCount`, `selectRunningLaneCount`, `selectRoundRunning`, `selectSignalAnimating`, `selectTopDialog`), never fields. Delete-on-sight rule recorded as a comment at the store root.
+- [x] 3.3 Store unit tests (`store/store.test.ts`): each slice's actions and selectors; a reload-semantics test (fresh `createRennetStore` = clean, nothing rehydrated); a derive test (the staged-asks count is unmoved by arbitrary unrelated actions and equals `Object.keys(...).length` — computed, not stored).
+- [x] 3.4 Cluster gate green. Commit.
 
 ## 4. Router + cutover — `app-ui/src/routes/`
 
