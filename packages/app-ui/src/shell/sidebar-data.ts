@@ -109,6 +109,14 @@ function hostForSource(source: string): { id: string; label: string; kind: "loca
   return { id: source, label: label || source, kind: "remote" };
 }
 
+/** The `org/repo` identity a rename falls back to (R67): the last two path segments of
+ *  the project's location (parent/repo), the closest org/repo the wire carries — the
+ *  Project shape has no explicit remote. Falls back to the whole path if it has fewer. */
+function orgRepo(path: string): string {
+  const parts = path.split(/[/\\]+/).filter(Boolean);
+  return parts.slice(-2).join("/") || path;
+}
+
 function buildHosts(
   projects: readonly Project[],
   projection: SidebarSessionProjection,
@@ -130,7 +138,7 @@ function buildHosts(
     bucket.rows.push({
       id: project.id,
       name: project.name,
-      fallbackName: project.name,
+      fallbackName: orgRepo(project.openPath || project.path),
       indexing: indexing.has(project.id),
       sessions: projection.sessionsByProject[project.id] ?? [],
     });
