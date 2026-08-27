@@ -112,6 +112,7 @@ export {
   loadConventionCatalogue,
 } from "./convention-catalogue-reader";
 export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
+export { type DossierKey, DossierStore } from "./dossier-store";
 export {
   createExecObservingTurn,
   EXEC_OUTPUT_TAIL,
@@ -248,6 +249,7 @@ export {
   KNOWLEDGE_FILE,
   KnowledgeStore,
   type PromoteKnowledgeResult,
+  writeAtomic,
 } from "./knowledge-store";
 export {
   changedPathsBetween,
