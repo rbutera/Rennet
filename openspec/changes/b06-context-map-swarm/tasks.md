@@ -19,7 +19,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 - [x] 3.1 Extract the mint-time honesty helpers from `knowledge-generation.ts` (anchor→blobOid resolution, anchor-or-drop, hypothesis stamping, statement id mint) into `core/knowledge/mint.ts`, reused verbatim — no second implementation. Flat pass keeps compiling by importing them (deletion comes in cluster 5).
 - [x] 3.2 `core/knowledge/swarm.ts`: `runPartitionWorker(slice, snapshot, runTurn)` — per-slice prompt + the worker output schema (existing statement fields + optional `hint`), minted through `mint.ts`; `hint` survives only in the worker result envelope. `runMapVerify(workerResults, snapshot, runTurn)` — re-reads cited spans (anchor-bounded), flips each hypothesis to `confirmed`/`rejected`, mints cross-cutting statements (same honesty contract), dedups by statement id; output is a `KnowledgeSet` (B03 shape, consumed not re-modeled). Both pure over injected `runTurn`; NO budget parameter (reconciliation 4).
 - [x] 3.3 Tests: worker mint honesty (unresolvable path dropped, unanchored statement dropped, hypothesis label, hint discarded from the final set); verify flips per span evidence; cross-cutting statement minted + anchored; dedupe.
-- [ ] 3.4 Gate green.
+- [x] 3.4 Gate green.
 
 ## Cluster 4 — incremental delta (partition-routed)
 
