@@ -19,14 +19,21 @@ export type HunkId = z.infer<typeof hunkIdSchema>;
  * `base` (pre-image) or `head` (post-image). A citation hydrates from the
  * captured patchset, never a working tree.
  */
-export const codeRefSchema = z.object({
-  patchsetId: z.string().min(1),
-  path: z.string().min(1),
-  side: z.enum(["base", "head"]),
-  startLine: z.number().int().nonnegative(),
-  endLine: z.number().int().nonnegative(),
-  symbol: z.string().optional(),
-});
+export const codeRefSchema = z
+  .object({
+    patchsetId: z.string().min(1),
+    path: z.string().min(1),
+    side: z.enum(["base", "head"]),
+    // 1-based file lines, same contract as `anchorSpanSchema`; an inverted span
+    // is unreadable and rejected here rather than at hydration time.
+    startLine: z.number().int().min(1),
+    endLine: z.number().int().min(1),
+    symbol: z.string().optional(),
+  })
+  .refine((ref) => ref.endLine >= ref.startLine, {
+    message: "endLine must be >= startLine",
+    path: ["endLine"],
+  });
 export type CodeRef = z.infer<typeof codeRefSchema>;
 
 /** A 1-based file-line span (issue #78). Shared by the disposition anchor + command inputs. */
