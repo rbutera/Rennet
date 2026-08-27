@@ -7,6 +7,12 @@ import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
+import {
+  LiveSettingsProjectionProvider,
+  PriorSurfaceTracker,
+  SettingsScreen,
+  ThemePrefProvider,
+} from "../settings";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
@@ -126,17 +132,6 @@ function SessionScreen({ slug }: { readonly slug: string }) {
   return <ReviewWorkspace review={resolution.review} />;
 }
 
-/** The settings route (#480 `/settings/:page`) — interim, reads the real settings view. */
-function SettingsScreen({ page }: { readonly page: string }) {
-  const { data } = useCommand("settings.get", {});
-  return (
-    <section data-screen="settings" className="mx-auto max-w-[720px] p-10">
-      <h1 className="font-display text-xl font-medium text-ink">Settings — {page}</h1>
-      <p className="mt-2 text-ink-soft">{data ? `Scheme: ${data.scheme}` : "Loading settings…"}</p>
-    </section>
-  );
-}
-
 /**
  * App-wide appearance (wireframe #15): the reviewer's saved scheme is applied to the
  * document ROOT, so EVERY surface inherits it — not only the screens that thread a
@@ -161,7 +156,12 @@ function AppearanceSync() {
   const effective: "dark" | "light" =
     scheme === "light" ? "light" : scheme === "dark" ? "dark" : systemDark ? "dark" : "light";
   useEffect(() => {
-    document.documentElement.dataset.scheme = effective;
+    // The resolved scheme stamps BOTH `data-scheme` (the --rn-* swap in palette.css)
+    // and the `dark` class on the root (C10 §6.3, claim 635 — the Tailwind dark-mode
+    // selector, so any `dark:` utility and dark-aware kit component resolves too).
+    const root = document.documentElement;
+    root.dataset.scheme = effective;
+    root.classList.toggle("dark", effective === "dark");
   }, [effective]);
   return null;
 }
@@ -176,39 +176,54 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
   return (
     <BridgeProvider bridge={bridge}>
       <AppearanceSync />
-      <Router hook={history?.hook} searchHook={history?.searchHook}>
-        <AppLayout>
-          <Switch>
-            <Route path={ROUTES.home}>
-              <Redirect to={ROUTES.newChat} />
-            </Route>
-            <Route path={ROUTES.newChat} component={NewChatScreen} />
-            <Route path={ROUTES.sessionRun}>
-              {(p) => <Interim screen="session-run" title={`Run — ${p.slug}`} />}
-            </Route>
-            <Route path={ROUTES.session}>{(p) => <SessionScreen slug={p.slug ?? ""} />}</Route>
-            <Route path={ROUTES.archived}>
-              <ArchivedView />
-            </Route>
-            <Route path={ROUTES.projectIndexing}>
-              {(p) => <IndexingView projectId={p.id ?? ""} />}
-            </Route>
-            <Route path={ROUTES.projectMap}>
-              {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
-            </Route>
-            <Route path={ROUTES.settings}>{(p) => <SettingsScreen page={p.page ?? ""} />}</Route>
-            <Route path={ROUTES.projectDetail}>
-              {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
-            </Route>
-            <Route path={ROUTES.projects}>
-              <Interim screen="projects" title="Projects" />
-            </Route>
-            <Route>
-              <NotFound label="this address" />
-            </Route>
-          </Switch>
-        </AppLayout>
-      </Router>
+      <ThemePrefProvider>
+        <Router hook={history?.hook} searchHook={history?.searchHook}>
+          <PriorSurfaceTracker>
+            {/* The live settings projection is mounted ABOVE the route switch, so a
+                reader's per-session agent enablement (the `disabled` set) survives
+                leaving and reopening Settings — it resets only on a full app remount
+                (a reload), which is the spec (C10 §10.2). Settings is a route-local
+                takeover; wrapping it there would drop the state on every exit. */}
+            <LiveSettingsProjectionProvider>
+              <AppLayout>
+                <Switch>
+                  <Route path={ROUTES.home}>
+                    <Redirect to={ROUTES.newChat} />
+                  </Route>
+                  <Route path={ROUTES.newChat} component={NewChatScreen} />
+                  <Route path={ROUTES.sessionRun}>
+                    {(p) => <Interim screen="session-run" title={`Run — ${p.slug}`} />}
+                  </Route>
+                  <Route path={ROUTES.session}>
+                    {(p) => <SessionScreen slug={p.slug ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.archived}>
+                    <ArchivedView />
+                  </Route>
+                  <Route path={ROUTES.projectIndexing}>
+                    {(p) => <IndexingView projectId={p.id ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.projectMap}>
+                    {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.settings}>
+                    {(p) => <SettingsScreen page={p.page ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.projectDetail}>
+                    {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
+                  </Route>
+                  <Route path={ROUTES.projects}>
+                    <Interim screen="projects" title="Projects" />
+                  </Route>
+                  <Route>
+                    <NotFound label="this address" />
+                  </Route>
+                </Switch>
+              </AppLayout>
+            </LiveSettingsProjectionProvider>
+          </PriorSurfaceTracker>
+        </Router>
+      </ThemePrefProvider>
     </BridgeProvider>
   );
 }
