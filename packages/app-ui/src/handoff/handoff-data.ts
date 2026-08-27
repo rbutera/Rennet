@@ -1,6 +1,6 @@
-import type { Review } from "@rennet/protocol";
+import type { CommandOutput, Review } from "@rennet/protocol";
 import type { RennetState, StagedAsk } from "../store";
-import { parseLineAnchor, partitionAsksByAnchor } from "./selectors";
+import { type ProposedVerdict, parseLineAnchor, partitionAsksByAnchor } from "./selectors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The hand-off resolution seam (C08 cluster 1, Reconciliation 1/3) — the SINGLE point
@@ -91,6 +91,84 @@ export const composeLivingDraft = (asks: Readonly<Record<string, StagedAsk>>): L
  */
 export const selectLivingDraft = (s: RennetState): LivingDraft =>
   composeLivingDraft(s.review.stagedAsks);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The COMPOSED review draft (C08 cluster 6, exact-preview contract — architecture-contracts.md
+// "Posting to GitHub", R33). `composeLivingDraft` above is the reviewer's local WORKING set
+// (staged asks); the outbound review is not those bytes — the daemon's `publish.compose` is the
+// single-source authority the post round-trips (the client cannot forge bytes the compositionId
+// would reject). So the Post Review lane previews THIS — the daemon's composed comments — and
+// posts exactly them. The reviewer "sees the exact outbound GitHub payload before the external
+// mutation"; the renderer never constructs a different body after preview.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One composed review comment (the byte-exact `publish.compose(mode:"review")` shape). */
+export type ReviewComment = Extract<
+  CommandOutput<"publish.compose">,
+  { status: "review" }
+>["comments"][number];
+
+/** A composed line comment resolved to its `path:line`. */
+export interface ComposedLineComment {
+  readonly path: string;
+  readonly line: number;
+  readonly comment: ReviewComment;
+}
+
+/** Composed line comments sharing a file path (GitHub's line-comment stratum). */
+export interface ComposedLineGroup {
+  readonly path: string;
+  readonly comments: readonly ComposedLineComment[];
+}
+
+/**
+ * The composed outbound review the lane PREVIEWS and POSTS — byte-exact with what
+ * `publish.review` receives. `body` is the comments with no line (the review body stratum);
+ * `lineGroups` are the line-anchored comments grouped by file path; `verdict` is the daemon's
+ * derived proposal (still flippable at the control — the event is a separate post arg);
+ * `arithmetic` is the `N request changes · M comments` tally over the composed comments.
+ */
+export interface ReviewDraft {
+  readonly body: readonly ReviewComment[];
+  readonly lineGroups: readonly ComposedLineGroup[];
+  readonly verdict: ProposedVerdict;
+  readonly arithmetic: { readonly requestChanges: number; readonly comments: number };
+  readonly destination: string;
+}
+
+/**
+ * Split the daemon's composed comments into GitHub's two strata (body vs file-grouped line
+ * comments), preserving compose order. A comment with a `line` is a line comment; one without
+ * is a review-body note. The lane renders THIS and posts the same composition — no re-derivation.
+ */
+export function composeReviewDraft(
+  composed: Extract<CommandOutput<"publish.compose">, { status: "review" }>,
+): ReviewDraft {
+  const body: ReviewComment[] = [];
+  const byPath = new Map<string, ComposedLineComment[]>();
+  let requestChanges = 0;
+  for (const comment of composed.comments) {
+    if (comment.type === "request-change") requestChanges += 1;
+    if (comment.line === undefined) {
+      body.push(comment);
+      continue;
+    }
+    const group = byPath.get(comment.path) ?? [];
+    group.push({ path: comment.path, line: comment.line, comment });
+    byPath.set(comment.path, group);
+  }
+  const lineGroups: ComposedLineGroup[] = [...byPath.entries()].map(([path, comments]) => ({
+    path,
+    comments,
+  }));
+  return {
+    body,
+    lineGroups,
+    verdict: composed.verdict,
+    arithmetic: { requestChanges, comments: composed.comments.length - requestChanges },
+    destination: composed.destination,
+  };
+}
 
 /**
  * The span-rework seam (Objective clause 4) — the SINGLE point selection-steer Revise reaches.

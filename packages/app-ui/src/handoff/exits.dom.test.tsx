@@ -120,12 +120,18 @@ describe("hand-off exits (C08 cluster 6)", () => {
     const r = mountHandoff(review({ postTarget }), handlers);
     stage("src/a.ts:5", "request-change");
 
-    // Nothing has been invoked yet — nothing leaves without the sign-click.
-    expect(calls).toEqual([]);
+    // Compose fires on open (the exact-preview contract): the lane renders the daemon's composed
+    // bytes, NOT the store's staged asks. The composed comment body shows; the store ask body
+    // ("ask src/a.ts:5") never does — the preview is the outbound review, not the working set.
+    expect(await r.findByText("guard the boundary")).toBeTruthy();
+    expect(r.getByText("overall this reads clean")).toBeTruthy();
+    expect(r.queryByText("ask src/a.ts:5")).toBeNull();
+    // Compose ran (a read); nothing that LEAVES the machine has — no post without the sign-click.
+    expect(calls).toEqual(["compose:review"]);
 
     await r.user.click(r.getByRole("button", { name: /Post Review/ }));
 
-    // The sign-click ran the full egress, in order.
+    // The sign-click ran the egress in order — and never re-composed (compose stays at one).
     expect(calls).toEqual(["compose:review", "consent", "review"]);
     // The preview equals what posts: publish.review received the exact bytes compose returned.
     expect(postedPayload).toBe(PAYLOAD);
@@ -136,6 +142,50 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
     expect(r.getByText(/Request Changes · 1 line comment · body/)).toBeTruthy();
     expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
+  });
+
+  it("an inline edit that can't reach the composition is marked pending — never silently divergent", async () => {
+    // The reviewer stages an ask AND types an inline edit into the store. `publish.compose` takes
+    // no edit input, so that edit cannot reach the outbound bytes. The lane must (a) still post the
+    // composed bytes byte-for-byte, and (b) visibly mark the unreachable edit — not drop it silently.
+    let postedPayload: string | undefined;
+    let postedComments: unknown;
+    const handlers: MemoryBridgeHandlers = {
+      "publish.compose": () => ({
+        status: "review",
+        comments: COMMENTS,
+        payload: PAYLOAD,
+        verdict: "REQUEST_CHANGES",
+        destination: "acme/orbital#7",
+        title: "acme/orbital#7",
+        compositionId: "comp-1",
+      }),
+      "publish.requestConsent": () => ({ authorization: "tok-abc" }),
+      "publish.review": (input: CommandInput<"publish.review">) => {
+        postedPayload = input.payload;
+        postedComments = input.comments;
+        return {
+          dryRun: false,
+          request: { endpoint: "graphql", method: "POST", body: {} },
+          marker: "m1",
+          ledger: [],
+          outcome: { reviewRef: "R_1", url: "https://x/1", reused: false },
+        };
+      },
+    };
+    stage("src/a.ts:5", "request-change");
+    act(() => useRennetStore.getState().reviewActions.setDraftEdit("src/a.ts:5", "MY LOCAL EDIT"));
+
+    const r = mountHandoff(review({ postTarget }), handlers);
+    // The pending-mark shows: the inline edit is named as not-in-this-review, not silently applied.
+    expect(await r.findByText(/1 inline edit pending — not in this composed review/)).toBeTruthy();
+    // …and the reviewer's local edit text is nowhere in the previewed (outbound) bytes.
+    expect(r.queryByText(/MY LOCAL EDIT/)).toBeNull();
+
+    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
+    // What posts is the composed bytes, byte-for-byte — the local edit reached neither preview nor post.
+    expect(postedPayload).toBe(PAYLOAD);
+    expect(postedComments).toEqual(COMMENTS);
   });
 
   it("a daemon that lands no outcome fails honest — never a faked post", async () => {
@@ -161,6 +211,8 @@ describe("hand-off exits (C08 cluster 6)", () => {
       }),
     };
     const r = mountHandoff(review({ postTarget }), handlers);
+    // Wait for compose-on-open to arm the CTA (the composed bytes render), then sign.
+    expect(await r.findByText("guard the boundary")).toBeTruthy();
     await r.user.click(r.getByRole("button", { name: /Post Review/ }));
     // No receipt: the lane stays on the draft, the Post CTA re-armed (honest, not a fake success).
     expect(r.queryByText(/Review posted to/)).toBeNull();

@@ -2,7 +2,7 @@ import type { Review } from "@rennet/protocol";
 import { useCallback, useMemo } from "react";
 import { useCommand, useMutation } from "../data";
 import { useRennetStore } from "../store";
-import { resolveEntryMode } from "./handoff-data";
+import { composeReviewDraft, type ReviewDraft, resolveEntryMode } from "./handoff-data";
 import type { PostReceipt } from "./post-review-lane";
 import type { DraftedPr, PrReceipt } from "./rounds-lanes";
 import type { ProposedVerdict } from "./selectors";
@@ -33,8 +33,13 @@ import type { ProposedVerdict } from "./selectors";
 
 /** The live exits the route threads into `<HandoffView>` — the mode picks which are present. */
 export interface HandoffExits {
-  /** Post Review egress (teammate-PR mode). Absent for own-branch/retrospective reviews. */
+  /** Post Review egress (teammate-PR mode). Absent until the review is composed (or off-mode). */
   readonly onPost?: (args: { verdict: ProposedVerdict }) => Promise<PostReceipt>;
+  /**
+   * The composed outbound review the Post Review lane PREVIEWS — byte-exact with what `onPost`
+   * posts (the exact-preview contract). Absent while composing / when the daemon can't compose.
+   */
+  readonly reviewDraft?: ReviewDraft;
   /** Open-Pull-Request egress (own-branch mode). Absent until a PR is composed + ready. */
   readonly onOpenPr?: () => Promise<PrReceipt>;
   /** The composed own-branch PR the rounds lane renders. Absent ⇒ the page stays Changes. */
@@ -48,10 +53,22 @@ export function useHandoffExits(review: Review): HandoffExits {
 
   // The egress writes (C01 §2.5): each a registered, bound publish command over the bridge. The
   // standing law routes every write through `useMutation` — no surface calls `bridge.invoke`.
-  const { mutate: composeReview } = useMutation("publish.compose");
   const { mutate: requestConsent } = useMutation("publish.requestConsent");
   const { mutate: postReview } = useMutation("publish.review");
   const { mutate: submitPr } = useMutation("publish.submitPr");
+
+  // Teammate-PR review preview: compose ONCE, on open (the exact-preview contract — R33,
+  // architecture-contracts.md "Posting to GitHub"). The lane PREVIEWS these composed bytes and
+  // the sign-click posts the SAME composition (`onPost` below never re-composes) — so the review
+  // the reviewer signs IS the review that leaves. A stable command id keeps the read from
+  // refetching across re-renders (the cache key already carries `reviewId` + `mode`).
+  const reviewCommandId = useMemo(() => crypto.randomUUID(), []);
+  const reviewCompose = useCommand(
+    "publish.compose",
+    { commandId: reviewCommandId, reviewId, mode: "review" },
+    { enabled: mode === "teammate-pr" },
+  );
+  const reviewComposed = reviewCompose.data?.status === "review" ? reviewCompose.data : undefined;
 
   // Own-branch PR preview: `publish.compose(mode:"pr")` composes the daemon's byte-exact submission
   // (live, Reconciliation 3) — BOTH the draft the lane shows and the bytes the sign-click opens
@@ -71,46 +88,37 @@ export function useHandoffExits(review: Review): HandoffExits {
 
   const onPost = useCallback(
     async ({ verdict }: { verdict: ProposedVerdict }): Promise<PostReceipt> => {
-      // compose → the previewed bytes → requestConsent → review(dryRun:false): the real egress, on
-      // the sign-click alone (task 6.1). The daemon composes the canonical outbound review; the
-      // token binds (review, target, payload, verdict); publish.review re-derives the same bytes.
-      const composed = await composeReview({
-        commandId: crypto.randomUUID(),
-        reviewId,
-        mode: "review",
-      });
-      if (composed.status !== "review") {
-        throw new Error(
-          composed.status === "unavailable"
-            ? composed.reason
-            : "This review cannot be composed to post.",
-        );
-      }
+      // Post the ALREADY-composed bytes the lane previewed — never a fresh compose (that recompose
+      // was the exact-preview break: the reviewer signs a preview, a re-derivation posts). The
+      // previewed `reviewComposed` IS the payload: requestConsent binds it, publish.review
+      // round-trips it, the compositionId refuses a stale/cross-review post. Real egress on the
+      // sign-click alone (task 6.1) — the verdict is the human's flippable event, a separate arg.
+      if (!reviewComposed) throw new Error("The review is not composed yet.");
       if (!target) throw new Error("This review has no pull request to post to.");
       const { authorization } = await requestConsent({
         commandId: crypto.randomUUID(),
         reviewId,
         target,
-        payload: composed.payload,
+        payload: reviewComposed.payload,
         verdict,
-        compositionId: composed.compositionId,
+        compositionId: reviewComposed.compositionId,
       });
       const result = await postReview({
         commandId: crypto.randomUUID(),
         reviewId,
         target,
-        comments: composed.comments,
-        payload: composed.payload,
+        comments: reviewComposed.comments,
+        payload: reviewComposed.payload,
         verdict,
         authorization,
-        compositionId: composed.compositionId,
+        compositionId: reviewComposed.compositionId,
         dryRun: false,
       });
       if (!result.outcome) throw new Error("The review did not post — nothing left the machine.");
-      const lineCommentCount = composed.comments.filter((c) => c.line !== undefined).length;
-      return { verdict, lineCommentCount, url: result.outcome.url ?? composed.destination };
+      const lineCommentCount = reviewComposed.comments.filter((c) => c.line !== undefined).length;
+      return { verdict, lineCommentCount, url: result.outcome.url ?? reviewComposed.destination };
     },
-    [composeReview, requestConsent, postReview, reviewId, target],
+    [requestConsent, postReview, reviewId, target, reviewComposed],
   );
 
   const onOpenPr = useCallback(async (): Promise<PrReceipt> => {
@@ -128,7 +136,10 @@ export function useHandoffExits(review: Review): HandoffExits {
   }, [submitPr, reviewId, prComposed]);
 
   return {
-    onPost: mode === "teammate-pr" ? onPost : undefined,
+    // Post is armed only once the review is composed — so the previewed bytes and the posted bytes
+    // are one composition (the CTA renders disabled until then, honest).
+    onPost: mode === "teammate-pr" && reviewComposed ? onPost : undefined,
+    reviewDraft: reviewComposed ? composeReviewDraft(reviewComposed) : undefined,
     onOpenPr: prComposed ? onOpenPr : undefined,
     pr: prComposed
       ? { title: prComposed.submission.title, body: prComposed.submission.body, ready: true }

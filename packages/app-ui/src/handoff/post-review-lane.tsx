@@ -12,8 +12,18 @@ import {
 import type { DispositionKind, StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
-import { composeLivingDraft, type LineComment, reviseDraftSpan } from "./handoff-data";
-import { type ProposedVerdict, verdictArithmeticFromAsks } from "./selectors";
+import {
+  type ComposedLineComment,
+  composeLivingDraft,
+  type LineComment,
+  type ReviewDraft,
+  reviseDraftSpan,
+} from "./handoff-data";
+import {
+  type ProposedVerdict,
+  type VerdictArithmetic,
+  verdictArithmeticFromAsks,
+} from "./selectors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Post Review lane (C08 cluster 4, Objective clauses 4/5, teammate-PR mode). Ported from
@@ -71,14 +81,27 @@ export interface PostReceipt {
 export interface PostReviewLaneProps {
   readonly review: Review;
   /**
-   * The egress — resolves `publish.compose` → `publish.review` on the sign-click (cluster 6).
-   * Absent ⇒ the Post CTA is present but disabled (no egress wired); the lane is otherwise fully
-   * live over the store, so every drop/edit/retire/restore is real without it.
+   * The egress — posts the composed `draft` on the sign-click (cluster 6). Absent ⇒ the Post CTA
+   * is present but disabled (no egress wired / review not composed yet).
    */
   readonly onPost?: (args: { verdict: ProposedVerdict }) => Promise<PostReceipt>;
+  /**
+   * The composed outbound review (the daemon's `publish.compose` bytes). When present, the lane
+   * PREVIEWS exactly these bytes and posts the same composition (the exact-preview contract,
+   * architecture-contracts.md "Posting to GitHub"). Absent ⇒ the pre-compose working-draft view
+   * over the store (used while composing and by unit mounts) with the CTA disabled.
+   */
+  readonly draft?: ReviewDraft;
 }
 
-export function PostReviewLane({ review, onPost }: PostReviewLaneProps) {
+export function PostReviewLane({ review, onPost, draft }: PostReviewLaneProps) {
+  // The composed preview IS what posts (exact-preview): when the daemon's composition is in hand,
+  // render THOSE bytes, never the local working draft that recomposed to different bytes on click.
+  if (draft) return <ComposedReviewPreview review={review} draft={draft} onPost={onPost} />;
+  return <WorkingReviewDraft review={review} onPost={onPost} />;
+}
+
+function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft">) {
   const patchsetId = review.activePatchsetId;
   const postTarget = review.postTarget;
   const prRef = postTarget
@@ -106,7 +129,6 @@ export function PostReviewLane({ review, onPost }: PostReviewLaneProps) {
   const threadsStaying = Object.keys(quoteThreads).length;
 
   const effectiveVerdict = verdictOverride ?? arithmetic.proposed;
-  const overridden = verdictOverride !== null;
 
   const [editingAnchor, setEditingAnchor] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -191,47 +213,11 @@ export function PostReviewLane({ review, onPost }: PostReviewLaneProps) {
           </h1>
         </div>
 
-        {/* Verdict: proposed, always flippable (R33). */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <span className="text-xs text-muted-foreground">Verdict</span>
-          {/* Single-select segmented control — ToggleGroup, not a hand-rolled aria-pressed group
-              (no-handrolled-toggle, autopsy S6). A review always carries a verdict, so a deselect
-              (the empty array) is ignored; "use proposal" is the explicit revert. */}
-          <ToggleGroup
-            value={[effectiveVerdict]}
-            onValueChange={(next: string[]) => {
-              const picked = next[0] as ProposedVerdict | undefined;
-              if (!picked) return;
-              setVerdictOverride(picked === arithmetic.proposed ? null : picked);
-            }}
-            aria-label="Review verdict"
-          >
-            {VERDICTS.map((option) => (
-              <Toggle key={option.value} value={option.value} size="sm">
-                <span className={cn("size-1.5 rounded-full", option.dot)} />
-                {option.label}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-          <span className="text-xs text-muted-foreground/80">
-            {overridden ? (
-              <>
-                overridden — proposed {VERDICT_LABEL[arithmetic.proposed].toLowerCase()}{" "}
-                <button
-                  type="button"
-                  onClick={() => setVerdictOverride(null)}
-                  className="underline decoration-dotted underline-offset-2 hover:text-foreground"
-                >
-                  use proposal
-                </button>
-              </>
-            ) : (
-              `proposed from your review · ${arithmetic.requestChanges} request change${
-                arithmetic.requestChanges === 1 ? "" : "s"
-              } · ${arithmetic.comments} comment${arithmetic.comments === 1 ? "" : "s"}`
-            )}
-          </span>
-        </div>
+        <VerdictControl
+          arithmetic={arithmetic}
+          verdictOverride={verdictOverride}
+          setVerdictOverride={setVerdictOverride}
+        />
 
         {/* The living draft body: sans-face prose, steered by selection (R32) — no wrapper. */}
         <ProseSelectionLayer draftHandlers={draftHandlers}>
@@ -338,6 +324,245 @@ export function PostReviewLane({ review, onPost }: PostReviewLaneProps) {
             }
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The verdict segmented control (R33): the proposal states its arithmetic beside itself and is
+ * always flippable. An override says so and offers "use proposal" to revert. Shared by the
+ * working draft (arithmetic proposed off staged asks) and the composed preview (proposed off the
+ * daemon's composed verdict) — the arithmetic is passed in, the control never derives it.
+ */
+function VerdictControl({
+  arithmetic,
+  verdictOverride,
+  setVerdictOverride,
+}: {
+  arithmetic: VerdictArithmetic;
+  verdictOverride: ProposedVerdict | null;
+  setVerdictOverride: (verdict: ProposedVerdict | null) => void;
+}) {
+  const effectiveVerdict = verdictOverride ?? arithmetic.proposed;
+  const overridden = verdictOverride !== null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <span className="text-xs text-muted-foreground">Verdict</span>
+      {/* Single-select segmented control — ToggleGroup, not a hand-rolled aria-pressed group
+          (no-handrolled-toggle, autopsy S6). A review always carries a verdict, so a deselect
+          (the empty array) is ignored; "use proposal" is the explicit revert. */}
+      <ToggleGroup
+        value={[effectiveVerdict]}
+        onValueChange={(next: string[]) => {
+          const picked = next[0] as ProposedVerdict | undefined;
+          if (!picked) return;
+          setVerdictOverride(picked === arithmetic.proposed ? null : picked);
+        }}
+        aria-label="Review verdict"
+      >
+        {VERDICTS.map((option) => (
+          <Toggle key={option.value} value={option.value} size="sm">
+            <span className={cn("size-1.5 rounded-full", option.dot)} />
+            {option.label}
+          </Toggle>
+        ))}
+      </ToggleGroup>
+      <span className="text-xs text-muted-foreground/80">
+        {overridden ? (
+          <>
+            overridden — proposed {VERDICT_LABEL[arithmetic.proposed].toLowerCase()}{" "}
+            <button
+              type="button"
+              onClick={() => setVerdictOverride(null)}
+              className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+            >
+              use proposal
+            </button>
+          </>
+        ) : (
+          `proposed from your review · ${arithmetic.requestChanges} request change${
+            arithmetic.requestChanges === 1 ? "" : "s"
+          } · ${arithmetic.comments} comment${arithmetic.comments === 1 ? "" : "s"}`
+        )}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The COMPOSED review preview (exact-preview contract, architecture-contracts.md "Posting to
+ * GitHub"). `draft` is the daemon's `publish.compose(mode:"review")` bytes, and `onPost` posts
+ * that SAME composition — so what the reviewer signs here IS what leaves the machine, byte for
+ * byte, never a body recomposed after preview. The composed bytes render read-only: they are the
+ * outbound payload, not the working set. Refinement (drop/edit/verdict-by-ask) happens over the
+ * store in the diff and working-draft surfaces BEFORE compose; reopening the lane recomposes.
+ *
+ * Because `publish.compose` takes no inline-edit input, any local `draftEdits` (inline edits the
+ * reviewer typed) cannot reach this composition — so they are marked pending-not-applied, never
+ * silently dropped (the finding's "never silently divergent").
+ */
+function ComposedReviewPreview({
+  review,
+  draft,
+  onPost,
+}: {
+  review: Review;
+  draft: ReviewDraft;
+  onPost?: (args: { verdict: ProposedVerdict }) => Promise<PostReceipt>;
+}) {
+  const patchsetId = review.activePatchsetId;
+  const postTarget = review.postTarget;
+  const prRef = postTarget
+    ? `${postTarget.repo.owner}/${postTarget.repo.name}#${postTarget.number}`
+    : draft.destination;
+
+  const verdictOverride = useRennetStore((s) => s.review.verdictOverride);
+  const setVerdictOverride = useRennetStore((s) => s.reviewActions.setVerdictOverride);
+  const draftEdits = useRennetStore((s) => s.review.draftEdits);
+  const pendingEditCount = Object.keys(draftEdits).length;
+
+  const [receipt, setReceipt] = useState<PostReceipt | null>(null);
+
+  const arithmetic: VerdictArithmetic = {
+    proposed: draft.verdict,
+    requestChanges: draft.arithmetic.requestChanges,
+    comments: draft.arithmetic.comments,
+  };
+  const effectiveVerdict = verdictOverride ?? draft.verdict;
+  const lineCommentCount = draft.lineGroups.reduce((n, g) => n + g.comments.length, 0);
+
+  if (receipt) {
+    return (
+      <div className="mx-auto flex w-full max-w-[720px] flex-col items-start gap-3 px-8 py-10">
+        <span className="flex items-center gap-2 text-base font-semibold text-foreground">
+          <Check className="size-4 text-green" aria-hidden="true" />
+          Review posted to {prRef}
+        </span>
+        <p className="text-sm text-muted-foreground">
+          {VERDICT_LABEL[receipt.verdict]} · {receipt.lineCommentCount} line comment
+          {receipt.lineCommentCount === 1 ? "" : "s"} · body
+        </p>
+        <a
+          href={receipt.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sm text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+        >
+          {receipt.url.replace(/^https?:\/\//, "")}
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-8 py-8">
+        <div className="flex items-center gap-2.5">
+          <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">
+            Post Review · {prRef}
+          </h1>
+        </div>
+
+        <VerdictControl
+          arithmetic={arithmetic}
+          verdictOverride={verdictOverride}
+          setVerdictOverride={setVerdictOverride}
+        />
+
+        {/* Any inline edit that cannot reach the composition, named — not silently dropped. */}
+        {pendingEditCount > 0 && (
+          <p className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+            {pendingEditCount} inline edit{pendingEditCount === 1 ? "" : "s"} pending — not in this
+            composed review. Reopen the lane to recompose with your changes.
+          </p>
+        )}
+
+        {/* Review body: the composed body comments (no line), read-only — these are the bytes. */}
+        <div className="flex flex-col gap-4">
+          <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+            Review Body
+          </span>
+          {draft.body.length === 0 ? (
+            <p className="text-sm text-muted-foreground/70">No review body in this composition.</p>
+          ) : (
+            draft.body.map((comment, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: composed bytes are immutable and never reorder — the index is a stable identity here, and body notes carry no other unique field.
+              <div key={`body-${index}`} className="flex flex-col gap-1">
+                <IntentTag type={comment.type} />
+                <RichText
+                  text={comment.body}
+                  patchsetId={patchsetId}
+                  paragraphClassName="text-base leading-[1.7] text-foreground/90"
+                />
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Line comments: the composed line-anchored comments, grouped by file path. */}
+        {draft.lineGroups.length > 0 && (
+          <div className="flex flex-col gap-3 border-t border-border/60 pt-4">
+            <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+              Line Comments · {lineCommentCount}
+            </span>
+            {draft.lineGroups.map((group) => (
+              <div key={group.path} className="flex flex-col gap-2">
+                <span className="font-mono text-2xs text-muted-foreground">{group.path}</span>
+                {group.comments.map((line) => (
+                  <ComposedLineCard
+                    key={`${line.path}:${line.line}`}
+                    line={line}
+                    patchsetId={patchsetId}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* The exact bytes above are what posts — no separate preview, no recomposition (R31/R33). */}
+        <div className="flex items-center border-t border-border/60 pt-4">
+          <HandoffAction
+            label="Post Review"
+            pendingLabel="Posting review…"
+            icon={GitPullRequest}
+            onSubmit={
+              onPost
+                ? async () => {
+                    setReceipt(await onPost({ verdict: effectiveVerdict }));
+                  }
+                : undefined
+            }
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One composed line-comment card, read-only: the anchor reveal, its intent tag, and its body. */
+function ComposedLineCard({ line, patchsetId }: { line: ComposedLineComment; patchsetId: string }) {
+  const codeRef: CodeRef = {
+    patchsetId,
+    path: line.path,
+    side: "head",
+    startLine: line.line,
+    endLine: line.line,
+  };
+  return (
+    <div className="rounded-lg border border-border bg-card px-3.5 py-3">
+      <div className="flex items-center gap-1.5">
+        <AnchorReveal citations={[codeRef]} />
+        <IntentTag type={line.comment.type} />
+      </div>
+      <div className="mt-1.5">
+        <RichText
+          text={line.comment.body}
+          patchsetId={patchsetId}
+          paragraphClassName="text-sm leading-relaxed text-foreground/90"
+        />
       </div>
     </div>
   );

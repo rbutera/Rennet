@@ -73,6 +73,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
 function HandoffMount({ review }: { review: Review }) {
   const exits = useHandoffExits(review);
   return (
-    <HandoffView review={review} onPost={exits.onPost} pr={exits.pr} onOpenPr={exits.onOpenPr} />
+    <HandoffView
+      review={review}
+      onPost={exits.onPost}
+      reviewDraft={exits.reviewDraft}
+      pr={exits.pr}
+      onOpenPr={exits.onOpenPr}
+    />
   );
 }
