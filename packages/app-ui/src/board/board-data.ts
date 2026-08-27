@@ -1,4 +1,4 @@
-import { type LensBoard, LensBoardSchema, type LensKind } from "@rennet/protocol";
+import { LENS_KINDS, type LensBoard, LensBoardSchema, type LensKind } from "@rennet/protocol";
 import { createContext, useContext } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,4 +66,26 @@ export function resolveBoard(raw: unknown): BoardResolution {
 export function useBoardData(generation: string, lens: LensKind): BoardResolution {
   const source = useContext(BoardSourceContext);
   return resolveBoard(source(generation, lens));
+}
+
+/** A present lens paired with its resolved board — what the lens switcher renders. */
+export interface LensBoardEntry {
+  readonly lens: LensKind;
+  readonly board: LensBoard;
+}
+
+/**
+ * The lenses that HAVE a board in `generation`, each with its board — the lens
+ * switcher's absent-not-disabled set (C05 6.2). Probes every lens through the one
+ * seam and keeps only those that resolve, so "which lenses are present" is derived
+ * from board-data, never invented: a lens the source has no board for is simply
+ * absent. One `useContext`; the fixed-length `LENS_KINDS` map is pure, so this stays
+ * hooks-safe.
+ */
+export function useLensBoards(generation: string): LensBoardEntry[] {
+  const source = useContext(BoardSourceContext);
+  return LENS_KINDS.flatMap((lens) => {
+    const { board } = resolveBoard(source(generation, lens));
+    return board ? [{ lens, board }] : [];
+  });
 }
