@@ -27,7 +27,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 - [x] 4.1 Apply track-b's reconciliation-1 ruling: move `isTestPath`/`implementationPathFor`/`testPathsFor` from `app-ui/src/canvas/counterpart.ts` to `packages/protocol/src/delta/counterpart.ts` (ruled placement, delta seam export), repoint app-ui to import them, keep app-ui's UI-side resolution local. `core/delta/counterpart-hints.ts` derives `{testPath, implPath}` pairs among the patchset's changed paths.
 - [x] 4.2 `core/delta/index.ts`: `DeltaPacket` type + `buildDeltaPacket(patchset, knowledge: KnowledgeSet, dossier: DossierItem[], successorAccount?: SuccessorAccount) → DeltaPacket` — assembly only (no I/O, no model): `{patchset meta, hunks (index), knowledge, dossier, successorAccount?, blastRadius, openspec?, noisePreclass, counterpartHints}`. openspec section present iff the patchset touches openspec artifacts. Parameter shapes are the protocol contracts — no re-modeling.
 - [x] 4.3 Tests: assembly includes every producer's facts; `successorAccount` section present iff the argument is supplied; determinism (two calls, deep-equal result).
-- [ ] 4.4 Gate green.
+- [x] 4.4 Gate green.
 
 ## Cluster 5 — docs
 
