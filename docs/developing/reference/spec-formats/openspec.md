@@ -1,9 +1,9 @@
 ---
 title: OpenSpec artifact shape
-description: The exact directory layout, requirement grammar, change lifecycle, and machine-parseable structure OpenSpec produces, for Rennet's spec lens.
+description: The exact directory layout, requirement grammar, change lifecycle, and machine-parseable structure OpenSpec produces, for Rennet's Design lens.
 ---
 
-OpenSpec ([Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec)) is a spec-driven workflow that keeps a project's accepted behavior in Markdown under an `openspec/` directory. This page documents the precise artifact shape a spec lens can render: the directory layout, the requirement grammar, the change lifecycle, and which parts are reliably structured versus freeform prose. The corpus of record is this repo's own `openspec/` tree; upstream docs fill in the CLI and validation rules.
+OpenSpec ([Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec)) is a spec-driven workflow that keeps a project's accepted behavior in Markdown under an `openspec/` directory. This page documents the precise artifact shape the Design lens can render: the directory layout, the requirement grammar, the change lifecycle, and which parts are reliably structured versus freeform prose. The corpus of record is this repo's own `openspec/` tree; upstream docs fill in the CLI and validation rules.
 
 ## Directory layout
 
@@ -150,7 +150,7 @@ The commands that produce or check the artifact shape (see the [OpenSpec CLI ref
 
 ## Rendering affordances
 
-What a spec lens can reliably exploit, ranked by how machine-parseable it is:
+What the Design lens can reliably exploit, ranked by how machine-parseable it is:
 
 - **Requirement cards** (reliable). Every `### Requirement:` is a titled, addressable unit with a normative body. Render each as a card; the `SHALL`/`SHOULD`/`MAY` keyword gives a strength badge (hard / recommended / optional) for free.
 - **Scenario blocks** (reliable). Each `#### Scenario:` under a requirement is a titled GIVEN/WHEN/THEN block. Render as a labeled step list; the WHEN/THEN split is a natural two-column or trigger-outcome layout. Bold-vs-bare keyword variance is the only normalization needed.

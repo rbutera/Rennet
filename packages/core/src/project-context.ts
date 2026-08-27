@@ -46,7 +46,7 @@ import type {
   WorkspaceScope,
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import type { FanInIndex } from "./blast-radius";
+import type { FanInIndex } from "./delta";
 
 /** Load a content-addressed shard's bytes by digest, or `undefined` if absent. */
 export type ShardLoader = (digest: string) => string | undefined;

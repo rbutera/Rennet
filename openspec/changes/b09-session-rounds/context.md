@@ -19,7 +19,7 @@ B3. Interlocks with B8 (pipeline idempotency, warm-session serialization) — sa
 - The decision: https://github.com/rbutera/rennet/issues/466 · post-round: https://github.com/rbutera/rennet/issues/486
 - Engine asset §2 core/session + risk 3: https://github.com/rbutera/rennet/issues/489#issuecomment-5431046330
 - Existing: `packages/core/src/orchestrator-session*`, `packages/adapters/src/orchestrator-turn.ts`, harness ports
-- Docs: `docs/developing/concepts/agent-handoff.md`, `harness-adapters.md`
+- Docs: `docs/developing/concepts/handoff-and-exits.md`, `harness-adapters.md`
 
 ## Verification
 

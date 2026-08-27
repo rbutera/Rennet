@@ -1,9 +1,9 @@
 ---
 title: Superpowers spec and plan formats
-description: The exact spec, plan, and execution-ledger artifacts obra's Superpowers plugin produces, for the spec lens to render.
+description: The exact spec, plan, and execution-ledger artifacts obra's Superpowers plugin produces, for the Design lens to render.
 ---
 
-[Superpowers](https://github.com/obra/superpowers) is a Claude Code plugin whose skills drive a brainstorm to spec to plan to execution workflow. Each stage writes a Markdown artifact with a mandated shape. This page documents those shapes so Rennet's spec lens can render them as structured objects instead of raw Markdown.
+[Superpowers](https://github.com/obra/superpowers) is a Claude Code plugin whose skills drive a brainstorm to spec to plan to execution workflow. Each stage writes a Markdown artifact with a mandated shape. This page documents those shapes so Rennet's Design lens can render them as structured objects instead of raw Markdown.
 
 Source: the installed plugin at `~/.claude/plugins/cache/claude-plugins-official/superpowers/6.3.0/skills/`, cross-checked against [github.com/obra/superpowers](https://github.com/obra/superpowers). Skills cited by name below map to `skills/<name>/SKILL.md`.
 
@@ -122,7 +122,7 @@ A task with a `complete` line is DONE; the first task without one is where execu
 
 ## Rendering affordances
 
-What the spec lens can exploit, in descending order of structural reliability:
+What the Design lens can exploit, in descending order of structural reliability:
 
 - **Plan task/step tree.** `### Task N:` headings and `- [ ]` / `- [x]` steps are a machine-parseable outline. Render it as a collapsible phase→task→step tree with live checkbox state.
 - **File-touch lists.** Each task's `**Files:**` block (Create / Modify / Test, with line ranges on Modify) is a per-task change manifest — render it as a file-impact badge set and cross-link to the diff.

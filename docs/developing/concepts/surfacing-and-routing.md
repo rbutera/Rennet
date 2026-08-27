@@ -165,5 +165,5 @@ review behavior.
 | Model Council catalog and resolution | `packages/core/src/model-council.ts` |
 | Live daemon composition | `packages/server/src/create-server.ts` |
 
-See [review lenses](./review-lenses.md) for the admitted review surfaces and
+See [the lens pipeline](./lens-pipeline.md) for the admitted review surfaces and
 [context assembly](./context-assembly.md) for retrieved repository context.

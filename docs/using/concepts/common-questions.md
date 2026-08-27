@@ -66,14 +66,17 @@ cannot be executed by another application.
 
 ## What happens on my own branch?
 
-You can prepare a coding-agent handoff from your dispositions, run it, and review
-the resulting changes. Rennet includes changes the agent made outside the
-requested files in that next review.
+The asks you stage become a work order instead of a review. Dispatch a round and
+a coding agent runs it; when the round returns, a report accounts for every ask
+as addressed, partial, or untouched, each outcome verified against the round's
+own diff. Work the agent did that you never asked for is surfaced as "beyond the
+asks" rather than hidden.
 
-When work is recaptured, a disposition carries only when its content is
-byte-identical at the same path and the match is unambiguous. Changed or
-ambiguous work is reviewed again. Once the branch is ready, Rennet can push the
-named branch and open the pull request described by the outbound draft.
+The boards then regenerate over the successor patchset. Sections the round
+touched open expanded and marked; sections it left alone carry forward folded,
+and the previous generation stays readable. Repeat until nothing is left to ask,
+at which point the same surface pushes the branch and opens the pull request
+from the description it has been drafting all along.
 
 ## What licence is Rennet under?
 

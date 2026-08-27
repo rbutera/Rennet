@@ -5,7 +5,7 @@ description: The exact on-disk shape of a Kiro spec — the .kiro/specs three-fi
 
 Kiro (Amazon's spec-driven IDE, [kiro.dev](https://kiro.dev)) writes each feature's
 spec as three Markdown files in a per-feature folder. This page records their
-exact structure so Rennet's spec lens can render them as objects rather than as
+exact structure so Rennet's Design lens can render them as objects rather than as
 raw Markdown. It describes Kiro's artifacts, not Rennet behaviour.
 
 ## Directory layout
@@ -176,7 +176,7 @@ context rather than structured spec objects.
 
 ## Rendering affordances
 
-What a spec lens can rely on, from most to least structured:
+What the Design lens can rely on, from most to least structured:
 
 - **File triplet as a unit.** `requirements.md` / `design.md` / `tasks.md` in a
   `.kiro/specs/<feature>/` folder is a reliable signal to group the three into

@@ -199,5 +199,5 @@ reaches the provider used by the selected harness.
 | Per-project harness composition | `packages/server/src/create-server.ts` |
 | Client-to-daemon connection | `packages/client/src/ws-bridge.ts` |
 
-See [agent handoff](./agent-handoff.md) for the write-enabled consumer and
-[model council](./model-council.md) for job assignment.
+See [hand off and the exits](./handoff-and-exits.md) for the write-enabled
+consumer and [model council](./model-council.md) for job assignment.

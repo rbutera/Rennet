@@ -19,7 +19,6 @@ import {
 import { v7 as uuidv7 } from "uuid";
 import { buildSuccessorAccount, changedPathsBetween } from "./successor-account";
 
-export * from "./blast-radius";
 export * from "./ci-classification";
 export * from "./ci-refinement";
 export * from "./codex-run-turn";
@@ -28,10 +27,10 @@ export * from "./context-ask";
 export * from "./context-assembly";
 export * from "./coverage-mapping";
 export * from "./decomposition";
+export * from "./delta";
 export * from "./delta-digest";
 export * from "./draft-pr-body";
 export * from "./dual-seat";
-export * from "./element-diffs";
 export * from "./escape-path";
 export * from "./finding-reconcile";
 export * from "./finding-verification";
@@ -53,7 +52,6 @@ export * from "./noise-generation";
 export * from "./novelty-ledger";
 export * from "./novelty-lifecycle";
 export * from "./offered-manifest";
-export * from "./openspec-change";
 export * from "./patchset-intent";
 export * from "./pipeline";
 export * from "./project-context";

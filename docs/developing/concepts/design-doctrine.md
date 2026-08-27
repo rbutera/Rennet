@@ -30,7 +30,7 @@ The main color roles are:
 
 | Token family | Use |
 | --- | --- |
-| Canvas, surface, raised | Opaque layout levels and reading areas |
+| Surface ramp | Opaque layout levels and reading areas — the base ground, panel surfaces, and raised chrome |
 | Accent | Links, focus, selection, primary actions, decisions, disagreement, and blast radius |
 | Green | Added code and verified evidence |
 | Danger | Destructive actions and errors |
@@ -66,14 +66,14 @@ on the default theme — packs are an app-client feature.
 
 ## Surfaces stay opaque
 
-The window uses one continuous canvas. Panels separate through small background
+The window uses one continuous surface. Panels separate through small background
 steps and one-pixel borders. Shadows belong to overlays such as menus, dialogs,
 and popovers.
 
 Code always sits on an opaque, high-contrast surface. The outbound preview has
 its own sheet tokens and serif text, which distinguishes the result destined for
-GitHub from the editable working view. Editing happens on the collation draft,
-then the preview renders the resulting destination object.
+GitHub from the working view. The orchestrator reworks the living draft; the
+preview then renders the exact destination object.
 
 ## Typography has clear jobs
 
@@ -113,7 +113,7 @@ position unchanged.
 
 ## Keep marks at their evidence
 
-A disposition, finding, conversation, or proposal belongs at the line, span,
+A finding, ask, conversation, or proposal belongs at the line, span,
 chunk, requirement, or fragment it describes. Indexes may navigate to those
 anchors, but they do not replace the anchored rendering.
 
@@ -207,6 +207,6 @@ Before a UI change is done, check:
 | Component ramp checks | `packages/ui/src/design-ramp.test.ts`, `packages/app-ui/src/design-ramp.test.ts` |
 | Kit-not-hand-rolled toggle check | `eslint.config.mjs` (`NO_HANDROLLED_TOGGLE`), `packages/app-ui/src/toggle-lint.test.ts` |
 
-See [review lenses](./review-lenses.md) for the review lenses and
-[collation and publishing](./collation-and-publishing.md) for the draft and
+See [the lens pipeline](./lens-pipeline.md) for the five lens boards and
+[hand off and the exits](./handoff-and-exits.md) for the living drafts and the
 outbound preview.

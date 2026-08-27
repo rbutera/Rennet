@@ -10,7 +10,7 @@
   "b02": { "status": "done", "passes": true },
   "b03": { "status": "done", "passes": true },
   "b04": { "status": "done", "passes": true },
-  "b05": { "status": "pending", "passes": false },
+  "b05": { "status": "done", "passes": true },
   "b06": { "status": "pending", "passes": false },
   "b07": { "status": "pending", "passes": false },
   "b08": { "status": "pending", "passes": false },
