@@ -43,10 +43,22 @@ Spawn teammates with the Agent tool; message them with SendMessage; name them by
 3. **Implement**: spawn opus implementer(s) in a worktree (Agent `isolation: "worktree"`, or EnterWorktree for a managed one). Hand-off: packet path + tasks.md + BUILD-LOOP.md. They work the loop rules (bearings, one task cluster per session, commit per task, no placeholders). Long changes = several fresh sessions, not one long one.
 4. **Gate**: `sh -c 'pnpm check'` green in the worktree, plus the packet's end-to-end verification with its positive control. Re-run yourself or have the manager assert the evidence — an implementer's "gates pass" is a claim, not a fact.
 5. **Review**: push the branch, open a PR, run the `wave` skill's dual-review gate (Opus + Codex seats, diff + packet only). Fix loop until both pass. Sort findings under Rule Zero — a finding whose fix is a consent gate, lockdown, or capability removal is dropped, not fixed.
-6. **Land**: merge, verify (`git rev-parse origin/main` matches), then cleanup: `sh -c 'cd <worktree> && pnpm nx reset'`, remove the worktree from outside it, flip the workstream's `BUILD-STATUS.json` entry, check the change's docs obligation was met, and have the manager report the completion sigil.
+6. **Land**: acquire the shared merge lock (`git push origin HEAD:refs/heads/merge-lock`; fail = wait+retry; >20 min stale may be force-broken), merge under it, verify (`git rev-parse origin/main` matches), pull main and flip the workstream's `BUILD-STATUS.json` entry **on main** (never in a feature branch), commit + push, release the lock (`git push origin --delete merge-lock`). Then cleanup: `sh -c 'cd <worktree> && pnpm nx reset'`, remove the worktree from outside it, check the change's docs obligation was met, and report the completion sigil.
 7. **Report**: one message to Rai per landed workstream — what works now, what's next, anything flagged.
 
 Client-track extra: at C-track kickoff, the `track-c` manager's first task is the inventory tagging commit (`[ws:*]` on all 712 lines + the exactly-once check script + generated per-workstream issues) — the plan's verification contract depends on it.
+
+## Latios (second machine) — Twonata's workstreams
+
+A second orchestrator, **Twonata**, runs on the latios machine (24 GB, M5 Pro) with its own checkout of this repo. Twonata owns exactly these workstreams: **C06 (diff view), C07 (chat), C10 (settings/help), C11 (command menu)**. The nimbus orchestrator (Renata) must NOT dispatch, implement, or review those four; everything else in the plan stays nimbus-owned and Twonata must not touch it. All four are gate-satisfied by C3+C4 (landed); their B9/B10 "live" dependencies are MemoryBridge-first per the packets — build the surfaces now, isolate live wiring in a clearly marked gated final cluster, never a hollow pass.
+
+Twonata follows this skill's dispatch cycle with these cross-machine overrides:
+
+1. **Worktrees live on latios** (`rennet-wt-c06` etc. beside its checkout), cap 4 active implementation worktrees there, review seats exempt. Cleanup-on-merge (nx reset + worktree remove) is Twonata's duty on its own machine.
+2. **Same review discipline**: dual review per workstream — one Codex seat (round 1, once per workstream, never re-run in fix loops) + a fresh opus seat; fix loops confirm with fresh opus seats. Rule Zero governs findings triage.
+3. **Landing is serialized by the shared merge lock — both orchestrators merge their own work.** Before ANY merge to main (either machine): acquire the lock with `git push origin HEAD:refs/heads/merge-lock` — a failed push means someone else is merging; wait and retry. Under the lock: fold current `origin/main` into the branch if it moved, gate green, merge the PR, pull main, then edit `BUILD-STATUS.json` **on main** (flip the workstream's entry), commit, push. Release with `git push origin --delete merge-lock`. BUILD-STATUS.json is edited ONLY on main under the lock, right after your own merge — never in a feature branch. A lock ref older than 20 minutes may be force-broken (assume the holder died).
+4. **The PR is the coordination bus.** Cross-machine agent messaging is not assumed to work; anything Twonata must tell Renata goes in the PR description/comments (reconciliations, packet-contradicts-reality findings, gate evidence). Keep reports in the PR, not in prose files.
+5. **Footprints**: the four latios workstreams are mutually disjoint surfaces and disjoint from nimbus's in-flight work; if a packet turns out to overlap a nimbus-owned file (shared store slice, barrel), Twonata notes it in the PR and folds main before review concludes — the rebase-before-landing rule absorbs small overlaps.
 
 ## Escalate to Rai (rare)
 
