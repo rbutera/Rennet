@@ -12,12 +12,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { access } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Octokit } from "@octokit/core";
 import {
   AskLogStore,
   applyVisibilitySwitch,
+  BoardMetaStore,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   CodexAdapter,
@@ -96,6 +98,7 @@ import {
   runGitHubDeviceFlow,
   runPrWorktreeSetup,
   runRelatedContextRetrieval,
+  SessionStore,
   SqliteReviewStore,
   snapshotStoreFor,
   validateGitHubToken,
@@ -118,6 +121,7 @@ import {
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
   guardSeatTurn,
+  type HandoffTurnOutcome,
   type HarnessPort,
   type HarnessTurnResult,
   HOST_LOCUS,
@@ -189,7 +193,10 @@ import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from ".
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
+import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
+import { createRoundsRuntime, type PersistedBoardMeta, type RoundsRuntime } from "./runtime/rounds";
+import { SessionEntry } from "./session/session-entry";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
@@ -1436,6 +1443,51 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Backs the `ask.*` write path (the sole writers) and the reload-survival read
   // a reconnecting client rehydrates from (`ask.read`).
   const askLogStore = new AskLogStore();
+  // The write-enabled coding-agent turn (issue #18): brackets a live `claude` write turn
+  // with git checkpoints and returns the turn diff. Extracted to a local so BOTH the
+  // `review.handoff.run` command and the B11 round dispatch (below) run the same turn.
+  const runHandoffTurn = async ({
+    repoRoot,
+    prompt,
+  }: {
+    repoRoot: string;
+    prompt: string;
+  }): Promise<HandoffTurnOutcome> => {
+    const locus = locusForRepo(repoRoot);
+    // The SDK prepends this distro cwd to its direct wsl.exe spawn.
+    const distroCwd =
+      locus.kind === "wsl" ? (toDistroPath(repoRoot, locus.distro) ?? undefined) : undefined;
+    if (await repoHasSubmodules(repoRoot, locus)) {
+      return {
+        status: "failed",
+        reason:
+          "Handoff does not support repositories with submodules yet: a coding agent's edits inside a submodule leave the gitlink unchanged, so the review would not see them. Refusing rather than losing them.",
+        turnDiff: "",
+        filesTouched: [],
+      };
+    }
+    const { adapter } = await getClaudeHarness(locus, distroCwd);
+    if (!adapter) {
+      return {
+        status: "failed",
+        reason: "no coding harness (claude) is installed to run the handoff",
+        turnDiff: "",
+        filesTouched: [],
+      };
+    }
+    return runHandoffTurnCore({
+      repoRoot,
+      prompt,
+      runPort: claudeHandoffRunPort(adapter),
+      checkpoint: new GitCheckpointStore(repoRoot, locus),
+    });
+  };
+  // The rounds runtime + session entry (B11 cluster 4, closing B09 tasks 5.1/6.2's
+  // deferral): late-bound because the runtime needs `boardsRuntimeFor`, which is defined
+  // after the WS listener starts (below). The `dispatchRound` deps closure reads them at
+  // command time, so the null-until-assigned window is closed before any round dispatches.
+  let roundsRuntime: RoundsRuntime | undefined;
+  let sessionEntry: SessionEntry | undefined;
   const dispatch = createDispatch({
     service,
     allowedRoots,
@@ -1504,34 +1556,36 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // turn diff. Reuses the SAME memoized `claude` discovery the review pipeline uses
     // (R2 subscription OAuth). Refuses a repo with submodules (Codex F6) and answers an
     // honest failed turn when no `claude` is installed — never a fabricated success.
-    runHandoffTurn: async ({ repoRoot, prompt }) => {
-      const locus = locusForRepo(repoRoot);
-      // The SDK prepends this distro cwd to its direct wsl.exe spawn.
-      const distroCwd =
-        locus.kind === "wsl" ? (toDistroPath(repoRoot, locus.distro) ?? undefined) : undefined;
-      if (await repoHasSubmodules(repoRoot, locus)) {
-        return {
-          status: "failed",
-          reason:
-            "Handoff does not support repositories with submodules yet: a coding agent's edits inside a submodule leave the gitlink unchanged, so the review would not see them. Refusing rather than losing them.",
-          turnDiff: "",
-          filesTouched: [],
-        };
-      }
-      const { adapter } = await getClaudeHarness(locus, distroCwd);
-      if (!adapter) {
-        return {
-          status: "failed",
-          reason: "no coding harness (claude) is installed to run the handoff",
-          turnDiff: "",
-          filesTouched: [],
-        };
-      }
-      return runHandoffTurnCore({
-        repoRoot,
-        prompt,
-        runPort: claudeHandoffRunPort(adapter),
-        checkpoint: new GitCheckpointStore(repoRoot, locus),
+    runHandoffTurn,
+    // The round exit (B11 cluster 4): run the composed work-order as ONE coding-agent turn,
+    // serialized per session behind any round already in flight for the review's target. The
+    // session is SessionEntry's mint-or-reattach for that target (a stable id per target, so
+    // two dispatches of one review serialize together), keyed by the review's repo root; a
+    // detached HEAD (no branch to claim) falls back to a review-id session. A failure-isolated
+    // post-commit kick (the swarm/scout precedent): the turn runs behind the command, and its
+    // rejection never surfaces — `round.dispatch` already returned the composed work-order.
+    dispatchRound: async ({ review, workOrder }) => {
+      if (!roundsRuntime) return;
+      const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
+      const branch = activePatchset?.repository.headRef;
+      const session =
+        branch !== undefined && sessionEntry
+          ? sessionEntry.enter(review.repositoryRoot, {
+              branch,
+              ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
+            }).session
+          : {
+              id: review.id,
+              projectId: review.repositoryRoot,
+              threads: [],
+              createdAt: Date.now(),
+            };
+      await roundsRuntime.dispatchRound({
+        session,
+        workOrder,
+        runWorkers: async (order) => {
+          await runHandoffTurn({ repoRoot: review.repositoryRoot, prompt: order.prompt });
+        },
       });
     },
     chooseRepository,
@@ -2056,6 +2110,38 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
     return runtime;
   };
+
+  // The rounds runtime + session entry (B11 cluster 4 — closes B09 tasks 5.1/6.2's ledgered
+  // deferral: the mechanism was built and E2E-composed, the create-server trigger is here).
+  // The 6.2 seams, resolved from the composition root following the swarm/scout precedent:
+  // harness ports probe live; `boardsRuntimeFor` mints + broadcasts boards; the durable
+  // `BoardMetaStore` is the crash-boundary idempotency the `runRound` regeneration consults
+  // (persist before arrival, load on restart); prompts read from the on-disk `@rennet/prompts`
+  // src. `composeTurn` is omitted (optional — the lens boards are the surface until the
+  // authoring turn is wired). The round DISPATCH exercises only the per-session serializer;
+  // the full board regeneration `runRound` drives lands when its lens-pipeline collation
+  // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
+  const boardMetaStore = new BoardMetaStore(join(homedir(), ".rennet", "board-meta"));
+  const promptsSrcDir = (() => {
+    try {
+      // `@rennet/prompts` exports `./src/index.ts`; its dir is the prompt-file root the
+      // reader joins `prompts/<lens>.md` against. Resolved best-effort — only `runRound`
+      // reads a prompt, so an unresolved dir never breaks construction or the dispatch path.
+      return dirname(createRequire(import.meta.url).resolve("@rennet/prompts"));
+    } catch {
+      return join(homedir(), ".rennet", "prompts");
+    }
+  })();
+  sessionEntry = new SessionEntry(new SessionStore());
+  roundsRuntime = createRoundsRuntime({
+    resolveClaudePort: claudeAdapterForRepo,
+    resolveCodexExecutor: codexExecutorForRepo,
+    boardsRuntimeFor,
+    readPrompt: createNodePromptReader(promptsSrcDir),
+    persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
+    loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
+      boardMetaStore.listForGeneration(sessionId, generation),
+  });
 
   let didShutdown = false;
   const shutdown = (): void => {
