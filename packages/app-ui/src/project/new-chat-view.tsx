@@ -18,15 +18,6 @@ import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
 import { TargetIcon } from "../shell/sidebar/target-icon";
 import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../shell/sidebar-data";
-
-/** The unified target vocabulary's STATE labels (R36) — a row with a state reads by its
- *  state, not its bare kind, so "Needs you" / "Merged" / "Reviewed" surface honestly. */
-const STATE_LABEL: Record<SessionTargetState, string> = {
-  "needs-you": "Needs you",
-  merged: "Merged",
-  reviewed: "Reviewed",
-};
-
 import {
   buildSmartRows,
   filterSmartRows,
@@ -35,6 +26,14 @@ import {
   smartListCounts,
   sortSmartRows,
 } from "./smart-list";
+
+/** The unified target vocabulary's STATE labels (R36) — a row with a state reads by its
+ *  state, not its bare kind, so "Needs you" / "Merged" / "Reviewed" surface honestly. */
+const STATE_LABEL: Record<SessionTargetState, string> = {
+  "needs-you": "Needs you",
+  merged: "Merged",
+  reviewed: "Reviewed",
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The New Chat view (C12 §10.8, /new-chat?project=…). A full-view takeover — there
