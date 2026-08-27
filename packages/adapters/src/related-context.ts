@@ -25,6 +25,7 @@ export type RefSource =
   | "commit-message"
   | "pr-title"
   | "pr-body"
+  | "pr-comment"
   | "scout-detection";
 
 export interface RefProvenance {
@@ -62,6 +63,8 @@ export interface ExtractRefsInput {
   commitMessages?: readonly string[];
   prTitle?: string;
   prBody?: string;
+  /** PR discussion comments (fetched via `gh pr view`) — low-signal prose. */
+  prComments?: readonly string[];
 }
 
 export interface ExtractRefsOptions {
@@ -81,6 +84,7 @@ function* sources(input: ExtractRefsInput): Generator<[RefSource, string]> {
   for (const message of input.commitMessages ?? []) yield ["commit-message", message];
   if (input.prTitle) yield ["pr-title", input.prTitle];
   if (input.prBody) yield ["pr-body", input.prBody];
+  for (const comment of input.prComments ?? []) yield ["pr-comment", comment];
 }
 
 /**
@@ -373,6 +377,13 @@ export interface RetrieveRelatedContextDeps {
    * `owner/repo#123` and URL refs still resolve.
    */
   readonly repo?: { owner: string; name: string };
+  /**
+   * A PR review's number: the flow fetches the PR's live title/body/comments
+   * through the SAME injected `gh` runner (`gh pr view --json`) and extracts
+   * from those, superseding any caller-cached copies in `input`. A failed
+   * fetch is a typed failure; extraction falls back to the given input.
+   */
+  readonly prNumber?: number;
   readonly trackerConfig?: TrackerConfig;
   /** REST seam for JIRA/Linear. Default: global `fetch` returning parsed JSON. */
   readonly fetchJson?: JsonFetcher;
@@ -663,12 +674,30 @@ export async function retrieveRelatedContext(
     jiraPrefixes: config.jira?.projectPrefixes ?? [],
     linearPrefixes: config.linear?.projectPrefixes ?? [],
   };
-  const refs = extractRefs(input, options);
 
   const items = new Map<string, DossierItem>();
   const raw: RawContextPayload[] = [];
   const failures: RefFailure[] = [];
   const missingConfig: MissingConfigFact[] = [];
+
+  // A PR review: the PR's own title/body/comments come through the injected
+  // runner (never a caller-side cache smuggled in as commit messages). A failed
+  // fetch is a typed failure and extraction proceeds from the given input.
+  let extractionInput = input;
+  if (deps.prNumber !== undefined) {
+    const pr = await fetchPrView(deps.gh, deps.prNumber);
+    if (pr.ok) {
+      extractionInput = {
+        ...input,
+        prTitle: pr.value.title,
+        prBody: pr.value.body,
+        prComments: pr.value.comments,
+      };
+    } else {
+      failures.push({ id: `pr#${deps.prNumber}`, error: pr.error, detail: pr.detail });
+    }
+  }
+  const refs = extractRefs(extractionInput, options);
 
   const fetchedGithub = new Set<string>();
   const fetchGithub = async (ref: GithubRef, provenance: string): Promise<string[]> => {

@@ -30,6 +30,7 @@ import {
   ensureReviewContextAssembly,
   projectHypothesisRepoContext,
   repoRecordOf,
+  runRelatedContextRetrieval,
 } from "./live-review-backend";
 import { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
 import { ProjectContextReader } from "./project-context-reader";
@@ -606,22 +607,32 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     if (!novelty.ok) expect(novelty.failure.reason).toBe("stale");
   });
 
-  it("fires related-context retrieval once at review open and persists the dossier (#461, B7)", async () => {
+  it("the review-open kick persists the dossier and refuses a refire on the same patchset (#461, B7)", async () => {
     const repo = workspaceRepo();
     git(repo.root, "reset", "--hard", repo.oid1);
     const store = freshStore();
-    const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
-    await createLiveCanvasOpsBackend(review, pipeline, { store });
+    const { review } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
 
     // The fixture review has no refs (no PR intent, "first"/"second" subjects),
-    // so retrieval runs deterministically — no gh spawn — and stores the honest
-    // empty dossier. The stored record is what gates a refire on the next open.
+    // so retrieval runs deterministically over the injected runner — which must
+    // never be reached — and stores the honest empty dossier. The stored record
+    // is what gates a refire on the next open of the same patchset.
+    const ghCalls: string[][] = [];
+    const gh = async (args: string[]): Promise<string> => {
+      ghCalls.push(args);
+      throw new Error("no refs — the runner must not be reached");
+    };
+    await runRelatedContextRetrieval(review, { store, gh });
+
     const dossierStore = new DossierStore(store);
     const key = { target: "local", patchsetRef: review.activePatchsetId };
     const { repoKey } = repoRecordOf(review);
-    await vi.waitFor(() => {
-      expect(dossierStore.load(repoKey, key)).toEqual([]);
-    });
+    expect(dossierStore.load(repoKey, key)).toEqual([]);
     expect(dossierStore.loadRaw(repoKey, key)).toEqual([]);
+    expect(ghCalls).toEqual([]);
+
+    // Second kick on the same patchset: the stored record gates the refire.
+    await runRelatedContextRetrieval(review, { store, gh });
+    expect(ghCalls).toEqual([]);
   });
 });

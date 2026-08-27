@@ -276,12 +276,14 @@ export {
   type LiveReviewBackend,
   type LiveSnapshotOutcome,
   projectHypothesisRepoContext,
+  type RelatedContextKickDeps,
   type RepoRecord,
   type ReviewContextManifest,
   repoKeyOf,
   repoRecordOf,
   resolveContextFor,
   resolveNoveltyFor,
+  runRelatedContextRetrieval,
 } from "./live-review-backend";
 export { ensureManagedClone, managedCloneRoot } from "./managed-clone";
 export {

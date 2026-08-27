@@ -37,6 +37,11 @@ const FIXTURE: FrozenFixture = JSON.parse(
 
 function frozenGh(fixture: FrozenFixture): GhRunner {
   return async (args: string[]) => {
+    // The PR's own view — the production path fetches title/body/comments HERE,
+    // through the injected runner, never from a caller-side cache.
+    if (args[0] === "pr" && args[1] === "view" && args[2] === String(fixture.pr.number)) {
+      return JSON.stringify(fixture.pr);
+    }
     const issueApi = /^repos\/rbutera\/rennet\/issues\/(\d+)$/.exec(args[1] ?? "");
     if (args[0] === "api" && issueApi) {
       const frozen = fixture.issues[issueApi[1] ?? ""];
@@ -87,16 +92,14 @@ describe("B07 packet e2e — frozen PR #514 capture through the full retrieval f
       status: "emitted",
       body: { items: [] },
     });
+    // The PR's title/body/comments are NOT passed in: the flow fetches them
+    // itself through the frozen runner (`gh pr view`), the production path.
     return retrieveRelatedContext(
-      {
-        branchName: "b05-delta-packet",
-        prTitle: FIXTURE.pr.title,
-        prBody: FIXTURE.pr.body,
-        commitMessages: FIXTURE.pr.comments.map((c) => c.body),
-      },
+      { branchName: "b05-delta-packet" },
       {
         gh: frozenGh(FIXTURE),
         repo: { owner: "rbutera", name: "rennet" },
+        prNumber: FIXTURE.pr.number,
         runTurn: keepAll,
         now: () => new Date("2026-08-27T12:00:00.000Z"),
       },

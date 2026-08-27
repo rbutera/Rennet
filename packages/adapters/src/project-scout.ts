@@ -423,6 +423,7 @@ const scoutRecordSchema = z.object({
             "commit-message",
             "pr-title",
             "pr-body",
+            "pr-comment",
             "scout-detection",
           ]),
           match: z.string(),
