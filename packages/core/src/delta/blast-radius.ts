@@ -158,7 +158,12 @@ function fileMark(signal: BlastRadiusSignal, path: string, reason: string): Blas
   return { target: `rennet:file/${path}`, signal, reason, assessed: true };
 }
 
-function compareStrings(left: string, right: string): number {
+/**
+ * Code-unit string compare — locale-independent, so sorted output is identical
+ * on every host (localeCompare is not: default collation varies by locale).
+ * The delta packet's other sorted sections reuse this.
+ */
+export function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 

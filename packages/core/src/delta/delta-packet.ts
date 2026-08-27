@@ -1,6 +1,6 @@
 import type { DossierItem, KnowledgeSet, Patchset, SuccessorAccount } from "@rennet/protocol";
 import { parseFilePatch } from "../decomposition";
-import { type BlastRadiusSignalMark, computeBlastRadius } from "./blast-radius";
+import { type BlastRadiusSignalMark, compareStrings, computeBlastRadius } from "./blast-radius";
 import { buildCounterpartHints, type CounterpartHint } from "./counterpart-hints";
 import { buildHunkIndex, type HunkIndex } from "./hunk-index";
 import { type NoisePreclassFact, preclassifyNoise } from "./noise-preclass";
@@ -51,21 +51,31 @@ export interface DeltaPacket {
 
 const OPENSPEC_CHANGE_PATH = /^openspec\/changes\/([^/]+)\//;
 
-/** Path-grain openspec facts: which change dirs the patchset touches, or undefined. */
+/**
+ * Path-grain openspec facts: which change dirs the patchset touches, or
+ * undefined. A rename's OLD side (`previousPath`) counts as touched too —
+ * a rename out of a change dir still changes that change.
+ */
 function openspecTouch(files: Patchset["files"]): OpenSpecTouch | undefined {
   const byChange = new Map<string, string[]>();
   for (const file of files) {
-    const name = file.path.match(OPENSPEC_CHANGE_PATH)?.[1];
-    if (name === undefined) continue;
-    const paths = byChange.get(name) ?? [];
-    paths.push(file.path);
-    byChange.set(name, paths);
+    for (const path of [file.path, file.previousPath]) {
+      if (path === undefined) continue;
+      const name = path.match(OPENSPEC_CHANGE_PATH)?.[1];
+      if (name === undefined) continue;
+      const paths = byChange.get(name) ?? [];
+      if (!paths.includes(path)) paths.push(path);
+      byChange.set(name, paths);
+    }
   }
   if (byChange.size === 0) return undefined;
   return {
     changes: [...byChange.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, artifactPaths]) => ({ name, artifactPaths: [...artifactPaths].sort() })),
+      .sort(([a], [b]) => compareStrings(a, b))
+      .map(([name, artifactPaths]) => ({
+        name,
+        artifactPaths: [...artifactPaths].sort(compareStrings),
+      })),
   };
 }
 

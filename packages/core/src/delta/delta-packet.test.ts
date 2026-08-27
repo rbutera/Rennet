@@ -138,6 +138,55 @@ describe("buildDeltaPacket", () => {
     expect("openspec" in packet).toBe(false);
   });
 
+  it("a rename OUT of a change dir still touches that change (previousPath counts)", () => {
+    const packet = buildDeltaPacket(
+      patchsetOf([
+        file("docs/moved-out.md", PATCH, {
+          status: "renamed",
+          previousPath: "openspec/changes/my-change/proposal.md",
+        }),
+      ]),
+      KNOWLEDGE,
+      DOSSIER,
+    );
+    expect(packet.openspec).toEqual({
+      changes: [{ name: "my-change", artifactPaths: ["openspec/changes/my-change/proposal.md"] }],
+    });
+  });
+
+  it("a rename BETWEEN change dirs touches both changes", () => {
+    const packet = buildDeltaPacket(
+      patchsetOf([
+        file("openspec/changes/change-b/tasks.md", PATCH, {
+          status: "renamed",
+          previousPath: "openspec/changes/change-a/tasks.md",
+        }),
+      ]),
+      KNOWLEDGE,
+      DOSSIER,
+    );
+    expect(packet.openspec?.changes.map((c) => c.name)).toEqual(["change-a", "change-b"]);
+  });
+
+  it("orders by code units, not locale collation", () => {
+    const packet = buildDeltaPacket(
+      patchsetOf([
+        file("openspec/changes/ä-change/proposal.md", PATCH),
+        file("openspec/changes/a-change/proposal.md", PATCH),
+        file("openspec/changes/Z-change/proposal.md", PATCH),
+      ]),
+      KNOWLEDGE,
+      DOSSIER,
+    );
+    // Code-unit order: "Z" (0x5A) < "a" (0x61) < "ä" (0xE4). Locale collation
+    // (e.g. en) would interleave differently — this pins host-independence.
+    expect(packet.openspec?.changes.map((c) => c.name)).toEqual([
+      "Z-change",
+      "a-change",
+      "ä-change",
+    ]);
+  });
+
   it("is deterministic: two calls over the same inputs are deep-equal", () => {
     expect(buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER)).toEqual(
       buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER),

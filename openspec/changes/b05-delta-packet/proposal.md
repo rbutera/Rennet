@@ -50,6 +50,10 @@ Drafter dispatch + composition incl. the every-hunk check (B8); knowledge genera
 
 12. **Generated-output rule narrowed to the approved globs.** Delegating to decomposition's `isGeneratedPath` swept up hand-authorable paths (`routes.map`, `build/config.ts`) — beyond mechanical certainty. The rule now matches only a `dist/` path segment, `*.min.*`, and JS/CSS sourcemap suffixes, locally in `noise-preclass.ts`; negative fixtures added.
 
+13. **Packet ordering is code-unit, not locale.** `localeCompare` collation varies by host locale, breaking cross-host determinism; the packet's sorted sections (openspec changes/paths, counterpart hints) now reuse blast-radius's exported code-unit `compareStrings`, with a fixed-Unicode-order test.
+
+14. **`openspecTouch` sees renames.** Only `file.path` was examined, so a rename OUT of a change dir (old side in `previousPath`) omitted the touched change. Both sides are checked now; rename-out and rename-between tests added.
+
 ## Verification (packet)
 
 `pnpm check` green. Fixture test: a real captured patchset produces a DeltaPacket whose hunk ids are **stable across a re-run** and whose successor-account section is **present iff** a prior generation exists. Positive control that can fail (mutate a hunk body → id changes; omit successorAccount → section absent).

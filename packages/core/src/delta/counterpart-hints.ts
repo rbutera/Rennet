@@ -1,4 +1,5 @@
 import { implementationPathFor, isTestPath } from "@rennet/protocol";
+import { compareStrings } from "./blast-radius";
 
 /**
  * A test↔implementation pair among the patchset's changed paths — Sequence-drafter
@@ -27,7 +28,8 @@ export function buildCounterpartHints(paths: readonly string[]): CounterpartHint
       hints.push({ implPath, testPath: path });
     }
   }
+  // Code-unit compare: locale-independent, identical order on every host.
   return hints.sort(
-    (a, b) => a.implPath.localeCompare(b.implPath) || a.testPath.localeCompare(b.testPath),
+    (a, b) => compareStrings(a.implPath, b.implPath) || compareStrings(a.testPath, b.testPath),
   );
 }
