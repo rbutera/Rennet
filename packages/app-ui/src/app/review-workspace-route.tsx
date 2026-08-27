@@ -8,7 +8,13 @@ import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
 import { DiffViewContainer } from "../review";
 import { RoundGreeting } from "../rounds/round-greeting";
-import { useReportBoard, useRoundDispatch, useRoundState } from "../rounds/rounds-data";
+import {
+  useReportBoard,
+  useRoundDispatch,
+  useRoundRecords,
+  useRoundState,
+} from "../rounds/rounds-data";
+import { RoundsLedger } from "../rounds/rounds-ledger";
 import { ROUTES, readSessionQuery, sessionRunPath, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 
@@ -62,6 +68,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // `composed` state, never a stored navigation target — the S9 fence). Stable store
   // reads only (a primitive + a stable action ref) — no fresh-object selector.
   const roundState = useRoundState(slug);
+  // The rounds ledger (C09 §6.2). `?view=rounds` shows the ledger EXACTLY when a round
+  // has completed — the derived-presence C5 uses for the lens switcher, and what the
+  // top-bar's History pill is gated on. A `?view=rounds` deep-link with no completed
+  // round falls through to the board (the "no rounds ⇒ fall back" guard — url.ts already
+  // falls back on an unknown `?view`, this covers the known-but-empty case).
+  const roundRecords = useRoundRecords(slug);
   const greetingArmed = useRennetStore((s) => s.run.greetingArmed);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
   const reportBoardId = "reportBoardId" in roundState ? roundState.reportBoardId : "";
@@ -87,6 +99,8 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
         <DiffViewContainer review={review} />
+      ) : view === "rounds" && roundRecords.length > 0 ? (
+        <RoundsLedger slug={slug} records={roundRecords} />
       ) : greetingArmed && inReportPhase && report.status === "valid" ? (
         <RoundGreeting
           board={report.board}

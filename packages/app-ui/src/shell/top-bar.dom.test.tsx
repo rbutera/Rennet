@@ -80,10 +80,12 @@ describe("session top-bar (C03 §4)", () => {
   });
 
   it("selects no pill on the board view", () => {
-    const { getByText } = mountTopBar("/s/s2");
-    for (const label of ["History", "Map", "Diff"]) {
+    const { getByText, queryByText } = mountTopBar("/s/s2");
+    for (const label of ["Map", "Diff"]) {
       expect(getByText(label).closest("button")?.getAttribute("aria-pressed")).toBe("false");
     }
+    // History (rounds) is gated on a completed round — absent over the default source.
+    expect(queryByText("History")).toBeNull();
   });
 
   it("toggles with replace — the back-stack does not grow", () => {

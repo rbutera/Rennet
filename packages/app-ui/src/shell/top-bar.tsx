@@ -2,6 +2,7 @@ import { Toggle, ToggleGroup } from "@rennet/ui";
 import { ArrowLeft, PanelRightOpen } from "lucide-react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { Icon } from "../components/icon";
+import { useRoundRecords } from "../rounds/rounds-data";
 import { DEFAULT_VIEW, ROUTES, readSessionQuery, type ViewKind, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 import { useSidebarTree } from "./sidebar-data";
@@ -44,6 +45,12 @@ export function TopBar() {
   const query = readSessionQuery(new URLSearchParams(search));
   const current = { lens: query.lens, file: query.file ?? undefined };
   const offBoard = query.view !== DEFAULT_VIEW;
+  // The History (rounds) toggle is present EXACTLY when a round has completed (C09 §6.2) —
+  // the derived-presence url.ts gates `?view=rounds` on, never a disabled tab. With no
+  // completed round it drops from the pill entirely (honest-absent by default, since no
+  // rounds runtime is bound yet — Reconciliation 1). Map · Diff are always present.
+  const roundRecords = useRoundRecords(slug);
+  const pill = roundRecords.length > 0 ? PILL : PILL.filter((p) => p.view !== "rounds");
   // A pill toggle is selected only for its three explicit views; the board and
   // handoff select none (value = []), never the "" sentinel (S6).
   const pillValue = PILL.some((p) => p.view === query.view) ? [query.view] : [];
@@ -109,7 +116,7 @@ export function TopBar() {
       {/* RIGHT slot: the History · Map · Diff pill. */}
       <div className="flex items-center justify-end">
         <ToggleGroup value={pillValue} onValueChange={onPill} aria-label="Session view">
-          {PILL.map(({ view, label }) => (
+          {pill.map(({ view, label }) => (
             <Toggle key={view} value={view} size="sm">
               {label}
             </Toggle>
