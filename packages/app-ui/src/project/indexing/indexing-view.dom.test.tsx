@@ -6,12 +6,18 @@
 // provenance the instant the scout returns, Escape inside a field blurs it rather than
 // leaving, and — the never-a-gate positive control — the map completes and its exits
 // appear with the questionnaire left untouched.
-import type { Project, ProjectProcessEvent } from "@rennet/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import type {
+  ProcessedRepoSummary,
+  Project,
+  ProjectContextMapResult,
+  ProjectProcessEvent,
+} from "@rennet/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../../data";
 import { memoryHistory } from "../../routes/history";
 import { newChatPath, projectIndexingPath, projectMapPath } from "../../routes/url";
+import { Sidebar } from "../../shell/sidebar/sidebar";
 import { useRennetStore } from "../../store";
 import { act, cleanup, fireEvent, mount, screen, waitFor } from "../../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../../test/memory-bridge";
@@ -19,7 +25,7 @@ import { IndexingView } from "./indexing-view";
 
 afterEach(() => {
   cleanup();
-  useRennetStore.setState((s) => ({ ui: { ...s.ui, openDialogs: [] } }));
+  useRennetStore.setState((s) => ({ ui: { ...s.ui, openDialogs: [], processingProjectIds: [] } }));
 });
 
 function project(id: string): Project {
@@ -50,7 +56,7 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
  *  `project.process` so the test can drive its `onProgress` channel. */
 function renderView(id: string, extra: MemoryBridgeHandlers = {}) {
   const history = memoryHistory(projectIndexingPath(id));
-  const process = deferred<{ repos: [] }>();
+  const process = deferred<{ repos: ProcessedRepoSummary[] }>();
   let commandId = "";
   const bridge = new MemoryBridge({
     "projects.list": () => ({ projects: [project(id)] }),
@@ -68,8 +74,36 @@ function renderView(id: string, extra: MemoryBridgeHandlers = {}) {
     </BridgeProvider>,
   );
   const emit = (event: ProjectProcessEvent) => act(() => bridge.emitProgress(commandId, event));
-  const finish = () => act(() => process.resolve({ repos: [] }));
-  return { ...view, history, emit, finish, commandIdRef: () => commandId };
+  const finishWith = (repos: readonly ProcessedRepoSummary[]) =>
+    act(() => process.resolve({ repos: repos as ProcessedRepoSummary[] }));
+  const finish = () => finishWith([]);
+  return { ...view, history, emit, finish, finishWith, commandIdRef: () => commandId };
+}
+
+const summary = (files: number, symbols: number): ProcessedRepoSummary => ({
+  repo: "rennet",
+  path: "/home/rai/rennet",
+  ok: true,
+  files,
+  symbols,
+});
+
+/** A minimal `project.contextMap` `ok` result — the view reads only scope count and
+ *  statement dispositions, so the rest of the (large) map payload is elided. */
+function contextMapOk(
+  scopes: number,
+  confirmed: number,
+  rejected: number,
+): ProjectContextMapResult {
+  const statements = [
+    ...Array.from({ length: confirmed }, (_, i) => ({ id: `c${i}`, status: "confirmed" as const })),
+    ...Array.from({ length: rejected }, (_, i) => ({ id: `r${i}`, status: "rejected" as const })),
+  ];
+  return {
+    status: "ok",
+    map: { scopes: Array.from({ length: scopes }, (_, i) => ({ name: `s${i}` })) },
+    knowledge: { statements },
+  } as unknown as ProjectContextMapResult;
 }
 
 const stage = (note: string, detail?: string): ProjectProcessEvent => ({
@@ -175,5 +209,130 @@ describe("IndexingView — scout + questionnaire", () => {
 
     await user.click(screen.getByRole("button", { name: /Start a Review/ }));
     expect(history.history.at(-1)).toBe(newChatPath("p5"));
+  });
+});
+
+describe("IndexingView — map generation, ready card, sidebar sync (cluster 4)", () => {
+  it("map steps render in order off the progress channel, spinning then ticking", async () => {
+    const { emit } = renderView("m1");
+    await waitFor(() => expect(screen.getByText("rennet")).toBeTruthy());
+
+    emit(repoStart); // scout returned → the map timeline begins
+    emit(stage("Scanned the working tree", "456 files"));
+    await waitFor(() => expect(screen.getByText(/Scanned the working tree/)).toBeTruthy());
+    emit(stage("Mapped imports across scopes"));
+    await waitFor(() => expect(screen.getByText(/Mapped imports across scopes/)).toBeTruthy());
+
+    // Order preserved; only the newest map step spins, the earlier one has ticked.
+    const a = stepRow(/Scanned the working tree/).compareDocumentPosition(
+      stepRow(/Mapped imports across scopes/),
+    );
+    expect(a & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(stepRow(/Scanned the working tree/).querySelector(".animate-spin")).toBeNull();
+    expect(stepRow(/Mapped imports across scopes/).querySelector(".animate-spin")).toBeTruthy();
+
+    // repo-done renders REAL counts off the wire summary (never scripted text).
+    emit({ kind: "repo-done", repo: "rennet", summary: summary(456, 1200) });
+    await waitFor(() =>
+      expect(screen.getByText(/Built rennet · 456 files · 1200 symbols/)).toBeTruthy(),
+    );
+  });
+
+  it("the ready block shows real scope, file, and disposition counts", async () => {
+    const { finishWith } = renderView("r1", {
+      "project.contextMap": () => contextMapOk(12, 3, 1),
+    });
+    await waitFor(() => expect(screen.getByText("rennet")).toBeTruthy());
+
+    finishWith([summary(456, 1200)]);
+    await waitFor(() => expect(screen.getByText("Context Map Ready")).toBeTruthy());
+    expect(screen.getByText(/12 scopes · 456 files · 3 confirmed · 1 rejected/)).toBeTruthy();
+  });
+
+  it("an absent context map degrades to the file count, never fabricated", async () => {
+    const { finishWith } = renderView("r2", {
+      "project.contextMap": () => ({ status: "absent", reason: "no snapshot yet" }),
+    });
+    await waitFor(() => expect(screen.getByText("rennet")).toBeTruthy());
+
+    finishWith([summary(88, 200)]);
+    await waitFor(() => expect(screen.getByText("Context Map Ready")).toBeTruthy());
+    // Only the honest file count — no invented scope or disposition numbers.
+    expect(screen.getByText("88 files")).toBeTruthy();
+    expect(screen.queryByText(/scopes/)).toBeNull();
+    expect(screen.queryByText(/confirmed/)).toBeNull();
+  });
+
+  it("the Start a Review CTA scrolls itself into view on completion", async () => {
+    const scrollSpy = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    // happy-dom has no scrollIntoView — install a spy (the view calls it optionally).
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      const { finish } = renderView("s1");
+      await waitFor(() => expect(screen.getByText("rennet")).toBeTruthy());
+      finish();
+      await waitFor(() => expect(screen.getByText("Context Map Ready")).toBeTruthy());
+      expect(scrollSpy).toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("the sidebar indexing spinner tracks the run — on while in flight, off when it resolves", async () => {
+    const history = memoryHistory(projectIndexingPath("side1"));
+    const process = deferred<{ repos: ProcessedRepoSummary[] }>();
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("side1")] }),
+      "project.process": () => process.promise,
+    });
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <Sidebar />
+          <IndexingView projectId="side1" />
+        </Router>
+      </BridgeProvider>,
+    );
+
+    // The run is in flight (no repo-start) → the sidebar row spins on "indexing".
+    await waitFor(() => expect(screen.getByText("indexing")).toBeTruthy());
+
+    // The run resolves → the spinner clears (the header may read "indexed", the sidebar does not).
+    act(() => process.resolve({ repos: [] }));
+    await waitFor(() => expect(screen.queryByText("indexing")).toBeNull());
+  });
+
+  it("leaving the indexing view does not cancel — the sidebar spinner persists until the run resolves", async () => {
+    const history = memoryHistory(projectIndexingPath("side2"));
+    const process = deferred<{ repos: ProcessedRepoSummary[] }>();
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("side2")] }),
+      "project.process": () => process.promise,
+    });
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <Sidebar />
+        </Router>
+      </BridgeProvider>,
+    );
+    const indexing = mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <IndexingView projectId="side2" />
+        </Router>
+      </BridgeProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText("indexing")).toBeTruthy());
+
+    // Leave the view — the run keeps going (main owns it); the spinner stays on.
+    act(() => indexing.unmount());
+    expect(screen.getByText("indexing")).toBeTruthy();
+
+    // Only when the run itself resolves does the spinner clear.
+    act(() => process.resolve({ repos: [] }));
+    await waitFor(() => expect(screen.queryByText("indexing")).toBeNull());
   });
 });
