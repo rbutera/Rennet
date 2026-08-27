@@ -25,7 +25,7 @@ Serial clusters, each a separately-reviewable sub-wave sized for one implementer
 
 ## Cluster 4 — rework one-shot workers, serialized per document (clause: rework)
 
-- [ ] 4.1 Rework runs as **one-shot workers outside the interactive session**, **serialized per document**: a rework request for a board/document dispatches a one-shot worker turn (not the resident session), and two rework requests for the SAME document serialize (a per-document lock) so their writes never race. Reuse the existing rework primitive (`core/refine-comment.ts` / `refine-comment-live.ts`) for the worker body; B09 adds the per-document serialization and the one-shot dispatch, not a new refiner. Writes route through the existing staging path (reconciliation 4), never a second writer.
+- [x] 4.1 Rework runs as **one-shot workers outside the interactive session**, **serialized per document**: a rework request for a board/document dispatches a one-shot worker turn (not the resident session), and two rework requests for the SAME document serialize (a per-document lock) so their writes never race. Reuse the existing rework primitive (`core/refine-comment.ts` / `refine-comment-live.ts`) for the worker body; B09 adds the per-document serialization and the one-shot dispatch, not a new refiner. Writes route through the existing staging path (reconciliation 4), never a second writer.
 - [ ] 4.2 Tests: two rework requests for one document run serially (second starts after first commits); two for different documents may overlap; a rework worker is one-shot (it does not resume the interactive cursor); the write lands through the sanctioned board client.
 - [ ] 4.3 Cluster gate green. Commit.
 
