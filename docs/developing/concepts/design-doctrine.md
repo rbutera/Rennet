@@ -158,6 +158,7 @@ meaning needs it.
 - Give unfamiliar icons a tooltip and accessible name.
 - Use shared icon components for controls instead of emoji or text glyphs.
 - Use the shared radius and color tokens instead of one-off values.
+- Take segmented controls (pick one of N) from the kit's `ToggleGroup`/`Toggle`; hand-rolling `aria-pressed` or `role="radiogroup"` in a surface is banned by lint, not left to review.
 
 ## Accessibility is part of the component
 
@@ -204,6 +205,7 @@ Before a UI change is done, check:
 | Mobile theme projection | `apps/mobile/src/theme` |
 | Palette and contrast checks | `packages/theme/src/theme.test.ts`, `packages/theme/src/palette-sync.test.ts` |
 | Component ramp checks | `packages/ui/src/design-ramp.test.ts`, `packages/app-ui/src/design-ramp.test.ts` |
+| Kit-not-hand-rolled toggle check | `eslint.config.mjs` (`rennet/no-handrolled-toggle`), `packages/app-ui/src/toggle-lint.test.ts` |
 
 See [the lens pipeline](./lens-pipeline.md) for the five lens boards and
 [hand off and the exits](./handoff-and-exits.md) for the living drafts and the
