@@ -9,6 +9,10 @@
  * against its own copy of the package.
  */
 
+// The RSP prompt contracts, prompt-layer assembly, and verification/ci prompt
+// renderers absorbed from the deleted `@rennet/instructions` package (B02).
+export * from "./prompt-contracts";
+
 /** The five lenses, in display order: Design first, then the reading walk. */
 export const LENS_KINDS = ["design", "sequence", "decisions", "flagged", "noise"] as const;
 
