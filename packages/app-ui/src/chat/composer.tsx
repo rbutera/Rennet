@@ -11,8 +11,10 @@ import { useRennetStore } from "../store";
 // `review.codeComments`, quote badges from `review.quoteThreads`; removal calls the real
 // `reviewActions.clearCodeComment` / `removeQuoteComment`. No spike comment-provider shim,
 // no `store?.` guard. Image badges are local composer state. Sending fires the seam's
-// `review.ask` (via `onSend`) and clears the ridden-in comment/quote references — no ask
-// staging (C8), no command effects (B10). Presence follows the real in-flight stream state.
+// `review.ask` (via `onSend`) and clears the LOCAL image badges; the comment/quote badges
+// mirror the live `review` slice and are not cleared here — they persist until removed
+// through their own X (or by the review advancing). No ask staging (C8), no command
+// effects (B10). Presence follows the real in-flight stream state.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MIN_TEXTAREA_HEIGHT = 36;
@@ -165,7 +167,8 @@ export function Composer({
     if (!value.trim()) return;
     onSend(value.trim());
     setValue("");
-    // The staged references ride into the sent message; clear them (image badges local).
+    // Clear only the LOCAL image badges (revoking their object URLs). Comment/quote badges
+    // live in the review slice and are left as-is — they are not staged references here.
     for (const badge of imageBadges) URL.revokeObjectURL(badge.thumbnailUrl);
     setImageBadges([]);
   }
