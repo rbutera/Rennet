@@ -1,0 +1,136 @@
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "./index";
+
+// The recorded absorption snapshot (B3 cluster 4): the 62 commandDefinitions ids
+// the registry absorbed. A dropped or renamed command fails this loudly; a NEW
+// command is added here deliberately, with its registry row.
+const ABSORBED_IDS = [
+  "app.bootstrap",
+  "attention.acknowledge",
+  "device.registerPush",
+  "flagged.adjudication",
+  "flagged.review",
+  "fs.listDir",
+  "github.connectCancel",
+  "github.connectPoll",
+  "github.connectStart",
+  "github.disconnect",
+  "github.setToken",
+  "github.status",
+  "harness.detect",
+  "noise.review",
+  "openspec.change",
+  "openspec.coverage",
+  "pairing.exchange",
+  "pairing.listDevices",
+  "pairing.mint",
+  "pairing.revokeDevice",
+  "project.cleanupWorktree",
+  "project.contextAsk",
+  "project.contextMap",
+  "project.detail",
+  "project.discover",
+  "project.knowledgeDisposition",
+  "project.process",
+  "projects.add",
+  "projects.list",
+  "projects.remove",
+  "publish.compose",
+  "publish.requestConsent",
+  "publish.review",
+  "publish.submitPr",
+  "repository.choose",
+  "review.ask",
+  "review.capture",
+  "review.checkFreshness",
+  "review.deltaDigest",
+  "review.draftPrBody",
+  "review.handoff.compose",
+  "review.handoff.prepare",
+  "review.handoff.run",
+  "review.interrupt",
+  "review.load",
+  "review.openInEditor",
+  "review.openPr",
+  "review.prWorktree",
+  "review.reattach",
+  "review.refine",
+  "review.regenerate",
+  "review.setDisposition",
+  "review.symbolLookup",
+  "review.uiEvidence",
+  "settings.get",
+  "settings.guidance",
+  "settings.pinRepoValue",
+  "settings.resetRepoValue",
+  "settings.setAppearance",
+  "settings.setKeybinding",
+  "settings.setRepoLocus",
+  "settings.setRepoVisibility",
+] as const;
+
+// The #465 v1 agent inventory, mapped by inspection (no session.*/navigate command
+// exists today). Mirrors AGENT_EXPOSED in index.ts so an exposure edit is deliberate.
+const AGENT_INVENTORY = [
+  "projects.add",
+  "projects.list",
+  "review.capture",
+  "review.openPr",
+  "settings.get",
+  "settings.pinRepoValue",
+  "settings.resetRepoValue",
+  "settings.setAppearance",
+  "settings.setKeybinding",
+  "settings.setRepoLocus",
+  "settings.setRepoVisibility",
+] as const;
+
+describe("command registry invariants (#465)", () => {
+  it("absorbed exactly the recorded 62-command snapshot", () => {
+    expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
+    expect(ABSORBED_IDS).toHaveLength(62);
+  });
+
+  it("every row carries label, exposure, and locus with today's uniform values", () => {
+    for (const [id, row] of Object.entries(commands)) {
+      // #465: tool name = command id = menu label.
+      expect(row.label, id).toBe(id);
+      expect(row.locus, id).toBe("host");
+      expect(row.exposure.ui, id).toBe(true);
+      expect(row.exposure.commandMenu, id).toBe(false);
+      expect(row.exposure.agent, id).toBe(AGENT_INVENTORY.includes(id as never));
+    }
+  });
+
+  it("agent exposure is exactly the v1 inventory", () => {
+    const agentIds = Object.entries(commands)
+      .filter(([, row]) => row.exposure.agent)
+      .map(([id]) => id)
+      .sort();
+    expect(agentIds).toEqual([...AGENT_INVENTORY]);
+  });
+
+  it("every row's args/output are the parse seams' schemas", () => {
+    for (const [id, row] of Object.entries(commands)) {
+      expect(row.args, id).toBeInstanceOf(z.ZodType);
+      expect(row.output, id).toBeInstanceOf(z.ZodType);
+      // The parse seams route through THIS row: a non-object payload must be
+      // rejected by every command's object schema — proves per-row routing
+      // without needing 62 hand-built fixtures.
+      expect(() => parseCommandInput(id as never, Symbol("not-a-payload"))).toThrow();
+      expect(() => parseCommandOutput(id as never, Symbol("not-a-payload"))).toThrow();
+    }
+  });
+
+  it("round-trips a real payload through a known row", () => {
+    expect(parseCommandInput("app.bootstrap", {})).toEqual({});
+    expect(parseCommandInput("fs.listDir", { path: "/tmp" })).toEqual({ path: "/tmp" });
+  });
+
+  it("isCommandName answers from the registry", () => {
+    expect(isCommandName("app.bootstrap")).toBe(true);
+    expect(isCommandName("canvas.read")).toBe(false);
+    expect(isCommandName("ordering.approve")).toBe(false);
+  });
+});
