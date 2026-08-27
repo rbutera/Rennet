@@ -13,8 +13,8 @@ import type {
 } from "@rennet/core";
 import type { DraftBoard, Generation, SessionModel, SessionThread } from "@rennet/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { BoardsRuntime } from "../boards/boards-runtime";
-import type { BoardMeta } from "../runtime/lens-pipeline";
+import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
+import type { PersistedBoardMeta } from "../runtime/rounds";
 import { createRoundsRuntime } from "../runtime/rounds";
 import { SessionEntry, type Target } from "./session-entry";
 import { SessionTurnLoop, type TurnRow } from "./turn-loop";
@@ -91,14 +91,18 @@ function fakeClaudePort(): HarnessPort {
   } as unknown as HarnessPort;
 }
 
-/** A fake boards runtime that mints sequential board ids and counts mints, so the
- *  E2E can prove a re-entry drafts the boards exactly ONCE (no double-start). */
-function fakeBoardsRuntimeFor(mints: { count: number }) {
-  return (): Pick<BoardsRuntime, "service" | "createRennetBoard"> =>
-    ({
-      service: { apply: async () => ({ ok: true }) },
-      createRennetBoard: async () => `board:${mints.count++}`,
-    }) as unknown as Pick<BoardsRuntime, "service" | "createRennetBoard">;
+/** A REAL file-backed boards runtime for `root`, wrapping createRennetBoard to
+ *  count mints. Board CONTENT (elements) persists to `<root>/.rennet/boards`, so a
+ *  fresh runtime after a restart replays it via `service.getState` — the non-vacuous
+ *  reconstruction proof (F6), not a mint counter over a store that keeps nothing. */
+function realBoardsRuntimeFor(runtime: BoardsRuntime, mints: { count: number }) {
+  return (): Pick<BoardsRuntime, "service" | "createRennetBoard"> => ({
+    service: runtime.service,
+    createRennetBoard: async () => {
+      mints.count += 1;
+      return runtime.createRennetBoard();
+    },
+  });
 }
 
 const PREV_GEN: Generation = { id: "gen:ps-0", patchsetId: "ps-0", lensBoards: {}, status: "live" };
@@ -163,17 +167,18 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
     };
     store1.save(live);
 
-    // 2. A round drafts the boards and persists each board's meta durably. A
-    //    RE-ENTRY resolving to the SAME patchset generation must NOT re-draft: the
-    //    rounds runtime routes the drafting through the PipelineStartGuard keyed on
-    //    (session, generation), so the second round reuses the first run's boards.
+    // 2. A round drafts the boards through the REAL file-backed board store and
+    //    persists each board's meta durably, tagged with the (session, generation).
+    //    A RE-ENTRY resolving to the SAME patchset generation must NOT re-draft.
+    const boards1 = createBoardsRuntime(root);
     const mints = { count: 0 };
     const runtime = createRoundsRuntime({
       resolveClaudePort: async () => fakeClaudePort(),
       resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: fakeBoardsRuntimeFor(mints),
+      boardsRuntimeFor: realBoardsRuntimeFor(boards1, mints),
       readPrompt,
-      persistBoardMeta: (_repo, meta: BoardMeta) => metaStore1.save(meta),
+      persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore1.save(meta),
+      loadDraftedBoards: (_repo, s, g) => metaStore1.listForGeneration(s, g),
     });
 
     const roundInput = {
@@ -193,20 +198,42 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
     expect(mintsAfterFirst).toBe(6); // report + five lenses, minted once
     expect(first.record.boardGeneration).toBe("gen:ps-1");
 
-    // Re-entry mid-generation: a second round resolving to the same generation.
-    // POSITIVE-CONTROL SURFACE: with the guard removed this re-drafts (mints jump
-    // to 12) and the assertion below reddens.
+    // The canonical board-id set (five lens boards + the report) — stable ids the
+    // restart must reconstruct EXACTLY, not re-mint.
+    const canonicalIds = [
+      ...Object.values(first.boardGeneration.lensBoards),
+      first.record.reportBoard,
+    ].sort();
+    expect(canonicalIds).toHaveLength(6);
+
+    // Board CONTENT landed in the real event log (F6 — not a mint counter over a
+    // store that keeps nothing): each lens board carries at least one authored
+    // element. Capture the element ids to prove they replay UNDER THE SAME BOARD ID
+    // after the restart.
+    const contentBefore = new Map<string, string[]>();
+    for (const boardId of Object.values(first.boardGeneration.lensBoards)) {
+      const keys = [...(await boards1.service.getState(boardId)).keys()].sort();
+      expect(keys.length).toBeGreaterThan(0);
+      contentBefore.set(boardId, keys);
+    }
+
+    // Re-entry mid-generation: a second round resolving to the same generation does
+    // not re-draft (durable evidence + the in-memory guard both dedup).
     const second = await runtime.runRound(roundInput);
-    expect(mints.count).toBe(mintsAfterFirst); // no re-draft — the guard deduped
+    expect(mints.count).toBe(mintsAfterFirst); // no re-draft
     expect(second.record.boardGeneration).toBe("gen:ps-1");
     expect(runtime.ledger(live.id)).toHaveLength(2);
 
-    // Each of the six boards persisted its coverage/blemish meta durably.
-    expect(metaStore1.list()).toHaveLength(6);
+    // Each of the six boards persisted its coverage/blemish meta durably, tagged
+    // with the (session, generation) linkage.
+    const meta1 = metaStore1.list();
+    expect(meta1).toHaveLength(6);
+    expect(meta1.every((m) => m.session === session.id && m.generation === "gen:ps-1")).toBe(true);
 
-    // ── KILL + RESTART: fresh stores over the SAME dirs (a new process) ─────────
+    // ── KILL + RESTART: fresh stores AND a fresh runtime over the SAME dirs ──────
     const store2 = new SessionStore(sessionDir);
     const metaStore2 = new BoardMetaStore(metaDir);
+    const boards2 = createBoardsRuntime(root);
 
     // 3. Reattach: the very same row-click reattaches to the persisted session —
     //    no second mint. The cursor, the claim, and the anchored thread survived.
@@ -219,8 +246,39 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
     expect(rejoin.session.claim).toEqual({ branch: "feat/session-rounds", prNumber: 466 });
     expect(rejoin.session.threads).toHaveLength(1);
 
-    // The boards reconstruct intact from the persisted meta — coverage survived.
+    // 4. CRASH-BOUNDARY IDEMPOTENCY (F1): a FRESH runtime after the restart has an
+    //    EMPTY in-memory guard. A re-entry resolving to the same (session, generation)
+    //    must NOT re-draft — the durable BoardMeta on disk is the truth. Mint count
+    //    stays ZERO and the reconstructed board ids EQUAL the pre-restart set.
+    //    POSITIVE-CONTROL SURFACE: drop `loadDraftedBoards` (the durable check) and
+    //    this fresh runtime re-mints six new ids — mints2 jumps to 6 and the stable-id
+    //    assertion reddens (the "12 boards" the review named).
+    const mints2 = { count: 0 };
+    const runtime2 = createRoundsRuntime({
+      resolveClaudePort: async () => fakeClaudePort(),
+      resolveCodexExecutor: async () => null as CodexExecutor | null,
+      boardsRuntimeFor: realBoardsRuntimeFor(boards2, mints2),
+      readPrompt,
+      persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore2.save(meta),
+      loadDraftedBoards: (_repo, s, g) => metaStore2.listForGeneration(s, g),
+    });
+    const rejoined = await runtime2.runRound({ ...roundInput, session: rejoin.session });
+    expect(mints2.count).toBe(0); // never re-minted — reconstructed from durable evidence
+    expect(rejoined.record.boardGeneration).toBe("gen:ps-1");
+    const reconstructedIds = [
+      ...Object.values(rejoined.boardGeneration.lensBoards),
+      rejoined.record.reportBoard,
+    ].sort();
+    expect(reconstructedIds).toEqual(canonicalIds); // stable ids across the restart
+
+    // The boards reconstruct intact from the persisted meta — coverage survived —
+    // and the real event log still replays each board's CONTENT (the SAME element
+    // ids) under its stable board id across the restart.
     expect(metaStore2.list()).toHaveLength(6);
+    for (const boardId of Object.values(rejoined.boardGeneration.lensBoards)) {
+      const keys = [...(await boards2.service.getState(boardId)).keys()].sort();
+      expect(keys).toEqual(contentBefore.get(boardId));
+    }
   });
 
   it("a vanished harness transcript triggers the context_rebuilt fallback with boards canonical", async () => {

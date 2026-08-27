@@ -1,4 +1,13 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addThread, archive } from "@rennet/core";
@@ -75,7 +84,16 @@ export class SessionStore {
     const validated = SessionModelSchema.parse(session);
     const path = this.pathFor(validated.id);
     const tmp = `${path}.tmp-${process.pid}-${this.tmpSeq++}`;
-    writeFileSync(tmp, `${JSON.stringify(validated, null, 2)}\n`);
+    // fsync the temp file's contents to disk BEFORE the rename (F7): rename is
+    // atomic for readers, but without the fsync a crash can leave the renamed file
+    // pointing at unflushed (empty/partial) data. Cheap real data-loss prevention.
+    const fd = openSync(tmp, "w");
+    try {
+      writeSync(fd, `${JSON.stringify(validated, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, path);
   }
 

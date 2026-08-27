@@ -1,4 +1,13 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { LENS_KINDS, ViolationSchema } from "@rennet/protocol";
 import { z } from "zod";
@@ -40,7 +49,12 @@ const OmissionSchema = z.object({
   reason: z.string(),
 });
 
-/** The persisted board-meta shape — structurally B08's `BoardMeta`, validated on read. */
+/** The persisted board-meta shape — structurally B08's `BoardMeta`, validated on read.
+ *  `session`/`generation` are the durable idempotency linkage (B09 F1): they tag each
+ *  board's meta with the (session, patchset generation) that drafted it, so a fresh
+ *  runtime after a restart can ask "did this (session, generation) already draft?"
+ *  from durable evidence — the crash-boundary truth the in-memory guard cannot carry.
+ *  Optional so a non-rounds writer (or a pre-F1 record) still validates. */
 export const BoardMetaRecordSchema = z.object({
   lens: z.enum(LINT_TARGETS),
   boardId: z.string().min(1),
@@ -48,6 +62,8 @@ export const BoardMetaRecordSchema = z.object({
   blemishes: z.array(ViolationSchema),
   omissions: z.array(OmissionSchema),
   immutability: z.array(ViolationSchema),
+  session: z.string().min(1).optional(),
+  generation: z.string().min(1).optional(),
 });
 export type BoardMetaRecord = z.infer<typeof BoardMetaRecordSchema>;
 
@@ -67,6 +83,10 @@ export interface BoardMetaInput {
     readonly reason: string;
   }[];
   readonly immutability: readonly z.infer<typeof ViolationSchema>[];
+  /** The durable idempotency linkage (B09 F1): the session + patchset generation
+   *  that drafted this board. Absent for non-rounds writers. */
+  readonly session?: string;
+  readonly generation?: string;
 }
 
 export class BoardMetaStore {
@@ -86,7 +106,16 @@ export class BoardMetaStore {
     const validated = BoardMetaRecordSchema.parse(meta);
     const path = this.pathFor(validated.boardId);
     const tmp = `${path}.tmp-${process.pid}-${this.tmpSeq++}`;
-    writeFileSync(tmp, `${JSON.stringify(validated, null, 2)}\n`);
+    // fsync the temp file's contents to disk BEFORE the rename (F7): rename is
+    // atomic for readers, but without the fsync a crash can leave the renamed file
+    // pointing at unflushed (empty/partial) data. Cheap real data-loss prevention.
+    const fd = openSync(tmp, "w");
+    try {
+      writeSync(fd, `${JSON.stringify(validated, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, path);
   }
 
@@ -106,6 +135,16 @@ export class BoardMetaStore {
     }
     const result = BoardMetaRecordSchema.safeParse(parsed);
     return result.success ? result.data : undefined;
+  }
+
+  /**
+   * The durable idempotency query (B09 F1): every board-meta record drafted by a
+   * given (session, generation). A fresh runtime after a restart reads THIS to
+   * learn a generation already drafted its boards — the crash-boundary evidence
+   * that stops a post-restart re-entry from re-drafting. Empty ⇒ not yet drafted.
+   */
+  listForGeneration(session: string, generation: string): BoardMetaRecord[] {
+    return this.list().filter((r) => r.session === session && r.generation === generation);
   }
 
   /** Every persisted board-meta record. Malformed entries are skipped, not thrown. */

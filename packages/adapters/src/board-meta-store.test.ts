@@ -40,6 +40,25 @@ describe("BoardMetaStore", () => {
     expect(ids).toEqual(["board:design", "board:report"]);
   });
 
+  it("round-trips the (session, generation) idempotency linkage and queries by it (F1)", () => {
+    const store = new BoardMetaStore(dir());
+    store.save({ ...meta("board:design", "design"), session: "s1", generation: "gen:ps-1" });
+    store.save({ ...meta("board:report", "report"), session: "s1", generation: "gen:ps-1" });
+    // A different generation for the same session, and the same generation id in
+    // another session — neither must leak into the query.
+    store.save({ ...meta("board:old", "noise"), session: "s1", generation: "gen:ps-0" });
+    store.save({ ...meta("board:other", "design"), session: "s2", generation: "gen:ps-1" });
+
+    expect(store.load("board:design")?.generation).toBe("gen:ps-1");
+    const drafted = store
+      .listForGeneration("s1", "gen:ps-1")
+      .map((m) => m.boardId)
+      .sort();
+    expect(drafted).toEqual(["board:design", "board:report"]);
+    // Not-yet-drafted (session, generation) ⇒ empty ⇒ the caller drafts.
+    expect(store.listForGeneration("s1", "gen:ps-9")).toEqual([]);
+  });
+
   it("fails safe: a missing board reads back undefined, never a throw", () => {
     const store = new BoardMetaStore(dir());
     expect(store.load("board:absent")).toBeUndefined();

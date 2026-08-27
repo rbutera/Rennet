@@ -21,6 +21,9 @@
 //   3. IDEMPOTENT drafting per (session, generation) — the pipeline start routes
 //      through cluster 5's `PipelineStartGuard`, keyed on the boardGeneration id
 //      (derived from the landed patchset so re-drafting the same patchset dedups).
+//      The guard is the same-PROCESS fast path; across a restart it is empty, so
+//      the durable truth is the BoardMeta on disk for the (session, generation)
+//      (`loadDraftedBoards`): present ⇒ reconstruct, never re-draft (B09 F1).
 //   4. RECORD the round — a `RoundRecord` pinning asks, worker commit range,
 //      minted generation, board generation, and the round-report board; the
 //      rounds ledger is `RoundRecord[]` data (no UI — C9 out of scope).
@@ -54,6 +57,7 @@ import { PipelineStartGuard } from "../session/pipeline-guard";
 import {
   type BoardArrivalEvent,
   type BoardMeta,
+  type LensBoardOutcome,
   type LensPipelineResult,
   type PromptReader,
   runLensPipeline,
@@ -61,6 +65,15 @@ import {
 
 /** The boards one round drafts: the five lenses plus the round-report seat. */
 const LINT_TARGETS: readonly LintTarget[] = [...LENS_KINDS, "report"];
+
+/** B08's `BoardMeta` tagged with the durable idempotency linkage (B09 F1): the
+ *  (session, patchset generation) that drafted the board. The composition root
+ *  persists this so a fresh runtime after a restart can recognize an already-
+ *  drafted generation from durable evidence. */
+export interface PersistedBoardMeta extends BoardMeta {
+  readonly session: string;
+  readonly generation: string;
+}
 
 // ── Generation lifecycle (#457 append-then-freeze) — pure state machine ──
 
@@ -146,8 +159,20 @@ export interface RoundsRuntimeDeps {
   ) => Pick<BoardsRuntime, "service" | "createRennetBoard">;
   /** Read a prompt file's text (`createNodePromptReader` in production; hermetic in tests). */
   readonly readPrompt: PromptReader;
-  /** The durable board-meta store's write (B08 finding 3); absent ⇒ metadata is result-only. */
-  readonly persistBoardMeta?: (repoRoot: string, meta: BoardMeta) => void | Promise<void>;
+  /** The durable board-meta store's write (B08 finding 3); absent ⇒ metadata is
+   *  result-only. Carries the (session, generation) linkage so the durable
+   *  idempotency read below can find it (B09 F1). */
+  readonly persistBoardMeta?: (repoRoot: string, meta: PersistedBoardMeta) => void | Promise<void>;
+  /** The durable idempotency read (B09 F1): the board-meta already on disk for a
+   *  (session, generation). Non-empty ⇒ that generation already drafted its boards,
+   *  so this runtime reconstructs from the evidence instead of re-minting/re-drafting
+   *  — the crash-boundary truth the in-memory guard cannot survive a restart to carry.
+   *  Absent ⇒ only the in-memory guard dedups (same-process re-entry, no restart proof). */
+  readonly loadDraftedBoards?: (
+    repoRoot: string,
+    sessionId: string,
+    generation: string,
+  ) => readonly BoardMeta[];
   /** The per-board arrival broadcast that powers the progressive reveal (R58). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
   /** The orchestrator's heavy authoring turn for the composition write-through (C2),
@@ -176,11 +201,37 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   // queue; the returned promise carries the real outcome.
   const tails = new Map<string, Promise<unknown>>();
 
+  /** Reconstruct the drafting result from durable BoardMeta (B09 F1): a fresh
+   *  runtime after a restart never re-mints or re-drafts an already-drafted
+   *  (session, generation) — it rebuilds the board ids + coverage/blemish metadata
+   *  from the evidence on disk. The report board drafts FIRST, so any non-empty
+   *  evidence includes it. */
+  function reconstructFromMeta(records: readonly BoardMeta[]): {
+    pipeline: LensPipelineResult;
+    reportBoardId: string;
+  } {
+    const outcomes: LensBoardOutcome[] = records.map((m) => ({
+      lens: m.lens,
+      boardId: m.boardId,
+      omissions: m.omissions,
+      blemishes: m.blemishes,
+      immutability: m.immutability,
+    }));
+    const report = outcomes.find((o) => o.lens === "report");
+    const pipeline: LensPipelineResult = {
+      boards: outcomes.filter((o) => o.lens !== "report"),
+      coverage: [],
+      ...(report === undefined ? {} : { report }),
+    };
+    return { pipeline, reportBoardId: report?.boardId ?? outcomes[0]?.boardId ?? "" };
+  }
+
   /** Pre-mint the round's boards, resolve ports, and run the pipeline once. Lives
    *  inside the start guard so a re-entry for the same generation never re-mints or
    *  re-drafts — it returns the first run's result. */
   async function draft(
     input: RoundInput,
+    boardGeneration: Generation,
   ): Promise<{ pipeline: LensPipelineResult; reportBoardId: string }> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const boardIds = new Map<LintTarget, string>();
@@ -211,7 +262,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       ...(deps.onBoardArrival === undefined ? {} : { onBoardArrival: deps.onBoardArrival }),
       ...(persistBoardMeta === undefined
         ? {}
-        : { persistBoardMeta: (meta: BoardMeta) => persistBoardMeta(input.repoRoot, meta) }),
+        : {
+            // Tag each board's meta with the (session, generation) that drafted it,
+            // so the durable idempotency read can recognize this generation after a
+            // restart (B09 F1). The pipeline's pure logic is untouched — this
+            // composition wrapper adds the linkage.
+            persistBoardMeta: (meta: BoardMeta) =>
+              persistBoardMeta(input.repoRoot, {
+                ...meta,
+                session: input.session.id,
+                generation: boardGeneration.id,
+              }),
+          }),
       ...(input.previous === undefined ? {} : { previous: input.previous }),
       ...(composeTurn === undefined ? {} : { composeTurn }),
       ...(input.reviewDraftLintCtx === undefined
@@ -227,16 +289,29 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // Run the dispatched work watched live, then regenerate over what it produced.
     const worked = await input.runWorkers();
     const landed = worked.patchsetId !== undefined;
-    // Code moved ⇒ mint a successor generation; else re-report against the existing one.
+    // Code moved ⇒ mint a successor generation; else re-report against the existing
+    // one. F8: two rounds that land NOTHING share `previousGeneration.id`, so they
+    // share the (session, generation) key — the second's draft dedups to the first's
+    // boards (the in-memory guard, or the durable reconstruction below after a
+    // restart). Intended: no code moved ⇒ no new generation ⇒ the same boards re-reported.
     const boardGeneration = landed
       ? mintGeneration(newGenerationId(worked.patchsetId as string), worked.patchsetId as string)
       : input.previousGeneration;
 
-    const { pipeline, reportBoardId } = await guard.start(
-      input.session.id,
-      boardGeneration.id,
-      () => draft(input),
-    );
+    // Durable idempotency across the crash boundary (F1): a fresh runtime after a
+    // restart has an EMPTY in-memory guard, so the guard alone would re-draft (12
+    // boards). The truth is the BoardMeta already on disk for this (session,
+    // generation): if it exists, reconstruct the drafted boards from it and never
+    // re-mint/re-draft. The guard stays the same-process fast path; this durable
+    // check is what survives a restart. (Absent read seam ⇒ guard-only, no restart proof.)
+    const durableEvidence =
+      deps.loadDraftedBoards?.(input.repoRoot, input.session.id, boardGeneration.id) ?? [];
+    const { pipeline, reportBoardId } =
+      durableEvidence.length > 0
+        ? reconstructFromMeta(durableEvidence)
+        : await guard.start(input.session.id, boardGeneration.id, () =>
+            draft(input, boardGeneration),
+          );
 
     // The round-report seat's board, or the pre-minted report board id when the seat
     // wrote nothing — always a valid id, so the `RoundRecord` is never unrepresentable.
