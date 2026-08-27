@@ -159,7 +159,8 @@ redrafted and stamped.
 ## Server composition and dispatch
 
 `packages/server/src/create-server.ts` assembles the runtime. It supplies the
-command implementations to `packages/server/src/dispatch.ts`, which validates
+command implementations to the dispatch map in `packages/server/src/dispatch/`
+(one module per command family, bound from the command registry), which validates
 and routes protocol commands. This package also owns live orchestration, symbol
 lookup, projected connections, ask streams, review reattachment, and daemon
 lifecycle.
@@ -177,7 +178,8 @@ Rennet stores different kinds of state at their natural scopes:
 | Location | Contents |
 |---|---|
 | Platform daemon data directory | `rennet.sqlite`, project registry, daemon claim, and daemon-owned files |
-| `~/.rennet/config.json` | Global user settings |
+| `~/.rennet/client-settings.json` | Viewer preferences (appearance, keybindings) — the client rung |
+| `~/.rennet/daemon-settings.json` | This host's global settings rung (listener bind, tracker) |
 | `~/.rennet/projects/<escaped-path>/` | Project snapshot, Repo Map shards and manifests, overlays, knowledge, and context manifests |
 | `~/.rennet/threads/<reviewId>.json` | Durable review conversation |
 | Project `.rennet/map/` and `.rennet/knowledge/` | Optional promoted context mirrors |

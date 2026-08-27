@@ -332,9 +332,9 @@ export function SettingsScreen({
             </div>
             {view.appearanceMalformed ? (
               <p className={`settings-malformed mt-3 ${BANNER}`}>
-                Your <code className="font-mono text-xs">~/.rennet/config.json</code> could not be
-                parsed. Editing is disabled so it is not overwritten — fix or remove the file, then
-                reopen settings.
+                Your <code className="font-mono text-xs">~/.rennet/client-settings.json</code> could
+                not be parsed. Editing is disabled so it is not overwritten — fix or remove the
+                file, then reopen settings.
               </p>
             ) : (
               <p className="settings-note mt-3 text-sm text-ink-faint">
@@ -636,9 +636,9 @@ function KeyboardPanel({
       {error ? <p className={`settings-error ${BANNER}`}>{error}</p> : null}
       {malformed ? (
         <p className={`settings-malformed mt-3 ${BANNER}`}>
-          Your <code className="font-mono text-xs">~/.rennet/config.json</code> could not be parsed.
-          Editing is disabled so it is not overwritten — fix or remove the file, then reopen
-          settings.
+          Your <code className="font-mono text-xs">~/.rennet/client-settings.json</code> could not
+          be parsed. Editing is disabled so it is not overwritten — fix or remove the file, then
+          reopen settings.
         </p>
       ) : (
         <p className="settings-note text-sm text-ink-faint">
