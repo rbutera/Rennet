@@ -41,6 +41,27 @@ describe("rennet store", () => {
       store.getState().reviewActions.clearCodeComment("src/a.ts", 12);
       expect(selectCodeComment("src/a.ts", 12)(store.getState())).toBeUndefined();
     });
+
+    it("mints quote threads, appends replies, and removes them; explain carries its kind", () => {
+      const store = createRennetStore();
+      const id = store
+        .getState()
+        .reviewActions.addQuoteComment("the quoted span", "why here?", "explain");
+      expect(store.getState().review.quoteThreads[id]).toEqual({
+        anchor: "the quoted span",
+        kind: "explain",
+        messages: [{ author: "user", text: "why here?" }],
+      });
+      store.getState().reviewActions.addQuoteReply(id, "orchestrator", "because X");
+      expect(store.getState().review.quoteThreads[id]?.messages).toEqual([
+        { author: "user", text: "why here?" },
+        { author: "orchestrator", text: "because X" },
+      ]);
+      // A reply to a missing thread is a no-op, never a throw.
+      store.getState().reviewActions.addQuoteReply("qt-nope", "user", "ignored");
+      store.getState().reviewActions.removeQuoteComment(id);
+      expect(store.getState().review.quoteThreads[id]).toBeUndefined();
+    });
   });
 
   describe("run slice", () => {

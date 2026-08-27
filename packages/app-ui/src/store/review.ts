@@ -23,13 +23,36 @@ export interface StagedAsk {
   readonly body: string;
 }
 
+/** One message in a quote thread — the reviewer's, or the orchestrator's reply. */
+export interface QuoteMessage {
+  readonly author: "user" | "orchestrator";
+  readonly text: string;
+}
+
+/**
+ * A quote-anchored thread on board prose (C4, extends C01's placeholder). `anchor`
+ * is the highlighted span; `messages` is the exchange (opener + replies); an
+ * `explain` thread is a question to the orchestrator — it never raises the exit count.
+ */
+export interface QuoteThread {
+  readonly anchor: string;
+  readonly kind?: "comment" | "explain";
+  readonly messages: readonly QuoteMessage[];
+}
+
+// A per-process thread-id counter — monotonic, deterministic, and independent of any
+// store instance (a fresh `createRennetStore` shares no OTHER state, so unique ids
+// across instances is all that's needed; no crypto, no collision).
+let quoteThreadSeq = 0;
+const nextQuoteThreadId = (): string => `qt-${++quoteThreadSeq}`;
+
 export interface ReviewState {
   /** Staged asks keyed by anchor id. */
   readonly stagedAsks: Readonly<Record<string, StagedAsk>>;
   /** Per-line code comments, keyed path → line → body. */
   readonly codeComments: Readonly<Record<string, Readonly<Record<number, string>>>>;
-  /** Quote threads keyed by thread id (thread bodies are C7's shape; id set is enough here). */
-  readonly quoteThreads: Readonly<Record<string, { readonly anchor: string }>>;
+  /** Quote threads keyed by thread id — the anchored span, its kind, and the exchange. */
+  readonly quoteThreads: Readonly<Record<string, QuoteThread>>;
   /** The focused thread id, or null. */
   readonly focusedThreadId: string | null;
   /** The retired ledger: ids the reviewer withdrew from the staged set. */
@@ -47,6 +70,12 @@ export interface ReviewSlice {
     unstageAsk(anchor: string): void;
     setCodeComment(path: string, line: number, body: string): void;
     clearCodeComment(path: string, line: number): void;
+    /** Mint a quote thread on `anchor` with `text` as the opener; returns the new thread id. */
+    addQuoteComment(anchor: string, text: string, kind?: "comment" | "explain"): string;
+    /** Append a reply to an existing thread (no-op if the thread is gone). */
+    addQuoteReply(threadId: string, author: "user" | "orchestrator", text: string): void;
+    /** Drop a quote thread. */
+    removeQuoteComment(threadId: string): void;
     setFocusedThread(threadId: string | null): void;
     retire(id: string): void;
     setVerdictOverride(verdict: ReviewState["verdictOverride"]): void;
@@ -97,6 +126,39 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
         return {
           review: { ...s.review, codeComments: { ...s.review.codeComments, [path]: restLines } },
         };
+      }),
+    addQuoteComment: (anchor, text, kind) => {
+      const id = nextQuoteThreadId();
+      set((s) => ({
+        review: {
+          ...s.review,
+          quoteThreads: {
+            ...s.review.quoteThreads,
+            [id]: { anchor, kind, messages: [{ author: "user", text }] },
+          },
+        },
+      }));
+      return id;
+    },
+    addQuoteReply: (threadId, author, text) =>
+      set((s) => {
+        const thread = s.review.quoteThreads[threadId];
+        if (!thread) return {};
+        return {
+          review: {
+            ...s.review,
+            quoteThreads: {
+              ...s.review.quoteThreads,
+              [threadId]: { ...thread, messages: [...thread.messages, { author, text }] },
+            },
+          },
+        };
+      }),
+    removeQuoteComment: (threadId) =>
+      set((s) => {
+        const rest = { ...s.review.quoteThreads };
+        delete rest[threadId];
+        return { review: { ...s.review, quoteThreads: rest } };
       }),
     setFocusedThread: (threadId) =>
       set((s) => ({ review: { ...s.review, focusedThreadId: threadId } })),
