@@ -2,6 +2,7 @@
 // folder's only import surface; siblings are implementation.
 
 export * from "./blast-radius";
+export * from "./counterpart-hints";
 export * from "./element-diffs";
 export { buildHunkIndex, type HunkIndex, type IndexedHunk } from "./hunk-index";
 export * from "./noise-preclass";

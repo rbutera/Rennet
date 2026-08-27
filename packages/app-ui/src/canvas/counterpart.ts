@@ -1,8 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Counterpart is a B5 survivor (#489): it reads the minimal canvas shape below
 // and keys lenses by the protocol `LensKind` (B3's manifests seam — the B2-era
-// local union is gone).
-import { LENS_KINDS, type LensKind } from "@rennet/protocol";
+// local union is gone). The pure path-pairing helpers moved to the protocol
+// delta seam in B5 (core/delta derives counterpart hints from the same
+// definitions); this module keeps only the UI-side element resolution.
+import {
+  implementationPathFor,
+  isTestPath,
+  LENS_KINDS,
+  type LensKind,
+  testPathsFor,
+} from "@rennet/protocol";
+
+export { implementationPathFor, isTestPath, testPathsFor };
 
 /** The minimal canvas shape this resolver reads: its analysis elements' keys. */
 export interface CounterpartCanvas {
@@ -26,11 +36,8 @@ export interface CounterpartCanvas {
 // unchanged file in the editor is a separate affordance, the symbol inspector's
 // open-in-editor, not this jump).
 //
-// Matching is the dominant JS/TS suffix convention (`foo.ts` ↔ `foo.test.ts` /
-// `foo.spec.ts`), the only convention that is REVERSIBLE both ways. A `__tests__/`
-// directory marks a file as a test for other purposes, but it does not yield a
-// deterministic implementation path, so it is deliberately not used to resolve a
-// counterpart here.
+// The matching convention itself (reversible `.test`/`.spec` suffix) lives with the
+// helpers in the protocol delta seam.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The resolved counterpart jump for the shown file, or null when there is none to offer. */
@@ -45,39 +52,6 @@ export interface CounterpartTarget {
   readonly path: string;
   /** Which side the counterpart is — the shown file's own kind is the opposite. */
   readonly counterpartKind: "test" | "implementation";
-}
-
-/** The reversible test-suffix convention: `<base>.<test|spec>.<ext>`. */
-const TEST_SUFFIX = /\.(test|spec)\.([cm]?[jt]sx?)$/;
-
-/** True when the path is a test file by the reversible suffix convention. */
-export function isTestPath(path: string): boolean {
-  return TEST_SUFFIX.test(path);
-}
-
-/**
- * The single implementation path a test path maps back to: drop the `.test`/`.spec`
- * infix, keeping the extension. `src/foo.test.ts` → `src/foo.ts`. Returns null when
- * the path is not a test path by the convention.
- */
-export function implementationPathFor(testPath: string): string | null {
-  if (!TEST_SUFFIX.test(testPath)) return null;
-  return testPath.replace(TEST_SUFFIX, ".$2");
-}
-
-/**
- * The test path candidates an implementation path maps forward to: `<base>.test.<ext>`
- * and `<base>.spec.<ext>`, keeping the implementation's extension. `src/foo.ts` →
- * [`src/foo.test.ts`, `src/foo.spec.ts`]. Empty for a path with no recognised
- * TS/JS extension (nothing to pair) or for a path that is already a test.
- */
-export function testPathsFor(implPath: string): string[] {
-  if (isTestPath(implPath)) return [];
-  const match = implPath.match(/\.([cm]?[jt]sx?)$/);
-  const ext = match?.[1];
-  if (ext === undefined) return [];
-  const base = implPath.slice(0, implPath.length - (ext.length + 1));
-  return [`${base}.test.${ext}`, `${base}.spec.${ext}`];
 }
 
 /**
