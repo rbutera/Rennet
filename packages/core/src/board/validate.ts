@@ -95,6 +95,12 @@ export interface ValidateResult {
   readonly composition: readonly Violation[];
   /** How many retry turns were spent. */
   readonly attempts: number;
+  /**
+   * Whether ANY drafter return parsed. `false` means every turn (initial + retries)
+   * failed to parse and the board is the synthetic empty fallback — the caller must
+   * surface this as a lens FAILURE, never as an empty-but-successful board (finding 6).
+   */
+  readonly everParsed: boolean;
 }
 
 // ── ZodError-shaped pointers (elementRef → JSON path) ────────────────────────
@@ -153,6 +159,33 @@ function ownedCodeRefs(el: DraftElement, codeRefIds: ReadonlySet<string>): Set<s
     }
   }
   return owned;
+}
+
+/**
+ * Rewrite an element to remove `dropped` ids from its ARRAY reference fields (a
+ * finding's `code`, a section's `children`), and report whether a SCALAR
+ * reference field (a `noise_verdict`'s `hunk`) still points at a dropped id — an
+ * unpatchable dangle that forces the element to cascade-omit (finding 5).
+ */
+function patchOutDropped(
+  el: DraftElement,
+  dropped: ReadonlySet<string>,
+): { el: DraftElement; danglingScalar: boolean } {
+  const data = el.data as Record<string, unknown>;
+  let changed = false;
+  let danglingScalar = false;
+  const next: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (Array.isArray(v)) {
+      const filtered = v.filter((x) => !(typeof x === "string" && dropped.has(x)));
+      if (filtered.length !== v.length) changed = true;
+      next[k] = filtered;
+    } else {
+      if (typeof v === "string" && dropped.has(v)) danglingScalar = true;
+      next[k] = v;
+    }
+  }
+  return { el: changed ? ({ ...el, data: next } as DraftElement) : el, danglingScalar };
 }
 
 /** The patchset hunks a set of code_ref elements overlaps (side-aware, finding 8). */
@@ -343,6 +376,9 @@ export async function validateDraft(
   // A parse failure on the very first return still seeds the channel: the seat
   // is re-asked with the schema issues as pointers (attempt 1 below).
   let pendingParseIssues = first.ok ? [] : first.issues;
+  // Did ANY seat return ever parse? A run that never parses ships the synthetic
+  // empty board — the caller must surface that as a failure, not empty success (finding 6).
+  let everParsed = first.ok;
 
   const frozen = new Map<string, DraftElement>();
   const rungByElement = new Map<string, number>();
@@ -373,8 +409,18 @@ export async function validateDraft(
     }
 
     if (attempts >= RETRY_CAP) {
-      // Exhaustion: whatever still fails ships as labeled blemishes. Visible, never blocking.
-      blemishes = violations.map((v) => ({ ...v, attempts }));
+      // Exhaustion: whatever still fails ships as labeled blemishes. Visible, never
+      // blocking. A run stuck on PARSE issues (the seat never returned a valid board)
+      // labels those as blemishes — never an empty `blemishes[]` hiding a broken run (finding 6).
+      const unresolved: Violation[] =
+        pendingParseIssues.length > 0
+          ? pendingParseIssues.map((i) => ({
+              ruleId: "schema-invalid",
+              elementRef: `/${i.path.join("/")}`,
+              message: i.message,
+            }))
+          : violations;
+      blemishes = unresolved.map((v) => ({ ...v, attempts }));
       break;
     }
 
@@ -400,35 +446,89 @@ export async function validateDraft(
       }
     }
 
-    // Second pass: honest-omission exit. Drop each rung-4 element AND the
-    // code_refs it owned that no surviving element still cites (an orphan
-    // citation would keep "teaching" a hunk we are about to skip). The shed
-    // code_refs' hunks move to `skippedHunks` — nothing teaches them now.
+    // Second pass: the honest-omission exit + incoming-reference closure (finding 5).
+    // Drop each rung-4 element; resolve the closure so NO surviving element dangles
+    // a reference to a dropped one; shed the hunks nothing on the board still teaches.
     const dropped = new Set<string>(primaryDrops);
     if (primaryDrops.size > 0) {
-      const citedBySurvivors = new Set<string>();
-      for (const el of current.elements) {
-        if (primaryDrops.has(el.id)) continue;
-        for (const crId of ownedCodeRefs(el, codeRefIds)) {
-          if (crId !== el.id) citedBySurvivors.add(crId); // a citation, not the code_ref itself
-        }
-      }
-      for (const el of current.elements) {
-        if (!primaryDrops.has(el.id)) continue;
-        const shed = [...ownedCodeRefs(el, codeRefIds)].filter(
-          (crId) => !citedBySurvivors.has(crId),
-        );
-        for (const crId of shed) dropped.add(crId);
-        const hunks = hunksTaughtBy(new Set(shed), current, ctx);
-        const reason = OMISSION_REASON_KINDS.has(el.kind)
+      const pre = current.elements;
+      const omitReason = (el: DraftElement): string =>
+        OMISSION_REASON_KINDS.has(el.kind)
           ? `The ${ctx.lens} ${ctx.lens === "report" ? "seat" : "lens"} could not teach \`${el.id}\` in ${LADDER_RUNGS} attempts; left to another lens.`
           : `\`${el.id}\` could not be made valid in ${LADDER_RUNGS} attempts; omitted honestly.`;
-        omissions.push({ elementId: el.id, hunks, reason });
-      }
-    }
+      // Ordered reason per dropped element (primary first, cascades appended).
+      const reasonById = new Map<string, string>();
+      for (const el of pre) if (primaryDrops.has(el.id)) reasonById.set(el.id, omitReason(el));
 
-    // Fold the omission hunks into the running accumulator + the working board.
-    if (dropped.size > 0) {
+      // (a) Backward closure: a survivor's ARRAY refs to a dropped id are PATCHED
+      // out (the element thawed to re-lint); a survivor whose SCALAR ref points at
+      // a dropped id cannot be patched and CASCADE-omits. Iterated to a fixpoint.
+      const patchedById = new Map<string, DraftElement>();
+      for (;;) {
+        let grew = false;
+        for (const el of pre) {
+          if (dropped.has(el.id)) continue;
+          const source = patchedById.get(el.id) ?? el;
+          const { el: patched, danglingScalar } = patchOutDropped(source, dropped);
+          if (danglingScalar) {
+            dropped.add(el.id);
+            frozen.delete(el.id);
+            reasonById.set(
+              el.id,
+              `\`${el.id}\` cited an omitted element and cannot stand without it; omitted to avoid a dangling reference.`,
+            );
+            grew = true;
+          } else if (patched !== source) {
+            patchedById.set(el.id, patched);
+            frozen.delete(el.id); // thawed — its refs changed, re-lint next round
+            grew = true;
+          }
+        }
+        if (!grew) break;
+      }
+
+      // (b) Forward shed: a code_ref no PATCHED survivor still cites is orphaned by
+      // the drop — remove it too, so a hunk we are about to skip is not still "taught".
+      const survivorEls = pre
+        .filter((el) => !dropped.has(el.id))
+        .map((el) => patchedById.get(el.id) ?? el);
+      const citedBySurvivors = new Set<string>();
+      for (const el of survivorEls) {
+        for (const cr of ownedCodeRefs(el, codeRefIds)) if (cr !== el.id) citedBySurvivors.add(cr);
+      }
+      const candidates = new Set<string>();
+      for (const el of pre) {
+        if (dropped.has(el.id)) {
+          for (const cr of ownedCodeRefs(el, codeRefIds)) candidates.add(cr); // incl. a dropped code_ref itself
+        } else {
+          const lost = [...ownedCodeRefs(el, codeRefIds)].filter(
+            (cr) =>
+              cr !== el.id && !ownedCodeRefs(patchedById.get(el.id) ?? el, codeRefIds).has(cr),
+          );
+          for (const cr of lost) candidates.add(cr); // a survivor stopped citing it via patching
+        }
+      }
+      for (const cr of candidates) if (!citedBySurvivors.has(cr)) dropped.add(cr);
+
+      // (c) Assign shed hunks to each omission: hunks its owned code_refs taught
+      // that NO surviving code_ref still teaches. Record omissions in drop order.
+      const stillTaught = taughtHunkIds(
+        pre.filter((el) => el.kind === "code_ref" && !dropped.has(el.id)),
+        ctx.hunks,
+      );
+      for (const [id, reason] of reasonById) {
+        const el = pre.find((e) => e.id === id);
+        const ownedDropped = el
+          ? [...ownedCodeRefs(el, codeRefIds)].filter((cr) => dropped.has(cr))
+          : [];
+        const hunks = hunksTaughtBy(new Set(ownedDropped), current, ctx).filter(
+          (h) => !stillTaught.has(h),
+        );
+        omissions.push({ elementId: id, hunks, reason });
+      }
+
+      // (d) Fold the shed hunks into the accumulator, then rebuild the working board
+      // from the PATCHED survivors (dropped removed, dangling refs stripped).
       const seen = new Set(omissionSkips.map((s) => s.hunk));
       for (const om of omissions) {
         for (const hunk of om.hunks) {
@@ -438,9 +538,11 @@ export async function validateDraft(
           }
         }
       }
-      const nextElements = current.elements.filter((el) => !dropped.has(el.id));
+      const finalEls = pre
+        .filter((el) => !dropped.has(el.id))
+        .map((el) => patchedById.get(el.id) ?? el);
       current = withOmissionSkips(
-        { ...(current as object), elements: nextElements } as DraftBoard,
+        { ...(current as object), elements: finalEls } as DraftBoard,
         omissionSkips,
       );
     }
@@ -471,6 +573,7 @@ export async function validateDraft(
     const raw = await seams.runTurn({ draft: current, pointers, attempt: attempts });
     const coerced = coerceBoard(raw);
     if (coerced.ok) {
+      everParsed = true;
       pendingParseIssues = [];
       current = withOmissionSkips(
         mergePatch(current, coerced.board, frozen, dropped),
@@ -493,5 +596,19 @@ export async function validateDraft(
   // Gate 3 — composition every-hunk coverage (cluster-4 seam).
   const composition = seams.compositionGate ? seams.compositionGate(current, ctx) : [];
 
-  return { board: current, omissions, blemishes, immutability, composition, attempts };
+  // Final wire-boundary check (finding 5/6): the shipped board must re-parse clean.
+  // The closure strips array refs and the loop drops elements, so surface any
+  // residual structural issue as a labeled blemish rather than shipping it silently.
+  const finalParse = coerceBoard(current);
+  if (!finalParse.ok) {
+    const wire = finalParse.issues.map((i) => ({
+      ruleId: "schema-invalid",
+      elementRef: `/${i.path.join("/")}`,
+      message: i.message,
+      attempts,
+    }));
+    blemishes = [...blemishes, ...wire];
+  }
+
+  return { board: current, omissions, blemishes, immutability, composition, attempts, everParsed };
 }

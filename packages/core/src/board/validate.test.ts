@@ -315,3 +315,60 @@ describe("validateDraft — gate ordering", () => {
     expect(checkImmutability(before, forged).map((v) => v.elementRef)).toEqual(["fake"]);
   });
 });
+
+// ── Finding 5: honest omission never ships a dangling reference ───────────────
+
+describe("validateDraft — finding 5: the incoming-reference closure", () => {
+  it("patches a survivor that cited a dropped code_ref, sheds its hunk, no dangling ref", async () => {
+    // c1 overruns the 200-line file → citation-resolves fires on c1 every round;
+    // f1 (clean concern) cites c1. The seat never fixes c1.
+    const withBadRef = board(
+      [
+        finding("f1", "The refresh token is classified before its code is read.", ["c1"]),
+        codeRef("c1", "src/auth.ts", 11, 9999),
+      ],
+      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
+    );
+    const seat: ValidateSeams["runTurn"] = () => withBadRef; // never fixed
+
+    const result = await validateDraft(withBadRef, ctx(), { runTurn: seat });
+
+    // c1 is dropped; f1 survives but its citation was patched out — no dangling ref.
+    expect(findEl(result.board, "c1")).toBeUndefined();
+    const f1 = findEl(result.board, "f1");
+    expect(f1).toBeDefined();
+    expect((f1?.data as { code: string[] } | undefined)?.code).toEqual([]);
+    // c1 taught h1 (11.. overlaps h1 @ 10-14); with c1 gone, h1 is shed to skippedHunks.
+    expect(skips(result.board).some((s) => s.hunk === "h1")).toBe(true);
+    expect(result.omissions.map((o) => o.elementId)).toContain("c1");
+    // The final board re-parses clean — no dangling ref left for the wire boundary.
+    expect(result.blemishes).toEqual([]);
+  });
+});
+
+// ── Finding 6: failure paths never fabricate empty success ────────────────────
+
+describe("validateDraft — finding 6: honest failure state", () => {
+  it("labels unresolved parse failures as blemishes and reports everParsed=false", async () => {
+    const garbage = { not: "a board" } as unknown; // never parses
+    const seat: ValidateSeams["runTurn"] = () => garbage; // every retry also garbage
+
+    const result = await validateDraft(garbage, ctx(), { runTurn: seat });
+
+    expect(result.everParsed).toBe(false);
+    expect(result.attempts).toBe(RETRY_CAP); // ten invalid returns, not one
+    // The unresolved schema issues ride as labeled blemishes — never an empty blemishes[].
+    expect(result.blemishes.length).toBeGreaterThan(0);
+    expect(result.blemishes.every((b) => b.ruleId === "schema-invalid")).toBe(true);
+    // The board is the honest empty fallback; the CALLER surfaces failure from everParsed.
+    expect(result.board.elements).toEqual([]);
+  });
+
+  it("a genuinely empty but PARSED board reports everParsed=true (a real empty lens)", async () => {
+    const result = await validateDraft({ elements: [], skippedHunks: [] }, ctx(), {
+      runTurn: noRetry,
+    });
+    expect(result.everParsed).toBe(true);
+    expect(result.blemishes).toEqual([]);
+  });
+});
