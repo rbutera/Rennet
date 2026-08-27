@@ -43,8 +43,8 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 ## Cluster 7 — verification
 
-- [ ] 7.1 `pnpm check` → EXIT=0 on its own line, tail shown.
-- [ ] 7.2 Packet E2E (stub `runTurn`, reconciliation 5) against THIS repo's real snapshot: partitions cover every in-scope file exactly once; every emitted statement's anchors resolve against the snapshot inventory; then a small synthetic baseline advance (one touched file) re-processes ONLY the owning partition — carry visible (untouched statements byte-identical in the output set).
-- [ ] 7.3 Positive controls, fail-then-revert with evidence: (a) drop a file from every slice → coverage assert fails; (b) break anchor resolution in the stub's output → the mint drops it and the anchors-resolve assert fails; (c) widen routeDelta to all partitions → the only-touched-partition assert fails. Revert, re-run green, tree clean.
-- [ ] 7.4 BUILD-STATUS.json: `b06` → `{"status":"done","passes":true}` (only that line). Commit, push, local == origin.
-- [ ] 7.5 Output the sigil: `<promise>B06-COMPLETE</promise>`
+- [x] 7.1 `pnpm check` → EXIT=0 on its own line, tail shown.
+- [x] 7.2 Packet E2E (stub `runTurn`, reconciliation 5) against THIS repo's real snapshot: partitions cover every in-scope file exactly once; every emitted statement's anchors resolve against the snapshot inventory; then a small synthetic baseline advance (one touched file) re-processes ONLY the owning partition — carry visible (untouched statements byte-identical in the output set).
+- [x] 7.3 Positive controls, fail-then-revert with evidence: (a) drop a file from every slice → coverage assert fails; (b) break anchor resolution in the stub's output → the mint drops it and the anchors-resolve assert fails; (c) widen routeDelta to all partitions → the only-touched-partition assert fails. Revert, re-run green, tree clean.
+- [x] 7.4 BUILD-STATUS.json: `b06` → `{"status":"done","passes":true}` (only that line). Commit, push, local == origin.
+- [x] 7.5 Output the sigil: `<promise>B06-COMPLETE</promise>`
