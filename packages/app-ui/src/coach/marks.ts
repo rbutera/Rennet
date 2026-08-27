@@ -12,23 +12,20 @@
 // Marks anchor to chrome only (buttons, switchers, containers) — never to a
 // board content element, which is generated and moves.
 // ─────────────────────────────────────────────────────────────────────────────
+import type { MarkId } from "@rennet/protocol";
 
 /**
  * The closed set of coach marks. Nine per #487 (R55's original eight plus
  * `start-review`, ruled in live at commit fc2ed84e). This union is the anchor
  * key: the typed registry (Cluster 2) is closed over it, so an unknown id is a
  * compile error, not a silent orphan.
+ *
+ * Defined PROTOCOL-side (`markIdSchema`) and re-exported here — protocol imports no
+ * Rennet package, app-ui imports protocol, so the persisted `coachmarks.seen` slice
+ * and this mark model share ONE source of truth (Cluster 3). The election order and
+ * teaching copy below stay app-side; protocol owns only the validation set.
  */
-export type MarkId =
-  | "start-review"
-  | "new-chat"
-  | "smart-list"
-  | "lenses"
-  | "highlight"
-  | "fab"
-  | "verdict"
-  | "draft"
-  | "dispatch";
+export type { MarkId } from "@rennet/protocol";
 
 export interface Mark {
   id: MarkId;

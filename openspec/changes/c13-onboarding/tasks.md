@@ -39,11 +39,11 @@ Serial clusters. Each cluster is one session. Search before implementing
 
 ## Cluster 3 — Persistence seam (protocol + core + data)
 
-- [ ] `packages/protocol` `clientSettingsSchema`: add optional `coachmarks:
+- [x] `packages/protocol` `clientSettingsSchema`: add optional `coachmarks:
       { seen: MarkId[]; skipAll: boolean }` (additive, like `keybindings`).
-- [ ] `settingsViewSchema` (`settings.get` output): surface `coachmarks`
+- [x] `settingsViewSchema` (`settings.get` output): surface `coachmarks`
       additively so the client reads initial state in one call.
-- [ ] Add `settings.setCoachmarks` command (input `{ seen, skipAll }`, output the
+- [x] Add `settings.setCoachmarks` command (input `{ seen, skipAll }`, output the
       stored slice) mirroring `settings.setAppearance`/`setKeybinding`: a plain
       write, first click, no ceremony, refuses a malformed config (Rule 75).
 - [ ] Core handler: write the slice through B10's file-config-store
