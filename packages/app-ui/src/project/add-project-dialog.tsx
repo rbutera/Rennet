@@ -17,9 +17,10 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { DirectoryBrowser } from "../components/directory-browser";
 import { Icon } from "../components/icon";
-import { useBridge, useCommand, useMutation } from "../data";
+import { useBridge, useMutation } from "../data";
 import { messageFrom } from "../lib/message-from";
 import { projectIndexingPath } from "../routes/url";
+import { useConnectionCapabilities } from "../shell/connection-capabilities";
 import { selectDialogOpen, useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,29 +31,17 @@ import { selectDialogOpen, useRennetStore } from "../store";
 // folder is selected; the dialog reopens clean each time (the body remounts on
 // open). Adding runs `project.discover` (+ `projects.add`) through the seam,
 // produces no orchestrator turn, and navigates straight to the indexing view.
+//
+// The source picker lists the shell's REAL browsable daemons (Local, each WSL distro,
+// each paired remote) — NOT `pairing.listDevices` (those are inbound clients of THIS
+// daemon, not daemons this client can browse). Switching to another daemon calls the
+// shell's `connectSource`: the app remounts onto that daemon and the browser below lists
+// ITS filesystem (blocker 2). Outside the shell the capabilities fall back to Local only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One browsable environment (source) the picker lists: local, or a paired remote. */
-interface Environment {
-  readonly source: ProjectSource;
-  readonly label: string;
-  readonly kind: "local" | "remote";
-}
-
-/** Every environment the picker offers: Local always first, then each paired remote.
- *  Paired devices come through the seam (`pairing.listDevices`); an unavailable handler
- *  (or none paired) simply leaves Local — the one environment always present. */
-function useEnvironments(): Environment[] {
-  const { data } = useCommand("pairing.listDevices", {});
-  const remotes: Environment[] = (data?.devices ?? []).map((device) => ({
-    source: `remote:${device.deviceId}` as ProjectSource,
-    label: device.name,
-    kind: "remote",
-  }));
-  // ponytail: WSL distros are enumerated by the desktop shell (no protocol command),
-  // so they extend this list only once the shell injects them — Local + paired remotes
-  // is the whole set reachable through the seam. Add shell-fed distros when wired.
-  return [{ source: "local", label: "This machine", kind: "local" }, ...remotes];
+/** Local gets the Monitor glyph; a WSL distro or a paired remote gets Server. */
+function sourceIsLocal(source: ProjectSource): boolean {
+  return source === "local";
 }
 
 export function AddProjectDialog() {
@@ -77,13 +66,16 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
   const bridge = useBridge();
   const [, navigate] = useLocation();
   const openDialog = useRennetStore((s) => s.uiActions.openDialog);
-  const environments = useEnvironments();
+  const openAddProjectForSource = useRennetStore((s) => s.uiActions.openAddProjectForSource);
+  const { sources, activeSource, connectSource } = useConnectionCapabilities();
 
   const pendingSource = useRennetStore((s) => s.ui.pendingAddProjectSource);
   const clearAddProjectSource = useRennetStore((s) => s.uiActions.clearAddProjectSource);
 
+  // A fresh open defaults to the daemon actually attached (the browser's real host), not a
+  // blind "local"; a preselection from Browse Its Projects (`pendingSource`) wins.
   const [source, setSource] = useState<ProjectSource>(
-    (pendingSource as ProjectSource | undefined) ?? "local",
+    (pendingSource as ProjectSource | undefined) ?? activeSource,
   );
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
@@ -104,17 +96,31 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
   const discover = useMutation("project.discover");
   const addProject = useMutation("projects.add", { invalidates: ["projects.list"] });
 
-  const current =
-    environments.find((environment) => environment.source === source) ?? environments[0];
+  const current = sources.find((option) => option.id === source) ?? sources[0];
 
-  function selectSource(next: ProjectSource): void {
+  async function selectSource(next: ProjectSource): Promise<void> {
     setSourceOpen(false);
     if (next === source) return;
-    // Switching source clears the selected path and reloads the browser against that
-    // host (the `reloadKey` below is the source, so the browser remounts its listing).
+    // The daemon for this source is already attached (Local, or the current one): browse it
+    // inline — the DirectoryBrowser's `reloadKey` is the source, so it remounts its listing.
+    if (next === activeSource) {
+      setSource(next);
+      setSelectedPath(null);
+      setError(undefined);
+      return;
+    }
+    // A different daemon: attach it. `connectSource` REMOUNTS the whole app onto that daemon;
+    // reopen Add Project preselected to `next` (through the store, which survives the remount)
+    // so the freshly-mounted browser lists ITS filesystem — the same hop Browse Its Projects uses.
+    const result = await connectSource(next, "repo");
+    if (result.switched) {
+      openAddProjectForSource(next);
+      return; // this mount is tearing down
+    }
+    // No switch (already attached under another id, or an attach error): browse inline.
     setSource(next);
     setSelectedPath(null);
-    setError(undefined);
+    setError(result.error);
   }
 
   async function add(): Promise<void> {
@@ -172,7 +178,7 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
         >
           <span className="flex min-w-0 items-center gap-2">
             <Icon
-              icon={current?.kind === "local" ? Monitor : Server}
+              icon={current && sourceIsLocal(current.id) ? Monitor : Server}
               className="size-4 flex-none text-ink-faint"
             />
             <span className="truncate">{current?.label}</span>
@@ -180,19 +186,19 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
           <Icon icon={ChevronDown} className="size-4 flex-none text-ink-faint" />
         </PopoverTrigger>
         <PopoverContent align="start" className="w-(--anchor-width) min-w-56 gap-0 p-1">
-          {environments.map((environment) => (
+          {sources.map((option) => (
             <button
-              key={environment.source}
+              key={option.id}
               type="button"
               className="flex w-full items-center gap-2 rounded-control px-2 py-2 text-left text-base text-ink hover:bg-raised sm:py-1.5"
-              onClick={() => selectSource(environment.source)}
+              onClick={() => void selectSource(option.id)}
             >
               <Icon
-                icon={environment.kind === "local" ? Monitor : Server}
+                icon={sourceIsLocal(option.id) ? Monitor : Server}
                 className="size-4 flex-none text-ink-faint"
               />
-              <span className="flex-1 truncate">{environment.label}</span>
-              {environment.source === current?.source ? (
+              <span className="flex-1 truncate">{option.label}</span>
+              {option.id === current?.id ? (
                 <Icon icon={Check} className="size-4 flex-none text-accent" />
               ) : null}
             </button>

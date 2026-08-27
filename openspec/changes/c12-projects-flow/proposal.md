@@ -34,3 +34,26 @@ The scout/questionnaire engine (B7), context-map generation engine (B6), and ses
 ## Verification (packet)
 
 `pnpm check` green (zero new packages — confirm, not assume). E2E against the real app: add this repo as a project — the scout runs, the questionnaire prefills with provenance chips, the map generates with live progress, **Start a Review** mints a session and lands in it; archive a session and restore it from `/archived`. Surfaces are proven by DOM interaction suites over the real router + `MemoryBridge`; the live-mint leg runs whole once B9 is on main (final cluster). A positive control that can fail is shown for the never-a-gate questionnaire (map completes and exits appear with the questionnaire unanswered) and for the row-vanishes-on-claim behaviour. Docs updated in the same change: `docs/using/guides/getting-started.md`, `docs/using/guides/context-map.md`. Every §10 `[ws:C12]` claim spot-checked against the running client, reconciliation-4 claims checked to the C12 boundary. Completion sigil `<promise>C12-COMPLETE</promise>`.
+
+## Fix-loop ledger (PR #524 dual review — Codex + opus)
+
+Each amendment records a review finding's resolution. Findings and orchestrator scoping in
+`c12-fix-order.md`.
+
+- **A1 — add-remote-dialog ignores the entered address (blocker 1).** The dialog exchanged the
+  pairing code on the currently-attached daemon and discarded the token, so it paired nothing.
+  Fixed by threading the shell's real cross-daemon machinery into the router: a new
+  `shell/connection-capabilities.tsx` context carries `pairAtAddress`, which `ConnectionHost`
+  implements with the same temporary-bridge-at-the-address exchange + saved-target persistence
+  its own `submitAdd` uses. `AddRemoteDialog` now calls `pairAtAddress(address, code)`; outside
+  the shell the fallback rejects with honest copy. Test rewritten to `mountApp` (real
+  ConnectionHost, distinct per-target bridges): it asserts the exchange ran on a bridge dialled
+  AT the address, never the local daemon.
+- **A2 — add-project presents inbound clients as remote environments (blocker 2).** The source
+  picker listed `pairing.listDevices` (clients of THIS daemon) and a source switch only bumped
+  the browser's `reloadKey` while it kept the same bridge. Fixed by consuming the capabilities
+  context's real `sources` (Local + WSL distros + saved remotes) and `connectSource`: switching
+  to another daemon remounts the app onto it (via the store's existing `pendingAddProjectSource`
+  hop, which survives the remount) so the browser lists ITS filesystem. Test at line 173
+  rewritten to `mountApp` with genuinely distinct bridges — browsing the remote shows its own
+  listing, and HOME is gone, proving the bridge changed.

@@ -1,51 +1,34 @@
 // @vitest-environment happy-dom
 //
-// The Add Environment pairing dialog (C12 §10.3) over a MemoryBridge: Connect
-// gating, the connecting lock + spinner, the success actions, and the one `ui` hop
-// behind "Browse Its Projects" (reopen Add Project preselected to the paired
-// machine). Opened the way the sidebar opens it — `ui.openDialog("add-environment")`
-// through the real store.
-import type { PairedDevice } from "@rennet/protocol";
+// The Add Environment pairing dialog (C12 §10.3) over the REAL shell (ConnectionHost →
+// router), so the cross-daemon connect is genuine: `pairAtAddress` dials a TEMPORARY bridge
+// AT the entered address, exchanges the one-time code on THAT connection, and persists the
+// tokened daemon as a selectable source. Dialling the currently-attached daemon and
+// discarding the token — the blocker-1 bug — paired nothing; a single-bridge mock hid it.
+// Opened the way the sidebar opens it: `ui.openDialog("add-environment")` through the store.
+import type { CommandInput, FsListDirResult } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
-import { Router } from "wouter";
-import { BridgeProvider } from "../data";
-import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, cleanup, mount, screen, waitFor } from "../test/dom";
-import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
-import { AddProjectDialog } from "./add-project-dialog";
-import { AddRemoteDialog } from "./add-remote-dialog";
+import { act, cleanup, screen, waitFor } from "../test/dom";
+import { mountApp } from "../test/mount-app";
 
 afterEach(() => {
   cleanup();
+  globalThis.localStorage.clear();
   useRennetStore.setState((s) => ({
     ui: { ...s.ui, openDialogs: [], pendingAddProjectSource: undefined },
   }));
 });
 
-const device: PairedDevice = {
-  deviceId: "d1",
-  name: "build-server",
-  createdAt: "2026-08-01T00:00:00.000Z",
-  lastSeenAt: "2026-08-27T00:00:00.000Z",
-  expiresAt: "2026-12-01T00:00:00.000Z",
+const REMOTE_FS: FsListDirResult = {
+  path: "/home",
+  home: "/home",
+  parent: null,
+  entries: [],
 };
 
 function openRemote(): void {
   act(() => useRennetStore.getState().uiActions.openDialog("add-environment"));
-}
-
-function render(handlers: MemoryBridgeHandlers, withProject = false) {
-  const history = memoryHistory("/new-chat");
-  const bridge = new MemoryBridge(handlers);
-  return mount(
-    <BridgeProvider bridge={bridge}>
-      <Router hook={history.hook} searchHook={history.searchHook}>
-        <AddRemoteDialog />
-        {withProject ? <AddProjectDialog /> : null}
-      </Router>
-    </BridgeProvider>,
-  );
 }
 
 /** A promise with an exposed resolver, to hold the exchange in flight. */
@@ -59,8 +42,8 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 
 describe("AddRemoteDialog", () => {
   it("Connect is inert until BOTH address and code carry a value", async () => {
+    const { user } = mountApp(() => ({}));
     openRemote();
-    const { user } = render({});
 
     const connect = await screen.findByRole("button", { name: "Connect" });
     expect((connect as HTMLButtonElement).disabled).toBe(true);
@@ -74,9 +57,9 @@ describe("AddRemoteDialog", () => {
   });
 
   it("locks the fields and shows the spinner while connecting", async () => {
-    openRemote();
     const gate = deferred<{ deviceToken: string; deviceId: string }>();
-    const { user } = render({ "pairing.exchange": () => gate.promise });
+    const { user } = mountApp(() => ({ "pairing.exchange": () => gate.promise }));
+    openRemote();
 
     await user.type(screen.getByLabelText("Address"), "build-server.tailnet.ts.net");
     await user.type(screen.getByLabelText("Pairing code"), "abcd-1234");
@@ -91,15 +74,19 @@ describe("AddRemoteDialog", () => {
     await screen.findByText(/Connected to/);
   });
 
-  it("derives the machine name from the address's first label and offers Done", async () => {
-    openRemote();
+  it("dials the entered address, derives the machine name from it, and offers Done", async () => {
     let sentName: string | undefined;
-    const { user } = render({
-      "pairing.exchange": ({ deviceName }) => {
-        sentName = deviceName;
+    let dialledHost: string | undefined;
+    const { user, bridges } = mountApp((target) => ({
+      "pairing.exchange": (input: CommandInput<"pairing.exchange">) => {
+        sentName = input.deviceName;
+        // The pairing bridge is a TEMPORARY connection at the entered address, not the
+        // local daemon — so its target id is a `pairing:*`, never "local".
+        dialledHost = target.host;
         return { deviceToken: "tok", deviceId: "d1" };
       },
-    });
+    }));
+    openRemote();
 
     await user.type(screen.getByLabelText("Address"), "build-server.tailnet.ts.net");
     await user.type(screen.getByLabelText("Pairing code"), "abcd-1234");
@@ -108,6 +95,9 @@ describe("AddRemoteDialog", () => {
     // The name is the first dotted label, and it names the connected machine.
     await screen.findByText("build-server");
     expect(sentName).toBe("build-server");
+    // The exchange ran on a bridge dialled AT the address — never the local daemon.
+    expect(dialledHost).toBe("build-server.tailnet.ts.net");
+    expect(bridges.get("local")).toBeDefined();
 
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() =>
@@ -115,19 +105,13 @@ describe("AddRemoteDialog", () => {
     );
   });
 
-  it("Browse Its Projects reopens Add Project preselected to the paired machine", async () => {
+  it("Browse Its Projects attaches the paired machine and opens Add Project on it", async () => {
+    const { user } = mountApp(() => ({
+      "pairing.exchange": () => ({ deviceToken: "tok", deviceId: "d1" }),
+      // Add Project's browser fires once it mounts against the newly-attached remote.
+      "fs.listDir": () => ({ result: REMOTE_FS }),
+    }));
     openRemote();
-    const { user } = render(
-      {
-        "pairing.exchange": () => ({ deviceToken: "tok", deviceId: "d1" }),
-        "pairing.listDevices": () => ({ devices: [device] }),
-        // Add Project's browser fires once it mounts against the preselected source.
-        "fs.listDir": () => ({
-          result: { path: "/home", home: "/home", parent: null, entries: [] },
-        }),
-      },
-      true,
-    );
 
     await user.type(screen.getByLabelText("Address"), "build-server.tailnet.ts.net");
     await user.type(screen.getByLabelText("Pairing code"), "abcd-1234");
@@ -135,8 +119,8 @@ describe("AddRemoteDialog", () => {
 
     await user.click(await screen.findByRole("button", { name: "Browse Its Projects" }));
 
-    // The environment dialog closed; Add Project opened preselected to the new remote,
-    // so its source picker names the paired machine (not "This machine").
+    // The environment dialog closed; Add Project opened on the newly-paired remote, so its
+    // source picker names the paired machine (not "This machine").
     await waitFor(() => expect(useRennetStore.getState().ui.openDialogs).toContain("add-project"));
     expect(useRennetStore.getState().ui.openDialogs).not.toContain("add-environment");
     await screen.findByRole("button", { name: "Source: build-server" });

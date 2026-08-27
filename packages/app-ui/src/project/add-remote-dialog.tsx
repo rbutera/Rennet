@@ -12,8 +12,8 @@ import {
 import { Check, Loader2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { Icon } from "../components/icon";
-import { useMutation } from "../data";
 import { messageFrom } from "../lib/message-from";
+import { useConnectionCapabilities } from "../shell/connection-capabilities";
 import { selectDialogOpen, useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,12 +25,12 @@ import { selectDialogOpen, useRennetStore } from "../store";
 // shows while connecting; the environment name is the address's first label. The
 // body remounts on open, so the dialog reopens clean each time.
 //
-// ponytail: the REAL cross-daemon connect (a temp bridge dialled at the address,
-// `pairing.exchange` invoked ON it, the token saved to localStorage) already lives
-// in `components/connection-host.tsx` `submitAdd` — shell machinery the router seam
-// cannot reach, deferred as cluster 1 recorded. This surface binds the exchange
-// through the seam (real command, MemoryBridge-backed in tests); when the shell
-// injects a ConnectionFactory into the router, the same call routes to the remote.
+// The REAL cross-daemon connect — a temp bridge dialled AT the entered address,
+// `pairing.exchange` invoked ON it, the token saved as a selectable source — lives in
+// `components/connection-host.tsx` and reaches this dialog as `pairAtAddress` through the
+// connection-capabilities context (blocker 1). Dialling the currently-attached daemon and
+// discarding the token, as this dialog once did, paired nothing. Outside the shell the
+// fallback rejects with honest copy (pairing needs the desktop app).
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Stage = "idle" | "connecting" | "connected";
@@ -61,13 +61,13 @@ export function AddRemoteDialog() {
 
 function AddRemoteBody({ onClose }: { onClose(): void }) {
   const openAddProjectForSource = useRennetStore((s) => s.uiActions.openAddProjectForSource);
+  const { pairAtAddress } = useConnectionCapabilities();
   const [stage, setStage] = useState<Stage>("idle");
   const [address, setAddress] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string>();
   const deviceIdRef = useRef<string | null>(null);
 
-  const exchange = useMutation("pairing.exchange", { invalidates: ["pairing.listDevices"] });
   const name = nameFromAddress(address);
   const connecting = stage === "connecting";
 
@@ -76,7 +76,9 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
     setStage("connecting");
     setError(undefined);
     try {
-      const { deviceId } = await exchange.mutate({ code: code.trim(), deviceName: name });
+      // Dial the ENTERED address, exchange the code on that new connection, and persist the
+      // paired daemon as a selectable source (blocker 1) — not a no-op on the current bridge.
+      const { deviceId } = await pairAtAddress(address, code);
       deviceIdRef.current = deviceId;
       setStage("connected");
     } catch (reason) {

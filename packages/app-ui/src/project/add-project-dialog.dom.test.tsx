@@ -5,13 +5,7 @@
 // interaction. Opened the way the sidebar opens it — `ui.openDialog("add-project")`
 // through the real store — so the mount, the seam reads/writes, and navigation all
 // run against the real router + BridgeProvider.
-import type {
-  CommandInput,
-  DiscoveryResult,
-  FsListDirResult,
-  PairedDevice,
-  Project,
-} from "@rennet/protocol";
+import type { CommandInput, DiscoveryResult, FsListDirResult, Project } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
@@ -20,11 +14,15 @@ import { projectIndexingPath } from "../routes/url";
 import { useRennetStore } from "../store";
 import { act, cleanup, mount, screen, waitFor } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
+import { mountApp } from "../test/mount-app";
 import { AddProjectDialog } from "./add-project-dialog";
 
 afterEach(() => {
   cleanup();
-  useRennetStore.setState((s) => ({ ui: { ...s.ui, openDialogs: [] } }));
+  globalThis.localStorage.clear();
+  useRennetStore.setState((s) => ({
+    ui: { ...s.ui, openDialogs: [], pendingAddProjectSource: undefined },
+  }));
 });
 
 const HOME: FsListDirResult = {
@@ -44,12 +42,13 @@ const DEV: FsListDirResult = {
   entries: [{ name: "acme", path: "/home/rai/dev/acme", isRepo: true, unreadable: false }],
 };
 
-const device: PairedDevice = {
-  deviceId: "d1",
-  name: "lancelot",
-  createdAt: "2026-08-01T00:00:00.000Z",
-  lastSeenAt: "2026-08-27T00:00:00.000Z",
-  expiresAt: "2026-12-01T00:00:00.000Z",
+/** The lancelot (remote daemon) filesystem — a DISTINCT listing from HOME, so browsing it
+ *  proves the source switch changed which bridge the browser talks to. */
+const LANCELOT: FsListDirResult = {
+  path: "/home/lancelot",
+  home: "/home/lancelot",
+  parent: "/home",
+  entries: [{ name: "services", path: "/home/lancelot/services", isRepo: true, unreadable: false }],
 };
 
 function project(id: string): Project {
@@ -170,35 +169,43 @@ describe("AddProjectDialog", () => {
     expect(kinds).toEqual(["repo", "workspace"]);
   });
 
-  it("switching source clears the selected path and reloads the browser against that host", async () => {
-    open();
-    const second = deferred<{ result: FsListDirResult }>();
-    let calls = 0;
-    const { user } = renderDialog({
-      "pairing.listDevices": () => ({ devices: [device] }),
-      "fs.listDir": () => {
-        calls += 1;
-        return calls === 1 ? { result: HOME } : second.promise;
-      },
-    });
+  it("switching source attaches that daemon and browses ITS filesystem (distinct bridge)", async () => {
+    // A saved remote daemon, so the source picker offers "lancelot" alongside Local. The two
+    // daemons are GENUINELY distinct bridges (mountApp gives each target its own MemoryBridge),
+    // so browsing the remote must show its own filesystem — the single-bridge mock hid this.
+    globalThis.localStorage.setItem(
+      "rennet.daemons",
+      JSON.stringify({
+        daemons: [
+          {
+            id: "daemon:d1",
+            label: "lancelot",
+            host: "100.1.2.3",
+            port: 7411,
+            deviceToken: "tok",
+          },
+        ],
+      }),
+    );
+    const { user } = mountApp((target) => ({
+      "fs.listDir": () => ({ result: target.id === "daemon:d1" ? LANCELOT : HOME }),
+    }));
 
-    const add = await screen.findByRole("button", { name: "Add" });
+    open();
+    // Local first: the browser lists HOME.
     await screen.findByText("dev");
+    const add = await screen.findByRole("button", { name: "Add" });
     await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
 
-    // Open the source picker and switch to the paired remote.
+    // Switch to the remote daemon: connectSource remounts the app onto it, and the browser
+    // now lists the REMOTE filesystem (a different bridge), not HOME.
     await user.click(screen.getByRole("button", { name: /^Source:/ }));
     await user.click(await screen.findByText("lancelot"));
 
-    // Selection cleared and the new listing is in flight → Add is inert again.
-    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(true));
-    expect(calls).toBe(2); // the source switch reloaded the browser
-
-    // Once the host's listing resolves, a directory is current again → Add re-enables.
-    act(() =>
-      second.resolve({ result: { ...HOME, path: "/home/lancelot", home: "/home/lancelot" } }),
-    );
-    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
+    await screen.findByText("services"); // lancelot's listing, from its own bridge
+    expect(screen.queryByText("dev")).toBeNull(); // HOME is gone — the bridge really changed
+    const addAfter = await screen.findByRole("button", { name: "Add" });
+    await waitFor(() => expect((addAfter as HTMLButtonElement).disabled).toBe(false));
   });
 
   it("reopens clean — a descent in one session is gone the next", async () => {
