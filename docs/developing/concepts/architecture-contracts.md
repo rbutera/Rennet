@@ -45,7 +45,6 @@ knowledge:
 |---|---|---|
 | Project snapshot | Files, packages, entry points, exported symbols, identifier references, and dependencies | Pinned Git OID and content hashes |
 | Knowledge layer | Project explanations, claims, evidence, confidence, and freshness | Project and source evidence |
-| Primer | A small deterministic summary of review and context state | Version and SHA-256 digest |
 
 Snapshots and knowledge are composed by the live server. Multi-repository
 contexts refer to member maps and their pinned identities instead of flattening

@@ -96,7 +96,7 @@ Repository architecture checks enforce these import directions:
 flowchart LR
   theme[@rennet/theme]
   protocol[@rennet/protocol]
-  instructions[@rennet/instructions]
+  prompts[@rennet/prompts]
   core[@rennet/core]
   adapters[@rennet/adapters]
   server[@rennet/server]
@@ -104,14 +104,14 @@ flowchart LR
   appui["@rennet/app-ui<br/>screens"]
   client[@rennet/client]
 
-  instructions --> protocol
+  prompts --> protocol
   core --> protocol
-  core --> instructions
+  core --> prompts
   adapters --> protocol
-  adapters --> instructions
+  adapters --> prompts
   adapters --> core
   server --> protocol
-  server --> instructions
+  server --> prompts
   server --> core
   server --> adapters
   ui --> protocol
@@ -140,7 +140,7 @@ One review moves through the system as follows:
 3. The server records an immutable patchset and derives review artifacts against
    that identity.
 4. Deterministic analysis and model jobs populate the Spec, Sequence, Decisions,
-   Noise, and Flagged canvases.
+   Noise, and Flagged lenses.
 5. The reviewer reads, asks questions, records dispositions, and previews any
    outbound GitHub result.
 6. The outbound action for a review submits the previewed review. The outbound
@@ -159,8 +159,8 @@ and routes protocol commands. This package also owns live orchestration, symbol
 lookup, projected connections, ask streams, review reattachment, and daemon
 lifecycle.
 
-`@rennet/core` contains portable review logic, document validation, canvas
-projection, scheduling, lineage, and state folds. `@rennet/adapters` implements
+`@rennet/core` contains portable review logic, document validation, scheduling,
+lineage, and state folds. `@rennet/adapters` implements
 Git capture, GitHub calls, filesystem stores, SQLite persistence, Repo Map
 generation, and coding-harness execution. Keeping composition in the server
 lets the desktop, browser, mobile, and CLI paths use the same behavior.
@@ -202,6 +202,6 @@ window does not stop a daemon that remains resident.
 - [Architecture contracts](./architecture-contracts.md) defines the correctness
   rules behind immutable capture, provenance, lineage, persistence, and posting.
 - [Review lenses](./review-lenses.md) describe the five review surfaces.
-- [Context assembly](./context-assembly.md) explains the bounded primer and
-  retrieval tools.
+- [Context assembly](./context-assembly.md) explains project context and
+  selection-aware retrieval.
 - [The Model Council](./model-council.md) explains model assignment.

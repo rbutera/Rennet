@@ -23,7 +23,7 @@ first. Design was previously called the spec lens; Sequence was previously
 called reading order. Each lens is a board of typed blocks drafted by a review
 agent on a fixed prompt.
 
-The prompts live in `packages/lens-instructions` (`@rennet/lens-instructions`),
+The prompts live in `packages/prompts` (`@rennet/prompts`),
 one markdown file per lens plus the post-process editor pass. The package exports a
 typed manifest; the pipeline reads the files and supplies the board schema
 separately, so instructions and schema cannot drift apart.

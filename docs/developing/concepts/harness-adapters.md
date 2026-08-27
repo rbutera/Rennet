@@ -126,7 +126,7 @@ The omp adapter runs the `omp` binary from `@oh-my-pi/pi-coding-agent` through a
 proven Bun runtime. Its transport uses `omp --mode rpc --auto-approve
 --no-session` and sends the prompt as an RPC command on standard input.
 
-Rennet gives omp a temporary extension directory containing the `canvasOps` MCP
+Rennet gives omp a temporary extension directory containing its loopback MCP
 configuration, then removes the directory when the turn ends. The decoder bounds
 frames and captured standard error. Malformed, oversized, rejected, or unfinished
 RPC frames end the session as a protocol failure even if the child exits with
@@ -182,9 +182,9 @@ usage record. Those zeros therefore do not prove that the turn consumed no
 tokens. Provider-reported and derived dollar values remain separate and stay
 `null` when no amount is available.
 
-There is no hosted Rennet backend. The daemon starts local harness processes and
-serves `canvasOps` on a loopback transport where a subprocess needs MCP access.
-Review context still reaches the provider used by the selected harness.
+There is no hosted Rennet backend. The daemon starts local harness processes on a
+loopback transport where a subprocess needs MCP access. Review context still
+reaches the provider used by the selected harness.
 
 ## Code map
 

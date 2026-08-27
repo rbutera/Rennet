@@ -109,7 +109,6 @@ note remains the effective body unless a valid refinement was stored.
 | Command schema | `packages/protocol/src/index.ts` |
 | Raw, refined, signature, and effective body | `packages/app-ui/src/canvas/collation.ts` |
 | Request lifecycle and stale-result check | `packages/app-ui/src/app.tsx` |
-| Draft controls | `packages/app-ui/src/components/collation-draft-canvas.tsx` |
 
 See [collation and publishing](./collation-and-publishing.md) for the draft and
 its destination-specific payloads.
