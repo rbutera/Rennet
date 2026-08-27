@@ -500,6 +500,60 @@ describe("remote-surface e2e (#380)", () => {
     await closed; // terminal: the connection is dropped, not left pairing-only
   });
 
+  it("broadcasts board events raw to private sockets and privacy-wrapped to projected ones (B4)", async () => {
+    const ip = nonLoopbackIpv4();
+    if (!ip) {
+      console.warn("remote-surface board-broadcast test skipped: no non-loopback IPv4 interface");
+      return;
+    }
+    const pairing = new PairingStore(
+      join(mkdtempSync(join(tmpdir(), "rennet-remote-board-")), "devices.json"),
+    );
+    const listener = await startRemoteListener(pairing, "0.0.0.0");
+    const url = `ws://${ip}:${listener.port}`;
+
+    // Pair over a pairing-only connection, then reconnect projected; open a loopback private one.
+    const unpaired = await connect(url);
+    const { code } = pairing.mint();
+    const exchanged = (await unpaired.request("pairing.exchange", {
+      code,
+      deviceName: "phone",
+    })) as { deviceToken: string };
+    unpaired.socket.close();
+    const paired = await connect(url, exchanged.deviceToken);
+    const priv = await connect(`ws://127.0.0.1:${listener.port}`);
+
+    const privFrame = once(priv.socket, "message");
+    const pairedFrame = once(paired.socket, "message");
+    listener.broadcastBoardEvent("b1", [
+      {
+        seq: 1,
+        actor: "lens:design",
+        op: {
+          op: "create",
+          op_id: "op-1",
+          element: {
+            id: "e1",
+            kind: "prose",
+            data: { markdown: `see ${REPO_ROOT}/src/a.ts and ${HOME}/notes.md` },
+          },
+        },
+      },
+    ]);
+
+    // Private (loopback): the raw event, host paths intact.
+    const raw = JSON.parse(String((await privFrame)[0]));
+    expect(raw).toMatchObject({ type: "boardEvent", boardId: "b1" });
+    expect(raw.events[0].op.element.data.markdown).toContain(REPO_ROOT);
+
+    // Projected: same frame shape, every host path substituted.
+    const wrapped = JSON.parse(String((await pairedFrame)[0]));
+    expect(wrapped).toMatchObject({ type: "boardEvent", boardId: "b1" });
+    expect(findLeaks([JSON.stringify(wrapped)], [REPO_ROOT, HOME])).toEqual([]);
+    expect(wrapped.events[0].op.element.data.markdown).toContain("~/notes.md");
+    expect(wrapped.events[0].seq).toBe(1);
+  });
+
   it("revoking a device severs its live socket and blocks its token from re-authorizing (#383 batch)", async () => {
     const ip = nonLoopbackIpv4();
     if (!ip) {

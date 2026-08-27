@@ -24,8 +24,8 @@ check rejects missing or misnamed rows here.
 | `rennet-protocol` | `@rennet/protocol` | `packages/protocol` | Contract folders — board schema (on `@wboard/core`), command registry, session, delta, manifests — plus event and wire schemas | None |
 | `rennet-prompts` | `@rennet/prompts` | `packages/prompts` | Lens-agent drafting prompts, the unslop editor pass, and the versioned RSP prompt contracts | protocol |
 | `rennet-core` | `@rennet/core` | `packages/core` | Review behavior and domain workflows | protocol, prompts |
-| `rennet-adapters` | `@rennet/adapters` | `packages/adapters` | Git, GitHub, filesystem, persistence, and harness integrations | protocol, prompts, core |
-| `rennet-server` | `@rennet/server` | `packages/server` | Daemon composition, command dispatch, and network transport | protocol, prompts, core, adapters |
+| `rennet-adapters` | `@rennet/adapters` | `packages/adapters` | Git, GitHub, filesystem, persistence, and harness integrations, plus `whiteboard-client` — the only writer of board ops | protocol, prompts, core |
+| `rennet-server` | `@rennet/server` | `packages/server` | Daemon composition, command dispatch, network transport, and the embedded board service (`@wboard/server`) over `.rennet/boards/` | protocol, prompts, core, adapters |
 | `rennet-client` | `@rennet/client` | `packages/client` | Browser-safe connection and session runtime | protocol |
 | `rennet-ui` | `@rennet/ui` | `packages/ui` | Vendored shadcn/Base UI component kit | protocol, theme |
 | `rennet-app-ui` | `@rennet/app-ui` | `packages/app-ui` | Rennet's composites and review-interface screens | protocol, theme, ui |

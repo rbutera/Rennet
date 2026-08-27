@@ -99,6 +99,14 @@ Conversation state is stored separately under
 and a server registry entry. Reattachment combines the stored thread with the
 registry so a connected client can resume the body currently being generated.
 
+Board event logs persist under `.rennet/boards/` in the review project — local
+and ignored by default, never staged or committed. Each board is a
+`schema.json` written once at creation plus an append-only `log.jsonl` with
+contiguous sequence numbers; a batch of ops lands contiguously or not at all.
+The embedded board service replays the log on restart, so a fresh process over
+the same directory serves the identical board. All board writes route through
+the adapters `whiteboard-client` — the only writer of board ops.
+
 ## Harness boundary
 
 Rennet uses the user's installed coding harnesses. The Claude adapter invokes
@@ -127,6 +135,13 @@ shell-specific commands to the shell that can perform them.
 Projection is bidirectional. The server validates and translates incoming
 projected commands as well as outgoing state and events. Model-authored prose is
 displayed as authored and is not treated as a host-state transport.
+
+Board events and board projections are wrapped surfaces. The `boardEvent`
+frame rides the existing push path: loopback connections receive raw frames,
+projected connections receive frames passed through the projection seam, which
+scrubs known-root and home-directory prefixes from every string the same way
+it scrubs other free text. Board prose attributes are model-authored and get
+only that blanket pass.
 
 ## Posting to GitHub
 

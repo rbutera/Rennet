@@ -6,6 +6,8 @@ import {
   INBOUND_HOST_PATH_FIELDS,
   INBOUND_REPO_RELATIVE_PATH_FIELDS,
   ProjectionResolveError,
+  projectBoardEvent,
+  projectBoardProjection,
   projectCommandOutput,
   projectProgressEvent,
   redactAbsolutePaths,
@@ -165,6 +167,53 @@ describe("outbound structural projection", () => {
       ctx,
     ) as unknown as { summary: { path: { repoKey: string } } };
     expect(event.summary.path.repoKey).toBeTruthy();
+  });
+});
+
+// B4: the packet's positive control — a board payload carrying an absolute host
+// path and a home-dir string must come out of the wrap substituted. A scrub
+// bypass (identity wrap) makes every assertion here fail.
+describe("board privacy wrap (B4)", () => {
+  const event = {
+    seq: 1,
+    actor: "lens:design",
+    op: {
+      op: "create" as const,
+      op_id: "op-1",
+      element: {
+        id: "f1",
+        kind: "finding",
+        data: {
+          author: { kind: "lens-agent", id: "lens:design" },
+          concern: `The loader reads ${REPO}/packages/server/src/x.ts before init.`,
+          note: `${HOME}/notes/scratch.md has the repro`,
+        },
+      },
+    },
+  };
+
+  it("projectBoardEvent substitutes known roots and the home dir in every string", () => {
+    const projected = projectBoardEvent(event, ctx) as typeof event;
+    const text = JSON.stringify(projected);
+    expect(text).not.toContain(REPO);
+    expect(text).not.toContain(HOME);
+    expect(projected.op.element.data.concern).toBe(
+      "The loader reads <rennet>/packages/server/src/x.ts before init.",
+    );
+    expect(projected.op.element.data.note).toBe("~/notes/scratch.md has the repro");
+    // Non-string structure is untouched.
+    expect(projected.seq).toBe(1);
+    expect(projected.op.op_id).toBe("op-1");
+  });
+
+  it("projectBoardProjection substitutes in projected element state", () => {
+    const elements = [
+      { id: "f1", kind: "finding", data: { concern: `${REPO}/README.md`, home: HOME } },
+    ];
+    const projected = projectBoardProjection(elements, ctx) as typeof elements;
+    expect(JSON.stringify(projected)).not.toContain(REPO);
+    expect(projected[0]?.data.concern).toBe("<rennet>/README.md");
+    expect(projected[0]?.data.home).toBe("~");
   });
 });
 

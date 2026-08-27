@@ -36,6 +36,9 @@ minimumReleaseAgeExclude:
   # own scope; the alpha is published expressly for this build (#489 B3).
   # Name-scoped (all versions), same precedent as the Claude Agent SDK above.
   - "@wboard/core"
+  # Same first-party rationale: the embeddable board service Rennet's B4 runtime
+  # hosts in-process, published alongside @wboard/core from the same repo/tag.
+  - "@wboard/server"
 trustPolicy: no-downgrade
 trustPolicyExclude:
   - "semver@5.7.2 || 6.3.1"

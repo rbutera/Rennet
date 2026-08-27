@@ -11,9 +11,12 @@ control that work through the typed Rennet session protocol.
 ## Process topology
 
 The `@rennet/server` package is the composition root. It constructs stores,
-adapters, harnesses, the command dispatcher, and a WebSocket listener. The
-desktop app supervises that server as a detached local daemon instead of running
-it inside Electron.
+adapters, harnesses, the command dispatcher, a WebSocket listener, and the
+embedded board service (`@wboard/server`) whose event logs live under
+`.rennet/boards/` in the review project. Board writes route through the
+adapters `whiteboard-client`, the only writer of board ops. The desktop app
+supervises that server as a detached local daemon instead of running it inside
+Electron.
 
 ```mermaid
 flowchart LR

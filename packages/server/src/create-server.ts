@@ -147,6 +147,7 @@ import type {
   ProjectProcessEvent,
   Review,
 } from "@rennet/protocol";
+import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type FlaggedReviewRun } from "./dispatch";
@@ -218,6 +219,13 @@ export interface RennetServer {
   readonly wsHost: string;
   /** Quiesce live turns, close the watcher, close rehydration, close the store, close the WS listener. Idempotent. */
   readonly shutdown: () => void;
+  /**
+   * The boards runtime for a review project (B4) — one embedded board service per
+   * project root, its appends broadcast on the WS push path (raw to loopback,
+   * privacy-wrapped to projected connections). B8's lens pipeline writes through
+   * whiteboard-client over `boardsRuntimeFor(root).service`.
+   */
+  readonly boardsRuntimeFor: (projectRoot: string) => BoardsRuntime;
 }
 
 export async function createRennetServer(options: RennetServerOptions): Promise<RennetServer> {
@@ -1969,6 +1977,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     uiDist: options.uiDist,
   });
 
+  // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
+  // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`,
+  // which fans raw frames to loopback sockets and `projectBoardEvent`-wrapped ones to
+  // projected sockets. One runtime per project root, created on demand.
+  const boardsRuntimes = new Map<string, BoardsRuntime>();
+  const boardsRuntimeFor = (projectRoot: string): BoardsRuntime => {
+    let runtime = boardsRuntimes.get(projectRoot);
+    if (!runtime) {
+      runtime = createBoardsRuntime(projectRoot, (boardId, events) =>
+        wsListener?.broadcastBoardEvent(boardId, events),
+      );
+      boardsRuntimes.set(projectRoot, runtime);
+    }
+    return runtime;
+  };
+
   let didShutdown = false;
   const shutdown = (): void => {
     // An in-flight device-flow poll must not outlive the server.
@@ -1986,5 +2010,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     pushTokenStore.close();
     void wsListener?.close();
   };
-  return { dispatch, shutdown, wsPort: wsListener.port, wsHost: wsListener.host };
+  return {
+    dispatch,
+    shutdown,
+    wsPort: wsListener.port,
+    wsHost: wsListener.host,
+    boardsRuntimeFor,
+  };
 }
