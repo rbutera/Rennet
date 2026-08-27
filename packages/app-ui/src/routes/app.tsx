@@ -1,4 +1,5 @@
 import type { RennetBridge } from "@rennet/protocol";
+import { useEffect, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider, useCommand } from "../data";
@@ -123,6 +124,35 @@ function SettingsScreen({ page }: { readonly page: string }) {
   );
 }
 
+/**
+ * App-wide appearance (wireframe #15): the reviewer's saved scheme is applied to the
+ * document ROOT, so EVERY surface inherits it — not only the screens that thread a
+ * `scheme` prop. `system` resolves live through the OS `prefers-color-scheme`, so an
+ * OS appearance change re-themes without a reload. Mounts under `BridgeProvider`
+ * (reads `settings.get` through the seam) and renders nothing — a pure synchronizer.
+ * This restores what the deleted legacy shell owned, lost in the router cutover.
+ */
+function AppearanceSync() {
+  const { data } = useCommand("settings.get", {});
+  const scheme = data?.scheme ?? "system";
+  const [systemDark, setSystemDark] = useState(
+    () => typeof matchMedia === "undefined" || matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+  useEffect(() => {
+    if (typeof matchMedia === "undefined") return;
+    const query = matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  const effective: "dark" | "light" =
+    scheme === "light" ? "light" : scheme === "dark" ? "dark" : systemDark ? "dark" : "light";
+  useEffect(() => {
+    document.documentElement.dataset.scheme = effective;
+  }, [effective]);
+  return null;
+}
+
 export interface RennetRouterAppProps {
   readonly bridge: RennetBridge;
   /** Injected history (hash / browser / memory). Omitted ⇒ the wouter browser default. */
@@ -132,6 +162,7 @@ export interface RennetRouterAppProps {
 export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
   return (
     <BridgeProvider bridge={bridge}>
+      <AppearanceSync />
       <Router hook={history?.hook} searchHook={history?.searchHook}>
         <AppLayout>
           <Switch>
