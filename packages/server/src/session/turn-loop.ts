@@ -28,6 +28,7 @@ import {
   advanceCursor,
   dropCursor,
   type HarnessError,
+  type HarnessEvent,
   type HarnessPort,
   type HarnessSession,
   isResumeVanished,
@@ -78,6 +79,19 @@ export interface TurnLoopDeps {
   readonly buildSpec: (session: SessionModel) => Omit<SessionSpec, "resume">;
   /** Sink for turn-stream rows (e.g. the `context_rebuilt` marker). Optional. */
   readonly emit?: (row: TurnRow) => void;
+  /**
+   * Capture a completed turn's raw harness events for the DISPLAY transcript (issue-set B).
+   * The turn loop is the single serialized writer that already sees every event and persists
+   * the cursor, so it is the natural capture point. The sink (wired in the composition root)
+   * projects these events to transcript rows — R19-scrubbing at that choke point using `cwd` —
+   * and appends them to the durable transcript store. Optional: absent ⇒ no transcript captured
+   * (the session read stays honest-empty), the harness CLI remains canonical either way.
+   */
+  readonly recordTranscript?: (input: {
+    readonly sessionId: string;
+    readonly cwd: string;
+    readonly events: readonly HarnessEvent[];
+  }) => void;
 }
 
 export interface TurnResult {
@@ -109,10 +123,15 @@ async function runTurnToOutcome(
   session: HarnessSession,
   prompt: string,
   onRow?: (row: TurnRow) => void,
+  captureEvents?: (events: readonly HarnessEvent[]) => void,
 ): Promise<SessionOutcome> {
+  // Collect every event for the display-transcript capture. `session.ended` returns early, so
+  // the capture runs in `finally` — a completed OR failed turn still records what it ran.
+  const collected: HarnessEvent[] = [];
   try {
     await session.send({ prompt });
     for await (const event of session.events) {
+      collected.push(event);
       if (event.kind === "compact_boundary") {
         onRow?.({
           kind: "compact_boundary",
@@ -127,6 +146,7 @@ async function runTurnToOutcome(
     return { status: "failed", error: STREAM_ENDED_WITHOUT_TERMINAL };
   } finally {
     await session.close();
+    if (captureEvents && collected.length > 0) captureEvents(collected);
   }
 }
 
@@ -208,8 +228,13 @@ export class SessionTurnLoop {
       ...this.deps.buildSpec(session),
       ...(resume === undefined ? {} : { resume }),
     };
+    const record = this.deps.recordTranscript;
+    const capture = record
+      ? (events: readonly HarnessEvent[]) =>
+          record({ sessionId: session.id, cwd: spec.cwd, events })
+      : undefined;
     return this.deps.port
       .createSession(spec)
-      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt, this.deps.emit));
+      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt, this.deps.emit, capture));
   }
 }
