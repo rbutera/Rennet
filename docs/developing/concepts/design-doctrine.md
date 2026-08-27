@@ -205,7 +205,7 @@ Before a UI change is done, check:
 | Mobile theme projection | `apps/mobile/src/theme` |
 | Palette and contrast checks | `packages/theme/src/theme.test.ts`, `packages/theme/src/palette-sync.test.ts` |
 | Component ramp checks | `packages/ui/src/design-ramp.test.ts`, `packages/app-ui/src/design-ramp.test.ts` |
-| Kit-not-hand-rolled toggle check | `eslint.config.mjs` (`NO_HANDROLLED_TOGGLE`), `packages/app-ui/src/toggle-lint.test.ts` |
+| Kit-not-hand-rolled toggle check | `eslint.config.mjs` (`rennet/no-handrolled-toggle`), `packages/app-ui/src/toggle-lint.test.ts` |
 
 See [the lens pipeline](./lens-pipeline.md) for the five lens boards and
 [hand off and the exits](./handoff-and-exits.md) for the living drafts and the
