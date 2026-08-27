@@ -26,10 +26,10 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 4. Deep-links and the pill mount
 
-- [ ] 4.1 Deep-link (Objective D, reconciliation 3): read `?file=` through `useSearch` + `readSessionQuery(new URLSearchParams(...)).file` — NO `next/navigation`. On mount, scroll the `diff-<file>` card into view (mount-only; the param stays shareable). The filename links that TARGET this (`?view=diff&file=`) are minted by the C4 `counterpart`/C5 surfaces — C6 owns the receiving jump.
-- [ ] 4.2 `packages/app-ui/src/review/diff-view-container.tsx`: read the active patchset's files via `diff-source.ts` from the resolved review, render `<DiffView files={…} />`. Handle an empty/absent patchset with an honest one-line state, never a blank frame.
-- [ ] 4.3 Mount for `?view=diff` (Objective A, reconciliation 6): add a minimal `?view` switch in `app/review-workspace-route.tsx` — `diff` renders the container, every other value keeps the existing honest placeholder (board = C5). Written so C5 slots its board branch beside this one. This is the only edit outside `review/`.
-- [ ] 4.4 `review/index.ts`: barrel `DiffView` (+ props type). DOM test: selecting `diff` (or a `?view=diff` route) mounts the surface; a `?view=diff&file=<path>` deep link renders and scrolls the named card. Cluster gate green. Commit.
+- [x] 4.1 Deep-link (Objective D, reconciliation 3): read `?file=` through `useSearch` + `readSessionQuery(new URLSearchParams(...)).file` — NO `next/navigation`. On mount, scroll the `diff-<file>` card into view (mount-only; the param stays shareable). The filename links that TARGET this (`?view=diff&file=`) are minted by the C4 `counterpart`/C5 surfaces — C6 owns the receiving jump.
+- [x] 4.2 `packages/app-ui/src/review/diff-view-container.tsx`: read the active patchset's files via `diff-source.ts` from the resolved review, render `<DiffView files={…} />`. Handle an empty/absent patchset with an honest one-line state, never a blank frame.
+- [x] 4.3 Mount for `?view=diff` (Objective A, reconciliation 6): add a minimal `?view` switch in `app/review-workspace-route.tsx` — `diff` renders the container, every other value keeps the existing honest placeholder (board = C5). Written so C5 slots its board branch beside this one. This is the only edit outside `review/`.
+- [x] 4.4 `review/index.ts`: barrel `DiffView` (+ props type). DOM test: selecting `diff` (or a `?view=diff` route) mounts the surface; a `?view=diff&file=<path>` deep link renders and scrolls the named card. Cluster gate green. Commit.
 
 ## 5. Fence, barrels, docs
 
