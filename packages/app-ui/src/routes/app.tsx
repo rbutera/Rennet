@@ -1,10 +1,11 @@
 import type { RennetBridge } from "@rennet/protocol";
-import { Redirect, Route, Router, Switch, useLocation } from "wouter";
+import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider, useCommand } from "../data";
 import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
+import { NewChatView } from "../project/new-chat-view";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
@@ -63,8 +64,17 @@ function LoadError({ slug, error }: { readonly slug: string; readonly error: unk
   );
 }
 
-/** The front-door entry (interim, reconciliation 2) — reads the real projects list. */
+/** The `/new-chat` route. With a `?project=` it is the C12 New Chat view (target
+ *  picker + composer for that project); without one, the interim front-door list. */
 function NewChatScreen() {
+  const search = useSearch();
+  const project = new URLSearchParams(search).get("project");
+  if (project) return <NewChatView projectId={project} />;
+  return <NewChatFrontDoor />;
+}
+
+/** The front-door entry (interim, reconciliation 2) — reads the real projects list. */
+function NewChatFrontDoor() {
   const { data, pending } = useCommand("projects.list", {});
   const [, navigate] = useLocation();
   return (
