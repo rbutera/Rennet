@@ -68,8 +68,12 @@ function fakeClaudePort(captures: ClaudeCapture[], body: () => unknown): Harness
     }): Promise<HarnessSession> => {
       captures.push({ model: options.model, outputSchema: options.outputSchema });
       const session = {
-        send: async () => {},
-        close: async () => {},
+        send: async () => {
+          /* the fake accepts the prompt and answers via events */
+        },
+        close: async () => {
+          /* nothing to release */
+        },
         events: (async function* () {
           yield {
             kind: "session.ended",
@@ -91,7 +95,7 @@ function fakeCodexExecutor(captures: CodexExecRequest[], body: () => unknown) {
   };
 }
 
-const workerBody = (): unknown => ({
+const workerBody = (): Record<string, unknown> => ({
   statements: [
     {
       subject: "a",
@@ -104,7 +108,7 @@ const workerBody = (): unknown => ({
   ],
 });
 
-const verifyBody = (): unknown => ({ verdicts: [], crossCutting: [] });
+const verifyBody = (): Record<string, unknown> => ({ verdicts: [], crossCutting: [] });
 
 describe("knowledge swarm — council-routed contract (no live model)", () => {
   it("both-scenario: workers land on codex (luna/low), verify on claude (sonnet-5), each with its schema", async () => {
