@@ -180,6 +180,69 @@ describe("buildElementDiffs", () => {
     expect(diffs["seq-el"]?.diff).toBe(WIDGET);
   });
 
+  // #250 real-shape PROVENANCE (ported to B2's local-shape fixtures): a proposal chunk
+  // element whose anchor is NOT a floor chunk, mapped through the admitted docs onto the
+  // floor hunk. The workspace mark index (packages/app-ui) reads this ownership signal off
+  // the diff, so the geometry-complete occurrence AND the SOLE ownership are pinned on
+  // buildElementDiffs' output. `buildCanvas` (the old producer that once built the real
+  // sequence canvas here) died with the Board rebuild (#489, B2); the element + admitted
+  // shapes are hand-built, but the element-diffs assertions are carried as-is.
+  it("REAL SHAPE (#250): the regrouped floor hunk maps onto the proposal element, geometry-complete and sole-owned", () => {
+    const floorHunkId = decomposition.hunks[0]?.id ?? "";
+    expect(floorHunkId).not.toBe("");
+    const element: TestElement = {
+      elementKey: "seq-250",
+      docId: "pdoc",
+      anchor: "rennet:chunk/agent-group",
+      kind: "chunk",
+      title: "Agent group",
+    };
+    const set = setWith("sequence", [element]);
+    const admitted: AdmittedDocument[] = [
+      {
+        docId: "pdoc",
+        docType: "decomposition.proposal",
+        body: {
+          chunks: [
+            {
+              chunkId: "agent-group",
+              title: "Agent group",
+              hunkIds: [floorHunkId],
+              angles: ["sequence"],
+              rationale: "regrouped",
+            },
+          ],
+          edges: [],
+          readingOrder: ["agent-group"],
+          residue: [],
+        },
+      },
+    ];
+    const diffs = buildElementDiffs(set, decomposition, patchset, admitted);
+    // Pin the COMPLETE occurrence descriptor (ranges included), derived from the source
+    // hunk, not just its id. A producer GEOMETRY drift (a `newStart + 10` that keeps the
+    // id) reddens here rather than agreeing with a hard-coded-geometry UI fixture. #250 r2 F3.
+    const floorHunk = decomposition.hunks.find((hunk) => hunk.id === floorHunkId);
+    expect(floorHunk).toBeDefined();
+    const occurrence = diffs["seq-250"]?.hunkOccurrences
+      .flat()
+      .find((occ) => occ.id === floorHunkId);
+    expect(occurrence).toEqual({
+      id: floorHunkId,
+      oldStart: floorHunk?.oldStart,
+      oldLines: floorHunk?.oldLines,
+      newStart: floorHunk?.newStart,
+      newLines: floorHunk?.newLines,
+    });
+    // The proposal element is the SOLE owner of the floor hunk — a producer change that
+    // duplicated the hunk onto a second element's diff would redden here rather than slip
+    // past a single-element check. #250 r2 F3.
+    const ownersOfFloorHunk = Object.entries(diffs)
+      .filter(([, entry]) => entry?.hunkOccurrences.flat().some((occ) => occ.id === floorHunkId))
+      .map(([key]) => key);
+    expect(ownersOfFloorHunk).toEqual(["seq-250"]);
+  });
+
   // Oversize-split fragments: two decomposition hunks (splitOf fragments) that
   // both fall inside ONE raw `@@` hunk must render that parent hunk ONCE (the
   // `seen` dedupe), never twice.
