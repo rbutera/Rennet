@@ -1,7 +1,13 @@
 import type { DraftBoard, DraftElement, LensKind } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SCAFFOLD_GLOBS, type LintContext, type LintHunk, lint } from "./lint";
+import {
+  DEFAULT_SCAFFOLD_GLOBS,
+  type LintContext,
+  type LintHunk,
+  lint,
+  lintReviewDraft,
+} from "./lint";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -80,10 +86,15 @@ describe("lint — the clean control", () => {
   });
 });
 
-// ── Parse-time (S1/S2 — the frozen schema retires the rule) ──────────────────
-
-describe("parse-time schema constraints (S1/S2 — R17 at parse time, F1)", () => {
-  it("rejects a `code` element kind with ZodError-shaped issues (no code bytes)", () => {
+// ── Parse-time KIND palette (S1/S2 — the frozen schema owns the kind gate) ────
+//
+// Parse-time enforces the KIND palette: an out-of-palette kind (`code`, or the
+// curation-only `message`/`thread`) is rejected by `DraftBoardSchema`. It does
+// NOT screen code bytes inside a *legal* prose element — that is the
+// `no-code-bytes` lint rule's lane (P6: the earlier claim that R17 is enforced
+// at parse time overclaimed; the parse gate only bars the illegal kinds).
+describe("parse-time KIND palette (S1/S2)", () => {
+  it("rejects an out-of-palette `code` element kind with ZodError-shaped issues", () => {
     const result = parseDraft({ elements: [{ id: "x", kind: "code", data: { author } }] });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected rejection");
@@ -96,6 +107,15 @@ describe("parse-time schema constraints (S1/S2 — R17 at parse time, F1)", () =
       elements: [{ id: "m", kind: "message", data: { author, role: "question" } }],
     });
     expect(result.ok).toBe(false);
+  });
+
+  it("does NOT reject code bytes in a legal prose element — that is the lint rule's lane (P6)", () => {
+    const result = parseDraft({
+      elements: [
+        { id: "p", kind: "prose", data: { author, markdown: "```ts\nconst x = 1;\n```" } },
+      ],
+    });
+    expect(result.ok).toBe(true); // parse accepts it; `no-code-bytes` lint fires on it
   });
 });
 
@@ -313,39 +333,54 @@ describe("skippedHunks rules (S3 / L11 / L14 / L15)", () => {
   });
 });
 
-// ── L17 report-coherent (round_outcome) ──────────────────────────────────────
+// ── L17 report-coherent (round_outcome, the report seat) ─────────────────────
 
-describe("report-coherent (L17 / R57)", () => {
+describe("report-coherent (L17 / R57 — the report seat, S1)", () => {
   const outcome = (id: string, status: string, ask: { ref: string; text: string }, note: string) =>
     el(id, "round_outcome", { status, ask, note });
+  // The report is its OWN lint target, not a lens board (S1) — kindAllowlist
+  // admits round_outcome only here. Every ask carries a non-empty `ref` because
+  // the frozen `askRefSchema.ref` is `.min(1)`; a `beyond` item is distinguished
+  // by its `note`, not by an (impossible) empty ref.
+  const reportCtx = ctx({ lens: "report" });
 
-  it("fires when round items are out of sort order", () => {
-    const bad = board(
-      [
-        outcome("o1", "beyond", { ref: "", text: "" }, "Hardened the token path proactively."),
-        outcome("o2", "addressed", { ref: "a1", text: "fix auth" }, "Done."),
-      ],
-      { skippedHunks: [] },
-    );
-    expect(rulesHit(lint(bad, ctx()))).toContain("report-coherent");
+  it("a schema-valid round report (with `beyond`) passes lint end to end", () => {
+    const ok = board([
+      outcome("o1", "addressed", { ref: "a1", text: "fix auth" }, "Done, verified in the diff."),
+      outcome(
+        "o2",
+        "beyond",
+        { ref: "beyond:token-path", text: "hardened token path" },
+        "Added a guard the asks did not request.",
+      ),
+    ]);
+    expect(lint(ok, reportCtx)).toEqual([]);
   });
 
-  it("fires when a `beyond` item carries an ask ref instead of a note", () => {
-    const bad = board([outcome("o1", "beyond", { ref: "a1", text: "x" }, "")], {
-      skippedHunks: [],
-    });
-    expect(rulesHit(lint(bad, ctx()))).toContain("report-coherent");
+  it("fires when round items are out of sort order", () => {
+    const bad = board([
+      outcome("o1", "beyond", { ref: "beyond:tok", text: "x" }, "Hardened the token path."),
+      outcome("o2", "addressed", { ref: "a1", text: "fix auth" }, "Done."),
+    ]);
+    expect(rulesHit(lint(bad, reportCtx))).toContain("report-coherent");
+  });
+
+  it("fires when a `beyond` item carries no accounting note", () => {
+    const bad = board([outcome("o1", "beyond", { ref: "beyond:tok", text: "x" }, "  ")]);
+    expect(rulesHit(lint(bad, reportCtx))).toContain("report-coherent");
   });
 
   it("passes well-sorted, status-coherent items", () => {
-    const ok = board(
-      [
-        outcome("o1", "addressed", { ref: "a1", text: "fix auth" }, "Done."),
-        outcome("o2", "beyond", { ref: "", text: "" }, "Also hardened the refresh path."),
-      ],
-      { skippedHunks: [] },
-    );
-    expect(rulesHit(lint(ok, ctx()))).not.toContain("report-coherent");
+    const ok = board([
+      outcome("o1", "addressed", { ref: "a1", text: "fix auth" }, "Done."),
+      outcome(
+        "o2",
+        "beyond",
+        { ref: "beyond:refresh", text: "refresh path" },
+        "Also hardened the refresh path.",
+      ),
+    ]);
+    expect(rulesHit(lint(ok, reportCtx))).not.toContain("report-coherent");
   });
 });
 
@@ -357,7 +392,7 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
 
   it("fires when the shall text is not a verbatim substring of the source", () => {
     const scoped = ctx({
-      lens: "decisions" as LensKind,
+      lens: "design" as LensKind,
       artifactText: "The system SHALL refresh the token before classifying an error.",
     });
     expect(rulesHit(lint(reqBoard("The system SHALL rotate tokens hourly"), scoped))).toContain(
@@ -367,7 +402,7 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
 
   it("passes verbatim (whitespace-normalized) shall text", () => {
     const scoped = ctx({
-      lens: "decisions" as LensKind,
+      lens: "design" as LensKind,
       artifactText: "The system SHALL refresh the token before classifying an error.",
     });
     expect(rulesHit(lint(reqBoard("The system SHALL refresh the token"), scoped))).not.toContain(
@@ -376,7 +411,7 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   });
 
   it("degrades to no-op when the caller supplies no artifact text", () => {
-    const scoped = ctx({ lens: "decisions" as LensKind });
+    const scoped = ctx({ lens: "design" as LensKind });
     expect(rulesHit(lint(reqBoard("anything at all"), scoped))).not.toContain(
       "requirement-verbatim",
     );
@@ -427,5 +462,316 @@ describe("kind-allowlist (per-lens kinds)", () => {
     );
     const scoped = ctx({ lens: "design" as LensKind });
     expect(rulesHit(lint(ok, scoped))).not.toContain("kind-allowlist");
+  });
+
+  // Spec-P1: the Design prompt renders BOTH requirement regions AND the
+  // implementer's stated `decision` calls, so both are legal typed kinds there.
+  it("admits both `decision` and `requirement` on the Design board (Spec-P1)", () => {
+    const ok = board(
+      [
+        el("d", "decision", {
+          statement: "Injected the clock instead of reading it module-level.",
+          why: "Testability.",
+          evidence: ["c1"],
+          alternatives: ["A module-level `Date.now`."],
+        }),
+        el("r", "requirement", {
+          shall: "The system SHALL refresh first",
+          coverage: "met",
+          trace: ["c1"],
+        }),
+        codeRef("c1", "src/auth.ts", 11, 12),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ lens: "design" as LensKind });
+    expect(rulesHit(lint(ok, scoped))).not.toContain("kind-allowlist");
+  });
+
+  it("rejects a `requirement` on the Decisions board (requirement is Design's, S1)", () => {
+    const bad = board([el("r", "requirement", { shall: "x", coverage: "gap", trace: [] })], {
+      skippedHunks: [],
+    });
+    const scoped = ctx({ lens: "decisions" as LensKind });
+    expect(rulesHit(lint(bad, scoped))).toContain("kind-allowlist");
+  });
+});
+
+// ── S3/S8 — GitHub #L citations + inverted ranges ────────────────────────────
+
+describe("citation range + form (S3 / S8)", () => {
+  it("citation-well-formed fires on a GitHub `#L` citation (colon-less form)", () => {
+    const bad = board([el("p", "prose", { markdown: "See src/auth.ts#L11 for the guard." })], {
+      skippedHunks: [],
+    });
+    expect(rulesHit(lint(bad, ctx()))).toContain("citation-well-formed");
+  });
+
+  it("citation-resolves fires on an inverted prose range (999-1)", () => {
+    const bad = board([el("p", "prose", { markdown: "See src/auth.ts:999-1 there." })], {
+      skippedHunks: [],
+    });
+    expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
+  });
+
+  it("citation-resolves fires on an inverted typed code_ref span", () => {
+    const bad = board(
+      [
+        el("c", "code_ref", {
+          patchset_id: "ps-1",
+          path: "src/auth.ts",
+          side: "head",
+          start_line: 20,
+          end_line: 5,
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
+  });
+});
+
+// ── S2 — patchset identity + side-specific inventories ───────────────────────
+
+describe("citation identity (S2 — patchset id + side)", () => {
+  it("fires when a code_ref cites a different patchset than the board's", () => {
+    const bad = board(
+      [
+        el("c", "code_ref", {
+          patchset_id: "other-ps",
+          path: "src/auth.ts",
+          side: "head",
+          start_line: 11,
+          end_line: 12,
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ patchsetId: "ps-1" });
+    expect(rulesHit(lint(bad, scoped))).toContain("citation-resolves");
+  });
+
+  it("resolves a base-side ref against the BASE inventory, not head", () => {
+    // The file exists at 200 lines on head but only 8 on base; a base-side ref to
+    // line 40 overruns base though it fits head — checking the head inventory
+    // would wrongly pass it.
+    const bad = board(
+      [
+        el("c", "code_ref", {
+          patchset_id: "ps-1",
+          path: "src/auth.ts",
+          side: "base",
+          start_line: 40,
+          end_line: 40,
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ patchsetId: "ps-1", baseFiles: new Map([["src/auth.ts", 8]]) });
+    expect(rulesHit(lint(bad, scoped))).toContain("citation-resolves");
+  });
+
+  it("passes a base-side ref that fits the base inventory", () => {
+    const ok = board(
+      [
+        el("c", "code_ref", {
+          patchset_id: "ps-1",
+          path: "src/auth.ts",
+          side: "base",
+          start_line: 3,
+          end_line: 5,
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ patchsetId: "ps-1", baseFiles: new Map([["src/auth.ts", 8]]) });
+    expect(rulesHit(lint(ok, scoped))).not.toContain("citation-resolves");
+  });
+});
+
+// ── L12 (P2) — noise_verdict.hunk element reference resolves ──────────────────
+
+describe("noise_verdict.hunk resolves (L12 / P2)", () => {
+  const noiseCtx = ctx({ lens: "noise" as LensKind });
+
+  it("fires when a noise verdict's `hunk` references no element on the board", () => {
+    const bad = board(
+      [
+        el("n", "noise_verdict", {
+          hunk: "ghost",
+          verdict: "noise",
+          reason: "Lockfile churn from the dep bump.",
+          judge: "llm",
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    expect(rulesHit(lint(bad, noiseCtx))).toContain("citation-resolves");
+  });
+
+  it("fires when a noise verdict's `hunk` references a non-code_ref element", () => {
+    const bad = board(
+      [
+        el("n", "noise_verdict", {
+          hunk: "p",
+          verdict: "noise",
+          reason: "Lockfile churn from the dep bump.",
+          judge: "llm",
+        }),
+        el("p", "prose", { markdown: "not a code ref" }),
+      ],
+      { skippedHunks: [] },
+    );
+    expect(rulesHit(lint(bad, noiseCtx))).toContain("citation-resolves");
+  });
+
+  it("passes when a noise verdict's `hunk` points at a real code_ref", () => {
+    const ok = board(
+      [
+        el("n", "noise_verdict", {
+          hunk: "c1",
+          verdict: "noise",
+          reason: "Lockfile churn from the dep bump.",
+          judge: "llm",
+        }),
+        codeRef("c1", "src/util.ts", 1, 3),
+      ],
+      { skippedHunks: [] },
+    );
+    expect(rulesHit(lint(ok, noiseCtx))).not.toContain("citation-resolves");
+  });
+});
+
+// ── S6 (P4) — decision grounding ─────────────────────────────────────────────
+
+describe("decision-grounded (S6 / P4)", () => {
+  const designCtx = ctx({ lens: "design" as LensKind });
+  const decision = (over: Record<string, unknown>) =>
+    board(
+      [
+        el("d", "decision", {
+          statement: "Injected the clock.",
+          why: "Testability.",
+          evidence: ["c1"],
+          alternatives: ["A module-level `Date.now`."],
+          ...over,
+        }),
+        codeRef("c1", "src/auth.ts", 11, 12),
+      ],
+      { skippedHunks: [] },
+    );
+
+  it("fires when a decision has no evidence anchors", () => {
+    expect(rulesHit(lint(decision({ evidence: [] }), designCtx))).toContain("decision-grounded");
+  });
+
+  it("fires when a decision names no alternative", () => {
+    expect(rulesHit(lint(decision({ alternatives: [] }), designCtx))).toContain(
+      "decision-grounded",
+    );
+  });
+
+  it("passes a decision that cites evidence and names an alternative", () => {
+    expect(rulesHit(lint(decision({}), designCtx))).not.toContain("decision-grounded");
+  });
+});
+
+// ── L16 (P5) — requirement order follows the source artifact ──────────────────
+
+describe("requirement-order (L16 / P5)", () => {
+  const source =
+    "R1: The system SHALL authenticate the user. R2: The system SHALL refresh the token.";
+  const req = (id: string, shall: string) =>
+    el(id, "requirement", { shall, coverage: "met", trace: [] });
+
+  it("fires when requirements are rendered out of the artifact's order", () => {
+    const bad = board(
+      [
+        req("r1", "The system SHALL refresh the token"),
+        req("r2", "The system SHALL authenticate the user"),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
+    expect(rulesHit(lint(bad, scoped))).toContain("requirement-order");
+  });
+
+  it("passes requirements rendered in the artifact's order", () => {
+    const ok = board(
+      [
+        req("r1", "The system SHALL authenticate the user"),
+        req("r2", "The system SHALL refresh the token"),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
+    expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-order");
+  });
+
+  it("degrades to a no-op without the source artifact", () => {
+    const bad = board(
+      [
+        req("r1", "The system SHALL refresh the token"),
+        req("r2", "The system SHALL authenticate the user"),
+      ],
+      { skippedHunks: [] },
+    );
+    expect(rulesHit(lint(bad, ctx({ lens: "design" as LensKind })))).not.toContain(
+      "requirement-order",
+    );
+  });
+});
+
+// ── P3 — the review-draft register entry point (review-draft-voice.md) ────────
+
+describe("lintReviewDraft (P3 — living-review register: L3/L4/L7)", () => {
+  const files = new Map([["src/auth.ts", 200]]);
+
+  it("L3 fires on a bare-basename citation in the draft", () => {
+    const hit = rulesHit(lintReviewDraft("I checked auth.ts:11 and it holds.", { files }));
+    expect(hit).toContain("citation-well-formed");
+  });
+
+  it("L4 fires on an unresolvable citation in the draft", () => {
+    const hit = rulesHit(lintReviewDraft("See src/ghost.ts:11 for the fix.", { files }));
+    expect(hit).toContain("citation-resolves");
+  });
+
+  it("L7 fires when the draft names the pipeline's machinery", () => {
+    const hit = rulesHit(lintReviewDraft("The lens agents flagged the token path.", { files }));
+    expect(hit).toContain("process-vocabulary");
+  });
+
+  it("L7 does NOT fire on the reviewer speaking of their own review", () => {
+    const hit = rulesHit(
+      lintReviewDraft("In this review I focus on the refresh path at src/auth.ts:11.", { files }),
+    );
+    expect(hit).not.toContain("process-vocabulary");
+  });
+
+  it("passes a clean, well-cited review draft", () => {
+    expect(lintReviewDraft("The refresh guard at src/auth.ts:11 is correct.", { files })).toEqual(
+      [],
+    );
+  });
+});
+
+// ── S4 — root-level scaffold paths (glob `**/` matches zero dirs) ─────────────
+
+describe("scaffold glob root-level (S4)", () => {
+  it("fires on a root-level openspec path (no leading directory)", () => {
+    const bad = board([codeRef("c", "openspec/changes/x/proposal.md", 1, 1)], { skippedHunks: [] });
+    const scoped = ctx({ files: new Map([["openspec/changes/x/proposal.md", 10]]) });
+    expect(rulesHit(lint(bad, scoped))).toContain("scaffold-is-noise-lane");
+  });
+
+  it("fires on a root-level lockfile and `.openspec.yaml`", () => {
+    const lock = board([codeRef("c", "pnpm-lock.yaml", 1, 1)], { skippedHunks: [] });
+    const lockCtx = ctx({ files: new Map([["pnpm-lock.yaml", 9000]]) });
+    expect(rulesHit(lint(lock, lockCtx))).toContain("scaffold-is-noise-lane");
+
+    const stamp = board([codeRef("c", ".openspec.yaml", 1, 1)], { skippedHunks: [] });
+    const stampCtx = ctx({ files: new Map([[".openspec.yaml", 5]]) });
+    expect(rulesHit(lint(stamp, stampCtx))).toContain("scaffold-is-noise-lane");
   });
 });

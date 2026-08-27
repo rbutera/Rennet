@@ -11,29 +11,33 @@
  * Consumes the B03-frozen `protocol/src/board` seam verbatim — `DraftBoard`,
  * `DraftElement`, `Violation` (`{ ruleId, elementRef, message }`) — and never
  * re-models it (reconciliation 2). The `ctx` is plain data the caller assembles
- * (patchset hunk list, file→line-count index, the review lens); assembling it is
- * the cluster-5 runtime's job, not lint's.
+ * (patchset hunk list, side-specific file→line-count indices, the review lens);
+ * assembling it is the cluster-5 runtime's job, not lint's.
  *
  * ── Reconciliation with #493's rule catalog (recorded in proposal.md ledger) ──
  * #493 was written against a RICHER imagined schema (a `finding.fix` field,
- * `finding.details`, `finding.body`, `requirement.status`, drafter-authored
- * section `counts`, a `noise-group` kind, a `thread` kind). B03 froze a leaner
- * 13-kind schema. So:
- *   - S1/S2 (no thread/message/`code` kind) are enforced STRUCTURALLY by
- *     `DraftBoardSchema` at parse time — not lint rules here (`parseDraft`
- *     rejects them with ZodError issues; see lint.test.ts).
+ * `finding.details`, `requirement.status`, drafter-authored section `counts`, a
+ * `noise-group` kind, a `thread` kind). B03 froze a leaner 13-kind schema. So:
+ *   - S1/S2-as-kind (no thread/message/`code` kind) are enforced STRUCTURALLY by
+ *     `DraftBoardSchema` at parse time — `parseDraft` rejects an out-of-palette
+ *     KIND with ZodError issues (see lint.test.ts). Code bytes inside a *legal*
+ *     prose element are NOT a parse-time concern — the `no-code-bytes` lint rule
+ *     below owns them.
  *   - L18 (cross-lens every-hunk coverage) runs at COMPOSITION → cluster 4.
  *   - L19 (typed-data immutability across post-process) is a POST-PASS assertion
  *     → cluster 3.
- *   - L5 (fix-in-body), L6 (body wall), L8 (drafter counts), L12 (noise-group
- *     edges), L16 (requirement-order) reference fields/kinds the frozen schema
- *     does not carry; L12 folds into `citation-resolves` on `noise_verdict.hunk`.
- * The residue — the per-draft rules whose fields DO exist — is implemented here.
+ *   - The residue — the per-draft rules whose fields DO exist — is implemented
+ *     here. S6 (decision grounding) and S8 (citation range order) DO have frozen
+ *     fields and are enforced; only S4/S5/S7 + L5/L6/L8 reference truly-absent
+ *     fields and stay parked (see the ledger for each named field).
  */
 
 import type { DraftBoard, DraftElement, HunkId, LensKind, Violation } from "@rennet/protocol";
 
 // ── The lint context (plain data the caller assembles) ───────────────────────
+
+/** The lint target: one of the five lens boards, or the round-report seat. */
+export type LintTarget = LensKind | "report";
 
 /** One patchset hunk, with the new-image range citations resolve against. */
 export interface LintHunk {
@@ -46,19 +50,27 @@ export interface LintHunk {
 }
 
 /**
- * Lint input, per board. `files` maps a repo-relative path to its line count at
- * the review commit (citation resolution); `hunks` is the collation producer's
- * hunk list (coverage rules); `patchsetIdentifiers` is the R20 allowlist built
- * from the changed files (identifiers the change itself defines, so the process-
- * vocabulary screen does not fire on the reviewed code's own nouns).
+ * Lint input, per board. `files` maps a repo-relative path to its line count on
+ * the HEAD (post-image) side at the review commit; `baseFiles`, when supplied,
+ * is the BASE (pre-image) inventory a `side: "base"` `code_ref` resolves against
+ * (S2 — a base-side citation checked against the head inventory is a false
+ * pass/fail). `patchsetId`, when supplied, is the one patchset this board may
+ * cite: a `code_ref` naming any other patchset is a cross-patchset leak.
+ * `hunks` is the collation producer's hunk list (coverage rules);
+ * `patchsetIdentifiers` is the R20 allowlist built from the changed files.
  */
 export interface LintContext {
-  readonly lens: LensKind;
+  readonly lens: LintTarget;
   readonly hunks: readonly LintHunk[];
+  /** HEAD-side (post-image) path → line-count inventory. */
   readonly files: ReadonlyMap<string, number>;
+  /** BASE-side (pre-image) inventory; `side: "base"` code_refs resolve here (S2). */
+  readonly baseFiles?: ReadonlyMap<string, number>;
+  /** The one patchset this board may cite; a code_ref on another is a leak (S2). */
+  readonly patchsetId?: string;
   readonly scaffoldGlobs?: readonly string[];
   readonly patchsetIdentifiers?: ReadonlySet<string>;
-  /** Source artifact text, when the caller supplies it — enables `requirement-verbatim`. */
+  /** Source artifact text, when the caller supplies it — enables `requirement-verbatim`/`-order`. */
   readonly artifactText?: string;
 }
 
@@ -76,12 +88,14 @@ export const DEFAULT_SCAFFOLD_GLOBS: readonly string[] = [
 ];
 
 /**
- * The typed domain kinds each lens owns. Shared structural kinds (`prose`,
- * `section`, `callout`, `annotation`, `code_ref`) are legal on every board; a
- * typed kind on the wrong board, or the report seat's `round_outcome` on any
- * lens board, is a lane violation. [extrapolated] from the lens prompts — the
- * rulings fix the intent (thread/message never from a drafter, S1), not the
- * exact per-lens list.
+ * The typed domain kinds each target owns. Shared structural kinds (`prose`,
+ * `section`, `callout`, `annotation`, `code_ref`) are legal everywhere; a typed
+ * kind on the wrong board is a lane violation. Grounded in the lens prompts
+ * (`packages/prompts`): the Design prompt renders BOTH requirement regions AND
+ * the implementer's stated `decision` calls (a projection the Decisions board
+ * shares), so Design admits `decision` + `requirement`; the Decisions prompt is
+ * decision-only. The report seat's `round_outcome` is legal ONLY on the report
+ * target and never on a lens board (S1).
  */
 const SHARED_KINDS: ReadonlySet<string> = new Set([
   "prose",
@@ -91,14 +105,20 @@ const SHARED_KINDS: ReadonlySet<string> = new Set([
   "code_ref",
 ]);
 const LENS_TYPED_KINDS: Readonly<Record<LensKind, readonly string[]>> = {
-  flagged: ["finding"],
-  decisions: ["decision", "requirement"],
+  design: ["decision", "requirement"],
   sequence: ["order_step"],
+  decisions: ["decision"],
+  flagged: ["finding"],
   noise: ["noise_verdict"],
-  design: [],
 };
+const REPORT_TYPED_KINDS: readonly string[] = ["round_outcome"];
 
-// ── Field extraction (frozen-schema aware) ───────────────────────────────────
+/** The typed kinds the target authors (the report seat, or a named lens). */
+function typedKindsFor(target: LintTarget): readonly string[] {
+  return target === "report" ? REPORT_TYPED_KINDS : LENS_TYPED_KINDS[target];
+}
+
+// ── Field extraction (frozen-schema aware, one field-role table) ─────────────
 
 interface Field {
   readonly elementId: string;
@@ -106,74 +126,43 @@ interface Field {
   readonly text: string;
 }
 
-/** Longform prose fields — the code-byte / dialogue / citation / remainder lane. */
-function proseFields(el: DraftElement): Field[] {
-  const id = el.id;
-  const d = el.data as Record<string, unknown>;
-  const out: Field[] = [];
-  const push = (field: string) => {
-    const v = d[field];
-    if (typeof v === "string" && v.length > 0) out.push({ elementId: id, field, text: v });
-  };
-  switch (el.kind) {
-    case "prose":
-      push("markdown");
-      break;
-    case "callout":
-      push("body");
-      break;
-    case "annotation":
-      push("body");
-      break;
-    case "finding":
-      push("concern");
-      break;
-    case "decision":
-      push("statement");
-      push("why");
-      break;
-    case "requirement":
-      push("shall");
-      break;
-    case "noise_verdict":
-      push("reason");
-      break;
-    case "round_outcome":
-      push("note");
-      break;
-  }
-  return out;
-}
-
 /**
- * Short structural fields — the process-vocabulary lane (R20). Body prose is NOT
- * lint's (#493 §5: post-process deletes a machinery sentence; lint can only
- * reject the whole element, and a body cannot lose a sentence without content).
+ * Per-kind field roles (S5 — one table, no duplicated kind-switch). `prose` is
+ * the longform lane (code-byte / dialogue / citation / remainder rules); a
+ * kind's `decision.statement` sits in BOTH because a decision statement is both
+ * longform prose and a short structural label. `structural` is the process-
+ * vocabulary lane (R20): titles and short labels, never body prose (#493 §5:
+ * lint can only reject a whole element, and a body cannot lose one machinery
+ * sentence without content — that is the post-process editor's lane).
  */
-function structuralFields(el: DraftElement): Field[] {
-  const id = el.id;
+const FIELD_ROLES: Readonly<
+  Record<string, { prose: readonly string[]; structural: readonly string[] }>
+> = {
+  prose: { prose: ["markdown"], structural: [] },
+  callout: { prose: ["body"], structural: ["variant"] },
+  annotation: { prose: ["body"], structural: [] },
+  finding: { prose: ["concern"], structural: [] },
+  decision: { prose: ["statement", "why"], structural: ["statement"] },
+  requirement: { prose: ["shall"], structural: [] },
+  noise_verdict: { prose: ["reason"], structural: [] },
+  round_outcome: { prose: ["note"], structural: [] },
+  section: { prose: [], structural: ["title"] },
+  order_step: { prose: [], structural: ["title"] },
+};
+
+function fieldsOf(el: DraftElement, role: "prose" | "structural"): Field[] {
+  const roles = FIELD_ROLES[el.kind];
+  if (roles === undefined) return [];
   const d = el.data as Record<string, unknown>;
   const out: Field[] = [];
-  const push = (field: string) => {
+  for (const field of roles[role]) {
     const v = d[field];
-    if (typeof v === "string" && v.length > 0) out.push({ elementId: id, field, text: v });
-  };
-  switch (el.kind) {
-    case "section":
-      push("title");
-      break;
-    case "order_step":
-      push("title");
-      break;
-    case "decision":
-      push("statement");
-      break;
-    case "callout":
-      push("variant");
-      break;
+    if (typeof v === "string" && v.length > 0) out.push({ elementId: el.id, field, text: v });
   }
   return out;
 }
+const proseFields = (el: DraftElement): Field[] => fieldsOf(el, "prose");
+const structuralFields = (el: DraftElement): Field[] => fieldsOf(el, "structural");
 
 const ref = (elementId: string, field?: string): string =>
   field === undefined ? elementId : `${elementId}/${field}`;
@@ -185,12 +174,120 @@ function withoutInlineCode(text: string): string {
   return text.replace(/`[^`]*`/g, " ");
 }
 
+/** Blank out the identifiers the changed files themselves define (R20 exemption 2). */
+function screenPatchsetIdentifiers(text: string, ids: ReadonlySet<string> | undefined): string {
+  if (ids === undefined) return text;
+  let out = text;
+  for (const id of ids) {
+    if (id.length > 0) out = out.split(id).join(" ");
+  }
+  return out;
+}
+
+// ── Shared prose checks (board fields AND the review-draft register reuse) ────
+
+/** Every `path:line(-line)?` citation mention in a prose string. */
+const CITATION = /(`?)([\w./@-]+\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?/g;
+/** The GitHub blob form `path#L12` / `path#L12-L15` — a bare basename or full path. */
+const GITHUB_CITATION = /([\w./@-]+\.[A-Za-z0-9]+)#L\d+(?:-L?\d+)?/gi;
+
+/** L3 — one prose string's citations are full repo-relative `path:line`. */
+function checkCitationWellFormed(text: string, elementRef: string): Violation[] {
+  const out: Violation[] = [];
+  for (const m of text.matchAll(CITATION)) {
+    const path = m[2] ?? "";
+    const absolute = path.startsWith("/") || path.startsWith("~");
+    const basenameOnly = !path.includes("/");
+    if (absolute || basenameOnly) {
+      out.push({
+        ruleId: "citation-well-formed",
+        elementRef,
+        message: `R25/R26: cite \`${path}:${m[3]}\` as a repo-relative path:line — no leading / or ~, no bare basename.`,
+      });
+    }
+  }
+  // The GitHub `#L` form never carries a colon, so `CITATION` never sees it — screen it directly.
+  for (const m of text.matchAll(GITHUB_CITATION)) {
+    out.push({
+      ruleId: "citation-well-formed",
+      elementRef,
+      message: `R25/R26: \`${m[0]}\` is a GitHub \`#L\` citation — cite a repo-relative \`path:line\` instead.`,
+    });
+  }
+  return out;
+}
+
+/** L4/L8 — one prose string's `path:line` citations resolve (existence + range order). */
+function checkCitationResolves(
+  text: string,
+  files: ReadonlyMap<string, number>,
+  elementRef: string,
+): Violation[] {
+  const out: Violation[] = [];
+  for (const m of text.matchAll(CITATION)) {
+    const path = m[2] ?? "";
+    // Malformed citations (absolute / bare basename) are L3's lane, not L4's.
+    if (!path.includes("/") || path.startsWith("/") || path.startsWith("~")) continue;
+    const start = Number(m[3]);
+    const end = m[4] === undefined ? start : Number(m[4]);
+    if (end < start) {
+      out.push({
+        ruleId: "citation-resolves",
+        elementRef,
+        message: `Citation \`${path}:${start}-${end}\` is inverted: the end line precedes the start.`,
+      });
+      continue;
+    }
+    const count = files.get(path);
+    if (count === undefined) {
+      out.push({
+        ruleId: "citation-resolves",
+        elementRef,
+        message: `Citation \`${path}:${m[3]}\` does not resolve: no such file at the review commit.`,
+      });
+    } else if (start < 1 || end > count) {
+      out.push({
+        ruleId: "citation-resolves",
+        elementRef,
+        message: `Citation \`${path}:${m[3]}\` overruns the file (${count} lines).`,
+      });
+    }
+  }
+  return out;
+}
+
+const PROCESS_VOCAB =
+  /\b(?:lens(?:es)?|boards?|agents?|seats?|drafts?|orchestrator|unslop|post-process|the review process|this review|the pipeline)\b/i;
+/** L7 — one string screened for machinery vocabulary (R20), with the F2/F3 exemptions. */
+function checkProcessVocab(
+  text: string,
+  ctx: Pick<LintContext, "patchsetIdentifiers">,
+  elementRef: string,
+  pattern: RegExp = PROCESS_VOCAB,
+): Violation[] {
+  const screened = screenPatchsetIdentifiers(withoutInlineCode(text), ctx.patchsetIdentifiers);
+  return pattern.test(screened)
+    ? [
+        {
+          ruleId: "process-vocabulary",
+          elementRef,
+          message:
+            "R20: this names the machinery (lens/board/agent/seat/draft/…). Name the domain object, not the pipeline. Backtick a real identifier to exempt it.",
+        },
+      ]
+    : [];
+}
+
 // ── The rules (each: pure, over one draft + ctx) ─────────────────────────────
 
 type Rule = (draft: DraftBoard, ctx: LintContext) => Violation[];
 
 const FENCE = /```/;
-const INDENTED_BLOCK = /^ {4,}\S.*(?:\r?\n {4,}\S.*)+/m; // ≥2 indented lines
+// ponytail: a run of ≥2 four-space-indented lines. A markdown list/paragraph
+// continuation is also four-space-indented, so a deliberately-indented prose
+// block can false-positive; the ceiling is acceptable because board prose is
+// short and fenced blocks are the real target. Upgrade path: track list context.
+const INDENTED_BLOCK = /^ {4,}\S.*(?:\r?\n {4,}\S.*)+/m;
 /**
  * L1 — no fenced or indented code block in prose (R17/R26). A fence is three
  * backticks and an indented block is ≥2 lines; a single-backtick inline
@@ -233,79 +330,88 @@ const noDialogue: Rule = (draft) =>
     }),
   );
 
-/** Every `path:line(-line)?` citation mention in a prose string. */
-const CITATION = /(`?)([\w./@-]+\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?/g;
 /** L3 — prose citations are full repo-relative `path:line`, never absolute/GitHub/basename. */
 const citationWellFormed: Rule = (draft) =>
   draft.elements.flatMap((el) =>
-    proseFields(el).flatMap(({ elementId, field, text }) => {
-      const out: Violation[] = [];
-      for (const m of text.matchAll(CITATION)) {
-        const path = m[2] ?? "";
-        const end = (m.index ?? 0) + m[0].length;
-        const absolute = path.startsWith("/") || path.startsWith("~");
-        const githubForm = /#l/i.test(text.slice(end, end + 2));
-        const basenameOnly = !path.includes("/");
-        if (absolute || githubForm || basenameOnly) {
-          out.push({
-            ruleId: "citation-well-formed",
-            elementRef: ref(elementId, field),
-            message: `R25/R26: cite \`${path}:${m[3]}\` as a repo-relative path:line — no leading / or ~, no #L form, no bare basename.`,
-          });
-        }
-      }
-      return out;
-    }),
+    proseFields(el).flatMap(({ elementId, field, text }) =>
+      checkCitationWellFormed(text, ref(elementId, field)),
+    ),
   );
 
-/** L4 — every citation resolves against the worktree index (prose + typed code_ref). */
+/**
+ * L4/L12/S2/S8 — every citation resolves against the right side's worktree index.
+ * Prose `path:line` mentions resolve against the HEAD inventory; typed `code_ref`
+ * elements resolve against their `side`'s inventory, must name the one expected
+ * patchset (S2), and must not invert their line span (S8). A `noise_verdict`'s
+ * `hunk` element reference (L12) must point at a real `code_ref` on this board.
+ */
 const citationResolves: Rule = (draft, ctx) => {
   const out: Violation[] = [];
-  const lineOk = (path: string, line: number): boolean => {
-    const count = ctx.files.get(path);
-    return count !== undefined && line >= 1 && line <= count;
-  };
+  const byId = new Map(draft.elements.map((el) => [el.id, el]));
   for (const el of draft.elements) {
-    // Prose path:line mentions.
+    // Prose path:line mentions — HEAD side.
     for (const { elementId, field, text } of proseFields(el)) {
-      for (const m of text.matchAll(CITATION)) {
-        const path = m[2] ?? "";
-        // Malformed citations (absolute / bare basename) are L3's lane, not L4's.
-        if (!path.includes("/") || path.startsWith("/") || path.startsWith("~")) continue;
-        const start = Number(m[3]);
-        const end = m[4] === undefined ? start : Number(m[4]);
-        if (!ctx.files.has(path)) {
-          out.push({
-            ruleId: "citation-resolves",
-            elementRef: ref(elementId, field),
-            message: `Citation \`${path}:${m[3]}\` does not resolve: no such file at the review commit.`,
-          });
-        } else if (!lineOk(path, end)) {
-          out.push({
-            ruleId: "citation-resolves",
-            elementRef: ref(elementId, field),
-            message: `Citation \`${path}:${m[3]}\` overruns the file (${ctx.files.get(path)} lines).`,
-          });
-        }
-      }
+      out.push(...checkCitationResolves(text, ctx.files, ref(elementId, field)));
     }
-    // Typed code_ref elements (also covers L12's noise_verdict.hunk edge).
+    // Typed code_ref elements: patchset identity + side inventory + range order.
     if (el.kind === "code_ref") {
-      const d = el.data as { path?: unknown; start_line?: unknown; end_line?: unknown };
+      const d = el.data as {
+        path?: unknown;
+        side?: unknown;
+        patchset_id?: unknown;
+        start_line?: unknown;
+        end_line?: unknown;
+      };
       const path = typeof d.path === "string" ? d.path : "";
+      const side = d.side === "base" ? "base" : "head";
       const startLine = typeof d.start_line === "number" ? d.start_line : 0;
       const endLine = typeof d.end_line === "number" ? d.end_line : startLine;
-      if (!ctx.files.has(path)) {
+      const cited = typeof d.patchset_id === "string" ? d.patchset_id : "";
+      if (ctx.patchsetId !== undefined && cited !== ctx.patchsetId) {
         out.push({
           ruleId: "citation-resolves",
           elementRef: ref(el.id),
-          message: `code_ref cites \`${path}\` — no such file at the review commit.`,
+          message: `code_ref cites patchset \`${cited}\`, not this board's \`${ctx.patchsetId}\` — cross-patchset citations do not resolve.`,
         });
-      } else if (!lineOk(path, endLine)) {
+        continue;
+      }
+      if (endLine < startLine) {
         out.push({
           ruleId: "citation-resolves",
           elementRef: ref(el.id),
-          message: `code_ref \`${path}:${startLine}-${endLine}\` overruns the file (${ctx.files.get(path)} lines).`,
+          message: `code_ref \`${path}:${startLine}-${endLine}\` is inverted: the end line precedes the start.`,
+        });
+        continue;
+      }
+      // Resolve against the cited side's inventory. A base-side ref with no base
+      // inventory supplied degrades to unchecked (never checked against HEAD).
+      const inventory = side === "base" ? ctx.baseFiles : ctx.files;
+      if (inventory === undefined) continue;
+      const count = inventory.get(path);
+      if (count === undefined) {
+        out.push({
+          ruleId: "citation-resolves",
+          elementRef: ref(el.id),
+          message: `code_ref cites \`${path}\` (${side}) — no such file at the review commit.`,
+        });
+      } else if (startLine < 1 || endLine > count) {
+        out.push({
+          ruleId: "citation-resolves",
+          elementRef: ref(el.id),
+          message: `code_ref \`${path}:${startLine}-${endLine}\` (${side}) overruns the file (${count} lines).`,
+        });
+      }
+    }
+    // L12 — a noise_verdict's `hunk` is an element reference to a code_ref on this board.
+    if (el.kind === "noise_verdict") {
+      const hunkRef = (el.data as { hunk?: unknown }).hunk;
+      const target = typeof hunkRef === "string" ? byId.get(hunkRef) : undefined;
+      if (target === undefined || target.kind !== "code_ref") {
+        out.push({
+          ruleId: "citation-resolves",
+          elementRef: ref(el.id, "hunk"),
+          message:
+            "A noise verdict's `hunk` must reference a `code_ref` element on this board; it points at nothing citable.",
         });
       }
     }
@@ -313,33 +419,12 @@ const citationResolves: Rule = (draft, ctx) => {
   return out;
 };
 
-const PROCESS_VOCAB =
-  /\b(?:lens(?:es)?|boards?|agents?|seats?|drafts?|orchestrator|unslop|post-process|the review process|this review|the pipeline)\b/i;
 /** L7 — no machinery vocabulary in structural fields (R20), with the F2 exemptions. */
 const processVocabulary: Rule = (draft, ctx) =>
   draft.elements.flatMap((el) =>
-    structuralFields(el).flatMap(({ elementId, field, text }) => {
-      // Exemption 1: a match inside backticks is a code token, not narration.
-      let screened = withoutInlineCode(text);
-      // Exemption 2: identifiers the changed files themselves define are the
-      // change's vocabulary, not the pipeline's — blank them out.
-      if (ctx.patchsetIdentifiers) {
-        for (const id of ctx.patchsetIdentifiers) {
-          if (id.length > 0) screened = screened.split(id).join(" ");
-        }
-      }
-      if (PROCESS_VOCAB.test(screened)) {
-        return [
-          {
-            ruleId: "process-vocabulary",
-            elementRef: ref(elementId, field),
-            message:
-              "R20: a structural field names the machinery (lens/board/agent/seat/draft/…). Name the domain object, not the pipeline. Backtick a real identifier to exempt it.",
-          },
-        ];
-      }
-      return [];
-    }),
+    structuralFields(el).flatMap(({ elementId, field, text }) =>
+      checkProcessVocab(text, ctx, ref(elementId, field)),
+    ),
   );
 
 const REMAINDER =
@@ -362,13 +447,26 @@ const noRemainderNarration: Rule = (draft) =>
   );
 
 function matchesGlob(path: string, glob: string): boolean {
-  // Minimal glob: `**` → any run (incl. /), `*` → any run without /. Split on
-  // `**` first so the two wildcards never collide (no sentinel needed).
+  // Minimal glob. Split on `**` FIRST so the single-`*` pass never corrupts a
+  // `**` run. A `**/` boundary (the next segment starts with `/`) becomes an
+  // optional directory prefix `(?:.*/)?` matching ZERO or more dirs, so a
+  // root-level `openspec/x` matches `**/openspec/**`. A bare `**` becomes `.*`
+  // (any run incl. `/`); a single `*` becomes `[^/]*` (a run without `/`).
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  const body = escaped
-    .split("**")
-    .map((seg) => seg.replace(/\*/g, "[^/]*"))
-    .join(".*");
+  const parts = escaped.split("**");
+  let body = "";
+  for (let i = 0; i < parts.length; i += 1) {
+    let seg = parts[i] ?? "";
+    if (i > 0) {
+      if (seg.startsWith("/")) {
+        body += "(?:.*/)?";
+        seg = seg.slice(1);
+      } else {
+        body += ".*";
+      }
+    }
+    body += seg.replace(/\*/g, "[^/]*");
+  }
   return new RegExp(`^${body}$`).test(path);
 }
 /** L10 — scaffold stamps are the Noise lane (R22): only Noise cites a scaffold path. */
@@ -486,16 +584,63 @@ const noTaughtAndSkipped: Rule = (draft, ctx) => {
   }));
 };
 
+// ── Decisions grounding (S6 — the frozen decision carries evidence + alternatives) ──
+
+/**
+ * S6 — a `decision` names at least one real alternative and cites at least one
+ * evidence anchor. The Decisions prompt's own test: "if you cannot name a viable
+ * alternative, it is not a decision, it is just code"; evidence is where the call
+ * is visible. Both `evidence` and `alternatives` are frozen `string[]` fields, so
+ * the emptiness residue IS enforceable (proposal ledger P4). `requirement.trace`
+ * is deliberately NOT required non-empty — an empty trace is an honest
+ * unimplemented obligation (Design prompt: "Zero hunks renders as unimplemented").
+ */
+const decisionGrounded: Rule = (draft) =>
+  draft.elements.flatMap((el) => {
+    if (el.kind !== "decision") return [];
+    const d = el.data as { evidence?: unknown; alternatives?: unknown };
+    const out: Violation[] = [];
+    const evidence = Array.isArray(d.evidence) ? d.evidence : [];
+    const alternatives = Array.isArray(d.alternatives) ? d.alternatives : [];
+    if (evidence.length === 0) {
+      out.push({
+        ruleId: "decision-grounded",
+        elementRef: ref(el.id, "evidence"),
+        message:
+          "A decision cites where the call is visible: `evidence` is empty. Anchor it to the code (a code_ref).",
+      });
+    }
+    if (alternatives.length === 0) {
+      out.push({
+        ruleId: "decision-grounded",
+        elementRef: ref(el.id, "alternatives"),
+        message:
+          "If you cannot name a viable alternative it is not a decision, it is just code: `alternatives` is empty.",
+      });
+    }
+    return out;
+  });
+
 // ── Report-seat coherence (round_outcome) ────────────────────────────────────
 
 const STATUS_ORDER = ["addressed", "partial", "untouched", "beyond"] as const;
-/** L17 — round-report items are status-sorted; a `beyond` item names work, not an ask. */
+/**
+ * L17 — round-report items are status-sorted; a `beyond` item is real self-
+ * directed work, so it carries a `note` accounting for it (report prompt: "for
+ * `beyond`, say why the worker's detour was or was not sound").
+ *
+ * Reconciliation (proposal ledger, S1): the frozen `askRefSchema.ref` is
+ * `.min(1)` and `ask` is a REQUIRED field on `roundOutcomeData`, so a schema-
+ * valid `beyond` round_outcome cannot carry an empty `ask.ref`. R57's original
+ * "leave `ask.ref` empty" is therefore unenforceable against the frozen schema;
+ * lint enforces the enforceable half — a non-empty `note` — and the sort order.
+ */
 const reportCoherent: Rule = (draft) => {
   const out: Violation[] = [];
   const outcomes = draft.elements.filter((el) => el.kind === "round_outcome");
   let prevRank = -1;
   for (const el of outcomes) {
-    const d = el.data as { status?: unknown; ask?: unknown; note?: unknown };
+    const d = el.data as { status?: unknown; note?: unknown };
     const status = typeof d.status === "string" ? d.status : "";
     const rank = STATUS_ORDER.indexOf(status as (typeof STATUS_ORDER)[number]);
     if (rank !== -1 && rank < prevRank) {
@@ -507,15 +652,13 @@ const reportCoherent: Rule = (draft) => {
     }
     if (rank !== -1) prevRank = rank;
     if (status === "beyond") {
-      const ask = d.ask as { ref?: unknown } | undefined;
       const note = typeof d.note === "string" ? d.note : "";
-      const askRef = ask && typeof ask.ref === "string" ? ask.ref : "";
-      if (askRef.length > 0 || note.trim().length === 0) {
+      if (note.trim().length === 0) {
         out.push({
           ruleId: "report-coherent",
           elementRef: ref(el.id),
           message:
-            "R57: a `beyond` item names work the round did on its own — leave `ask.ref` empty and give a `note`.",
+            "R57: a `beyond` item names work the round did on its own — account for it in a `note`.",
         });
       }
     }
@@ -545,9 +688,41 @@ const requirementVerbatim: Rule = (draft, ctx) => {
   });
 };
 
-/** Kind allowlist — no message/thread/off-lens typed kind, nor the report seat's kind. */
+/**
+ * L16 — requirements render in the source artifact's own order (Design prompt:
+ * "Do not renumber or reorder requirements; keep the artifact's own addressing").
+ * Enforced via L13's offsets (proposal ledger P5): a verbatim `shall`'s position
+ * in the artifact must be non-decreasing down the board. Degrades to a no-op
+ * without the source text; a `shall` not found verbatim is L13's lane, skipped here.
+ */
+const requirementOrder: Rule = (draft, ctx) => {
+  if (ctx.artifactText === undefined) return [];
+  const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
+  const haystack = normalize(ctx.artifactText);
+  const out: Violation[] = [];
+  let prevOffset = -1;
+  for (const el of draft.elements) {
+    if (el.kind !== "requirement") continue;
+    const shall = (el.data as { shall?: unknown }).shall;
+    if (typeof shall !== "string" || shall.length === 0) continue;
+    const offset = haystack.indexOf(normalize(shall));
+    if (offset === -1) continue; // not verbatim — L13 owns it
+    if (offset < prevOffset) {
+      out.push({
+        ruleId: "requirement-order",
+        elementRef: ref(el.id, "shall"),
+        message:
+          "Requirements keep the artifact's own order: this `shall` appears before a requirement already rendered above it.",
+      });
+    }
+    prevOffset = offset;
+  }
+  return out;
+};
+
+/** Kind allowlist — no message/thread/off-target typed kind, nor a foreign lens's. */
 const kindAllowlist: Rule = (draft, ctx) => {
-  const allowed = new Set<string>([...SHARED_KINDS, ...LENS_TYPED_KINDS[ctx.lens]]);
+  const allowed = new Set<string>([...SHARED_KINDS, ...typedKindsFor(ctx.lens)]);
   return draft.elements.flatMap((el) =>
     allowed.has(el.kind)
       ? []
@@ -555,14 +730,20 @@ const kindAllowlist: Rule = (draft, ctx) => {
           {
             ruleId: "kind-allowlist",
             elementRef: ref(el.id),
-            message: `Kind \`${el.kind}\` is not one the ${ctx.lens} lens authors (S1: thread/message are curation-only; typed kinds belong to their home lens).`,
+            message: `Kind \`${el.kind}\` is not one the ${ctx.lens} ${
+              ctx.lens === "report" ? "seat" : "lens"
+            } authors (S1: thread/message are curation-only; typed kinds belong to their home lens/seat).`,
           },
         ],
   );
 };
 
-/** The per-draft rule registry, in evaluation order. */
-export const LINT_RULES: readonly Rule[] = [
+/**
+ * The per-draft rule registry for a LENS board, in evaluation order. The report
+ * seat runs {@link REPORT_RULES} instead — it carries no coverage/skipped-hunks
+ * obligation, so the lens coverage rules do not apply to it.
+ */
+export const LENS_RULES: readonly Rule[] = [
   kindAllowlist,
   noCodeBytes,
   noDialogue,
@@ -575,15 +756,71 @@ export const LINT_RULES: readonly Rule[] = [
   skipReasonSpecific,
   skippedHunksResolve,
   noTaughtAndSkipped,
+  decisionGrounded,
   reportCoherent,
   requirementVerbatim,
+  requirementOrder,
+];
+
+/**
+ * The round-report seat's rule set (S1). The report is not a lens board: it has
+ * no hunk coverage or `skippedHunks` obligation, so only the prose/kind screens
+ * plus report coherence apply.
+ */
+export const REPORT_RULES: readonly Rule[] = [
+  kindAllowlist,
+  noCodeBytes,
+  noDialogue,
+  citationWellFormed,
+  citationResolves,
+  processVocabulary,
+  reportCoherent,
 ];
 
 /**
  * Lint a draft board against its context. Pure. Returns every {@link Violation}
- * across all rules; an empty array is a clean board. The retry channel that
- * feeds violations back to the drafter is cluster 3 (`validate.ts`).
+ * across all rules; an empty array is a clean board. The report seat runs a
+ * report-specific rule set; every lens runs {@link LENS_RULES}. The retry
+ * channel that feeds violations back to the drafter is cluster 3 (`validate.ts`).
  */
 export function lint(draft: DraftBoard, ctx: LintContext): Violation[] {
-  return LINT_RULES.flatMap((rule) => rule(draft, ctx));
+  const rules = ctx.lens === "report" ? REPORT_RULES : LENS_RULES;
+  return rules.flatMap((rule) => rule(draft, ctx));
+}
+
+// ── The review-draft register (P3 — review-draft-voice.md gets lint coverage) ─
+
+/**
+ * The living-review draft (`review-draft-voice.md`) is authored write-through as
+ * one prose text, not a board of typed elements — there is no post-process stage
+ * between the orchestrator and the text the reviewer reads. It still owes the
+ * citation and machinery screens (packet: the process-vocabulary screen applies
+ * to the write-through authoring register too). This is that entry point.
+ *
+ * The register's machinery screen is NARROWER than a board's: the draft IS the
+ * review, so it may speak of "this review" — it may not name the pipeline's
+ * parts (lenses, boards, seats, drafts, agents, the pipeline).
+ */
+const REGISTER_MACHINERY =
+  /\b(?:lens(?:es)?|boards?|agents?|seats?|drafts?|orchestrator|unslop|post-process|pipeline)\b/i;
+
+export interface RegisterLintContext {
+  /** HEAD-side path → line-count inventory, for citation resolution (L4). */
+  readonly files: ReadonlyMap<string, number>;
+  /** The R20 identifier allowlist built from the changed files (L7 exemption). */
+  readonly patchsetIdentifiers?: ReadonlySet<string>;
+}
+
+/**
+ * Lint the review-draft register text: L3 (citations well-formed), L4 (citations
+ * resolve), L7 (no machinery). Pure. The whole text is the machinery lane here,
+ * not just short labels — the draft never mentions the pipeline's parts.
+ */
+export function lintReviewDraft(text: string, ctx: RegisterLintContext): Violation[] {
+  const at = "/draft";
+  return [
+    ...checkCitationWellFormed(text, at),
+    ...checkCitationResolves(text, ctx.files, at),
+    ...checkProcessVocab(text, ctx, at, REGISTER_MACHINERY),
+  ];
 }
