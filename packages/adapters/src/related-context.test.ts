@@ -405,6 +405,65 @@ describe("retrieveRelatedContext", () => {
     }
   });
 
+  it("follows one hop out of tracker payloads, not just GitHub bodies", async () => {
+    process.env.B07_TEST_JIRA_TOKEN = "j";
+    process.env.B07_TEST_LINEAR_TOKEN = "l";
+    try {
+      const fetchJson: JsonFetcher = async (url, init) => {
+        if (init.method === "GET") {
+          // The JIRA description names a GitHub issue AND a configured Linear key.
+          const description = url.includes("PROJ-1")
+            ? "see rbutera/rennet#7 and ENG-9 for the rest"
+            : "";
+          return { fields: { summary: "jira item", status: { name: "Open" }, description } };
+        }
+        return {
+          data: { issue: { title: "linear item", description: "no more links", state: {} } },
+        };
+      };
+      const gh = canned({
+        "api repos/rbutera/rennet/issues/7/comments": JSON.stringify([]),
+        "api repos/rbutera/rennet/issues/7": JSON.stringify({
+          title: "Hop target",
+          state: "open",
+          body: "PROJ-99 would be a second hop", // must NOT be followed (one hop total)
+          html_url: "https://github.com/rbutera/rennet/issues/7",
+        }),
+      });
+      const result = await retrieveRelatedContext(
+        { prBody: "PROJ-1 covers this" },
+        {
+          gh,
+          repo: { owner: "rbutera", name: "rennet" },
+          now,
+          fetchJson,
+          trackerConfig: {
+            jira: {
+              baseUrl: "https://jira.example",
+              tokenEnvVar: "B07_TEST_JIRA_TOKEN",
+              projectPrefixes: ["PROJ"],
+            },
+            linear: {
+              baseUrl: "https://api.linear.app/graphql",
+              tokenEnvVar: "B07_TEST_LINEAR_TOKEN",
+              projectPrefixes: ["ENG"],
+            },
+          },
+        },
+      );
+      expect(result.items.map((item) => item.id).sort()).toEqual([
+        "github:rbutera/rennet#7",
+        "jira:PROJ-1",
+        "linear:ENG-9",
+      ]);
+      // PROJ-99 sat inside a hop-fetched body: one hop total, never followed.
+      expect(result.items.some((item) => item.id.includes("PROJ-99"))).toBe(false);
+    } finally {
+      delete process.env.B07_TEST_JIRA_TOKEN;
+      delete process.env.B07_TEST_LINEAR_TOKEN;
+    }
+  });
+
   it("applies enrichment trims, meters an exhausted budget as overage, never refuses", async () => {
     const gh = canned({ ...issue(7, "keep me"), ...issue(8, "drop me") });
     const budget = createInvocationBudget(0); // exhausted from the start

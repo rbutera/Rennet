@@ -472,6 +472,8 @@ interface TrackerFetchOutcome {
   raw?: RawContextPayload;
   failure?: RefFailure;
   missing?: MissingConfigFact;
+  /** The fetched body text, un-truncated — link-hop extraction input. */
+  hopText?: string;
 }
 
 /** Fetch one JIRA issue via configured REST (`/rest/api/2/issue/<key>`). */
@@ -518,6 +520,7 @@ async function fetchJiraKey(
         fetchedAt,
       }),
       raw: { id, tracker: "jira", payload },
+      hopText: fields.description ?? "",
     };
   } catch (cause) {
     return {
@@ -584,6 +587,7 @@ async function fetchLinearKey(
         fetchedAt,
       }),
       raw: { id, tracker: "linear", payload },
+      hopText: issue.description ?? "",
     };
   } catch (cause) {
     return { failure: { id, ...failureOf(cause) } };
@@ -674,24 +678,40 @@ export async function retrieveRelatedContext(
     return [result.value.body, ...result.value.comments];
   };
 
-  // Hop 0: every extracted ref. Hop 1: refs found inside fetched GitHub bodies.
+  // Hop 0: every extracted ref. Hop 1: refs found inside ANY fetched body —
+  // GitHub, JIRA, and Linear payloads all contribute candidates, followed once
+  // through the same visited sets (one hop total: hop fetches feed no further
+  // extraction).
+  const fetchedTracker = new Set<string>();
+  const fetchTracker = async (ref: TrackerKeyRef): Promise<string[]> => {
+    if (fetchedTracker.has(ref.key)) return [];
+    fetchedTracker.add(ref.key);
+    const outcome = await fetchTrackerKey(ref, config, fetchJson, fetchedAt);
+    if (outcome.item) items.set(outcome.item.id, outcome.item);
+    if (outcome.raw) raw.push(outcome.raw);
+    if (outcome.failure) failures.push(outcome.failure);
+    if (outcome.missing) missingConfig.push(outcome.missing);
+    return outcome.hopText ? [outcome.hopText] : [];
+  };
+
   const hopTexts: string[] = [];
   for (const ref of refs) {
     if (ref.kind === "github") {
       hopTexts.push(...(await fetchGithub(ref, ref.provenance.source)));
       continue;
     }
-    const outcome = await fetchTrackerKey(ref, config, fetchJson, fetchedAt);
-    if (outcome.item) items.set(outcome.item.id, outcome.item);
-    if (outcome.raw) raw.push(outcome.raw);
-    if (outcome.failure) failures.push(outcome.failure);
-    if (outcome.missing) missingConfig.push(outcome.missing);
+    hopTexts.push(...(await fetchTracker(ref)));
   }
   if (hopTexts.length > 0) {
     const hopRefs = extractRefs({ commitMessages: hopTexts }, options);
     for (const ref of hopRefs) {
-      if (ref.kind !== "github") continue; // tracker keys one hop out: config story unchanged
-      await fetchGithub(ref, "link-hop");
+      if (ref.kind === "github") {
+        await fetchGithub(ref, "link-hop");
+      } else if (ref.tracker !== "unknown") {
+        // Configured tracker keys one hop out fetch too; unconfigured hop keys
+        // stay out (hop prose is low-signal — the config story is unchanged).
+        await fetchTracker(ref);
+      }
     }
   }
 
