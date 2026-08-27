@@ -153,6 +153,51 @@ matching adapter, and records the observed result. A registered job or protocol
 type without a composed producer remains an available contract, not shipped
 review behavior.
 
+## Command routing reads one registry
+
+The review path above surfaces model output. A second kind of routing decides
+which command runs when a client, the ⌘K menu, or the orchestrator asks for one.
+That routing reads a single table: the command registry in
+`packages/protocol/src/commands/index.ts`. Every row is keyed by a stable command
+id and carries the id's argument schema, output schema, label, and an `exposure`
+record. Three consumers read that one table; none keeps its own list.
+
+```mermaid
+flowchart LR
+  registry["Command registry\n(protocol/commands)"] --> map["Dispatch map\nserver/dispatch/"]
+  registry --> tools["app_* agent tools\nserver/agent-tools.ts"]
+  registry --> menu["Command menu / sidebar\n(app UI)"]
+  map --> handler["Family handler runs"]
+  tools -->|exposure.agent| turn["Orchestrator turn"]
+```
+
+**Dispatch map.** `packages/server/src/dispatch/` binds a
+`Map<commandId, handler>` from the registry, one module per command family
+(`app`, `attention`, `device`, `flagged`, `fs`, `github`, `harness`, `noise`,
+`openspec`, `pairing`, `patchset`, `project`, `projects`, `publish`, `repository`,
+`review`, `settings`). The map is the only router; it replaced a single
+2,357-line `switch (name)`. A compile-time exhaustiveness check fails to type-check
+if any registry command has no handler, and a runtime test enumerates the map's
+keys against the registry's command ids and asserts the two sets diff empty — the
+map serves every command the switch did. An unregistered id fails exactly as the
+switch's `default` did; there is no new gate on the path.
+
+**Agent tools.** `packages/server/src/agent-tools.ts` derives the orchestrator's
+`app_*` in-process SDK tools by iterating the registry for rows where
+`exposure.agent` is true. One row yields one tool: name `app_<id>` (dots
+flattened to underscores), args schema and description from the row, and a `run`
+that dispatches the command id. The surface is a pure projection of the flag —
+flipping a row into `AGENT_EXPOSED` (in `protocol/commands`) makes its tool appear
+with no edit here. There is no per-tool allow or deny list (Rule Zero). The
+whiteboard five stay HTTP MCP tools (`WhiteboardClient`, #455-locked names); they
+are not registry ids, so they are structurally absent from this loop.
+
+`exposure.agent` is the only per-row datum that gates the agent surface. The v1
+inventory covers project add and list, review capture and open-PR, and the
+settings ops. Session-scoped tools (list and open session) wait on their
+`session.*` commands; a client-locus `navigate` command does not exist in the
+registry yet, so it is left unbound rather than stubbed.
+
 ## Code map
 
 | Concern | Owner |
@@ -160,6 +205,9 @@ review behavior.
 | RSP envelope, registry, anchors, and validator | `packages/protocol/src/delta/rsp.ts` |
 | Body schemas and semantic checks | `packages/protocol/src/delta/bodies.ts` |
 | Shared RSP and lineage types | `packages/protocol/src/delta/` and `packages/protocol/src/domain.ts` |
+| Command registry (one table, three readers) | `packages/protocol/src/commands/index.ts` |
+| Dispatch map (per-family command modules) | `packages/server/src/dispatch/` |
+| `app_*` agent tool surface | `packages/server/src/agent-tools.ts` |
 | Base instructions and prompt assembly | `packages/prompts/src/index.ts` |
 | Harness-turn adapter used by core jobs | `packages/core/src/harness-run-turn.ts` |
 | Model Council catalog and resolution | `packages/core/src/model-council.ts` |
