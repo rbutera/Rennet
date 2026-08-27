@@ -101,6 +101,14 @@ export const GenerationSchema = z.object({
 export type Generation = z.infer<typeof GenerationSchema>;
 
 /**
+ * The honest no-mint marker for a dispatch-only round's generation fields. A round
+ * that ran a work-order but regenerated NO boards (the record-only path) has no minted
+ * generation and no report board; both generation fields carry this marker to say so
+ * explicitly, rather than a fabricated generation id or a board id pointing at nothing.
+ */
+export const ROUND_NO_REGEN = "no-regen";
+
+/**
  * The rounds-ledger row (#462's #486 R57 ripple): what one work-order round
  * dispatched and what came back.
  */
@@ -110,10 +118,20 @@ export const RoundRecordSchema = z.object({
   workerCommitRange: z.object({ from: id, to: id }),
   /** Generation minted from the worker's commits; absent if nothing landed. */
   mintedPatchsetGeneration: id.optional(),
-  /** The generation whose boards this round reported against. */
+  /** The generation whose boards this round reported against (`ROUND_NO_REGEN` for a
+   *  dispatch round that regenerated no boards). */
   boardGeneration: id,
-  /** Board id of the round-report board (the `round_outcome` items live on it). */
+  /** Board id of the round-report board (the `round_outcome` items live on it), or
+   *  `ROUND_NO_REGEN` when the round drafted no report board. */
   reportBoard: id,
+  /** The write-turn's outcome. A dispatch round records this and the diff below; the
+   *  full-regeneration `runRound` path leaves them absent. */
+  outcome: z.enum(["completed", "failed"]).optional(),
+  /** The round's working-tree diff, captured via GitCheckpointStore — present on a
+   *  dispatch round, failed rounds included (their partial edits are on disk regardless). */
+  diff: z.string().optional(),
+  /** The paths the round changed (structural, from the checkpoint's path list). */
+  changedPaths: z.array(z.string()).optional(),
 });
 export type RoundRecord = z.infer<typeof RoundRecordSchema>;
 
