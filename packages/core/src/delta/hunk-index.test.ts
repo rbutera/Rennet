@@ -32,7 +32,7 @@ describe("buildHunkIndex", () => {
     const second = buildHunkIndex(patchset);
     expect(first.hunks).toHaveLength(2);
     expect(first.hunks.map((h) => h.id)).toEqual(second.hunks.map((h) => h.id));
-    expect(first.byId.get(first.hunks[0]!.id)).toEqual(first.hunks[0]);
+    expect(first.byId.get(first.hunks[0]?.id ?? "")).toEqual(first.hunks[0]);
   });
 
   it("changes the id when a body line changes", () => {
@@ -40,9 +40,9 @@ describe("buildHunkIndex", () => {
     const after = buildHunkIndex({
       files: [file("src/a.ts", PATCH.replace("const b = 3;", "const b = 9;"))],
     });
-    expect(after.hunks[0]!.id).not.toBe(before.hunks[0]!.id);
+    expect(after.hunks[0]?.id).not.toBe(before.hunks[0]?.id);
     // The untouched second hunk keeps its id — identity is per hunk, not per file.
-    expect(after.hunks[1]!.id).toBe(before.hunks[1]!.id);
+    expect(after.hunks[1]?.id).toBe(before.hunks[1]?.id);
   });
 
   it("flags every hunk of a truncated patch lossy, with ids still minted", () => {
@@ -53,7 +53,7 @@ describe("buildHunkIndex", () => {
       expect(hunk.lossy).toBe(true);
       expect(hunk.id).toMatch(/^[0-9a-f]{64}$/);
     }
-    expect(buildHunkIndex({ files: [file("src/a.ts", PATCH)] }).hunks[0]!.lossy).toBe(false);
+    expect(buildHunkIndex({ files: [file("src/a.ts", PATCH)] }).hunks[0]?.lossy).toBe(false);
   });
 
   it("yields no hunks and does not throw on empty and binary files", () => {
@@ -69,9 +69,9 @@ describe("buildHunkIndex", () => {
 
   it("carries the verbatim header, body, and both spans", () => {
     const [first] = buildHunkIndex({ files: [file("src/a.ts", PATCH)] }).hunks;
-    expect(first!.header).toBe("@@ -1,3 +1,3 @@");
-    expect(first!.body).toEqual([" const a = 1;", "-const b = 2;", "+const b = 3;"]);
-    expect(first!.spans).toEqual({
+    expect(first?.header).toBe("@@ -1,3 +1,3 @@");
+    expect(first?.body).toEqual([" const a = 1;", "-const b = 2;", "+const b = 3;"]);
+    expect(first?.spans).toEqual({
       old: { start: 1, lines: 3 },
       new: { start: 1, lines: 3 },
     });
