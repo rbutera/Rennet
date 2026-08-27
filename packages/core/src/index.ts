@@ -43,6 +43,7 @@ export * from "./handoff-loop";
 export * from "./harness";
 export * from "./harness-conformance";
 export * from "./harness-run-turn";
+export * from "./harness-transcript";
 export * from "./invocation-budget";
 export * from "./knowledge";
 export * from "./lineage-matcher";

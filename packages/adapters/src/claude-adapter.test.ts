@@ -488,3 +488,25 @@ describe("ClaudeAdapter session", () => {
     expect(ended.outcome.lastAssistantMessageAnchor).toBeUndefined();
   });
 });
+
+describe("normalizeClaudeFrame: thinking / reasoning lane (issue-set B)", () => {
+  it("maps an assistant `thinking` block to a thinking.message event", () => {
+    const frame = {
+      type: "assistant",
+      message: { content: [{ type: "thinking", thinking: "let me reason about this" }] },
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const thinking = events.find((e) => e.kind === "thinking.message");
+    expect(thinking?.kind === "thinking.message" && thinking.text).toBe("let me reason about this");
+  });
+
+  it("maps a stream_event thinking_delta to a thinking.delta (was a passthrough before B)", () => {
+    const frame = {
+      type: "stream_event",
+      event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "step" } },
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    expect(events[0]?.kind === "thinking.delta" && events[0].text).toBe("step");
+  });
+});

@@ -6,6 +6,8 @@ import {
   AskProjectionSchema,
   attentionFamilySchema,
   QuoteThreadSchema,
+  RoundRecordSchema,
+  SessionTranscriptSchema,
   StagedAskSchema,
   VerdictOverrideSchema,
 } from "../session";
@@ -1190,6 +1192,25 @@ const definitions = {
     input: z.object({ reviewId: z.string().min(1) }),
     output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
   },
+  // ── Session reads (B9/B10-deferred client seam) ─────────────────────────────
+  // The two client-facing SESSION READs B9 (the runtime) and B11 (the round WRITE)
+  // deferred. `session.transcript` is the chat dock's read (C07): the header trail +
+  // the historical transcript rows + the harness context figure. Honest-absent today —
+  // the harness owns the coding transcript (#466 res. 3), so Rennet has no server-side
+  // coding turns to return; `rows` is empty and `contextWindow` absent until a harness-
+  // transcript read port lands (a future capability, not a projection). The live ask
+  // threads arrive separately via `review.reattach`, already wired. `session.rounds` is
+  // the rounds ledger read (C09 cluster 8): the session's `RoundRecord[]`, projected from
+  // the live rounds runtime. Empty until a round RECORDS (`runRound`); the dispatch WRITE
+  // (B11) runs the workers but the record wiring is a separate deferred piece.
+  "session.transcript": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: SessionTranscriptSchema,
+  },
+  "session.rounds": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({ records: z.array(RoundRecordSchema) }),
+  },
   // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
   // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;
   // this is its host command). A one-shot worker (a FRESH model turn, never the
@@ -1236,7 +1257,8 @@ const definitions = {
  * the add-project tool was uncompletable. `navigate` (#480) stays UNEXPOSED and
  * unregistered: it is a client-locus command, and the dispatch table's compile-time
  * exhaustiveness guard would force a HOST handler for it — that is client execution,
- * deferred to C11. `session.*` likewise waits on its commands (B9). None invented. */
+ * deferred to C11. The `session.*` READS now exist (host-locus) but stay UNEXPOSED to the
+ * agent — they are client-surface reads, not app tools. None invented. */
 const AGENT_EXPOSED = new Set<string>([
   "repository.choose",
   "project.discover",
