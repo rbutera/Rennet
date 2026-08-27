@@ -10,7 +10,8 @@ function reviewState() {
   return useRennetStore.getState().review;
 }
 
-/** Select the contents of `el`, then fire the document mouseup the layer listens for. */
+/** Select the contents of `el`, then fire the mouseup ON `el` (a release inside the
+ *  prose, the real anchoring gesture — target is the selected element, not `document`). */
 function selectAndRelease(el: Element) {
   const range = document.createRange();
   range.selectNodeContents(el);
@@ -18,7 +19,7 @@ function selectAndRelease(el: Element) {
   selection?.removeAllRanges();
   selection?.addRange(range);
   act(() => {
-    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
 }
 
@@ -78,15 +79,17 @@ describe("ProseSelectionLayer — board-prose selection controls", () => {
     await user.click(getByText("Stage"));
     const [id] = Object.keys(reviewState().quoteThreads);
     expect(id).toBeDefined();
-    // The ask's anchor IS the thread id — one exit, not two.
-    expect(reviewState().stagedAsks[id as string]).toEqual({
-      anchor: id,
+    // The ask keeps the quoted span as source provenance AND claims the thread by id —
+    // distinct fields, so an exit tally counts the thread once without conflation.
+    expect(reviewState().stagedAsks[PROSE]).toEqual({
+      anchor: PROSE,
       type: "request-change",
       body: "guard the boundary",
+      threadId: id,
     });
   });
 
-  it("Escape and an outside click both dismiss the toolbar", () => {
+  it("Escape and a collapsed selection both dismiss the toolbar", () => {
     const { getByText, queryByText } = proseLayer();
     selectAndRelease(getByText(PROSE));
     expect(getByText("Comment")).toBeTruthy();
@@ -103,6 +106,21 @@ describe("ProseSelectionLayer — board-prose selection controls", () => {
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
     expect(queryByText("Comment")).toBeNull();
+  });
+
+  it("a release targeting outside the container dismisses even with a live selection", () => {
+    const { getByText, queryByText } = proseLayer();
+    selectAndRelease(getByText(PROSE));
+    expect(getByText("Comment")).toBeTruthy();
+    // A real outside click: mouseup targeted on <body> (outside the prose container),
+    // WITHOUT clearing the still-live internal selection.
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    expect(queryByText("Comment")).toBeNull();
+    // The selection was deliberately left intact — this proves the target check, not
+    // the collapsed-selection path.
+    expect(window.getSelection()?.isCollapsed).toBe(false);
   });
 
   it("flips the panel below the selection near the viewport top, above it otherwise", () => {

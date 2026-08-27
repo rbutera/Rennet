@@ -18,9 +18,16 @@ export type DispositionKind = "approve" | "request-change" | "comment" | "questi
 
 /** A staged ask against an anchor — the reviewer's pending request-change/comment/question. */
 export interface StagedAsk {
+  /** The ask's SOURCE anchor — a `path:line` code position, or the quoted prose span. */
   readonly anchor: string;
   readonly type: DispositionKind;
   readonly body: string;
+  /**
+   * The quote thread this ask CLAIMS, when it was minted alongside one (prose
+   * request-change). Kept distinct from `anchor` (the source provenance) so an exit
+   * tally counts the claimed thread once — via this ask — instead of twice.
+   */
+  readonly threadId?: string;
 }
 
 /** One message in a quote thread — the reviewer's, or the orchestrator's reply. */

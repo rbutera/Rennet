@@ -60,6 +60,13 @@ export function ProseSelectionLayer({
     function handleMouseUp(event: MouseEvent) {
       // Clicks inside the floating panel must not re-anchor or dismiss.
       if (panelRef.current?.contains(event.target as Node)) return;
+      // A release whose TARGET is outside the prose container dismisses — even if the
+      // browser kept the prior internal selection alive (which would otherwise re-anchor
+      // the toolbar on an outside click).
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        dismiss();
+        return;
+      }
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed || !containerRef.current) {
         dismiss();
@@ -118,10 +125,11 @@ export function ProseSelectionLayer({
     if (!anchor) return;
     const text = draft.trim();
     if (text.length === 0) return;
-    // Mint the thread, then stage an ask whose ANCHOR is the thread id — the ask claims
-    // the thread, so the exit count sees one item, not two.
+    // Mint the thread, then stage an ask that keeps the quoted span as its source
+    // provenance (`anchor`) AND names the thread it CLAIMS (`threadId`) — so the exit
+    // tally counts the claimed thread once, without conflating source with claim.
     const id = addQuoteComment(anchor.quote, text);
-    stageAsk({ anchor: id, type: "request-change", body: text });
+    stageAsk({ anchor: anchor.quote, type: "request-change", body: text, threadId: id });
     setFocusedThread(id);
     window.getSelection()?.removeAllRanges();
     dismiss();
