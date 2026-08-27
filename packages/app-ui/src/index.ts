@@ -115,7 +115,9 @@ export { CoverageMosaicView } from "./components/coverage";
 // `fs.listDir` so browsing works over a remote/WSL source with no native dialog.
 export { DirectoryBrowser } from "./components/directory-browser";
 export { FrontDoor } from "./components/front-door";
-export { SettingsScreen } from "./components/settings-screen";
+// The Archived surface (C10 §9): its own main-surface route, enriched in place on
+// C12's `project/archived-view.tsx`.
+export { ArchivedView } from "./project/archived-view";
 // The review layer (C4, #489): the shared machinery C5–C9 render — the one code
 // surface, the multi-site evidence viewer, the one line-comment editor, the prose
 // selection toolbar, the R45 markdown-subset renderer, reference chips, and the
@@ -149,6 +151,9 @@ export {
   RennetRouterApp,
   type RennetRouterAppProps,
 } from "./routes";
+// The Settings takeover (C10): the route-driven page directory replacing the deleted
+// one-file `components/settings-screen.tsx` (autopsy S2). See `settings/index.ts`.
+export { SettingsScreen } from "./settings";
 // The frame's command menu + the ONE global key owner (C11, autopsy S7). The key-layer
 // API lets a later overlay (C5/C12) register on the same Escape priority stack; the
 // entry builders + key-action catalogue stay module-private behind these.
