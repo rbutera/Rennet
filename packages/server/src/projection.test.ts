@@ -466,6 +466,9 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "fs.listDir.output.result.entries.path",
   ]),
   ...classified("repo-relative", [
+    // The unbound span-read row (B3, #489): a CodeRef citation's path is
+    // repo-relative within the captured patchset.
+    "patchset.readSpan.input.path",
     "review.setDisposition.input.path",
     "publish.review.input.comments.path",
     "publish.review.output.ledger.path",

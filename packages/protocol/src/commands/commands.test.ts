@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "./index";
 
-// The recorded absorption snapshot (B3 cluster 4): the 62 commandDefinitions ids
-// the registry absorbed. A dropped or renamed command fails this loudly; a NEW
-// command is added here deliberately, with its registry row.
+// The recorded registry snapshot (B3 clusters 4+6): the 62 commandDefinitions
+// ids the registry absorbed, plus patchset.readSpan (new in cluster 6 — the
+// span-read contract, client asset risk 2). A dropped or renamed command fails
+// this loudly; a NEW command is added here deliberately, with its registry row.
 const ABSORBED_IDS = [
   "app.bootstrap",
   "attention.acknowledge",
@@ -26,6 +27,7 @@ const ABSORBED_IDS = [
   "pairing.listDevices",
   "pairing.mint",
   "pairing.revokeDevice",
+  "patchset.readSpan",
   "project.cleanupWorktree",
   "project.contextAsk",
   "project.contextMap",
@@ -87,9 +89,9 @@ const AGENT_INVENTORY = [
 ] as const;
 
 describe("command registry invariants (#465)", () => {
-  it("absorbed exactly the recorded 62-command snapshot", () => {
+  it("matches the recorded 63-command snapshot (62 absorbed + span-read)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(62);
+    expect(ABSORBED_IDS).toHaveLength(63);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

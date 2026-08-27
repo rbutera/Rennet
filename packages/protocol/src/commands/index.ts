@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { anchorSideSchema, anchorSpanSchema } from "../delta/citations";
+import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
 import { attentionFamilySchema } from "../session";
 import {
@@ -434,6 +434,20 @@ const definitions = {
     // an empty `path` answers from the daemon's home dir; any absolute path is listable.
     input: z.object({ path: z.string().optional() }),
     output: z.object({ result: fsListDirResultSchema }),
+  },
+  "patchset.readSpan": {
+    // Read a cited span from the CAPTURED patchset — never a working tree
+    // (client asset risk 2, #489). Registered in B3 so Track C freezes against
+    // the shape; dispatch binds it in B4/B10 — the wire answers
+    // unknown-command until then (proposal reconciliation 8).
+    input: codeRefSchema,
+    output: z.object({
+      /** The cited span's lines, in order, from the captured patch text. */
+      lines: z.array(z.string()),
+      /** A few lines either side of the span, for orientation. */
+      contextBefore: z.array(z.string()),
+      contextAfter: z.array(z.string()),
+    }),
   },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.
