@@ -1,5 +1,6 @@
 import { dataValidator } from "@wboard/core";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   AUTHORED_BOARD_SCHEMA,
   BOARD_WIRE_SCHEMA,
@@ -209,19 +210,29 @@ describe("host board schema (#462)", () => {
   });
 });
 
+// The omit POLICY, pinned independently of production `DRAFT_OMITTED_KINDS`
+// (#462's curation-side tier: human discussion + the GitHub-anchored human
+// comment). If the production set drifts — a kind added or removed — the pin
+// fails even though the derivation below still holds. (Codex finding 4: the
+// policy and the derivation are separate drift surfaces.)
+const EXPECTED_DRAFT_OMITTED = ["message", "review_comment"].sort();
+
 describe("draft board seam (parseDraft)", () => {
   it("parses a draft fixture", () => {
     const r = parseDraft(draftBoard);
     expect(r.ok, r.ok ? "" : JSON.stringify(r.issues, null, 2)).toBe(true);
   });
 
-  it("rejects a curation-side kind in a draft, returning issues", () => {
-    const r = parseDraft({
-      elements: [{ id: "m1", kind: "message", data: { author, role: "question" } }],
-    });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.issues.length).toBeGreaterThan(0);
-  });
+  it.each(EXPECTED_DRAFT_OMITTED)(
+    "rejects the curation-side kind %s in a draft, returning issues",
+    (kind) => {
+      const el = fullBoard.elements.find((e) => e.kind === kind);
+      if (!el) throw new Error(`fixture has no ${kind}`);
+      const r = parseDraft({ elements: [el] });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.issues.length).toBeGreaterThan(0);
+    },
+  );
 });
 
 describe("drift test 1 — DraftBoardSchema stays the derivation", () => {
@@ -229,6 +240,12 @@ describe("drift test 1 — DraftBoardSchema stays the derivation", () => {
     // Bites when a 14th kind is added to Host without updating the snapshot.
     expect(kindsOf(HostElementSchema)).toEqual(EXPECTED_HOST_KINDS);
     expect(Object.keys(HOST_KIND_SCHEMAS).sort()).toEqual(EXPECTED_HOST_KINDS);
+  });
+
+  it("the omit set IS the recorded curation-side policy", () => {
+    // Pinned literal vs production constant: dropping (or adding) an omitted
+    // kind fails here even though the derivation test below would stay green.
+    expect([...DRAFT_OMITTED_KINDS].sort()).toEqual(EXPECTED_DRAFT_OMITTED);
   });
 
   it("Draft kinds === Host kinds minus the recorded omit set (computed from the schemas)", () => {
@@ -259,6 +276,62 @@ describe("drift test 2 — Zod authoring layer stays in step with the wire", () 
       expect(r.success, `${el.kind}: ${r.success ? "" : JSON.stringify(r.error.issues)}`).toBe(
         true,
       );
+    }
+  });
+
+  // Classify a Zod attribute the way the authored table declares one. Computed
+  // from the schema object itself — no third hand-kept list (codex finding 5).
+  const zodAttr = (schema: z.ZodType): { required: boolean; many: boolean; base: string } => {
+    let s: z.ZodType = schema;
+    let required = true;
+    if (s instanceof z.ZodOptional) {
+      required = false;
+      s = s.unwrap() as z.ZodType;
+    }
+    let many = false;
+    if (s instanceof z.ZodArray) {
+      many = true;
+      s = s.element as z.ZodType;
+    }
+    const base =
+      s instanceof z.ZodNumber
+        ? "number"
+        : s instanceof z.ZodBoolean
+          ? "boolean"
+          : s instanceof z.ZodString || s instanceof z.ZodEnum || s instanceof z.ZodLiteral
+            ? "stringlike"
+            : "json";
+    return { required, many, base };
+  };
+  // A Zod string can lower to wire `string` OR `element` (an element id is a
+  // plain string) — the one dimension this comparison cannot pin. Everything
+  // else (names, requiredness, arity, number/boolean/json vs scalar) drifts loudly.
+  const WIRE_TYPES_FOR_BASE: Record<string, readonly string[]> = {
+    stringlike: ["string", "element"],
+    number: ["number"],
+    boolean: ["boolean"],
+    json: ["json"],
+  };
+
+  it("authored attribute topology matches the Zod layer per kind (names, requiredness, arity)", () => {
+    for (const [kind, kindSchema] of Object.entries(HOST_KIND_SCHEMAS)) {
+      const authoredAttrs = AUTHORED_BOARD_SCHEMA[kind as keyof typeof AUTHORED_BOARD_SCHEMA]
+        .attributes as Record<string, { type: string; required: boolean; many?: boolean }>;
+      const dataSchema = kindSchema.shape.data as z.ZodObject<z.ZodRawShape>;
+      const zodShape = dataSchema.shape;
+
+      expect(Object.keys(authoredAttrs).sort(), `${kind}: attribute name sets`).toEqual(
+        Object.keys(zodShape).sort(),
+      );
+      for (const [name, attr] of Object.entries(authoredAttrs)) {
+        const z_ = zodAttr(zodShape[name] as z.ZodType);
+        expect(attr.required, `${kind}.${name}: requiredness`).toBe(z_.required);
+        expect(Boolean(attr.many), `${kind}.${name}: arity (many)`).toBe(z_.many);
+        expect(
+          WIRE_TYPES_FOR_BASE[z_.base],
+          `${kind}.${name}: wire type ${attr.type} vs zod ${z_.base}`,
+        ).toContain(attr.type);
+      }
     }
   });
 });
