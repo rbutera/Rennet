@@ -58,14 +58,17 @@ export class SessionEntry {
     private readonly mintDeps: MintSessionDeps = {},
   ) {}
 
-  /** The live claim owning this target, if any — a non-archived session whose
-   *  claim matches (branch or PR). The claim survives merge; only archive clears it. */
-  #claiming(target: Target): SessionModel | undefined {
+  /** The live claim owning this target WITHIN a project, if any — a non-archived
+   *  session in the SAME project whose claim matches (branch or PR). A claim is
+   *  project-scoped: `feat/x` or PR #7 in project A must never cross-attach to the
+   *  same-named target in project B (F5). The claim survives merge; only archive clears it. */
+  #claiming(projectId: string, target: Target): SessionModel | undefined {
     return this.store
       .list()
       .find(
         (s) =>
           s.archivedAt === undefined &&
+          s.projectId === projectId &&
           s.claim !== undefined &&
           claimMatchesTarget(s.claim, target),
       );
@@ -77,7 +80,7 @@ export class SessionEntry {
    * a second click (even mid-generation) reattaches, never mints a second session.
    */
   enter(projectId: string, target: Target): EntryResult {
-    const existing = this.#claiming(target);
+    const existing = this.#claiming(projectId, target);
     if (existing !== undefined) return { session: existing, reattached: true };
     const claim: Claim = {
       branch: target.branch,
@@ -89,14 +92,17 @@ export class SessionEntry {
   }
 
   /**
-   * Claim-dedup on resolve: the New-chat rows that SURVIVE — the candidates whose
-   * target no live claim already owns. A claimed target's rows disappear while the
-   * claim holds (archive is the only release).
+   * Claim-dedup on resolve, scoped to a project (F5): the New-chat rows that
+   * SURVIVE — the candidates whose target no live claim IN THIS PROJECT already
+   * owns. A claim in another project never hides a same-named target here. A
+   * claimed target's rows disappear while the claim holds (archive is the only release).
    */
-  visibleTargets(candidates: readonly Target[]): Target[] {
+  visibleTargets(projectId: string, candidates: readonly Target[]): Target[] {
     const claims = this.store
       .list()
-      .filter((s) => s.archivedAt === undefined && s.claim !== undefined)
+      .filter(
+        (s) => s.archivedAt === undefined && s.projectId === projectId && s.claim !== undefined,
+      )
       .map((s) => s.claim as Claim);
     return candidates.filter((t) => !claims.some((c) => claimMatchesTarget(c, t)));
   }
