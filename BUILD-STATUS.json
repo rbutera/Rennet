@@ -3,7 +3,7 @@
   "a2": { "status": "done", "passes": true },
   "a3": { "status": "done", "passes": true },
   "a4": { "status": "done", "passes": true },
-  "a5": { "status": "pending", "passes": false },
+  "a5": { "status": "done", "passes": true },
   "a6": { "status": "pending", "passes": false },
   "a7": { "status": "pending", "passes": false },
   "b01": { "status": "done", "passes": true },
