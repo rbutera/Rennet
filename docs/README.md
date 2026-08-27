@@ -56,7 +56,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [protocol compatibility](./developing/reference/protocol-compatibility.md),
   [Codex app-server integration](./developing/reference/codex-app-server.md),
   and [reactive streams](./developing/reference/reactive-streams.md)
-- Spec formats (survey for the spec lens):
+- Spec formats (survey for the Design lens):
   [OpenSpec](./developing/reference/spec-formats/openspec.md),
   [Kiro](./developing/reference/spec-formats/kiro.md),
   [BMAD](./developing/reference/spec-formats/bmad.md),

@@ -31,7 +31,7 @@ flowchart LR
 
 ## Design
 
-Design (previously called the spec lens) answers "did the implementation
+Design answers "did the implementation
 satisfy its stated intent?" The server
 captures available OpenSpec material with the patchset and builds a structured
 spec model from that frozen input. Coverage mapping connects requirements to

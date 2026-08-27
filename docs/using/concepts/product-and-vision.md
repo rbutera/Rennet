@@ -77,7 +77,7 @@ the highest-risk line.
 
 | Lens | Question |
 |---|---|
-| Spec | What should the change do, and which requirements have evidence? |
+| Design | What should the change do, and which requirements have evidence? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
 | Noise | What remains, and why may it need less attention? |
