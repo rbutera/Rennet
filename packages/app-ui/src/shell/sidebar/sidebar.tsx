@@ -755,8 +755,28 @@ function SidebarFooter() {
 export function Sidebar() {
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const setSidebarOpen = useRennetStore((s) => s.uiActions.setSidebarOpen);
+  const asideRef = useRef<HTMLElement>(null);
+  const firstRun = useRef(true);
+  // Collapsing/expanding swaps the panel subtree for the rail (or back), UNMOUNTING
+  // whichever toggle held focus — the browser then drops focus to <body>. When that
+  // happens, hand focus to the counterpart toggle so keyboard operation survives the
+  // swap. Guarded to the focus-was-dropped case, so a toggle fired while focus lived
+  // elsewhere never has focus yanked into the sidebar; skipped on first mount.
+  useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    const aside = asideRef.current;
+    if (!aside) return;
+    const active = aside.ownerDocument.activeElement;
+    if (active && active !== aside.ownerDocument.body) return;
+    const label = open ? "Collapse sidebar" : "Expand sidebar";
+    aside.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+  }, [open]);
   return (
     <aside
+      ref={asideRef}
       data-region="sidebar"
       data-open={open}
       className={cn(

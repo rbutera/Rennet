@@ -133,6 +133,22 @@ describe("sidebar structure (C03 §2)", () => {
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
   });
 
+  it("keeps keyboard focus on the toggle across a collapse AND an expand", async () => {
+    const { getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
+    const collapse = getByLabelText("Collapse sidebar");
+    collapse.focus();
+    expect(document.activeElement).toBe(collapse);
+    // Collapse: the panel subtree unmounts — focus must land on the rail's Expand
+    // toggle, not fall to <body>.
+    fireEvent.click(collapse);
+    const expand = await waitFor(() => getByLabelText("Expand sidebar"));
+    expect(document.activeElement).toBe(expand);
+    // Expand again: focus returns to the panel's Collapse toggle.
+    fireEvent.click(expand);
+    const collapseAgain = await waitFor(() => getByLabelText("Collapse sidebar"));
+    expect(document.activeElement).toBe(collapseAgain);
+  });
+
   it("orders the action block Search → New Chat → Add Project → Add Environment", () => {
     const { getByText } = mountSidebar({ projects: [project("p1", "atlas")] });
     const order = ["Search", "New Chat", "Add Project", "Add Environment"].map((t) => getByText(t));
