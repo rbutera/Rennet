@@ -59,16 +59,20 @@ mutates review state.
 
 Lens drafters do not retrieve their primary input through tools.
 `buildDeltaPacket()` in `packages/core/src/delta/` assembles the drafters'
-entire input from durable state: the hunk index with stable content-derived
-ids, the element differ's output, blast-radius signals, deterministic noise
+entire input from durable state: the patchset's file inventory (with typed
+mode-change evidence where the diff carries one), the hunk index with stable
+content-derived ids, blast-radius signals, deterministic noise
 pre-classification, test-to-implementation counterpart hints, the knowledge
 set, the bounded dossier, and — on re-review rounds — the successor account.
 The packet is inlined into drafting prompts rather than fetched mid-draft, so
 a drafter's evidence is pinned and reproducible. Facts that need the project
-snapshot, such as ownership rules and fan-in, appear as explicit not-assessed
-marks until dispatch supplies them, and openspec artifacts enter at path grain
-with the full parse running where the artifact text lives. Raw payloads and
-follow-up questions stay behind the context tools above.
+snapshot stay honestly absent from the packet: fan-in carries an explicit
+not-assessed mark, ownership marks simply do not appear until dispatch
+supplies the rules, and openspec artifacts enter at path grain with the full
+parse running where the artifact text lives. The element differ lives in the
+same folder but feeds lineage carry and the successor account, not the packet
+directly. Raw payloads and follow-up questions stay behind the context tools
+above.
 
 ## Selection-aware questions
 
