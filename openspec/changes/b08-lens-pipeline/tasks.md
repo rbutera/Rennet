@@ -33,7 +33,7 @@ Serial clusters, each a separately-reviewable **sub-wave** (B08 is XL — the or
 - [x] 5.3 Round-report FIRST on rounds (D3, R58): when a round returns, run the `round-report` drafter (`ROUND_REPORT_FILE`) BEFORE the lens drafters — it gates the regeneration and is the drafters' input. Emit **per-board arrival events** over B04's existing board-event broadcast as each board freezes (these power the B09 R58 reveal; B08 emits, B09 consumes). Round-report funnels through the same post-process pass; it is not a sixth lens.
 - [x] 5.4 Composition authoring (C2): the orchestrator applies the mechanical `compose` (cluster 4) plus the **write-through authored** connective prose on the versioned composition prompt (`REVIEW_DRAFT_VOICE_FILE` — reconciliation 5), in the reviewer's first-person register; the same post-process steps apply. Curation feedback is threaded into the next generation's packet.
 - [x] 5.5 Tests: contract tests for the real path — seat routing per scenario reaches the right harness port with the right model/effort; the turn carries DeltaPacket + lens prompt + host schema; a valid structured return is written via `whiteboard-client` and NO other module writes board ops (reuse B04's writer-invariant scan); round-report runs before lens drafters on a round; per-board arrival events fire on freeze. No live model call in the gate (inject `runTurn`).
-- [ ] 5.6 Cluster gate green (positive proof: `pnpm nx run-many -t typecheck -p rennet-core rennet-server rennet-adapters rennet-protocol`). Commit.
+- [x] 5.6 Cluster gate green (positive proof: `pnpm nx run-many -t typecheck -p rennet-core rennet-server rennet-adapters rennet-protocol`). Commit.
 
 ## Cluster 6 — concurrency measurement (M1, engine asset risk 3)
 
