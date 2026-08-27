@@ -13,6 +13,8 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/icon";
 import { OSGlyph } from "../assets/os-glyphs";
 import { type SettingsHost, useSettingsProjection } from "../data";
+import { AgentsSection } from "./agents";
+import { ReviewSettings } from "./model-mappings";
 import { SourceControlSection } from "./source-control";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,8 +34,8 @@ import { SourceControlSection } from "./source-control";
 //   • Remove — the ONE sanctioned destructive confirmation (task 3.4): it names the
 //     projects + sessions it forgets and states the machine itself is untouched.
 //
-// The Source Control (§4), Agents and Review (§5) sections mount below the daemon
-// line in their own clusters.
+// Source Control (§4), Agents and Review model mappings (§5) mount below the
+// daemon line, each reading its own slice of the one hosts projection.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -58,6 +60,11 @@ function removeDescription(host: SettingsHost): string {
 
 export function HostCard({ host }: { readonly host: SettingsHost }) {
   const projection = useSettingsProjection();
+  // Which agents this host may use lives on the card, because the Review section
+  // below depends on the answer — one hosts projection, no local copy (§5.1).
+  const enabledAgentIds = (projection.agentsByHost[host.id] ?? [])
+    .filter((tool) => tool.enabled)
+    .map((tool) => tool.id);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
@@ -162,6 +169,10 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
       </div>
 
       <SourceControlSection host={host} />
+
+      <AgentsSection host={host} />
+
+      <ReviewSettings host={host} enabledIds={enabledAgentIds} />
 
       <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
         <DialogContent>
