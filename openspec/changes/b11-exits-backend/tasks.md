@@ -15,7 +15,7 @@ Serial clusters; one cluster per session; each ends on a green gate + commit. Cl
 - [x] 2.1 `packages/server/src/dispatch/ask.ts` (new): the `ask.*` handlers — each parses input, **appends one event** to the session's `AskLog` via the store, and returns the receipt (the sole write path; no handler mutates a projection directly). A retire/restore/override handler is symmetric with its receipt. Register in `dispatch/index.ts` beside `publish`/`review`.
 - [x] 2.2 Wire into `create-server.ts`: construct the `AskLogStore`, expose `ask.read` (the projection) as the session-open read, and **emit projection updates to clients** on every append (private contract + R19 `projection.ts` — the ask projection is model/anchor data; route host paths through `toRepoReference`, prose through the blanket scrub, add no new leak). A reconnecting client reads the current projection; nothing is client-derived.
 - [x] 2.3 Tests: `ask-dispatch.test.ts` — each command appends exactly one event and returns a reversing receipt; applying the receipt (a second command) restores the projection; the projection read after a simulated restart (new store over the same log file) equals the pre-restart projection (the reload-survival unit, the E2E's core in miniature).
-- [ ] 2.4 Cluster gate green. Commit.
+- [x] 2.4 Cluster gate green. Commit.
 
 ## Cluster 3 — publish.compose sources the durable ask projection (clause: PR body draft; two-strata review; publish submission)
 
