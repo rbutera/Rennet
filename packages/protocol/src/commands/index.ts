@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
-import { attentionFamilySchema } from "../session";
+import {
+  AskEventBodySchema,
+  AskProjectionSchema,
+  attentionFamilySchema,
+  QuoteThreadSchema,
+  StagedAskSchema,
+  VerdictOverrideSchema,
+} from "../session";
 import {
   appearanceSchemeSchema,
   askModeSchema,
@@ -45,6 +52,7 @@ import {
   reattachResultSchema,
   refinementResultSchema,
   resolvedProvenanceSchema,
+  reviewBodyNoteSchema,
   reviewCommentSchema,
   reviewSchema,
   setRepoVisibilityOutcomeSchema,
@@ -231,6 +239,12 @@ const definitions = {
       target: publishTargetSchema,
       /** The canonical review content (mirrors the ui `ReviewComment` preview). */
       comments: z.array(reviewCommentSchema),
+      /**
+       * The review-BODY notes — pathless/prose asks woven into the review body (B11 finding
+       * 2). Optional/additive: absent ⇒ `[]`, so a client that only sends line comments is
+       * unchanged. The canonical payload folds these in, so they round-trip like `comments`.
+       */
+      bodyNotes: z.array(reviewBodyNoteSchema).optional().default([]),
       /** The canonical payload bytes the sheet previewed + signed (round-trip check). */
       payload: z.string(),
       /**
@@ -333,7 +347,12 @@ const definitions = {
         status: z.literal("review"),
         /** The composed team-PR comments the phone previews AND posts verbatim via `publish.review`. */
         comments: z.array(reviewCommentSchema),
-        /** The canonical bytes, derived from `comments` — the round-trip `publish.review` verifies. */
+        /** The composed review-BODY notes (pathless/prose asks) the phone previews AND posts
+         *  verbatim (B11 finding 2). Folded into the canonical `payload`, so nothing vanishes.
+         *  Additive/optional so a pre-finding-2 consumer (or a partial mock) still validates; the
+         *  daemon always sends it (`[]` when there are none). */
+        bodyNotes: z.array(reviewBodyNoteSchema).optional(),
+        /** The canonical bytes, derived from `comments` + `bodyNotes` — `publish.review` verifies. */
         payload: z.string(),
         /** The derived review verdict (the GitHub review event the post will carry). */
         verdict: forgeReviewEventSchema,
@@ -1072,6 +1091,140 @@ const definitions = {
         message: "attention.acknowledge: provide a reviewId or an attentionId to clear",
       }),
     output: z.object({ cleared: z.number().int().nonnegative() }),
+  },
+  // ── Durable asks (B11 cluster 1, Q15) — the ONE write path ──────────────────
+  // Every reviewer interaction on an open review (stage/withdraw an ask, edit its
+  // body, retire/restore, open/reply/close a quote thread, set a per-line comment,
+  // override the verdict) is a command here that APPENDS one event to the session's
+  // ask log; the projection is `foldAsks(log)`, never a second stored copy. Each
+  // write returns a RECEIPT — the inverse event body — so a client implements undo
+  // by feeding the receipt straight back through `ask.apply`. `ask.read` is the
+  // projection read a reconnecting client rehydrates from; nothing is client-derived.
+  // Handlers + create-server wiring land in B11 cluster 2; these are the shapes.
+  "ask.stage": {
+    input: z.object({ sessionId: z.string().min(1), ask: StagedAskSchema }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.unstage": {
+    input: z.object({ sessionId: z.string().min(1), id: z.string().min(1) }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.edit": {
+    input: z.object({ sessionId: z.string().min(1), id: z.string().min(1), body: z.string() }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.retire": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      id: z.string().min(1),
+      reason: z.string(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.restore": {
+    input: z.object({ sessionId: z.string().min(1), id: z.string().min(1) }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.quoteOpen": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      threadId: z.string().min(1),
+      thread: QuoteThreadSchema,
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  // A reply is append-shaped at the command (author + text); the handler reads the
+  // thread's current messages, appends, and records the resulting list on the event.
+  "ask.quoteReply": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      threadId: z.string().min(1),
+      author: z.enum(["user", "orchestrator"]),
+      text: z.string(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.quoteClose": {
+    input: z.object({ sessionId: z.string().min(1), threadId: z.string().min(1) }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  // One command, nullable verdict: a value emits `verdict-override-set`, null emits
+  // `verdict-override-clear` (mirrors the client's single `setVerdictOverride`).
+  "ask.setVerdictOverride": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      verdict: VerdictOverrideSchema.nullable(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.setLineComment": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      path: z.string().min(1),
+      line: z.number().int().min(1),
+      body: z.string(),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.clearLineComment": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      path: z.string().min(1),
+      line: z.number().int().min(1),
+    }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  // The projection read — the session-open / reconnect rehydrate.
+  "ask.read": {
+    input: z.object({ sessionId: z.string().min(1) }),
+    output: z.object({ projection: AskProjectionSchema }),
+  },
+  // ── The round exit (B11 cluster 4, #458 R29–R36) ────────────────────────────
+  // Dispatch a round: fold the review's durable ask projection (the ask-log
+  // session id IS the review id) into ONE work-order via `composeHandoffBundle`
+  // and hand it to the rounds runtime, serialized per session and idempotent (a
+  // re-dispatch of the same asks coalesces onto the in-flight round, never a
+  // second run). `dispatched:false` with an empty work-order when the review has
+  // no addressed asks — an honest "nothing to dispatch", never a fabricated run.
+  "round.dispatch": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
+  },
+  // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
+  // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;
+  // this is its host command). A one-shot worker (a FRESH model turn, never the
+  // resident cursor) reworks one staged ask's body per the reviewer's instruction,
+  // serialized PER DOCUMENT (one rework in flight per review). The write routes
+  // through the durable ask log — the sole ask writer (cluster 2's `ask.edit`
+  // event) — so it survives reload; `receipt` reverses it (receipt-is-undo). The
+  // reworked span RE-ANCHORS across the regenerated body by quote match via the
+  // lineage matcher (`carriedAnchor`), fail-closed: null when the span did not
+  // survive regeneration byte-identically (an ambiguous carry reopens, never lies).
+  // `reworked` posts NOTHING — it stages a revised ask, exactly like a hand edit.
+  "review.reviseSpan": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The staged ask whose body a span belongs to (the client rendered it). */
+      askId: z.string().min(1),
+      /** The reviewer's selected span — the quoted text the rework re-anchors. */
+      span: z.string().min(1),
+      /** What to do to the span (e.g. "make this more concise"). */
+      instruction: z.string().min(1),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("reworked"),
+        /** The reworked span's new home in the regenerated body, or null (fail-closed). */
+        carriedAnchor: z.string().nullable(),
+        /** The regenerated ask body now staged (the `ask.edit` that landed). */
+        reworkedBody: z.string(),
+        /** The inverse event — feed it back to undo the rework (receipt-is-undo). */
+        receipt: AskEventBodySchema,
+      }),
+      z.object({ status: z.literal("no-change"), reason: z.string() }),
+      z.object({ status: z.literal("unavailable"), reason: z.string() }),
+    ]),
   },
 } as const;
 

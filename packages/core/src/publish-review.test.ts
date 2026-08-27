@@ -161,13 +161,10 @@ describe("buildForgeReviewPost (issue #21)", () => {
     expect(deriveReviewEvent(at("approve"))).toBe("APPROVE");
     expect(deriveReviewEvent(at("comment"))).toBe("COMMENT");
     expect(deriveReviewEvent(at("question"))).toBe("COMMENT");
-    // A requested change dominates approvals.
-    expect(
-      deriveReviewEvent([
-        { path: "a.ts", line: 1, side: "RIGHT", type: "approve", body: "x" },
-        { path: "b.ts", line: 2, side: "RIGHT", type: "request-change", body: "y" },
-      ]),
-    ).toBe("REQUEST_CHANGES");
+    // A requested change dominates approvals (deriveReviewEvent needs only the `type`).
+    expect(deriveReviewEvent([{ type: "approve" }, { type: "request-change" }])).toBe(
+      "REQUEST_CHANGES",
+    );
     // An explicit verdict OVERRIDES the derived one.
     const overridden = buildForgeReviewPost(at("comment"), {
       reviewId: "rev-3",
@@ -177,6 +174,31 @@ describe("buildForgeReviewPost (issue #21)", () => {
       verdict: "APPROVE",
     });
     expect(overridden.event).toBe("APPROVE");
+  });
+
+  it("weaves BODY notes into the review body, ledgers them, and escalates the verdict (finding 2)", () => {
+    const withBody = buildForgeReviewPost(
+      [{ path: "src/a.ts", line: 1, side: "RIGHT", type: "comment", body: "a line note" }],
+      {
+        reviewId: "rev-body",
+        target: TARGET,
+        payload: "p",
+        capabilities: CAPS,
+        bodyNotes: [
+          { type: "request-change", body: "restructure the module boundary" },
+          { type: "comment", body: "nice narrative" },
+        ],
+      },
+    );
+    // The pathless asks travel in the review body under a "Review notes" heading — not dropped.
+    expect(withBody.body).toContain("Review notes");
+    expect(withBody.body).toContain("restructure the module boundary");
+    expect(withBody.body).toContain("nice narrative");
+    // Each body note is ledgered (surfaced, never a silent drop).
+    expect(withBody.ledger.filter((d) => d.kind === "body-note")).toHaveLength(2);
+    // A prose request-change escalates the whole review to REQUEST_CHANGES, though no line
+    // comment did — the verdict follows the WHOLE outbound set (handoff-and-exits.md).
+    expect(withBody.event).toBe("REQUEST_CHANGES");
   });
 
   it("embeds the deterministic idempotency marker in the body", () => {

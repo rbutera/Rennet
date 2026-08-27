@@ -1,5 +1,6 @@
 import { type CommandName, isCommandName } from "@rennet/protocol";
 import { appHandlers } from "./app";
+import { askHandlers } from "./ask";
 import { attentionHandlers } from "./attention";
 import { deviceHandlers } from "./device";
 import { flaggedHandlers } from "./flagged";
@@ -15,6 +16,8 @@ import { projectsHandlers } from "./projects";
 import { publishHandlers } from "./publish";
 import { repositoryHandlers } from "./repository";
 import { reviewHandlers } from "./review";
+import { reworkHandlers } from "./rework";
+import { roundHandlers } from "./round";
 import {
   type CommandHandler,
   createDispatchRuntime,
@@ -66,6 +69,7 @@ function runningReviewIdOf(name: CommandName, rawInput: unknown): string | undef
 export function buildDispatchTable(rt: DispatchRuntime) {
   const table = {
     ...appHandlers(rt),
+    ...askHandlers(rt),
     ...attentionHandlers(rt),
     ...deviceHandlers(rt),
     ...flaggedHandlers(rt),
@@ -81,6 +85,8 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...publishHandlers(rt),
     ...repositoryHandlers(rt),
     ...reviewHandlers(rt),
+    ...reworkHandlers(rt),
+    ...roundHandlers(rt),
     ...settingsHandlers(rt),
   };
   // Compile-time exhaustiveness guard — the successor to the old `switch` default's `never`

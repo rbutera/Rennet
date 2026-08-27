@@ -3,10 +3,10 @@ import {
   buildForgeReviewPost,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
-  deriveReviewEvent,
   isRepoRelativePath,
   resolveReviewEvent,
-  reviewCommentsFromDispositions,
+  reviewBodyNotesFromProjection,
+  reviewCommentsFromProjection,
 } from "@rennet/core";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import { publishConsentKey } from "../publish-consent-authority";
@@ -45,7 +45,13 @@ export function publishHandlers(rt: DispatchRuntime) {
       // (the phone flow carries `compositionId`), recompute the binding from the CURRENT review
       // and refuse a stale-revision or cross-review mint. Recomputing from the current
       // dispositions is what catches a disposition edit landing between preview and post.
-      assertCompositionFresh(review, "review", input.payload, input.compositionId);
+      assertCompositionFresh(
+        review,
+        "review",
+        input.payload,
+        input.compositionId,
+        deps.askLog.readProjection(review.id),
+      );
       const target = toForgeReviewTarget(input.target);
       // Bind the mint to the review's OWN pull request (issue #21): a local capture
       // (no postTarget) or a mismatched target cannot even obtain a token, so the
@@ -63,6 +69,9 @@ export function publishHandlers(rt: DispatchRuntime) {
       // THE USER. Every dangerous part is gated here; the pipeline has no other path
       // to egress (this command is reachable only from the trusted renderer origin).
       const input = parseCommandInput(name, rawInput);
+      // The body stratum defaults to none (B11 finding 2) — a client that sends only line
+      // comments is unchanged. Localised so the checks + post-build read one non-optional value.
+      const bodyNotes = input.bodyNotes ?? [];
 
       // (0) The RETROSPECTIVE gate (Rule 75, most-permissive-fault): a review opened
       // read-only over an already-merged/any PR must NEVER egress. We resolve the
@@ -82,7 +91,13 @@ export function publishHandlers(rt: DispatchRuntime) {
       // Compose-binding integrity (#382 M2 finding 2): a daemon-composed artifact carries its
       // binding; recompute it from the CURRENT review and refuse a stale/cross-review post
       // (dry-run included, so the fault surfaces as a refusal rather than a plausible request).
-      assertCompositionFresh(addressed, "review", input.payload, input.compositionId);
+      assertCompositionFresh(
+        addressed,
+        "review",
+        input.payload,
+        input.compositionId,
+        deps.askLog.readProjection(addressed.id),
+      );
 
       const target = toForgeReviewTarget(input.target);
 
@@ -91,21 +106,25 @@ export function publishHandlers(rt: DispatchRuntime) {
       // the signed `payload` EXACTLY (===, never prefix/substring). A disagreement
       // fails CLOSED. This runs on dry-run TOO, so a corrupt payload surfaces as a
       // refusal rather than a plausible-looking request.
-      if (canonicalReviewPayload(input.comments) !== input.payload) {
+      // The canonical bytes fold in BOTH strata — line comments AND body notes (B11 finding
+      // 2) — so a pathless ask is part of the round-trip, not a silent drop.
+      if (canonicalReviewPayload(input.comments, bodyNotes) !== input.payload) {
         throw new Error("Publish refused: the review payload does not match its content");
       }
-      // (2) An empty review is not a valid egress — refuse rather than post nothing.
-      if (input.comments.length === 0) {
+      // (2) An empty review is not a valid egress — refuse rather than post nothing. Empty
+      // means NEITHER a line comment NOR a body note (a body-only review still posts).
+      if (input.comments.length === 0 && bodyNotes.length === 0) {
         throw new Error("Publish refused: the review has no content");
       }
 
       // (3) Assemble the forge-neutral post (event COMMENT — no APPROVE shape; every
-      // no-line fold ledgered, never a silent drop).
+      // no-line fold + body note ledgered, never a silent drop).
       const post = buildForgeReviewPost(input.comments, {
         reviewId: input.reviewId,
         target,
         payload: input.payload,
         capabilities: deps.publishPort.capabilities,
+        bodyNotes,
         // Derive-first, overridable: an explicit verdict wins; else it derives from
         // the dispositions. `undefined` simply defers to the derived verdict.
         ...(input.verdict ? { verdict: input.verdict } : {}),
@@ -127,7 +146,10 @@ export function publishHandlers(rt: DispatchRuntime) {
         // Absent / forged / replayed / target-payload-or-verdict-mismatched ⇒ refused,
         // and NOTHING leaves. The verdict is resolved the SAME way it is for the post
         // (`resolveReviewEvent`), so the token authorises exactly the event that ships.
-        const resolvedVerdict = resolveReviewEvent(input.comments, input.verdict);
+        const resolvedVerdict = resolveReviewEvent(
+          [...input.comments, ...bodyNotes],
+          input.verdict,
+        );
         const key = publishConsentKey(input.reviewId, target, input.payload, resolvedVerdict);
         const authorization = input.authorization;
         if (typeof authorization !== "string" || !deps.publishConsent.consume(key, authorization)) {
@@ -245,6 +267,13 @@ export function publishHandlers(rt: DispatchRuntime) {
         });
       }
 
+      // The durable ask projection is the living-draft authority (B11 cluster 3): both exit
+      // modes source their outbound composition from it, keyed by the review's id (the ask
+      // log's session id — the contract the client honours when it calls `ask.*`). It
+      // supersedes `review.dispositions` as the compose source; the post commands re-derive
+      // the same bytes off the same projection, so the round-trip stays single-source.
+      const projection = deps.askLog.readProjection(review.id);
+
       if (input.mode === "review") {
         // A team-PR review posts a review event to a real PR. Only a review with a postTarget
         // can post one; a branch-only capture has no PR to comment on (it opens a PR instead).
@@ -255,10 +284,14 @@ export function publishHandlers(rt: DispatchRuntime) {
               "This review has no pull request to post to — open one from the own-branch flow instead.",
           });
         }
-        // Compose the DEFAULT (unedited) comments from the review's dispositions — the phone
+        // Compose the DEFAULT (unedited) comments from the durable ask projection — the phone
         // does not edit (publish decision 4), so the default IS the product. The payload and
         // verdict are core's, so publish.review re-verifies these very bytes (single-source).
-        const comments = reviewCommentsFromDispositions(review.dispositions);
+        const comments = reviewCommentsFromProjection(projection);
+        // The BODY stratum (B11 finding 2): pathless/prose asks that have no diff line travel in
+        // the review body rather than vanishing. `reviewCommentsFromProjection` +
+        // `reviewBodyNotesFromProjection` PARTITION the staged asks, so each appears exactly once.
+        const bodyNotes = reviewBodyNotesFromProjection(projection);
         // Path safety at compose (#382 M2 finding 8): refuse to compose an outbound review whose
         // comments carry an absolute or traversing path — such a path would post outside the
         // repo (or is corruption). Ingestion (`canvas.disposition`) already rejects them; this is
@@ -270,8 +303,14 @@ export function publishHandlers(rt: DispatchRuntime) {
             reason: `A review comment has an unsafe path (${badPath.path}); it cannot be posted.`,
           });
         }
-        const payload = canonicalReviewPayload(comments);
-        const verdict = deriveReviewEvent(comments);
+        const payload = canonicalReviewPayload(comments, bodyNotes);
+        // Derive-first, overridable: the projection's explicit `verdictOverride` WINS; a null
+        // override defers to the verdict derived from the WHOLE outbound set (comments + body
+        // notes), so a prose request-change escalates the verdict too (R33).
+        const verdict = resolveReviewEvent(
+          [...comments, ...bodyNotes],
+          projection.verdictOverride ?? undefined,
+        );
         const target = review.postTarget;
         const destination = `${target.repo.owner}/${target.repo.name}#${target.number}`;
         const compositionId = publishCompositionId({
@@ -286,6 +325,7 @@ export function publishHandlers(rt: DispatchRuntime) {
         return parseCommandOutput(name, {
           status: "review",
           comments,
+          bodyNotes,
           payload,
           verdict,
           destination,
@@ -315,8 +355,22 @@ export function publishHandlers(rt: DispatchRuntime) {
       // Draft the PR body (daemon-composed) when a drafter is wired; else a deterministic
       // title/body. Either way the payload is derived from the SAME submission returned, so
       // publish.submitPr round-trips it exactly (self-consistent, R33-honest).
+      // Feed the durable ask set into the PR-body drafter as its dispositions (B11 cluster 3):
+      // each staged ask is a `{ type, path, resolution }` drafting fact (the `:line` suffix
+      // trimmed to the bare path — drafting material for the model prompt, never egress). The
+      // verdict override is a GitHub review event and has no PR-body sink, so it does not ride
+      // here. `draftPrBody` produces text into a preview; it posts nothing (R33).
       const drafted = deps.draftPrBody
-        ? await deps.draftPrBody({ review, base, head: headRef, dispositions: [] })
+        ? await deps.draftPrBody({
+            review,
+            base,
+            head: headRef,
+            dispositions: Object.values(projection.stagedAsks).map((ask) => ({
+              type: ask.type,
+              path: ask.anchor.replace(/:\d+$/, ""),
+              resolution: ask.body,
+            })),
+          })
         : undefined;
       const title = drafted?.status === "drafted" ? drafted.title : headRef;
       const body = drafted?.status === "drafted" ? drafted.body : "";

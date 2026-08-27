@@ -47,6 +47,43 @@ lives in a versioned orchestrator prompt beside the lens prompts.
 The **Hand off button is the live basket**: its count ticks as asks land, and
 it carries a derived working state while a draft rework runs.
 
+## The durable-asks backend
+
+Asks are **durable host-side, per session**, and there is exactly **one write
+path**: a command appends **one event** to an append-only per-session log, and
+the current ask state is the pure **fold** of that log — never a second stored
+copy.
+
+```mermaid
+flowchart LR
+  cmd["ask.* command"] -->|appends one event| log[("append-only<br/>AskLog (per session)")]
+  log -->|foldAsks| proj["AskProjection<br/>stagedAsks · lineComments<br/>quoteThreads · retired · verdictOverride"]
+  cmd -->|returns| receipt["receipt (the inverse event)"]
+  proj -->|R19 projection push| client["live clients"]
+  proj --> review["publish.compose · review"]
+  proj --> pr["publish.compose · pr"]
+  proj --> round["round.dispatch"]
+```
+
+- **The log is the only mutation.** `ask.stage` / `edit` / `retire` / `restore`
+  / `quoteOpen` / `quoteReply` / `quoteClose` / `setVerdictOverride` /
+  `setLineComment` / `clearLineComment` / `unstage` each append one event; the
+  `ask.*` dispatch handlers are the sole writers. No handler edits a projection
+  in place. `ask.read` is the projection, and reads never write.
+- **Receipt-is-undo.** Every write returns a **receipt** that is the inverse
+  event — applying it restores the prior projection (stage↔unstage, edit↔the
+  prior body, quote-reply↔drop-last, override-set↔the prior value). Undo is
+  just the next append, so it survives reload like any other write.
+- **Reload survival.** The projection is `foldAsks(read())` over the on-disk
+  log; a restarted host reads the same log and folds the identical projection.
+  Staged asks, line comments, quote threads, the retired ledger, and the verdict
+  override all survive a kill. Nothing is client-derived — a reconnecting client
+  reads the current projection, pushed on every append through the R19
+  projection (host paths routed through `toRepoReference`, prose through the
+  blanket scrub; the ask projection adds no new leak).
+
+The projection is the single source every exit composes from.
+
 ## Selection is the steering wheel
 
 Board prose selection offers **Comment / Request changes / Explain**. Draft
@@ -94,6 +131,16 @@ highlighting a span.
   round receipt, restorable with a click; a **Detached** list holds threads
   whose anchoring prose no longer exists.
 
+A **span rework** (`review.reviseSpan`) is the concrete backing: a one-shot
+worker reworks one staged ask's body per the reviewer's instruction, then lands
+the result through the **same ask log** — it is an `ask.edit`, not a second
+writer — so a reworked ask survives reload for free and its receipt reverses it
+like any hand edit. The reworked span **re-anchors** across the regenerated body
+by matching its quoted text (the shared lineage matcher, fail-closed: a span
+that did not survive regeneration carries a null anchor rather than a wrong one).
+Reworks on one review serialize behind a per-review promise tail; reworks on
+different reviews overlap.
+
 ## The review's two strata
 
 A GitHub review is one **review body** plus **line comments** pinned to diff
@@ -137,6 +184,34 @@ model traces, and draft history never enter it unless their text became
 outbound draft content. There is no hosted Rennet backend: of the exit
 payload, GitHub receives the review or the pull request, and the harness
 provider receives model-turn context.
+
+## The three exits, as built
+
+Each exit composes from the durable ask projection, never from a private copy:
+
+- **The GitHub review** — `publish.compose(mode:"review")` folds the projection
+  into the two strata: staged line asks and bare line comments become line
+  comments in deterministic `(path, line)` order (an ask on a line wins over a
+  bare comment there); pathless and retired asks fall out. The verdict follows
+  the outbound set, and a set **verdict override wins** over the derived event.
+  The composed bytes re-derive the same `publish.review` exact-preview payload,
+  so preview and post stay the same object.
+- **The round work-order** — `round.dispatch` folds the addressed asks into
+  **exactly one** work-order and hands it to the rounds runtime **serialized per
+  session** (one round in flight; the second dispatch of the same asks coalesces
+  onto the first rather than racing a second). A failed kick is evicted so an
+  identical re-dispatch retries. (Board regeneration on a round's return is the
+  planned continuation of this loop and is not yet wired to a production caller;
+  what ships today is the dispatch → one work-order → serialized run.)
+- **The pull request** — `publish.compose(mode:"pr")` feeds the ask set plus the
+  verdict override into the PR body draft, with a **stable derived
+  `compositionId`** so an unchanged draft re-raises the *same* publish-ready.
+  As each round lands, the own-branch PR draft **re-composes and re-raises
+  publish-ready idempotently** (PR-lane ripening). `publish.submitPr`'s push +
+  open-PR is idempotent by head: one PR per head, reused on re-submit.
+
+Nothing here posts. Every exit drafts and previews; the branch push that opens a
+PR is not publication, and a GitHub review egresses only when Rai clicks Post.
 
 ## Opening the pull request
 

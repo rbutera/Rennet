@@ -4,10 +4,25 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 
 // The recorded registry snapshot (B3 clusters 4+6): the 62 ids absorbed from
 // the pre-B3 definitions table, plus patchset.readSpan (new in cluster 6 — the
-// span-read contract, client asset risk 2). A dropped or renamed command fails
-// this loudly; a NEW command is added here deliberately, with its registry row.
+// span-read contract, client asset risk 2), plus the 12 `ask.*` durable-asks
+// command shapes (B11 cluster 1 — the sole write path onto the ask event log;
+// handlers land in cluster 2), plus review.reviseSpan (B11 cluster 5 — the
+// living-draft span-rework command). A dropped or renamed command fails this
+// loudly; a NEW command is added here deliberately, with its registry row.
 const ABSORBED_IDS = [
   "app.bootstrap",
+  "ask.clearLineComment",
+  "ask.edit",
+  "ask.quoteClose",
+  "ask.quoteOpen",
+  "ask.quoteReply",
+  "ask.read",
+  "ask.restore",
+  "ask.retire",
+  "ask.setLineComment",
+  "ask.setVerdictOverride",
+  "ask.stage",
+  "ask.unstage",
   "attention.acknowledge",
   "device.registerPush",
   "flagged.adjudication",
@@ -59,9 +74,11 @@ const ABSORBED_IDS = [
   "review.reattach",
   "review.refine",
   "review.regenerate",
+  "review.reviseSpan",
   "review.setDisposition",
   "review.symbolLookup",
   "review.uiEvidence",
+  "round.dispatch",
   "settings.get",
   "settings.guidance",
   "settings.pinRepoValue",
@@ -96,7 +113,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(63);
+    expect(ABSORBED_IDS).toHaveLength(77);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

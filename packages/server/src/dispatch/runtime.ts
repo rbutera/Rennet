@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+import type { AskLogStore } from "@rennet/adapters";
 import {
   type AskAnswer,
   canonicalReviewPayload,
+  emptyAskProjection,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
   type ForgePublishPort,
@@ -10,11 +12,13 @@ import {
   forgeTargetKey,
   type HandoffTurnOutcome,
   type ReviewService,
-  reviewCommentsFromDispositions,
+  reviewBodyNotesFromProjection,
+  reviewCommentsFromProjection,
 } from "@rennet/core";
 import type {
   AnchorSide,
   AnchorSpan,
+  AskProjection,
   ComposedHandoffBundle,
   DeltaDigestResult,
   DispositionType,
@@ -505,6 +509,50 @@ export interface DispatchDeps {
    * write). Optional: absent ⇒ the settings commands are simply unavailable.
    */
   readonly settings?: SettingsComposition;
+  /**
+   * The durable ask-log store (B11 cluster 2, Q15) — the file-backed per-session
+   * event log the `ask.*` handlers are the SOLE writers of. `readProjection` folds
+   * the log to the living-draft projection; `append` adds one event. Required: the
+   * durable-asks write path is the whole point of the exit, so a composition without
+   * it would be a silently non-durable review, not a degraded-but-honest one.
+   */
+  readonly askLog: AskLogStore;
+  /**
+   * Push the current ask projection to live clients after an append (R19). The root
+   * binds it to the WS fan-out (`broadcastAskProjection`); absent ⇒ no live push (a
+   * reconnecting client still reads the durable projection via `ask.read`).
+   */
+  readonly broadcastAskProjection?: (sessionId: string, projection: AskProjection) => void;
+  /**
+   * Dispatch a round's composed work-order to the rounds runtime (B11 cluster 4): run the
+   * review's dispatched asks as ONE coding-agent turn, serialized per session (one round in
+   * flight). Composed by the root over `createRoundsRuntime`. A failure-isolated post-commit
+   * kick (the knowledge-swarm / project-scout precedent): the round runs BEHIND the command,
+   * this never throws into the command path, and `round.dispatch` returns the composed
+   * work-order whether or not the turn later succeeds. Optional so a composition WITHOUT a
+   * rounds runtime still constructs — the command then composes + returns the work-order and
+   * simply runs no round, rather than throwing.
+   */
+  readonly dispatchRound?: (input: {
+    review: Review;
+    workOrder: ComposedHandoffBundle;
+  }) => Promise<void>;
+  /**
+   * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
+   * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never
+   * the resident cursor. Takes the ALREADY-RESOLVED review (dispatch freshness-pins it
+   * once) plus the ask's disposition type, the selected span, and the instruction. The
+   * root composes it over the live refine harness. Optional so a composition without a
+   * rework seat still constructs — `review.reviseSpan` then answers an honest
+   * `unavailable`. The turn produces revised text into the ask log; it posts NOTHING.
+   */
+  readonly reworkSpan?: (input: {
+    review: Review;
+    type: DispositionType;
+    span: string;
+    instruction: string;
+    path?: string;
+  }) => Promise<RefinementResult>;
 }
 
 /**
@@ -571,6 +619,7 @@ export function toForgeReviewTarget(target: {
 }
 
 /**
+/**
  * The compose integrity binding (#382 M2 finding 2). A deterministic id over (reviewId, active
  * patchset, mode, canonical payload) — the payload already canonicalises the comments/submission,
  * so binding those four is enough to pin the artifact to one review AT one revision. `publish.compose`
@@ -593,21 +642,29 @@ export function publishCompositionId(fields: {
  * Refuse a post whose compose binding no longer matches the current review (#382 M2 finding 2).
  * A no-op when `compositionId` is absent (the desktop composes locally and posts without one —
  * additive/back-compat). For a team-PR "review" the expected binding is recomputed from the CURRENT
- * dispositions, so a disposition edit that landed between preview and post is caught (stale). For a
- * "pr" submission the payload is model-drafted (not re-derivable), so the binding is recomputed over
- * the posted payload + current patchset — catching a cross-review post or an advanced patchset; the
- * existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload to its content.
+ * durable ask projection (B11 cluster 3 — the same source `publish.compose` draws from, so the
+ * mirror holds), so an ask/line-comment/verdict edit that landed between preview and post is caught
+ * (stale). For a "pr" submission the payload is model-drafted (not re-derivable), so the binding is
+ * recomputed over the posted payload + current patchset — catching a cross-review post or an advanced
+ * patchset; the existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload.
  */
 export function assertCompositionFresh(
   review: Review,
   mode: "review" | "pr",
   payload: string,
   compositionId: string | undefined,
+  reviewProjection?: AskProjection,
 ): void {
   if (compositionId === undefined) return;
+  const proj = reviewProjection ?? emptyAskProjection();
   const boundPayload =
     mode === "review"
-      ? canonicalReviewPayload(reviewCommentsFromDispositions(review.dispositions))
+      ? // BOTH strata (B11 finding 2): the bound payload folds in body notes too, so a
+        // prose ask edited between preview and post is caught as stale like a line comment.
+        canonicalReviewPayload(
+          reviewCommentsFromProjection(proj),
+          reviewBodyNotesFromProjection(proj),
+        )
       : payload;
   const expected = publishCompositionId({
     reviewId: review.id,

@@ -537,6 +537,11 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "review.handoff.run.input.bundle.tasks.asks.path",
     "review.handoff.compose.input.dispositions.path",
     "review.handoff.compose.output.bundle.tasks.asks.path",
+    // The round exit (B11 cluster 4): the composed work-order's task asks carry the ask's
+    // `path` — a code ask's repo-relative path (from its `path:line` anchor) or a prose
+    // ask's quoted anchor text. Never a host-absolute path, so no remote projection
+    // translates it — the same shape/handling as the handoff-compose bundle above.
+    "round.dispatch.output.workOrder.tasks.asks.path",
     // The Context Map surface (add-context-map-view): every path in the Repo Map, the
     // knowledge set, and a context-ask answer is a git-blob path relative to the repo
     // root — never a host-absolute path, so no remote projection translates them.
@@ -547,6 +552,27 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "project.contextMap.output.knowledge.statements.evidence.path",
     "project.contextAsk.output.answer.evidence.path",
     "project.knowledgeDisposition.output.statement.evidence.path",
+    // Durable asks (B11): a per-line comment's `path` is the REVIEWED file's
+    // repo-relative path (like a disposition's), never a host-absolute path — so
+    // no remote projection translates it. Every write echoes its receipt (an
+    // `AskEventBody`, whose line-comment arms carry `path`), so each write command's
+    // `output.receipt.path` surfaces here too; all repo-relative.
+    "ask.setLineComment.input.path",
+    "ask.clearLineComment.input.path",
+    "ask.stage.output.receipt.path",
+    "ask.unstage.output.receipt.path",
+    "ask.edit.output.receipt.path",
+    "ask.retire.output.receipt.path",
+    "ask.restore.output.receipt.path",
+    "ask.quoteOpen.output.receipt.path",
+    "ask.quoteReply.output.receipt.path",
+    "ask.quoteClose.output.receipt.path",
+    "ask.setVerdictOverride.output.receipt.path",
+    "ask.setLineComment.output.receipt.path",
+    "ask.clearLineComment.output.receipt.path",
+    // Span rework (B11 cluster 5) echoes the same `AskEventBody` receipt (its
+    // `ask.edit` write), so its receipt's line-comment `path` arm is repo-relative too.
+    "review.reviseSpan.output.receipt.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",

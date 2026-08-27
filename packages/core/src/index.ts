@@ -33,6 +33,7 @@ export * from "./delta-digest";
 export * from "./draft-pr-body";
 export * from "./dual-seat";
 export * from "./escape-path";
+export * from "./exits";
 export * from "./finding-reconcile";
 export * from "./finding-verification";
 export * from "./forge-port";

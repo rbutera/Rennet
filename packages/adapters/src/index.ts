@@ -1,4 +1,10 @@
 export {
+  ASK_LOG_STORE_VERSION,
+  AskLogCorruptError,
+  AskLogStore,
+  defaultAskLogStoreDir,
+} from "./ask-log-store";
+export {
   BaselineAdvanceCoordinator,
   type BaselineAdvanceDeps,
   type BaselineWatchHandle,
