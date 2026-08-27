@@ -99,7 +99,12 @@ export interface BuildRegistryInput {
   hunkOccurrences?: readonly (readonly RenderedHunkOccurrence[])[];
 }
 
-const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+/**
+ * The unified-diff hunk-header grammar: `@@ -oldStart[,oldCount] +newStart[,newCount] @@`.
+ * The ONE `@@` regex in app-ui — the raw-diff parser (`review/diff-parse.ts`) imports this
+ * rather than hand-rolling a second grammar, so the two cannot drift.
+ */
+export const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 /** File-header / diff-metadata lines that must never be classified as add/del content. */
 function isFileHeader(text: string): boolean {

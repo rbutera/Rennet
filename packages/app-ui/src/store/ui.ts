@@ -29,6 +29,20 @@ export interface UiState {
   readonly commandMenuMode: CommandMenuMode;
   /** The stack of open dialog ids (top = frontmost); empty ⇒ no dialog. */
   readonly openDialogs: readonly string[];
+  /**
+   * A `ProjectSource` the NEXT Add Project open should preselect — the one `ui` hop
+   * behind Add Environment's "Browse Its Projects" (C12 §10.3). Set with the dialog,
+   * consumed (and cleared) by the Add Project body. Absent ⇒ Add Project opens on Local.
+   */
+  readonly pendingAddProjectSource?: string;
+  /**
+   * Projects with a `project.process` run the client kicked off still in flight — the
+   * sidebar row's "indexing" spinner (C12 §10.6). NOT derivable from the projection
+   * cache: it is genuine client-initiated ephemeral state (like `openDialogs`), set by
+   * the indexing view on start and cleared when the run resolves, so leaving the view
+   * never cancels it (the spinner tracks the real run, not the mounted screen).
+   */
+  readonly processingProjectIds: readonly string[];
 }
 
 export interface UiSlice {
@@ -44,6 +58,12 @@ export interface UiSlice {
     setCommandMenuMode(mode: CommandMenuMode): void;
     openDialog(id: string): void;
     closeDialog(id: string): void;
+    /** Open Add Project preselected to `source` (Add Environment → Browse Its Projects). */
+    openAddProjectForSource(source: string): void;
+    /** Clear the pending preselection once the Add Project body has consumed it. */
+    clearAddProjectSource(): void;
+    /** Mark (or unmark) a project as processing — drives the sidebar indexing spinner. */
+    setProjectProcessing(projectId: string, processing: boolean): void;
   };
 }
 
@@ -57,6 +77,7 @@ const initialUi: UiState = {
   commandMenuOpen: false,
   commandMenuMode: "search",
   openDialogs: [],
+  processingProjectIds: [],
 };
 
 export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) => ({
@@ -85,6 +106,25 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
       })),
     closeDialog: (id) =>
       set((s) => ({ ui: { ...s.ui, openDialogs: s.ui.openDialogs.filter((d) => d !== id) } })),
+    openAddProjectForSource: (source) =>
+      set((s) => ({
+        ui: {
+          ...s.ui,
+          pendingAddProjectSource: source,
+          openDialogs: [...s.ui.openDialogs.filter((d) => d !== "add-project"), "add-project"],
+        },
+      })),
+    clearAddProjectSource: () =>
+      set((s) => ({ ui: { ...s.ui, pendingAddProjectSource: undefined } })),
+    setProjectProcessing: (projectId, processing) =>
+      set((s) => {
+        const has = s.ui.processingProjectIds.includes(projectId);
+        if (processing === has) return s; // idempotent — no spurious re-render.
+        const next = processing
+          ? [...s.ui.processingProjectIds, projectId]
+          : s.ui.processingProjectIds.filter((id) => id !== projectId);
+        return { ui: { ...s.ui, processingProjectIds: next } };
+      }),
   },
 });
 
@@ -96,3 +136,6 @@ export const selectFolded = (nodeId: string) => (s: RennetState) =>
 export const selectDialogOpen = (id: string) => (s: RennetState) => s.ui.openDialogs.includes(id);
 /** The frontmost open dialog id, or null. DERIVED — never stored as its own field. */
 export const selectTopDialog = (s: RennetState): string | null => s.ui.openDialogs.at(-1) ?? null;
+/** The projects currently processing (sidebar indexing spinner). */
+export const selectProcessingProjectIds = (s: RennetState): readonly string[] =>
+  s.ui.processingProjectIds;

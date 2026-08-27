@@ -1,6 +1,18 @@
 import "./index.css";
 
 export { ReviewWorkspace } from "./app";
+// The board surface (C05, #489): the lens board document, element registry, fold
+// grammar, quote highlights, and the lens/generation switchers. See `board/index.ts`.
+export {
+  type BoardKind,
+  type ElementOf,
+  type ElementRegistry,
+  type ElementRenderer,
+  GenerationSwitcher,
+  LensBoardView,
+  type LensBoardViewProps,
+  LensSwitcher,
+} from "./board";
 // The collation draft (issue #101 / R40): the ordered, id-keyed editable draft — the
 // forming destination. Reorder / merge / split need a list, not #17's path-keyed map.
 // `collationItems` / `collationPayload` are the ordered outbound artifact the paper
