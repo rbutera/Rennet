@@ -32,7 +32,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 ## 5. protocol: delete the canvas.* surface and state model
 
 - [x] 5.1 In `index.ts`: delete `canvasSchema`, the five-angle `canvases` record, the `review.canvases` command, the six `canvas.*` commands, and the Canvas-family inferred-type exports. In `bodies.ts`: the `canvas.*` bodies. In `domain.ts`: the Canvas state model block (`Canvas` root, four layer types, `CanvasAngle`/`CANVAS_ANGLES`, `AnalysisElement`/`AnalysisCohort`, `Proposal*`, `BlastRadiusPaint`, `CanvasChangeNotification`, `Disposition`/`DispositionType`/`DispositionLayer`). Anchor/patchset types stay.
-- [ ] 5.2 Delete `canvas-commands.test.ts`, `review-canvases.test.ts`; trim `session.ts`/`session.test.ts`/`rsp.ts`/`index.test.ts` of canvas and dead-pass references (RSP validators for surviving `noise-generation`/`finding-verification` stay).
+- [x] 5.2 Delete `canvas-commands.test.ts`, `review-canvases.test.ts`; trim `session.ts`/`session.test.ts`/`rsp.ts`/`index.test.ts` of canvas and dead-pass references (RSP validators for surviving `noise-generation`/`finding-verification` stay).
 - [ ] 5.3 Sweep every remaining workspace reference to a deleted protocol type (the survivor trims of clusters 1–4 should have left none; fix any straggler by trimming the caller, never by resurrecting the type).
 - [ ] 5.4 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
 
