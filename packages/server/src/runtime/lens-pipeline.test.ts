@@ -1,8 +1,14 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { WhiteboardClient } from "@rennet/adapters";
 import type { DeltaPacket, HarnessPort, LintContext, LintHunk, LintTarget } from "@rennet/core";
 import type { DraftBoard, LensKind } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { createBoardsRuntime } from "../boards/boards-runtime";
 import {
   type BoardArrivalEvent,
+  type BoardMeta,
   boardOutputSchema,
   composeReviewDraft,
   draftToOps,
@@ -139,6 +145,14 @@ describe("draftToOps", () => {
   it("projects each draft element into one create op (the host is the sole op writer)", () => {
     const board = { elements: [{ id: "a", kind: "prose", data: {} }] } as unknown as DraftBoard;
     expect(draftToOps(board)).toEqual([{ op: "create", element: board.elements[0] }]);
+  });
+
+  it("topologically orders a referenced element before its citer (finding 2)", () => {
+    // Authoring order puts the finding BEFORE the code_ref it cites — the board
+    // service would reject that as a bad-ref, so the ops must be reordered.
+    const board = mkBoard([mkFinding("f1", "cites c1", ["c1"]), mkCodeRef("c1", "src/a.ts", 1, 2)]);
+    const ids = draftToOps(board).map((o) => o.element.id);
+    expect(ids.indexOf("c1")).toBeLessThan(ids.indexOf("f1"));
   });
 });
 
@@ -523,5 +537,184 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
     expect(applied).toEqual([]);
     for (const outcome of result.boards) expect(outcome.failure).toBeDefined();
+  });
+});
+
+// ── Persistence honesty (findings 2/3/6) ─────────────────────────────────────
+
+describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
+  const FLAGGED_HUNKS: LintHunk[] = [
+    { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5 },
+    { id: "h2", path: "src/util.ts", newStart: 1, newLines: 3 },
+  ];
+  const flaggedCtx: LintContext = {
+    lens: "flagged",
+    hunks: FLAGGED_HUNKS,
+    files: new Map([
+      ["src/auth.ts", 200],
+      ["src/util.ts", 50],
+    ]),
+  };
+  // A flagged board whose finding is authored BEFORE the code_ref it cites (the
+  // bad-ref hazard) and that consciously skips h2.
+  const flaggedBody = (): DraftBoard =>
+    mkBoard(
+      [
+        mkFinding("f1", "The refresh token is classified as an error before its code is read.", [
+          "c1",
+        ]),
+        mkCodeRef("c1", "src/auth.ts", 11, 12),
+      ],
+      [{ hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." }],
+    );
+  const bodyForFlagged = (prompt: string): unknown => {
+    const lens = lensFromPrompt(prompt);
+    if (lens === "flagged") return flaggedBody();
+    if (lens === "post-process") {
+      const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+      return ctx ? (JSON.parse(ctx[1] as string).board as unknown) : { elements: [] };
+    }
+    return cleanBody(lens);
+  };
+
+  it("a real board service rejects raw finding-before-code_ref order but accepts draftToOps order (finding 2)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lens-pipeline-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const board = flaggedBody();
+
+      // Raw authoring order (finding first) is a bad-ref — the exact hazard finding 2 names.
+      const rawId = await runtime.createRennetBoard();
+      const rawOps = board.elements.map((element) => ({ op: "create" as const, element }));
+      const raw = await client.apply(rawId, rawOps as never, "lens:flagged");
+      expect(raw.response.ok).toBe(false);
+
+      // draftToOps reorders the code_ref ahead of its citer → accepted.
+      const okId = await runtime.createRennetBoard();
+      const ok = await client.apply(okId, draftToOps(board) as never, "lens:flagged");
+      expect(ok.response.ok).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes through a REAL board service and persists skippedHunks durably (findings 2/3)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lens-pipeline-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const lenses: LintTarget[] = ["design", "sequence", "decisions", "flagged", "noise"];
+      const boardIds = new Map<LintTarget, string>();
+      for (const l of lenses) boardIds.set(l, await runtime.createRennetBoard());
+
+      const meta: BoardMeta[] = [];
+      const arrivals: BoardArrivalEvent[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], bodyForFlagged),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: FLAGGED_HUNKS,
+        lintContextFor: (l) => (l === "flagged" ? flaggedCtx : lintContextFor(l)),
+        readPrompt,
+        whiteboard: client,
+        boardIdFor: (l) => boardIds.get(l) ?? "",
+        onBoardArrival: (e) => arrivals.push(e),
+        persistBoardMeta: (m) => {
+          meta.push(m);
+        },
+      });
+
+      // The finding-before-code_ref board was ACCEPTED (draftToOps reordering worked
+      // through the real service) — not a silent failure.
+      const flagged = result.boards.find((b) => b.lens === "flagged");
+      expect(flagged?.failure).toBeUndefined();
+
+      // Reconstruct the flagged board from the ACTUAL event log — both elements landed.
+      const flaggedId = boardIds.get("flagged") ?? "";
+      const state = await runtime.service.getState(flaggedId);
+      expect(state.has("f1")).toBe(true);
+      expect(state.has("c1")).toBe(true);
+
+      // skippedHunks survived persistence via the durable metadata seam — the event
+      // log carries only elements, so this is the finding-3 durability proof.
+      const flaggedMeta = meta.find((m) => m.lens === "flagged");
+      expect(flaggedMeta?.skippedHunks).toEqual([
+        { hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." },
+      ]);
+      // Every accepted board announced its arrival (after cross-lens coverage).
+      expect(arrivals.map((a) => a.lens)).toContain("flagged");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces a rejected board write as a lens failure and does not announce it (finding 2)", async () => {
+    const applied: Applied[] = [];
+    const arrivals: BoardArrivalEvent[] = [];
+    const rejecting = {
+      apply: async (boardId: string, ops: readonly unknown[], actor: string) => {
+        applied.push({ boardId, ops, actor });
+        return { response: { ok: false, code: "bad-ref" }, ops } as never;
+      },
+    };
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (p) => cleanBody(lensFromPrompt(p))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: rejecting,
+      boardIdFor: (l) => `board:${l}`,
+      onBoardArrival: (e) => arrivals.push(e),
+    });
+    for (const o of result.boards) expect(o.failure).toBeDefined();
+    // A rejected write is never announced as arrived.
+    expect(arrivals).toEqual([]);
+  });
+
+  it("surfaces a never-parseable drafter as a lens failure, never an empty board (finding 6)", async () => {
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], () => ({ not: "a board" })), // never parses
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (l) => `board:${l}`,
+    });
+    for (const o of result.boards) {
+      expect(o.failure).toBeDefined();
+      expect(o.board).toBeUndefined();
+    }
+    expect(applied).toEqual([]); // no board ever written
+  });
+
+  it("degrades a thrown drafting turn to a recorded failure, never an uncaught throw (finding 6/opus F1)", async () => {
+    const throwingPort = {
+      createSession: async () => {
+        throw new Error("live claude crashed");
+      },
+    } as unknown as HarnessPort;
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: throwingPort,
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (l) => `board:${l}`,
+    });
+    for (const o of result.boards) expect(o.failure).toBeDefined();
+    expect(applied).toEqual([]);
   });
 });

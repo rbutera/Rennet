@@ -91,16 +91,54 @@ export function boardOutputSchema(): unknown {
 
 // ── Draft → board ops (the host writes ops on the drafter's behalf, D2) ──
 
+/** The element ids an element references (a string field, or array entry, that is a live element id). */
+function referencedIds(el: DraftElement, liveIds: ReadonlySet<string>): string[] {
+  const refs: string[] = [];
+  for (const value of Object.values(el.data as Record<string, unknown>)) {
+    if (typeof value === "string" && liveIds.has(value)) refs.push(value);
+    else if (Array.isArray(value)) {
+      for (const v of value) if (typeof v === "string" && liveIds.has(v)) refs.push(v);
+    }
+  }
+  return refs;
+}
+
 /**
  * Project a validated draft board into the flat `create` ops the whiteboard
  * client applies. The wire element shape `{ id, kind, data }` IS the draft
- * element shape, so this is a straight map — the host, never the drafter, is the
- * op writer (`whiteboard-client` is the sole writer, B04).
+ * element shape, so this is a per-element map — the host, never the drafter, is
+ * the op writer (`whiteboard-client` is the sole writer, B04).
+ *
+ * The ops are TOPOLOGICALLY ORDERED — a referenced element (a `code_ref`) is
+ * created before the element that cites it (a `finding` whose `code` names it),
+ * because the board service validates references in batch order and rejects a
+ * create that names a not-yet-created element as a `bad-ref` (finding 2). The
+ * drafter's authoring order is not that order, so a finding-before-its-code_ref
+ * board would otherwise be rejected wholesale while the pipeline announced
+ * success. Cycles (which the frozen schema does not admit) fall back to source
+ * order rather than dropping an element.
  */
 export function draftToOps(
   board: DraftBoard,
 ): { op: "create"; element: DraftBoard["elements"][number] }[] {
-  return board.elements.map((element) => ({ op: "create", element }));
+  const byId = new Map(board.elements.map((el) => [el.id, el]));
+  const liveIds = new Set(byId.keys());
+  const ordered: DraftElement[] = [];
+  const done = new Set<string>();
+  const onStack = new Set<string>();
+  const visit = (el: DraftElement): void => {
+    if (done.has(el.id) || onStack.has(el.id)) return; // done, or a cycle — break
+    onStack.add(el.id);
+    for (const refId of referencedIds(el, liveIds)) {
+      const dep = byId.get(refId);
+      if (dep !== undefined && dep.id !== el.id) visit(dep);
+    }
+    onStack.delete(el.id);
+    done.add(el.id);
+    ordered.push(el);
+  };
+  for (const el of board.elements) visit(el);
+  return ordered.map((element) => ({ op: "create", element }));
 }
 
 // ── Flagged dual seat: reconcile two boards' findings (J1/J2, cluster 5.2) ──
@@ -404,6 +442,36 @@ export interface BoardArrivalEvent {
   readonly elementCount: number;
 }
 
+/**
+ * A board's validation/coverage metadata (finding 3). `draftToOps` serializes only
+ * a board's ELEMENTS to the whiteboard event log; its `skippedHunks` (coverage) and
+ * the validation `blemishes`/`omissions`/`immutability` are board-level, live only in
+ * memory, and the frozen 13-kind vocabulary has no element to carry them. This is the
+ * durable home the composition root supplies (a store keyed by `boardId`), persisted
+ * BEFORE a board's arrival is announced so a reader reconstructing the result never
+ * sees an announced board whose coverage was lost.
+ */
+export interface BoardMeta {
+  readonly lens: LintTarget;
+  readonly boardId: string;
+  readonly skippedHunks: readonly { hunk: string; reason: string }[];
+  readonly blemishes: readonly Violation[];
+  readonly omissions: readonly Omission[];
+  readonly immutability: readonly Violation[];
+}
+
+/** Read a board's `skippedHunks` passthrough (board-level, not an element). */
+function boardSkippedHunks(board: DraftBoard): { hunk: string; reason: string }[] {
+  const raw = (board as { skippedHunks?: unknown }).skippedHunks;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((e) => {
+    const o = (e ?? {}) as { hunk?: unknown; reason?: unknown };
+    return typeof o.hunk === "string"
+      ? [{ hunk: o.hunk, reason: typeof o.reason === "string" ? o.reason : "" }]
+      : [];
+  });
+}
+
 // ── One lens's outcome ──
 
 export interface LensBoardOutcome {
@@ -444,6 +512,14 @@ export interface LensPipelineDeps {
   readonly boardIdFor: (lens: LintTarget) => string;
   /** The per-board arrival broadcast (B09 consumes; optional). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
+  /**
+   * The durable home for a board's coverage/validation metadata (finding 3): the
+   * `skippedHunks` and validation blemishes the whiteboard event log cannot carry.
+   * Called after the board's ops are accepted and BEFORE its arrival is announced,
+   * so a reconstructed result never announces a board whose coverage was lost. The
+   * composition root supplies a real store; absent ⇒ metadata is result-only.
+   */
+  readonly persistBoardMeta?: (meta: BoardMeta) => void | Promise<void>;
   /** Prior generation's boards, for R58 delta stamps (cluster 4). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -506,29 +582,96 @@ function bodyOr(result: HarnessTurnResult, fallback: unknown): unknown {
 /**
  * Draft one lens: seed the seat, run the cluster-3 validation loop (post-process
  * wired to the real `board-post-process` editor pass), and return the validated
- * board. Pure over the injected seat turns; never throws, never blocks.
+ * board — or an honest `failure` (finding 6). A failure is recorded, never a
+ * throw and never a silent empty-success board, when: the INITIAL turn does not
+ * emit a board (an empty fallback would ship as a schema-valid empty board), the
+ * loop NEVER produces a parseable board across its attempts (`everParsed`), or a
+ * seat call THROWS (a live-harness crash on the first turn or a retry). A thrown
+ * RETRY degrades to keeping the current draft — the loop re-lints and escalates,
+ * exactly the resolution-failure path — so one crashed retry never aborts a lens
+ * that already has passing elements.
  */
 async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   ctx: LintContext,
-): Promise<Awaited<ReturnType<typeof validateDraft>>> {
-  const first = await seatTurn(basePrompt, 0);
-  const firstInput = bodyOr(first, { elements: [] });
-  return validateDraft(firstInput, ctx, {
-    runTurn: async (req) => {
-      const retry = await seatTurn(
-        renderRetryPrompt(basePrompt, req.draft, req.pointers),
-        req.attempt,
-      );
-      // An honest turn failure keeps the current draft — the loop re-lints, the
-      // offending element escalates a rung, and an unfixable one becomes an
-      // honest omission. Never a wipe (returning an empty board would drop passers).
-      return bodyOr(retry, req.draft);
-    },
-    ...(postProcess === undefined ? {} : { postProcess }),
+): Promise<Awaited<ReturnType<typeof validateDraft>> | { failure: string }> {
+  const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
+  try {
+    const first = await seatTurn(basePrompt, 0);
+    if (first.status !== "emitted") {
+      return {
+        failure: `${who}: the initial drafting turn did not emit a board (${first.status}).`,
+      };
+    }
+    const validated = await validateDraft(first.body, ctx, {
+      runTurn: async (req) => {
+        try {
+          const retry = await seatTurn(
+            renderRetryPrompt(basePrompt, req.draft, req.pointers),
+            req.attempt,
+          );
+          // An honest turn failure keeps the current draft — the loop re-lints, the
+          // offending element escalates a rung, and an unfixable one becomes an
+          // honest omission. Never a wipe (returning an empty board would drop passers).
+          return bodyOr(retry, req.draft);
+        } catch {
+          // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
+          // keep the draft, let the loop escalate; one crashed retry is not fatal.
+          return req.draft;
+        }
+      },
+      ...(postProcess === undefined ? {} : { postProcess }),
+    });
+    if (!validated.everParsed) {
+      return {
+        failure: `${who}: no parseable board across ${validated.attempts} attempts — recorded as a failure, not an empty board.`,
+      };
+    }
+    return validated;
+  } catch (err) {
+    // A throw on the FIRST turn (or anywhere outside the retry channel) degrades to
+    // a recorded failure — never an uncaught throw that aborts the whole generation.
+    return {
+      failure: `${who}: the drafting seat threw — ${err instanceof Error ? err.message : String(err)}.`,
+    };
+  }
+}
+
+/**
+ * Apply a validated board's ops and report whether the write was ACCEPTED (finding 2):
+ * the board service validates references in order and rejects a bad batch, so the
+ * pipeline must inspect `response.ok` — a rejected write is a lens failure, not a
+ * silent success. On acceptance the board's coverage/validation metadata is durably
+ * stored (finding 3) BEFORE the caller announces arrival, so a reconstructed result
+ * never sees an announced board whose `skippedHunks` were lost.
+ */
+async function persistBoard(
+  deps: LensPipelineDeps,
+  lens: LintTarget,
+  boardId: string,
+  board: DraftBoard,
+  validated: ValidatedLike,
+  actor: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const result = await deps.whiteboard.apply(boardId, draftToOps(board), actor);
+  if (!result.response.ok) {
+    const code = (result.response as { code?: string }).code ?? "rejected";
+    return {
+      ok: false,
+      reason: `${lens} board write rejected by the board service (${code}) — not announced as arrived.`,
+    };
+  }
+  await deps.persistBoardMeta?.({
+    lens,
+    boardId,
+    skippedHunks: boardSkippedHunks(board),
+    blemishes: validated.blemishes,
+    omissions: validated.omissions,
+    immutability: validated.immutability,
   });
+  return { ok: true };
 }
 
 /** Build the `board-post-process` editor seam, or `undefined` when no seat resolves. */
@@ -581,9 +724,24 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   }
 
   // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam
-  // stays no-op per board — this is the cross-lens obligation).
+  // stays no-op per board — this is the cross-lens obligation). Runs BEFORE any lens
+  // arrival is announced (finding 3): a board's write is already accepted and its
+  // metadata durably stored inside `runLensBoard`; the announcement waits until
+  // cross-lens coverage is known, so a reader never sees a lens announced "ready"
+  // before the coverage picture that frames it.
   const boards = outcomes.map((o) => o.board).filter((b): b is DraftBoard => b !== undefined);
   const coverage = assertCoverage(boards, deps.hunks);
+
+  // Announce each accepted lens board now that coverage is known (finding 2/3).
+  for (const o of outcomes) {
+    if (o.board !== undefined && o.boardId !== undefined) {
+      deps.onBoardArrival?.({
+        lens: o.lens,
+        boardId: o.boardId,
+        elementCount: o.board.elements.length,
+      });
+    }
+  }
 
   // C2 — the authored composition write-through, when the orchestrator supplied a
   // free-text authoring turn. The lens boards ARE the reading surface (C3); this
@@ -629,10 +787,30 @@ async function runRoundReport(
   const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket);
   const ctx = deps.lintContextFor("report");
   const validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
+  if ("failure" in validated) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: validated.failure,
+    };
+  }
   const stamped = stampDeltas(deps.previous?.get("report"), validated.board);
 
   const boardId = deps.boardIdFor("report");
-  await deps.whiteboard.apply(boardId, draftToOps(stamped), "seat:report");
+  const persisted = await persistBoard(deps, "report", boardId, stamped, validated, "seat:report");
+  if (!persisted.ok) {
+    return {
+      lens: "report",
+      omissions: validated.omissions,
+      blemishes: validated.blemishes,
+      immutability: validated.immutability,
+      failure: persisted.reason,
+    };
+  }
+  // The report is the reviewer's greeting (R58) — it announces its arrival inline,
+  // ahead of the lens boards, once its write is accepted and its metadata is durable.
   deps.onBoardArrival?.({ lens: "report", boardId, elementCount: stamped.elements.length });
 
   return {
@@ -687,6 +865,7 @@ async function runFlaggedDual(
       : (codexSeat as (p: string, a: number) => Promise<HarnessTurnResult>);
     const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
     const single = await draftOneLens(basePrompt, seat, postProcess, ctx);
+    if ("failure" in single) return { failure: single.failure };
     return { ...single, board: stampSingleSeatConcurrence(single.board, label) };
   }
 
@@ -705,8 +884,24 @@ async function runFlaggedDual(
       ctx,
     ),
   ]);
+  const aOk = !("failure" in a);
+  const bOk = !("failure" in b);
+  // Neither seat produced a board ⇒ the flagged lens honestly failed.
+  if (!aOk && !bOk) {
+    return {
+      failure: `both flagged seats failed — ${(a as { failure: string }).failure} | ${(b as { failure: string }).failure}`,
+    };
+  }
+  // One seat failed ⇒ degrade to the survivor with honest single-model concurrence.
+  if (!aOk || !bOk) {
+    const ok = (aOk ? a : b) as ValidatedLike;
+    const label = aOk ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
+    return { ...ok, board: stampSingleSeatConcurrence(ok.board, label) };
+  }
+  const seatA = a as ValidatedLike;
+  const seatB = b as ValidatedLike;
   const labels = { a: DEFAULT_SEAT_LABELS["claude-code"], b: DEFAULT_SEAT_LABELS.codex };
-  const merged = reconcileFlaggedBoards(a.board, b.board, labels);
+  const merged = reconcileFlaggedBoards(seatA.board, seatB.board, labels);
   // Wire-validate the merged board (finding 7): a reconciliation that produced a
   // structurally-invalid board surfaces as a labeled blemish, never ships silently.
   const wire = parseDraft(merged);
@@ -719,9 +914,9 @@ async function runFlaggedDual(
       }));
   return {
     board: merged,
-    omissions: [...a.omissions, ...b.omissions],
-    blemishes: [...a.blemishes, ...b.blemishes, ...mergeBlemishes],
-    immutability: [...a.immutability, ...b.immutability],
+    omissions: [...seatA.omissions, ...seatB.omissions],
+    blemishes: [...seatA.blemishes, ...seatB.blemishes, ...mergeBlemishes],
+    immutability: [...seatA.immutability, ...seatB.immutability],
   };
 }
 
@@ -750,15 +945,31 @@ async function runLensBoard(
     if ("failure" in seat) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
     }
-    validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
+    const drafted = await draftOneLens(basePrompt, seat, postProcess, ctx);
+    if ("failure" in drafted) {
+      return { lens, omissions: [], blemishes: [], immutability: [], failure: drafted.failure };
+    }
+    validated = drafted;
   }
 
   // R58 delta stamps against the prior generation's board (cluster 4).
   const stamped = stampDeltas(deps.previous?.get(lens), validated.board);
 
+  // Write the board and INSPECT the response (finding 2): a rejected batch is a lens
+  // failure, never announced as arrived. On acceptance the coverage/validation
+  // metadata is durably stored (finding 3). Arrival is NOT emitted here — the pipeline
+  // announces lens arrivals only after cross-lens coverage runs over the frozen set.
   const boardId = deps.boardIdFor(lens);
-  await deps.whiteboard.apply(boardId, draftToOps(stamped), `lens:${lens}`);
-  deps.onBoardArrival?.({ lens, boardId, elementCount: stamped.elements.length });
+  const persisted = await persistBoard(deps, lens, boardId, stamped, validated, `lens:${lens}`);
+  if (!persisted.ok) {
+    return {
+      lens,
+      omissions: validated.omissions,
+      blemishes: validated.blemishes,
+      immutability: validated.immutability,
+      failure: persisted.reason,
+    };
+  }
 
   return {
     lens,
