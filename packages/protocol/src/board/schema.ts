@@ -64,6 +64,12 @@ const concurrenceSchema = z.object({
  * A prose selection anchor (#462 R27/R28 ripple): the sub-element quote a
  * message/thread replies to. The UI highlight is a projection of this — derived
  * state, never stored presentation.
+ *
+ * This combined `{target, quote, offsetHint?}` shape is the SESSION-side anchor
+ * (`session/`'s ThreadAnchor quote arm). On the board's `message` kind the same
+ * anchor travels SPLIT — `quote_target` as an `element`-typed wire attribute
+ * (so whiteboard reference validation sees it; a dangling target cannot pass)
+ * plus the {@link QuoteDescriptorSchema} descriptor as `json`.
  */
 export const QuoteAnchorSchema = z.object({
   target: z.string().min(1),
@@ -71,6 +77,10 @@ export const QuoteAnchorSchema = z.object({
   offsetHint: z.number().int().nonnegative().optional(),
 });
 export type QuoteAnchor = z.infer<typeof QuoteAnchorSchema>;
+
+/** The quoted-text half of a prose anchor — everything but the element target. */
+export const QuoteDescriptorSchema = QuoteAnchorSchema.omit({ target: true });
+export type QuoteDescriptor = z.infer<typeof QuoteDescriptorSchema>;
 
 /**
  * The ask lifecycle (#462 R29–R34; #466 res. 7). One vocabulary — the board's
@@ -157,9 +167,14 @@ const messageData = withAuthor({
   reply_to: z.string().optional(),
   code_ref: z.string().optional(),
   // #462 R27/R28 selection-thread ripple + R29–R34 ask lifecycle. Detached is
-  // visible, never dropped.
-  quote: QuoteAnchorSchema.optional(),
+  // visible, never dropped. The anchor travels split: `quote_target` is an
+  // element reference the wire validates; `quote` is the text descriptor.
+  quote_target: z.string().min(1).optional(),
+  quote: QuoteDescriptorSchema.optional(),
   lifecycle: AskLifecycleSchema.optional(),
+}).refine((d) => (d.quote === undefined) === (d.quote_target === undefined), {
+  message: "quote and quote_target come as a pair — an anchor needs both halves",
+  path: ["quote_target"],
 });
 // The `code_ref` kind's attrs ARE the canonical `CodeRef` (delta/citations,
 // B3 task 6.2) in snake_case wire casing — each field reuses the canonical
@@ -374,7 +389,12 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     role: a("string", true, "finding | question | discuss | request-change."),
     reply_to: a("element", false, "The element this replies to."),
     code_ref: a("element", false, "A cited code_ref element."),
-    quote: a("json", false, "Prose selection anchor { target, quote, offsetHint? }."),
+    quote_target: a("element", false, "The element a prose-selection anchor targets."),
+    quote: a(
+      "json",
+      false,
+      "Prose quote descriptor { quote, offsetHint? }; paired with quote_target.",
+    ),
     lifecycle: a("string", false, "staged | dispatched | addressed | retired | detached."),
   }),
   code_ref: authored("A citation into the captured patchset; code is never copied.", {

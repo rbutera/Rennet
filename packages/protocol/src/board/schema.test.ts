@@ -114,7 +114,8 @@ const fullBoard = {
         role: "question",
         reply_to: "f1",
         code_ref: "cr1",
-        quote: { target: "p1", quote: "prose", offsetHint: 5 },
+        quote_target: "p1",
+        quote: { quote: "prose", offsetHint: 5 },
         lifecycle: "staged",
       },
     },
@@ -185,6 +186,18 @@ describe("host board schema (#462)", () => {
     if (!el) throw new Error(`fixture has no ${kind}`);
     const { [field]: _dropped, ...data } = el.data as Record<string, unknown>;
     expect(HostElementSchema.safeParse({ ...el, data }).success).toBe(false);
+  });
+
+  it("rejects a quote descriptor without its element target (and vice versa)", () => {
+    const message = (data: Record<string, unknown>) =>
+      HostElementSchema.safeParse({
+        id: "m9",
+        kind: "message",
+        data: { author, role: "question", ...data },
+      }).success;
+    expect(message({ quote: { quote: "prose" } })).toBe(false);
+    expect(message({ quote_target: "p1" })).toBe(false);
+    expect(message({ quote_target: "p1", quote: { quote: "prose" } })).toBe(true);
   });
 
   it("passes undeclared data fields through (extras)", () => {
