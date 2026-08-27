@@ -7,7 +7,12 @@ import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
-import { PriorSurfaceTracker, SettingsScreen, ThemePrefProvider } from "../settings";
+import {
+  LiveSettingsProjectionProvider,
+  PriorSurfaceTracker,
+  SettingsScreen,
+  ThemePrefProvider,
+} from "../settings";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
@@ -174,39 +179,48 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
       <ThemePrefProvider>
         <Router hook={history?.hook} searchHook={history?.searchHook}>
           <PriorSurfaceTracker>
-            <AppLayout>
-              <Switch>
-                <Route path={ROUTES.home}>
-                  <Redirect to={ROUTES.newChat} />
-                </Route>
-                <Route path={ROUTES.newChat} component={NewChatScreen} />
-                <Route path={ROUTES.sessionRun}>
-                  {(p) => <Interim screen="session-run" title={`Run — ${p.slug}`} />}
-                </Route>
-                <Route path={ROUTES.session}>{(p) => <SessionScreen slug={p.slug ?? ""} />}</Route>
-                <Route path={ROUTES.archived}>
-                  <ArchivedView />
-                </Route>
-                <Route path={ROUTES.projectIndexing}>
-                  {(p) => <IndexingView projectId={p.id ?? ""} />}
-                </Route>
-                <Route path={ROUTES.projectMap}>
-                  {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
-                </Route>
-                <Route path={ROUTES.settings}>
-                  {(p) => <SettingsScreen page={p.page ?? ""} />}
-                </Route>
-                <Route path={ROUTES.projectDetail}>
-                  {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
-                </Route>
-                <Route path={ROUTES.projects}>
-                  <Interim screen="projects" title="Projects" />
-                </Route>
-                <Route>
-                  <NotFound label="this address" />
-                </Route>
-              </Switch>
-            </AppLayout>
+            {/* The live settings projection is mounted ABOVE the route switch, so a
+                reader's per-session agent enablement (the `disabled` set) survives
+                leaving and reopening Settings — it resets only on a full app remount
+                (a reload), which is the spec (C10 §10.2). Settings is a route-local
+                takeover; wrapping it there would drop the state on every exit. */}
+            <LiveSettingsProjectionProvider>
+              <AppLayout>
+                <Switch>
+                  <Route path={ROUTES.home}>
+                    <Redirect to={ROUTES.newChat} />
+                  </Route>
+                  <Route path={ROUTES.newChat} component={NewChatScreen} />
+                  <Route path={ROUTES.sessionRun}>
+                    {(p) => <Interim screen="session-run" title={`Run — ${p.slug}`} />}
+                  </Route>
+                  <Route path={ROUTES.session}>
+                    {(p) => <SessionScreen slug={p.slug ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.archived}>
+                    <ArchivedView />
+                  </Route>
+                  <Route path={ROUTES.projectIndexing}>
+                    {(p) => <IndexingView projectId={p.id ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.projectMap}>
+                    {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.settings}>
+                    {(p) => <SettingsScreen page={p.page ?? ""} />}
+                  </Route>
+                  <Route path={ROUTES.projectDetail}>
+                    {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
+                  </Route>
+                  <Route path={ROUTES.projects}>
+                    <Interim screen="projects" title="Projects" />
+                  </Route>
+                  <Route>
+                    <NotFound label="this address" />
+                  </Route>
+                </Switch>
+              </AppLayout>
+            </LiveSettingsProjectionProvider>
           </PriorSurfaceTracker>
         </Router>
       </ThemePrefProvider>

@@ -1,11 +1,10 @@
 import { cn } from "@rennet/ui";
 import { ArrowLeft } from "lucide-react";
 import { type KeyboardEvent, useCallback, useEffect, useRef } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { Icon } from "../components/icon";
 import { settingsPath } from "../routes/url";
 import { AppearancePage } from "./appearance";
-import { LiveSettingsProjectionProvider } from "./data";
 import { EnvironmentsPage } from "./environments/environments-page";
 import {
   parseSettingsPage,
@@ -59,8 +58,14 @@ function ActivePage({ page }: { readonly page: SettingsPageMeta }) {
 
 export function SettingsScreen({ page }: { readonly page: string }) {
   const [, navigate] = useLocation();
+  const search = useSearch();
   const getPriorSurface = usePriorSurface();
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // The scoped project (`?project`) is carried across sibling settings routes, so a nav
+  // hop (Projects → Appearance → Projects) preserves the reader's chosen project instead
+  // of silently falling back to the first one. Pages that ignore the param are unharmed.
+  const scopedProject = new URLSearchParams(search).get("project") ?? undefined;
 
   const activeId = parseSettingsPage(page);
   const activeMeta = SETTINGS_PAGE_BY_ID[activeId];
@@ -81,67 +86,64 @@ export function SettingsScreen({ page }: { readonly page: string }) {
   }
 
   return (
-    // The live projection binds the ONE post-fold served read (agents ← harness.detect,
-    // C10 §10.1); every other projection field stays honest-empty. It wraps the whole
-    // takeover so any page reads the same seam; a page-level test supplies its own.
-    <LiveSettingsProjectionProvider>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: Escape is handled here (not window) so a nested editor can intercept it with stopPropagation before settings closes */}
-      <div
-        ref={rootRef}
-        data-screen="settings"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="flex h-full min-h-0 flex-col overflow-hidden outline-none"
-      >
-        <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
-          <button
-            type="button"
-            onClick={leave}
-            aria-label="Back"
-            className="flex size-6 items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-          >
-            <Icon icon={ArrowLeft} className="size-3.5" />
-          </button>
-          <span className="text-xs font-medium text-ink">Settings</span>
-          <kbd className="ml-auto rounded border border-line px-1 py-0.5 text-2xs text-ink-soft">
-            esc
-          </kbd>
-        </header>
+    // The live settings projection (agents ← harness.detect, C10 §10.1) is supplied
+    // ABOVE the route switch in `routes/app.tsx`, so a reader's per-session agent
+    // enablement survives leaving and reopening this route-local takeover; every other
+    // projection field stays honest-empty. A page-level test supplies its own projection.
+    // biome-ignore lint/a11y/noStaticElementInteractions: Escape is handled here (not window) so a nested editor can intercept it with stopPropagation before settings closes
+    <div
+      ref={rootRef}
+      data-screen="settings"
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      className="flex h-full min-h-0 flex-col overflow-hidden outline-none"
+    >
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
+        <button
+          type="button"
+          onClick={leave}
+          aria-label="Back"
+          className="flex size-6 items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+        >
+          <Icon icon={ArrowLeft} className="size-3.5" />
+        </button>
+        <span className="text-xs font-medium text-ink">Settings</span>
+        <kbd className="ml-auto rounded border border-line px-1 py-0.5 text-2xs text-ink-soft">
+          esc
+        </kbd>
+      </header>
 
-        <div className="flex min-h-0 flex-1">
-          <nav
-            aria-label="Settings pages"
-            className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-line px-2 py-4"
-          >
-            {SETTINGS_PAGES.map((p) => {
-              const active = p.id === activeId;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => navigate(settingsPath(p.slug), { replace: true })}
-                  className={cn(
-                    "flex h-8 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
-                    active
-                      ? "bg-raised text-ink"
-                      : "text-ink-soft hover:bg-raised/60 hover:text-ink",
-                  )}
-                >
-                  <Icon icon={p.icon} className="size-3.5" />
-                  {p.label}
-                </button>
-              );
-            })}
-          </nav>
+      <div className="flex min-h-0 flex-1">
+        <nav
+          aria-label="Settings pages"
+          className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-line px-2 py-4"
+        >
+          {SETTINGS_PAGES.map((p) => {
+            const active = p.id === activeId;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                aria-current={active ? "page" : undefined}
+                onClick={() => navigate(settingsPath(p.slug, scopedProject), { replace: true })}
+                className={cn(
+                  "flex h-8 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
+                  active ? "bg-raised text-ink" : "text-ink-soft hover:bg-raised/60 hover:text-ink",
+                )}
+              >
+                <Icon icon={p.icon} className="size-3.5" />
+                {p.label}
+              </button>
+            );
+          })}
+        </nav>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 py-8">
-              <ActivePage page={activeMeta} />
-            </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 py-8">
+            <ActivePage page={activeMeta} />
           </div>
         </div>
       </div>
-    </LiveSettingsProjectionProvider>
+    </div>
   );
 }

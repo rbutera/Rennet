@@ -5,11 +5,28 @@
 // list in the nav, Escape (and the back arrow) leave to the PRIOR surface, and the
 // always-mounted chat-dock slot survives the visit un-remounted (the "chat + board
 // stay mounted" claim, proven by DOM-node identity across the round-trip).
+import type { Project } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
-import { frontDoorBridge } from "../test/fixtures/front-door";
+import { frontDoorBridge, frontDoorHandlers } from "../test/fixtures/front-door";
+import { MemoryBridge } from "../test/memory-bridge";
+
+function mkProj(id: string, name: string, openPath: string): Project {
+  return {
+    id,
+    name,
+    source: "local",
+    path: `/repos/${id}`,
+    kind: "repo",
+    repoCount: 1,
+    branchCount: 1,
+    primaryBranch: "main",
+    openPath,
+    addedAt: "2026-08-01T00:00:00.000Z",
+  };
+}
 
 function settingsNode(): HTMLElement | null {
   return document.querySelector('[data-screen="settings"]');
@@ -154,6 +171,84 @@ describe("cold deep-link — the route param drives the page (autopsy S2)", () =
     // The honest empty archived surface renders cold; it is NOT a settings page.
     await findByText("Nothing archived.");
     expect(settingsNode()).toBeNull();
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C10 §10.2 + §8 nav — cross-route persistence the route-local takeover must NOT drop.
+// P1-4: the left nav carries `?project` across sibling settings routes, so a hop out
+// and back keeps the reader's chosen project instead of snapping to the first.
+// P1-2: per-session agent enablement lives ABOVE the route switch (app.tsx), so leaving
+// and reopening Settings preserves it; only a full app remount (a reload) resets it.
+// ─────────────────────────────────────────────────────────────────────────────
+const NAV_PROJECTS: readonly Project[] = [
+  mkProj("p1", "checkout", "/checkout"),
+  mkProj("p2", "billing", "/billing"),
+];
+
+function projectName(getByLabelText: (t: string) => HTMLElement): string {
+  return (getByLabelText("Project name") as HTMLInputElement).value;
+}
+
+describe("Settings nav preserves ?project across sibling routes (P1-4)", () => {
+  it("Projects → Appearance → Projects keeps the scoped project", async () => {
+    const history = memoryHistory("/settings/projects?project=p2");
+    const { findByLabelText, getByLabelText, getByRole } = mount(
+      <RennetRouterApp bridge={frontDoorBridge(NAV_PROJECTS)} history={history} />,
+    );
+    // Cold deep-link scopes to p2.
+    expect(((await findByLabelText("Project name")) as HTMLInputElement).value).toBe("billing");
+    // Hop to Appearance via the nav, then back to Projects via the nav.
+    fireEvent.click(getByRole("button", { name: /Appearance/ }));
+    await waitFor(() =>
+      expect(getByRole("button", { name: /Appearance/ }).getAttribute("aria-current")).toBe("page"),
+    );
+    fireEvent.click(getByRole("button", { name: /Projects/ }));
+    // Still p2 — the query survived the round trip (it used to fall back to the first project).
+    await findByLabelText("Project name");
+    expect(projectName(getByLabelText)).toBe("billing");
+    cleanup();
+  });
+});
+
+describe("Agent enablement persists across leaving Settings (P1-2)", () => {
+  function agentBridge(): MemoryBridge {
+    return new MemoryBridge(
+      {
+        ...frontDoorHandlers(NAV_PROJECTS),
+        "harness.detect": () => ({ detected: [{ id: "claude", version: "2.1.0" }] }),
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+  }
+
+  async function claudeToggle(findByRole: (role: string, opts: object) => Promise<HTMLElement>) {
+    return findByRole("switch", { name: "Use Claude on This Machine" });
+  }
+
+  it("disable → leave → reopen keeps it disabled; a full remount resets it", async () => {
+    const history = memoryHistory("/settings/environments");
+    const first = mount(<RennetRouterApp bridge={agentBridge()} history={history} />);
+    const toggle = await claudeToggle(first.findByRole);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await first.user.click(toggle);
+    await waitFor(async () =>
+      expect((await claudeToggle(first.findByRole)).getAttribute("aria-checked")).toBe("false"),
+    );
+    // Leave Settings entirely (the takeover unmounts), then reopen it.
+    act(() => history.navigate("/new-chat"));
+    await first.findByText("Start a review.");
+    act(() => history.navigate("/settings/environments"));
+    // The provider lives above the route switch, so the disabled choice survived.
+    expect((await claudeToggle(first.findByRole)).getAttribute("aria-checked")).toBe("false");
+    cleanup();
+
+    // A full app remount (a reload) is where it resets — detection is fresh, none disabled.
+    const second = mount(
+      <RennetRouterApp bridge={agentBridge()} history={memoryHistory("/settings/environments")} />,
+    );
+    expect((await claudeToggle(second.findByRole)).getAttribute("aria-checked")).toBe("true");
     cleanup();
   });
 });

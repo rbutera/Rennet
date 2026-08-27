@@ -6,6 +6,7 @@ export { BackingFile } from "./backing-file";
 export {
   EMPTY_SETTINGS_PROJECTION,
   type Layered,
+  LiveSettingsProjectionProvider,
   type SettingsHost,
   type SettingsProjection,
   SettingsProjectionProvider,
