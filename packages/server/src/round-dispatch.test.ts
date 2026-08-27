@@ -261,7 +261,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
     ).rejects.toThrow(/round worker turn failed/);
 
     // The session tail is not wedged by the failure: a subsequent (successful) round still runs.
-    const ran = vi.fn(async () => {});
+    const ran = vi.fn(() => Promise.resolve());
     await runtime.dispatchRound({ session: session("s1"), workOrder: WORK_ORDER, runWorkers: ran });
     expect(ran).toHaveBeenCalledTimes(1);
   });
@@ -269,7 +269,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
   it("finding 4: a SUCCESSFUL round runs its ripening after the worker turn lands", async () => {
     const runtime = createRoundsRuntime(runtimeDeps());
     // Model the create-server runWorkers: after a completed turn it re-composes (ripens).
-    const ripen = vi.fn(async () => {});
+    const ripen = vi.fn(() => Promise.resolve());
     await runtime.dispatchRound({
       session: session("s1"),
       workOrder: WORK_ORDER,

@@ -348,8 +348,10 @@ const definitions = {
         /** The composed team-PR comments the phone previews AND posts verbatim via `publish.review`. */
         comments: z.array(reviewCommentSchema),
         /** The composed review-BODY notes (pathless/prose asks) the phone previews AND posts
-         *  verbatim (B11 finding 2). Folded into the canonical `payload`, so nothing vanishes. */
-        bodyNotes: z.array(reviewBodyNoteSchema),
+         *  verbatim (B11 finding 2). Folded into the canonical `payload`, so nothing vanishes.
+         *  Additive/optional so a pre-finding-2 consumer (or a partial mock) still validates; the
+         *  daemon always sends it (`[]` when there are none). */
+        bodyNotes: z.array(reviewBodyNoteSchema).optional(),
         /** The canonical bytes, derived from `comments` + `bodyNotes` — `publish.review` verifies. */
         payload: z.string(),
         /** The derived review verdict (the GitHub review event the post will carry). */
