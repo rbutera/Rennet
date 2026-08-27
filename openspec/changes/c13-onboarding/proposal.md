@@ -68,3 +68,16 @@ verdict, draft, dispatch`. Nothing about the cap is left open.
 - Out of scope: new marks beyond the ruled nine; the settings persistence engine
   (B10). Rule Zero: no gates — skip is one click, dismiss is one click or one
   use of the anchor, nothing is confirmed.
+
+## Fix-loop ledger (PR #535 dual review)
+
+Four findings upheld (3 P2 + 1 P3), fixed at their root, no gates added.
+
+- **Finding 1 (P2) — `useMergedRefs` cleanup clears every input ref.** React 19
+  skips its own null-invoke fallback for any ref once the ref callback returns a
+  cleanup, so the merged cleanup left object refs pinned to a detached node
+  (fab.tsx read `fabRef.current` for exit-flight geometry → misfired) and legacy
+  callback refs never saw their null-invoke. Fixed once at the shared function
+  (`coach/registry.ts`), covering both merge sites (fab, indexing CTA). Proven by
+  `coach/merged-refs.dom.test.tsx` — a live→null rerender clears the object ref and
+  null-invokes the legacy callback ref.

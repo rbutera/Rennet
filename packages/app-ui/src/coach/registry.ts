@@ -109,8 +109,20 @@ export function useMergedRefs<T extends Element>(
       if (ref) (ref as { current: T | null }).current = node;
       return undefined;
     });
+    // React 19 skips its own null-invoke fallback (`ref.current = null` / `ref(null)`)
+    // for ANY ref once the ref callback returns a cleanup — so this merged callback
+    // must clear every input itself, or object refs stay pinned to a detached node
+    // (fab.tsx reads `fabRef.current` for flight geometry → misfires) and legacy
+    // callback refs never see their null-invoke.
     return () => {
-      for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+      refs.forEach((ref, i) => {
+        const cleanup = cleanups[i];
+        if (typeof cleanup === "function")
+          cleanup(); // cleanup-returning ref owns its teardown
+        else if (typeof ref === "function")
+          ref(null); // legacy callback ref: hand it the null
+        else if (ref) (ref as { current: T | null }).current = null; // object ref: reset it
+      });
     };
   };
   // The ref list IS the dependency set: the merged callback must change identity when
