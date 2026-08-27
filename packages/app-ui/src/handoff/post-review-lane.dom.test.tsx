@@ -117,6 +117,23 @@ describe("PostReviewLane", () => {
     expect(store().review.stagedAsks["This holds up on the retry path."]).toBeDefined();
   });
 
+  it("selection Revise renders the affordance but is honestly gated — no fake success", () => {
+    stage("This holds up on the retry path.", "comment");
+    const r = mount(<PostReviewLane review={review} />);
+    selectAndRelease(r.getByText("This holds up on the retry path."));
+    fireEvent.click(r.getByText("Revise"));
+    // The affordance opens — the reviewer can draft the instruction (packet task 4.3)…
+    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "tighten this to one sentence" } });
+    // …but it states the gated truth and the Rework control is disabled: no pretend run (cluster 8).
+    expect(r.getByText(/Revise runs with the next round — not available yet/)).toBeTruthy();
+    expect(r.getByRole("button", { name: "Rework" }).hasAttribute("disabled")).toBe(true);
+    // Clicking the disabled control changes nothing: the ask is untouched, no draft edit recorded.
+    fireEvent.click(r.getByRole("button", { name: "Rework" }));
+    expect(store().review.stagedAsks["This holds up on the retry path."]).toBeDefined();
+    expect(store().review.draftEdits["This holds up on the retry path."]).toBeUndefined();
+  });
+
   it("the Retired drawer restores a deleted block whole (re-staged, pip back up)", () => {
     stage("src/a.ts:5", "request-change", "guard the boundary");
     const r = mount(<PostReviewLane review={review} />);
