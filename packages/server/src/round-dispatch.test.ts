@@ -2,11 +2,16 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskLogStore } from "@rennet/adapters";
-import type { ComposedHandoffBundle, Review, SessionModel } from "@rennet/protocol";
+import type { ComposedHandoffBundle, Review, RoundRecord, SessionModel } from "@rennet/protocol";
+import { ROUND_NO_REGEN } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatchRuntime, type DispatchDeps } from "./dispatch";
 import { roundHandlers } from "./dispatch/round";
-import { createRoundsRuntime, type RoundsRuntimeDeps } from "./runtime/rounds";
+import {
+  createRoundsRuntime,
+  type DispatchRoundResult,
+  type RoundsRuntimeDeps,
+} from "./runtime/rounds";
 
 // B11 cluster 4 — the round exit's dispatch. Two surfaces: the `round.dispatch` HANDLER
 // (asks → ONE work-order, coalesced so the runtime is kicked once per distinct work-order) and
@@ -311,5 +316,89 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
 
     release();
     await Promise.all([a, b]);
+  });
+});
+
+// ── The rounds runtime RECORDS a RoundRecord per completed dispatch (record-only, no regen) ──
+
+/** A work-order carrying two staged asks across one composed task — the ask ids are what a
+ *  recorded round pins as `asksDispatched`. */
+const ORDER_WITH_ASKS = {
+  reviewId: "review-1",
+  patchsetId: "ps-1",
+  tasks: [
+    {
+      title: "Address the review",
+      sourceDispositions: ["t1", "t2"],
+      asks: [
+        { path: "a.ts", type: "request-change", instruction: "fix", context: "", id: "t1" },
+        { path: "b.ts", type: "comment", instruction: "note", context: "", id: "t2" },
+      ],
+    },
+  ],
+  prompt: "do the work",
+  digest: "d1",
+  composed: false,
+  traceMap: {},
+} as unknown as ComposedHandoffBundle;
+
+const COMPLETED_RESULT: DispatchRoundResult = {
+  outcome: "completed",
+  diff: "diff --git a/a.ts b/a.ts\n+seeded",
+  changedPaths: ["a.ts"],
+  workerCommitRange: { from: "c0", to: "c1" },
+};
+
+describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: record only)", () => {
+  it("un-dispatched session ⇒ empty ledger (no fabricated round)", () => {
+    const runtime = createRoundsRuntime(runtimeDeps());
+    expect(runtime.ledger("s1")).toEqual([]);
+  });
+
+  it("a completed dispatch records a real RoundRecord: asks, diff, paths, commits, honest no-regen generation", async () => {
+    const runtime = createRoundsRuntime(runtimeDeps());
+    await runtime.dispatchRound({
+      session: session("s1"),
+      workOrder: ORDER_WITH_ASKS,
+      runWorkers: async () => COMPLETED_RESULT,
+    });
+
+    const ledger = runtime.ledger("s1");
+    expect(ledger).toHaveLength(1);
+    const record = ledger[0] as RoundRecord;
+    expect(record.asksDispatched).toEqual(["t1", "t2"]);
+    expect(record.diff).toBe(COMPLETED_RESULT.diff);
+    expect(record.changedPaths).toEqual(["a.ts"]);
+    expect(record.workerCommitRange).toEqual({ from: "c0", to: "c1" });
+    expect(record.outcome).toBe("completed");
+    // HONEST no-mint: no generation minted, no report board drafted — the marker, never a
+    // fabricated id — and `mintedPatchsetGeneration` stays absent.
+    expect(record.boardGeneration).toBe(ROUND_NO_REGEN);
+    expect(record.reportBoard).toBe(ROUND_NO_REGEN);
+    expect(record.mintedPatchsetGeneration).toBeUndefined();
+  });
+
+  it("a FAILED round STILL records its diff, then rejects so the dispatch retries", async () => {
+    const runtime = createRoundsRuntime(runtimeDeps());
+    const failed: DispatchRoundResult = {
+      outcome: "failed",
+      diff: "diff --git a/a.ts b/a.ts\n+partial-before-crash",
+      changedPaths: ["a.ts"],
+      workerCommitRange: { from: "c0", to: "c0" },
+    };
+    await expect(
+      runtime.dispatchRound({
+        session: session("s1"),
+        workOrder: ORDER_WITH_ASKS,
+        runWorkers: async () => failed,
+      }),
+    ).rejects.toThrow(/round worker turn failed/);
+
+    // The failed round is not lost — its partial diff is on the ledger (a crashed worker is
+    // not an empty round).
+    const ledger = runtime.ledger("s1");
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]?.outcome).toBe("failed");
+    expect(ledger[0]?.diff).toContain("partial-before-crash");
   });
 });

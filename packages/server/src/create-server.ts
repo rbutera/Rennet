@@ -198,7 +198,11 @@ import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
-import { createRoundsRuntime, type PersistedBoardMeta } from "./runtime/rounds";
+import {
+  createRoundsRuntime,
+  type DispatchRoundResult,
+  type PersistedBoardMeta,
+} from "./runtime/rounds";
 import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
@@ -1655,19 +1659,34 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       await roundsRuntime.dispatchRound({
         session,
         workOrder,
-        runWorkers: async (order) => {
+        runWorkers: async (order): Promise<DispatchRoundResult> => {
+          // The round's commit range is HEAD before → after the turn (the round commits
+          // its work — the ledger pins those commits; equal when it committed nothing).
+          // Read failure-isolated: an unborn/unreadable HEAD collapses to the "HEAD" marker
+          // rather than an empty (schema-invalid) id.
+          const gitAt = gitForRepo(review.repositoryRoot);
+          const headOid = async (): Promise<string> =>
+            (await gitAt(review.repositoryRoot, ["rev-parse", "HEAD"], { reject: false })).trim() ||
+            "HEAD";
+          const from = await headOid();
           const outcome = await runHandoffTurn({
             repoRoot: review.repositoryRoot,
             prompt: order.prompt,
           });
-          // A FAILED coding turn is NOT a successful round (P1 finding 4): throw so the
-          // dispatch memo evicts and an identical re-dispatch RETRIES — never a memoized
-          // failure that permanently suppresses the retry. (The rounds tail swallows the
-          // rejection so the session queue is not wedged; `round.dispatch`'s per-key memo
-          // sees the rejection and drops the key.)
-          if (outcome.status === "failed") {
-            throw new Error(`round worker turn failed: ${outcome.reason}`);
-          }
+          const to = await headOid();
+          // The round result the runtime pins into the ledger. The diff + changed paths are
+          // the checkpoint-measured truth `runHandoffTurn` already returns (it brackets the
+          // write turn with `GitCheckpointStore`); a FAILED turn still carries its partial
+          // diff. The runtime records this record, then REJECTS on a failed outcome so the
+          // dispatch memo evicts and an identical re-dispatch RETRIES (P1 finding 4) — the
+          // failure is recorded, never a memoized failure that suppresses the retry.
+          const result: DispatchRoundResult = {
+            outcome: outcome.status === "failed" ? "failed" : "completed",
+            diff: outcome.turnDiff,
+            changedPaths: [...outcome.filesTouched],
+            workerCommitRange: { from, to },
+          };
+          if (outcome.status === "failed") return result;
           // PR-lane RIPENING (B11 cluster 5, task 5.2): an own-branch review's PR draft
           // re-composes as the round lands. Reload the review by id (finding 4) so the
           // decision + compose run over the CURRENT persisted state, not the pre-round
@@ -1687,6 +1706,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               // Ripening is garnish on the round; a failed re-compose is swallowed.
             }
           }
+          return result;
         },
       });
     },
