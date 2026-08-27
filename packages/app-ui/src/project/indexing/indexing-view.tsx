@@ -154,7 +154,7 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
   // keys are stable without an array index.
   const [events, setEvents] = useState<{ id: number; event: ProjectProcessEvent }[]>([]);
   const [phase, setPhase] = useState<"running" | "done">("running");
-  const startedFor = useRef<string>();
+  const startedFor = useRef<string | undefined>(undefined);
 
   // Drive the real context-map build once per project and accumulate its live
   // narration off the `project.process` `onProgress` channel. The commandId is stable
