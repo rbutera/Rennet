@@ -64,6 +64,12 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
   }, []);
   const sidebarWidth = sidebarOpen ? SIDEBAR_PANEL_WIDTH : SIDEBAR_RAIL_WIDTH;
   const maxChatWidth = Math.max(MIN_CHAT_WIDTH, viewportWidth - sidebarWidth - MIN_SURFACE_WIDTH);
+  // The STORED width can outlive the room for it: a narrower viewport or an expanding
+  // sidebar shrinks the maximum below what was saved, which would render the dock over
+  // the surface's 400px floor AND report aria-valuenow > aria-valuemax. Clamp the width
+  // we actually render + hand the splitter to the live bounds, so the surface keeps its
+  // minimum and the ARIA range stays valid until the next drag rewrites the stored value.
+  const effectiveChatWidth = Math.min(maxChatWidth, Math.max(MIN_CHAT_WIDTH, chatWidth));
 
   function onDividerChange(width: number) {
     setResizing(true);
@@ -85,7 +91,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
         data-testid="chat-dock-slot"
         data-open={dockOpen}
         inert={!dockOpen}
-        style={{ width: dockOpen ? chatWidth : 0 }}
+        style={{ width: dockOpen ? effectiveChatWidth : 0 }}
         className={cn(
           "rennet-chat-dock flex-none overflow-hidden border-r border-line bg-surface",
           !resizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
@@ -96,7 +102,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
       {dockOpen ? (
         <ResizeHandle
           aria-label="Resize chat column"
-          value={chatWidth}
+          value={effectiveChatWidth}
           min={MIN_CHAT_WIDTH}
           max={maxChatWidth}
           defaultValue={DEFAULT_CHAT_WIDTH}
