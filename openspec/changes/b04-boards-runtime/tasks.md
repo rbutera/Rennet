@@ -38,8 +38,8 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 6. Verification (packet)
 
-- [ ] 6.1 `sh -c 'pnpm check'` green — exit 0 captured on its own line, not a masked pipe status.
-- [ ] 6.2 E2E (the packet's scripted sequence, as a real test run and shown): create board with the Rennet host wire schema → apply ops → read events → project → **restart** (dispose service, new `BoardService` + `FileBoardStore` on the same `.rennet/` directory) → identical projection. Show the passing run output.
-- [ ] 6.3 Positive control: temporarily break the privacy wrap (e.g. bypass the scrub for board events) — the 4.3 test MUST fail. Show the failure, revert, re-run green, `git status` clean.
-- [ ] 6.4 Writer-invariant sweep: show the 3.2 grep output at final HEAD — whiteboard-client is still the only board-op writer.
-- [ ] 6.5 Flip `b04` in `BUILD-STATUS.json` to done/passes:true (only that line); check boxes; commit; push; verify local == origin. Output the completion sigil `<promise>B04-COMPLETE</promise>`.
+- [x] 6.1 `sh -c 'pnpm check'` green — exit 0 captured on its own line, not a masked pipe status.
+- [x] 6.2 E2E (the packet's scripted sequence, as a real test run and shown): create board with the Rennet host wire schema → apply ops → read events → project → **restart** (dispose service, new `BoardService` + `FileBoardStore` on the same `.rennet/` directory) → identical projection. Show the passing run output. *(Verification note: the split coverage was composed into one e2e test — "e2e (B4 packet): create → apply → events → project → restart → identical projection" in `boards-runtime.test.ts`.)*
+- [x] 6.3 Positive control: temporarily break the privacy wrap (e.g. bypass the scrub for board events) — the 4.3 test MUST fail. Show the failure, revert, re-run green, `git status` clean.
+- [x] 6.4 Writer-invariant sweep: show the 3.2 grep output at final HEAD — whiteboard-client is still the only board-op writer.
+- [x] 6.5 Flip `b04` in `BUILD-STATUS.json` to done/passes:true (only that line); check boxes; commit; push; verify local == origin. Output the completion sigil `<promise>B04-COMPLETE</promise>`.

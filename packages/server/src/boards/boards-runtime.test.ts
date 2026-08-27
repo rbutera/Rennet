@@ -103,4 +103,20 @@ describe("boards runtime", () => {
     const { events } = await reborn.service.getEvents(boardId);
     expect(events.map((e) => e.op.op_id)).toEqual(["op-p1"]);
   });
+
+  it("e2e (B4 packet): create → apply → events → project → restart → identical projection", async () => {
+    const boardId = await runtime.createRennetBoard();
+    const ops = [proseOp("p1", "First."), proseOp("p2", "Second.")];
+    expect(await runtime.service.apply(boardId, ops, "lens:design")).toEqual({ ok: true });
+
+    const { events } = await runtime.service.getEvents(boardId);
+    const before = project(events);
+    expect([...before.elements.keys()].sort()).toEqual(["p1", "p2"]);
+
+    const reborn = createBoardsRuntime(projectRoot);
+    const { events: replayed } = await reborn.service.getEvents(boardId);
+    const after = project(replayed);
+    expect(replayed).toEqual(events);
+    expect([...after.elements.entries()]).toEqual([...before.elements.entries()]);
+  });
 });
