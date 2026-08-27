@@ -1,6 +1,7 @@
 import { cn, ResizeHandle } from "@rennet/ui";
 import { type ReactNode, useEffect, useState } from "react";
 import { useRoute } from "wouter";
+import { AppDialogs } from "../shell/app-dialogs";
 import {
   DEFAULT_CHAT_WIDTH,
   MIN_CHAT_WIDTH,
@@ -108,6 +109,10 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
         {isSessionRoute ? <TopBar /> : null}
         <div className="min-h-0 flex-1">{children}</div>
       </main>
+
+      {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
+          its own visibility to `ui.openDialogs` and portals over the frame. */}
+      <AppDialogs />
     </div>
   );
 }
