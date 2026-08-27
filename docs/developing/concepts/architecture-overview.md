@@ -142,17 +142,19 @@ One review moves through the system as follows:
    counts even when the visible payload must be truncated.
 3. The server records an immutable patchset and derives review artifacts against
    that identity.
-4. Deterministic analysis and model jobs populate the Design, Sequence, Decisions,
-   Noise, and Flagged lenses.
-5. The reviewer reads, asks questions, records dispositions, and previews any
+4. Deterministic analysis and drafting agents produce the Design, Sequence,
+   Decisions, Flagged, and Noise lens boards for that generation.
+5. The reviewer reads the boards, asks questions, stages asks, and previews any
    outbound GitHub result.
 6. The outbound action for a review submits the previewed review. The outbound
    action for an own-branch change pushes the named branch and opens or reuses
    its pull request.
 
 Recapture creates a successor patchset. It does not mutate the patchset already
-under review. Exact occurrence lineage carries dispositions where identity is
-preserved; changed content reopens for review.
+under review: the current generation of boards freezes and a successor
+generation is minted. Board content whose element ids survive carries verbatim,
+along with the board-native data on them; content whose cited code changed is
+redrafted and stamped.
 
 ## Server composition and dispatch
 
@@ -204,7 +206,8 @@ window does not stop a daemon that remains resident.
 
 - [Architecture contracts](./architecture-contracts.md) defines the correctness
   rules behind immutable capture, provenance, lineage, persistence, and posting.
-- [Review lenses](./review-lenses.md) describe the five review surfaces.
+- [The lens pipeline](./lens-pipeline.md) describes the five lens boards and how
+  they are drafted.
 - [Context assembly](./context-assembly.md) explains project context and
   selection-aware retrieval.
 - [The Model Council](./model-council.md) explains model assignment.

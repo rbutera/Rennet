@@ -192,7 +192,7 @@ actually made.
 
 ## Rendering affordances
 
-What a spec lens can rely on, from most to least structured:
+What the Design lens can rely on, from most to least structured:
 
 - **CONTEXT.md glossary entries as cards.** The `**Term**:` / definition /
   `_Avoid_: a, b` triple is a rigid, parseable shape — render each term as a

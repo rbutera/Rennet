@@ -14,12 +14,12 @@ Rennet does the structural reading work without taking the judgment away from th
 
 ## Product purpose
 
-Rennet is a local-first, open-source code review application. Its local daemon captures a changeset, groups related work into cohorts, orders those cohorts for comprehension, and keeps every claim connected to source evidence. Desktop, browser, and mobile clients read the same review.
+Rennet is a local-first, open-source code review application. Its local daemon captures a changeset, drafts lens boards that order the change for comprehension, and keeps every claim connected to source evidence. Desktop, browser, and mobile clients read the same review.
 
 Rennet supports two user stories.
 
 1. **Review your own work.** Inspect committed and working-tree changes, question the implementation, send a work order to a coding agent, review the resulting delta, push the branch, and open a pull request.
-2. **Review someone else's work.** Open a GitHub pull request, read it in comprehension order, record dispositions, edit the review preview, and post one normal GitHub review.
+2. **Review someone else's work.** Open a GitHub pull request, read it in comprehension order, stage asks, edit the review draft, and post one normal GitHub review.
 
 The macOS application is the public download. The release workflow also builds an unsigned Windows installer and portable ZIP. Native mobile distribution is planned; the mobile client already speaks the daemon protocol.
 
@@ -31,15 +31,15 @@ The macOS application is the public download. The release workflow also builds a
 
 Rennet is a review application, not a coding agent or an autonomous approval bot. Coding agents write changes. Rennet asks installed coding agents to help the reviewer understand and refine those changes.
 
-Its main interaction is roll-up, zoom, and lenses. Rennet groups related edits, preserves every underlying decision, and lets the reviewer act on the whole review, a cohort, a group, or one item. The reviewer can also ask what changed, why it changed, and what the surrounding repository implies. Answers stay attached to the review and its code.
+Its main interaction is roll-up, zoom, and lenses. Rennet groups related edits, preserves every underlying decision, and lets the reviewer act on the whole review, a board section, or one element. The reviewer can also ask what changed, why it changed, and what the surrounding repository implies. Answers stay attached to the review and its code.
 
 ## Operating context
 
 The local daemon works alongside Git repositories, worktrees, GitHub, Claude Code, and Codex. The Electron application owns the usual local daemon lifecycle and also hosts the browser client. A paired mobile client can connect to a daemon on another machine.
 
-The first desktop run opens an empty Projects list. After adding a repository, the reviewer can open local changes or a GitHub pull request. Reviews use the Spec, Sequence, Decisions, Flagged, and Noise canvases. Blast radius appears as an overlay.
+The first desktop run opens an empty Projects list. After adding a repository, the reviewer can open local changes or a GitHub pull request. Reviews read through the Design, Sequence, Decisions, Flagged, and Noise lens boards. Blast radius appears as an overlay.
 
-For another person's pull request, the review preview posts as a batched GitHub review. For the reviewer's own branch, the same dispositions become a work order for a coding agent. Rennet then captures and reviews the resulting delta before it can push the branch and open the pull request.
+For another person's pull request, the review preview posts as a batched GitHub review. For the reviewer's own branch, the same asks become a work order for a coding agent. Rennet then captures and reviews the resulting delta before it can push the branch and open the pull request.
 
 ## Capabilities and constraints
 

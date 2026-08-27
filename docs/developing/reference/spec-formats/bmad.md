@@ -1,6 +1,6 @@
 ---
 title: BMAD-METHOD spec artifacts
-description: The exact document and template shape BMAD-METHOD produces, for the Rennet spec lens.
+description: The exact document and template shape BMAD-METHOD produces, for the Rennet Design lens.
 ---
 
 BMAD-METHOD (Breakthrough Method of Agile AI-Driven Development,
@@ -192,7 +192,7 @@ layout (v6).
 
 ## Rendering affordances
 
-What a spec lens can reliably exploit, because BMAD encodes it as structure
+What the Design lens can reliably exploit, because BMAD encodes it as structure
 rather than prose:
 
 - **Status pipeline.** The story `Status` is an enumerated choice

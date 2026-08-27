@@ -16,7 +16,8 @@ directories and files with their rolled-up file counts.
 
 The center pane contains two related views. The neighborhood graph shows direct
 manifest and import relationships around the selected scope. The detail view
-shows the selected node's stored claims, evidence, confidence, and disposition.
+shows the selected node's stored claims with their evidence, their confidence,
+and whether you have confirmed or rejected them.
 
 The right pane contains the orchestrator ask rail, titled **Orchestrator**.
 Selecting an item in the tree updates the graph, details, and evidence available
@@ -33,8 +34,9 @@ Each hypothesis has three actions:
   the orchestrator.
 - **Discuss** places the claim in the ask rail so you can question it.
 
-These dispositions persist. During later enrichment, Rennet re-evaluates claims
-whose cited paths changed and carries dispositions for untouched claims forward.
+Your confirmations and rejections persist. During later enrichment, Rennet
+re-evaluates claims whose cited paths changed and carries your verdict on
+untouched claims forward.
 
 ## Ask about the project
 

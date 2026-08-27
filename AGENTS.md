@@ -37,7 +37,7 @@ Then, for depth:
 2. `docs/developing/decisions/contracts-and-rulings.md`
 3. `docs/developing/concepts/architecture-contracts.md`
 4. `docs/developing/reference/dependency-standard.md`
-5. `docs/developing/concepts/agent-handoff.md`
+5. `docs/developing/concepts/handoff-and-exits.md`
 
 Every one of these is subordinate to Rule Zero.
 
