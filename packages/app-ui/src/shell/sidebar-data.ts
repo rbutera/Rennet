@@ -77,6 +77,8 @@ export interface SidebarSessionProjection {
   renameSession(id: string, title: string): void;
   setSessionPinned(id: string, pinned: boolean): void;
   archiveSession(id: string): void;
+  /** Un-archive: returns the session to the live sidebar (release is archive-only). */
+  restoreSession(id: string): void;
   renameProject(id: string, name: string): void;
 }
 
@@ -87,6 +89,7 @@ const EMPTY_PROJECTION: SidebarSessionProjection = {
   renameSession: () => undefined,
   setSessionPinned: () => undefined,
   archiveSession: () => undefined,
+  restoreSession: () => undefined,
   renameProject: () => undefined,
 };
 

@@ -57,6 +57,7 @@ function mountTopBar(path: string) {
     renameSession: () => undefined,
     setSessionPinned: () => undefined,
     archiveSession: () => undefined,
+    restoreSession: () => undefined,
     renameProject: () => undefined,
   };
   const utils = mount(

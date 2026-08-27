@@ -80,6 +80,7 @@ function Harness({
     renameSession: (id, title) => map(id, (s) => ({ ...s, title })),
     setSessionPinned: (id, pinned) => map(id, (s) => ({ ...s, pinned })),
     archiveSession: (id) => map(id, (s) => ({ ...s, archived: true })),
+    restoreSession: (id) => map(id, (s) => ({ ...s, archived: false })),
     renameProject: () => undefined,
   };
   return (
