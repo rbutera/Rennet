@@ -2,6 +2,7 @@ import type { Review } from "@rennet/protocol";
 import { Badge, cn } from "@rennet/ui";
 import { Check, GitBranch, GitPullRequest } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useCoachAnchor } from "../coach/registry";
 import {
   AnchorReveal,
   type CodeRef,
@@ -97,6 +98,9 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr }: RoundsLanesPro
   const asks = useMemo(() => Object.values(stagedAsks), [stagedAsks]);
   const gathering = asks.length > 0;
 
+  // The `dispatch` coach mark anchors the Dispatch Round button.
+  const dispatchRef = useCoachAnchor("dispatch");
+
   const [receipt, setReceipt] = useState<PrReceipt | null>(null);
 
   // Selection steering matches a quoted span back to its ask (the spike's fuzzy join over the ask
@@ -189,6 +193,7 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr }: RoundsLanesPro
         {/* Dispatch Round: inert while nothing is staged (R37), and inert until C9 wires the round
             run (`onDispatch`) — a live button with no handler would be a dead click that lies. */}
         <button
+          ref={dispatchRef}
           type="button"
           disabled={!gathering || !onDispatch}
           onClick={onDispatch}

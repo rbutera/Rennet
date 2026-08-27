@@ -40,6 +40,10 @@ export interface SessionQuery {
   readonly view?: ViewKind;
   readonly lens?: LensKind;
   readonly file?: string;
+  /** The round's diff identity (its generation id) — set on the ledger's Round-diff link so
+   *  `?view=diff` resolves the round's IMMUTABLE diff, not whatever `activePatchsetId` points
+   *  at now (finding 2). Absent ⇒ the live review diff. */
+  readonly round?: string;
 }
 
 function queryString(entries: Array<[string, string | undefined]>): string {
@@ -57,6 +61,7 @@ export function sessionPath(slug: string, query: SessionQuery = {}): string {
     ["view", query.view && query.view !== DEFAULT_VIEW ? query.view : undefined],
     ["lens", query.lens && query.lens !== DEFAULT_LENS ? query.lens : undefined],
     ["file", query.file],
+    ["round", query.round],
   ])}`;
 }
 
@@ -116,6 +121,8 @@ export interface ParsedSessionQuery {
   readonly view: ViewKind;
   readonly lens: LensKind;
   readonly file: string | null;
+  /** The requested round's diff identity (its generation id), or null for the live diff. */
+  readonly round: string | null;
 }
 
 /** Read the whole session query grammar with fallbacks applied. */
@@ -127,6 +134,7 @@ export function readSessionQuery(
     view: parseView(search.get("view")),
     lens: parseLens(search.get("lens"), availableLenses),
     file: search.get("file"),
+    round: search.get("round"),
   };
 }
 

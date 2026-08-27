@@ -10,6 +10,7 @@ import {
 } from "@rennet/core";
 import type {
   ClientSettings,
+  CoachMarks,
   DaemonHostSection,
   DaemonSettings,
   PairedDevice,
@@ -114,6 +115,13 @@ export interface SettingsComposition {
    * config, exactly as `setAppearance`. Returns the whole stored map after the write.
    */
   setKeybinding(input: { id: string; keybinding?: string | null }): Record<string, string | null>;
+  /**
+   * Persist the onboarding coach-mark slice (C13) — seen marks + skip-all — to client
+   * settings. A plain global write, refused (throws) on a malformed config exactly as
+   * `setKeybinding`. Returns the stored slice after the write, so a reload reads back
+   * what skip/dismiss/replay persisted.
+   */
+  setCoachmarks(input: CoachMarks): CoachMarks;
   /**
    * Write one issue-tracker value on the GLOBAL rung (#461, B7) — the ordinary
    * settings write B8's in-chat ask persists through. `null` resets (drops the
@@ -291,6 +299,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         projects,
         // The stored override map, verbatim (#44). Additive: absent field ⇒ omitted.
         ...(schemeState.config.keybindings ? { keybindings: schemeState.config.keybindings } : {}),
+        // The persisted coach-mark slice, verbatim (C13). Additive: absent ⇒ omitted,
+        // the client reads it as empty/false. One read seeds the coach store on load.
+        ...(schemeState.config.coachmarks ? { coachmarks: schemeState.config.coachmarks } : {}),
         // Every daemon host the surface covers (#476), local first (§4.2).
         daemonHosts: daemonHostSections(allProjects),
       };
@@ -351,6 +362,15 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         return { ...current, keybindings };
       });
       return written.keybindings ?? {};
+    },
+
+    setCoachmarks: (input: CoachMarks): CoachMarks => {
+      // `updateGlobal` REFUSES (throws) when the config is malformed (Rule 75). The
+      // whole slice is written verbatim — the coach store owns the merge (which marks
+      // are seen, whether skip-all is set); this is a plain mirror to client settings,
+      // no ceremony (Rule Zero). Returns the stored slice so a reload reads it back.
+      const written = deps.updateGlobal((current) => ({ ...current, coachmarks: input }));
+      return written.coachmarks ?? { seen: [], skipAll: false };
     },
 
     setTrackerValue: (input): NonNullable<DaemonSettings["tracker"]> => {

@@ -55,6 +55,7 @@ import {
 } from "lucide-react";
 import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
+import { useCoachOptional } from "../../coach/context";
 import { Icon } from "../../components/icon";
 import { useUpdateReady } from "../../components/update-ready";
 import { useBridge } from "../../data";
@@ -189,6 +190,10 @@ function HelpPopover({
 }) {
   const [open, setOpen] = useState(false);
   const [, navigate] = useLocation();
+  // The coach store re-arms the tour on Replay. Optional: null in the brief window before
+  // the provider's store exists (it awaits `settings.get`), so the row disables until then
+  // rather than throwing — no gate, just an honestly-inert control until it can act.
+  const coach = useCoachOptional();
   const rowClass =
     "flex h-8 items-center rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink";
   return (
@@ -211,8 +216,17 @@ function HelpPopover({
         >
           Keyboard Shortcuts
         </button>
-        {/* Replay Tour re-arms the coach marks — wired when C13's tour store exists. */}
-        <button type="button" className={rowClass} disabled>
+        {/* Replay Tour re-arms the coach marks: clears seen + skip-all and re-elects the
+            first mark on a live surface (C13). Inert only until the store exists. */}
+        <button
+          type="button"
+          className={rowClass}
+          disabled={!coach}
+          onClick={() => {
+            setOpen(false);
+            coach?.store.getState().replay();
+          }}
+        >
           Replay Tour
         </button>
         <a href={ISSUES_URL} target="_blank" rel="noreferrer" className={rowClass}>

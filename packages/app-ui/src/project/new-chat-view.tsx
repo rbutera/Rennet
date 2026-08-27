@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
+import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
 import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
@@ -143,6 +144,12 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
 
   const branch = project?.primaryBranch ?? "main";
 
+  // Two coach marks live on this surface and chain in system order: `new-chat` (the
+  // project header — pick what to review, add another repo) then `smart-list` (the
+  // unified branches + pull-requests list).
+  const newChatRef = useCoachAnchor("new-chat");
+  const smartListRef = useCoachAnchor("smart-list");
+
   return (
     <section
       data-screen="new-chat"
@@ -179,7 +186,10 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[720px] flex-col px-8 pt-[7vh] pb-6">
-          <h1 className="flex flex-wrap items-baseline justify-center gap-2 text-center font-display text-2xl font-medium tracking-tight text-ink">
+          <h1
+            ref={newChatRef}
+            className="flex flex-wrap items-baseline justify-center gap-2 text-center font-display text-2xl font-medium tracking-tight text-ink"
+          >
             What should we review in
             <ProjectPicker
               projects={projects}
@@ -226,7 +236,10 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             </label>
           </div>
 
-          <div className="mt-3 flex flex-col divide-y divide-line overflow-hidden rounded-surface border border-line">
+          <div
+            ref={smartListRef}
+            className="mt-3 flex flex-col divide-y divide-line overflow-hidden rounded-surface border border-line"
+          >
             <CheckoutRow
               branch={branch}
               selected={target.kind === "checkout"}

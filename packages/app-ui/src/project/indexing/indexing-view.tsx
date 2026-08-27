@@ -3,6 +3,7 @@ import { Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, Loader2, MapIcon, MessageSquarePlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
+import { useCoachAnchor, useMergedRefs } from "../../coach/registry";
 import { Icon } from "../../components/icon";
 import { useBridge, useCommand, useMutation } from "../../data";
 import { newChatPath, projectMapPath } from "../../routes/url";
@@ -315,6 +316,9 @@ function CompletionBlock({
   readonly ctaRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const [, navigate] = useLocation();
+  // The `start-review` coach mark anchors this CTA (system-order first, so it wins on the
+  // indexing-ready surface). Merge with `ctaRef` — that ref already scrolls it into view.
+  const startReviewRef = useMergedRefs<HTMLButtonElement>(ctaRef, useCoachAnchor("start-review"));
   const { data: contextMap } = useCommand("project.contextMap", { projectId });
   const map = contextMap?.status === "ok" ? contextMap : undefined;
   // Loaded but not "ok" (absent / error) — a real signal the map didn't materialise, as
@@ -380,7 +384,7 @@ function CompletionBlock({
       </div>
 
       <button
-        ref={ctaRef}
+        ref={startReviewRef}
         type="button"
         onClick={() => navigate(newChatPath(projectId))}
         className="flex w-full items-center justify-center gap-2 rounded-surface bg-accent-fill px-6 py-4 text-base font-medium text-accent-ink hover:opacity-90"

@@ -1,5 +1,6 @@
 import type { LensKind } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
+import { useCoachAnchor } from "../coach/registry";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
 import { deltaKey } from "./viewed-delta";
@@ -37,10 +38,19 @@ export function LensSwitcher({
   readonly onSelect: (lens: LensKind) => void;
 }) {
   const viewed = useRennetStore((s) => s.viewedDelta.viewedDeltaSections);
+  // The `lenses` coach mark anchors the switcher — registered inside the visible-guard so
+  // the mark only elects when there is a switcher on screen (no lens boards ⇒ no anchor).
+  const lensesRef = useCoachAnchor("lenses");
   if (lenses.length === 0) return null;
 
   return (
-    <div role="tablist" aria-label="Lens" data-kind="lens-switcher" className="flex gap-1">
+    <div
+      ref={lensesRef}
+      role="tablist"
+      aria-label="Lens"
+      data-kind="lens-switcher"
+      className="flex gap-1"
+    >
       {lenses.map(({ lens, board }) => {
         const unviewedDeltas = board.sections.filter(
           (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],

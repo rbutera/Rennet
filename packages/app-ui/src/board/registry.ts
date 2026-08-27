@@ -30,6 +30,11 @@ import { createElement, type ReactNode } from "react";
  * the type below and the board-data boundary's rejection ({@link resolveBoard}, finding
  * 4) share a single source — a board containing one of these is invalid DATA, rejected
  * at the seam, never a silently-dropped element.
+ *
+ * C9 update: `round_outcome` now HAS a renderer — but on the round-report registry only
+ * (`rounds/report-registry.ts`, which widens `RENDERERS` with it). This lens exclusion
+ * is unchanged: a LENS board carrying `round_outcome` is still invalid data, rejected at
+ * the seam. Only the report surface renders it.
  */
 export const BOARD_EXCLUDED_KINDS = ["round_outcome", "review_comment"] as const;
 export type BoardExcludedKind = (typeof BOARD_EXCLUDED_KINDS)[number];

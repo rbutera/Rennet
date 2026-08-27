@@ -90,6 +90,18 @@ export function settingsHandlers(rt: DispatchRuntime) {
         }),
       });
     },
+    "settings.setCoachmarks": async (rawInput) => {
+      const name = "settings.setCoachmarks" as const;
+      // Personal, app-side (C13): writes only client settings, never a repo. The dep
+      // REFUSES (throws) on a malformed config; that error propagates rather than
+      // overwriting unparseable bytes (Rule 75). No gate — skip/dismiss/replay each
+      // persist on the first click (Rule Zero). Absent dep ⇒ echo the slice unstored.
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.settings) {
+        return parseCommandOutput(name, input);
+      }
+      return parseCommandOutput(name, deps.settings.setCoachmarks(input));
+    },
     "settings.setRepoVisibility": async (rawInput) => {
       const name = "settings.setRepoVisibility" as const;
       // Genuinely consumed: runs the real visibility switch (a repo `.gitignore`

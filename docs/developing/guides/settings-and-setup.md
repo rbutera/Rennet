@@ -59,6 +59,7 @@ Global settings live in two machine-local files, split by who owns the value:
 |---|---|---|---|---|
 | `~/.rennet/client-settings.json` | Viewer preferences, **outside** the config ladder | Appearance | system, dark, light | Applies the selected color scheme to the app. |
 | `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
+| `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** clears it. |
 | `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
 
 Appearance and keybindings are personal, app-side choices — never a repo fact,

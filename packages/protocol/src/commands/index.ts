@@ -13,6 +13,7 @@ import {
   appearanceSchemeSchema,
   askModeSchema,
   askReviewResultSchema,
+  coachMarksSchema,
   composedHandoffBundleSchema,
   conversationAnchorSchema,
   deltaDigestResultSchema,
@@ -890,6 +891,17 @@ const definitions = {
       keybinding: z.string().min(1).nullable().optional(),
     }),
     output: z.object({ keybindings: z.record(z.string(), z.string().nullable()) }),
+  },
+  // ── Settings: persist the onboarding coach-mark state (C13 · #487) ─────────
+  // A personal, app-side write — client settings only, never a repo. Mirrors
+  // `setKeybinding`: a plain write, first click, no confirmation (Rule Zero), and
+  // REFUSED (throws) when client-settings.json is malformed so an edit never
+  // overwrites unparseable bytes (Rule 75). Input is the whole slice the coach store
+  // holds (`seen` + `skipAll`); output echoes the stored slice after the write, so a
+  // reload reads back exactly what skip/dismiss/replay persisted.
+  "settings.setCoachmarks": {
+    input: coachMarksSchema,
+    output: coachMarksSchema,
   },
   // ── Settings: set a repo's repo-scope map visibility (wireframe #15) ───────
   // Genuinely consumed: runs the real visibility switch, which writes the repo's
