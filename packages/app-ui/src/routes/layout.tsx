@@ -1,6 +1,7 @@
 import { cn, ResizeHandle } from "@rennet/ui";
 import { type ReactNode, useEffect, useState } from "react";
 import { useRoute } from "wouter";
+import { ChatDock } from "../chat/chat-dock";
 import {
   DEFAULT_CHAT_WIDTH,
   MIN_CHAT_WIDTH,
@@ -85,7 +86,11 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
           "rennet-chat-dock flex-none overflow-hidden border-r border-line bg-surface",
           !resizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
         )}
-      />
+      >
+        {/* C7 fills the dock's internals; the slot's lifetime IS the transcript-identity
+            guarantee — the dock mounts once here and never unmounts on navigation. */}
+        <ChatDock />
+      </div>
 
       {/* The divider — only on a session route with the chat open. */}
       {dockOpen ? (
