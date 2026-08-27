@@ -6,10 +6,11 @@ import { createSignalSlice, type SignalSlice } from "./signal";
 import { createUiSlice, type UiSlice } from "./ui";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The Rennet renderer store (C01 §3): ONE zustand store, four slices — ui / review /
-// run / signal. NO persist middleware: a reload restores LOCATION from the URL and
-// resets interaction clean. NO `sidebar` slice: the host/project/session tree is a
-// server projection read through the data seam, and its mutations are commands.
+// The Rennet renderer store (C01 §3): ONE zustand store, five slices — ui / review /
+// run / signal / viewedDelta (C05's UI-only delta-mark axis, Reconciliation 6). NO
+// persist middleware: a reload restores LOCATION from the URL and resets interaction
+// clean. NO `sidebar` slice: the host/project/session tree is a server projection read
+// through the data seam, and its mutations are commands.
 //
 // DELETE-ON-SIGHT: no field here may duplicate anything computable from the projection
 // cache plus other fields. Counts, tallies, highlights, and "is anything running" are
