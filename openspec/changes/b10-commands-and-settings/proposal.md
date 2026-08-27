@@ -49,6 +49,18 @@ The packet names `adapters/orchestrator-turn.ts` as the file that grows the `app
   2. A `config.json` v1 fixture migrates **losslessly** to the split `client-settings.json` + `daemon-settings.json` (round-trip proof).
   3. The dispatch map serves every command the old switch did — **enumerate both, diff empty** (a positive control: add a switch-only id, watch the diff fail, revert).
 
+## Review-fix amendments (fold of origin/main + dual review, 11 findings upheld)
+
+Recorded as scope rulings made while resolving the upheld findings; the packet (`context.md`) stays authority.
+
+- **A1 — B7 tracker survives the split (findings 1, and the fold read/write side).** Main's B7 added a `tracker` section to the legacy v1 config. It is a GLOBAL-rung host fact, so it migrates into `daemon-settings.json` (not client): added to `daemonSettingsSchema`, routed in `migrateLegacyGlobalConfig`, written via a new `updateDaemon` dep from `settings.setTrackerValue`, and read by `resolveTrackerConfig` off daemon settings. The round-trip test now covers the full current-main v1 shape.
+- **A2 — onReviewOpened re-seated (finding 2).** The deleted monolith `dispatch.ts` carried main's B07 `deps.onReviewOpened?.(review)` calls at `review.capture` / `review.openPr`. Re-seated into `dispatch/review.ts` + the `DispatchDeps` interface in `dispatch/runtime.ts`; the composition callback in `create-server.ts` and the dispatch-level tests survived the fold. Conflict resolved by keeping `dispatch.ts` deleted (b10's refactor) and preserving main's behaviour in the new structure.
+- **A3 — execution locus is detection-only (finding 3).** Dropped the `repo` rung from `LOCUS_SETTING`; `resolveLocus` is now detection-only; `create-server` no longer reads a stored `config.locus` on the execution path. Supersedes any implication that a stored locus override still routes execution — it never reaches resolution now, so the surface's "(detected)" and execution can no longer disagree.
+- **A4 — version downgrade is fail-safe (finding 6).** The three settings schemas require the supported version literal (`z.literal(1)`); a future v2 doc reads as *malformed* and is refused (no destructive re-stamp). Migration and `update` both refuse rather than down-migrate.
+- **A5 — navigate stays UNREGISTERED, deferred to C11 (finding 8 ruling).** The packet's v1 agent set names `navigate` (#480), but the dispatch table's compile-time exhaustiveness guard forces a **host** handler for every registry row. `navigate` is client-locus; a host handler for it is client execution, which is C11 scope. So `navigate` is NOT added to the registry here — it remains unexposed with an explicit code + docs note. This narrows proposal line 23 ("navigate … dispatchable now"): navigate is deferred, not dispatchable in B10. The rest of the add-project flow IS completed — `repository.choose` + `project.discover` are exposed as the prerequisites of `projects.add` (pure flag flips).
+- **A6 — no live orchestrator turn yet (finding 7).** Verification proof 1 ("invocable through a live orchestrator turn") cannot hold in B10: the SDK turn that consumes `app_*` tools was torn down in B2 and is rebuilt in B9/B11. `buildAppTools` is a tested pure projection, exported but unwired; the docs now say so. The live-turn E2E belongs to B9/B11.
+- **A7 — paired-host enumeration unions the device inventory (finding 9).** The settings surface lists every paired device as a daemon host section, not only hosts a project routes to.
+
 ## Completion sigil
 
 `<promise>B10-COMPLETE</promise>`
