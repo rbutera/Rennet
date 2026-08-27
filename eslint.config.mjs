@@ -23,6 +23,20 @@ const NO_DIRECT_INVOKE = {
     "No direct bridge.invoke in app-ui surfaces — read through useCommand, write through useMutation, stream through useCommandStream (data/ hooks over useBridge). Only src/data/ may call .invoke.",
 };
 
+// Kit-not-hand-rolled (autopsy S6): app-ui surfaces must not hand-roll a
+// "pick one of N" segmented control — the tell is the accessibility markup a
+// hand-roll carries (`aria-pressed` on a button, or `role="radiogroup"` in
+// surface JSX). Those come from the kit's ToggleGroup/Toggle (@rennet/ui), which
+// exists precisely to kill the five incumbent hand-rolls. packages/ui is where
+// that markup legitimately lives, so the rule scopes to app-ui only; the existing
+// sites are quarantined in eslint-suppressions.json so a NEW hand-roll fails.
+const NO_HANDROLLED_TOGGLE = {
+  selector:
+    "JSXAttribute[name.name='aria-pressed'], JSXAttribute[name.name='role'][value.value='radiogroup']",
+  message:
+    "No hand-rolled segmented control in app-ui surfaces — use ToggleGroup/Toggle from @rennet/ui instead of hand-rolling aria-pressed / role=radiogroup markup (autopsy S6).",
+};
+
 export default [
   {
     ignores: ["**/dist/**", "**/out/**", "**/coverage/**", "node_modules/**"],
@@ -192,7 +206,7 @@ export default [
       "packages/app-ui/src/**/*.test.tsx",
     ],
     rules: {
-      "no-restricted-syntax": ["error", NO_HARDCODED_HEX, NO_DIRECT_INVOKE],
+      "no-restricted-syntax": ["error", NO_HARDCODED_HEX, NO_DIRECT_INVOKE, NO_HANDROLLED_TOGGLE],
     },
   },
 ];

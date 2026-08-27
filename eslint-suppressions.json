@@ -21,7 +21,7 @@
   },
   "packages/app-ui/src/components/front-door.tsx": {
     "no-restricted-syntax": {
-      "count": 9
+      "count": 10
     }
   },
   "packages/app-ui/src/components/github-connect.tsx": {
@@ -36,7 +36,7 @@
   },
   "packages/app-ui/src/components/project-detail.tsx": {
     "no-restricted-syntax": {
-      "count": 3
+      "count": 4
     }
   },
   "packages/app-ui/src/components/project-processing.tsx": {
@@ -46,7 +46,17 @@
   },
   "packages/app-ui/src/components/settings-screen.tsx": {
     "no-restricted-syntax": {
-      "count": 10
+      "count": 13
+    }
+  },
+  "packages/app-ui/src/components/source-switcher.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "packages/app-ui/src/components/symbol-inspector.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
     }
   }
 }
