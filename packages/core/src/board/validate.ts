@@ -108,8 +108,13 @@ const OMISSION_REASON_KINDS: ReadonlySet<string> = new Set([
   "round_outcome",
 ]);
 
-/** The typed lens-output kinds the post-process editor must not touch (L19). */
-const TYPED_DATA_KINDS = OMISSION_REASON_KINDS;
+/**
+ * The narrative kinds the post-process editor may freely add, drop, or rewrite —
+ * pure connective furniture. EVERY OTHER kind is typed lens output, immutable
+ * across the editor pass (L19 / finding 4: a `code_ref`, `section`, or any typed
+ * block is not the editor's to alter, drop, or forge).
+ */
+const EDITOR_NARRATIVE_KINDS: ReadonlySet<string> = new Set(["prose", "callout", "annotation"]);
 
 /** The element id a violation is against (elementRef is `id` or `id/field` or `/board...`). */
 function offendingId(elementRef: string): string | undefined {
@@ -191,21 +196,34 @@ function stableStringify(value: unknown): string {
 }
 
 /**
- * Gate 2 — every typed lens-output element present before the editor pass carries
- * byte-identical `data` after it (L19). A vanished or mutated typed element is a
- * post-process fault, not a drafter's; it surfaces (visible), never blocks.
+ * Gate 2 — the board is compared BIDIRECTIONALLY across the editor pass (L19 /
+ * finding 4). Every typed element (any kind outside {@link EDITOR_NARRATIVE_KINDS})
+ * must survive with byte-identical `data`, its kind unchanged; a typed element may
+ * neither VANISH nor APPEAR (a forged finding or a post-process-edited `code_ref`
+ * is caught), and the board's SET of skipped hunk ids may not change (the editor
+ * may polish a skip's reason prose, never invent or drop coverage). A fault
+ * surfaces (visible), never blocks.
  */
 export function checkImmutability(before: DraftBoard, after: DraftBoard): Violation[] {
+  const beforeById = new Map(before.elements.map((el) => [el.id, el]));
   const afterById = new Map(after.elements.map((el) => [el.id, el]));
   const out: Violation[] = [];
+
+  // A typed element present before the pass must survive it byte-identical.
   for (const el of before.elements) {
-    if (!TYPED_DATA_KINDS.has(el.kind)) continue;
+    if (EDITOR_NARRATIVE_KINDS.has(el.kind)) continue;
     const post = afterById.get(el.id);
     if (post === undefined) {
       out.push({
         ruleId: "typed-data-immutable",
         elementRef: el.id,
         message: `Post-process dropped typed \`${el.kind}\` element \`${el.id}\` — typed lens output is immutable across the editor pass.`,
+      });
+    } else if (post.kind !== el.kind) {
+      out.push({
+        ruleId: "typed-data-immutable",
+        elementRef: el.id,
+        message: `Post-process changed \`${el.id}\`'s kind from \`${el.kind}\` to \`${post.kind}\` — an element's kind is typed lens output.`,
       });
     } else if (stableStringify(post.data) !== stableStringify(el.data)) {
       out.push({
@@ -215,6 +233,32 @@ export function checkImmutability(before: DraftBoard, after: DraftBoard): Violat
       });
     }
   }
+
+  // A typed element must not be INTRODUCED by the pass (a forged finding/code_ref).
+  for (const el of after.elements) {
+    if (EDITOR_NARRATIVE_KINDS.has(el.kind)) continue;
+    if (!beforeById.has(el.id)) {
+      out.push({
+        ruleId: "typed-data-immutable",
+        elementRef: el.id,
+        message: `Post-process introduced typed \`${el.kind}\` element \`${el.id}\` — the editor may add connective prose, never typed lens output.`,
+      });
+    }
+  }
+
+  // The board's coverage record — the SET of skipped hunk ids — is typed. Reasons
+  // are prose the editor may polish; the skip set is not the editor's to touch.
+  const beforeSkips = new Set(readSkips(before).map((s) => s.hunk));
+  const afterSkips = new Set(readSkips(after).map((s) => s.hunk));
+  if (beforeSkips.size !== afterSkips.size || [...afterSkips].some((h) => !beforeSkips.has(h))) {
+    out.push({
+      ruleId: "typed-data-immutable",
+      elementRef: "/skippedHunks",
+      message:
+        "Post-process changed the board's set of skipped hunks — coverage is typed lens output, not the editor's to invent or drop.",
+    });
+  }
+
   return out;
 }
 

@@ -262,11 +262,56 @@ describe("validateDraft — gate ordering", () => {
     expect(checkImmutability(before, after)).toEqual([]);
   });
 
-  it("checkImmutability flags a dropped or reworded typed element", () => {
+  it("checkImmutability flags a dropped typed element", () => {
     const before = cleanBoard();
-    const afterDropped = board([codeRef("c1", "src/auth.ts", 11, 12)], {});
+    // The finding vanishes; the skip set is kept, so only the drop fires.
+    const afterDropped = board([codeRef("c1", "src/auth.ts", 11, 12)], {
+      skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }],
+    });
     expect(checkImmutability(before, afterDropped).map((v) => v.ruleId)).toEqual([
       "typed-data-immutable",
     ]);
+  });
+
+  // ── Finding 4: the bidirectional gate catches the probe's forgeries ──────
+  it("checkImmutability catches a post-process-edited code_ref (finding 4 probe)", () => {
+    const before = cleanBoard();
+    const after = board(
+      [
+        finding("f1", "The refresh token is classified as an error before its code is read.", [
+          "c1",
+        ]),
+        codeRef("c1", "src/auth.ts", 11, 99), // the editor forged the line span
+      ],
+      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
+    );
+    expect(checkImmutability(before, after)).toEqual([
+      {
+        ruleId: "typed-data-immutable",
+        elementRef: "c1",
+        message: expect.stringContaining("altered typed `code_ref`"),
+      },
+    ]);
+  });
+
+  it("checkImmutability catches an invented skippedHunks entry (finding 4 probe)", () => {
+    const before = cleanBoard();
+    // Same elements, but the editor invented coverage for h1 it never taught.
+    const after = cleanBoard({
+      skippedHunks: [
+        { hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." },
+        { hunk: "h1", reason: "invented by the editor" },
+      ],
+    });
+    expect(checkImmutability(before, after).map((v) => v.elementRef)).toEqual(["/skippedHunks"]);
+  });
+
+  it("checkImmutability catches a forged typed element the editor introduced (finding 4)", () => {
+    const before = cleanBoard();
+    const after = cleanBoard({}); // start from the clean board…
+    const forged = board([...after.elements, finding("fake", "editor invented a finding", [])], {
+      skippedHunks: skips(after),
+    });
+    expect(checkImmutability(before, forged).map((v) => v.elementRef)).toEqual(["fake"]);
   });
 });
