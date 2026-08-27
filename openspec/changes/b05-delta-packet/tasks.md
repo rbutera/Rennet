@@ -13,7 +13,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 - [x] 2.1 `git mv` `element-diffs.ts` + `element-diffs.test.ts` → `src/delta/`, repoint relative imports and `core/src/index.ts` re-export. Verbatim move — no signature change (reconciliation 6).
 - [x] 2.2 `git mv` `blast-radius.ts` + test → `src/delta/`. Rename the local `BlastRadiusPaint` shape to `BlastRadiusSignalMark` (or similar non-overlay name) and strip overlay/paint framing from comments — the signal taxonomy is Delta-packet input now. Keep the not-assessed semantics byte-for-byte (that is the KEEP list's point).
-- [ ] 2.3 `git mv` `openspec-change.ts` + tests → `src/delta/`, repoint imports (`openspec-disposition-durability.test.ts` and any other siblings).
+- [x] 2.3 `git mv` `openspec-change.ts` + tests → `src/delta/`, repoint imports (`openspec-disposition-durability.test.ts` and any other siblings).
 - [ ] 2.4 Gate green (positive proof: `pnpm nx run-many -t typecheck -p rennet-core rennet-server rennet-adapters` — no consumer lost an export).
 
 ## Cluster 3 — deterministic noise pre-classification (new)

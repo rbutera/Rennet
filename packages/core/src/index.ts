@@ -52,7 +52,6 @@ export * from "./noise-generation";
 export * from "./novelty-ledger";
 export * from "./novelty-lifecycle";
 export * from "./offered-manifest";
-export * from "./openspec-change";
 export * from "./patchset-intent";
 export * from "./pipeline";
 export * from "./project-context";

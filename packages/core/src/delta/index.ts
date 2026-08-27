@@ -4,3 +4,4 @@
 export * from "./blast-radius";
 export * from "./element-diffs";
 export { buildHunkIndex, type HunkIndex, type IndexedHunk } from "./hunk-index";
+export * from "./openspec-change";
