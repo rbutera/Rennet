@@ -6,6 +6,8 @@
 
 import { z } from "zod";
 import { AskLifecycleSchema, QuoteAnchorSchema } from "../board";
+// Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
+import { codeRefSchema } from "../delta/citations";
 import { LENS_KINDS } from "../manifests";
 
 const id = z.string().min(1);
@@ -33,19 +35,6 @@ export const ClaimSchema = z.object({
   prNumber: z.number().int().positive().optional(),
 });
 export type Claim = z.infer<typeof ClaimSchema>;
-
-/**
- * A citation into the captured patchset. Structural stand-in for the canonical
- * `CodeRef` — cluster 6 (`delta/`) declares it and re-points this alias.
- */
-const codeRefSchema = z.object({
-  patchsetId: id,
-  path: id,
-  side: z.enum(["base", "head"]),
-  startLine: z.number().int().nonnegative(),
-  endLine: z.number().int().nonnegative(),
-  symbol: z.string().optional(),
-});
 
 /**
  * A thread anchor (#466 res. 7): a code-line citation or a prose quote. One

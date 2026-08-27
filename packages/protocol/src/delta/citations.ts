@@ -8,6 +8,27 @@
  */
 import { z } from "zod";
 
+/** A stable decomposition hunk id — the unit anchors and citations reference. */
+export const hunkIdSchema = z.string().min(1);
+export type HunkId = z.infer<typeof hunkIdSchema>;
+
+/**
+ * The canonical patchset citation (B3 task 6.2, #489) — the ONE definition
+ * `board/`'s `code_ref` kind (snake_case wire casing, field-for-field) and
+ * `session/`'s thread anchors reuse. `side` selects the image the span reads:
+ * `base` (pre-image) or `head` (post-image). A citation hydrates from the
+ * captured patchset, never a working tree.
+ */
+export const codeRefSchema = z.object({
+  patchsetId: z.string().min(1),
+  path: z.string().min(1),
+  side: z.enum(["base", "head"]),
+  startLine: z.number().int().nonnegative(),
+  endLine: z.number().int().nonnegative(),
+  symbol: z.string().optional(),
+});
+export type CodeRef = z.infer<typeof codeRefSchema>;
+
 /** A 1-based file-line span (issue #78). Shared by the disposition anchor + command inputs. */
 export const anchorSpanSchema = z.object({
   startLine: z.number().int().min(1),

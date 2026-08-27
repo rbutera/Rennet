@@ -1,5 +1,6 @@
 import { type AuthoredSchema, compileToWire, defineSchema, WireSchema } from "@wboard/core";
 import { z } from "zod";
+import { codeRefSchema } from "../delta/citations";
 import type { FindingSeverity } from "../domain";
 
 /**
@@ -159,13 +160,16 @@ const messageData = withAuthor({
   quote: QuoteAnchorSchema.optional(),
   lifecycle: AskLifecycleSchema.optional(),
 });
+// The `code_ref` kind's attrs ARE the canonical `CodeRef` (delta/citations,
+// B3 task 6.2) in snake_case wire casing — each field reuses the canonical
+// sub-schema, so the two surfaces cannot drift.
 const codeRefData = withAuthor({
-  patchset_id: z.string().min(1),
-  path: z.string().min(1),
-  side: z.enum(["base", "head"]),
-  start_line: z.number().int().nonnegative(),
-  end_line: z.number().int().nonnegative(),
-  symbol: z.string().optional(),
+  patchset_id: codeRefSchema.shape.patchsetId,
+  path: codeRefSchema.shape.path,
+  side: codeRefSchema.shape.side,
+  start_line: codeRefSchema.shape.startLine,
+  end_line: codeRefSchema.shape.endLine,
+  symbol: codeRefSchema.shape.symbol,
 });
 const reviewCommentData = withAuthor({
   body: z.string(),
