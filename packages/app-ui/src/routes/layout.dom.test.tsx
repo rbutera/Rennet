@@ -8,7 +8,7 @@
 // takeover assertion below.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useRennetStore } from "../store";
-import { act, cleanup, mount, waitFor } from "../test/dom";
+import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { frontDoorBridge } from "../test/fixtures/front-door";
 import { RennetRouterApp } from "./app";
 import { memoryHistory } from "./history";
@@ -87,5 +87,24 @@ describe("frame chat-width clamp (400px surface minimum + ARIA range)", () => {
     // Expanding the sidebar to the 256px panel drops the max to 368 — the dock clamps down.
     act(() => useRennetStore.getState().uiActions.setSidebarOpen(true));
     await waitFor(() => expect(getByTestId("chat-dock-slot").style.width).toBe("368px"));
+  });
+});
+
+describe("frame width-transition suppression (drag lifetime, not a settle timer)", () => {
+  it("drops the transition on pointer-down and restores it on pointer-up", async () => {
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    const { getByTestId, getByLabelText } = mount(
+      <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
+    );
+    await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(false));
+    const dock = getByTestId("chat-dock-slot");
+    const handle = getByLabelText("Resize chat column");
+    expect(dock.className).toContain("transition-[width]");
+    // Pointer down begins the drag: the transition is suppressed for its whole lifetime.
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 1 });
+    expect(dock.className).not.toContain("transition-[width]");
+    // Pointer up ends it immediately — no 200ms timer straggling behind.
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    expect(dock.className).toContain("transition-[width]");
   });
 });
