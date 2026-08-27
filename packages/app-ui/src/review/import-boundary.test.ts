@@ -24,6 +24,12 @@ const GUARDED_FILES = [
   "reference-chip.tsx",
   "line-comment-editor.tsx",
   "selection-toolbar.tsx",
+  // C6 diff surface: the raw diff carries its patch text inline (reconciliation 2), so
+  // these need no filesystem and no span-read — the guard keeps that true.
+  "diff-source.ts",
+  "diff-parse.ts",
+  "diff-view.tsx",
+  "diff-view-container.tsx",
 ];
 
 describe("review import boundary", () => {

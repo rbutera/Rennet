@@ -1,11 +1,16 @@
 import type { Review } from "@rennet/protocol";
+import { useSearch } from "wouter";
+import { DiffViewContainer } from "../review";
+import { readSessionQuery } from "../routes/url";
 
-// STUB (B2, #489). The canvas-era review workspace surface — the diff heart, the
-// Angles rail, the lens/canvas views — was deleted in the delete-first cutover. The
-// Board rebuild (Track C) restores the review surface; until then this route stays
-// registered and renders an honest placeholder so the app still launches into an
-// open review. No behavior, no gate — the product is deliberately mid-rebuild.
+// The review workspace surface (B2 stub → Track C rebuild). The canvas-era surface was
+// deleted in the delete-first cutover; the Board rebuild restores it view-by-view over
+// `?view`. C6 owns ONLY the `diff` branch — every other value (board = C5's default,
+// map/handoff/rounds later) keeps the honest placeholder below, written so C5 slots its
+// board branch beside this switch. No behavior, no gate — the product is mid-rebuild.
 export function ReviewWorkspace({ review }: { review: Review }) {
+  const view = readSessionQuery(new URLSearchParams(useSearch())).view;
+  if (view === "diff") return <DiffViewContainer review={review} />;
   return (
     <main
       className="review-workspace-stub grid min-h-screen place-content-center justify-items-center gap-2 bg-canvas p-8 text-center"
