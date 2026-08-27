@@ -528,6 +528,35 @@ export function ConnectionHost({
     [activeId, defaultTarget.id, key, saved],
   );
 
+  // Dial a TEMPORARY tokenless bridge at (host, port), exchange the one-time code ON it (the
+  // ONE command a projected connection may invoke), and return the tokened target. The SINGLE
+  // exchange site — both the switcher's "Pair and add" and the router's pairAtAddress route
+  // through it, so the seam-fenced `.invoke` lives in exactly one place.
+  const exchangeAtEndpoint = useCallback(
+    async (
+      host: string,
+      port: number | undefined,
+      code: string,
+      label: string,
+    ): Promise<ConnectionTarget> => {
+      let temp: Connection | undefined;
+      try {
+        temp = makeConnection({ id: `pairing:${Date.now()}`, label, host, port });
+        const result = await temp.bridge.invoke("pairing.exchange", { code, deviceName: label });
+        return {
+          id: `daemon:${result.deviceId}`,
+          label,
+          host,
+          port,
+          deviceToken: result.deviceToken,
+        };
+      } finally {
+        temp?.close();
+      }
+    },
+    [makeConnection],
+  );
+
   const submitAdd = useCallback(async () => {
     setAddError(null);
     const parsed = parseHostPort(addHost);
@@ -542,25 +571,8 @@ export function ConnectionHost({
     }
     const label = addLabel.trim() || parsed.host;
     setAddBusy(true);
-    // Exchange the code through a TEMPORARY tokenless bridge (a pairing-only connection).
-    // Its only legal command is `pairing.exchange`; the returned token makes the saved
-    // daemon a projected connection on every future attach.
-    let temp: Connection | undefined;
     try {
-      temp = makeConnection({
-        id: `pairing:${Date.now()}`,
-        label,
-        host: parsed.host,
-        port: parsed.port,
-      });
-      const result = await temp.bridge.invoke("pairing.exchange", { code, deviceName: label });
-      const target: ConnectionTarget = {
-        id: `daemon:${result.deviceId}`,
-        label,
-        host: parsed.host,
-        port: parsed.port,
-        deviceToken: result.deviceToken,
-      };
+      const target = await exchangeAtEndpoint(parsed.host, parsed.port, code, label);
       setSaved((current) => {
         const next = [...current.filter((t) => t.id !== target.id), target];
         persistDaemons(key, next, target.id);
@@ -577,16 +589,13 @@ export function ConnectionHost({
         error instanceof Error ? error.message : "Pairing failed. Check the code and host.",
       );
     } finally {
-      temp?.close();
       setAddBusy(false);
     }
-  }, [addHost, addCode, addLabel, makeConnection, key]);
+  }, [addHost, addCode, addLabel, exchangeAtEndpoint, key]);
 
-  // Pair a NEW machine at an address (Add Environment dialog, blocker 1). Dials a TEMPORARY
-  // tokenless bridge AT the address, exchanges the one-time code ON it (the one command a
-  // projected connection may invoke), and persists the tokened daemon as a selectable source —
-  // WITHOUT switching to it (the dialog decides that via "Browse Its Projects" → connectSource).
-  // The same temp-bridge machinery `submitAdd` uses, exposed through the seam to the router.
+  // Pair a NEW machine at an address (Add Environment dialog, blocker 1). Dials the address,
+  // exchanges the code, and persists the tokened daemon as a selectable source — WITHOUT
+  // switching to it (the dialog decides that via "Browse Its Projects" → connectSource).
   const pairAtAddress = useCallback(
     async (address: string, code: string): Promise<{ deviceId: string; name: string }> => {
       const parsed = parseHostPort(address);
@@ -594,36 +603,15 @@ export function ConnectionHost({
       const trimmedCode = code.trim();
       if (trimmedCode.length === 0) throw new Error("Enter the pairing code shown on the daemon.");
       const label = parsed.host.split(".")[0] || parsed.host;
-      let temp: Connection | undefined;
-      try {
-        temp = makeConnection({
-          id: `pairing:${Date.now()}`,
-          label,
-          host: parsed.host,
-          port: parsed.port,
-        });
-        const result = await temp.bridge.invoke("pairing.exchange", {
-          code: trimmedCode,
-          deviceName: label,
-        });
-        const target: ConnectionTarget = {
-          id: `daemon:${result.deviceId}`,
-          label,
-          host: parsed.host,
-          port: parsed.port,
-          deviceToken: result.deviceToken,
-        };
-        setSaved((current) => {
-          const next = [...current.filter((t) => t.id !== target.id), target];
-          persistDaemons(key, next, activeId);
-          return next;
-        });
-        return { deviceId: result.deviceId, name: label };
-      } finally {
-        temp?.close();
-      }
+      const target = await exchangeAtEndpoint(parsed.host, parsed.port, trimmedCode, label);
+      setSaved((current) => {
+        const next = [...current.filter((t) => t.id !== target.id), target];
+        persistDaemons(key, next, activeId);
+        return next;
+      });
+      return { deviceId: target.id.slice("daemon:".length), name: label };
     },
-    [makeConnection, key, activeId],
+    [exchangeAtEndpoint, key, activeId],
   );
 
   // Add-or-replace a LOCAL (tokenless) target and make it active — a clean RennetApp remount,
