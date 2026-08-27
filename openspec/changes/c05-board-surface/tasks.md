@@ -33,7 +33,7 @@ Each renderer is its own file under `packages/app-ui/src/board/kinds/`, ported f
 
 - [x] 4.1 `packages/app-ui/src/board/section.tsx` (Objective clauses 2, 3): render a section on `packages/ui`'s `Collapse` — folded shows the `LensSection` `gist` + per-kind `counts`; unfolded renders the `section` element's `children` through the registry. Disclosure pattern from the spike (heading wraps the toggle; both states mounted for the fold animation).
 - [x] 4.2 Delta marks (Objective clause 8, #486): a section with `delta: "new" | "reworked"` opens expanded and shows the transient gold dot (`bg-primary`) while `!viewedDeltaSections[id]`; interacting (toggle or gist click) calls `markDeltaViewed` and clears the dot. `sr-only` text names the delta for a screen reader.
-- [ ] 4.3 DOM tests: fold/unfold; folded section shows gist+counts; a delta section opens expanded with the dot; interacting clears the dot (store-driven, not local). Cluster gate green. Commit.
+- [x] 4.3 DOM tests: fold/unfold; folded section shows gist+counts; a delta section opens expanded with the dot; interacting clears the dot (store-driven, not local). Cluster gate green. Commit.
 
 ## 5. Prose selection controls + durable quote highlights
 
