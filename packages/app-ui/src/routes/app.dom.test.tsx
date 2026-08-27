@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import { act, mount, waitFor } from "../test/dom";
-import { frontDoorBridge } from "../test/fixtures/front-door";
+import { frontDoorBridge, frontDoorHandlers } from "../test/fixtures/front-door";
+import { MemoryBridge } from "../test/memory-bridge";
 import { RennetRouterApp } from "./app";
 import { memoryHistory } from "./history";
 
@@ -36,10 +37,32 @@ describe("RennetRouterApp", () => {
     expect(dockAfter).toBe(dockBefore);
   });
 
-  it("an unresolvable session slug renders an honest not-found, never a crash", async () => {
-    // frontDoorBridge has no review.load handler → the slug does not resolve.
+  it("a genuinely missing review renders not-found (the daemon's typed signal)", async () => {
+    // The daemon's contract for an unknown reviewId is a `Review not found` rejection
+    // (server dispatch.ts). ONLY that maps to not-found — modelled here honestly.
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      "review.load": () => {
+        throw new Error("Review not found");
+      },
+    });
     const history = memoryHistory("/s/does-not-exist");
-    const { findByText } = mount(<RennetRouterApp bridge={frontDoorBridge()} history={history} />);
+    const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
     expect(await findByText("Not found")).toBeTruthy();
+  });
+
+  it("a load FAILURE (disconnect / IPC fault) renders an honest error, not a false not-found", async () => {
+    // Any rejection that is NOT the missing-review signal is a real error — it must not
+    // masquerade as "Nothing here" (finding 5: every failure rendering not-found is a lie).
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      "review.load": () => {
+        throw new Error("daemon connection lost");
+      },
+    });
+    const history = memoryHistory("/s/review-1");
+    const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
+    expect(await findByText(/Couldn.t open this review/)).toBeTruthy();
+    expect(await findByText(/daemon connection lost/)).toBeTruthy();
   });
 });

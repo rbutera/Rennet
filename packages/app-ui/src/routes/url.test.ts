@@ -21,6 +21,15 @@ describe("url grammar", () => {
         "/s/abc?view=map&lens=flagged&file=src%2Fa.ts",
       );
     });
+
+    it("board is the default (omitted); diff is a non-default and MUST serialize (#489)", () => {
+      expect(DEFAULT_VIEW).toBe("board");
+      // ?view=diff must survive a round-trip — the accepted route table makes board the
+      // default, so an explicit diff is a real alternative, never erased into a board URL.
+      expect(sessionPath("abc", { view: "diff" })).toBe("/s/abc?view=diff");
+      expect(parseView("diff")).toBe("diff");
+      expect(parseView(null)).toBe("board");
+    });
   });
 
   describe("parseView / parseLens — fallback on unknown", () => {

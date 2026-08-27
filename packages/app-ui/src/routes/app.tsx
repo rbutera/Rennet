@@ -42,6 +42,24 @@ function NotFound({ label }: { readonly label: string }) {
   );
 }
 
+/** An honest load-failure surface: the review could not be opened for a real reason
+ *  (daemon disconnect, IPC fault, server exception) — NOT the same as "doesn't exist". */
+function LoadError({ slug, error }: { readonly slug: string; readonly error: unknown }) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return (
+    <section
+      data-screen="load-error"
+      role="alert"
+      className="grid min-h-screen place-content-center justify-items-center gap-2 p-8 text-center"
+    >
+      <h1 className="font-display text-xl font-medium text-ink">Couldn’t open this review</h1>
+      <p className="max-w-[520px] text-ink-soft">
+        Opening “{slug}” failed: {detail}
+      </p>
+    </section>
+  );
+}
+
 /** The front-door entry (interim, reconciliation 2) — reads the real projects list. */
 function NewChatScreen() {
   const { data, pending } = useCommand("projects.list", {});
@@ -90,6 +108,7 @@ function SessionScreen({ slug }: { readonly slug: string }) {
     return <p className="p-10 font-serif text-ink-soft">Opening…</p>;
   }
   if (resolution.status === "not-found") return <NotFound label={`session “${slug}”`} />;
+  if (resolution.status === "error") return <LoadError slug={slug} error={resolution.error} />;
   return <ReviewWorkspace review={resolution.review} />;
 }
 
@@ -140,7 +159,9 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
             <Route path={ROUTES.projects}>
               <Interim screen="projects" title="Projects" />
             </Route>
-            <Route>{(params) => <NotFound label={JSON.stringify(params)} />}</Route>
+            <Route>
+              <NotFound label="this address" />
+            </Route>
           </Switch>
         </AppLayout>
       </Router>

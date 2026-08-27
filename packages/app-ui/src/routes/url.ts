@@ -8,11 +8,13 @@ import { LENS_KINDS, type LensKind } from "@rennet/protocol";
 // `replace` (they refine the same location), while opening a screen `push`es.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The board view a session route can show (#480). */
-export type ViewKind = "diff" | "map" | "handoff" | "rounds";
-export const VIEW_KINDS: readonly ViewKind[] = ["diff", "map", "handoff", "rounds"];
-/** The board default view — an unknown ?view falls back here. */
-export const DEFAULT_VIEW: ViewKind = "diff";
+/** The board view a session route can show (#480/#489). `board` is the default; the
+ *  others are explicit `?view=` alternatives. */
+export type ViewKind = "board" | "diff" | "map" | "handoff" | "rounds";
+export const VIEW_KINDS: readonly ViewKind[] = ["board", "diff", "map", "handoff", "rounds"];
+/** The board default view — an unknown or absent ?view falls back here, and it alone is
+ *  omitted from a serialized query (diff/map/handoff/rounds always serialize). */
+export const DEFAULT_VIEW: ViewKind = "board";
 /** The default lens — an unknown ?lens falls back to the first available (else this). */
 export const DEFAULT_LENS: LensKind = LENS_KINDS[0];
 
