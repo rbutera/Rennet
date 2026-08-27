@@ -536,6 +536,22 @@ export interface DispatchDeps {
     review: Review;
     workOrder: ComposedHandoffBundle;
   }) => Promise<void>;
+  /**
+   * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
+   * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never
+   * the resident cursor. Takes the ALREADY-RESOLVED review (dispatch freshness-pins it
+   * once) plus the ask's disposition type, the selected span, and the instruction. The
+   * root composes it over the live refine harness. Optional so a composition without a
+   * rework seat still constructs — `review.reviseSpan` then answers an honest
+   * `unavailable`. The turn produces revised text into the ask log; it posts NOTHING.
+   */
+  readonly reworkSpan?: (input: {
+    review: Review;
+    type: DispositionType;
+    span: string;
+    instruction: string;
+    path?: string;
+  }) => Promise<RefinementResult>;
 }
 
 /**

@@ -1628,6 +1628,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         },
       });
     },
+    // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that
+    // reworks one staged ask's body per the reviewer's instruction, on WHICHEVER seat the
+    // council resolves — the SAME refine harness `refineComment` runs on. `review.reviseSpan`
+    // serializes these per review, re-anchors the span by quote match, and lands the result
+    // through the durable ask log. Degrades to an honest `unavailable` when neither seat is
+    // installed. Posts NOTHING — it stages a revised ask exactly like a hand edit.
+    // ponytail: reuses the refine turn with the instruction+span composed into the note; a
+    // dedicated revise prompt is the quality upgrade path, not a correctness gap.
+    reworkSpan: async ({ review, type, span, instruction, path }) =>
+      createLiveRefinePort({
+        claudePort: claudeAdapterForRepo,
+        codexExecutor: codexExecutorForRepo,
+      })({
+        review,
+        type,
+        raw: `Revise this text as instructed — "${instruction}":\n\n${span}`,
+        ...(path ? { path } : {}),
+      }),
     chooseRepository,
     openPullRequest,
     startWatching: (root: string) =>

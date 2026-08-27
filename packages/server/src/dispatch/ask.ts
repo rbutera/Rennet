@@ -17,7 +17,7 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  * sees the change without polling; a reconnecting one reads it via `ask.read`).
  */
 
-function applyWrite(
+export function applyWrite(
   rt: DispatchRuntime,
   sessionId: string,
   body: AskEventBody,

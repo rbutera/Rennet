@@ -16,6 +16,7 @@ import { projectsHandlers } from "./projects";
 import { publishHandlers } from "./publish";
 import { repositoryHandlers } from "./repository";
 import { reviewHandlers } from "./review";
+import { reworkHandlers } from "./rework";
 import { roundHandlers } from "./round";
 import {
   type CommandHandler,
@@ -84,6 +85,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...publishHandlers(rt),
     ...repositoryHandlers(rt),
     ...reviewHandlers(rt),
+    ...reworkHandlers(rt),
     ...roundHandlers(rt),
     ...settingsHandlers(rt),
   };

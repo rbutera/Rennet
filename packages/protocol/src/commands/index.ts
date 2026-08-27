@@ -1166,6 +1166,42 @@ const definitions = {
     input: z.object({ reviewId: z.string().min(1) }),
     output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
   },
+  // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
+  // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;
+  // this is its host command). A one-shot worker (a FRESH model turn, never the
+  // resident cursor) reworks one staged ask's body per the reviewer's instruction,
+  // serialized PER DOCUMENT (one rework in flight per review). The write routes
+  // through the durable ask log — the sole ask writer (cluster 2's `ask.edit`
+  // event) — so it survives reload; `receipt` reverses it (receipt-is-undo). The
+  // reworked span RE-ANCHORS across the regenerated body by quote match via the
+  // lineage matcher (`carriedAnchor`), fail-closed: null when the span did not
+  // survive regeneration byte-identically (an ambiguous carry reopens, never lies).
+  // `reworked` posts NOTHING — it stages a revised ask, exactly like a hand edit.
+  "review.reviseSpan": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The staged ask whose body a span belongs to (the client rendered it). */
+      askId: z.string().min(1),
+      /** The reviewer's selected span — the quoted text the rework re-anchors. */
+      span: z.string().min(1),
+      /** What to do to the span (e.g. "make this more concise"). */
+      instruction: z.string().min(1),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("reworked"),
+        /** The reworked span's new home in the regenerated body, or null (fail-closed). */
+        carriedAnchor: z.string().nullable(),
+        /** The regenerated ask body now staged (the `ask.edit` that landed). */
+        reworkedBody: z.string(),
+        /** The inverse event — feed it back to undo the rework (receipt-is-undo). */
+        receipt: AskEventBodySchema,
+      }),
+      z.object({ status: z.literal("no-change"), reason: z.string() }),
+      z.object({ status: z.literal("unavailable"), reason: z.string() }),
+    ]),
+  },
 } as const;
 
 /** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose
