@@ -1,5 +1,6 @@
 export {
   ASK_LOG_STORE_VERSION,
+  AskLogCorruptError,
   AskLogStore,
   defaultAskLogStoreDir,
 } from "./ask-log-store";

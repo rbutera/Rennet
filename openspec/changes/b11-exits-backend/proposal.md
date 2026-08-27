@@ -41,6 +41,12 @@ All UI (C8 landed the client exits; C9 owns the client swap to the durable proje
 
 6. **Consent token is PARKED.** Reconciliation-adjacent findings whose fix touches `publish.requestConsent` or adds any gate are dropped under Rule Zero.
 
+## Review-fix ledger (dual-review PR #537 — opus REQUEST-CHANGES / Codex BLOCK, all upheld under Rule Zero)
+
+Each entry is a fix, not a gate: data-loss prevention, honest failure, correctness, privacy, or test-validity.
+
+1. **P0 — corrupt durable history silently became an empty review** (`adapters/ask-log-store.ts`). `read` caught EVERY failure as "absent", so a torn write / malformed JSON / schema or version mismatch / foreign-session or non-contiguous seq folded to an empty projection → compose posted a CLEAN review over lost asks (silent lie). Fixed: ONLY ENOENT is absent; every other state is `corrupt` and `read`/`readProjection` throw `AskLogCorruptError` while `append` refuses to clobber. Added `readState` validation (version + per-event session identity + contiguous seq) and a parent-directory fsync after rename (crash-durable rename, a genuine ~4-line addition — no transaction machinery, per the B09 precedent). Proof: `ask-log-store.test.ts` — torn-write refusal, version/foreign-session/seq refusal, and a **child-process** SIGKILL'd-mid-write durability test (finding 10a).
+
 ## Verification (packet)
 
 `pnpm check` green. E2E with positive controls able to fail: (a) stage asks → kill host → restart → asks intact; (b) dispatch a round work-order twice → exactly one dispatch; (c) compose + preview a GitHub review draft for a real PR **without posting**.
