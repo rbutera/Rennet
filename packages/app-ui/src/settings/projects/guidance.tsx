@@ -5,6 +5,7 @@ import { Icon } from "../../components/icon";
 import type { SidebarProject } from "../../shell/sidebar-data";
 import { Row, Section, Segmented } from "../atoms";
 import { type GuidanceRule, type GuidanceSeverity, useSettingsProjection } from "../data";
+import { UnbackedNote } from "./unbacked-note";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Projects → Guidance section (C10 §8.7, claims 669–673). The repo rules the
@@ -33,12 +34,24 @@ const SEVERITY_OPTIONS = [
 
 export function GuidanceSection({ project }: { readonly project: SidebarProject }) {
   const projection = useSettingsProjection();
+  // No served guidance-WRITE command yet (`settings.guidance` is read-only) ⇒ the editor
+  // is locked and the gap disclosed, never an Add Rule / Save that silently discards.
+  const backed = projection.projectEditsPersist;
   const rules = projection.guidanceByProject[project.id] ?? [];
 
   return (
     <Section title="Guidance" caption={`.rennet/ in ${project.name}`}>
       <Row label="Rules" hint="repo rules the review agents read" stacked>
-        <GuidanceList rules={rules} onChange={(next) => projection.setGuidance(project.id, next)} />
+        <GuidanceList
+          rules={rules}
+          disabled={!backed}
+          onChange={(next) => projection.setGuidance(project.id, next)}
+        />
+        {backed ? null : (
+          <UnbackedNote>
+            Guidance rules aren&rsquo;t served yet — this lands with the settings engine.
+          </UnbackedNote>
+        )}
       </Row>
     </Section>
   );
@@ -47,9 +60,12 @@ export function GuidanceSection({ project }: { readonly project: SidebarProject 
 function GuidanceList({
   rules,
   onChange,
+  disabled,
 }: {
   readonly rules: readonly GuidanceRule[];
   readonly onChange: (rules: readonly GuidanceRule[]) => void;
+  /** No served write store ⇒ the editor cannot open and Add Rule is locked (no no-op save). */
+  readonly disabled?: boolean;
 }) {
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const [draftText, setDraftText] = useState("");
@@ -156,13 +172,15 @@ function GuidanceList({
               {rule.severity}
             </span>
             <span className="text-xs text-ink">{rule.rule}</span>
-            <button
-              type="button"
-              onClick={() => openEditor(index)}
-              className="ml-auto hidden shrink-0 rounded px-1.5 py-0.5 text-2xs text-ink-soft hover:bg-raised hover:text-ink group-hover:block"
-            >
-              Edit
-            </button>
+            {disabled ? null : (
+              <button
+                type="button"
+                onClick={() => openEditor(index)}
+                className="ml-auto hidden shrink-0 rounded px-1.5 py-0.5 text-2xs text-ink-soft hover:bg-raised hover:text-ink group-hover:block"
+              >
+                Edit
+              </button>
+            )}
           </div>
         ),
       )}
@@ -172,7 +190,8 @@ function GuidanceList({
         <button
           type="button"
           onClick={() => openEditor("new")}
-          className="flex h-7 w-fit items-center gap-1.5 rounded-md px-2 text-xs text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+          disabled={disabled}
+          className="flex h-7 w-fit items-center gap-1.5 rounded-md px-2 text-xs text-ink-soft transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-ink-soft"
         >
           <Icon icon={Plus} className="size-3" />
           Add Rule

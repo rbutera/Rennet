@@ -1,3 +1,4 @@
+import { cn } from "@rennet/ui";
 import type { KeyboardEvent } from "react";
 import type { SidebarProject } from "../../shell/sidebar-data";
 import {
@@ -8,6 +9,7 @@ import {
 } from "../assets/worktree";
 import { Row, Section } from "../atoms";
 import { useSettingsProjection } from "../data";
+import { UnbackedNote } from "./unbacked-note";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Projects → Worktrees section (C10 §8.3, claims 653–655). The location
@@ -31,6 +33,8 @@ const FIELD =
 
 export function WorktreeSection({ project }: { readonly project: SidebarProject }) {
   const projection = useSettingsProjection();
+  // No served write store yet ⇒ disable the fields + disclose the gap (no no-op inputs).
+  const backed = projection.projectEditsPersist;
   const settings = projection.worktreeByProject[project.id];
   const root = settings?.root.value ?? DEFAULT_WORKTREE_ROOT;
   const pattern = settings?.pattern.value ?? DEFAULT_WORKTREE_PATTERN;
@@ -45,9 +49,10 @@ export function WorktreeSection({ project }: { readonly project: SidebarProject 
           value={root}
           onChange={(event) => projection.setWorktreeRoot(project.id, event.target.value)}
           onKeyDown={stopEscape}
+          disabled={!backed}
           aria-label="Worktree location"
           spellCheck={false}
-          className={FIELD}
+          className={cn(FIELD, !backed && "cursor-not-allowed opacity-60")}
         />
       </Row>
       <Row label="Naming" hint="how each worktree folder is named" stacked>
@@ -55,9 +60,10 @@ export function WorktreeSection({ project }: { readonly project: SidebarProject 
           value={pattern}
           onChange={(event) => projection.setWorktreePattern(project.id, event.target.value)}
           onKeyDown={stopEscape}
+          disabled={!backed}
           aria-label="Worktree naming pattern"
           spellCheck={false}
-          className={FIELD}
+          className={cn(FIELD, !backed && "cursor-not-allowed opacity-60")}
         />
         <div className="flex flex-wrap items-center gap-1">
           {WORKTREE_TOKENS.map((t) => (
@@ -65,8 +71,9 @@ export function WorktreeSection({ project }: { readonly project: SidebarProject 
               key={t.token}
               type="button"
               onClick={() => projection.setWorktreePattern(project.id, pattern + t.token)}
+              disabled={!backed}
               title={`Insert ${t.token}`}
-              className="flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-2xs text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              className="flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-2xs text-ink-soft transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-ink-soft"
             >
               <span className="font-mono">{t.token}</span>
               <span className="text-ink-faint">{t.label}</span>
@@ -77,6 +84,12 @@ export function WorktreeSection({ project }: { readonly project: SidebarProject 
           <span className="shrink-0 text-2xs uppercase tracking-wide text-ink-faint">Preview</span>
           <span className="truncate font-mono text-xs text-ink">{preview}</span>
         </div>
+        {backed ? null : (
+          <UnbackedNote>
+            Worktree location and naming aren&rsquo;t served yet — this lands with the settings
+            engine.
+          </UnbackedNote>
+        )}
       </Row>
     </Section>
   );

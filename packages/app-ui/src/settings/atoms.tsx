@@ -94,16 +94,20 @@ export function Segmented<T extends string>({
   value,
   onChange,
   ariaLabel,
+  disabled,
 }: {
   readonly options: readonly { readonly id: T; readonly label: string }[];
   readonly value: T;
   readonly onChange: (id: T) => void;
   readonly ariaLabel: string;
+  /** Lock the whole control (a still-unserved setting discloses its gap; default off). */
+  readonly disabled?: boolean;
 }) {
   return (
     <ToggleGroup
       aria-label={ariaLabel}
       value={[value]}
+      disabled={disabled}
       onValueChange={(next: string[]) => {
         const picked = next[0] as T | undefined;
         if (picked && picked !== value) onChange(picked);

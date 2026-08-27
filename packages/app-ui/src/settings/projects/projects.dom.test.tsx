@@ -20,6 +20,7 @@ import {
   EMPTY_SETTINGS_PROJECTION,
   type GuidanceRule,
   type IssueTrackerSettings,
+  LiveSettingsProjectionProvider,
   type SettingsProjection,
   SettingsProjectionProvider,
   type WorktreeSettings,
@@ -116,6 +117,9 @@ function StatefulProjects({
 
   const projection: SettingsProjection = {
     ...EMPTY_SETTINGS_PROJECTION,
+    // A stateful fixture DOES persist (edits reach the probe), so it is a backed
+    // projection — the editors render live, exactly as B10's projection will.
+    projectEditsPersist: true,
     nameByProject: names,
     glyphByProject: glyphs,
     worktreeByProject: worktrees,
@@ -334,6 +338,82 @@ describe("ProjectsPage — dual-source settings", () => {
     expect(queryByLabelText("Guidance rule text")).toBeNull();
     expect(getByTestId("probe-guidance").textContent).toBe("Money amounts are integer cents");
     expect(bubbled).toBe(0);
+    cleanup();
+  });
+});
+
+// ── The LIVE projection: no served write store ⇒ honest disabled + disclosed gap ──
+// Mirrors the Environments honest-gap tests (`source-control`/`model-mappings`): under
+// the real `LiveSettingsProjectionProvider` (`projectEditsPersist === false`), every
+// unbacked Projects editor renders DISABLED and discloses its gap — it must never be a
+// live-looking control wired to a no-op setter that silently eats input.
+function liveBridge(): MemoryBridge {
+  return new MemoryBridge(
+    {
+      "projects.list": () => ({ projects: [...PROJECTS] }),
+      "settings.get": () => ({
+        scheme: "system",
+        schemeProvenance: {
+          layer: "builtin",
+          contributions: [{ layer: "builtin", value: "system", effective: true }],
+        },
+        appearanceMalformed: false,
+        projects: [P1_ROW],
+      }),
+      // The one served field post-fold; empty here — irrelevant to the Projects editors.
+      "harness.detect": () => ({ detected: [] }),
+    },
+    { platform: "darwin", version: "1.0.1" },
+  );
+}
+
+function mountLiveProjects() {
+  const history = memoryHistory("/settings/projects?project=p1");
+  return mount(
+    <BridgeProvider bridge={liveBridge()}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <LiveSettingsProjectionProvider>
+          <ProjectsPage />
+        </LiveSettingsProjectionProvider>
+      </Router>
+    </BridgeProvider>,
+  );
+}
+
+describe("ProjectsPage — live projection is honest about the unserved write store", () => {
+  it("disables every unbacked editor and discloses the gap (no silent no-op controls)", async () => {
+    const { findByLabelText, getByLabelText, getByRole } = mountLiveProjects();
+
+    // Identity: the name field is disabled (not a live field bound to a no-op setter).
+    expect((await findByLabelText("Project name")).hasAttribute("disabled")).toBe(true);
+    // Identity: the glyph choices are locked (the group disables its members).
+    expect(getByRole("button", { name: "rocket" }).hasAttribute("disabled")).toBe(true);
+    // Worktrees: both fields disabled.
+    expect(getByLabelText("Worktree location").hasAttribute("disabled")).toBe(true);
+    expect(getByLabelText("Worktree naming pattern").hasAttribute("disabled")).toBe(true);
+    // Issue tracker: the segmented picker is locked.
+    expect(getByRole("button", { name: "jira" }).hasAttribute("disabled")).toBe(true);
+    // Guidance: Add Rule is locked, so no editor can open to discard a rule.
+    expect(getByRole("button", { name: "Add Rule" }).hasAttribute("disabled")).toBe(true);
+
+    // Each locked editor names its gap — the same honesty the Environments cards carry.
+    const notes = [...document.querySelectorAll('[data-slot="unbacked-note"]')].map(
+      (n) => n.textContent ?? "",
+    );
+    expect(notes.length).toBe(4);
+    expect(notes.some((t) => /Naming and glyphs/.test(t))).toBe(true);
+    expect(notes.some((t) => /Worktree location and naming/.test(t))).toBe(true);
+    expect(notes.some((t) => /Issue-tracker config/.test(t))).toBe(true);
+    expect(notes.some((t) => /Guidance rules/.test(t))).toBe(true);
+    cleanup();
+  });
+
+  it("keeps Review Context (repo visibility) live — it IS backed by settings.setRepoVisibility", async () => {
+    const { findByRole } = mountLiveProjects();
+    // The visibility Segmented is NOT part of the projection seam; it stays interactive.
+    expect((await findByRole("button", { name: "git-visible" })).hasAttribute("disabled")).toBe(
+      false,
+    );
     cleanup();
   });
 });

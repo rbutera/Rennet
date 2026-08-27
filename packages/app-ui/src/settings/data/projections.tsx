@@ -147,6 +147,13 @@ export interface SettingsProjection {
   readonly trackerByProject: Readonly<Record<string, IssueTrackerSettings>>;
   /** The guidance rules the review agents read, per project id. */
   readonly guidanceByProject: Readonly<Record<string, readonly GuidanceRule[]>>;
+  /** Whether the per-project editors (name, glyph, worktree, tracker, guidance) have a
+   *  served WRITE store. FALSE in the live client until B10 — with no store, a fully
+   *  enabled control would silently eat every keystroke, so the pages instead disable
+   *  their controls and disclose the gap (the same honesty as the Environments cards,
+   *  no UI lie). A stateful test/B10 projection sets it TRUE, so those editors are live
+   *  and provable. (`setRepoVisibility` is NOT in this set — Repository is live-backed.) */
+  readonly projectEditsPersist: boolean;
 
   /** Rename a host — flows through to the sidebar host-group header (one hosts state). */
   renameHost(id: string, name: string): void;
@@ -187,6 +194,7 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   worktreeByProject: {},
   trackerByProject: {},
   guidanceByProject: {},
+  projectEditsPersist: false,
   renameHost: () => undefined,
   removeHost: () => undefined,
   setToolEnabled: () => undefined,

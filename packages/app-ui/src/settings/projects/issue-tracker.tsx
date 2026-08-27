@@ -1,3 +1,4 @@
+import { cn } from "@rennet/ui";
 import type { KeyboardEvent } from "react";
 import type { SidebarHost, SidebarProject } from "../../shell/sidebar-data";
 import { Row, Section, Segmented } from "../atoms";
@@ -8,6 +9,7 @@ import {
   useSettingsProjection,
 } from "../data";
 import { ProvenanceChip } from "../provenance-chip";
+import { UnbackedNote } from "./unbacked-note";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Projects → Issue Tracker section (C10 §8.5–8.6, claims 659–668). Related-context
@@ -62,6 +64,8 @@ export function TrackerSection({
   readonly host: SidebarHost;
 }) {
   const projection = useSettingsProjection();
+  // No served write store yet ⇒ lock the picker + fields and disclose the gap.
+  const backed = projection.projectEditsPersist;
   const tracker = projection.trackerByProject[project.id] ?? UNSET_TRACKER;
 
   const setKind = (kind: TrackerKind) => {
@@ -96,10 +100,14 @@ export function TrackerSection({
           value={entry.value}
           onChange={(event) => setField(field, event.target.value)}
           onKeyDown={stopEscape}
+          disabled={!backed}
           aria-label={ariaLabel}
           placeholder={placeholder}
           spellCheck={false}
-          className="w-56 rounded-md border border-line bg-surface px-2 py-1.5 font-mono text-xs text-ink placeholder:text-ink-faint focus-visible:border-accent-line focus-visible:outline-none"
+          className={cn(
+            "w-56 rounded-md border border-line bg-surface px-2 py-1.5 font-mono text-xs text-ink placeholder:text-ink-faint focus-visible:border-accent-line focus-visible:outline-none",
+            !backed && "cursor-not-allowed opacity-60",
+          )}
         />
       </>
     );
@@ -117,6 +125,7 @@ export function TrackerSection({
           options={TRACKER_OPTIONS}
           value={tracker.kind.value}
           onChange={setKind}
+          disabled={!backed}
         />
       </Row>
       {tracker.kind.value === "github" ? (
@@ -141,6 +150,13 @@ export function TrackerSection({
           {textField("tokenEnv", "Tracker token environment variable", "JIRA_API_TOKEN")}
         </Row>
       ) : null}
+      {backed ? null : (
+        <div className="py-2.5">
+          <UnbackedNote>
+            Issue-tracker config isn&rsquo;t served yet — this lands with the settings engine.
+          </UnbackedNote>
+        </div>
+      )}
     </Section>
   );
 }

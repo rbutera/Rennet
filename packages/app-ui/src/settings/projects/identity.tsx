@@ -11,6 +11,7 @@ import {
 } from "../assets/project-icon";
 import { Row, Section } from "../atoms";
 import { useSettingsProjection } from "../data";
+import { UnbackedNote } from "./unbacked-note";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Projects → Identity section (C10 §8.2, claims 649–652). The display name
@@ -33,9 +34,12 @@ function stopEscape(event: KeyboardEvent<HTMLElement>) {
 
 export function IdentitySection({ project }: { readonly project: SidebarProject }) {
   const projection = useSettingsProjection();
+  // No served write store yet ⇒ show the controls disabled + disclose the gap, never
+  // an enabled field bound to the projection's no-op setter (which would eat input).
+  const backed = projection.projectEditsPersist;
   const name = projection.nameByProject[project.id] ?? project.name;
   const glyph = projection.glyphByProject[project.id] ?? DEFAULT_PROJECT_ICON;
-  const renamed = name !== project.fallbackName;
+  const renamed = backed && name !== project.fallbackName;
 
   return (
     <Section title="Identity" caption="~/.rennet/client-settings.json">
@@ -59,15 +63,20 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
               projection.setProjectName(project.id, project.fallbackName);
           }}
           onKeyDown={stopEscape}
+          disabled={!backed}
           aria-label="Project name"
           placeholder={project.fallbackName}
-          className="w-56 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-ink placeholder:text-ink-faint focus-visible:border-accent-line focus-visible:outline-none"
+          className={cn(
+            "w-56 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-ink placeholder:text-ink-faint focus-visible:border-accent-line focus-visible:outline-none",
+            !backed && "cursor-not-allowed opacity-60",
+          )}
         />
       </Row>
       <Row label="Glyph" hint="shown next to the project in the sidebar" stacked>
         <ToggleGroup
           aria-label="Project glyph"
           value={[glyph]}
+          disabled={!backed}
           onValueChange={(next: string[]) => {
             const picked = next[0] as ProjectIconName | undefined;
             if (picked) projection.setProjectGlyph(project.id, picked);
@@ -92,6 +101,13 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
           ))}
         </ToggleGroup>
       </Row>
+      {backed ? null : (
+        <div className="py-2.5">
+          <UnbackedNote>
+            Naming and glyphs aren&rsquo;t served yet — this lands with the settings engine.
+          </UnbackedNote>
+        </div>
+      )}
     </Section>
   );
 }
