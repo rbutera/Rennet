@@ -412,6 +412,7 @@ export {
   snapshotStoreFor,
 } from "./project-snapshot-store";
 export {
+  type EnrichmentReport,
   type ExtractedRef,
   type ExtractRefsInput,
   type ExtractRefsOptions,
@@ -423,9 +424,19 @@ export {
   fetchPrView,
   type GhRunner,
   type GithubRef,
+  type JsonFetcher,
+  type MissingConfigFact,
+  type RawContextPayload,
+  RELATED_CONTEXT_ENRICH_SCHEMA,
+  type RefFailure,
   type RefFetchResult,
   type RefProvenance,
   type RefSource,
+  type RelatedContextResult,
+  type RetrieveRelatedContextDeps,
+  retrieveRelatedContext,
+  type TrackerConfig,
+  type TrackerEndpointConfig,
   type TrackerKeyRef,
 } from "./related-context";
 export {
