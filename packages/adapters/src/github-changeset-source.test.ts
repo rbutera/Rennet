@@ -89,6 +89,7 @@ function prFrom(
     cloneUrls: ["git@github.com:acme/widget.git"],
     forgeRef: "PR_7",
     changedFiles: 1,
+    viewerDidAuthor: false,
     sso: { kind: "none" },
   };
 }

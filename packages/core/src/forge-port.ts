@@ -79,6 +79,13 @@ export interface ForgePullRequest {
   /** The forge's opaque node id; carried, never interpreted, outside the adapter. */
   forgeRef: string;
   changedFiles: number;
+  /**
+   * Whether the AUTHENTICATED viewer authored this PR (GitHub GraphQL
+   * `viewerDidAuthor`). The ownership fact that tells an own PR from a teammate's,
+   * so the hand-off routes the own-branch lane rather than the teammate Post-review
+   * lane. Sourced from the same authenticated GraphQL call as the rest of the PR.
+   */
+  viewerDidAuthor: boolean;
   /** Non-fatal SSO state observed while fetching this PR. */
   sso: SsoState;
 }

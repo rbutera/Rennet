@@ -36,7 +36,7 @@ const SEARCH_CEILING = 1000;
 const PR_QUERY = `query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
     pullRequest(number:$number){
-      number title body isDraft headRefOid baseRefOid baseRefName headRefName changedFiles id
+      number title body isDraft headRefOid baseRefOid baseRefName headRefName changedFiles id viewerDidAuthor
     }
   }
 }`;
@@ -78,6 +78,7 @@ interface GraphqlPr {
   headRefName: string;
   changedFiles: number;
   id: string;
+  viewerDidAuthor: boolean;
 }
 
 interface GraphqlSearchNode {
@@ -239,6 +240,7 @@ export class GitHubForgeAdapter implements ForgePort {
       cloneUrls: cloneUrls(ref.repo.owner, ref.repo.name),
       forgeRef: pr.id,
       changedFiles: pr.changedFiles,
+      viewerDidAuthor: pr.viewerDidAuthor,
       sso,
     };
   }
