@@ -2013,6 +2013,69 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(out.outcome).not.toBeNull();
   });
 
+  it("publish.compose (mode review) sources asks + line comments + verdict override; publish.review accepts the projection-composed bytes", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    // Two strata from the durable projection: a line-anchored ask + a bare line comment.
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: { id: "a1", anchor: "src/a.ts:3", type: "request-change", body: "rename" },
+    });
+    await dispatch("ask.setLineComment", {
+      sessionId: review.id,
+      path: "src/b.ts",
+      line: 8,
+      body: "extract",
+    });
+    // Override the derived REQUEST_CHANGES down to a neutral COMMENT (derive-first, overridable).
+    await dispatch("ask.setVerdictOverride", { sessionId: review.id, verdict: "COMMENT" });
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as {
+      status: string;
+      comments: ReviewCommentInput[];
+      payload: string;
+      verdict: ForgeReviewEvent;
+      compositionId: string;
+    };
+    expect(composed.status).toBe("review");
+    // Both strata composed, deterministic (path, line) order — line comments, not file-level.
+    expect(composed.comments).toEqual([
+      { path: "src/a.ts", line: 3, side: "RIGHT", type: "request-change", body: "rename" },
+      { path: "src/b.ts", line: 8, side: "RIGHT", type: "comment", body: "extract" },
+    ]);
+    // The explicit override WINS over the derived REQUEST_CHANGES.
+    expect(composed.verdict).toBe("COMMENT");
+    expect(composed.payload).toBe(canonicalReviewPayload(composed.comments));
+
+    // The phone posts EXACTLY the composed bytes + binding — the freshness mirror recomputes the
+    // expected payload from the SAME projection and accepts; a real send lands one review.
+    const { authorization } = (await dispatch("publish.requestConsent", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      compositionId: composed.compositionId,
+    })) as { authorization: string };
+    const out = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments: composed.comments,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      compositionId: composed.compositionId,
+      authorization,
+      dryRun: false,
+    })) as { dryRun: boolean; outcome: { url: string | null } | null };
+    expect(out.dryRun).toBe(false);
+    expect(out.outcome).not.toBeNull();
+  });
+
   it("binds the composed artifact and refuses a stale-revision post (#382 M2 finding 2)", async () => {
     const { dispatch } = harness();
     const review = await postableReview(dispatch);
