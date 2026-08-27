@@ -13,7 +13,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 2. The element registry — one renderer per kind, `assertNever` default
 
-- [ ] 2.1 `packages/app-ui/src/board/registry.ts` (Objective clause 1, autopsy S4): a `Record<Exclude<HostKind, "round_outcome" | "review_comment">, ElementRenderer>` map and an `Element` dispatcher that looks up `element.kind`, renders through the map, and has an `assertNever(kind)` default arm (Reconciliation 3 — `round_outcome`→C9, `review_comment`→C7/C8; the domain exclusion keeps totality honest with no stub). Renderer files land in cluster 3; this cluster wires the dispatch mechanism + type-level totality proof.
+- [x] 2.1 `packages/app-ui/src/board/registry.ts` (Objective clause 1, autopsy S4): a `Record<Exclude<HostKind, "round_outcome" | "review_comment">, ElementRenderer>` map and an `Element` dispatcher that looks up `element.kind`, renders through the map, and has an `assertNever(kind)` default arm (Reconciliation 3 — `round_outcome`→C9, `review_comment`→C7/C8; the domain exclusion keeps totality honest with no stub). Renderer files land in cluster 3; this cluster wires the dispatch mechanism + type-level totality proof.
 - [ ] 2.2 Type-level positive control recorded: adding a kind to the registry domain without a renderer makes `assertNever` a compile error (run once by hand — widen the domain, watch typecheck fail, revert; record here). This is the named replacement for the spike's silent `default: return null`. Cluster gate green. Commit.
 
 ## 3. Per-kind renderers — port the JSX through the fence
