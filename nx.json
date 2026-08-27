@@ -12,6 +12,7 @@
       "{workspaceRoot}/.tool-versions",
       "{workspaceRoot}/biome.json",
       "{workspaceRoot}/eslint.config.mjs",
+      "{workspaceRoot}/eslint-suppressions.json",
       "{workspaceRoot}/tsconfig.base.json",
       "{workspaceRoot}/vitest.config.ts"
     ],

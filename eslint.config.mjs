@@ -173,26 +173,23 @@ export default [
     // sanctioned caller and are exempt; tests drive MemoryBridge directly and are
     // exempt too. Placed AFTER the hex block so it wins the merge on surface files —
     // hence it re-lists NO_HARDCODED_HEX to keep hex enforced there.
+    //
+    // ── LEGACY QUARANTINE (strangler-fig), done as a CHECKED BASELINE ──────────
+    // Incumbent surfaces still on the Surface/prop-bridge model carry live `.invoke`
+    // calls today. They are NOT whole-file ignored — that would exempt NEWLY added
+    // `.invoke` calls too, defeating the fence. Instead the EXISTING calls are
+    // recorded in `eslint-suppressions.json` (ESLint's suppressions baseline), which
+    // the CLI auto-loads. Effect: every current legacy call still passes, but a NEW
+    // `.invoke` in a quarantined file pushes the per-file count past the baseline and
+    // FAILS. C03–C14 drain the legacy calls and prune the baseline (a drained call
+    // leaves an unused suppression, which ESLint also flags); C14 verifies it is empty.
+    // Regenerate after draining:
+    //   pnpm exec eslint packages/app-ui/src --suppress-rule no-restricted-syntax --prune-suppressions
     files: ["packages/app-ui/src/**/*.ts", "packages/app-ui/src/**/*.tsx"],
     ignores: [
       "packages/app-ui/src/data/**",
       "packages/app-ui/src/**/*.test.ts",
       "packages/app-ui/src/**/*.test.tsx",
-      // ── LEGACY QUARANTINE (strangler-fig) ────────────────────────────────────
-      // Incumbent surfaces still on the Surface/prop-bridge model. Each is rebuilt
-      // onto the seam by the workstream named, which DROPS its line here. C14
-      // conformance verifies this list is EMPTY. Do not add new entries — new code
-      // uses the hooks. Every file below carries a live `.invoke` today.
-      "packages/app-ui/src/app/shell.tsx", // legacy — migrated by C03
-      "packages/app-ui/src/components/directory-browser.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/project-processing.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/front-door.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/project-detail.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/context-map-view.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/pr-worktree-status.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/connection-host.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/github-connect.tsx", // legacy — migrated by C12
-      "packages/app-ui/src/components/settings-screen.tsx", // legacy — migrated by C10
     ],
     rules: {
       "no-restricted-syntax": ["error", NO_HARDCODED_HEX, NO_DIRECT_INVOKE],
