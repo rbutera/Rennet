@@ -20,7 +20,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 - [x] 3.1 `packages/core/src/delta/noise-preclass.ts`: pure rules over the hunk index → `NoisePreclassFact[]` `{hunkId, rule, reason}`. Rules (mechanical only): lockfile paths (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, etc.), generated-scaffold stamps (`.openspec.yaml` per R22), generated-output globs (`dist/`, `*.min.*`, sourcemaps). NO formatting/import-order heuristics — a model judges the remainder (#464 dec. 2); do not grow the rule set beyond what is mechanically certain.
 - [x] 3.2 Tests: each rule fires on a fixture hunk; a plain source hunk yields no fact; verdicts carry the firing rule (the "which judged" record).
-- [ ] 3.3 Gate green.
+- [x] 3.3 Gate green.
 
 ## Cluster 4 — counterpart hints + the buildDeltaPacket seam
 
