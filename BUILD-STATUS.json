@@ -89,8 +89,9 @@
     "passes": true
   },
   "c05": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 live-wiring swap B4/B8-gated"
   },
   "c06": {
     "status": "done",
