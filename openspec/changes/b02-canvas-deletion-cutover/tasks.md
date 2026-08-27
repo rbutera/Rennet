@@ -19,7 +19,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 - [x] 3.1 Delete the adapters DELETE set: `canvas-ops-external`/`canvas-ops-server`/`canvas-ops-test-backend`/`canvas-ops-wired.test`, `adjudication-backend` + `adjudication-calibration.*` (incl. `.json`), `ui-verification-backend.*`, `orchestrator-turn.*`/`orchestrator-session-server.*`/`orchestrator-live.real.test`/`orchestrator-codex-live.real.test`, `decisions-fixture.*`/`flagged-fixture.ts`/`noise-fixture.*`. Trim `adapters/src/index.ts` and `codex-wsl-live.real.test.ts`.
 - [x] 3.2 Trim server: `create-server.ts` loses `buildCanvasesForReviewWithContextFeed`/`buildCanvasesForReview`, the `review.canvases` delivery, canvasOps@2 wiring, and every dead-pass call; `dispatch.ts` (+ test) drops `buildCanvases` from the seam; delete `orchestrator.ts` + `orchestrator.test.ts`; trim `review-intelligence-session.*` (hypothesis phase out, ask flow stays), `review-ask-live.*`, `live-review-backend.test.ts`, `delta-digest-live.*`, `projection.test.ts`. `projection.ts` untouched.
-- [ ] 3.3 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
+- [x] 3.3 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
 
 ## 4. core cutover — the reconciliation executed
 
