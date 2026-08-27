@@ -43,11 +43,6 @@ export function useSetRepoVisibility(): MutationResult<"settings.setRepoVisibili
   return useMutation("settings.setRepoVisibility", { invalidates: ["settings.get"] });
 }
 
-/** Set (or clear with `locus: null`) a repo's execution-locus override. */
-export function useSetRepoLocus(): MutationResult<"settings.setRepoLocus"> {
-  return useMutation("settings.setRepoLocus", { invalidates: ["settings.get"] });
-}
-
 /** Reset a repo-scoped value to inheritance (fall back down the ladder). */
 export function useResetRepoValue(): MutationResult<"settings.resetRepoValue"> {
   return useMutation("settings.resetRepoValue", { invalidates: ["settings.get"] });

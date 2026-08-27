@@ -64,7 +64,6 @@ const P1_ROW: SettingsProject = {
     contributions: [{ layer: "builtin", value: "not promoted", effective: true }],
   },
   locus: { kind: "host" },
-  locusOverridden: false,
   locusProvenance: {
     layer: "detected",
     contributions: [{ layer: "detected", value: "host", effective: true }],

@@ -11,7 +11,6 @@ export {
   useResetRepoValue,
   useSetAppearance,
   useSetKeybinding,
-  useSetRepoLocus,
   useSetRepoVisibility,
   useSettingsView,
 } from "./live";
