@@ -39,14 +39,84 @@ import type { DraftBoard, DraftElement, HunkId, LensKind, Violation } from "@ren
 /** The lint target: one of the five lens boards, or the round-report seat. */
 export type LintTarget = LensKind | "report";
 
-/** One patchset hunk, with the new-image range citations resolve against. */
+/**
+ * One patchset hunk. Coverage and citation resolution are SIDE-AWARE: a
+ * `side: "head"` code_ref resolves against the new image on {@link path}; a
+ * `side: "base"` one resolves against the old image on {@link previousPath}
+ * (its own line numbers). A pure addition has no old image (`oldLines === 0`)
+ * and is teachable only from the head side; a pure deletion has no new image
+ * (`newLines === 0`) and is teachable only from the base side — the geometry
+ * finding 8 restores.
+ */
 export interface LintHunk {
   readonly id: HunkId;
+  /** The head-side (post-image) path; a `side: "head"` code_ref resolves here. */
   readonly path: string;
   /** 1-based first line of the hunk's new image. */
   readonly newStart: number;
-  /** Line count of the hunk's new image (`newStart .. newStart + newLines - 1`). */
+  /** Line count of the hunk's new image (`newStart .. newStart + newLines - 1`); 0 for a pure deletion. */
   readonly newLines: number;
+  /** The base-side (pre-image) path; defaults to {@link path} when the file was not renamed. */
+  readonly previousPath?: string;
+  /** 1-based first line of the hunk's old image; a `side: "base"` code_ref resolves here. */
+  readonly oldStart?: number;
+  /** Line count of the hunk's old image (`oldStart .. oldStart + oldLines - 1`); 0 for a pure addition. */
+  readonly oldLines?: number;
+}
+
+/** A code_ref reduced to what coverage/citation geometry needs: its side, path, and line span. */
+export interface CodeRefSpan {
+  readonly path: string;
+  readonly side: "base" | "head";
+  readonly start: number;
+  readonly end: number;
+}
+
+/** Read a `code_ref` element's coverage span, or `undefined` if it is not a code_ref. */
+export function readCodeRefSpan(el: DraftElement): CodeRefSpan | undefined {
+  if (el.kind !== "code_ref") return undefined;
+  const d = el.data as { path?: unknown; side?: unknown; start_line?: unknown; end_line?: unknown };
+  const path = typeof d.path === "string" ? d.path : "";
+  const side = d.side === "base" ? "base" : "head";
+  const start = typeof d.start_line === "number" ? d.start_line : 0;
+  const end = typeof d.end_line === "number" ? d.end_line : start;
+  return { path, side, start, end };
+}
+
+/**
+ * Does `ref` TEACH `hunk`? A base-side ref resolves against the old image and
+ * the previous path (a pure addition, `oldLines === 0`, has no old image to
+ * teach); a head-side ref resolves against the new image and the current path
+ * (a pure deletion, `newLines === 0`, has no new image). A base-side citation
+ * therefore can never falsely cover an addition, and a deletion-only hunk is
+ * teachable only from the base side (finding 8).
+ */
+export function codeRefTeaches(ref: CodeRefSpan, hunk: LintHunk): boolean {
+  if (ref.side === "base") {
+    const oldStart = hunk.oldStart;
+    const oldLines = hunk.oldLines;
+    if (oldStart === undefined || oldLines === undefined || oldLines === 0) return false;
+    if (ref.path !== (hunk.previousPath ?? hunk.path)) return false;
+    const hEnd = oldStart + oldLines - 1;
+    return ref.start <= hEnd && ref.end >= oldStart;
+  }
+  if (hunk.newLines === 0 || ref.path !== hunk.path) return false;
+  const hEnd = hunk.newStart + hunk.newLines - 1;
+  return ref.start <= hEnd && ref.end >= hunk.newStart;
+}
+
+/** The hunk ids a set of board elements TEACH (side-aware), across every code_ref among them. */
+export function taughtHunkIds(
+  elements: readonly DraftElement[],
+  hunks: readonly LintHunk[],
+): Set<string> {
+  const taught = new Set<string>();
+  for (const el of elements) {
+    const ref = readCodeRefSpan(el);
+    if (ref === undefined) continue;
+    for (const h of hunks) if (codeRefTeaches(ref, h)) taught.add(h.id);
+  }
+  return taught;
 }
 
 /**
@@ -562,20 +632,8 @@ const noTaughtAndSkipped: Rule = (draft, ctx) => {
   const skips = skippedHunks(draft);
   if (skips === undefined || skips.length === 0) return [];
   const skipped = new Set(skips.map((s) => s.hunk));
-  // "Taught": any code_ref whose new-image line range overlaps a hunk on its path.
-  const taught = new Set<string>();
-  for (const el of draft.elements) {
-    if (el.kind !== "code_ref") continue;
-    const d = el.data as { path?: unknown; start_line?: unknown; end_line?: unknown };
-    const path = typeof d.path === "string" ? d.path : "";
-    const start = typeof d.start_line === "number" ? d.start_line : 0;
-    const end = typeof d.end_line === "number" ? d.end_line : start;
-    for (const h of ctx.hunks) {
-      if (h.path !== path) continue;
-      const hEnd = h.newStart + h.newLines - 1;
-      if (start <= hEnd && end >= h.newStart) taught.add(h.id);
-    }
-  }
+  // "Taught": any code_ref whose side-appropriate range overlaps a hunk (finding 8).
+  const taught = taughtHunkIds(draft.elements, ctx.hunks);
   const both = [...skipped].filter((id) => taught.has(id));
   return both.map((id) => ({
     ruleId: "no-taught-and-skipped",

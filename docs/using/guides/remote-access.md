@@ -33,7 +33,7 @@ are rejected.
 ## Bind the daemon
 
 The daemon listens on `127.0.0.1` by default. Set `daemon.listen` in
-`~/.rennet/config.json` to accept connections on a private-network address:
+`~/.rennet/daemon-settings.json` to accept connections on a private-network address:
 
 ```json
 {
