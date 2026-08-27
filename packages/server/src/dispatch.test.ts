@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildGitHubReviewRequest, FileThreadStore } from "@rennet/adapters";
+import { AskLogStore, buildGitHubReviewRequest, FileThreadStore } from "@rennet/adapters";
 import {
   type AskAnswer,
   type ComposePort,
@@ -247,6 +247,7 @@ function harness(
   const deps: DispatchDeps = {
     service,
     allowedRoots,
+    askLog: new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-asks-"))),
     projectContextMap:
       extra.projectContextMap ?? (() => Promise.resolve({ status: "absent", reason: "stub" })),
     projectContextAsk:
@@ -2293,6 +2294,7 @@ function frontDoorHarness(seed: {
   const deps: DispatchDeps = {
     service,
     allowedRoots,
+    askLog: new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-asks-"))),
     projectContextMap: () => Promise.resolve({ status: "absent", reason: "stub" }),
     projectContextAsk: () =>
       Promise.resolve({

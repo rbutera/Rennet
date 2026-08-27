@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Octokit } from "@octokit/core";
 import {
+  AskLogStore,
   applyVisibilitySwitch,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
@@ -1431,9 +1432,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // (reload persisted threads, crash-recovered) and persistence (write a streaming
   // placeholder that recovers as interrupted if this process dies mid-answer).
   const threadStore = new FileThreadStore();
+  // B11: the durable ask-log store (~/.rennet/asks), sibling to the thread store.
+  // Backs the `ask.*` write path (the sole writers) and the reload-survival read
+  // a reconnecting client rehydrates from (`ask.read`).
+  const askLogStore = new AskLogStore();
   const dispatch = createDispatch({
     service,
     allowedRoots,
+    askLog: askLogStore,
     // Related-context retrieval (#461, B7): kicked at the REAL review-open
     // commands (capture / openPr), fire-and-forget — the kick's own promise
     // never rejects, both harness ports resolve failure-isolated (honest

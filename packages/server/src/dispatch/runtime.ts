@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+import type { AskLogStore } from "@rennet/adapters";
 import {
   type AskAnswer,
   canonicalReviewPayload,
@@ -15,6 +16,7 @@ import {
 import type {
   AnchorSide,
   AnchorSpan,
+  AskProjection,
   ComposedHandoffBundle,
   DeltaDigestResult,
   DispositionType,
@@ -505,6 +507,20 @@ export interface DispatchDeps {
    * write). Optional: absent ⇒ the settings commands are simply unavailable.
    */
   readonly settings?: SettingsComposition;
+  /**
+   * The durable ask-log store (B11 cluster 2, Q15) — the file-backed per-session
+   * event log the `ask.*` handlers are the SOLE writers of. `readProjection` folds
+   * the log to the living-draft projection; `append` adds one event. Required: the
+   * durable-asks write path is the whole point of the exit, so a composition without
+   * it would be a silently non-durable review, not a degraded-but-honest one.
+   */
+  readonly askLog: AskLogStore;
+  /**
+   * Push the current ask projection to live clients after an append (R19). The root
+   * binds it to the WS fan-out (`broadcastAskProjection`); absent ⇒ no live push (a
+   * reconnecting client still reads the durable projection via `ask.read`).
+   */
+  readonly broadcastAskProjection?: (sessionId: string, projection: AskProjection) => void;
 }
 
 /**
