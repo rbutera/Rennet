@@ -22,6 +22,7 @@ import {
   normalizeChord,
 } from "../command/commands";
 import { KEY_ACTIONS } from "../command/key-actions";
+import { useMutation } from "../data";
 import { messageFrom } from "../lib/message-from";
 import { RennetBrandMark } from "./brand-mark";
 import { GitHubAccountRows } from "./github-connect";
@@ -407,7 +408,6 @@ export function SettingsScreen({
 
         {view !== null && tab === "keyboard" ? (
           <KeyboardPanel
-            bridge={bridge}
             overrides={view.keybindings ?? {}}
             malformed={view.appearanceMalformed}
             onOverridesChanged={(keybindings) => {
@@ -557,12 +557,10 @@ function catalogueLabel(def: CommandDef): string {
  * intervention (Rule Zero). Context-independent, so it renders outside the workspace.
  */
 function KeyboardPanel({
-  bridge,
   overrides,
   malformed,
   onOverridesChanged,
 }: {
-  bridge: RennetBridge;
   overrides: KeybindingOverrides;
   malformed: boolean;
   onOverridesChanged(overrides: KeybindingOverrides): void;
@@ -572,6 +570,13 @@ function KeyboardPanel({
   // The row currently capturing its next keydown as a new chord (the recorder).
   const [recording, setRecording] = useState<string | null>(null);
   const [recordingNote, setRecordingNote] = useState<string>();
+  // The write goes through the mutation seam and INVALIDATES `settings.get` on success,
+  // so the live key owner (which reads that same cached command above the outlet, never
+  // remounting) picks up the new override at once — no advertised-but-dead bind waiting
+  // for a reload. A direct `bridge.invoke` would leave that shared read stale.
+  const { mutate: writeKeybinding } = useMutation("settings.setKeybinding", {
+    invalidates: ["settings.get"],
+  });
 
   // The six advertised app binds (C11): the Keyboard Shortcuts page lists exactly what
   // the key owner fires — no advertised-but-dead row (the §14 item 1 UI lie). Remapping
@@ -588,10 +593,7 @@ function KeyboardPanel({
     setError(undefined);
     try {
       // `keybinding` omitted (undefined) is RESET; the bridge input drops the key.
-      const next = await bridge.invoke(
-        "settings.setKeybinding",
-        keybinding === undefined ? { id } : { id, keybinding },
-      );
+      const next = await writeKeybinding(keybinding === undefined ? { id } : { id, keybinding });
       onOverridesChanged(next.keybindings);
     } catch (reason) {
       setError(messageFrom(reason));

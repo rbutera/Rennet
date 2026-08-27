@@ -13,6 +13,7 @@ import type {
   SettingsView,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { BridgeProvider } from "../data";
 import { fireEvent, mount, waitFor } from "../test/dom";
 import { SettingsScreen } from "./settings-screen";
 
@@ -482,7 +483,9 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
   it("Keyboard: set records a chord, unbind and reset send the right payloads (#44)", async () => {
     const { bridge, calls } = fakeBridge();
     const { container, getByRole, getByLabelText } = mount(
-      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
@@ -546,7 +549,11 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     // Seed an override that collides Command Menu onto Search's default ⌘P.
     const conflictView: SettingsView = { ...view, keybindings: { commands: "mod+p" } };
     const { bridge, calls } = fakeBridge({ "settings.get": conflictView });
-    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    const { container, getByRole } = mount(
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
+    );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
@@ -573,7 +580,9 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     const unboundView: SettingsView = { ...view, keybindings: { "toggle-chat": null } };
     const { bridge, calls } = fakeBridge({ "settings.get": unboundView });
     const { container, getByRole, getByLabelText } = mount(
-      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
@@ -600,7 +609,9 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
   it("Keyboard: refuses Shift/Alt capture inline without writing", async () => {
     const { bridge, calls } = fakeBridge();
     const { container, getByRole, getByLabelText } = mount(
-      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
@@ -625,7 +636,11 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
       keybindings: { search: "mod+", "retired.command": "mod+e" },
     };
     const { bridge, calls } = fakeBridge({ "settings.get": staleView });
-    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    const { container, getByRole } = mount(
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
+    );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
@@ -652,13 +667,15 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     const bubbled = vi.fn();
     const onKeybindingsChange = vi.fn();
     const { container, getByRole, getByLabelText } = mount(
-      <div role="application" onKeyDown={bubbled}>
-        <SettingsScreen
-          bridge={bridge}
-          onBack={vi.fn()}
-          onKeybindingsChange={onKeybindingsChange}
-        />
-      </div>,
+      <BridgeProvider bridge={bridge}>
+        <div role="application" onKeyDown={bubbled}>
+          <SettingsScreen
+            bridge={bridge}
+            onBack={vi.fn()}
+            onKeybindingsChange={onKeybindingsChange}
+          />
+        </div>
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
