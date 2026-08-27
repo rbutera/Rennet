@@ -2,6 +2,8 @@ import type { RennetBridge } from "@rennet/protocol";
 import { Redirect, Route, Router, Switch, useLocation } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider, useCommand } from "../data";
+import { ArchivedView } from "../project/archived-view";
+import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
@@ -145,13 +147,13 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
             </Route>
             <Route path={ROUTES.session}>{(p) => <SessionScreen slug={p.slug ?? ""} />}</Route>
             <Route path={ROUTES.archived}>
-              <Interim screen="archived" title="Archived" />
+              <ArchivedView />
             </Route>
             <Route path={ROUTES.projectIndexing}>
               {(p) => <IndexingView projectId={p.id ?? ""} />}
             </Route>
             <Route path={ROUTES.projectMap}>
-              {(p) => <Interim screen="project-map" title={`Context map — ${p.id}`} />}
+              {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
             </Route>
             <Route path={ROUTES.settings}>{(p) => <SettingsScreen page={p.page ?? ""} />}</Route>
             <Route path={ROUTES.projectDetail}>
