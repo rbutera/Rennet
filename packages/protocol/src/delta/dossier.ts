@@ -9,6 +9,14 @@
  */
 import { z } from "zod";
 
+/**
+ * The bound on a dossier item's body (#461 §8: "bounded body"). The unit is
+ * characters (#461 leaves it unstated); the retrieval worker truncates to fit,
+ * and the schema enforces the bound so an unbounded body can never land on a
+ * generation record or a drafting prompt.
+ */
+export const DOSSIER_BODY_MAX_CHARS = 16_384;
+
 export const dossierItemSchema = z.object({
   /** Stable citation key — drafters reference the item by this id. */
   id: z.string().min(1),
@@ -18,7 +26,7 @@ export const dossierItemSchema = z.object({
   /** The tracker's own state label, verbatim (e.g. `open`, `In Progress`). */
   state: z.string(),
   /** The BOUNDED body — the retrieval worker truncates before it lands here. */
-  body: z.string(),
+  body: z.string().max(DOSSIER_BODY_MAX_CHARS),
   /** Acceptance criteria when the tracker item carries them (#461 §7: they sharpen round-report ask verification). */
   acceptanceCriteria: z.string().optional(),
   url: z.string(),

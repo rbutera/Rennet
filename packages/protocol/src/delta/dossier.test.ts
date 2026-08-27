@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type DossierItem, dossierItemSchema, serializeDossier } from "./dossier";
+import {
+  DOSSIER_BODY_MAX_CHARS,
+  type DossierItem,
+  dossierItemSchema,
+  serializeDossier,
+} from "./dossier";
 
 const item: DossierItem = {
   id: "jira:REN-42",
@@ -23,6 +28,16 @@ describe("dossierItemSchema (#461 §8)", () => {
     delete bare.acceptanceCriteria;
     expect(dossierItemSchema.parse(bare)).toEqual(bare);
     expect(dossierItemSchema.safeParse({ ...bare, fetchedAt: "yesterday" }).success).toBe(false);
+  });
+
+  it("bounds the body (#461 §8): at the limit passes, one over fails", () => {
+    expect(
+      dossierItemSchema.safeParse({ ...item, body: "x".repeat(DOSSIER_BODY_MAX_CHARS) }).success,
+    ).toBe(true);
+    expect(
+      dossierItemSchema.safeParse({ ...item, body: "x".repeat(DOSSIER_BODY_MAX_CHARS + 1) })
+        .success,
+    ).toBe(false);
   });
 });
 
