@@ -83,6 +83,26 @@ describe("runPartitionWorker", () => {
     expect(result.droppedAnchors).toBe(2);
   });
 
+  it("drops off-slice citations: partition isolation is enforced at mint, not in the prompt", async () => {
+    const result = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: [
+            // lib/c.ts IS in the snapshot inventory but NOT in this worker's slice.
+            rawStatement({ claim: "cites another slice", evidence: [{ path: "lib/c.ts" }] }),
+            rawStatement(),
+          ],
+        }),
+    });
+    expect(result.statements).toHaveLength(1);
+    expect(result.statements[0]?.statement.evidence[0]?.path).toBe("src/a.ts");
+    expect(result.droppedStatements).toBe(1);
+    expect(result.droppedAnchors).toBe(1);
+  });
+
   it("resolves to an honest failed after exhausted retries", async () => {
     const result = await runPartitionWorker({
       slice: SLICE,

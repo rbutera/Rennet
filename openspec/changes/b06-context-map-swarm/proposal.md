@@ -34,6 +34,10 @@ Lens agents consuming statements (B8); project-scout (B7); the context-map UI (C
 
 12. **Amendment (cluster 5): a THIRD flat-pass caller existed and is migrated.** Reconciliation 3 named two callers; `live-review-backend.ts` also fired a background initial enrichment when a review opened with no local set. It now runs `runKnowledgeSwarmForRepo` claude-only (that seam resolves only a Claude port — the council sees an honest claude-only availability). The retired pieces beyond the named four: `createKnowledgeRunTurn`, the whole `knowledge-enrichment.ts` module (its `snapshotContextFromLoaded`/`changedPathsBetween` re-homed into `knowledge-swarm.ts`), core's `knowledge-generation.ts` file (shared `KnowledgeSnapshotContext`/`KnowledgeProvenanceSeed` types re-homed into `knowledge/mint.ts`), and the flat pass's cost harness — rewritten to drive the swarm (the Claude-seat metrics tap survives as `KnowledgeSwarmDeps.collector`, the same turn-metrics seam). The locus-threading enumeration test drops 8→7 `getClaudeHarness` sites (the knowledge site now routes through the counted `claudeAdapterForRepo`).
 
+## Review-fix amendments (PR #517 round 1)
+
+13. **Partition isolation enforced at mint.** `runPartitionWorker` resolved anchors against the whole snapshot inventory, so isolation was prompt-only. The worker's anchor index is now built from `slice.files` — an off-slice citation drops by the same anchor-or-drop rule as an invented path. The verify seat keeps the whole-inventory index (cross-cutting statements span slices by design).
+
 ## Verification (packet)
 
 `pnpm check` green. E2E against this repo itself: partitions cover every in-scope file exactly once; emitted statements carry anchors that resolve against the snapshot; a second run after a small commit re-processes only touched partitions (carry visible in the output). Positive controls that can fail (drop a file from every slice → coverage assert fails; break anchor resolution → mint drops the statement and the assert fails; touch one file → exactly the owning partition re-runs).

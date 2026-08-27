@@ -101,16 +101,18 @@ after synthesis — never facts, never stored.`,
 }
 
 /**
- * Run one partition worker over its slice. Anchors resolve against the WHOLE
- * snapshot inventory (the honesty authority); the prompt constrains citations
- * to the slice. No budget parameter — the map path is uncapped by decision.
+ * Run one partition worker over its slice. Anchors resolve against the SLICE's
+ * file index only — off-slice citations are dropped by the same anchor-or-drop
+ * rule as invented paths, so partition isolation is enforced at mint time, not
+ * merely requested in the prompt. No budget parameter — the map path is
+ * uncapped by decision.
  */
 export async function runPartitionWorker(
   input: PartitionWorkerInput,
 ): Promise<PartitionWorkerResult> {
   const { slice, snapshot, provenance, runTurn, maxRetries = 1 } = input;
   const generator = provenance.generator ?? KNOWLEDGE_SWARM_GENERATOR_ID;
-  const filesByPath = fileBlobIndex(snapshot.files);
+  const filesByPath = fileBlobIndex(slice.files);
   const prompt = buildWorkerPrompt(slice, snapshot);
   const tally: MintTally = { droppedAnchors: 0, droppedStatements: 0 };
   let lastFailure = "the partition worker did not complete";

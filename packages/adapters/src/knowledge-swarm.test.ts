@@ -88,23 +88,37 @@ function fakeClaudePort(captures: ClaudeCapture[], body: () => unknown): Harness
 }
 
 /** A fake codex executor capturing each request and answering canned output. */
-function fakeCodexExecutor(captures: CodexExecRequest[], body: () => unknown) {
+function fakeCodexExecutor(captures: CodexExecRequest[], body: (req: CodexExecRequest) => unknown) {
   return async (req: CodexExecRequest): Promise<CodexExecResult> => {
     captures.push(req);
-    return { output: body() };
+    return { output: body(req) };
   };
 }
 
-const workerBody = (): Record<string, unknown> => ({
+/**
+ * Every worker answers with a statement citing a/one.ts. For the `a` worker
+ * that is in-slice and mints; for the `b` worker (a DISTINCT claim, so dedup
+ * cannot mask the outcome) it is OFF-SLICE and must be dropped at mint —
+ * partition isolation is enforced, not requested.
+ */
+const workerBody = (req?: { prompt?: string }): Record<string, unknown> => ({
   statements: [
-    {
-      subject: "a",
-      aspect: "purpose",
-      claim: "module a does a-things",
-      confidence: "high",
-      evidence: [{ path: "a/one.ts" }],
-      hint: "pairs with b",
-    },
+    req?.prompt?.includes("b/two.ts")
+      ? {
+          subject: "b",
+          aspect: "purpose",
+          claim: "b cites another worker's slice",
+          confidence: "high",
+          evidence: [{ path: "a/one.ts" }],
+        }
+      : {
+          subject: "a",
+          aspect: "purpose",
+          claim: "module a does a-things",
+          confidence: "high",
+          evidence: [{ path: "a/one.ts" }],
+          hint: "pairs with b",
+        },
   ],
 });
 
@@ -140,9 +154,11 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     expect(claudeCaptures[0]?.model).toBe("sonnet-5");
     expect(claudeCaptures[0]?.outputSchema).toBe(MAP_VERIFY_OUTPUT_SCHEMA);
     // The set persisted, statements minted through the honesty contract, and the
-    // worker's hint died at synthesis (never stored).
+    // worker's hint died at synthesis (never stored). The `b` worker's off-slice
+    // citation was dropped at mint — exactly ONE statement survives, worker a's.
     expect(saved).toHaveLength(1);
-    expect(saved[0]?.statements.length).toBeGreaterThanOrEqual(1);
+    expect(saved[0]?.statements.map((s) => s.subject)).toEqual(["a"]);
+    expect(JSON.stringify(saved[0])).not.toContain("another worker's slice");
     expect(JSON.stringify(saved[0])).not.toContain("pairs with b");
   });
 
