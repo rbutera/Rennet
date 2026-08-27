@@ -69,18 +69,28 @@ in `daemon-settings.json`; the settings surface lists **every paired host's**
 is read directly; a remote or WSL host is listed so it is visible, but its rung
 lives on that host and is not read from here.
 
-Settings has four tabs: Global, Repo, Keyboard, and Pairing. The Global tab
-edits appearance; the Keyboard tab edits keybindings. The keybinding recorder
-needs a platform primary modifier or a bare key and rejects Shift or Alt
-combinations. It shows shortcut collisions but still stores them; the first
-matching command wins. An invalid stored shortcut falls back to the catalogue
-default or remains unbound.
+Settings is a full-view takeover reached by route, not a set of tabs. The left
+nav lists four pages — **Environments**, **Appearance**, **Keyboard Shortcuts**,
+and **Projects** — each its own route (`/settings/:page`); the active page is read
+from the URL, so a page deep-links and reloads directly. **Archived** is a
+sibling main-surface route (`/archived`), not a settings page. Appearance edits
+the color scheme, theme pack, and code theme; Keyboard Shortcuts edits
+keybindings; Environments and Projects are described below.
 
-The Keyboard tab lists the app shortcuts that a single global key owner fires:
-Search (⌘P), Command Menu (⌘K), New Chat (⌘N), Toggle Sidebar (⌘B), Toggle Chat
-(⌘J), and Settings (⌘,). What the tab advertises is exactly what fires — remap a
-row and the action runs on the new chord right away, and persists across launches.
-`⌘R` is bound to nothing, so the reload chord stays the platform default.
+The Keyboard Shortcuts page lists the app shortcuts that a single global key owner
+fires: Search (⌘P), Command Menu (⌘K), New Chat (⌘N), Toggle Sidebar (⌘B), Toggle
+Chat (⌘J), and Settings (⌘,). What the page advertises is exactly what fires —
+the page and the key owner read one table, so there is no advertised-but-dead
+shortcut. Remap a row and the action runs on the new chord right away (the remap
+invalidates the settings read the live key owner shares, so it rearms without a
+reload) and persists across launches. `⌘R` is bound to nothing, so the reload
+chord stays the platform default.
+
+The keybinding recorder needs a platform primary modifier or a bare key and
+rejects Shift or Alt combinations. It shows shortcut collisions but still stores
+them; the first matching command wins. An invalid stored shortcut falls back to
+the catalogue default or remains unbound. A filter narrows the list; Escape clears
+the filter before it can close Settings.
 
 If either settings file is malformed, Rennet uses built-in values and disables
 writes that would replace the unreadable file. Fix or move the file, then reopen
@@ -97,10 +107,43 @@ lands in exactly one target and nothing is dropped. The legacy `config.json` is
 left in place, and the presence of either split file means the migration has
 already run, so it never repeats.
 
+## Environments
+
+The Environments page is a card per machine. **This Machine** is always present
+and never removable — it is where Rennet runs. Remote and WSL hosts appear as
+their own cards and can be removed; removing a card forgets the environment and
+the projects and sessions Rennet tracked on it, and names those counts in the one
+sanctioned confirmation, while stating the machine itself is untouched. Each card
+header shows the OS glyph (a `WSL` chip for a WSL host), the environment name
+(rename inline — Enter commits, Escape cancels, an emptied name keeps the old
+one), and either the host address or a `Local` chip.
+
+The daemon line is the resolver's honest answer: the version when the daemon is
+reachable, "Not connected — last seen running Rennet daemon v<n>" for a
+previously-seen host, or "Not connected — daemon unreachable, version unknown"
+otherwise, never an invented current version. Reconnect appears only when a host
+is unreachable; Update Daemon only when a reachable host has an update.
+
+Each card carries a **Source Control** and an **Agents** section. Agents on This
+Machine are live: Rennet lists the coding harnesses it discovered (Claude, Codex)
+with their versions, and disabling one rules it out of reviews on that host
+without uninstalling anything. When at least one agent is enabled, a Review
+section exposes Model Mappings. Detection that is not yet wired renders an honest
+empty state rather than a fabricated row: remote-host agent detection, per-host
+source-control tool detection, and the served model-mapping council are not live
+yet, so those surfaces read empty until their backends land. GitHub sign-in is not
+a source-control row here — it lives on the front door and the project detail
+(see [First run](#first-run)).
+
+Device pairing lives on the This Machine card, because a pairing bootstraps a
+connection to this machine's daemon. See [Device pairing](#device-pairing).
+
 ## Repository settings
 
-Each included repository has its own row in Settings. Its local project config
-lives under `~/.rennet/projects/<escaped-absolute-path>/config.json`.
+Repository settings are the **Projects** page, scoped to one project through an
+inline picker grouped by environment and resolved from the `?project` URL scope.
+Each included repository has its own local project config under
+`~/.rennet/projects/<escaped-absolute-path>/config.json`.
 
 | Setting | Values | Behavior |
 |---|---|---|
@@ -108,11 +151,23 @@ lives under `~/.rennet/projects/<escaped-absolute-path>/config.json`.
 | Map promotion | promoted, not promoted | Reports whether a validated map is mirrored into the repository. |
 | Runs on | detected host or named WSL distribution | Shows where Git and the harness run, detected from the repository path. Read-only. |
 | Review guidance | rules from `.rennet/conventions.json` | Shows the same catalogue review runners consume. |
+| Issue tracker | github, jira, linear, none | Names the tracker whose referenced tickets are fetched for review agents. |
 
 Map visibility supports pin and reset operations. A pinned value is stored at
 the repository layer. Reset removes that layer's value and returns to the
 inherited value. Map promotion and "Runs on" are read-only in Settings;
 promotion is a separate project action, and "Runs on" is a detected fact.
+
+The Projects page also carries project **identity** (display name with the
+`org/repo` default, and a glyph), **worktree** location and naming pattern, and
+the issue tracker's fields — GitHub rides the host's `gh` CLI and exposes no
+further fields; JIRA and Linear expose a project key, a base URL, and the *name*
+of the environment variable holding the token (never the token itself). Of these,
+Review Context (map visibility) is the section wired to a live command today;
+identity, glyph, worktree pattern, issue-tracker, and guidance edits resolve
+through the settings seam but have no served write yet, so they persist once their
+backends land. The page shows them so the surface is complete, not because every
+edit is yet durable.
 
 Changing visibility never stages or commits files. Local visibility keeps the
 promoted map out of ordinary Git status through Rennet's entry in
@@ -141,9 +196,10 @@ The UI renders the resolver's answer instead of recalculating precedence in Reac
 
 ## Device pairing
 
-The Pairing tab creates a single-use code that expires after five minutes. A
-remote device exchanges it for a device token and presents that token on future
-connections. The same tab lists paired devices and revokes them.
+The Device Pairing section on the Environments **This Machine** card creates a
+single-use code that expires after five minutes. A remote device exchanges it for
+a device token and presents that token on future connections. The same section
+lists paired devices and revokes them.
 
 A paired device connects directly to the configured daemon, normally over the
 user's Tailscale network. There is no Rennet backend. Remote projections use
@@ -216,7 +272,7 @@ available.
 
 ## Diagnose setup
 
-- Open Global settings to inspect the GitHub account and reconnect or paste a token.
+- Inspect the GitHub account, reconnect, or paste a token from the front door's Connect GitHub card (or a project's detail); it is not a Settings page.
 - Run `claude --version` or `codex --version` to check a user-installed harness.
 - Fix malformed global or repository config before changing its settings.
 - Check the chosen directory when discovery returns no repositories; Rennet does not search outside it.
