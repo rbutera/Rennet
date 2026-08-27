@@ -57,3 +57,57 @@ Each amendment records a review finding's resolution. Findings and orchestrator 
   hop, which survives the remount) so the browser lists ITS filesystem. Test at line 173
   rewritten to `mountApp` with genuinely distinct bridges — browsing the remote shows its own
   listing, and HOME is gone, proving the bridge changed.
+- **A3 — scout phase ordering fabricated (high 3).** The view derived a scout-vs-map split from
+  the `project.process` stream (events before the first `repo-start` = "scout"). Verified against
+  `server/process-project.ts`: the real order is per repo `repo-start` → `stage`* → `repo-done`,
+  then resolve — this IS the map build, with NO scout narration on the channel; the model-backed
+  scout (B7) runs server-side after processing with no client-reachable progress key (the bridge
+  exposes only `onProgress`/`onProjectDetailProgress`). So the fabricated split is removed: the
+  view renders one honest build timeline. Fork: honest classification (no scout channel to
+  subscribe exists in C12). Test rewritten to production-shaped sequences (`repo-start` first).
+- **A4 — ready card before scout/enrichment complete (high 4, HONEST-NARROW).** No way to track
+  scout/enrichment completion from the client. Narrowed the UI + `getting-started.md` to the
+  structural-map completion the view actually has, and added honest partial/failed copy.
+- **A5 — questionnaire "saved" lie (high 5, HONEST-NARROW).** No project-config WRITE command
+  exists (Settings→Projects is C10), so edits are component-state only. "Looks right" no longer
+  claims a save — it dismisses and points at Settings; `context-map.md` narrowed likewise. The
+  never-a-gate control asserts non-vacuously (map completes + exits appear, questionnaire
+  untouched, still offered).
+- **A6 — settle conflated failure/partial/ready (high 6).** Replaced the boolean `done` with a
+  four-state `Outcome`: a transport error or an all-`ok:false` run reads "Indexing failed"; some
+  failed reads "partial" (naming the repos); an ok run whose `project.contextMap` is absent reads
+  "the context map isn't ready yet" — only an all-ok run with a real map reads "Context Map
+  Ready". The spinner clears in the resolution path unconditionally. The absent-map test now
+  asserts the non-ready state; new tests cover failed + partial.
+- **A7 — no run-identity guard on settlement (high 7).** The resolution now binds to the run's
+  own project id: it clears THAT run's sidebar spinner regardless, but paints outcome/summaries
+  only while `startedFor` still equals it — a late project-A resolution can no longer install A's
+  summaries into project B's view. New test drives two projects through one mounted instance.
+- **A8 — stale add() completion (high 8).** Added a per-mount `alive` ref; `add()` bails before
+  any post-await UI effect (onClose/navigate, setError/setBusy) when the body has unmounted, so a
+  stale completion can't close a reopened dialog or hijack the route.
+- **A9 — inert Discuss button (high 9).** `ContextMapView` is only ever mounted by the router with
+  `showAskRail=false`, so the ask-rail prefill path was dead and Discuss did nothing. Fork: the
+  cheap real feature — `onDiscuss` is now optional; the button renders only when a handler exists;
+  the router wrapper wires it to the project's New Chat prefilled with the statement (`?ask=`),
+  seeded into the composer. Docs `context-map.md` already describe leaving-lands-on-New-Chat.
+- **A10 — direct bridge.invoke in routed surfaces (medium 10, SCOPED PER PACKET).** The `.invoke`
+  sites are in the REUSED incumbent components (`directory-browser`, `components/context-map-view`)
+  whose seam-fence suppressions predate C12; the eslint config's own comment schedules those for
+  draining across "C03–C14" via the sanctioned baseline. The surfaces C12 authors use
+  `useCommand`/`useMutation`; `indexing-view`'s `onProgress` is a stream, which the fence does not
+  cover (only `.invoke`) and which has no seam hook carrying per-stage narration. No new
+  suppression added; migrating the incumbents is C14 drain work the packet explicitly defers.
+- **A11 — project-detail placeholder dead end (medium 11).** Front-door project rows now navigate
+  to `newChatPath(p.id)` instead of the `projectDetail` interim placeholder.
+- **A12 — paste-a-pairing-link claim unimplemented (medium 12, HONEST-NARROW).** No `rennet://pair`
+  link format exists anywhere (`pairing.mint` returns a bare code); a parser would consume a format
+  nothing prints. Deleted the "paste the link it prints" claim from the code-field helper.
+- **A13 — status chips always printed TARGET_LABEL (medium 13).** `StateChip` now renders the
+  DERIVED state label ("Needs you"/"Merged"/"Reviewed") when a row carries a state, falling back to
+  the kind label otherwise. New DOM assertion on chip text.
+- **A14 — Browse Its Projects handoff kept stale error (medium 14).** The pending-source consume
+  effect now resets the body's complete state (error + busy) on the handoff, so a stale error from
+  a prior attempt can't survive into the fresh preselected browse.
+- **A15 — missing deps array (P3 15).** The New Chat Escape effect now declares `[navigate]`
+  (wouter-stable) instead of running every render.
