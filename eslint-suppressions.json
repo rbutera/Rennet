@@ -44,7 +44,7 @@
   },
   "packages/app-ui/src/components/settings-screen.tsx": {
     "rennet/no-direct-invoke": {
-      "count": 10
+      "count": 8
     },
     "rennet/no-handrolled-toggle": {
       "count": 2

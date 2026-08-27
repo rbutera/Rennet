@@ -3,6 +3,7 @@ import { createContext, useContext, useMemo } from "react";
 import { useRoute } from "wouter";
 import { useCommand, useMutation } from "../data";
 import { ROUTES } from "../routes/url";
+import { selectProcessingProjectIds, useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The sidebar's SINGLE data-resolution point (C03, proposal reconciliation 2).
@@ -78,6 +79,8 @@ export interface SidebarSessionProjection {
   renameSession(id: string, title: string): void;
   setSessionPinned(id: string, pinned: boolean): void;
   archiveSession(id: string): void;
+  /** Un-archive: returns the session to the live sidebar (release is archive-only). */
+  restoreSession(id: string): void;
   renameProject(id: string, name: string): void;
 }
 
@@ -88,6 +91,7 @@ const EMPTY_PROJECTION: SidebarSessionProjection = {
   renameSession: () => undefined,
   setSessionPinned: () => undefined,
   archiveSession: () => undefined,
+  restoreSession: () => undefined,
   renameProject: () => undefined,
 };
 
@@ -120,8 +124,11 @@ function orgRepo(path: string): string {
 function buildHosts(
   projects: readonly Project[],
   projection: SidebarSessionProjection,
+  processingProjectIds: readonly string[],
 ): SidebarHost[] {
-  const indexing = new Set(projection.indexingProjectIds ?? []);
+  // The live client's indexing spinner rides the `ui` slice's processing set (C12's
+  // flow); the projection's `indexingProjectIds` remains for B9's session projection.
+  const indexing = new Set([...(projection.indexingProjectIds ?? []), ...processingProjectIds]);
   const byHost = new Map<
     string,
     { label: string; kind: "local" | "remote"; rows: SidebarProject[] }
@@ -160,7 +167,11 @@ export interface SidebarTree {
 export function useSidebarTree(): SidebarTree {
   const { data, pending } = useCommand("projects.list", {});
   const projection = useSidebarSessionProjection();
-  const hosts = useMemo(() => buildHosts(data?.projects ?? [], projection), [data, projection]);
+  const processing = useRennetStore(selectProcessingProjectIds);
+  const hosts = useMemo(
+    () => buildHosts(data?.projects ?? [], projection, processing),
+    [data, projection, processing],
+  );
   return { hosts, loading: pending };
 }
 

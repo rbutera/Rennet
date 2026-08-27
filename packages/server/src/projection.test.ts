@@ -315,7 +315,6 @@ describe("inbound resolution", () => {
       promoted: false,
       promotedProvenance: { layer: "builtin", contributions: [] },
       locus: { kind: "host" },
-      locusOverridden: false,
       configMalformed: false,
     };
     const projected = projectCommandOutput(
@@ -340,7 +339,7 @@ describe("inbound resolution", () => {
     expect(resolved.repoPath).toBe(REPO);
   });
 
-  it.each(["settings.setRepoLocus", "settings.resetRepoValue", "settings.pinRepoValue"] as const)(
+  it.each(["settings.resetRepoValue", "settings.pinRepoValue"] as const)(
     "projects the SettingsProject row returned by %s",
     (command) => {
       const output = projectCommandOutput(
@@ -497,8 +496,6 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "settings.get.output.projects.repoPath",
     "settings.guidance.input.repoPath",
     "settings.setRepoVisibility.input.repoPath",
-    "settings.setRepoLocus.input.repoPath",
-    "settings.setRepoLocus.output.project.repoPath",
     "settings.resetRepoValue.input.repoPath",
     "settings.resetRepoValue.output.project.repoPath",
     "settings.pinRepoValue.input.repoPath",

@@ -53,13 +53,21 @@ after the project draft is confirmed.
 
 ## Global settings
 
-Global settings live in `~/.rennet/config.json`.
+Global settings live in two machine-local files, split by who owns the value:
 
-| Setting | Values | Behavior |
-|---|---|---|
-| Appearance | system, dark, light | Applies the selected color scheme to the app. |
-| Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
-| Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
+| File | Holds | Setting | Values | Behavior |
+|---|---|---|---|---|
+| `~/.rennet/client-settings.json` | Viewer preferences, **outside** the config ladder | Appearance | system, dark, light | Applies the selected color scheme to the app. |
+| `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
+| `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
+
+Appearance and keybindings are personal, app-side choices — never a repo fact,
+never written into a working tree — so they sit outside the ladder in
+`client-settings.json`. The daemon listener is the host's global rung and lives
+in `daemon-settings.json`; the settings surface lists **every paired host's**
+`daemon-settings` section, not just the local one. The local host's listener rung
+is read directly; a remote or WSL host is listed so it is visible, but its rung
+lives on that host and is not read from here.
 
 Settings has four tabs: Global, Repo, Keyboard, and Pairing. The Global tab
 edits appearance; the Keyboard tab edits keybindings. The keybinding recorder
@@ -68,9 +76,26 @@ combinations. It shows shortcut collisions but still stores them; the first
 matching command wins. An invalid stored shortcut falls back to the catalogue
 default or remains unbound.
 
-If `~/.rennet/config.json` is malformed, Rennet uses built-in values and disables
+The Keyboard tab lists the app shortcuts that a single global key owner fires:
+Search (⌘P), Command Menu (⌘K), New Chat (⌘N), Toggle Sidebar (⌘B), Toggle Chat
+(⌘J), and Settings (⌘,). What the tab advertises is exactly what fires — remap a
+row and the action runs on the new chord right away, and persists across launches.
+`⌘R` is bound to nothing, so the reload chord stays the platform default.
+
+If either settings file is malformed, Rennet uses built-in values and disables
 writes that would replace the unreadable file. Fix or move the file, then reopen
 Settings.
+
+### Migration from `config.json`
+
+Earlier Rennet stored these values in one `~/.rennet/config.json` blob that mixed
+viewer preferences with the host's daemon rung. On first read, Rennet migrates
+that legacy file **mechanically and losslessly** into the two split files —
+appearance and keybindings to `client-settings.json`, the daemon rung to
+`daemon-settings.json`. The migration is one-way and deterministic: every field
+lands in exactly one target and nothing is dropped. The legacy `config.json` is
+left in place, and the presence of either split file means the migration has
+already run, so it never repeats.
 
 ## Repository settings
 
@@ -81,20 +106,21 @@ lives under `~/.rennet/projects/<escaped-absolute-path>/config.json`.
 |---|---|---|
 | Map visibility | local, Git-visible | Updates Rennet's entry in `.rennet/.gitignore`. |
 | Map promotion | promoted, not promoted | Reports whether a validated map is mirrored into the repository. |
-| Execution locus | host or named WSL distribution | Chooses where Git and harness commands run. |
+| Runs on | detected host or named WSL distribution | Shows where Git and the harness run, detected from the repository path. Read-only. |
 | Review guidance | rules from `.rennet/conventions.json` | Shows the same catalogue review runners consume. |
 
-Map visibility and execution locus support pin and reset operations. A pinned
-value is stored at the repository layer. Reset removes that layer's value and
-returns to the inherited or detected value. Map promotion is read-only in
-Settings; promotion is a separate project action.
+Map visibility supports pin and reset operations. A pinned value is stored at
+the repository layer. Reset removes that layer's value and returns to the
+inherited value. Map promotion and "Runs on" are read-only in Settings;
+promotion is a separate project action, and "Runs on" is a detected fact.
 
 Changing visibility never stages or commits files. Local visibility keeps the
 promoted map out of ordinary Git status through Rennet's entry in
 `.rennet/.gitignore`. Git-visible removes only that Rennet-owned exclusion.
 
-Rennet detects a WSL locus from a WSL repository path. A repository-level choice
-can select the host or a named distribution instead. Reset restores detection.
+Rennet detects where a repository runs from its path — a WSL locus from a WSL
+path, the host otherwise — and shows it as "Runs on". It is a detected fact, not
+a setting: there is no override to choose the host or a distribution.
 
 Malformed repository config resolves to defaults and disables writes for that
 row. Invalid entries in `.rennet/conventions.json` are dropped individually and
@@ -110,8 +136,8 @@ builtin < detected < global < repo
 ```
 
 Appearance uses `builtin < global`. Map visibility uses `builtin < repo`.
-Execution locus uses `detected < repo`. The UI renders the resolver's answer
-instead of recalculating precedence in React.
+"Runs on" (execution locus) is a detected fact with no ladder layer to override.
+The UI renders the resolver's answer instead of recalculating precedence in React.
 
 ## Device pairing
 
@@ -127,7 +153,8 @@ repository references rather than host paths.
 
 ```text
 ~/.rennet/
-├── config.json
+├── client-settings.json
+├── daemon-settings.json
 ├── devices.json
 ├── push-tokens.sqlite
 └── projects/
@@ -165,8 +192,8 @@ that app instance.
 The daemon data directory contains its discovery claim, log, GitHub credential,
 project registry, pull-request worktree index, and review database.
 `RENNET_USER_DATA` or `--data-dir` selects that directory for a development or
-test daemon. It does not relocate the machine-wide `~/.rennet/config.json`,
-device stores, or path-keyed Repo Maps.
+test daemon. It does not relocate the machine-wide `~/.rennet/client-settings.json`,
+`daemon-settings.json`, device stores, or path-keyed Repo Maps.
 
 The desktop launcher and `rennet serve` set `UV_THREADPOOL_SIZE` to `16` before
 the daemon starts when the variable is absent. An explicit operator value wins.

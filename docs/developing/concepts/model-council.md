@@ -29,8 +29,17 @@ generation.
 Knowledge generation runs two council jobs: `partition-worker`, a light batched
 job that reads one repository slice and emits anchored claims, and `map-verify`,
 a heavy seat that confirms hypotheses against their cited spans and mints
-cross-cutting claims. Every model path in the product resolves through the
-council.
+cross-cutting claims.
+
+The lens drafting pipeline runs five: `lens-draft` (the drafting seat for the
+Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —
+Claude and Codex on the same instructions, reconciled by cross-model
+concurrence), `lens-draft-noise` (the noise lens), `board-post-process` (the
+editor pass that reshapes and de-slops board prose between the lint loop and the
+immutability gate), and `round-report` (the per-round seat that drafts first on
+a re-review). The Flagged dual-seat merge routes through `finding-reconcile`.
+
+Every model path in the product resolves through the council.
 
 ## Availability tables
 

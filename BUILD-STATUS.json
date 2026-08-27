@@ -56,16 +56,18 @@
     "passes": true
   },
   "b08": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PRs #521+#526 landed, 8 sub-wave-2 review fixes confirmed; composition-root wiring is B09's consuming turn (docs framed planned)"
   },
   "b09": {
     "status": "pending",
     "passes": false
   },
   "b10": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "clusters 1-5 landed (PR #523, 11 review fixes confirmed); cluster 6 live-turn wiring B9-gated"
   },
   "b11": {
     "status": "pending",
@@ -88,16 +90,18 @@
     "passes": true
   },
   "c05": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 live-wiring swap B4/B8-gated"
   },
   "c06": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true
   },
   "c07": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #529 landed; live session-transcript projection B9-gated (one-file swap in chat-data.ts). Dock identity + live-turn fold + compaction all work now over MemoryBridge"
   },
   "c08": {
     "status": "pending",
@@ -112,12 +116,14 @@
     "passes": false
   },
   "c11": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #528 landed; live command execution B10-live-rows-gated (registry exposure flags). C10's keyboard page must carry the six-bind KEY_ACTIONS + settings.get invalidation when it replaces settings-screen.tsx"
   },
   "c12": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 rename seam B9-gated"
   },
   "c13": {
     "status": "pending",

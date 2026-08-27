@@ -10,6 +10,10 @@ import type { RennetState } from "./index";
 // is DERIVED from the route, never stored here.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** The ⌘P/⌘K command menu's default view. `⌘P` opens it search-first, `⌘K`
+ *  command-first — one dialog, two entry modes (C11 reconciliation 1). */
+export type CommandMenuMode = "search" | "command";
+
 export interface UiState {
   /** The sidebar region is open (the layout renders it; the tree inside is a projection). */
   readonly sidebarOpen: boolean;
@@ -19,10 +23,26 @@ export interface UiState {
   readonly chatOpen: boolean;
   /** The chat dock width in px. */
   readonly chatWidth: number;
-  /** The ⌘K command menu is open. */
+  /** The ⌘P/⌘K command menu is open. */
   readonly commandMenuOpen: boolean;
+  /** Which view the open menu defaults to — set by the chord/affordance that opened it. */
+  readonly commandMenuMode: CommandMenuMode;
   /** The stack of open dialog ids (top = frontmost); empty ⇒ no dialog. */
   readonly openDialogs: readonly string[];
+  /**
+   * A `ProjectSource` the NEXT Add Project open should preselect — the one `ui` hop
+   * behind Add Environment's "Browse Its Projects" (C12 §10.3). Set with the dialog,
+   * consumed (and cleared) by the Add Project body. Absent ⇒ Add Project opens on Local.
+   */
+  readonly pendingAddProjectSource?: string;
+  /**
+   * Projects with a `project.process` run the client kicked off still in flight — the
+   * sidebar row's "indexing" spinner (C12 §10.6). NOT derivable from the projection
+   * cache: it is genuine client-initiated ephemeral state (like `openDialogs`), set by
+   * the indexing view on start and cleared when the run resolves, so leaving the view
+   * never cancels it (the spinner tracks the real run, not the mounted screen).
+   */
+  readonly processingProjectIds: readonly string[];
 }
 
 export interface UiSlice {
@@ -33,9 +53,17 @@ export interface UiSlice {
     toggleFold(nodeId: string): void;
     setChatOpen(open: boolean): void;
     setChatWidth(width: number): void;
-    setCommandMenuOpen(open: boolean): void;
+    /** Open/close the command menu; opening without a mode defaults to `"search"`. */
+    setCommandMenuOpen(open: boolean, mode?: CommandMenuMode): void;
+    setCommandMenuMode(mode: CommandMenuMode): void;
     openDialog(id: string): void;
     closeDialog(id: string): void;
+    /** Open Add Project preselected to `source` (Add Environment → Browse Its Projects). */
+    openAddProjectForSource(source: string): void;
+    /** Clear the pending preselection once the Add Project body has consumed it. */
+    clearAddProjectSource(): void;
+    /** Mark (or unmark) a project as processing — drives the sidebar indexing spinner. */
+    setProjectProcessing(projectId: string, processing: boolean): void;
   };
 }
 
@@ -47,7 +75,9 @@ const initialUi: UiState = {
   // reconciliation 8: C01's interim 360 corrected here, one number, inventory wins).
   chatWidth: 420,
   commandMenuOpen: false,
+  commandMenuMode: "search",
   openDialogs: [],
+  processingProjectIds: [],
 };
 
 export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) => ({
@@ -64,13 +94,37 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
       })),
     setChatOpen: (open) => set((s) => ({ ui: { ...s.ui, chatOpen: open } })),
     setChatWidth: (width) => set((s) => ({ ui: { ...s.ui, chatWidth: width } })),
-    setCommandMenuOpen: (open) => set((s) => ({ ui: { ...s.ui, commandMenuOpen: open } })),
+    // Opening without a mode defaults to "search" (the sidebar Search row's behaviour,
+    // reconciliation 1); ⌘P passes "search", ⌘K passes "command". A close leaves the
+    // mode reset to "search" for the next open — the flag that matters is `open`.
+    setCommandMenuOpen: (open, mode = "search") =>
+      set((s) => ({ ui: { ...s.ui, commandMenuOpen: open, commandMenuMode: mode } })),
+    setCommandMenuMode: (mode) => set((s) => ({ ui: { ...s.ui, commandMenuMode: mode } })),
     openDialog: (id) =>
       set((s) => ({
         ui: { ...s.ui, openDialogs: [...s.ui.openDialogs.filter((d) => d !== id), id] },
       })),
     closeDialog: (id) =>
       set((s) => ({ ui: { ...s.ui, openDialogs: s.ui.openDialogs.filter((d) => d !== id) } })),
+    openAddProjectForSource: (source) =>
+      set((s) => ({
+        ui: {
+          ...s.ui,
+          pendingAddProjectSource: source,
+          openDialogs: [...s.ui.openDialogs.filter((d) => d !== "add-project"), "add-project"],
+        },
+      })),
+    clearAddProjectSource: () =>
+      set((s) => ({ ui: { ...s.ui, pendingAddProjectSource: undefined } })),
+    setProjectProcessing: (projectId, processing) =>
+      set((s) => {
+        const has = s.ui.processingProjectIds.includes(projectId);
+        if (processing === has) return s; // idempotent — no spurious re-render.
+        const next = processing
+          ? [...s.ui.processingProjectIds, projectId]
+          : s.ui.processingProjectIds.filter((id) => id !== projectId);
+        return { ui: { ...s.ui, processingProjectIds: next } };
+      }),
   },
 });
 
@@ -82,3 +136,6 @@ export const selectFolded = (nodeId: string) => (s: RennetState) =>
 export const selectDialogOpen = (id: string) => (s: RennetState) => s.ui.openDialogs.includes(id);
 /** The frontmost open dialog id, or null. DERIVED — never stored as its own field. */
 export const selectTopDialog = (s: RennetState): string | null => s.ui.openDialogs.at(-1) ?? null;
+/** The projects currently processing (sidebar indexing spinner). */
+export const selectProcessingProjectIds = (s: RennetState): readonly string[] =>
+  s.ui.processingProjectIds;

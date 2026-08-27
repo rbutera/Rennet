@@ -1,6 +1,18 @@
 import "./index.css";
 
 export { ReviewWorkspace } from "./app";
+// The board surface (C05, #489): the lens board document, element registry, fold
+// grammar, quote highlights, and the lens/generation switchers. See `board/index.ts`.
+export {
+  type BoardKind,
+  type ElementOf,
+  type ElementRegistry,
+  type ElementRenderer,
+  GenerationSwitcher,
+  LensBoardView,
+  type LensBoardViewProps,
+  LensSwitcher,
+} from "./board";
 // The collation draft (issue #101 / R40): the ordered, id-keyed editable draft — the
 // forming destination. Reorder / merge / split need a list, not #17's path-keyed map.
 // `collationItems` / `collationPayload` are the ordered outbound artifact the paper
@@ -62,6 +74,25 @@ export {
   resolveAnchorToRows,
   spanAnchorForRows,
 } from "./canvas/registrar";
+// The chat dock (C07, #489): the persistent conversation dock mounted once into C3's
+// layout slot. The `SessionTranscriptProvider` + projection types let a host supply the
+// live session's transcript / trail / context figure / reviewId. See `chat/index.ts`.
+export type {
+  ChatDockModel,
+  ChatTrail,
+  CompactBoundaryRow,
+  ContextWindow,
+  SessionTranscriptProjection,
+  TranscriptRow,
+  TurnRow,
+  TurnStatus,
+} from "./chat";
+export {
+  ChatDock,
+  EMPTY_TRANSCRIPT,
+  SessionTranscriptProvider,
+  useSessionTranscript,
+} from "./chat";
 // The connections surface (issue #381): the shared daemon-attachment shell both the
 // desktop renderer and the served browser tab mount. Transport-agnostic — the shell
 // injects the bridge factory, so `ui` never imports a client package.
@@ -118,3 +149,7 @@ export {
   RennetRouterApp,
   type RennetRouterAppProps,
 } from "./routes";
+// The frame's command menu + the ONE global key owner (C11, autopsy S7). The key-layer
+// API lets a later overlay (C5/C12) register on the same Escape priority stack; the
+// entry builders + key-action catalogue stay module-private behind these.
+export { CommandMenu, type KeyLayerHandler, KeyOwner, useKeyLayer } from "./shell";

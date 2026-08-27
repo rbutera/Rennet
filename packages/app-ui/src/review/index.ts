@@ -10,6 +10,8 @@ export type { CodeRef, SpanRead } from "./citations";
 export { useSpanRead } from "./citations";
 export { CodeBlock, type CodeBlockProps } from "./code-block";
 export { AnchorReveal, CodeTabs } from "./code-tabs";
+export { DiffView, type DiffViewProps } from "./diff-view";
+export { DiffViewContainer } from "./diff-view-container";
 export { LineCommentEditor, type LineCommentEditorProps } from "./line-comment-editor";
 export { ReferenceChip, type ReferenceChipProps } from "./reference-chip";
 export { RichText, type RichTextProps } from "./rich-text";

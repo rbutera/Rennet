@@ -1,13 +1,17 @@
 import type { RennetBridge } from "@rennet/protocol";
 import { useEffect, useState } from "react";
-import { Redirect, Route, Router, Switch, useLocation } from "wouter";
+import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider, useCommand } from "../data";
+import { ArchivedView } from "../project/archived-view";
+import { ProjectContextMapView } from "../project/context-map-view";
+import { IndexingView } from "../project/indexing/indexing-view";
+import { NewChatView } from "../project/new-chat-view";
 import { PriorSurfaceTracker, SettingsScreen, ThemePrefProvider } from "../settings";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
-import { projectDetailPath, ROUTES, settingsPath } from "./url";
+import { newChatPath, ROUTES, settingsPath } from "./url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RennetRouterApp (C01 §4) — the router foundation the later Track-C surfaces mount
@@ -62,8 +66,17 @@ function LoadError({ slug, error }: { readonly slug: string; readonly error: unk
   );
 }
 
-/** The front-door entry (interim, reconciliation 2) — reads the real projects list. */
+/** The `/new-chat` route. With a `?project=` it is the C12 New Chat view (target
+ *  picker + composer for that project); without one, the interim front-door list. */
 function NewChatScreen() {
+  const search = useSearch();
+  const project = new URLSearchParams(search).get("project");
+  if (project) return <NewChatView projectId={project} />;
+  return <NewChatFrontDoor />;
+}
+
+/** The front-door entry (interim, reconciliation 2) — reads the real projects list. */
+function NewChatFrontDoor() {
   const { data, pending } = useCommand("projects.list", {});
   const [, navigate] = useLocation();
   return (
@@ -81,7 +94,7 @@ function NewChatScreen() {
               <button
                 type="button"
                 className="text-ink underline-offset-2 hover:underline"
-                onClick={() => navigate(projectDetailPath(p.id))}
+                onClick={() => navigate(newChatPath(p.id))}
               >
                 {p.name}
               </button>
@@ -172,13 +185,13 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
                 </Route>
                 <Route path={ROUTES.session}>{(p) => <SessionScreen slug={p.slug ?? ""} />}</Route>
                 <Route path={ROUTES.archived}>
-                  <Interim screen="archived" title="Archived" />
+                  <ArchivedView />
                 </Route>
                 <Route path={ROUTES.projectIndexing}>
-                  {(p) => <Interim screen="project-indexing" title={`Indexing — ${p.id}`} />}
+                  {(p) => <IndexingView projectId={p.id ?? ""} />}
                 </Route>
                 <Route path={ROUTES.projectMap}>
-                  {(p) => <Interim screen="project-map" title={`Context map — ${p.id}`} />}
+                  {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
                 </Route>
                 <Route path={ROUTES.settings}>
                   {(p) => <SettingsScreen page={p.page ?? ""} />}

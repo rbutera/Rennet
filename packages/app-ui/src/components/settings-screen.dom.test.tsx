@@ -13,6 +13,7 @@ import type {
   SettingsView,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { BridgeProvider } from "../data";
 import { fireEvent, mount, waitFor } from "../test/dom";
 import { SettingsScreen } from "./settings-screen";
 
@@ -39,7 +40,6 @@ const view: SettingsView = {
         contributions: [{ layer: "builtin", value: "false", effective: true }],
       },
       locus: { kind: "host" },
-      locusOverridden: false,
       locusProvenance: {
         layer: "detected",
         contributions: [
@@ -104,46 +104,9 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
           gitignorePath: "/orbital/.rennet/.gitignore",
         } satisfies SetRepoVisibilityOutcome;
       }
-      case "settings.setRepoLocus": {
-        if (overrides["settings.setRepoLocus"]) {
-          return overrides["settings.setRepoLocus"];
-        }
-        const locus = (
-          input as { locus: { kind: "host" } | { kind: "wsl"; distro: string } | null }
-        ).locus;
-        const current = settingsView.projects[0];
-        if (!current) throw new Error("settings fixture requires a project row");
-        const resolvedLocus = locus ?? current.locus;
-        const project = locus
-          ? {
-              ...current,
-              locus: resolvedLocus,
-              locusOverridden: true,
-              locusProvenance: {
-                layer: "repo" as const,
-                contributions: [
-                  ...current.locusProvenance.contributions
-                    .filter((contribution) => contribution.layer !== "repo")
-                    .map((contribution) => ({ ...contribution, effective: false })),
-                  {
-                    layer: "repo" as const,
-                    value: resolvedLocus.kind === "host" ? "host" : `WSL · ${resolvedLocus.distro}`,
-                    effective: true,
-                  },
-                ],
-              },
-            }
-          : { ...current, locusOverridden: false };
-        return {
-          status: "applied",
-          locus: resolvedLocus,
-          locusOverridden: locus !== null,
-          project,
-        };
-      }
       case "settings.resetRepoValue": {
         if (overrides["settings.resetRepoValue"]) return overrides["settings.resetRepoValue"];
-        const key = (input as { key: "visibility" | "locus" }).key;
+        const key = (input as { key: "visibility" }).key;
         // A reset re-resolves the row to its inherited value (builtin/detected).
         return {
           status: "applied",
@@ -160,21 +123,19 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
       }
       case "settings.pinRepoValue": {
         if (overrides["settings.pinRepoValue"]) return overrides["settings.pinRepoValue"];
-        const key = (input as { key: "visibility" | "locus" }).key;
-        // A pin freezes the current effective value at the repo layer.
+        const key = (input as { key: "visibility" }).key;
+        // A pin freezes the current effective visibility at the repo layer.
         return {
           status: "applied",
           key,
           project: {
             ...view.projects[0],
-            locus: { kind: "host" },
-            locusOverridden: true,
-            locusProvenance: {
+            visibility: "local",
+            visibilityProvenance: {
               layer: "repo",
               contributions: [
-                { layer: "builtin", value: "host", effective: false },
-                { layer: "detected", value: "host", effective: false },
-                { layer: "repo", value: "host", effective: true },
+                { layer: "builtin", value: "local", effective: false },
+                { layer: "repo", value: "local", effective: true },
               ],
             },
           },
@@ -324,7 +285,8 @@ describe("SettingsScreen", () => {
 
 describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
   // A repo-set variant: visibility explicitly set at the repo layer, so its row
-  // offers Reset (not Pin). Locus stays detected, so ITS row offers Pin.
+  // offers Reset (not Pin). "Runs on" is a detected fact now (#476) — read-only, no
+  // Reset/Pin of its own.
   const repoSetView: SettingsView = {
     ...view,
     projects: view.projects.map((p) => ({
@@ -348,57 +310,26 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     return mounted;
   }
 
-  it("Explain: the locus row renders its resolver contributions", async () => {
-    const { bridge } = fakeBridge();
+  it("Explain: the 'Runs on' row renders as a read-only detected fact (#476)", async () => {
+    const { bridge, calls } = fakeBridge();
     const { container } = await openRepoTab(bridge);
-    // The locus row's provenance lists the ladder contributions (builtin + detected).
-    const items = [...container.querySelectorAll(".settings-prov-item")].map((n) => n.textContent);
-    expect(items.some((t) => t?.includes("detected"))).toBe(true);
-    expect(items.some((t) => t?.includes("builtin"))).toBe(true);
-    const locusLabel = [...container.querySelectorAll(".settings-k")].find(
-      (node) => node.textContent === "Execution locus",
+    // The "Runs on" row shows the detected locus with its detected provenance — no chooser.
+    const runsOnLabel = [...container.querySelectorAll(".settings-k")].find(
+      (node) => node.textContent === "Runs on",
     );
-    expect(locusLabel?.closest(".settings-row")?.querySelector(".settings-prov")?.textContent).toBe(
-      "detected",
-    );
+    const runsOnRow = runsOnLabel?.closest(".settings-row");
+    expect(runsOnRow?.querySelector(".settings-prov")?.textContent).toBe("detected");
+    // Read-only: no set/pin/reset control on the row, and no locus write is possible.
+    expect(runsOnRow?.querySelector(".settings-pin")).toBeNull();
+    expect(runsOnRow?.querySelector(".settings-reset")).toBeNull();
+    expect(runsOnRow?.querySelector("button")).toBeNull();
+    expect(calls.some((c) => c.name === "settings.setRepoLocus")).toBe(false);
   });
 
-  it("an explicit Host edit replaces the detected row with repo-effective provenance", async () => {
-    const detectedWslView: SettingsView = {
-      ...view,
-      projects: view.projects.map((project) => ({
-        ...project,
-        repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
-        locus: { kind: "wsl", distro: "Ubuntu" },
-        locusProvenance: {
-          layer: "detected",
-          contributions: [
-            { layer: "builtin", value: "host", effective: false },
-            { layer: "detected", value: "WSL · Ubuntu", effective: true },
-          ],
-        },
-      })),
-    };
-    const { bridge } = fakeBridge({ "settings.get": detectedWslView });
-    const { container, getByRole } = await openRepoTab(bridge);
-
-    fireEvent.click(getByRole("button", { name: "Host" }));
-
-    const locusLabel = [...container.querySelectorAll(".settings-k")].find(
-      (node) => node.textContent === "Execution locus",
-    );
-    const locusRow = locusLabel?.closest(".settings-row");
-    await waitFor(() =>
-      expect(locusRow?.querySelector(".settings-prov-item.on")?.textContent).toBe("repo: host"),
-    );
-    expect(locusRow?.querySelector(".settings-reset")).not.toBeNull();
-    expect(locusRow?.querySelector(".settings-pin")).toBeNull();
-  });
-
-  it("an inheriting/detected row shows Pin and NOT Reset", async () => {
+  it("an inheriting/detected visibility row shows Pin and NOT Reset", async () => {
     const { bridge } = fakeBridge();
     const { container } = await openRepoTab(bridge);
-    // visibility inherits (builtin) and locus is detected → both offer Pin, none Reset.
+    // visibility inherits (builtin) → offers Pin; "Runs on" is read-only (no controls).
     expect(container.querySelector(".settings-pin")).not.toBeNull();
     expect(container.querySelector(".settings-reset")).toBeNull();
   });
@@ -422,15 +353,14 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     await waitFor(() => expect(container.querySelector(".settings-pin")).not.toBeNull());
   });
 
-  it("clicking Pin on a detected locus invokes settings.pinRepoValue with key locus", async () => {
+  it("clicking Pin on the inheriting visibility row invokes settings.pinRepoValue with key visibility", async () => {
     const { bridge, calls } = fakeBridge();
     const { getByRole } = await openRepoTab(bridge);
-    // The locus row's Pin (there are two Pins — visibility + locus; pick locus by title).
-    fireEvent.click(getByRole("button", { name: /pin the execution locus/i }));
+    fireEvent.click(getByRole("button", { name: /pin the map visibility/i }));
     await waitFor(() => expect(calls.some((c) => c.name === "settings.pinRepoValue")).toBe(true));
     const call = calls.find((c) => c.name === "settings.pinRepoValue");
     const input = call?.input as { key: string };
-    expect(input.key).toBe("locus");
+    expect(input.key).toBe("visibility");
   });
 
   it("no confirmation ceremony: Reset completes in a single interaction, no dialog appears", async () => {
@@ -482,28 +412,30 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
   it("Keyboard: set records a chord, unbind and reset send the right payloads (#44)", async () => {
     const { bridge, calls } = fakeBridge();
     const { container, getByRole, getByLabelText } = mount(
-      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
-    // Every catalogue row with a default binding is listed (nav.back among them).
+    // Every six-bind row is listed (Search among them).
     const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     expect(backRow).toBeTruthy();
 
     // Set → the recorder captures the next chord (⌘E) and writes it.
     fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
-    const recorder = getByLabelText("Press the new chord for Back");
+    const recorder = getByLabelText("Press the new chord for Search");
     fireEvent.keyDown(recorder, { key: "e", metaKey: true });
     await waitFor(() => expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true));
     const set = calls.find((c) => c.name === "settings.setKeybinding");
-    expect(set?.input).toEqual({ id: "nav.back", keybinding: "mod+e" });
+    expect(set?.input).toEqual({ id: "search", keybinding: "mod+e" });
 
     // Unbind sends an explicit null.
     const backRow2 = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     fireEvent.click(
       [...(backRow2?.querySelectorAll("button") ?? [])].find(
@@ -523,7 +455,7 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
 
     // A now-overridden row shows Reset, which sends an id-only payload (delete entry).
     const backRow3 = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     const resetBtn = [...(backRow3?.querySelectorAll("button") ?? [])].find(
       (b) => b.textContent === "Reset",
@@ -536,17 +468,21 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
           .filter((c) => c.name === "settings.setKeybinding")
           .some((c) => {
             const input = c.input as Record<string, unknown>;
-            return input.id === "nav.back" && !("keybinding" in input);
+            return input.id === "search" && !("keybinding" in input);
           }),
       ).toBe(true),
     );
   });
 
   it("Keyboard: a conflicting chord is disclosed on both rows AND the write still lands (Rule Zero) (#44)", async () => {
-    // Seed an override that collides nav.forward onto nav.back's default ⌘[.
-    const conflictView: SettingsView = { ...view, keybindings: { "nav.forward": "mod+[" } };
+    // Seed an override that collides Command Menu onto Search's default ⌘P.
+    const conflictView: SettingsView = { ...view, keybindings: { commands: "mod+p" } };
     const { bridge, calls } = fakeBridge({ "settings.get": conflictView });
-    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    const { container, getByRole } = mount(
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
+    );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
@@ -558,37 +494,41 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     // The Rule Zero control: assigning a chord already held is accepted and persisted —
     // the bridge write fires unconditionally, with no are-you-sure gate in between.
     const forwardRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Forward"),
+      row.textContent?.includes("Toggle Chat"),
     );
     fireEvent.click(forwardRow?.querySelector("button") as HTMLButtonElement);
     const recorder = container.querySelector(".settings-key-recorder") as HTMLInputElement;
-    fireEvent.keyDown(recorder, { key: "[", metaKey: true });
+    fireEvent.keyDown(recorder, { key: "p", metaKey: true });
     await waitFor(() => expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true));
     // No confirmation dialog/element is ever rendered.
     expect(container.querySelector("[role='alertdialog']")).toBeNull();
   });
 
-  it("Keyboard: renders no-default commands and assigns their first chord", async () => {
-    const { bridge, calls } = fakeBridge();
+  it("Keyboard: assigns a bare-key chord to an unbound row", async () => {
+    // An override that unbinds Toggle Chat renders it "unbound"; a new bare key rebinds it.
+    const unboundView: SettingsView = { ...view, keybindings: { "toggle-chat": null } };
+    const { bridge, calls } = fakeBridge({ "settings.get": unboundView });
     const { container, getByRole, getByLabelText } = mount(
-      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
     const settingsRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back to projects"),
+      row.textContent?.includes("Toggle Chat"),
     );
     expect(settingsRow?.textContent).toContain("unbound");
     fireEvent.click(settingsRow?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(getByLabelText("Press the new chord for Back to projects"), { key: "s" });
+    fireEvent.keyDown(getByLabelText("Press the new chord for Toggle Chat"), { key: "s" });
 
     await waitFor(() =>
       expect(
         calls.some(
           (call) =>
             call.name === "settings.setKeybinding" &&
-            (call.input as { id?: string; keybinding?: string }).id === "nav.projects" &&
+            (call.input as { id?: string; keybinding?: string }).id === "toggle-chat" &&
             (call.input as { keybinding?: string }).keybinding === "s",
         ),
       ).toBe(true),
@@ -598,15 +538,17 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
   it("Keyboard: refuses Shift/Alt capture inline without writing", async () => {
     const { bridge, calls } = fakeBridge();
     const { container, getByRole, getByLabelText } = mount(
-      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
     const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(getByLabelText("Press the new chord for Back"), {
+    fireEvent.keyDown(getByLabelText("Press the new chord for Search"), {
       key: "J",
       shiftKey: true,
     });
@@ -620,10 +562,14 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
   it("Keyboard: reports invalid raw overrides and lets unknown ids be reset", async () => {
     const staleView: SettingsView = {
       ...view,
-      keybindings: { "palette.toggle": "mod+", "retired.command": "mod+e" },
+      keybindings: { search: "mod+", "retired.command": "mod+e" },
     };
     const { bridge, calls } = fakeBridge({ "settings.get": staleView });
-    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    const { container, getByRole } = mount(
+      <BridgeProvider bridge={bridge}>
+        <SettingsScreen bridge={bridge} onBack={vi.fn()} />
+      </BridgeProvider>,
+    );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
@@ -650,22 +596,24 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     const bubbled = vi.fn();
     const onKeybindingsChange = vi.fn();
     const { container, getByRole, getByLabelText } = mount(
-      <div role="application" onKeyDown={bubbled}>
-        <SettingsScreen
-          bridge={bridge}
-          onBack={vi.fn()}
-          onKeybindingsChange={onKeybindingsChange}
-        />
-      </div>,
+      <BridgeProvider bridge={bridge}>
+        <div role="application" onKeyDown={bubbled}>
+          <SettingsScreen
+            bridge={bridge}
+            onBack={vi.fn()}
+            onKeybindingsChange={onKeybindingsChange}
+          />
+        </div>
+      </BridgeProvider>,
     );
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
     const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(getByLabelText("Press the new chord for Back"), {
-      key: "k",
+    fireEvent.keyDown(getByLabelText("Press the new chord for Search"), {
+      key: "e",
       metaKey: true,
     });
 
