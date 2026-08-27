@@ -288,20 +288,52 @@ describe("sidebar tree (C03 §3)", () => {
     await waitFor(() => expect(queryByText("Pinned")).toBeNull());
   });
 
-  it("fires projects.remove from the remove-project confirmation", async () => {
+  it("fires projects.remove DIRECTLY from the menu — no confirmation ceremony (Rule Zero)", async () => {
     const remove = vi.fn(() => ({ projects: [] }));
-    const { getByText, findByText, getByRole } = mountSidebar({
+    const { getByText, findByText, getByRole, queryByText } = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
       extraHandlers: { "projects.remove": remove },
     });
     await findByText("atlas");
     fireEvent.contextMenu(getByText("atlas"));
-    fireEvent.click(getByRole("menuitem", { name: "Remove project…" }));
-    // Confirmation names the project + its session count, then removes.
-    expect(getByText("Remove atlas?")).toBeTruthy();
-    fireEvent.click(getByRole("button", { name: "Remove Project" }));
+    fireEvent.click(getByRole("menuitem", { name: "Remove project" }));
+    // No dialog stands between the menu and the command.
+    expect(queryByText(/Remove atlas/)).toBeNull();
     await waitFor(() => expect(remove).toHaveBeenCalledOnce());
     expect(remove).toHaveBeenCalledWith(expect.objectContaining({ projectId: "p1" }));
+  });
+
+  it("navigates away only AFTER a successful removal of the project you stand in", async () => {
+    const { getByText, findByText, getByRole, history } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      path: "/s/s1", // standing in p1 via session s1
+      extraHandlers: { "projects.remove": () => ({ projects: [] }) },
+    });
+    await findByText("atlas");
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Remove project" }));
+    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat"));
+  });
+
+  it("does NOT navigate (nor claim success) when the removal command rejects", async () => {
+    const { getByText, findByText, getByRole, history } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      path: "/s/s1",
+      extraHandlers: {
+        "projects.remove": () => {
+          throw new Error("daemon connection lost");
+        },
+      },
+    });
+    await findByText("atlas");
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Remove project" }));
+    // Give the rejected mutation a turn to settle, then prove we stayed put.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(history.history).not.toContain("/new-chat");
+    expect(history.history.at(-1)).toBe("/s/s1");
   });
 });

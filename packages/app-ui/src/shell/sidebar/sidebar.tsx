@@ -28,6 +28,7 @@ import {
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
+  toast,
 } from "@rennet/ui";
 import {
   Archive,
@@ -490,9 +491,6 @@ export function Sidebar() {
     0,
   );
 
-  // Remove-confirmation target (local, ephemeral).
-  const [removeTarget, setRemoveTarget] = useState<SidebarProject | null>(null);
-
   function standingIn(projectId: string): boolean {
     if (onMap && mapParams?.id === projectId) return true;
     if (onIndexing && indexingParams?.id === projectId) return true;
@@ -510,10 +508,22 @@ export function Sidebar() {
     if (session.slug === activeSlug) navigate(newChatPath());
   }
 
-  function confirmRemove(project: SidebarProject) {
+  // Remove a project directly from the menu (Rule Zero: no confirmation ceremony). The
+  // command can REJECT (daemon down, IPC fault) — await it, and navigate away ONLY on
+  // success. A false "it's gone" while the daemon still holds it is a lie; on failure
+  // the row stays and the reviewer is told, honestly, that nothing was removed.
+  async function removeProjectNow(project: SidebarProject) {
     const standing = standingIn(project.id);
-    void removeProject(project.id);
-    setRemoveTarget(null);
+    try {
+      await removeProject(project.id);
+    } catch (error) {
+      toast.add({
+        title: `Couldn’t remove ${project.name}`,
+        description: error instanceof Error ? error.message : String(error),
+        type: "error",
+      });
+      return;
+    }
     if (standing) navigate(newChatPath());
   }
 
@@ -723,10 +733,10 @@ export function Sidebar() {
                           <ContextMenuSeparator />
                           <ContextMenuItem
                             variant="destructive"
-                            onClick={() => setRemoveTarget(project)}
+                            onClick={() => void removeProjectNow(project)}
                           >
                             <Icon icon={Trash2} />
-                            Remove project…
+                            Remove project
                           </ContextMenuItem>
                         </ContextMenuContent>
                       </ContextMenu>
@@ -787,36 +797,6 @@ export function Sidebar() {
           update={updateControlRail}
         />
       )}
-
-      {/* Remove-project confirmation — names the project + its session count
-          (archived included), states the repo on disk is untouched (R66). */}
-      <Dialog
-        open={removeTarget !== null}
-        onOpenChange={(isOpen) => {
-          if (!isOpen) setRemoveTarget(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove {removeTarget?.name}?</DialogTitle>
-            <DialogDescription>
-              {removeTarget && removeTarget.sessions.length > 0
-                ? `This removes the project and its ${removeTarget.sessions.length} session${removeTarget.sessions.length === 1 ? "" : "s"}, archived included, from Rennet. `
-                : "This removes the project from Rennet. "}
-              The repository on disk is not touched.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-            <Button
-              variant="destructive"
-              onClick={() => removeTarget && confirmRemove(removeTarget)}
-            >
-              Remove Project
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {updateReady ? (
         <UpdateDialog
