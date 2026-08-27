@@ -115,8 +115,9 @@
     "passes": false
   },
   "c11": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #528 landed; live command execution B10-live-rows-gated (registry exposure flags). C10's keyboard page must carry the six-bind KEY_ACTIONS + settings.get invalidation when it replaces settings-screen.tsx"
   },
   "c12": {
     "status": "done",
