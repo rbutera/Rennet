@@ -35,8 +35,8 @@ import type {
   KnowledgeStatus,
 } from "@rennet/protocol";
 import { canonicalize, KNOWLEDGE_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
-import type { LoadedSnapshot, SnapshotGateFailure } from "./project-context";
-import { isSafeRepoRelativePath } from "./project-context";
+import type { LoadedSnapshot, SnapshotGateFailure } from "../project-context";
+import { isSafeRepoRelativePath } from "../project-context";
 
 const CONFIDENCES: readonly KnowledgeConfidence[] = ["high", "medium", "low"];
 const STATUSES: readonly KnowledgeStatus[] = ["hypothesis", "confirmed", "rejected"];

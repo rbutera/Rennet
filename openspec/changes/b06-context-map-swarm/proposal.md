@@ -28,6 +28,7 @@ Lens agents consuming statements (B8); project-scout (B7); the context-map UI (C
 6. **flat-pass retirement — RULED (track-b, 2026-08-27): migrate-callers-then-delete approved.** #460's question text says "replace the single flat knowledge pass". Verdict: migrate-callers-then-delete — the shared mint/honesty helpers are extracted and reused by the swarm, then `runKnowledgeEnrichment`, `runKnowledgeDeltaPass`, `DEFAULT_KNOWLEDGE_MAX_FILES`, and their adapters orchestration are deleted once the swarm path is wired. No dormant legacy path kept.
 7. **`hint` is worker-output-only.** It exists in the worker output schema and dies at synthesis — never enters `KnowledgeStatement` (protocol untouched), matching "discardable, never stored".
 8. **Verify needs no protocol change.** `KnowledgeStatus` already carries `hypothesis|confirmed|rejected` with rejection-as-recorded-state semantics (`citations.ts:150`) — the verify seat writes the existing vocabulary.
+9. **Amendment (cluster 2): `core/src/knowledge.ts` re-homed as `knowledge/read.ts`.** Creating the packet-mandated `core/knowledge/` folder collided with the existing `knowledge.ts` file (module resolution would let the file shadow the folder at `./knowledge`). The pure read side moved into the folder as `read.ts` (git mv, content unchanged except relative-import depth); the folder index re-exports it, so every `./knowledge` / `@rennet/core` importer keeps compiling verbatim. Zero consumer edits.
 
 ## Verification (packet)
 

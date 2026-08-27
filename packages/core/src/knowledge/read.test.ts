@@ -5,6 +5,7 @@ import type {
   SnapshotFileEntry,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import type { LoadedSnapshot } from "../project-context";
 import {
   anchorResolves,
   fileBlobIndex,
@@ -14,8 +15,7 @@ import {
   validateKnowledgeAnchor,
   validateKnowledgeSet,
   validateKnowledgeStatement,
-} from "./knowledge";
-import type { LoadedSnapshot } from "./project-context";
+} from "./read";
 
 function file(path: string, blobOid: string): SnapshotFileEntry {
   return { path, blobOid, size: 1, mode: "100644" };

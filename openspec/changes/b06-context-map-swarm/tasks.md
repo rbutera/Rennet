@@ -10,7 +10,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 
 ## Cluster 2 — partitions (invisible plumbing)
 
-- [ ] 2.1 `packages/core/src/knowledge/partition.ts`: `buildPartitions(snapshot, cap ≈ 120)` — one slice per workspace scope (from the structural snapshot's `scopes`); a scope over the cap subtree-splits (directory prefix walk) until under it; files outside every scope (or no scopes at all) fall back to top-level-directory slices. Every in-scope file in EXACTLY one slice, by construction. Pure; no I/O. `core/knowledge/index.ts` is the folder's import surface.
+- [x] 2.1 (amendment 9: `knowledge.ts` re-homed as `knowledge/read.ts` — folder/file collision) `packages/core/src/knowledge/partition.ts`: `buildPartitions(snapshot, cap ≈ 120)` — one slice per workspace scope (from the structural snapshot's `scopes`); a scope over the cap subtree-splits (directory prefix walk) until under it; files outside every scope (or no scopes at all) fall back to top-level-directory slices. Every in-scope file in EXACTLY one slice, by construction. Pure; no I/O. `core/knowledge/index.ts` is the folder's import surface.
 - [ ] 2.2 Tests: total coverage (union = inventory, pairwise disjoint) on real-shaped fixtures incl. oversized-scope split and the no-scopes fallback; determinism (same snapshot → same slices, stable order).
 - [ ] 2.3 Gate green.
 
