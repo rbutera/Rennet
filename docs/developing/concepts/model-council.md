@@ -23,7 +23,14 @@ the surrounding heavy analysis session instead of requiring an independent seat.
 A catalogue entry is assignment metadata, not proof that a feature currently
 calls it. Live call sites include review-pipeline jobs, selection-aware context
 questions, CI analysis, delta digests, pull-request body drafting, handoff
-composition, comment refinement, orchestration, and adjudication.
+composition, comment refinement, orchestration, adjudication, and knowledge
+generation.
+
+Knowledge generation runs two council jobs: `partition-worker`, a light batched
+job that reads one repository slice and emits anchored claims, and `map-verify`,
+a heavy seat that confirms hypotheses against their cited spans and mints
+cross-cutting claims. Every model path in the product resolves through the
+council.
 
 ## Availability tables
 
@@ -120,7 +127,9 @@ letting the execution path account for retries, multiple seats, reconciliation,
 and follow-up turns against one shared allowance. Review-generation runners use
 a refused grant to stop that runner and expose degraded output. `context.ask`
 records the refusal as an overage and continues the requested answer under Rule
-Zero.
+Zero. The knowledge swarm takes no invocation budget at all: complete map
+coverage is the decided behavior, so its runners have no budget parameter to
+consult.
 
 ## Changing an assignment
 

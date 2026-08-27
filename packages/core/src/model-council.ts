@@ -149,6 +149,17 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
           "CI failure classification (#182)",
           28,
         ),
+        // Issue #460: the context-map swarm. partition-worker is the light
+        // fan-out (one turn per partition slice); the map path is uncapped by
+        // construction — its runners take no InvocationBudget (#460 point 5).
+        job(
+          "partition-worker",
+          "light",
+          "batched",
+          false,
+          "Context-map partition worker (#460)",
+          29,
+        ),
         // ── Heavy tier (§2.2) ──
         job("context-ask-thorough", "heavy", "per-call", false, "context.ask — thorough", 17),
         job("decomposition-skeleton", "heavy", "per-call", false, "Decomposition skeleton", 18),
@@ -187,6 +198,8 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
         job("orchestrator-chat", "heavy", "per-call", false, "Orchestrator + diff chat", 24),
         job("adjudication", "heavy", "per-call", false, "Adjudication / second opinion", 25),
         job("self-consistency", "heavy", "per-call", false, "Self-consistency (divergence)", 26),
+        // Issue #460: the single verify/synthesis seat over the swarm's output.
+        job("map-verify", "heavy", "per-call", false, "Context-map verify/synthesis (#460)", 30),
         // ── Deterministic floor (§2.1) — no model, ever ──
         job("diff-ingest", "deterministic", "none", false, "Diff ingest + lineage (D1)"),
         job("patchset-immutability", "deterministic", "none", false, "Patchset immutability (D2)"),
@@ -312,6 +325,7 @@ const TABLE_BOTH: AssignmentTable = {
   "handoff-bundle-composition": pick("gpt-5.6-terra", "medium"),
   "context-ask-fetch": pick("gpt-5.6-luna", "low"),
   "ci-failure-classification": pick("gpt-5.6-luna", "low"),
+  "partition-worker": pick("gpt-5.6-luna", "low"), // #460 names cheap Codex (Luna); effort [extrapolated]
   // Heavy → Claude review seats.
   "context-ask-thorough": pick("sonnet-5", "medium"),
   "decomposition-skeleton": pick("sonnet-5", "low"),
@@ -329,6 +343,7 @@ const TABLE_BOTH: AssignmentTable = {
   "orchestrator-chat": pick("sonnet-5", "medium"),
   adjudication: pick("opus-4.8", "high"), // pairs with Sol-high (fresh session); primary seat here
   "self-consistency": pick("opus-4.8", "xhigh"), // generator's model at xhigh; divergence-triggered
+  "map-verify": pick("sonnet-5", "medium"), // #460 point 4 verbatim (Claude sonnet-5); packet fixes medium
 };
 
 /** Table 2 — Claude-only (Haiku / Sonnet 5 / Opus 4.8). */
@@ -365,6 +380,8 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "orchestrator-chat": pick("sonnet-5", "medium"),
   adjudication: pick("opus-4.8", "high"), // degraded single-provider self-consistency; badge at execution
   "self-consistency": pick("opus-4.8", "xhigh"),
+  "partition-worker": pick("haiku", "low"), // [extrapolated] #460 silent on claude-only; house light model
+  "map-verify": pick("sonnet-5", "medium"),
 };
 
 /** Table 3 — Codex-only (Sol / Terra / Luna). */
@@ -402,6 +419,8 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "orchestrator-chat": pick("gpt-5.6-terra", "medium"),
   adjudication: pick("gpt-5.6-sol", "high"), // pairs with Sol-high (fresh session); primary seat here
   "self-consistency": pick("gpt-5.6-sol", "xhigh"),
+  "partition-worker": pick("gpt-5.6-luna", "low"), // #460 names cheap Codex; effort [extrapolated]
+  "map-verify": pick("gpt-5.6-terra", "medium"), // [extrapolated] #460 silent on codex-only; house mid model
 };
 
 export const ASSIGNMENT_TABLES: Readonly<Record<CouncilScenario, AssignmentTable>> = {

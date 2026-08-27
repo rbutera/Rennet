@@ -211,7 +211,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
       },
       runKnowledgePass: async (input) => {
         calls.push(input);
-        knowledgeDone.resolve();
+        if (calls.length === 2) knowledgeDone.resolve();
       },
       watch: watcher.watch,
       timers: clock.timers,
@@ -223,13 +223,16 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     await structuralDone.promise;
     await knowledgeDone.promise;
 
+    // The INITIAL run fires at watcher start (review P1 — a freshly-processed
+    // project must not wait for a baseline advance), then the advance re-targets.
     expect(calls).toEqual([
-      expect.objectContaining({ repoKey: handle?.repoKey, fromOid: oid1, toOid: oid2 }),
+      expect.objectContaining({ repoKey: handle?.repoKey, toOid: oid1 }),
+      expect.objectContaining({ repoKey: handle?.repoKey, toOid: oid2 }),
     ]);
     handle?.close();
   });
 
-  it("coalesces from the unpersisted base when a running knowledge pass fails", async () => {
+  it("coalesces to the newest target when a running knowledge pass fails", async () => {
     const { root, storeDir, oid1, advance } = repoOnMain();
     const store = new ProjectSnapshotStore(storeDir);
     const generator = new ProjectSnapshotGenerator({ store });
@@ -239,7 +242,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     const secondStarted = deferred();
     const clock = fakeTimers();
     const watcher = capturingWatch();
-    const calls: { fromOid: string; toOid: string }[] = [];
+    const calls: { toOid: string }[] = [];
     let structuralCount = 0;
     const handle = await startRepoRehydration({
       repoPath: root,
@@ -282,8 +285,11 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     releaseFirst.resolve();
     await secondStarted.promise;
     expect(calls).toHaveLength(2);
+    // The initial run targeted the starting baseline; the retry after its
+    // failure lands on the NEWEST coalesced target (the swarm derives its own
+    // delta base from the stored prior set, no from-OID bookkeeping).
+    expect(calls[0]?.toOid).toBe(oid1);
     expect(calls[1]?.toOid).toBe(oid4);
-    expect(calls[1]?.fromOid).toBe(oid1);
     handle?.close();
   });
 

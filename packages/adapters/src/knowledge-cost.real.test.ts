@@ -1,10 +1,9 @@
 import { writeFileSync } from "node:fs";
-import { createInvocationBudget, DEFAULT_MAX_HARNESS_INVOCATIONS } from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import { createClaudeHarness } from "./claude-query";
 import { execaGit } from "./git-range-diff";
-import { enrichKnowledgeForRepo } from "./knowledge-enrichment";
 import { KnowledgeStore } from "./knowledge-store";
+import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { resolveBaseRef } from "./project-snapshot-source";
@@ -14,38 +13,25 @@ import { createMetricsCollector, type TurnMetric } from "./turn-metrics";
 // ─────────────────────────────────────────────────────────────────────────────
 // KNOWLEDGE COST harness (Rai's ask 2026-08-10: "repo-map generation cost").
 //
-// The knowledge layer is the ONE place the Repo Map spends model turns, so THIS is
-// the "repo-map generation cost" to measure. It drives the REAL enrichment (an
-// initial full pass + a branch-advance delta pass) against a dogfood target — this
-// repo at its resolved base OID — on the user's own `claude` (subscription OAuth,
-// $0 metered), and records model/tokens/latency per turn via the same turn-metrics
-// seam the ~294K review baseline uses (`~/expedition/Rennet Cost Baseline.md`), so
-// the DELTA is directly comparable.
+// The knowledge layer is the ONE place the Repo Map spends model turns, so THIS
+// is the "repo-map generation cost" to measure. Since B06 the layer is the
+// PARTITIONED SWARM (#460): one light worker turn per partition slice plus one
+// verify/synthesis turn — uncapped by decision, so the honest cost question is
+// "how many partitions does this repo produce and what does each turn cost".
+// It drives the REAL swarm against a dogfood target — this repo at its resolved
+// base OID — on the user's own harnesses, recording model/tokens/latency per
+// Claude turn via the same turn-metrics seam the ~294K review baseline uses.
 //
-// It spends subscription quota and needs a discoverable `claude`, so it is SKIPPED
-// unless RENNET_KNOWLEDGE_COST=1:
+// It spends subscription quota and needs a discoverable `claude`, so it is
+// SKIPPED unless RENNET_KNOWLEDGE_COST=1:
 //
 //   RENNET_KNOWLEDGE_COST=1 RENNET_METRICS_OUT=/abs/knowledge-metrics.json \
 //     pnpm exec vitest run packages/adapters/src/knowledge-cost.real.test.ts
 //
 // Optional: RENNET_REPO_ROOT overrides the dogfood target (default: cwd).
-//
-// ── ANALYTICAL ENVELOPE (when a live turn is not spent) ───────────────────────
-// The knowledge pass is bounded to ONE structured turn per pass (budget-gated,
-// changed-regions-only on a delta). Its shape is the same single-turn `claude`
-// session the review producers use, whose measured baseline is ~50–57K tokens/turn
-// (Cost Baseline 2026-08-10). So:
-//   • INITIAL full enrichment ≈ 1 turn ≈ ~55–90K tokens (a larger prompt: the file
-//     inventory + scopes, capped at DEFAULT_KNOWLEDGE_MAX_FILES=400 paths) — i.e.
-//     roughly ONE review-producer turn, ~20–30% of the ~294K full-review baseline,
-//     paid ONCE at project-open, not per review.
-//   • DELTA pass ≈ 1 turn over ONLY the changed regions ≈ ~40–55K tokens, and only
-//     when the reference branch actually moves (debounced + merge-train-coalesced),
-//     carrying untouched statements verbatim (never re-run) — so steady-state cost
-//     tracks change size, not repo size.
-//   • Neither is on the review's critical path: a review spends its ~294K on the
-//     structural + lens turns regardless; knowledge adds at most ~1 turn, async.
-// The live numbers below refine this envelope with measured token counts.
+// Codex-seat turns (when the council routes workers to Luna) report through the
+// executor's own usage surface, not this collector — the summary below counts
+// the Claude-seat turns and states that boundary honestly.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RUN = process.env.RENNET_KNOWLEDGE_COST === "1";
@@ -58,7 +44,7 @@ function summarize(metrics: readonly TurnMetric[]): void {
     process.stdout.write(`${s}\n`);
   };
   line("");
-  line("=== RENNET KNOWLEDGE PASS COST — per model turn ===");
+  line("=== RENNET KNOWLEDGE SWARM COST — per Claude model turn ===");
   let total = 0;
   let ms = 0;
   for (const m of metrics) {
@@ -92,7 +78,7 @@ function summarize(metrics: readonly TurnMetric[]): void {
 
 describe("rennet knowledge layer — generation cost (gated real turns)", () => {
   it.skipIf(!RUN)(
-    "measures the initial enrichment + delta pass token cost vs the ~294K review baseline",
+    "measures the swarm's per-partition + verify turn cost vs the ~294K review baseline",
     async () => {
       const { adapter, discovery } = await createClaudeHarness({ env: process.env });
       expect(
@@ -110,17 +96,26 @@ describe("rennet knowledge layer — generation cost (gated real turns)", () => 
       await generator.generate(REPO_ROOT, { explicitBaseRef: base.baseOid });
 
       const collector = createMetricsCollector();
-      const initial = await enrichKnowledgeForRepo({
+      const outcome = await runKnowledgeSwarmForRepo({
         reader,
         knowledgeStore,
-        port: adapter,
+        claudePort: adapter,
+        codexExecutor: null,
         repoKey: base.repoKey,
         repoRoot: REPO_ROOT,
         baseOid: base.baseOid,
-        budget: createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
         collector,
+        onProgress: (event) => {
+          if (event.kind === "verify" || event.status !== "queued")
+            process.stdout.write(`  ${JSON.stringify(event)}\n`);
+        },
       });
-      process.stdout.write(`\ninitial enrichment: ${initial.status}\n`);
+      process.stdout.write(`\nswarm run: ${outcome.status}\n`);
+      if (outcome.status === "ok") {
+        process.stdout.write(
+          `partitions: ${outcome.ranPartitions}/${outcome.totalPartitions}, statements: ${outcome.set.statements.length}\n`,
+        );
+      }
 
       summarize(collector.metrics);
       if (METRICS_OUT) {
@@ -146,6 +141,6 @@ describe("rennet knowledge layer — generation cost (gated real turns)", () => 
         expect(["oauth", "none", null]).toContain(m.apiKeySource);
       }
     },
-    900_000,
+    1_800_000,
   );
 });

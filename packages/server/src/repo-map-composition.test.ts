@@ -8,7 +8,7 @@ describe("desktop Repo Map composition", () => {
       "ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid, gitForRepo(repoRoot))",
     );
     expect(source).toContain("resolveProjectSnapshotId: (repoRoot, baseOid) =>");
-    expect(source).toContain("runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) =>");
+    expect(source).toContain("runKnowledgePass: async ({ repoKey, repoRoot, toOid }) =>");
     expect(source).toContain(
       "runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey)",
     );

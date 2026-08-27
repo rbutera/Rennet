@@ -5,7 +5,7 @@
  * and model-free: it validates the stored statement shape, resolves evidence
  * anchors against a snapshot, and answers `context.knowledge` from a stored
  * {@link KnowledgeSet} + a materialized snapshot. The model turn that MINTS
- * statements lives in `knowledge-generation.ts` (still node-free — the model
+ * statements lives in `swarm.ts` (still node-free — the model
  * wiring is injected); the store I/O and the real harness call live in adapters.
  *
  * The honesty contract (design §6, spec repo-map-knowledge):
@@ -35,8 +35,8 @@ import type {
   KnowledgeStatus,
 } from "@rennet/protocol";
 import { canonicalize, KNOWLEDGE_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
-import type { LoadedSnapshot, SnapshotGateFailure } from "./project-context";
-import { isSafeRepoRelativePath } from "./project-context";
+import type { LoadedSnapshot, SnapshotGateFailure } from "../project-context";
+import { isSafeRepoRelativePath } from "../project-context";
 
 const CONFIDENCES: readonly KnowledgeConfidence[] = ["high", "medium", "low"];
 const STATUSES: readonly KnowledgeStatus[] = ["hypothesis", "confirmed", "rejected"];

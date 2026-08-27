@@ -17,8 +17,8 @@ import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { type KnowledgeBackendPart, knowledgeBackend } from "./knowledge-backend";
-import { enrichKnowledgeForRepo } from "./knowledge-enrichment";
 import { KnowledgeStore } from "./knowledge-store";
+import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import { resolveMapSource } from "./map-travel";
 import { NestedProjectContext } from "./nested-project-context";
 import {
@@ -408,10 +408,14 @@ export async function createLiveCanvasOpsBackend(
     void (async () => {
       const port = deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot));
       if (!port) return;
-      await enrichKnowledgeForRepo({
+      // The initial council-routed swarm run (#460). This seam resolves only a
+      // Claude port, so the council sees a claude-only availability — honest,
+      // not degraded silently.
+      await runKnowledgeSwarmForRepo({
         reader: new ProjectContextReader(deps.store),
         knowledgeStore,
-        port,
+        claudePort: port,
+        codexExecutor: null,
         repoKey,
         repoRoot: review.repositoryRoot,
         baseOid: currentBase.baseOid,

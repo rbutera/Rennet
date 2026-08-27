@@ -50,7 +50,6 @@ import {
   discoverCodex,
   discoverProject,
   discoverWorktreeIdentities,
-  enrichKnowledgeForRepo,
   ensureManagedClone,
   ensureProjectSnapshotPin,
   ensurePrWorktree,
@@ -88,7 +87,6 @@ import {
   resolveForgeRemote,
   resolveGitHubAuth,
   runGitHubDeviceFlow,
-  runKnowledgeDeltaForRepo,
   runPrWorktreeSetup,
   SqliteReviewStore,
   snapshotStoreFor,
@@ -182,6 +180,7 @@ import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
+import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
@@ -1307,6 +1306,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // frames fanned to every client, #378), under a stable command id, so the mechanism is
   // visible-capable with no new protocol surface. It only warms repos that already have a
   // snapshot — it never cold-builds in the background.
+  // The knowledge-swarm scheduler (#460, B06): server/runtime/ is the wiring
+  // point (reconciliation 3). It shares the rehydration progress push, so the
+  // swarm's `knowledge`-stage lines land on the same screen as the build stages.
+  const knowledgeSwarmRuntime = createKnowledgeSwarmRuntime({
+    store: snapshotStore,
+    resolveClaudePort: claudeAdapterForRepo,
+    resolveCodexExecutor: codexExecutorForRepo,
+    narrate: (event) => {
+      options.broadcastProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, event);
+      wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
+    },
+  });
   rehydration = createProactiveRehydration({
     store: snapshotStore,
     generator: snapshotGenerator,
@@ -1318,25 +1329,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
     },
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
-    runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) => {
-      const { locus, distroCwd } = locusContextForRepo(repoRoot);
-      const { adapter } = await getClaudeHarness(locus, distroCwd);
-      if (!adapter) return false;
-      const reader = new ProjectContextReader(snapshotStore);
-      const knowledgeStore = new KnowledgeStore(snapshotStore);
-      const common = {
-        reader,
-        knowledgeStore,
-        port: adapter,
-        repoKey,
-        repoRoot,
-        baseOid: toOid,
-      };
-      const result = await runKnowledgeDeltaForRepo({ ...common, fromOid });
-      if (result.status === "ok") return true;
-      if (result.status !== "no-prior-set") return false;
-      const initial = await enrichKnowledgeForRepo(common);
-      return initial.status === "ok";
+    // The knowledge pass is the council-routed partition swarm (#460, B06): the
+    // swarm picks skip vs incremental vs full itself from the stored prior set's
+    // identity, and its per-partition + verify lines ride the SAME rehydration
+    // progress push as the narrate above.
+    runKnowledgePass: async ({ repoKey, repoRoot, toOid }) => {
+      const outcome = await knowledgeSwarmRuntime.runForRepo({ repoKey, repoRoot, toOid });
+      return outcome.status === "ok" || outcome.status === "skipped";
     },
   });
   // At launch, resume warming every project whose Repo Map already exists.
