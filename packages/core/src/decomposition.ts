@@ -93,6 +93,8 @@ export interface RawHunk {
 export interface ParsedFile {
   hunks: RawHunk[];
   hasModeChange: boolean;
+  /** Present when the preamble carries both `old mode`/`new mode` lines. */
+  modeChange?: { old: string; new: string };
 }
 
 export const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -102,6 +104,8 @@ export function parseFilePatch(patch: string): ParsedFile {
   const hunks: RawHunk[] = [];
   let current: RawHunk | null = null;
   let hasModeChange = false;
+  let oldMode: string | undefined;
+  let newMode: string | undefined;
   for (const line of lines) {
     const header = HUNK_HEADER.exec(line);
     if (header) {
@@ -119,7 +123,12 @@ export function parseFilePatch(patch: string): ParsedFile {
     if (current === null) {
       // Preamble, before the first hunk: the only signal we read here is a mode
       // change (a mode-only file has no hunk body at all).
-      if (/^(old|new) mode /.test(line)) hasModeChange = true;
+      const mode = /^(old|new) mode (\d+)$/.exec(line);
+      if (mode) {
+        hasModeChange = true;
+        if (mode[1] === "old") oldMode = mode[2];
+        else newMode = mode[2];
+      }
       continue;
     }
     const first = line.charAt(0);
@@ -127,7 +136,13 @@ export function parseFilePatch(patch: string): ParsedFile {
     // "\ No newline at end of file" and blank inter-hunk lines are not body: ignore.
   }
   if (current) hunks.push(current);
-  return { hunks, hasModeChange };
+  return {
+    hunks,
+    hasModeChange,
+    ...(oldMode !== undefined && newMode !== undefined
+      ? { modeChange: { old: oldMode, new: newMode } }
+      : {}),
+  };
 }
 
 export function addedOf(body: readonly string[]): string[] {

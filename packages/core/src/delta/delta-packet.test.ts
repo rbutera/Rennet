@@ -118,6 +118,21 @@ describe("buildDeltaPacket", () => {
     expect("successorAccount" in withoutAccount).toBe(false);
   });
 
+  it("a mode-only change is visible in the packet as typed mode evidence", () => {
+    const chmodOnly = ["old mode 100644", "new mode 100755"].join("\n");
+    const packet = buildDeltaPacket(
+      patchsetOf([file("bin/run.sh", chmodOnly, { additions: 0, deletions: 0 })]),
+      KNOWLEDGE,
+      DOSSIER,
+    );
+    // Zero hunks — without the file-row evidence the change would vanish.
+    expect(packet.hunks.hunks).toEqual([]);
+    expect(packet.patchset.files[0]?.modeChange).toEqual({ old: "100644", new: "100755" });
+    // A hunk-carrying file without mode lines carries none.
+    const plain = buildDeltaPacket(patchsetOf([file("src/foo.ts", PATCH)]), KNOWLEDGE, DOSSIER);
+    expect("modeChange" in (plain.patchset.files[0] ?? {})).toBe(false);
+  });
+
   it("omits the openspec section when the patchset touches no openspec artifact", () => {
     const packet = buildDeltaPacket(patchsetOf([file("src/foo.ts", PATCH)]), KNOWLEDGE, DOSSIER);
     expect("openspec" in packet).toBe(false);

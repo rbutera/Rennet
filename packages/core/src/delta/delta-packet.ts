@@ -1,11 +1,19 @@
 import type { DossierItem, KnowledgeSet, Patchset, SuccessorAccount } from "@rennet/protocol";
+import { parseFilePatch } from "../decomposition";
 import { type BlastRadiusSignalMark, computeBlastRadius } from "./blast-radius";
 import { buildCounterpartHints, type CounterpartHint } from "./counterpart-hints";
 import { buildHunkIndex, type HunkIndex } from "./hunk-index";
 import { type NoisePreclassFact, preclassifyNoise } from "./noise-preclass";
 
-/** One changed file of the packet's patchset meta — the file row without its patch text. */
-export type DeltaPacketFile = Omit<Patchset["files"][number], "patch">;
+/**
+ * One changed file of the packet's patchset meta — the file row without its
+ * patch text, plus typed mode-change evidence where the diff carries one (a
+ * chmod-only file has zero hunks; without this it would vanish from the
+ * drafters' input entirely).
+ */
+export type DeltaPacketFile = Omit<Patchset["files"][number], "patch"> & {
+  readonly modeChange?: { readonly old: string; readonly new: string };
+};
 
 /** The openspec artifacts the patchset touches, at path grain (see `buildDeltaPacket`). */
 export interface OpenSpecTouch {
@@ -88,14 +96,19 @@ export function buildDeltaPacket(
       id: patchset.id,
       createdAt: patchset.createdAt,
       truncated: patchset.truncated,
-      files: patchset.files.map((file) => ({
-        path: file.path,
-        previousPath: file.previousPath,
-        status: file.status,
-        additions: file.additions,
-        deletions: file.deletions,
-        binary: file.binary,
-      })),
+      files: patchset.files.map((file) => {
+        const modeChange =
+          file.binary || file.patch === "" ? undefined : parseFilePatch(file.patch).modeChange;
+        return {
+          path: file.path,
+          previousPath: file.previousPath,
+          status: file.status,
+          additions: file.additions,
+          deletions: file.deletions,
+          binary: file.binary,
+          ...(modeChange !== undefined ? { modeChange } : {}),
+        };
+      }),
     },
     hunks,
     knowledge,
