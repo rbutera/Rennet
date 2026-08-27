@@ -36,9 +36,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 6. `rich-text.tsx` — R45 markdown subset (base tier)
 
-- [ ] 6.1 `packages/app-ui/src/review/rich-text.tsx`: port the spike's tokenizer (`FILE_REF`/`TOKEN`/`SPEC_KEYWORD` regexes, `parseRef`) and render pipeline for: bold (`**text**` → `<strong>`, literal asterisks never survive), bulleted paragraphs (every line starting `- `, each line keeping the full token pipeline), normative-grammar bolding (SHALL/SHALL NOT/MUST/MUST NOT/WHEN/THEN/AND/IF/WHILE/WHERE), backticked terms as plain monospace (never a boxed pill). Reconciliation 7: do NOT port `QuoteHighlight` (durable highlight + tooltip + reply input + overlap resolution) — that block is `[ws:C5]`.
-- [ ] 6.2 Citation rendering: a `path:line` token renders as a `reference-chip` (cluster 4); click hydrates via `review/citations.ts` and reveals the slice inline (via `code-block.tsx`), a second click folds it. An unreadable citation renders one honest line, not a silent skip.
-- [ ] 6.3 DOM tests: each token kind (bold, bullet, spec keyword, backtick, citation) renders correctly in isolation and combined in one paragraph; citation click-to-reveal/fold; unreadable-citation honest line. Cluster gate green. Commit.
+- [x] 6.1 `packages/app-ui/src/review/rich-text.tsx`: port the spike's tokenizer (`FILE_REF`/`TOKEN`/`SPEC_KEYWORD` regexes, `parseRef`) and render pipeline for: bold (`**text**` → `<strong>`, literal asterisks never survive), bulleted paragraphs (every line starting `- `, each line keeping the full token pipeline), normative-grammar bolding (SHALL/SHALL NOT/MUST/MUST NOT/WHEN/THEN/AND/IF/WHILE/WHERE), backticked terms as plain monospace (never a boxed pill). Reconciliation 7: do NOT port `QuoteHighlight` (durable highlight + tooltip + reply input + overlap resolution) — that block is `[ws:C5]`.
+- [x] 6.2 Citation rendering: a `path:line` token renders as a `reference-chip` (cluster 4); click hydrates via `review/citations.ts` and reveals the slice inline (via `code-block.tsx`), a second click folds it. An unreadable citation renders one honest line, not a silent skip.
+- [x] 6.3 DOM tests: each token kind (bold, bullet, spec keyword, backtick, citation) renders correctly in isolation and combined in one paragraph; citation click-to-reveal/fold; unreadable-citation honest line. Cluster gate green. Commit.
 
 ## 7. Barrels, dead-code sweep, docs
 

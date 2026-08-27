@@ -14,8 +14,9 @@ import { ReferenceChip } from "./reference-chip";
 // honest line, never a silent empty block.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Hydrate one cited span and render it as a CodeBlock (or an honest line while it can't). */
-function HydratedBlock({ citation }: { citation: CodeRef }) {
+/** Hydrate one cited span and render it as a CodeBlock (or an honest line while it can't).
+ *  Shared by CodeTabs/AnchorReveal here and by rich-text's citation reveal. */
+export function CitationBlock({ citation }: { citation: CodeRef }) {
   const { data, error } = useSpanRead(citation);
   const label = `${basename(citation.path)}:${citation.startLine}`;
   if (error) {
@@ -58,7 +59,7 @@ export function CodeTabs({ citations }: { citations: readonly CodeRef[] }) {
           ))}
         </div>
       )}
-      <HydratedBlock citation={citation} />
+      <CitationBlock citation={citation} />
     </div>
   );
 }
@@ -82,7 +83,7 @@ export function AnchorReveal({ citations }: { citations: readonly CodeRef[] }) {
           />
         ))}
       </div>
-      {activeCitation && <HydratedBlock citation={activeCitation} />}
+      {activeCitation && <CitationBlock citation={activeCitation} />}
     </div>
   );
 }
