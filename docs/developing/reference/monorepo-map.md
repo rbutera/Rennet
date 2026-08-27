@@ -21,7 +21,7 @@ check rejects missing or misnamed rows here.
 | Nx project | Package | Root | Responsibility | Allowed in-repository dependencies |
 | --- | --- | --- | --- | --- |
 | `rennet-theme` | `@rennet/theme` | `packages/theme` | Shared design tokens and generated mobile palette | None |
-| `rennet-protocol` | `@rennet/protocol` | `packages/protocol` | Command, event, and wire schemas | None |
+| `rennet-protocol` | `@rennet/protocol` | `packages/protocol` | Contract folders — board schema (on `@wboard/core`), command registry, session, delta, manifests — plus event and wire schemas | None |
 | `rennet-prompts` | `@rennet/prompts` | `packages/prompts` | Lens-agent drafting prompts, the unslop editor pass, and the versioned RSP prompt contracts | protocol |
 | `rennet-core` | `@rennet/core` | `packages/core` | Review behavior and domain workflows | protocol, prompts |
 | `rennet-adapters` | `@rennet/adapters` | `packages/adapters` | Git, GitHub, filesystem, persistence, and harness integrations | protocol, prompts, core |
