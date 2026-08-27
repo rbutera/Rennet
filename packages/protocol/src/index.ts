@@ -18,6 +18,7 @@ import { attentionFamilySchema } from "./session";
 export * from "./board";
 export * from "./bodies";
 export * from "./domain";
+export * from "./manifests";
 export * from "./rsp";
 export * from "./session";
 export * from "./sha256";

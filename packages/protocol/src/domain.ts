@@ -20,6 +20,9 @@ import type {
   RiskCrossCheck,
   UiScreenshot,
 } from "./index";
+// Council job identity moved to ./manifests (B3, #489) — ids as data; the
+// assignment/override shapes below still key off it (type-only, erased).
+import type { CouncilJobId } from "./manifests";
 
 export type FileChangeStatus = "added" | "modified" | "deleted" | "renamed";
 
@@ -1478,24 +1481,7 @@ export interface CouncilPick {
   readonly effort: CouncilEffort;
 }
 
-/** A stable job id in the versioned catalogue. */
-export type CouncilJobId = string;
-
-/**
- * One catalogue entry: WHAT the job is (its tier, batching shape, and whether it
- * rides another session) — never WHICH model, which is the assignment table's
- * job. Shipped versioned like a schema; job ids are stable.
- */
-export interface CouncilJob {
-  readonly jobId: CouncilJobId;
-  readonly tier: CouncilTier;
-  readonly batching: CouncilBatching;
-  /** True when the job rides another job's session (granularity is the seat). */
-  readonly sessionRider: boolean;
-  /** Optional matrix row number, purely for the resolution-trace flavour. */
-  readonly row?: number;
-  readonly label: string;
-}
+// `CouncilJobId`/`CouncilJob` moved to ./manifests (B3, #489).
 
 /** Which harnesses are installed (the availability probe result). */
 export interface CouncilAvailability {
