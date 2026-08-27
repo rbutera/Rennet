@@ -44,7 +44,7 @@ Serial clusters, each a separately-reviewable **sub-wave** (B08 is XL — the or
 
 - [x] 7.1 Make `docs/developing/concepts/lens-pipeline.md` **live**: reconcile the planned page against what B08 actually built (drafting flow, the three-gate validation loop, the 19-rule lint, honest-omission + blemishes, mechanical-vs-authored composition, the round-report-first ordering) — correct any planned-vs-shipped drift, drop future-tense hedging for what now exists.
 - [x] 7.2 Sweep `docs/` (excluding `docs/dist`) for stale claims about drafting/lint/composition a reader would now find wrong (e.g. the B04 note at `lens-pipeline.md:22` on lens naming, and any `model-council.md` gap on the five new job rows). Fix stragglers.
-- [ ] 7.3 Cluster gate green (docs check inside). Commit.
+- [x] 7.3 Cluster gate green (docs check inside). Commit.
 
 ## Cluster 8 — verification (packet)
 
