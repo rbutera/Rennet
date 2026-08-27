@@ -1,10 +1,10 @@
 import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { buildOfferedManifest } from "./angle-generation";
 import { decompose } from "./decomposition";
 import { createInvocationBudget } from "./invocation-budget";
 import { type NoiseProvenanceSeed, type NoiseTurnResult, runNoiseAngle } from "./noise-generation";
+import { buildOfferedManifest } from "./offered-manifest";
 
 // ── A tiny real changeset: a lockfile hunk + two source hunks ────────────────
 

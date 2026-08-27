@@ -118,16 +118,13 @@ import {
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
-  patchsetIntentToReviewIntent,
   queryKnowledge,
   queryProjectMap,
   ReviewService,
   recordSeatSend,
   resolveAssignment,
-  resolveDualSeat,
   resolveLocus,
   runCoverageMapping,
-  runDualFindingReview,
   runHandoffTurn as runHandoffTurnCore,
   runNoiseAngle,
   toDistroPath,
@@ -955,30 +952,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     );
   }
 
-  // The provenance seed for a live finding run. Provenance is stamped on the RSP
-  // document but not read by the Flagged lens (findings map straight to the lens),
-  // so a placeholder model is honest for placement; the capability layers are set
-  // true because this path DOES constrain structured output through the adapter.
-  const FINDING_PROVENANCE_SEED = {
-    harness: "claude-code",
-    harnessVersion: "unknown",
-    adapterVersion: "0.0.0",
-    model: "unknown",
-    modelReportedBy: "unknown" as const,
-    capability: {
-      structuredOutput: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-      perCallModelSelection: {
-        implementedByAdapter: true,
-        advertisedByHarness: true,
-        availableInSession: true,
-      },
-    },
-  };
-
   /**
    * The live Flagged lens runner (issue #32/#138 + dual-model #41), replacing
    * `flaggedReviewFixture`. Decomposes the review's active patchset into the offered
@@ -1011,19 +984,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const sharedBudget = session.budget;
     const codexResolution = await getCodexResolution(locus);
     const codex = codexResolution.availability;
-    const codexPort = codexResolution.port;
     const decomposition = decompose(patchset);
     const manifest = buildOfferedManifest(decomposition);
-    // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
-    // with `cwd` on the live mutable checkout rather than an immutable materialisation,
-    // because that layer is not built yet. Follow-up: materialise the active patchset
-    // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
-    const claudeTurn = adapter
-      ? createHarnessRunTurn(adapter, { docType: "finding", cwd: review.repositoryRoot })
-      : undefined;
 
-    // The honestly-probed installed set: the Codex port is passed IFF codex is
-    // installed, so a Codex seat is always executable (the resolver's invariant).
+    // The honestly-probed installed set (drives the CI-classification seat below).
     const installed: CouncilHarnessId[] = [];
     if (adapter) installed.push("claude-code");
     if (codex.available) installed.push("codex");
@@ -1046,45 +1010,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               })
             : undefined;
 
-    // The ordered dual seats (Claude first, Codex second), each with its honest
-    // provenance seed and executor. Under a single provider this is one seat.
-    const seats = resolveDualSeat({
-      council: { availability: { installed } },
-      jobId: "finding-generation",
-      docType: "finding",
-      patchsetId: patchset.id,
-      manifest,
-      baseSeed: FINDING_PROVENANCE_SEED,
-      ...(claudeTurn ? { claudeTurn } : {}),
-      ...(codexPort ? { codexPort } : {}),
-    });
-
-    // Hypothesis, both finding seats, and verification draw from ONE review budget:
-    // the ceiling stops spend, never the review. The dual runner guards each seat's
-    // turn (a thrown Codex spawn degrades to a failed seat, then the reconcile
-    // degrades) and owns the reconcile + the honest single-provider degradation.
-    // The per-project convention checklist (#180), fed to BOTH seats as a labelled
-    // layer. Absent (no catalogue file), each seat assembles exactly as before.
-    const conventions = loadReviewConventions(review);
-
-    // The change's stated intent (#136), projected from the frozen capture on the
-    // patchset; absent a captured surface it is undefined and the finding assembly is
-    // byte-identical to before capture landed.
-    const intent = patchsetIntentToReviewIntent(patchset.intent);
-
-    const { review: flagged } = await runDualFindingReview({
-      deepReview,
-      patchsetId: patchset.id,
-      manifest,
-      seats,
-      budget: sharedBudget,
-      ...(intent ? { intent } : {}),
-      ...(conventions ? { conventions } : {}),
-      ...(contextFeed.assembledContext === undefined
-        ? {}
-        : { assembledContext: contextFeed.assembledContext }),
-      onSend: contextFeed.onSend,
-    });
+    // The model finding generator (the dual-seat `runFindingAngle` path) died with
+    // the Board rebuild (#489); B8's drafters replace it. Until then the flagged lens
+    // degrades to no findings — the deterministic CI signal, incomplete-ingestion
+    // blocking states, and $0 UI-surface classifier below still stamp the honest
+    // render-only chrome, and deep-review verification simply has nothing to verify.
+    const flagged: FlaggedReview = { status: "ok", findings: [] };
 
     // ── Per-finding verification (#179): a DEEP-REVIEW feature, alongside dual-model ──
     // Quick review stays single-Claude with NO verification (byte-identical to before).

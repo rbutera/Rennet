@@ -23,14 +23,36 @@ import type {
   Canvas,
   CanvasAngle,
   Decomposition,
+  DecompositionProposalBody,
   ElementDiff,
   ElementDiffs,
   Hunk,
   Patchset,
   RenderedHunkOccurrence,
+  RspDocType,
 } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
-import { type AdmittedDocument, isProposalBody } from "./canvas";
+
+/**
+ * An admitted RSP document, as the diff slicer consumes it: the adapter-minted
+ * `docId`, the `docType`, and the validator-admitted `body`. Inlined from the
+ * deleted `canvas.ts` projector (B2) — the slicer is its only surviving consumer.
+ */
+export interface AdmittedDocument {
+  docId: string;
+  docType: RspDocType;
+  body: unknown;
+}
+
+/** Whether an admitted body is a decomposition proposal (carries chunks + reading order). */
+function isProposalBody(body: unknown): body is DecompositionProposalBody {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    Array.isArray((body as { chunks?: unknown }).chunks) &&
+    Array.isArray((body as { readingOrder?: unknown }).readingOrder)
+  );
+}
 
 /** A verbatim `@@` hunk sliced from a file patch: its line ranges + exact text. */
 interface RawHunk {

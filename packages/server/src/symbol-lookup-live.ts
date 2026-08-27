@@ -1,9 +1,23 @@
 import type {
-  CanvasOpsBackend,
+  ProjectFileOverviewResult,
   ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
+  ReferenceLookup,
+  SymbolLookup,
 } from "@rennet/core";
 import type { Review, SymbolInspection, SymbolNeighbors } from "@rennet/protocol";
+
+/**
+ * The minimal slice of the live review backend the symbol inspector reads: the
+ * model-free symbolic ops (`context.overview` / `context.symbol` / `context.references`).
+ * Inlined from the deleted `CanvasOpsBackend` port (B2) — the inspector only needs
+ * these three; the composed `LiveReviewContextBackend` satisfies it structurally.
+ */
+export interface SymbolLookupBackend {
+  fileOverview(path: string): ProjectFileOverviewResult;
+  symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult;
+  references(query: ReferenceLookup): ProjectReferenceResult;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.symbolLookup — the LIVE symbol inspector port (Rai, wireframes #8).
@@ -124,7 +138,7 @@ export function symbolReferencesSection(
  * "in this file" row then, never inventing one.
  */
 export function definitionNeighbors(
-  backend: CanvasOpsBackend,
+  backend: SymbolLookupBackend,
   definition: SymbolInspection["definition"],
 ): SymbolNeighbors | undefined {
   if (definition.status !== "ok") return undefined;
@@ -145,7 +159,7 @@ export function definitionNeighbors(
 
 /** Resolve one name to its definitions + references + definition-file neighbours. */
 export function lookupSymbol(
-  backend: CanvasOpsBackend,
+  backend: SymbolLookupBackend,
   name: string,
   cap: number = DEFAULT_REFERENCE_CAP,
 ): SymbolInspection {
@@ -157,7 +171,7 @@ export function lookupSymbol(
 
 export interface LiveSymbolLookupDeps {
   /** Compose (or reuse) the review's live symbolic backend. */
-  buildBackend(review: Review): Promise<CanvasOpsBackend>;
+  buildBackend(review: Review): Promise<SymbolLookupBackend>;
   /** Reference-site display cap; defaults to {@link DEFAULT_REFERENCE_CAP}. */
   readonly referenceCap?: number;
 }

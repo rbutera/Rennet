@@ -5,13 +5,13 @@ import type {
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { CodexUtilityPort } from "./codex-utility-port";
+import type { FindingProvenanceSeed } from "./dual-seat";
 import {
   DEFAULT_CODEX_SECOND_SEAT_EFFORT,
   DEFAULT_CODEX_SECOND_SEAT_MODEL,
   DEFAULT_SEAT_LABELS,
   resolveDualSeat,
 } from "./dual-seat";
-import type { FindingProvenanceSeed } from "./finding-generation";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { providerHarness, resolveAssignment } from "./model-council";
 

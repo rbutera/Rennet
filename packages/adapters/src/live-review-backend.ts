@@ -1,12 +1,9 @@
 import { realpathSync } from "node:fs";
 import {
-  type CanvasOpsBackend,
   type ContextAssembly,
   escapePath,
   type HarnessPort,
-  type ReviewBackendState,
-  type RunLedgerEntry,
-  reviewBackendCore,
+  type ReviewPipelineResult,
 } from "@rennet/core";
 import type {
   ContextManifest,
@@ -15,19 +12,27 @@ import type {
   Patchset,
   Review,
 } from "@rennet/protocol";
-import { contextAskBackend } from "./context-ask-backend";
+import { type ContextAskBackendPart, contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
 import { execaGit, type GitExec } from "./git-range-diff";
-import { knowledgeBackend } from "./knowledge-backend";
+import { type KnowledgeBackendPart, knowledgeBackend } from "./knowledge-backend";
 import { enrichKnowledgeForRepo } from "./knowledge-enrichment";
 import { KnowledgeStore } from "./knowledge-store";
 import { resolveMapSource } from "./map-travel";
 import { NestedProjectContext } from "./nested-project-context";
-import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
+import {
+  type NoveltyBackendPart,
+  noveltyBackend,
+  type ResolvedNoveltyContext,
+} from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import type { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
-import { projectContextBackend, type ResolvedRepoContext } from "./project-context-backend";
+import {
+  type ProjectContextBackendPart,
+  projectContextBackend,
+  type ResolvedRepoContext,
+} from "./project-context-backend";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { projectSnapshotPinResolver } from "./project-snapshot-pin";
@@ -269,8 +274,6 @@ export interface LiveBackendDeps {
   readonly compositionStore?: RepoCompositionStore;
   /** Override the pipeline's shared per-review invocation meter (tests/composition only). */
   readonly budget?: InvocationBudget;
-  /** Extra core state the composition root may supply (freshness, ledger, effect sink). */
-  readonly core?: Omit<ReviewBackendState, "review" | "pipeline">;
 }
 
 /** The outcome of the snapshot-on-open generation, for honest reporting/telemetry. */
@@ -285,9 +288,20 @@ export interface LiveSnapshotOutcome {
   readonly degradedReason?: string;
 }
 
+/**
+ * The live review context backend during the Board rebuild (B2): the surviving
+ * model-free context / symbol / novelty / knowledge reads plus the one model-backed
+ * `context.ask`. The canvas / diff / run accessors died with the canvas projection
+ * (#489); the Board (B-series) re-homes the review surface.
+ */
+export type LiveReviewContextBackend = ProjectContextBackendPart &
+  NoveltyBackendPart &
+  KnowledgeBackendPart &
+  ContextAskBackendPart;
+
 /** The composed live backend plus the snapshot-on-open outcome. */
 export interface LiveReviewBackend {
-  readonly backend: CanvasOpsBackend;
+  readonly backend: LiveReviewContextBackend;
   readonly snapshot: LiveSnapshotOutcome;
   readonly contextManifest?: ContextManifest;
 }
@@ -303,7 +317,7 @@ const DEFAULT_MAX_SNAPSHOT_FILES = 20_000;
  */
 export async function createLiveCanvasOpsBackend(
   review: Review,
-  pipeline: ReviewBackendState["pipeline"],
+  pipeline: ReviewPipelineResult,
   deps: LiveBackendDeps,
 ): Promise<LiveReviewBackend> {
   const git = deps.git ?? execaGit;
@@ -405,8 +419,6 @@ export async function createLiveCanvasOpsBackend(
     })().catch((error) => deps.onKnowledgeError?.(error));
   }
 
-  const runLedger: RunLedgerEntry[] = [...(deps.core?.runLedger ?? [])];
-  const core = reviewBackendCore({ review, pipeline, ...deps.core, runLedger });
   const contextPart = projectContextBackend(reader, resolveContextFor(review, repoKey));
   const noveltyPart = noveltyBackend(
     noveltyReader,
@@ -429,25 +441,9 @@ export async function createLiveCanvasOpsBackend(
       deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot)) ?? null,
     repoRoot: review.repositoryRoot,
     budget: deps.budget ?? pipeline.invocationBudget,
-    onAttempt: (attempt) => {
-      const accepted = attempt.outcome === "answered" || attempt.outcome === "unanswered";
-      runLedger.push({
-        runId: `${review.id}:context.ask:${runLedger.length + 1}`,
-        purpose: attempt.purpose,
-        tier: attempt.tier,
-        model: attempt.model ?? "harness-default",
-        admitted: accepted ? 1 : 0,
-        rejected: accepted ? 0 : 1,
-        budgetSpent: attempt.budgetGranted ? 1 : 0,
-        ...(Number.isFinite(attempt.budgetRemaining)
-          ? { budgetRemaining: attempt.budgetRemaining }
-          : {}),
-      });
-    },
   });
 
-  const backend: CanvasOpsBackend = {
-    ...core,
+  const backend: LiveReviewContextBackend = {
     ...contextPart,
     ...noveltyPart,
     ...knowledgePart,

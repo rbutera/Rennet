@@ -2,15 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type CanvasOpsBackend,
-  canvasOpsTool,
-  type OpsEnvelope,
-  type ToolOutcome,
-} from "@rennet/core";
-import type { NoveltyLedger, PatchFile, Patchset, ProjectSnapshotManifest } from "@rennet/protocol";
+import type { PatchFile, Patchset, ProjectSnapshotManifest } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
+import { noveltyBackend } from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
@@ -113,47 +107,20 @@ function patchset(baseOid: string): Patchset {
   };
 }
 
-/**
- * The `context.novelty` tool only ever reaches `novelty()`; the rest of the
- * `CanvasOpsBackend` is not exercised, so a slice-plus-throwing-stub is an honest
- * full backend for this focused path (a wrong call throws loudly).
- */
-function backendFor(
-  reader: NoveltyLedgerReader,
-  resolve: () => ResolvedNoveltyContext,
-): CanvasOpsBackend {
-  const slice = noveltyBackend(reader, resolve);
-  const notUsed = () => {
-    throw new Error("non-novelty backend accessor called in a novelty-only test");
-  };
-  return new Proxy(slice as Partial<CanvasOpsBackend>, {
-    get(target, prop, receiver) {
-      if (prop in target) return Reflect.get(target, prop, receiver);
-      return notUsed;
-    },
-  }) as CanvasOpsBackend;
-}
-
-function okEnvelope<T>(outcome: ToolOutcome<T> | Promise<ToolOutcome<T>>): OpsEnvelope<T> {
-  if (outcome instanceof Promise) throw new Error("expected a synchronous tool outcome");
-  if (!outcome.ok) throw new Error(`expected ok, got ${JSON.stringify(outcome.error)}`);
-  return outcome.envelope;
-}
-
 describe("context.novelty through the real reader gate", () => {
-  it("serves the deterministic ledger for the change at the pinned base OID as `current`", async () => {
+  it("serves the deterministic ledger for the change at the pinned base OID", async () => {
     const { store, manifest } = await generate();
     const reader = new NoveltyLedgerReader(new ProjectContextReader(store));
     const ps = patchset(manifest.baseOid);
-    const backend = backendFor(reader, () => ({ repoKey: manifest.repoKey, patchset: ps }));
+    const backend = noveltyBackend(reader, () => ({ repoKey: manifest.repoKey, patchset: ps }));
 
-    const env = okEnvelope(canvasOpsTool("context.novelty").handle({}, backend));
-    const ledger = env.data as NoveltyLedger;
-    expect(env.freshness).toBe("current");
+    const result = backend.novelty();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected a served ledger");
+    const ledger = result.ledger;
     expect(ledger.baseOid).toBe(manifest.baseOid);
     expect(ledger.snapshotFingerprint).toBe(manifest.fingerprint);
     expect(ledger.patchsetId).toBe(ps.id);
-    expect(env.evidence).toEqual([manifest.baseOid, manifest.fingerprint, ps.id]);
 
     const at = (path: string, kind: "file" | "symbol", symbol?: string) =>
       ledger.entries.find(
@@ -166,31 +133,29 @@ describe("context.novelty through the real reader gate", () => {
     expect(at("packages/a/src/added.test.ts", "file")?.classification).toBe("conforms");
   });
 
-  it("rides a STALE snapshot back as freshness `stale`, never a served ledger (R30)", async () => {
+  it("refuses a STALE snapshot rather than serving a ledger (R30)", async () => {
     const { store, manifest } = await generate();
     const reader = new NoveltyLedgerReader(new ProjectContextReader(store));
     // The patchset pins a DIFFERENT base OID than the snapshot was built at.
     const ps = patchset("0000000000000000000000000000000000000000");
-    const backend = backendFor(reader, () => ({ repoKey: manifest.repoKey, patchset: ps }));
+    const backend = noveltyBackend(reader, () => ({ repoKey: manifest.repoKey, patchset: ps }));
 
-    const env = okEnvelope(canvasOpsTool("context.novelty").handle({}, backend));
-    expect(env.freshness).toBe("stale");
-    const data = env.data as { unavailable: { reason: string; storedBaseOid?: string } };
-    expect(data.unavailable.reason).toBe("stale");
-    expect(data.unavailable.storedBaseOid).toBe(manifest.baseOid);
-    // The distinguished refusal never masquerades as a served ledger.
-    expect((env.data as { baseOid?: string }).baseOid).toBeUndefined();
-    expect((env.data as { entries?: unknown }).entries).toBeUndefined();
+    const result = backend.novelty();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a stale refusal");
+    expect(result.failure.reason).toBe("stale");
+    expect((result.failure as { storedBaseOid?: string }).storedBaseOid).toBe(manifest.baseOid);
   });
 
-  it("maps an ABSENT snapshot (unknown repo) to freshness `failed`", async () => {
+  it("maps an ABSENT snapshot (unknown repo) to an absent refusal", async () => {
     const { store, manifest } = await generate();
     const reader = new NoveltyLedgerReader(new ProjectContextReader(store));
     const ps = patchset(manifest.baseOid);
-    const backend = backendFor(reader, () => ({ repoKey: "/no/such/repo/.git", patchset: ps }));
+    const backend = noveltyBackend(reader, () => ({ repoKey: "/no/such/repo/.git", patchset: ps }));
 
-    const env = okEnvelope(canvasOpsTool("context.novelty").handle({}, backend));
-    expect(env.freshness).toBe("failed");
-    expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("absent");
+    const result = backend.novelty();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected an absent refusal");
+    expect(result.failure.reason).toBe("absent");
   });
 });

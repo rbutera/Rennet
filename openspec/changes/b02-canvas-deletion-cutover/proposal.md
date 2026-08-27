@@ -66,7 +66,17 @@ Verdicts: **DELETE**, **KEEP** (untouched), **KEEP (trim)** — survives with re
 | `dual-seat.ts`, `dual-seat.test.ts` | KEEP (trim) *(#464 names `resolveDualSeat` as the council path; drop `finding-generation` imports)* |
 | `review-backend.ts`, `review-backend.test.ts` | KEEP (trim) *(cascade — drop canvas-ops/canvas types)* |
 | `index.ts` | KEEP (trim) — drop dead re-exports |
-| `delta-account.ts`, `delta-account.test.ts` | RENAME → `successor-account.ts` / `successor-account.test.ts` *(census, #457)* |
+| `delta-account.ts`, `delta-account.test.ts` | RENAME → `successor-account.ts` / `successor-account.test.ts` *(census, #457, cluster 7)* |
+
+**Cluster-4 execution amendments (forced deviations, recorded per the deletion-authority rule; the positive control diffs THIS list vs `git`):**
+
+- `ui-verification.ts`: DELETE → **KEEP (trim)**. Its deterministic `classifyUiSurface` / `UI_SURFACE_CLASSIFIER_VERSION` / `RunUiVerificationResult` are read LIVE by `create-server`'s flagged path (the $0 immediate UI-surface status); only the model verify-ui turn (`runUiVerification`) is deleted. `ui-verification.test.ts` still DELETED (it tested the model turn).
+- `angle-generation.ts`: DELETE stands, but its deterministic `buildOfferedManifest` (read live by `create-server`'s flagged finding path + noise) is **rehomed to a new `offered-manifest.ts`** rather than lost.
+- `review-backend.ts`, `review-backend.test.ts`: KEEP (trim) → **DELETE**. `reviewBackendCore`'s entire surface is the canvas/diff/run accessors, which are dead after the projection deletion — the live backend (symbolLookup / context.ask) consumes only the context/symbol/ask slices. Forced by the `canvas-ops.ts` DELETE: the `CanvasOpsBackend` port is re-typed to `LiveReviewContextBackend` (adapters `live-review-backend.ts`) + a minimal `SymbolLookupBackend` (server `symbol-lookup-live.ts`).
+- `element-diffs.ts`: the table said "inline `compareCodeUnits`"; the actual dying-`canvas.ts` dependency is `AdmittedDocument` + `isProposalBody` (element-diffs uses a local `compare`, never `compareCodeUnits`). Those two were inlined.
+- New file: `packages/core/src/offered-manifest.ts` (holds `buildOfferedManifest`).
+- Cascade DELETEs (untabled survivors that could not be trimmed without inventing behaviour): `packages/server/src/review-pipeline-input.ts` + `.test.ts` (orphaned once the model-seat pipeline input died); `packages/adapters/src/finding-verification-cost.real.test.ts`, `cost-baseline.real.test.ts`, `dual-review-cost.real.test.ts`, `integration/real-decomposition.integration.test.ts` (drove the deleted finding/decomposition passes).
+- `create-server.ts` (KEEP-trim, server table): the `runDualFindingReview` finding-generation call in `runFlaggedReviewWithContextFeed` trimmed out (dead pass; B8's drafters replace it) → the flagged lens degrades to no findings, while the deterministic CI signal / blocking states / UI classifier still stamp.
 
 ### packages/adapters/src
 

@@ -1,8 +1,4 @@
-import type {
-  CanvasOpsBackend,
-  ProjectReferenceResult,
-  ProjectSymbolDefinitionResult,
-} from "@rennet/core";
+import type { ProjectReferenceResult, ProjectSymbolDefinitionResult } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
@@ -10,6 +6,7 @@ import {
   definitionNeighbors,
   lookupSymbol,
   reviewPinnedToHead,
+  type SymbolLookupBackend,
   symbolDefinitionSection,
   symbolReferencesSection,
 } from "./symbol-lookup-live";
@@ -166,7 +163,7 @@ describe("lookupSymbol", () => {
           references: { name: query.name, sites: [{ path: "src/y.ts", line: 9, scope: null }] },
         } satisfies ProjectReferenceResult;
       },
-    } as unknown as CanvasOpsBackend;
+    } as unknown as SymbolLookupBackend;
 
     const inspection = lookupSymbol(backend, "makeThing");
     expect(calls).toEqual(["def:makeThing", "ref:makeThing"]);
@@ -207,7 +204,7 @@ describe("lookupSymbol", () => {
           ],
         },
       }),
-    } as unknown as CanvasOpsBackend;
+    } as unknown as SymbolLookupBackend;
 
     const inspection = lookupSymbol(backend, "TokenBucket");
     expect(inspection.neighbors).toEqual({
@@ -236,7 +233,7 @@ describe("definitionNeighbors", () => {
               },
             }
           : { ok: false as const, reason: "shard-unavailable" as const, path, digest: "d" },
-    }) as unknown as CanvasOpsBackend;
+    }) as unknown as SymbolLookupBackend;
 
   it("returns undefined when the definition has no site (nothing to neighbour)", () => {
     expect(definitionNeighbors(overviewBackend(true), { status: "ok", sites: [] })).toBeUndefined();
@@ -313,7 +310,7 @@ describe("createLiveSymbolLookup", () => {
         }) satisfies ProjectSymbolDefinitionResult,
       references: () =>
         ({ ok: true, references: { name: "n", sites: [] } }) satisfies ProjectReferenceResult,
-    } as unknown as CanvasOpsBackend;
+    } as unknown as SymbolLookupBackend;
     const lookup = createLiveSymbolLookup({
       buildBackend: async (review) => {
         builtFor = review.id;
