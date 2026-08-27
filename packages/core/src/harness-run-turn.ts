@@ -51,6 +51,14 @@ export type HarnessTurnResult =
       readonly tokens?: RspTokenUsage;
       /** Executor provenance facts, when the executor reported them (#88). */
       readonly executor?: TurnExecutorFacts;
+      /**
+       * What actually ran the turn, when the harness reported it (the knowledge
+       * swarm stamps this onto statement provenance instead of null, review P2).
+       */
+      readonly observed?: {
+        readonly model: string | null;
+        readonly apiKeySource: string | null;
+      };
     }
   | { readonly status: "failed"; readonly message: string };
 

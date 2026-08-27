@@ -96,6 +96,9 @@ cross-slice synthesizer might need (a suspicion that a pattern continues
 elsewhere, a coupling you cannot see the other end of). Hints are discarded
 after synthesis — never facts, never stored.`,
     `\nYOUR SLICE (${slice.files.length} files at base ${snapshot.baseOid.slice(0, 12)}):\n${paths}`,
+    `\nYour working directory is the repository checkout. READ the slice files
+themselves before making claims — evidence means the code you actually read,
+never a guess from a filename.`,
     "\nEmit the knowledge statements for this slice.",
   ].join("\n");
 }
@@ -123,9 +126,15 @@ export async function runPartitionWorker(
       lastFailure = turn.message;
       continue;
     }
+    // Provenance names what ACTUALLY ran when the turn reported it (review P2).
+    const observed: KnowledgeProvenanceSeed = {
+      model: turn.observed?.model ?? provenance.model,
+      apiKeySource: turn.observed?.apiKeySource ?? provenance.apiKeySource,
+      ...(provenance.generator === undefined ? {} : { generator: provenance.generator }),
+    };
     const statements: WorkerStatement[] = [];
     for (const raw of parseStatements(turn.body)) {
-      const minted = mintStatement(raw, filesByPath, snapshot, provenance, generator, tally);
+      const minted = mintStatement(raw, filesByPath, snapshot, observed, generator, tally);
       if (minted === undefined) continue;
       const hint = (raw as Record<string, unknown>).hint;
       statements.push({
@@ -273,8 +282,14 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
       if (verdict === "confirmed") confirmed += 1;
       else rejected += 1;
     }
+    // Cross-cutting statements carry the VERIFIER's observed provenance (review P2).
+    const observed: KnowledgeProvenanceSeed = {
+      model: turn.observed?.model ?? provenance.model,
+      apiKeySource: turn.observed?.apiKeySource ?? provenance.apiKeySource,
+      ...(provenance.generator === undefined ? {} : { generator: provenance.generator }),
+    };
     const crossCutting = (Array.isArray(body.crossCutting) ? body.crossCutting : [])
-      .map((raw) => mintStatement(raw, filesByPath, snapshot, provenance, generator, tally))
+      .map((raw) => mintStatement(raw, filesByPath, snapshot, observed, generator, tally))
       .filter((s): s is KnowledgeStatement => s !== undefined);
     const set: KnowledgeSet = {
       schemaVersion: KNOWLEDGE_SCHEMA_VERSION,

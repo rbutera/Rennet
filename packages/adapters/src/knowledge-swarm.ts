@@ -5,6 +5,7 @@ import {
   dispositionCarrier,
   type HarnessPort,
   type HarnessTurnResult,
+  KNOWLEDGE_SWARM_GENERATOR_ID,
   type KnowledgeSnapshotContext,
   type LoadedSnapshot,
   MAP_VERIFY_OUTPUT_SCHEMA,
@@ -24,6 +25,7 @@ import type {
   KnowledgeSet,
   KnowledgeStatement,
 } from "@rennet/protocol";
+import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
 import type { KnowledgeStore } from "./knowledge-store";
 import type { ProjectContextReader } from "./project-context-reader";
@@ -57,7 +59,12 @@ export function snapshotContextFromLoaded(loaded: LoadedSnapshot): KnowledgeSnap
   };
 }
 
-/** The `from..to` changed-path closure via `git diff --name-only` (empty on any git error). */
+/**
+ * The `from..to` changed-path closure via `git diff --name-only`. A git failure
+ * THROWS: an unreadable diff must surface as a failed pass the caller retries,
+ * never read as "no changed paths" (review P1 — a silent skip drops the missed
+ * interval on the floor).
+ */
 export async function changedPathsBetween(
   git: GitExec,
   root: string,
@@ -65,14 +72,16 @@ export async function changedPathsBetween(
   toOid: string,
 ): Promise<string[]> {
   if (fromOid === toOid) return [];
-  try {
-    const out = await git(root, ["diff", "--name-only", "-z", `${fromOid}..${toOid}`], {
-      reject: true,
-    });
-    return out.split("\0").filter((path) => path.length > 0);
-  } catch {
-    return [];
-  }
+  const out = await git(root, ["diff", "--name-only", "-z", `${fromOid}..${toOid}`], {
+    reject: true,
+  });
+  return out.split("\0").filter((path) => path.length > 0);
+}
+
+/** The full path inventory at `oid` (for PRIOR-snapshot partition ownership). */
+async function pathsAtOid(git: GitExec, root: string, oid: string): Promise<string[]> {
+  const out = await git(root, ["ls-tree", "-r", "--name-only", "-z", oid], { reject: true });
+  return out.split("\0").filter((path) => path.length > 0);
 }
 
 /** Options shared by both concrete turn builders. */
@@ -148,7 +157,11 @@ export function createClaudeSwarmTurn(
             return { status: "failed", message };
           }
           record("emitted", usage);
-          return { status: "emitted", body: outcome.structuredOutput };
+          return {
+            status: "emitted",
+            body: outcome.structuredOutput,
+            observed: { model: observedModel ?? model, apiKeySource },
+          };
         }
         const message =
           outcome.status === "failed" ? outcome.error.message : "the swarm turn was cancelled";
@@ -167,14 +180,17 @@ export function createClaudeSwarmTurn(
 /**
  * Build a swarm `runTurn` on the codex utility executor (the seat boundary the
  * council resolver names for a Codex pick — cheap Luna for the light worker
- * volume, per R39). An executor throw is an honest turn failure.
+ * volume, per R39). The turn is ROOTED AT THE CHECKOUT (`cwd`): the swarm's
+ * seats read real files as evidence, so the classic temp-dir utility posture
+ * would leave a Codex seat reasoning from filenames alone (review P0). An
+ * executor throw is an honest turn failure.
  */
 export function createCodexSwarmTurn(
   executor: CodexExecutor,
   model: string,
   effort: string,
   outputSchema: unknown,
-  options: Pick<SwarmTurnOptions, "signal"> = {},
+  options: Pick<SwarmTurnOptions, "signal" | "cwd">,
 ): RunTurn {
   return async function runTurn(prompt: string): Promise<HarnessTurnResult> {
     try {
@@ -183,9 +199,14 @@ export function createCodexSwarmTurn(
         effort,
         prompt,
         outputSchema,
+        cwd: options.cwd,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      return { status: "emitted", body: result.output };
+      return {
+        status: "emitted",
+        body: result.output,
+        observed: { model: result.model ?? model, apiKeySource: null },
+      };
     } catch (error) {
       return { status: "failed", message: error instanceof Error ? error.message : String(error) };
     }
@@ -226,12 +247,6 @@ export interface KnowledgeSwarmDeps {
   readonly repoRoot: string;
   /** The resolved base OID the snapshot must be fresh at. */
   readonly baseOid: string;
-  /**
-   * The OID the prior knowledge set was generated against. When given and a
-   * prior set exists, the run is INCREMENTAL: only partitions owning changed
-   * paths re-run, and untouched statements carry verbatim.
-   */
-  readonly fromOid?: string;
   /** Council context override; default availability is computed from the two ports. */
   readonly council?: CouncilResolveContext;
   /** Concurrent partition workers. Default 4. */
@@ -265,7 +280,7 @@ function turnFor(
   schema: unknown,
   deps: KnowledgeSwarmDeps,
   council: CouncilResolveContext,
-): { runTurn: RunTurn } | { failure: string } {
+): { runTurn: RunTurn; model: string } | { failure: string } {
   const resolution = resolveAssignment(jobId, council);
   if (resolution.kind !== "model") {
     return { failure: `${jobId} resolved to no model (${resolution.trace.summary})` };
@@ -273,12 +288,16 @@ function turnFor(
   if (resolution.harness === "codex") {
     if (!deps.codexExecutor) return { failure: `${jobId} resolved to codex, which is unavailable` };
     return {
+      model: resolution.model,
+      // Rooted at the checkout: a Codex seat reads its evidence like a Claude
+      // seat does — never reasons from filenames in a temp dir (review P0).
       runTurn: createCodexSwarmTurn(
         deps.codexExecutor,
         resolution.model,
         resolution.effort,
         schema,
         {
+          cwd: deps.repoRoot,
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
         },
       ),
@@ -288,6 +307,7 @@ function turnFor(
     return { failure: `${jobId} resolved to claude-code, which is unavailable` };
   }
   return {
+    model: resolution.model,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, schema, {
       cwd: deps.repoRoot,
       label: jobId === "map-verify" ? "knowledge.verify" : "knowledge.worker",
@@ -318,9 +338,15 @@ async function boundedAll<T>(tasks: readonly (() => Promise<T>)[], limit: number
  * Gates the snapshot fresh (typed `snapshot-unavailable`, never a fabricated
  * set), partitions it, fans out the workers on the resolved harness, runs the
  * verify/synthesis seat, and — on `ok` — writes the store. A failed run leaves
- * the store untouched (knowledge degrades to absent honestly). Incremental when
- * `fromOid` is given and a prior set exists: only owning partitions re-run,
- * untouched statements carry verbatim, prior dispositions stay durable by id.
+ * the store untouched (knowledge degrades to absent honestly).
+ *
+ * The runner decides its own mode from the PRIOR SET'S IDENTITY (review P1 —
+ * never a caller-supplied `fromOid`): a prior set from this generator+schema at
+ * this baseline is a no-op skip; at an older baseline it is an incremental run
+ * (delta base = `prior.baseOid`, only owning partitions re-run, untouched
+ * statements carry verbatim, dispositions durable by id); a prior set from a
+ * FOREIGN generator or schema (the retired flat pass) is replaced by a full
+ * run — it never survives as carry substrate.
  */
 export async function runKnowledgeSwarmForRepo(
   deps: KnowledgeSwarmDeps,
@@ -342,24 +368,47 @@ export async function runKnowledgeSwarmForRepo(
   if ("failure" in verify) return { status: "failed", reason: verify.failure };
 
   const partitions = buildPartitions(snapshot);
-  const prior = deps.knowledgeStore.loadLocal(deps.repoKey);
+  const loaded = deps.knowledgeStore.loadLocal(deps.repoKey);
+  const priorEligible =
+    loaded !== null &&
+    loaded.generator === KNOWLEDGE_SWARM_GENERATOR_ID &&
+    loaded.schemaVersion === KNOWLEDGE_SCHEMA_VERSION;
+  const prior = priorEligible ? loaded : null;
+  if (prior && prior.baseOid === snapshot.baseOid) {
+    return { status: "skipped", reason: "the knowledge set is already current at this baseline" };
+  }
 
   let slicesToRun: readonly PartitionSlice[] = partitions;
   let carried: readonly KnowledgeStatement[] = [];
   let priorReverify: PartitionWorkerResult | null = null;
-  if (prior && deps.fromOid !== undefined) {
-    const changed = await changedPathsBetween(
-      deps.git ?? execaGit,
-      deps.repoRoot,
-      deps.fromOid,
-      deps.baseOid,
-    );
+  if (prior) {
+    const git = deps.git ?? execaGit;
+    let changed: string[];
+    let priorPaths: string[];
+    try {
+      changed = await changedPathsBetween(git, deps.repoRoot, prior.baseOid, snapshot.baseOid);
+      priorPaths = await pathsAtOid(git, deps.repoRoot, prior.baseOid);
+    } catch (error) {
+      // An unreadable interval is a FAILED pass the scheduler retries — reading
+      // it as "nothing changed" would silently drop the whole delta (review P1).
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "failed", reason: `changed-path resolution failed: ${message}` };
+    }
     if (changed.length === 0) {
       return { status: "skipped", reason: "no changed paths between the baselines" };
     }
-    slicesToRun = routeDelta(partitions, changed);
-    const plan = planReverify(prior, changed);
+    // Prior ownership for orphaned (deleted / re-scoped) paths: the prior
+    // inventory partitioned under the current scope graph (blobOids are not
+    // consulted by routing).
+    const priorPartitions = buildPartitions({
+      ...snapshot,
+      files: priorPaths.map((path) => ({ path, blobOid: "" })),
+    });
+    slicesToRun = routeDelta(partitions, changed, priorPartitions);
+    const plan = planReverify(prior, changed, snapshot.files);
     carried = plan.carried;
+    // `plan.invalidated` (evidence entirely gone) is deliberately NOT carried and
+    // NOT re-verified: those statements die with their evidence.
     if (plan.reverify.length > 0) {
       // Prior statements whose cited evidence changed re-enter the verify seat as
       // a synthetic worker result (no hints; the seat re-adjudicates per span).
@@ -374,7 +423,9 @@ export async function runKnowledgeSwarmForRepo(
     }
   }
 
-  const provenance = { model: null, apiKeySource: null };
+  // Seat-level seeds: each mint names the model the council resolved for THAT
+  // seat; a turn's observed facts override at mint time (review P2).
+  const provenance = { model: worker.model, apiKeySource: null };
   const total = slicesToRun.length;
   for (const [index, slice] of slicesToRun.entries()) {
     deps.onProgress?.({
@@ -413,15 +464,21 @@ export async function runKnowledgeSwarmForRepo(
     deps.concurrency ?? 4,
   );
   const failedPartitions = results.filter((result) => result.status === "failed").length;
-  if (failedPartitions === results.length && results.length > 0 && priorReverify === null) {
-    return { status: "failed", reason: "every partition worker failed" };
+  if (failedPartitions > 0) {
+    // All-or-keep-prior (review P1): a partial swarm must never REPLACE the
+    // store — a set silently missing failed slices' knowledge reads as complete.
+    // The prior set stays; the scheduler's retry runs the whole delta again.
+    return {
+      status: "failed",
+      reason: `${failedPartitions} of ${results.length} partition workers failed`,
+    };
   }
 
   deps.onProgress?.({ kind: "verify", status: "running" });
   const verifyResult = await runMapVerify({
     workerResults: priorReverify === null ? results : [...results, priorReverify],
     snapshot,
-    provenance,
+    provenance: { model: verify.model, apiKeySource: null },
     runTurn: verify.runTurn,
   });
   if (verifyResult.status !== "ok" || verifyResult.set === undefined) {
