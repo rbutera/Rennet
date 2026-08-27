@@ -4,10 +4,10 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 1. Test rig — MemoryBridge
 
-- [ ] 1.1 Author `packages/app-ui/src/test/memory-bridge.ts`: `MemoryBridge implements RennetBridge` (`packages/protocol/src/wire.ts`). Constructor takes per-command handlers keyed by `CommandName` and typed through `CommandInput<K>`/`CommandOutput<K>`; an un-handled command rejects with the command name (loud, never a silent `undefined`). Implement the five optional push channels (`onProgress`, `onProjectDetailProgress`, `onAskStream`, `onAttention`, `onUpdateReady`) as subscribable emitters with test-side `emit*` helpers and working unsubscribes; `platform`/`version` settable per instance.
-- [ ] 1.2 Fixture bridges live under `packages/app-ui/src/test/` only (e.g. `test/fixtures/`): a fixture is a `MemoryBridge` pre-loaded with handlers, never an importable data module. Unit tests: invoke round-trip, unhandled-command rejection, push-channel emit reaches subscribers and stops after unsubscribe.
-- [ ] 1.3 Fence test (INVENTORY §13 made self-enforcing): a test walks the import graph (or greps import specifiers) of every module under `packages/app-ui/src/` *outside* `src/test/` and fails if any imports from `src/test/`. Prove it with a positive control once: add a violating import, watch it fail, revert.
-- [ ] 1.4 Cluster gate green. Commit.
+- [x] 1.1 Author `packages/app-ui/src/test/memory-bridge.ts`: `MemoryBridge implements RennetBridge` (`packages/protocol/src/wire.ts`). Constructor takes per-command handlers keyed by `CommandName` and typed through `CommandInput<K>`/`CommandOutput<K>`; an un-handled command rejects with the command name (loud, never a silent `undefined`). Implement the five optional push channels (`onProgress`, `onProjectDetailProgress`, `onAskStream`, `onAttention`, `onUpdateReady`) as subscribable emitters with test-side `emit*` helpers and working unsubscribes; `platform`/`version` settable per instance.
+- [x] 1.2 Fixture bridges live under `packages/app-ui/src/test/` only (e.g. `test/fixtures/`): a fixture is a `MemoryBridge` pre-loaded with handlers, never an importable data module. Unit tests: invoke round-trip, unhandled-command rejection, push-channel emit reaches subscribers and stops after unsubscribe.
+- [x] 1.3 Fence test (INVENTORY §13 made self-enforcing): a test walks the import graph (or greps import specifiers) of every module under `packages/app-ui/src/` *outside* `src/test/` and fails if any imports from `src/test/`. Prove it with a positive control once: add a violating import, watch it fail, revert. (Test files excluded — they legitimately import the mount harness; the rule guards surface code.)
+- [x] 1.4 Cluster gate green. Commit.
 
 ## 2. The data seam — `app-ui/src/data/`
 
