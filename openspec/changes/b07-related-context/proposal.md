@@ -45,6 +45,8 @@ Add-project UI (C12); standing tracker knowledge through the swarm (B6 owns the 
 
 15. **Scout: tracker-specific URL evidence outranks the key shape (Codex 9).** `ABC-123` is the shape BOTH trackers use, so a `linear.app` link now decides `trackerKind: linear` even when keys repeat, and the dominant prefix classifies as the LINEAR project key. JIRA classification requires the key evidence without a Linear marker.
 
+16. **Harness discovery cannot skip the deterministic scout (Codex 10).** Each port resolver's failure is isolated (`.catch(() => null)`): a rejected discovery narrows availability, and the zero-cost deterministic pass always runs and persists.
+
 ## Verification (packet)
 
 `pnpm check` green. E2E (ruled approach, reconciliation 4): against the frozen real-Rennet-PR fixture, extraction → retrieval produces a dossier where every item carries provenance + fetched-at, total serialized size respects the bound, and the dossier inlines into a B05 `buildDeltaPacket` call without truncation. Positive controls that can fail: oversize body → bounded (schema rejects / item truncated per the shape's rule); drop provenance from a fixture item → schema rejects; break the ref extractor → zero items and the e2e's item-count assert fails.

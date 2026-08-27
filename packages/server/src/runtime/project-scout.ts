@@ -47,9 +47,12 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
     async runForRepo(input: ProjectScoutRunInput): Promise<ScoutResult | null> {
       const repoLabel = basename(input.repoRoot);
       try {
+        // Each resolver failure is isolated to its own harness: a rejected
+        // discovery must not skip the deterministic pass (which needs no model
+        // at all) — it just narrows availability.
         const [claudePort, codexExecutor] = await Promise.all([
-          deps.resolveClaudePort(input.repoRoot),
-          deps.resolveCodexExecutor(input.repoRoot),
+          deps.resolveClaudePort(input.repoRoot).catch(() => null),
+          deps.resolveCodexExecutor(input.repoRoot).catch(() => null),
         ]);
         const installed: CouncilHarnessId[] = [];
         if (claudePort) installed.push("claude-code");
