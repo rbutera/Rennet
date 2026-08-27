@@ -152,7 +152,11 @@ something the preview did not describe.
 1. Gather asks into *Changes*.
 2. Dispatch — one round at a time, one worker in a detached worktree; asks
    gathered mid-run queue for the next round.
-3. Watch the run live.
+3. Watch the run live. Dispatch takes over a dedicated run view (`/s/:slug/run`)
+   that streams the prep, worker, and gate/commit lines as the round advances.
+   The view is deep-linkable and cold: opening it mid-round reattaches to the
+   live progress and never re-dispatches, and when the round reaches its report
+   phase the view hands back to the board surface where the report greets.
 4. On completion the **round report** drafts first — its own seat on its own
    prompt (`packages/prompts`, `src/prompts/report.md`), through the
    same post-process pass as every draft. It verifies each ask against the
@@ -177,11 +181,14 @@ something the preview did not describe.
    from live to frozen and stays as drill-down while the successor is minted.
    Asks, threads, and highlights re-anchor by quote match; casualties land in
    the Detached list.
-7. Every completed round stays readable in the **rounds ledger** — a header
-   control beside Map · Diff that exists exactly when a round has completed.
-   One row per round; each opens that round's report, and each round pins
-   its asks, worker commits, frozen board generation, and the patchset
-   generation it minted, so earlier reports and diffs never vanish.
+7. Every completed round stays readable in the **rounds ledger** (`?view=rounds`)
+   — a header control beside Map · Diff that exists exactly when a round has
+   completed, never a disabled tab. One row per round; each opens that round's
+   report, and each round pins its asks, worker commits, frozen board
+   generation, and the patchset generation it minted. Because #457 appends the
+   new generation and freezes the old rather than overwriting, that frozen
+   generation stays reachable through the generation switcher and its diff
+   through `?view=diff`, so earlier reports and diffs never vanish.
 8. Repeat until nothing is left to ask. The surface becomes the pull
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane
