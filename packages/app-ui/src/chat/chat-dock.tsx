@@ -13,11 +13,11 @@ import { ConversationPane } from "./conversation-pane";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function ChatDock() {
-  const { rows, liveIds, trail, inFlight, send } = useChatDock();
+  const { rows, liveIds, trail, contextWindow, inFlight, send } = useChatDock();
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <ChatHeader trail={trail} />
-      <ConversationPane rows={rows} liveIds={liveIds} />
+      <ConversationPane rows={rows} liveIds={liveIds} contextWindow={contextWindow} />
       <Composer onSend={send} inFlight={inFlight} />
     </div>
   );

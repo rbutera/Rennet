@@ -31,9 +31,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 5. Anchored threads (transcript-side) + honest compaction
 
-- [ ] 5.1 `packages/app-ui/src/chat/anchored-thread.tsx` (reconciliation 6, #466): render a `review.quoteThreads` thread's messages inside the transcript, keyed by a board ref; the board marker is C5's, out of scope here. Focus follows `review.focusedThreadId`.
-- [ ] 5.2 `packages/app-ui/src/chat/compaction-row.tsx` (reconciliation 7): a `compact_boundary` timeline row and the ask-don't-estimate context meter, reading the stubbed projection's compaction data. The meter shows the harness-reported figure or an honest "unknown" — never a fabricated estimate.
-- [ ] 5.3 DOM tests over `MemoryBridge` + projection context: an anchored thread renders its messages transcript-side and focuses on `focusedThreadId`; a `compact_boundary` row renders with the honest meter; a projection reporting no context figure renders "unknown", not a number. Cluster gate green. Commit.
+- [x] 5.1 `packages/app-ui/src/chat/anchored-thread.tsx` (reconciliation 6, #466): render a `review.quoteThreads` thread's messages inside the transcript, keyed by a board ref; the board marker is C5's, out of scope here. Focus follows `review.focusedThreadId`.
+- [x] 5.2 `packages/app-ui/src/chat/compaction-row.tsx` (reconciliation 7): a `compact_boundary` timeline row and the ask-don't-estimate context meter, reading the stubbed projection's compaction data. The meter shows the harness-reported figure or an honest "unknown" — never a fabricated estimate.
+- [x] 5.3 DOM tests over `MemoryBridge` + projection context: an anchored thread renders its messages transcript-side and focuses on `focusedThreadId`; a `compact_boundary` row renders with the honest meter; a projection reporting no context figure renders "unknown", not a number. Cluster gate green. Commit.
 
 ## 6. Barrels, dead-code fence, docs, full gate
 
