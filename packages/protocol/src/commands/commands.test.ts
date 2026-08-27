@@ -113,6 +113,27 @@ describe("command registry invariants (#465)", () => {
     expect(agentIds).toEqual([...AGENT_INVENTORY]);
   });
 
+  it("patchset.readSpan parses a CodeRef citation in and cited lines out (B3 cluster 6)", () => {
+    const citation = {
+      patchsetId: "ps-1",
+      path: "packages/core/src/pipeline.ts",
+      side: "head",
+      startLine: 12,
+      endLine: 14,
+    };
+    expect(parseCommandInput("patchset.readSpan", citation)).toEqual(citation);
+    // A working-tree-style absolute path is still a string — the NEVER-a-working-tree
+    // rule is dispatch's contract (B4/B10); the shape pins patchsetId as mandatory.
+    expect(() => parseCommandInput("patchset.readSpan", { ...citation, patchsetId: "" })).toThrow();
+    const served = {
+      lines: ["const a = 1;", "const b = 2;", "export { a, b };"],
+      contextBefore: ["// pipeline floor"],
+      contextAfter: [""],
+    };
+    expect(parseCommandOutput("patchset.readSpan", served)).toEqual(served);
+    expect(() => parseCommandOutput("patchset.readSpan", { lines: "not-an-array" })).toThrow();
+  });
+
   it("every row's args/output are the parse seams' schemas", () => {
     for (const [id, row] of Object.entries(commands)) {
       expect(row.args, id).toBeInstanceOf(z.ZodType);

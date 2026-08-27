@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CommandInput, CommandName, CommandOutput } from "./commands";
-import type { AnchorSpan, RenderedHunkOccurrence } from "./delta/citations";
+import type { RenderedHunkOccurrence } from "./delta/citations";
 import { anchorSideSchema, anchorSpanSchema } from "./delta/citations";
 import type {
   CiSignal,

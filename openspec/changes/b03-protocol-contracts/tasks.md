@@ -45,7 +45,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 - [x] 6.2 Declare the stable `HunkId` shape and the canonical `CodeRef` (`{patchsetId, path, side: base|head, startLine, endLine, symbol?}`) here; re-point `board/`'s `code_ref` kind and `session/`'s anchors to this one definition (intra-package import; each folder's seam still re-exports what it names).
 - [x] 6.3 Author `DossierItem` per #461 §8: `{id, tracker, title, state, body (bounded), acceptanceCriteria?, url, provenance, fetchedAt}` — deterministically serializable, freshness attached; drafters cite items by `id`.
 - [x] 6.4 Register the **patchset span-read command** in the `commands/` table (client asset risk 2): input = a `CodeRef`-shaped citation (patchset id, path, side, span), output = the cited lines with minimal context — hydrated from the captured patchset, never a working tree. The row ships unbound (dispatch binds in B4/B10; unknown-command on the wire until then — reconciliation 8). Classify its path fields as repo-relative in `packages/server/src/projection.test.ts`'s `PATH_FIELD_CLASSIFICATIONS` so the coverage guard stays green.
-- [ ] 6.5 Fixture tests (dossier item round-trip; span-read input/output parse). Cluster gate green. Commit.
+- [x] 6.5 Fixture tests (dossier item round-trip; span-read input/output parse). Cluster gate green. Commit.
 
 ## 7. Root seam + docs (definition of done)
 
