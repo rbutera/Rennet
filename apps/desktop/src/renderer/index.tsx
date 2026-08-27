@@ -3,6 +3,7 @@ import {
   ConnectionHost,
   type ConnectionTarget,
   type DaemonResolution,
+  hashHistory,
 } from "@rennet/app-ui";
 import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
 import type { RennetBridge } from "@rennet/protocol";
@@ -113,6 +114,7 @@ createRoot(root).render(
       resolveDaemonTarget={resolveDaemonTarget}
       logWslConnect={preload.logWslConnect}
       listWslDistros={preload.listWslDistros}
+      history={hashHistory}
     />
   </StrictMode>,
 );

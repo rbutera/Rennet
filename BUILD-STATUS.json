@@ -19,7 +19,7 @@
   "b11": { "status": "pending", "passes": false },
   "c01": { "status": "done", "passes": true },
   "c02": { "status": "done", "passes": true },
-  "c03": { "status": "pending", "passes": false },
+  "c03": { "status": "done", "passes": true },
   "c04": { "status": "pending", "passes": false },
   "c05": { "status": "pending", "passes": false },
   "c06": { "status": "pending", "passes": false },

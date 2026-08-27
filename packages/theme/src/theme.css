@@ -42,6 +42,13 @@
   --color-green-line: var(--rn-green-line);
   --color-danger: var(--rn-danger);
   --color-danger-soft: var(--rn-danger-soft);
+  /* verdigris — the machine's voice (R53): the sidebar's unread-orchestrator dot. */
+  --color-model: var(--rn-model);
+  /* the update control's fill (INVENTORY §1: accent-filled). Tokenised here so the
+   * sidebar's Update control reads `bg-update`/`text-update-ink` from the theme
+   * instead of inlining the accent, keeping the hex fence the proof. */
+  --color-update: var(--rn-accent-fill);
+  --color-update-ink: var(--rn-accent-ink);
   /* paper */
   --color-sheet: var(--rn-sheet);
   --color-sheet-ink: var(--rn-sheet-ink);
