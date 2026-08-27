@@ -78,10 +78,12 @@ describe("ProseSelectionLayer — board-prose selection controls", () => {
     await user.type(getByPlaceholderText("What change are you requesting?"), "guard the boundary");
     await user.click(getByText("Stage"));
     const [id] = Object.keys(reviewState().quoteThreads);
-    expect(id).toBeDefined();
-    // The ask keeps the quoted span as source provenance AND claims the thread by id —
-    // distinct fields, so an exit tally counts the thread once without conflation.
-    expect(reviewState().stagedAsks[PROSE]).toEqual({
+    if (!id) throw new Error("expected a minted quote thread");
+    // The ask is keyed by its IDENTITY (the minted thread id), keeps the quoted span as source
+    // provenance, AND claims the thread by id — distinct fields, so two request-changes on identical
+    // prose stay separate and an exit tally counts the thread once without conflation.
+    expect(reviewState().stagedAsks[id]).toEqual({
+      id,
       anchor: PROSE,
       type: "request-change",
       body: "guard the boundary",

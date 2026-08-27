@@ -115,6 +115,19 @@ export { CoverageMosaicView } from "./components/coverage";
 // `fs.listDir` so browsing works over a remote/WSL source with no native dialog.
 export { DirectoryBrowser } from "./components/directory-browser";
 export { FrontDoor } from "./components/front-door";
+// The hand-off layer (C08, #489): the review's leaving surfaces — the exit FAB + derived pip,
+// the mode-dispatched hand-off view, and the egress-return / draft types the exits speak. See
+// `handoff/index.ts`.
+export type {
+  DraftedPr,
+  EntryMode,
+  ExitFabProps,
+  HandoffViewProps,
+  PostReceipt,
+  ProposedVerdict,
+  PrReceipt,
+} from "./handoff";
+export { ExitFab, HandoffView, modeHasExits, resolveEntryMode } from "./handoff";
 // The Archived surface (C10 §9): its own main-surface route, enriched in place on
 // C12's `project/archived-view.tsx`.
 export { ArchivedView } from "./project/archived-view";

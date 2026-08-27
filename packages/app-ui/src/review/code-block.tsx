@@ -2,6 +2,7 @@ import { cn } from "@rennet/ui";
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Icon } from "../components/icon";
+import { useFlightBatcher } from "../handoff/exit-flight";
 import { selectCodeComments, useRennetStore } from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { LineCommentEditor } from "./line-comment-editor";
@@ -54,6 +55,7 @@ export function CodeBlock({
   const comments = useRennetStore(selectCodeComments(path));
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const flight = useFlightBatcher();
 
   const [copied, setCopied] = useState(false);
   const [openLine, setOpenLine] = useState<number | null>(null);
@@ -67,11 +69,12 @@ export function CodeBlock({
   // Lines with a staged request-change ask (anchor `${path}:${line}`) read danger red.
   const askLines = useMemo(() => {
     const lines = new Set<number>();
-    for (const [anchor, ask] of Object.entries(stagedAsks)) {
+    // Match by the ask's `anchor` (its provenance), never the map key (now the ask id, not anchor).
+    for (const ask of Object.values(stagedAsks)) {
       if (ask.type !== "request-change") continue;
-      const colon = anchor.lastIndexOf(":");
-      if (colon < 0 || anchor.slice(0, colon) !== path) continue;
-      const line = Number.parseInt(anchor.slice(colon + 1), 10);
+      const colon = ask.anchor.lastIndexOf(":");
+      if (colon < 0 || ask.anchor.slice(0, colon) !== path) continue;
+      const line = Number.parseInt(ask.anchor.slice(colon + 1), 10);
       if (!Number.isNaN(line)) lines.add(line);
     }
     return lines;
@@ -242,11 +245,14 @@ export function CodeBlock({
                         // A code line is a real diff position: the comment saves AND a
                         // request-change ask stages against `${path}:${line}` (R36).
                         setCodeComment(path, lineNumber, text);
+                        // Identity is `path:line` — one request-change per line (re-save replaces).
                         stageAsk({
+                          id: `${path}:${lineNumber}`,
                           anchor: `${path}:${lineNumber}`,
                           type: "request-change",
                           body: text,
                         });
+                        flight.signal(); // the staging act flies one bubble to the FAB
                         setOpenLine(null);
                       }}
                     />

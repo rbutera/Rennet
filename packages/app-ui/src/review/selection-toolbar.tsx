@@ -3,6 +3,7 @@ import { GitPullRequestArrow, MessageSquare, Pencil, Sparkles, Trash2 } from "lu
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/icon";
+import { useFlightBatcher } from "../handoff/exit-flight";
 import { useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,6 +17,13 @@ import { useRennetStore } from "../store";
 
 /** The opener for an Explain thread — a question to the orchestrator, never a review verb. */
 const EXPLAIN_OPENER = "Explain this passage.";
+
+// Revise's EXECUTION is gated to cluster 8 (B11/B9's span-rework command, the `reviseDraftSpan`
+// seam). The affordance renders — the reviewer can open it and draft an instruction (packet task
+// 4.3) — but it must NOT pretend to run: it previously called the no-op `onRevise` and dismissed as
+// though the rework began. Until the seam is bound the control is disabled and says so. Cluster 8
+// flips this to `true` when `reviseDraftSpan` executes for real.
+const REVISE_WIRED = false;
 
 /**
  * The board-anchor identity of a selection (finding 2): the element id it landed in
@@ -65,6 +73,7 @@ export function ProseSelectionLayer({
   const [draft, setDraft] = useState("");
   const [explanation, setExplanation] = useState("");
   const { addQuoteComment, setFocusedThread, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const flight = useFlightBatcher();
 
   const dismiss = useCallback(() => {
     setAnchor(null);
@@ -153,7 +162,10 @@ export function ProseSelectionLayer({
       target: anchor.target,
       generation: anchor.generation,
     });
-    stageAsk({ anchor: anchor.quote, type: "request-change", body: text, threadId: id });
+    // Identity is the minted thread id — unique per selection, so two request-changes on identical
+    // prose (or the same span twice) stay separate asks instead of collapsing on the quote text.
+    stageAsk({ id, anchor: anchor.quote, type: "request-change", body: text, threadId: id });
+    flight.signal(); // the quote request-change stages one ask and flies one bubble (batched)
     setFocusedThread(id);
     window.getSelection()?.removeAllRanges();
     dismiss();
@@ -161,6 +173,10 @@ export function ProseSelectionLayer({
 
   function handleEditorSave() {
     if (mode === "revise") {
+      // Gated to cluster 8: do NOT fake success. While unwired, the Rework control is disabled and
+      // the panel says so, so this stays a no-op that keeps the editor open rather than dismissing
+      // as though the rework was queued. When cluster 8 binds the seam it flips `REVISE_WIRED`.
+      if (!REVISE_WIRED) return;
       const instruction = draft.trim();
       if (anchor && draftHandlers && instruction.length > 0)
         draftHandlers.onRevise(anchor.quote, instruction);
@@ -290,6 +306,12 @@ export function ProseSelectionLayer({
                 rows={2}
                 className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
               />
+              {/* Revise is gated (cluster 8): the panel states the truth rather than faking a run. */}
+              {mode === "revise" && !REVISE_WIRED && (
+                <p className="mt-1.5 text-2xs leading-snug text-muted-foreground">
+                  Revise runs with the next round — not available yet.
+                </p>
+              )}
               <div className="mt-1.5 flex items-center justify-end gap-1">
                 <button
                   type="button"
@@ -301,7 +323,13 @@ export function ProseSelectionLayer({
                 <button
                   type="button"
                   onClick={handleEditorSave}
-                  className="rounded-md bg-primary px-2.5 py-1 text-2xs font-medium text-primary-foreground hover:bg-primary/90"
+                  disabled={mode === "revise" && !REVISE_WIRED}
+                  title={
+                    mode === "revise" && !REVISE_WIRED
+                      ? "Revise runs with the next round — not available yet."
+                      : undefined
+                  }
+                  className="rounded-md bg-primary px-2.5 py-1 text-2xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
                 >
                   {mode === "revise" ? "Rework" : mode === "comment-rc" ? "Stage" : "Save"}
                 </button>
