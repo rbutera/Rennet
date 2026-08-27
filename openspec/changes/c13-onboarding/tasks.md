@@ -8,11 +8,11 @@ Serial clusters. Each cluster is one session. Search before implementing
 - [x] Create `packages/app-ui/src/coach/marks.ts`: port the `MarkId` union
       (nine ids, `start-review` first), `Mark` interface, `MARKS` array (spike
       copy verbatim — the teaching voice per R55), and `MARK_BY_ID`.
-- [ ] Create `coach/store.ts`: port the one-at-a-time election (first unseen
+- [x] Create `coach/store.ts`: port the one-at-a-time election (first unseen
       registered mark in system order), register/unregister, dismiss (learned by
       ✕ or by using the anchor), `skipEverything`, `replay`, and the chain-delay
       gap between marks on the same surface.
-- [ ] Persistence is injected, not `localStorage`: the store reads initial
+- [x] Persistence is injected, not `localStorage`: the store reads initial
       `{ seen, skipAll }` from a snapshot the provider feeds (Cluster 3 supplies
       it from `settings.get`) and calls an injected `persist({seen,skipAll})` on
       every change. **No `localStorage`, no `?tour=reset`, no module-level
