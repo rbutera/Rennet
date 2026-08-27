@@ -197,3 +197,8 @@ export const selectCodeComment =
   (path: string, line: number) =>
   (s: RennetState): string | undefined =>
     s.review.codeComments[path]?.[line];
+/** Every code comment on `path`, keyed by line — the map a code surface renders from. */
+export const selectCodeComments =
+  (path: string) =>
+  (s: RennetState): Readonly<Record<number, string>> | undefined =>
+    s.review.codeComments[path];

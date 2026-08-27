@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRennetStore } from "../store";
-import { mount, waitFor } from "../test/dom";
+import { act, fireEvent, mount } from "../test/dom";
 import { CodeBlock } from "./code-block";
 
 const CODE = "const a = 1\nconst b = 2\nconst c = 3";
@@ -50,22 +50,60 @@ describe("CodeBlock — the one code surface", () => {
       body: "rename",
     });
     expect(stateOf(2, container)).toBe("ask");
+    // The real danger-red class rides the row, not just the synthetic state attr.
+    expect(container.querySelector('[data-line="2"]')?.className).toContain("bg-destructive/25");
   });
 
-  it("line state follows the store: cited (green) for a highlight, plain otherwise", () => {
+  it("a highlight paints the real evidence-green class; the + button is hover-only until used", () => {
     const { container } = mount(
       <CodeBlock code={CODE} path={PATH} startLine={1} highlightLines={[2]} />,
     );
+    const cited = container.querySelector('[data-line="2"]');
+    const plain = container.querySelector('[data-line="1"]');
     expect(stateOf(2, container)).toBe("cited");
     expect(stateOf(1, container)).toBe("plain");
+    // Evidence green rides the cited row; the plain row carries no green.
+    expect(cited?.className).toContain("bg-green/15");
+    expect(plain?.className).not.toContain("bg-green/15");
+    // A commentless line reveals its + button only on hover (hidden until group-hover).
+    const plainButton = plain?.querySelector("button");
+    expect(plainButton?.className).toContain("hidden");
+    expect(plainButton?.className).toContain("group-hover:flex");
   });
 
-  it("Copy copies the code and shows its confirmation", async () => {
-    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-    const { getByText, user } = mount(<CodeBlock code={CODE} path={PATH} />);
-    await user.click(getByText("Copy"));
-    expect(writeText).toHaveBeenCalledWith(CODE);
-    await waitFor(() => expect(getByText("Copied")).toBeTruthy());
+  it("Copy copies the code, shows its confirmation, and clears it after the 1.5s timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      const { getByText } = mount(<CodeBlock code={CODE} path={PATH} />);
+      fireEvent.click(getByText("Copy"));
+      expect(writeText).toHaveBeenCalledWith(CODE);
+      // Flush the clipboard microtask so setCopied(true) applies.
+      await act(async () => {});
+      expect(getByText("Copied")).toBeTruthy();
+      // The 1.5s timeout must actually clear the confirmation back to "Copy".
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      expect(getByText("Copy")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the header path is an inert label by default, and a nav button when onOpenPath is passed", async () => {
+    const plain = mount(<CodeBlock code={CODE} path={PATH} />);
+    expect(plain.getByText(PATH).tagName).toBe("SPAN");
+    plain.unmount();
+
+    const onOpenPath = vi.fn();
+    const { getByText, user } = mount(
+      <CodeBlock code={CODE} path={PATH} onOpenPath={onOpenPath} />,
+    );
+    const pathButton = getByText(PATH);
+    expect(pathButton.tagName).toBe("BUTTON");
+    await user.click(pathButton);
+    expect(onOpenPath).toHaveBeenCalledWith(PATH);
   });
 
   it("renders the counterpart button exactly when passed, and calls onView", async () => {

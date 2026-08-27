@@ -45,6 +45,7 @@ export type {
 export {
   createReviewSlice,
   selectCodeComment,
+  selectCodeComments,
   selectStagedAsk,
   selectStagedAskCount,
 } from "./review";

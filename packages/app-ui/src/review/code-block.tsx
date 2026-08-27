@@ -2,19 +2,17 @@ import { cn } from "@rennet/ui";
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Icon } from "../components/icon";
-import { useRennetStore } from "../store";
+import { selectCodeComments, useRennetStore } from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { LineCommentEditor } from "./line-comment-editor";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The ONE code surface (C4). Every code appearance in the product renders through
-// here — chat tool output, board code elements, excerpt tabs, click-to-reveal panels.
-// Tokenized through the EXISTING synchronous syntax/shiki.ts (reconciliation 3): no
-// async load, no skeleton state, one tokenization pipeline shared with CodeView. Comments
-// and asks read/write the `review` slice DIRECTLY (no CodeCommentsProvider shim, no
-// `store?.` guard — reconciliation 8). A commented line shows a persistent glyph; a
-// line carrying a staged request-change ask reads danger red, a plain comment or a
-// cited/highlighted line reads evidence green.
+// The ONE code surface (C4): every code appearance in the product renders through here.
+// Two load-bearing decisions: tokenization is SYNCHRONOUS (the existing syntax/shiki.ts —
+// no async load, no skeleton, reconciliation 3), and comments/asks read and write the
+// `review` slice DIRECTLY (no provider shim, no `store?.` guard — reconciliation 8).
+// Header-path navigation is host-supplied via `onOpenPath` (routing is a C5–C9 surface
+// concern, not this component's — same seam shape as `counterpart`).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CodeBlockProps {
@@ -35,6 +33,12 @@ export interface CodeBlockProps {
     readonly path: string;
     onView(): void;
   };
+  /**
+   * Host-supplied header-path navigation (the Diff-view jump the docs promise). When
+   * set, the header path is a button that calls this with the file path; absent ⇒ inert
+   * label. Routing lives in the C5–C9 surface, not here — same pattern as `counterpart`.
+   */
+  readonly onOpenPath?: (path: string) => void;
   readonly className?: string;
 }
 
@@ -44,9 +48,10 @@ export function CodeBlock({
   startLine = 1,
   highlightLines,
   counterpart,
+  onOpenPath,
   className,
 }: CodeBlockProps) {
-  const comments = useRennetStore((s) => s.review.codeComments[path]);
+  const comments = useRennetStore(selectCodeComments(path));
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
 
@@ -98,9 +103,20 @@ export function CodeBlock({
       <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/50 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
           <Icon icon={FileCode} className="size-3.5 shrink-0 text-muted-foreground" />
-          <span title={path} className="truncate font-mono text-2xs text-foreground/80">
-            {path}
-          </span>
+          {onOpenPath ? (
+            <button
+              type="button"
+              title={path}
+              onClick={() => onOpenPath(path)}
+              className="truncate font-mono text-2xs text-foreground/80 hover:text-foreground hover:underline"
+            >
+              {path}
+            </button>
+          ) : (
+            <span title={path} className="truncate font-mono text-2xs text-foreground/80">
+              {path}
+            </span>
+          )}
           <span className="shrink-0 text-2xs text-muted-foreground">
             {lineCount > 1 ? `L${startLine}–${endLine}` : `L${startLine}`}
           </span>
