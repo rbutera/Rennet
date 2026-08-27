@@ -37,7 +37,10 @@ model routing.
 
 The current port exposes descriptor and health information plus one operation:
 `createSession(spec)`. A session then provides one event stream and the `send`,
-`interrupt`, and `close` methods. Resume and fork are not part of the interface.
+`interrupt`, and `close` methods. `SessionSpec` now carries an optional
+`resume?: { harnessSessionId: string }`: a spec with it continues a prior
+harness conversation, one without it starts fresh. Fork is still not part of the
+interface.
 
 Every event carries the same envelope:
 
@@ -69,6 +72,55 @@ flowchart TD
 Tool results keep both structured output and readable text. Terminal outcomes
 are a discriminated union of `completed`, `cancelled`, and `failed`, so missing
 usage or structured output cannot be mistaken for a successful empty value.
+
+## Cursor-resume and the turn loop
+
+Interactive turns run **fresh process per turn plus resume**, the pattern the
+harness CLIs are built for: the CLI owns the transcript, the compaction, and the
+prompt cache; Rennet persists only a pointer into that transcript — the
+`HarnessCursor` (`harnessSessionId` plus the last-assistant anchor and a turn
+count) — and re-passes it on the next turn through `SessionSpec.resume`. Rennet
+owns the turn loop (`packages/server/src/session/turn-loop.ts`) and holds two
+rules over it: **serialize turns per harness id** — one turn in flight per
+session at a time, a second queues rather than racing the same transcript — and
+**re-pass the options every turn**, because each turn is a fresh process and
+nothing (model, tools, cwd, system prompt) is sticky across it. After each turn
+the loop persists the updated cursor to the `SessionStore`.
+
+Resume is a Claude capability, honestly. The Claude adapter implements it end to
+end: `SessionSpec.resume` maps to the SDK's resume option, and a completed turn
+surfaces the harness session id so the durable session persists a real cursor —
+so the Claude adapter advertises the `resume` capability. The **Codex adapter
+does not**. Its app-server thread-resume path and returned cursor cannot be
+verified against the live binary offline, and wiring a durable Codex cursor by
+guess would be a broken path, not a capability. So Codex leaves `resume`
+unimplemented (capability flag `false`): a resume spec against Codex simply
+never surfaces a cursor, the loop never builds one for it, and each Codex turn
+starts fresh — the honest degrade, no fabricated cursor.
+
+When a persisted cursor points at a harness session the CLI no longer has (the
+transcript is gone), the loop does not fail and does not pretend. It surfaces a
+**`context_rebuilt`** turn-stream row, starts a fresh harness session, and keeps
+the **boards canonical** — the reconstructed session re-reads them from the
+event log and never drops or re-drafts them. The transcript is the harness's to
+lose; the boards are Rennet's, and they survive.
+
+## Compaction, surfaced not estimated
+
+When the harness compacts its own context, Rennet shows that it happened rather
+than hiding or guessing it. A harness compaction event becomes exactly one
+**`compact_boundary`** row in the turn stream. The row carries the harness's own
+structured `compact_metadata` — the `trigger` (`manual` or `auto`) and its
+pre/post token counts, each present only when the harness reported it, never a
+substituted zero. The live SDK frame carries **no free-text summary** (the
+compacted conversation summary goes to the CLI's own transcript, which the live
+stream filters out), so Rennet forwards the structured metadata verbatim and
+never attributes a fabricated prose sentence to the harness.
+
+The context meter follows the same rule: it **asks, it does not estimate**. It
+reports only what the harness states about its context window, and is absent —
+not zero, not a computed percentage — when the harness gives no figure. An
+invented budget would be a lie in the UI; an honest gap is the truth.
 
 ## Claude Code
 

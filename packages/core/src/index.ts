@@ -64,6 +64,7 @@ export * from "./review-ask";
 export * from "./review-intelligence-budget";
 export * from "./risk-crosscheck";
 export * from "./route-plan";
+export * from "./session";
 export * from "./settings-resolver";
 export * from "./snapshot-overlay";
 export * from "./successor-account";
