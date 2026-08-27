@@ -9,6 +9,7 @@ import {
   type ForgeReviewPost,
   foldAsks,
   mechanicalComposition,
+  type ReviewBodyNote,
   type ReviewCommentInput,
 } from "@rennet/core";
 import type { ComposedHandoffBundle, HandoffBundle, Review } from "@rennet/protocol";
@@ -207,11 +208,12 @@ function recordingPublishPort(): ForgePublishPort & { posts: ForgeReviewPost[] }
 type ComposeReview = {
   status: "review";
   comments: ReviewCommentInput[];
+  bodyNotes: ReviewBodyNote[];
   payload: string;
   verdict: string;
   compositionId: string;
 };
-type DryRun = { dryRun: boolean; outcome: unknown };
+type DryRun = { dryRun: boolean; outcome: unknown; request: { body: unknown } };
 
 describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts (6.4)", () => {
   it("previews the composed bytes without egress; a mutated payload fails the exact-preview", async () => {
@@ -227,12 +229,18 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
     const askH = askHandlers(rt);
     const publish = publishHandlers(rt);
 
-    // Stage a code-anchored ask + a bare line comment — the two-strata line comments.
+    // Stage a code-anchored ask + a bare line comment (the LINE stratum) AND a prose ask (the
+    // BODY stratum — B11 finding 2: a pathless request-change must travel in the review body,
+    // not vanish). This is the two-strata coverage the old E2E lacked (finding 10c).
     await askH["ask.stage"]({
       sessionId: SID,
       ask: { id: "a1", anchor: "src/x.ts:10", type: "request-change", body: "rename the export" },
     });
     await askH["ask.setLineComment"]({ sessionId: SID, path: "src/a.ts", line: 3, body: "typo" });
+    await askH["ask.stage"]({
+      sessionId: SID,
+      ask: { id: "p1", anchor: "The architecture section.", type: "comment", body: "PROSE NOTE" },
+    });
 
     // Compose the review from the durable projection.
     const composed = (await publish["publish.compose"]({
@@ -242,8 +250,10 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
     })) as ComposeReview;
     expect(composed.status).toBe("review");
     expect(composed.comments.length).toBeGreaterThan(0);
-    // The compose payload IS the canonical bytes of its own comments (the single source).
-    expect(canonicalReviewPayload(composed.comments)).toBe(composed.payload);
+    // The prose ask surfaced as a BODY note (exactly once) — not dropped, not a line comment.
+    expect(composed.bodyNotes).toEqual([{ type: "comment", body: "PROSE NOTE" }]);
+    // The compose payload IS the canonical bytes of BOTH strata (the single source).
+    expect(canonicalReviewPayload(composed.comments, composed.bodyNotes)).toBe(composed.payload);
 
     // Preview (dryRun defaults TRUE): builds the exact request, posts NOTHING.
     const dry = (await publish["publish.review"]({
@@ -251,12 +261,17 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
       reviewId: SID,
       target: POST_TARGET,
       comments: composed.comments,
+      bodyNotes: composed.bodyNotes,
       payload: composed.payload,
       verdict: composed.verdict,
       compositionId: composed.compositionId,
     })) as DryRun;
     expect(dry.dryRun).toBe(true);
     expect(dry.outcome).toBeNull();
+    // The prose note appears EXACTLY ONCE in the outbound review body, and nowhere in the line
+    // comments — proving the body stratum posts, once, where it belongs (finding 2 / 10c).
+    const requestJson = JSON.stringify(dry.request.body);
+    expect(requestJson.split("PROSE NOTE").length - 1).toBe(1);
     // NOTHING left the machine — the recording port saw zero real posts.
     expect(publishPort.posts).toHaveLength(0);
 

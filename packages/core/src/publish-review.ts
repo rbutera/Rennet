@@ -56,9 +56,11 @@ export const DEFAULT_REVIEW_EVENT: ForgeReviewEvent = "COMMENT";
  * there are approvals and nothing was requested-changed, `APPROVE`; else a neutral
  * `COMMENT`. Questions and plain comments alone never escalate past `COMMENT`.
  */
-export function deriveReviewEvent(comments: readonly ReviewCommentInput[]): ForgeReviewEvent {
-  if (comments.some((comment) => comment.type === "request-change")) return "REQUEST_CHANGES";
-  if (comments.some((comment) => comment.type === "approve")) return "APPROVE";
+export function deriveReviewEvent(
+  outbound: readonly { readonly type: DispositionType }[],
+): ForgeReviewEvent {
+  if (outbound.some((item) => item.type === "request-change")) return "REQUEST_CHANGES";
+  if (outbound.some((item) => item.type === "approve")) return "APPROVE";
   return "COMMENT";
 }
 
@@ -68,10 +70,10 @@ export function deriveReviewEvent(comments: readonly ReviewCommentInput[]): Forg
  * first, overridable" (Rai, 2026-08-09).
  */
 export function resolveReviewEvent(
-  comments: readonly ReviewCommentInput[],
+  outbound: readonly { readonly type: DispositionType }[],
   verdict?: ForgeReviewEvent,
 ): ForgeReviewEvent {
-  return verdict ?? deriveReviewEvent(comments);
+  return verdict ?? deriveReviewEvent(outbound);
 }
 
 /**
@@ -90,6 +92,20 @@ export interface ReviewCommentInput {
 }
 
 /**
+ * One review-BODY note — the body stratum (B11 P0 finding 2). An ask with no diff position
+ * (a prose/quote-of-board ask, or a path-only ask) cannot pin to a line, so it travels in
+ * the review BODY rather than vanishing from the posted review (handoff-and-exits.md "The
+ * review's two strata"). Carries only the outbound `type` + `body`; the source anchor is
+ * provenance and never egresses. `anchor` is optional provenance for a deterministic sort.
+ */
+export interface ReviewBodyNote {
+  readonly type: DispositionType;
+  readonly body: string;
+  /** Source provenance (the prose span / path) — used only to sort deterministically. */
+  readonly anchor?: string;
+}
+
+/**
  * The canonical outbound bytes for a posted review — reproduced here so the MAIN
  * egress boundary can verify them independently of the renderer.
  *
@@ -103,7 +119,10 @@ export interface ReviewCommentInput {
  * tolerated. This is the byte-exact contract the #106 fail-closed and this slice
  * both build on.
  */
-export function canonicalReviewPayload(comments: readonly ReviewCommentInput[]): string {
+export function canonicalReviewPayload(
+  comments: readonly ReviewCommentInput[],
+  bodyNotes: readonly ReviewBodyNote[] = [],
+): string {
   return JSON.stringify({
     kind: "pr-review",
     comments: comments.map((comment) => ({
@@ -113,6 +132,12 @@ export function canonicalReviewPayload(comments: readonly ReviewCommentInput[]):
       type: comment.type,
       body: comment.body,
     })),
+    // The `bodyNotes` field is OMITTED when empty (B11 finding 2), so a review with only
+    // line comments produces byte-identical bytes to the pre-finding payload — the ui-layer
+    // byte-pin (`reviewCommentsPayload`) stays valid until the client learns to send them.
+    ...(bodyNotes.length === 0
+      ? {}
+      : { bodyNotes: bodyNotes.map((note) => ({ type: note.type, body: note.body })) }),
   });
 }
 
@@ -182,9 +207,13 @@ function parsePathLine(anchor: string): { path: string; line: number } | null {
  *     every `lineComments` entry (`path`→line→body). An ask and a bare line comment on the
  *     SAME `path:line` collapse to ONE comment (the client's dual-claim rule): the ask
  *     wins, since it carries the intent `type` and its own body.
- *   • BODY prose — a staged ask whose anchor is a quoted prose span (no `path:line`) has no
- *     repo path, so it is not a GitHub review COMMENT. It feeds the round work-order exit
- *     (B11 cluster 4), not this one, and is excluded here rather than posted pathless.
+ *   • BODY notes — a staged ask with NO `path:line` (a prose/quote-of-board ask, or a
+ *     path-only ask) has no diff line to pin to, so {@link reviewBodyNotesFromProjection}
+ *     surfaces it as a review-BODY note (woven into the review body, ledgered). It is NOT
+ *     dropped here — that was B11 P0 finding 2 (lost reviewer intent): a prose request-change
+ *     entered the round work-order but VANISHED from the team review. The two functions
+ *     PARTITION `stagedAsks`, so every staged ask appears EXACTLY ONCE (a line comment OR a
+ *     body note), never twice, never zero times.
  *
  * Deterministic order (path, then line) so the canonical payload is byte-stable regardless
  * of the projection's Record key order — a projection round-tripped through disk composes
@@ -195,9 +224,17 @@ export function reviewCommentsFromProjection(projection: AskProjection): ReviewC
   const claimed = new Set<string>();
   for (const ask of Object.values(projection.stagedAsks)) {
     const at = parsePathLine(ask.anchor);
-    if (!at) continue; // a prose ask has no repo path — the round-work-order exit's input, not this one
+    if (!at) continue; // a no-line ask travels in the body — see reviewBodyNotesFromProjection
     claimed.add(`${at.path}:${at.line}`);
-    comments.push({ path: at.path, line: at.line, side: "RIGHT", type: ask.type, body: ask.body });
+    // Honor the ask's diff SIDE (B11 finding 7): a deletion-side ask posts on the pre-image
+    // (LEFT), not the hardcoded RIGHT it was flattened to. Absent ⇒ RIGHT (the common case).
+    comments.push({
+      path: at.path,
+      line: at.line,
+      side: ask.side ?? "RIGHT",
+      type: ask.type,
+      body: ask.body,
+    });
   }
   for (const [path, lines] of Object.entries(projection.lineComments)) {
     for (const [lineStr, body] of Object.entries(lines)) {
@@ -213,6 +250,28 @@ export function reviewCommentsFromProjection(projection: AskProjection): ReviewC
         : 1
       : (left.line ?? 0) - (right.line ?? 0),
   );
+}
+
+/**
+ * The review's BODY stratum (B11 P0 finding 2, handoff-and-exits.md "The review's two
+ * strata"). Every staged ask with NO diff line — a prose/quote-of-board ask, or a path-only
+ * ask (anchor does not parse as `path:line`) — becomes a review-BODY note. This is the exact
+ * complement of {@link reviewCommentsFromProjection}: together they partition `stagedAsks`,
+ * so a pathless request-change is posted in the review body rather than silently dropped.
+ * Deterministic order (anchor, then body) so the canonical payload is byte-stable.
+ */
+export function reviewBodyNotesFromProjection(projection: AskProjection): ReviewBodyNote[] {
+  const notes: ReviewBodyNote[] = [];
+  for (const ask of Object.values(projection.stagedAsks)) {
+    if (parsePathLine(ask.anchor)) continue; // a code-anchored ask is a line comment, not a body note
+    notes.push({ type: ask.type, body: ask.body, anchor: ask.anchor });
+  }
+  return notes.sort((left, right) => {
+    const la = left.anchor ?? "";
+    const ra = right.anchor ?? "";
+    if (la !== ra) return la < ra ? -1 : 1;
+    return left.body < right.body ? -1 : left.body > right.body ? 1 : 0;
+  });
 }
 
 /**
@@ -241,7 +300,9 @@ export function handoffDispositionsFromProjection(projection: AskProjection): Ha
           type: ask.type,
           body: ask.body,
           span: { startLine: at.line },
-          side: "additions" as const,
+          // Honor the ask's diff side (B11 finding 7): a deletion-side ask resolves the
+          // pre-image hunk, not the hardcoded additions side. Absent ⇒ additions.
+          side: ask.side === "LEFT" ? ("deletions" as const) : ("additions" as const),
         }
       : { path: ask.anchor, type: ask.type, body: ask.body };
   });
@@ -274,8 +335,9 @@ export interface ForgeReviewThread {
   readonly body: string;
 }
 
-/** The class of a flattening the ledger records (never a silent drop, #21). */
-export type PublishDegradationKind = "file-level-fold";
+/** The class of a flattening the ledger records (never a silent drop, #21). A `body-note`
+ *  is a pathless ask woven into the review body (B11 finding 2) — recorded, not dropped. */
+export type PublishDegradationKind = "file-level-fold" | "body-note";
 
 /** One degradation applied while building the outbound post, shown to the reviewer. */
 export interface PublishDegradation {
@@ -362,6 +424,12 @@ export interface BuildReviewPostOptions {
   readonly target: ForgeReviewTarget;
   /** The canonical payload bytes (the marker + round-trip both key off this). */
   readonly payload: string;
+  /**
+   * The review-BODY notes (pathless/prose asks) woven into the review body (B11 finding 2).
+   * Absent ⇒ none. Each is rendered under a "Review notes" heading and ledgered (`body-note`),
+   * and its `type` participates in the derived verdict just like a line comment's.
+   */
+  readonly bodyNotes?: readonly ReviewBodyNote[];
   /** The forge's advertised capabilities (degradation is written against these). */
   readonly capabilities: ForgeCapabilities;
   /**
@@ -409,6 +477,22 @@ export function buildForgeReviewPost(
   const marker = buildReviewMarker(options.reviewId, options.target, options.payload);
   const sections: string[] = ["Rennet review."];
 
+  // The BODY stratum (B11 finding 2): a pathless/prose ask has no diff line, so it is woven
+  // into the review body under a "Review notes" heading rather than dropped — and each is
+  // ledgered (`body-note`), so the reviewer sees it travelled in the body, never a silent drop.
+  const bodyNotes = options.bodyNotes ?? [];
+  if (bodyNotes.length > 0) {
+    const notes = bodyNotes.map((note) => {
+      ledger.push({
+        kind: "body-note",
+        path: "",
+        detail: "No diff position — woven into the review body as a review note.",
+      });
+      return `- ${formatCommentBody(note.type, note.body)}`;
+    });
+    sections.push(`## Review notes\n${notes.join("\n")}`);
+  }
+
   if (fileLevel.length > 0) {
     // A no-line comment cannot ride a batched review thread — a
     // `DraftPullRequestReviewThread` requires a line — so it folds into the review
@@ -429,7 +513,10 @@ export function buildForgeReviewPost(
 
   sections.push(markerComment(marker));
   const body = sections.join("\n\n");
-  const event = resolveReviewEvent(comments, options.verdict);
+  // The verdict follows the WHOLE outbound set — line comments AND body notes — so a prose
+  // request-change escalates to REQUEST_CHANGES too (handoff-and-exits.md), not just a
+  // code-anchored one.
+  const event = resolveReviewEvent([...comments, ...bodyNotes], options.verdict);
 
   return { target: options.target, event, body, threads, marker, ledger };
 }

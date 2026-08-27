@@ -232,6 +232,18 @@ export const reviewCommentSchema = z.object({
   body: z.string(),
 });
 
+/**
+ * One review-BODY note — the body stratum (B11 P0 finding 2, handoff-and-exits.md "The
+ * review's two strata"). An ask with NO diff position (a prose/quote-of-board ask, or a
+ * path-only ask) has no line to pin to, so it travels in the review BODY rather than
+ * vanishing. Carries only its intent `type` + outbound `body`; the anchor is provenance
+ * and does not egress.
+ */
+export const reviewBodyNoteSchema = z.object({
+  type: dispositionTypeSchema,
+  body: z.string(),
+});
+
 export const forgeRequestSchema = z.object({
   endpoint: z.string(),
   method: z.string(),
@@ -241,7 +253,9 @@ export const forgeRequestSchema = z.object({
 });
 
 export const publishDegradationSchema = z.object({
-  kind: z.literal("file-level-fold"),
+  // "file-level-fold": a no-line comment with a path folded to a file-level note.
+  // "body-note": a pathless/prose ask woven into the review body (B11 finding 2).
+  kind: z.enum(["file-level-fold", "body-note"]),
   path: z.string(),
   detail: z.string(),
 });

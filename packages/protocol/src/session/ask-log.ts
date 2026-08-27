@@ -39,6 +39,16 @@ export const StagedAskSchema = z.object({
   type: dispositionTypeSchema,
   body: z.string(),
   threadId: id.optional(),
+  /**
+   * The diff SIDE a code-anchored ask posts to (B11 finding 7). Additive/optional: absent
+   * defaults to `RIGHT` (the post-image), the common case. A DELETION-side ask sets `LEFT`
+   * so it posts on the pre-image line rather than the wrong side. Pre-B11 the disposition
+   * compose (`reviewCommentsFromDispositions`) carried `side` (`deletions` → LEFT); the
+   * durable staged-ask model must not flatten that away — so it round-trips here. The client
+   * (C9) populates it when staging a deletion-side finding; a multi-line RANGE (`startLine <
+   * line`) is a ledgered follow-up (`ReviewCommentInput` models a single line today).
+   */
+  side: z.enum(["LEFT", "RIGHT"]).optional(),
 });
 export type StagedAsk = z.infer<typeof StagedAskSchema>;
 

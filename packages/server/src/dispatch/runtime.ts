@@ -12,6 +12,7 @@ import {
   forgeTargetKey,
   type HandoffTurnOutcome,
   type ReviewService,
+  reviewBodyNotesFromProjection,
   reviewCommentsFromProjection,
 } from "@rennet/core";
 import type {
@@ -655,10 +656,14 @@ export function assertCompositionFresh(
   reviewProjection?: AskProjection,
 ): void {
   if (compositionId === undefined) return;
+  const proj = reviewProjection ?? emptyAskProjection();
   const boundPayload =
     mode === "review"
-      ? canonicalReviewPayload(
-          reviewCommentsFromProjection(reviewProjection ?? emptyAskProjection()),
+      ? // BOTH strata (B11 finding 2): the bound payload folds in body notes too, so a
+        // prose ask edited between preview and post is caught as stale like a line comment.
+        canonicalReviewPayload(
+          reviewCommentsFromProjection(proj),
+          reviewBodyNotesFromProjection(proj),
         )
       : payload;
   const expected = publishCompositionId({

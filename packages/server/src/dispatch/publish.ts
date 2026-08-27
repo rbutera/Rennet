@@ -5,6 +5,7 @@ import {
   canonicalReviewPayload,
   isRepoRelativePath,
   resolveReviewEvent,
+  reviewBodyNotesFromProjection,
   reviewCommentsFromProjection,
 } from "@rennet/core";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
@@ -68,6 +69,9 @@ export function publishHandlers(rt: DispatchRuntime) {
       // THE USER. Every dangerous part is gated here; the pipeline has no other path
       // to egress (this command is reachable only from the trusted renderer origin).
       const input = parseCommandInput(name, rawInput);
+      // The body stratum defaults to none (B11 finding 2) — a client that sends only line
+      // comments is unchanged. Localised so the checks + post-build read one non-optional value.
+      const bodyNotes = input.bodyNotes ?? [];
 
       // (0) The RETROSPECTIVE gate (Rule 75, most-permissive-fault): a review opened
       // read-only over an already-merged/any PR must NEVER egress. We resolve the
@@ -102,21 +106,25 @@ export function publishHandlers(rt: DispatchRuntime) {
       // the signed `payload` EXACTLY (===, never prefix/substring). A disagreement
       // fails CLOSED. This runs on dry-run TOO, so a corrupt payload surfaces as a
       // refusal rather than a plausible-looking request.
-      if (canonicalReviewPayload(input.comments) !== input.payload) {
+      // The canonical bytes fold in BOTH strata — line comments AND body notes (B11 finding
+      // 2) — so a pathless ask is part of the round-trip, not a silent drop.
+      if (canonicalReviewPayload(input.comments, bodyNotes) !== input.payload) {
         throw new Error("Publish refused: the review payload does not match its content");
       }
-      // (2) An empty review is not a valid egress — refuse rather than post nothing.
-      if (input.comments.length === 0) {
+      // (2) An empty review is not a valid egress — refuse rather than post nothing. Empty
+      // means NEITHER a line comment NOR a body note (a body-only review still posts).
+      if (input.comments.length === 0 && bodyNotes.length === 0) {
         throw new Error("Publish refused: the review has no content");
       }
 
       // (3) Assemble the forge-neutral post (event COMMENT — no APPROVE shape; every
-      // no-line fold ledgered, never a silent drop).
+      // no-line fold + body note ledgered, never a silent drop).
       const post = buildForgeReviewPost(input.comments, {
         reviewId: input.reviewId,
         target,
         payload: input.payload,
         capabilities: deps.publishPort.capabilities,
+        bodyNotes,
         // Derive-first, overridable: an explicit verdict wins; else it derives from
         // the dispositions. `undefined` simply defers to the derived verdict.
         ...(input.verdict ? { verdict: input.verdict } : {}),
@@ -138,7 +146,10 @@ export function publishHandlers(rt: DispatchRuntime) {
         // Absent / forged / replayed / target-payload-or-verdict-mismatched ⇒ refused,
         // and NOTHING leaves. The verdict is resolved the SAME way it is for the post
         // (`resolveReviewEvent`), so the token authorises exactly the event that ships.
-        const resolvedVerdict = resolveReviewEvent(input.comments, input.verdict);
+        const resolvedVerdict = resolveReviewEvent(
+          [...input.comments, ...bodyNotes],
+          input.verdict,
+        );
         const key = publishConsentKey(input.reviewId, target, input.payload, resolvedVerdict);
         const authorization = input.authorization;
         if (typeof authorization !== "string" || !deps.publishConsent.consume(key, authorization)) {
@@ -277,6 +288,10 @@ export function publishHandlers(rt: DispatchRuntime) {
         // does not edit (publish decision 4), so the default IS the product. The payload and
         // verdict are core's, so publish.review re-verifies these very bytes (single-source).
         const comments = reviewCommentsFromProjection(projection);
+        // The BODY stratum (B11 finding 2): pathless/prose asks that have no diff line travel in
+        // the review body rather than vanishing. `reviewCommentsFromProjection` +
+        // `reviewBodyNotesFromProjection` PARTITION the staged asks, so each appears exactly once.
+        const bodyNotes = reviewBodyNotesFromProjection(projection);
         // Path safety at compose (#382 M2 finding 8): refuse to compose an outbound review whose
         // comments carry an absolute or traversing path — such a path would post outside the
         // repo (or is corruption). Ingestion (`canvas.disposition`) already rejects them; this is
@@ -288,10 +303,14 @@ export function publishHandlers(rt: DispatchRuntime) {
             reason: `A review comment has an unsafe path (${badPath.path}); it cannot be posted.`,
           });
         }
-        const payload = canonicalReviewPayload(comments);
+        const payload = canonicalReviewPayload(comments, bodyNotes);
         // Derive-first, overridable: the projection's explicit `verdictOverride` WINS; a null
-        // override defers to the verdict derived from the composed comments (R33).
-        const verdict = resolveReviewEvent(comments, projection.verdictOverride ?? undefined);
+        // override defers to the verdict derived from the WHOLE outbound set (comments + body
+        // notes), so a prose request-change escalates the verdict too (R33).
+        const verdict = resolveReviewEvent(
+          [...comments, ...bodyNotes],
+          projection.verdictOverride ?? undefined,
+        );
         const target = review.postTarget;
         const destination = `${target.repo.owner}/${target.repo.name}#${target.number}`;
         const compositionId = publishCompositionId({
@@ -306,6 +325,7 @@ export function publishHandlers(rt: DispatchRuntime) {
         return parseCommandOutput(name, {
           status: "review",
           comments,
+          bodyNotes,
           payload,
           verdict,
           destination,

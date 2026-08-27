@@ -5,8 +5,10 @@ import { AskLogStore } from "@rennet/adapters";
 import {
   canonicalReviewPayload,
   deriveReviewEvent,
+  type ReviewBodyNote,
   type ReviewCommentInput,
   resolveReviewEvent,
+  reviewBodyNotesFromProjection,
   reviewCommentsFromProjection,
 } from "@rennet/core";
 import { describe, expect, it } from "vitest";
@@ -56,7 +58,7 @@ describe("reviewCommentsFromProjection (B11 cluster 3) — the two-strata compos
     ]);
   });
 
-  it("excludes retired asks and prose (pathless) asks from the outbound comments", () => {
+  it("excludes retired asks from comments, and routes a prose ask into the BODY stratum (finding 2)", () => {
     const { store, sid } = freshStore();
     store.append(sid, {
       kind: "stage",
@@ -67,13 +69,74 @@ describe("reviewCommentsFromProjection (B11 cluster 3) — the two-strata compos
       ask: { id: "a2", anchor: "src/a.ts:2", type: "comment", body: "gone" },
     });
     store.append(sid, { kind: "retire", id: "a2", reason: "dupe" });
-    // A prose ask has no repo path — it feeds the round work-order exit (cluster 4), not this one.
+    // A prose ask has no diff line — it must travel in the review BODY, never vanish (P0 finding 2).
     store.append(sid, {
       kind: "stage",
-      ask: { id: "a3", anchor: "This reads well.", type: "comment", body: "praise" },
+      ask: { id: "a3", anchor: "This reads well.", type: "request-change", body: "tighten this" },
+    });
+    const projection = store.readProjection(sid);
+    // The code-anchored ask is a line comment; the retired one is gone; the prose ask is NOT here.
+    expect(reviewCommentsFromProjection(projection)).toEqual<ReviewCommentInput[]>([
+      { path: "src/a.ts", line: 1, side: "RIGHT", type: "comment", body: "keep" },
+    ]);
+    // The prose ask surfaces as a review-BODY note (exactly once) — the lost reviewer intent.
+    expect(reviewBodyNotesFromProjection(projection)).toEqual<ReviewBodyNote[]>([
+      { type: "request-change", body: "tighten this", anchor: "This reads well." },
+    ]);
+  });
+
+  it("PARTITIONS every staged ask: each appears EXACTLY ONCE across line comments + body notes (finding 2)", () => {
+    const { store, sid } = freshStore();
+    store.append(sid, {
+      kind: "stage",
+      ask: { id: "c1", anchor: "src/a.ts:5", type: "request-change", body: "code ask" },
+    });
+    store.append(sid, {
+      kind: "stage",
+      ask: { id: "p1", anchor: "A quoted board sentence.", type: "comment", body: "prose ask" },
+    });
+    store.append(sid, {
+      kind: "stage",
+      ask: { id: "po1", anchor: "src/onlypath.ts", type: "comment", body: "path-only ask" },
+    });
+    const projection = store.readProjection(sid);
+    const comments = reviewCommentsFromProjection(projection);
+    const bodyNotes = reviewBodyNotesFromProjection(projection);
+    // Three staged asks → three outbound items, each in exactly one stratum, none dropped, none doubled.
+    const bodies = [...comments.map((c) => c.body), ...bodyNotes.map((n) => n.body)].sort();
+    expect(bodies).toEqual(["code ask", "path-only ask", "prose ask"]);
+    // The code ask is a line comment; the prose + path-only asks (no diff line) are body notes.
+    expect(comments.map((c) => c.body)).toEqual(["code ask"]);
+    expect(bodyNotes.map((n) => n.body).sort()).toEqual(["path-only ask", "prose ask"]);
+  });
+
+  it("carries a DELETION-side (LEFT) ask to the LEFT side, not the hardcoded RIGHT (finding 7)", () => {
+    const { store, sid } = freshStore();
+    // A deletion-side ask (the reviewer commented on a removed line — the pre-image).
+    store.append(sid, {
+      kind: "stage",
+      ask: {
+        id: "d1",
+        anchor: "src/a.ts:12",
+        type: "request-change",
+        body: "this deletion is wrong",
+        side: "LEFT",
+      },
+    });
+    // A default (additions-side) ask still posts RIGHT.
+    store.append(sid, {
+      kind: "stage",
+      ask: { id: "r1", anchor: "src/a.ts:20", type: "comment", body: "post-image note" },
     });
     expect(reviewCommentsFromProjection(store.readProjection(sid))).toEqual<ReviewCommentInput[]>([
-      { path: "src/a.ts", line: 1, side: "RIGHT", type: "comment", body: "keep" },
+      {
+        path: "src/a.ts",
+        line: 12,
+        side: "LEFT",
+        type: "request-change",
+        body: "this deletion is wrong",
+      },
+      { path: "src/a.ts", line: 20, side: "RIGHT", type: "comment", body: "post-image note" },
     ]);
   });
 

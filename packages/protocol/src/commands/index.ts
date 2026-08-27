@@ -52,6 +52,7 @@ import {
   reattachResultSchema,
   refinementResultSchema,
   resolvedProvenanceSchema,
+  reviewBodyNoteSchema,
   reviewCommentSchema,
   reviewSchema,
   setRepoVisibilityOutcomeSchema,
@@ -238,6 +239,12 @@ const definitions = {
       target: publishTargetSchema,
       /** The canonical review content (mirrors the ui `ReviewComment` preview). */
       comments: z.array(reviewCommentSchema),
+      /**
+       * The review-BODY notes — pathless/prose asks woven into the review body (B11 finding
+       * 2). Optional/additive: absent ⇒ `[]`, so a client that only sends line comments is
+       * unchanged. The canonical payload folds these in, so they round-trip like `comments`.
+       */
+      bodyNotes: z.array(reviewBodyNoteSchema).optional().default([]),
       /** The canonical payload bytes the sheet previewed + signed (round-trip check). */
       payload: z.string(),
       /**
@@ -340,7 +347,10 @@ const definitions = {
         status: z.literal("review"),
         /** The composed team-PR comments the phone previews AND posts verbatim via `publish.review`. */
         comments: z.array(reviewCommentSchema),
-        /** The canonical bytes, derived from `comments` — the round-trip `publish.review` verifies. */
+        /** The composed review-BODY notes (pathless/prose asks) the phone previews AND posts
+         *  verbatim (B11 finding 2). Folded into the canonical `payload`, so nothing vanishes. */
+        bodyNotes: z.array(reviewBodyNoteSchema),
+        /** The canonical bytes, derived from `comments` + `bodyNotes` — `publish.review` verifies. */
         payload: z.string(),
         /** The derived review verdict (the GitHub review event the post will carry). */
         verdict: forgeReviewEventSchema,
