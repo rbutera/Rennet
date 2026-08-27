@@ -265,7 +265,6 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
     promoted: false,
     promotedProvenance: repoProvenance,
     locus: { kind: "wsl" as const, distro: "Ubuntu" },
-    locusOverridden: false,
     locusProvenance: provenance,
     configMalformed: false,
   };
@@ -274,7 +273,8 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
     expect(settingsLayerSchema.parse("detected")).toBe("detected");
   });
 
-  it("settingsProjectSchema accepts the old row and normalizes locusProvenance", () => {
+  it("settingsProjectSchema normalizes locusProvenance to the detected fact (#476)", () => {
+    // Execution locus is a detected fact now — provenance is always `detected`.
     expect(settingsProjectSchema.parse(project).locusProvenance.layer).toBe("detected");
     const withoutProvenance: Record<string, unknown> = { ...project };
     delete withoutProvenance.locusProvenance;
@@ -282,43 +282,18 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
       layer: "detected",
       contributions: [{ layer: "detected", value: "WSL · Ubuntu", effective: true }],
     });
-    expect(
-      settingsProjectSchema.parse({ ...withoutProvenance, locusOverridden: true }).locusProvenance,
-    ).toEqual({
-      layer: "repo",
-      contributions: [{ layer: "repo", value: "WSL · Ubuntu", effective: true }],
-    });
-    const withoutOverridden: Record<string, unknown> = { ...project };
-    delete withoutOverridden.locusOverridden;
-    expect(() => settingsProjectSchema.parse(withoutOverridden)).toThrow();
   });
 
-  it("setRepoLocus outcome carries the freshly re-resolved row", () => {
-    const outcome = parseCommandOutput("settings.setRepoLocus", {
-      status: "applied",
-      locus: project.locus,
-      locusOverridden: true,
-      project: {
-        ...project,
-        locusOverridden: true,
-        locusProvenance: {
-          layer: "repo",
-          contributions: [{ layer: "repo", value: "WSL · Ubuntu", effective: true }],
-        },
-      },
-    });
-    expect(outcome.project?.locusProvenance.layer).toBe("repo");
-  });
-
-  it("resetRepoValue / pinRepoValue payloads parse for the two repo keys", () => {
+  it("resetRepoValue / pinRepoValue accept only `visibility` — locus is no longer a repo key (#476)", () => {
     for (const command of ["settings.resetRepoValue", "settings.pinRepoValue"] as const) {
       expect(
         parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "visibility" }).key,
       ).toBe("visibility");
-      expect(
-        parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "locus" }).key,
-      ).toBe("locus");
-      // A non-repo-scoped key (e.g. scheme) is rejected — reset/pin are repo-scoped.
+      // Locus was demoted to a detected fact — it is no longer a reset/pin-able repo key.
+      expect(() =>
+        parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "locus" }),
+      ).toThrow();
+      // A non-repo-scoped key (e.g. scheme) is rejected too — reset/pin are repo-scoped.
       expect(() =>
         parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "scheme" }),
       ).toThrow();
@@ -337,7 +312,7 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
     expect(
       parseCommandOutput("settings.pinRepoValue", {
         status: "malformed",
-        key: "locus",
+        key: "visibility",
         project: null,
       }).project,
     ).toBeNull();

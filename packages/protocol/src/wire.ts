@@ -1491,12 +1491,24 @@ export const locusSchema = z.union([
 export type Locus = z.infer<typeof locusSchema>;
 
 /**
- * The global (layer 1) config document, stored at `~/.rennet/config.json`. Every
- * field beyond `version` is optional so an untouched install is a trivially-valid
- * (or absent) `{ version }`; defaults are read-through, never migrated in.
+ * The LEGACY (pre-split) global config document, once stored at a single
+ * `~/.rennet/config.json` (schema v1). It mixed viewer preferences (appearance,
+ * keybindings) with the host's daemon rung (`daemon.listen`) in one blob. B10
+ * (#476) split that blob into `client-settings.json` (viewer prefs) and
+ * `daemon-settings.json` (the host rung); this schema now exists ONLY as the
+ * migration SOURCE — `migrateLegacyGlobalConfig` parses a legacy file with it,
+ * then writes the two split documents below. It is never written any more.
+ *
+ * Every field beyond `version` is optional so an untouched legacy install was a
+ * trivially-valid (or absent) `{ version }`; defaults are read-through.
  */
 export const globalConfigSchema = z.object({
-  version: z.number().int().nonnegative(),
+  // The ONE supported schema version. A future (v2+) or below-current doc fails
+  // this literal, so it reads as malformed rather than being silently accepted and
+  // re-stamped to v1 — which would strip every field this version does not know
+  // and destroy the newer doc's data (the "silent version downgrade" bug). Must
+  // equal GLOBAL_CONFIG_VERSION in file-config-store.ts.
+  version: z.literal(1),
   appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
   /**
    * User keybinding overrides for the command registry (#44), command id → chord
@@ -1542,6 +1554,66 @@ export const globalConfigSchema = z.object({
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
 /**
+ * Client settings — viewer preferences, stored at `~/.rennet/client-settings.json`
+ * (B10 #476). These are personal, app-side choices that live OUTSIDE the config
+ * ladder: the appearance scheme the renderer consumes as `data-scheme`, and the
+ * command-registry keybinding overrides (#44). Never a repo fact, never written
+ * into a working tree. Every field beyond `version` is optional — an untouched
+ * install is a trivially-valid (or absent) `{ version }`.
+ */
+export const clientSettingsSchema = z.object({
+  // Supported version literal — a future/below doc reads as malformed, never
+  // silently re-stamped (see globalConfigSchema). Must equal CLIENT_SETTINGS_VERSION.
+  version: z.literal(1),
+  appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
+  /** Command-registry keybinding overrides (#44): command id → chord token or `null` to unbind. */
+  keybindings: z.record(z.string(), z.string().nullable()).optional(),
+});
+export type ClientSettings = z.infer<typeof clientSettingsSchema>;
+
+/**
+ * Daemon settings — the global ladder rung as it exists ON ITS HOST, stored at
+ * `~/.rennet/daemon-settings.json` (B10 #476). Today it carries only the opt-in
+ * listener bind (#380); the settings surface lists every paired host's section.
+ * Additive-optional exactly as the legacy blob was.
+ */
+export const daemonSettingsSchema = z.object({
+  // Supported version literal — a future/below doc reads as malformed, never
+  // silently re-stamped (see globalConfigSchema). Must equal DAEMON_SETTINGS_VERSION.
+  version: z.literal(1),
+  /**
+   * Opt-in bind beyond loopback (#380). Absent ⇒ the daemon binds `127.0.0.1` on
+   * an ephemeral port. `host` names an interface (e.g. a Tailscale address); `port`
+   * optionally fixes the port.
+   */
+  daemon: z
+    .object({
+      listen: z
+        .object({
+          host: z.string().min(1),
+          port: z.number().int().nonnegative().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  /**
+   * The issue-tracker section's GLOBAL rung (#461, B7). This is a host fact —
+   * the global rung of the settings ladder lives on the daemon's host — so the
+   * legacy blob's `tracker` migrates HERE, not into client settings. `tokenEnv`
+   * names the env var holding the token; the token VALUE never enters any store.
+   */
+  tracker: z
+    .object({
+      kind: z.enum(["none", "github", "jira", "linear"]).optional(),
+      projectKey: z.string().optional(),
+      baseUrl: z.string().optional(),
+      tokenEnv: z.string().optional(),
+    })
+    .optional(),
+});
+export type DaemonSettings = z.infer<typeof daemonSettingsSchema>;
+
+/**
  * Which ladder layer a resolved value came from. Precedence (lowest→highest):
  * `builtin` < `detected` < `global` < `repo`. `detected` is the environment-derived
  * rung (today: execution-locus auto-detection) — a machine guess any explicit user
@@ -1584,18 +1656,14 @@ export const settingsProjectSchema = z
     promoted: z.boolean(),
     promotedProvenance: resolvedProvenanceSchema,
     /**
-     * The project's effective execution locus (add-windows-support): the persisted
-     * override if set, else auto-detected from `repoPath` (a `\\wsl$` root ⇒ that
-     * distro, else host). `locusOverridden` is true when it came from the config,
-     * false when auto-detected — so the UI can show detected-vs-chosen.
+     * The project's execution locus — a DETECTED FACT, not a knob (#476). Auto-detected
+     * from `repoPath` (a `\\wsl$` root ⇒ that distro, else host); Rennet SHOWS where the
+     * harness runs, it does not offer to choose it. No repo-layer override exists.
      */
     locus: locusSchema,
-    locusOverridden: z.boolean(),
     /**
-     * The resolver's own provenance for the locus — the `detected < repo` ladder
-     * (`detected` when auto-detected, `repo` when a persisted override wins, always
-     * listing the suppressed detected offer as a non-effective contribution). Computed
-     * fresh per read, never persisted; `locusOverridden` is derived (`layer === "repo"`).
+     * The provenance for the locus — always the `detected` layer now that locus is a
+     * detected fact (#476). Computed fresh per read, never persisted.
      */
     locusProvenance: resolvedProvenanceSchema.optional(),
     /**
@@ -1606,17 +1674,41 @@ export const settingsProjectSchema = z
     configMalformed: z.boolean(),
   })
   .transform((project) => {
-    const layer = project.locusOverridden ? ("repo" as const) : ("detected" as const);
     const value = project.locus.kind === "host" ? "host" : `WSL · ${project.locus.distro}`;
     return {
       ...project,
       locusProvenance: project.locusProvenance ?? {
-        layer,
-        contributions: [{ layer, value, effective: true }],
+        layer: "detected" as const,
+        contributions: [{ layer: "detected" as const, value, effective: true }],
       },
     };
   });
 export type SettingsProject = z.infer<typeof settingsProjectSchema>;
+
+/**
+ * One daemon host's section on the settings surface (#476). Rennet runs a daemon per
+ * host; the surface lists EVERY host a project routes to, not just the local one. The
+ * `isLocal` host is the one this daemon runs on — its `listen` rung is read from this
+ * host's `daemon-settings.json`. A remote or in-WSL host keeps its rung on THAT host, so
+ * `listen` is populated only for the local section; a non-local host is listed by
+ * `source`/`label` so it is visible even though its settings are not locally readable.
+ */
+export const daemonHostSectionSchema = z.object({
+  /** `local`, `wsl:<distro>`, or `remote:<deviceId>` — the routing address of the host. */
+  source: sourceSchema,
+  /** Human label for the host (`This machine`, `WSL · Ubuntu`, `Remote · <id>`). */
+  label: z.string().min(1),
+  /** True for the host this daemon runs on — the only section whose `listen` is locally readable. */
+  isLocal: z.boolean(),
+  /**
+   * The host's daemon-settings listener rung (#380), present only on the local section
+   * (a remote/WSL host's rung lives on that host). Absent ⇒ loopback default there.
+   */
+  listen: z
+    .object({ host: z.string().min(1), port: z.number().int().nonnegative().optional() })
+    .optional(),
+});
+export type DaemonHostSection = z.infer<typeof daemonHostSectionSchema>;
 
 /** The whole settings view: the global layer plus every repo's repo layer. */
 export const settingsViewSchema = z.object({
@@ -1637,6 +1729,14 @@ export const settingsViewSchema = z.object({
    * these on the catalogue defaults for dispatch, display, and conflict detection.
    */
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
+  /**
+   * Every daemon host the surface covers (#476), local section FIRST. Each carries its
+   * `daemon-settings` rung where locally readable (the local host); a remote or in-WSL
+   * host is listed so it is visible even though its rung lives on that host. Enumerated
+   * from the local host plus every distinct `source` the projects route to. Additive-
+   * optional: an old `settings.get` caller ignores it, an untouched engine may omit it.
+   */
+  daemonHosts: z.array(daemonHostSectionSchema).optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 
@@ -1654,37 +1754,14 @@ export const setRepoVisibilityOutcomeSchema = z.object({
 });
 export type SetRepoVisibilityOutcome = z.infer<typeof setRepoVisibilityOutcomeSchema>;
 
-/** The outcome of a repo-locus override write (add-windows-support). */
-export const setRepoLocusOutcomeSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("applied"),
-    locus: locusSchema,
-    locusOverridden: z.boolean(),
-    /** The fresh resolver-owned row after the override was written. */
-    project: settingsProjectSchema,
-  }),
-  z.object({
-    status: z.literal("unresolved"),
-    locus: locusSchema,
-    locusOverridden: z.boolean(),
-    project: z.null(),
-  }),
-  z.object({
-    status: z.literal("malformed"),
-    locus: locusSchema,
-    locusOverridden: z.boolean(),
-    project: z.null(),
-  }),
-]);
-export type SetRepoLocusOutcome = z.infer<typeof setRepoLocusOutcomeSchema>;
-
 /**
  * The repo-scoped settings keys that can be reset-to-inherit and pinned-at-repo.
- * Only the two editable repo-layer settings with a write path — visibility (the
- * gitignore switch) and locus (the override store). Promotion is read-through here,
- * and appearance is a global-layer key (reset via `setAppearance` with a null scheme).
+ * Only `visibility` (the gitignore switch) has a repo-layer write path now — execution
+ * locus was demoted to a detected fact, not a stored/selectable ladder value (#476).
+ * Promotion is read-through, and appearance is a global-layer key (reset via
+ * `setAppearance` with a null scheme).
  */
-export const settingsRepoValueKeySchema = z.enum(["visibility", "locus"]);
+export const settingsRepoValueKeySchema = z.enum(["visibility"]);
 export type SettingsRepoValueKey = z.infer<typeof settingsRepoValueKeySchema>;
 
 /**
