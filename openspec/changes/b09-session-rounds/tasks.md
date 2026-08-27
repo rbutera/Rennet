@@ -21,7 +21,7 @@ Serial clusters, each a separately-reviewable sub-wave sized for one implementer
 
 - [x] 3.1 Surface the harness's own compaction, never estimated: emit a **`compact_boundary`** row in the turn stream when the harness reports one (map the adapter's compaction event — `claude-query` PostCompact/compact-boundary system event — to a turn-stream row), carry the harness's **PostCompact summary** to the reader, and expose an **ask-don't-estimate meter** (report only what the harness states about its context window; never fabricate a token budget or a "% remaining" the harness did not give). Honest copy per CLAUDE.md — a fact surfaced, not a gate.
 - [x] 3.2 Tests: a harness compaction event produces exactly one `compact_boundary` row carrying the PostCompact summary; the meter reports the harness-provided figure and is absent (not zero, not estimated) when the harness gives none.
-- [ ] 3.3 Cluster gate green. Commit.
+- [x] 3.3 Cluster gate green. Commit.
 
 ## Cluster 4 — rework one-shot workers, serialized per document (clause: rework)
 
