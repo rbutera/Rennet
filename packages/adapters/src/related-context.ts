@@ -18,8 +18,14 @@ import { GITHUB_REQUEST_TIMEOUT_MS } from "./github-fetch";
 // Deterministic ref extraction (task 2.1)
 // ---------------------------------------------------------------------------
 
-/** Where a ref was found — feeds dossier `provenance` verbatim. */
-export type RefSource = "branch-name" | "commit-message" | "pr-title" | "pr-body";
+/** Where a ref was found — feeds dossier `provenance` verbatim. `scout-detection`
+ * is the project scout's marker pass (README + commit subjects, B7 cluster 4). */
+export type RefSource =
+  | "branch-name"
+  | "commit-message"
+  | "pr-title"
+  | "pr-body"
+  | "scout-detection";
 
 export interface RefProvenance {
   source: RefSource;

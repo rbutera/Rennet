@@ -384,6 +384,19 @@ export {
   resolveProjectKey,
 } from "./project-relocate";
 export {
+  loadScoutFacts,
+  PROJECT_SCOUT_SCHEMA,
+  type ProjectScoutDeps,
+  runProjectScout,
+  type ScoutFact,
+  type ScoutFacts,
+  type ScoutProvenance,
+  type ScoutResult,
+  saveScoutFacts,
+  scoutDeterministic,
+  scoutSettingsOffers,
+} from "./project-scout";
+export {
   type GenerateOptions,
   type GenerateResult,
   ProjectSnapshotGenerator,
