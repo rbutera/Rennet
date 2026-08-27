@@ -2,6 +2,7 @@ import type { RennetBridge } from "@rennet/protocol";
 import { Redirect, Route, Router, Switch, useLocation } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider, useCommand } from "../data";
+import { IndexingView } from "../project/indexing/indexing-view";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
@@ -147,7 +148,7 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
               <Interim screen="archived" title="Archived" />
             </Route>
             <Route path={ROUTES.projectIndexing}>
-              {(p) => <Interim screen="project-indexing" title={`Indexing — ${p.id}`} />}
+              {(p) => <IndexingView projectId={p.id ?? ""} />}
             </Route>
             <Route path={ROUTES.projectMap}>
               {(p) => <Interim screen="project-map" title={`Context map — ${p.id}`} />}
