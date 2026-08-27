@@ -3,11 +3,9 @@ import {
   askReview,
   type CodexExecRequest,
   type CodexExecResult,
-  type ReviewPipelineResult,
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
-import type { OrchestratorTurnOutcome, OrchestratorTurnRunner } from "./orchestrator";
 import {
   buildCodexAskPrompt,
   CODEX_ASK_DIFF_CEILING,
@@ -19,11 +17,10 @@ import {
 } from "./review-ask-live";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The LIVE review.ask ports (issue #139, bead workspace-alqow). Driven with NO
-// model and NO codex: fakes stand in for the orchestrator turn runner and the
-// codex executor, so the whole mapping + the no-synthesis contract are proven
-// hermetically. The gated real-turn proof (orchestrator-live.real.test.ts) covers
-// the actual model path.
+// The LIVE review.ask ports (issue #139, bead workspace-alqow). The orchestrator
+// leg (Claude over the canvasOps@2 MCP server) is gone with the Board rebuild (B2),
+// so askOrchestrator answers an honest "unavailable"; the Codex second-opinion leg
+// and the no-synthesis router law are still proven hermetically with fakes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function review(id = "review-1"): Review {
@@ -53,164 +50,12 @@ function review(id = "review-1"): Review {
   };
 }
 
-/** A minimal `OrchestratorTurnResult` for a completed turn with the given text. */
-function completed(finalText: string): OrchestratorTurnOutcome {
-  return {
-    available: true,
-    result: {
-      session: {} as never,
-      toolCalls: [],
-      finalText,
-      outcome: "completed",
-    },
-  };
-}
-
-const pipeline = {} as ReviewPipelineResult;
-const buildPipeline = () => Promise.resolve(pipeline);
-
 describe("createLiveReviewAskPorts — askOrchestrator", () => {
-  it("turns a span selection into one selected act with its placed element title", async () => {
-    const turn = vi.fn<OrchestratorTurnRunner>(() => Promise.resolve(completed("ok")));
-    const selectedPipeline = {
-      ...pipeline,
-      canvases: {
-        sequence: {
-          layers: {
-            analysis: {
-              elements: [
-                {
-                  elementKey: "el-1",
-                  anchor: "rennet:hunk/c1-h1",
-                  title: "Retry policy",
-                },
-              ],
-            },
-          },
-        },
-      },
-      elementDiffs: {
-        "el-1": {
-          hunkOccurrences: [[{ id: "c1-h1" }]],
-        },
-      },
-    } as unknown as ReviewPipelineResult;
-    const ports = createLiveReviewAskPorts({
-      buildPipeline: () => Promise.resolve(selectedPipeline),
-      orchestratorTurn: turn,
-    });
-    const selection = {
-      anchor: "rennet:hunk/c1-h1#L1-L2@additions",
-      excerpt: "a\nb",
-    };
-
-    await ports.askOrchestrator({ review: review(), question: "this?", selection });
-
-    expect(turn).toHaveBeenCalledWith(
-      expect.anything(),
-      selectedPipeline,
-      "this?",
-      undefined,
-      undefined,
-      {
-        userActs: [
-          {
-            kind: "selected",
-            anchor: selection.anchor,
-            elementSummary: "Retry policy",
-            excerpt: selection.excerpt,
-            seq: 1,
-          },
-        ],
-      },
-    );
-  });
-
-  it("builds the pipeline over the given review, drives the turn, and returns its final text", async () => {
-    const turn = vi.fn<OrchestratorTurnRunner>(() =>
-      Promise.resolve(completed("the retry-after is in milliseconds")),
-    );
-    const built = vi.fn<(r: Review) => Promise<ReviewPipelineResult>>(() =>
-      Promise.resolve(pipeline),
-    );
-    const ports = createLiveReviewAskPorts({ buildPipeline: built, orchestratorTurn: turn });
-    const r = review("review-9");
-    const answer = await ports.askOrchestrator({ review: r, question: "seconds or ms?" });
-
-    // The pipeline is built over the SAME review dispatch resolved (never re-fetched).
-    expect(built).toHaveBeenCalledWith(r);
-    // The 4th arg is the #251 onDelta sink — undefined here (this ask supplies none).
-    expect(turn).toHaveBeenCalledWith(r, pipeline, "seconds or ms?", undefined);
-    expect(answer).toEqual({
-      model: ORCHESTRATOR_ASK_LABEL,
-      answer: "the retry-after is in milliseconds",
-    });
-  });
-
-  it("threads the AbortController into the turn runner as the 5th arg (#251 criterion 4)", async () => {
-    const turn = vi.fn<OrchestratorTurnRunner>(() => Promise.resolve(completed("ok")));
-    const ports = createLiveReviewAskPorts({ buildPipeline, orchestratorTurn: turn });
-    const controller = new AbortController();
-    const r = review();
-    await ports.askOrchestrator({ review: r, question: "q", abortController: controller });
-    // The VERY controller reaches the runner (which hands it to the SDK). Drop the
-    // threading and this reddens (the runner would be called with only four args).
-    expect(turn).toHaveBeenCalledWith(r, pipeline, "q", undefined, controller);
-  });
-
-  it("calls the runner with exactly four args when NO controller is supplied (back-compat)", async () => {
-    const turn = vi.fn<OrchestratorTurnRunner>(() => Promise.resolve(completed("ok")));
-    const ports = createLiveReviewAskPorts({ buildPipeline, orchestratorTurn: turn });
-    const r = review();
-    await ports.askOrchestrator({ review: r, question: "q" });
-    // No abort seam ⇒ the runner's original four-arg shape is preserved unchanged.
-    expect(turn).toHaveBeenCalledWith(r, pipeline, "q", undefined);
-  });
-
-  it("returns an HONEST unavailable answer (never a fabricated one) when no claude is present", async () => {
-    const ports = createLiveReviewAskPorts({
-      buildPipeline,
-      orchestratorTurn: () =>
-        Promise.resolve({ available: false, reason: "no claude binary is available" }),
-    });
+  it("answers an honest unavailable during the Board rebuild (no live orchestrator)", async () => {
+    const ports = createLiveReviewAskPorts({});
     const answer = await ports.askOrchestrator({ review: review(), question: "q" });
     expect(answer.model).toBe(ORCHESTRATOR_ASK_LABEL);
-    expect(answer.answer).toMatch(/unavailable: no claude/i);
-  });
-
-  it("returns an HONEST failed answer carrying the harness error when the turn fails", async () => {
-    const ports = createLiveReviewAskPorts({
-      buildPipeline,
-      orchestratorTurn: () =>
-        Promise.resolve({
-          available: true,
-          result: {
-            session: {} as never,
-            toolCalls: [],
-            finalText: "",
-            outcome: "failed",
-            error: {
-              class: "unknown",
-              origin: "harness",
-              message: "the model rejected the turn",
-              retryable: false,
-              retryableSource: "inferred",
-              nativeCode: null,
-            },
-          },
-        }),
-    });
-    const answer = await ports.askOrchestrator({ review: review(), question: "q" });
-    expect(answer.answer).toMatch(/failed: the model rejected the turn/i);
-  });
-
-  it("does not pass an empty final answer off as the model's reply", async () => {
-    const ports = createLiveReviewAskPorts({
-      buildPipeline,
-      orchestratorTurn: () => Promise.resolve(completed("   ")),
-    });
-    const answer = await ports.askOrchestrator({ review: review(), question: "q" });
-    expect(answer.answer).toMatch(/without a final answer/i);
+    expect(answer.answer).toMatch(/unavailable/i);
   });
 });
 
@@ -219,11 +64,7 @@ describe("createLiveReviewAskPorts — askCodex", () => {
     const askCodex = vi.fn(
       async (): Promise<AskAnswer> => ({ model: CODEX_ASK_LABEL, answer: "codex says ms" }),
     );
-    const ports = createLiveReviewAskPorts({
-      buildPipeline,
-      orchestratorTurn: () => Promise.resolve(completed("x")),
-      askCodex,
-    });
+    const ports = createLiveReviewAskPorts({ askCodex });
     const r = review("review-7");
     const answer = await ports.askCodex({ review: r, question: "seconds or ms?" });
     expect(askCodex).toHaveBeenCalledWith({ review: r, question: "seconds or ms?" });
@@ -234,11 +75,7 @@ describe("createLiveReviewAskPorts — askCodex", () => {
     const askCodex = vi.fn(
       async (): Promise<AskAnswer> => ({ model: CODEX_ASK_LABEL, answer: "ok" }),
     );
-    const ports = createLiveReviewAskPorts({
-      buildPipeline,
-      orchestratorTurn: () => Promise.resolve(completed("x")),
-      askCodex,
-    });
+    const ports = createLiveReviewAskPorts({ askCodex });
     const controller = new AbortController();
     const r = review("review-7");
     await ports.askCodex({ review: r, question: "q", abortController: controller });
@@ -250,10 +87,7 @@ describe("createLiveReviewAskPorts — askCodex", () => {
   });
 
   it("returns an honest unavailable answer when no codex port is wired", async () => {
-    const ports = createLiveReviewAskPorts({
-      buildPipeline,
-      orchestratorTurn: () => Promise.resolve(completed("x")),
-    });
+    const ports = createLiveReviewAskPorts({});
     const answer = await ports.askCodex({ review: review(), question: "q" });
     expect(answer.model).toBe(CODEX_ASK_LABEL);
     expect(answer.answer).toMatch(/not installed/i);
@@ -266,8 +100,6 @@ describe("the LIVE ports preserve the no-synthesis law through the real askRevie
     askCodex: (i: { review: Review; question: string }) => Promise<AskAnswer>;
   } {
     return createLiveReviewAskPorts({
-      buildPipeline,
-      orchestratorTurn: () => Promise.resolve(completed("orchestrator answer")),
       askCodex: async () => ({ model: CODEX_ASK_LABEL, answer: "codex answer" }),
     });
   }

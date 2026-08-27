@@ -1,4 +1,4 @@
-import type { InvocationBudget, Review, ReviewHypothesis } from "@rennet/protocol";
+import type { Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createReviewIntelligenceSessions } from "./review-intelligence-session";
 
@@ -15,35 +15,6 @@ describe("review intelligence turn lifecycle (#316)", () => {
     expect(flagged).toBe(canvas);
     expect(flagged.budget).toBe(canvas.budget);
     expect(flagged.budget.max).toBe(12);
-  });
-
-  it("memoizes one in-flight hypothesis promise across concurrent flows", async () => {
-    const sessions = createReviewIntelligenceSessions();
-    const review = fakeReview("rv_conc", "ps_1");
-    const canvas = sessions.enter(review, true, "canvases");
-    const flagged = sessions.enter(review, true, "flagged");
-    let resolve: ((value: ReviewHypothesis | undefined) => void) | undefined;
-    let computeCalls = 0;
-    const compute = (): Promise<ReviewHypothesis | undefined> => {
-      computeCalls += 1;
-      return new Promise((settle) => {
-        resolve = settle;
-      });
-    };
-    const a = canvas.hypothesis(compute);
-    const b = flagged.hypothesis(compute);
-    expect(b).toBe(a);
-    expect(computeCalls).toBe(0);
-    await Promise.resolve();
-    expect(computeCalls).toBe(1);
-    resolve?.({
-      domain: "session",
-      scope: { inScope: [], outOfScope: [] },
-      designExpectation: "one shared turn",
-      risks: [],
-      repoContextPresent: false,
-    });
-    await Promise.all([a, b]);
   });
 
   it("same-key quick to dual re-entry starts a fresh budget with the correct ceiling", () => {
@@ -78,33 +49,5 @@ describe("review intelligence turn lifecycle (#316)", () => {
     const reattached = sessions.enter(fakeReview("rv_1", "ps_2"), true, "flagged");
     expect(reattached).not.toBe(first);
     expect(reattached.budget).not.toBe(first.budget);
-  });
-
-  it("clears a failed hypothesis memo so a retry recomputes", async () => {
-    const sessions = createReviewIntelligenceSessions();
-    const session = sessions.enter(fakeReview("rv_retry", "ps_1"), true, "flagged");
-    let calls = 0;
-    const failed = (budget: InvocationBudget): Promise<ReviewHypothesis | undefined> => {
-      calls += 1;
-      budget.tryConsume("hypothesis");
-      return Promise.resolve(undefined);
-    };
-    await session.hypothesis(failed);
-    const recovered: ReviewHypothesis = {
-      domain: "session",
-      scope: { inScope: [], outOfScope: [] },
-      designExpectation: "retry succeeded",
-      risks: [],
-      repoContextPresent: false,
-    };
-    await expect(
-      session.hypothesis(async (budget) => {
-        calls += 1;
-        budget.tryConsume("hypothesis");
-        return recovered;
-      }),
-    ).resolves.toBe(recovered);
-    expect(calls).toBe(2);
-    expect(session.budget.consumed).toBe(2);
   });
 });

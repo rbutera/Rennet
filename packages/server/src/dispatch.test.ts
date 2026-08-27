@@ -184,7 +184,6 @@ function harness(
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
     flaggedReview?: DispatchDeps["flaggedReview"];
-    readUiEvidence?: DispatchDeps["readUiEvidence"];
     repositoryExists?: DispatchDeps["repositoryExists"];
     pushTokens?: DispatchDeps["pushTokens"];
     acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
@@ -202,7 +201,6 @@ function harness(
   store: InMemoryStore;
   allowedRoots: Set<string>;
   startWatching: ReturnType<typeof vi.fn>;
-  buildCanvases: ReturnType<typeof vi.fn>;
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
   publishConsent: PublishConsentAuthority;
   reviewAsk: {
@@ -225,20 +223,6 @@ function harness(
   const allowedRoots = new Set<string>();
   const startWatching = vi.fn<(root: string) => void>();
   let dirty = false;
-  const buildCanvases = vi.fn<DispatchDeps["buildCanvases"]>(() =>
-    Promise.resolve({
-      canvases: canvasSet(),
-      elementDiffs: {
-        e1: {
-          path: "src/a.ts",
-          paths: ["src/a.ts"],
-          diff: "@@ -1,1 +1,2 @@\n+x",
-          hunkOccurrences: [],
-        },
-      },
-      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
-    }),
-  );
   const publishConsent = createPublishConsentAuthority();
   // review.ask ports (issue #139) as recording spies, so a test can assert the
   // orchestrator is asked exactly once and Codex only in "both" mode — the whole
@@ -327,7 +311,6 @@ function harness(
     setRepositoryDirty: (value) => {
       dirty = value;
     },
-    buildCanvases,
     publishPort,
     publishConsent,
     ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
@@ -397,7 +380,6 @@ function harness(
     // A test may override the runner (e.g. to stamp #309 blockingStates like the live
     // runner does) via `extra.flaggedReview`.
     flaggedReview: extra.flaggedReview ?? flaggedReviewSpy,
-    readUiEvidence: extra.readUiEvidence ?? (() => Promise.resolve(null)),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     threadPersistence: extra.threadPersistence ?? threadPersistence,
@@ -416,7 +398,6 @@ function harness(
     store,
     allowedRoots,
     startWatching,
-    buildCanvases,
     publishPort,
     publishConsent,
     reviewAsk,
@@ -442,67 +423,6 @@ async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Prom
   })) as { review: Review };
   return result.review;
 }
-
-describe("createDispatch — review.uiEvidence (#183)", () => {
-  it("returns the confined screenshot as an ok data URL for the addressed review", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      {
-        readUiEvidence: (reviewId, path) =>
-          Promise.resolve({
-            status: "ok",
-            dataUrl: `data:image/png;base64,${reviewId}:${path}`,
-          }),
-      },
-    );
-    const review = await capturedReview(dispatch);
-    const result = await dispatch("review.uiEvidence", { reviewId: review.id, path: "a.png" });
-    expect(result).toEqual({ status: "ok", dataUrl: `data:image/png;base64,${review.id}:a.png` });
-  });
-
-  it("preserves an oversized evidence status without reading bytes into IPC", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      { readUiEvidence: () => Promise.resolve({ status: "oversized" }) },
-    );
-    const review = await capturedReview(dispatch);
-    await expect(
-      dispatch("review.uiEvidence", { reviewId: review.id, path: "huge.png" }),
-    ).resolves.toEqual({ status: "oversized" });
-  });
-
-  it("returns not-found when the evidence read yields null (missing/escaping — honest, not a crash)", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      {
-        readUiEvidence: () => Promise.resolve(null),
-      },
-    );
-    const review = await capturedReview(dispatch);
-    const result = await dispatch("review.uiEvidence", {
-      reviewId: review.id,
-      path: "../escape.png",
-    });
-    expect(result).toEqual({ status: "not-found" });
-  });
-
-  it("refuses an unknown review id (the store gate, not a verify-ui concern)", async () => {
-    const { dispatch } = harness(
-      fakePublishPort(),
-      {},
-      {
-        readUiEvidence: () =>
-          Promise.resolve({ status: "ok", dataUrl: "data:image/png;base64,AAAA" }),
-      },
-    );
-    await expect(
-      dispatch("review.uiEvidence", { reviewId: "nope", path: "a.png" }),
-    ).rejects.toThrow();
-  });
-});
 
 describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   // A capture port that yields a DISTINCT successor on regenerate, so the fold stamps a
@@ -671,113 +591,6 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
     expect(adjudicate.review.id).toBe(review.id);
   });
 
-  it("routes review.canvases to the injected builder", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-
-    // Running the harness just runs — no consent token, no permission mode.
-    const result = (await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    })) as {
-      canvases: Record<CanvasAngle, Canvas>;
-      elementDiffs: Record<string, { path: string; diff: string }>;
-    };
-
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-    expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
-    // The per-element real diff map (#60) is delivered with the canvas set.
-    expect(result.elementDiffs.e1?.diff).toContain("+x");
-  });
-
-  it("composes review.canvases and flagged.review onto one exact turn budget", async () => {
-    const { dispatch, buildCanvases, flaggedReviewSpy } = harness();
-    const review = await capturedReview(dispatch);
-
-    const canvasResult = {
-      canvases: canvasSet(),
-      elementDiffs: {
-        e1: {
-          path: "src/a.ts",
-          paths: ["src/a.ts"],
-          diff: "@@ -1,1 +1,2 @@\n+x",
-          hunkOccurrences: [],
-        },
-      },
-      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
-    };
-    buildCanvases.mockImplementationOnce(async (_review, _deepReview, session) => {
-      session.budget.tryConsume("canvas-pipeline");
-      return canvasResult;
-    });
-
-    await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-      deepReview: false,
-    });
-    const canvasSession = buildCanvases.mock.calls[0]?.[2];
-    expect(canvasSession?.budget.max).toBe(6);
-
-    flaggedReviewSpy.mockImplementationOnce(async (_review, _deepReview, session) => {
-      session.budget.tryConsume("flagged-pipeline");
-      return { review: { status: "ok", findings: [] }, adjudication: null };
-    });
-    await dispatch("flagged.review", { reviewId: review.id, deepReview: false });
-    const flaggedSession = flaggedReviewSpy.mock.calls[0]?.[2];
-
-    expect(flaggedSession).toBe(canvasSession);
-    expect(flaggedSession?.budget).toBe(canvasSession?.budget);
-    expect(flaggedSession?.budget.consumed).toBe(2);
-  });
-
-  it("carries the REAL contextManifest through the review.canvases command boundary (#30)", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-    // The manifest the builder produced for THIS review; it must reach the renderer
-    // intact through the strict Zod command output (an undeclared field is stripped
-    // here — that is the exact IPC-fidelity failure the declared field guards).
-    const manifest: ContextManifest = {
-      repoRecordId: "/repo",
-      projectSnapshotId: "fp-1",
-      compositionDigest: "comp-1",
-      freshness: { status: "current", staleMembers: [] },
-      members: [],
-      documents: [
-        {
-          order: 0,
-          source: "claude-md",
-          sourcePath: "CLAUDE.md",
-          contentHash: "a".repeat(64),
-          originalBytes: 120,
-          bytes: 64,
-          state: "truncated",
-        },
-      ],
-      totalBytes: 64,
-      assembledPromptDigest: "b".repeat(64),
-      exhaustive: false,
-      unmanagedSources: ["harness ambient file reads (context-isolation probe not yet run)"],
-    };
-    buildCanvases.mockResolvedValueOnce({
-      canvases: canvasSet(),
-      elementDiffs: {},
-      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
-      contextManifest: manifest,
-    });
-
-    const result = (await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    })) as { contextManifest?: ContextManifest };
-
-    expect(result.contextManifest).toEqual(manifest);
-    expect(result.contextManifest?.documents[0]?.state).toBe("truncated");
-  });
-
   it("still serves the preserved MVP commands (app.bootstrap, review.setDisposition)", async () => {
     const { dispatch, startWatching } = harness();
     const review = await capturedReview(dispatch);
@@ -800,19 +613,6 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
       body: "",
     })) as { review: Review };
     expect(set.review.dispositions).toHaveLength(1);
-  });
-
-  it("denies review.canvases for a repository that was never granted", async () => {
-    const { dispatch, allowedRoots } = harness();
-    const review = await capturedReview(dispatch);
-    allowedRoots.delete(review.repositoryRoot);
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        repoPath: review.repositoryRoot,
-      }),
-    ).rejects.toThrow(/access was not granted/);
   });
 });
 
@@ -1185,13 +985,6 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
       reviewId: older.id,
     });
     expect(reattached).toEqual({ threads: [], inFlight: [] });
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: older.repositoryRoot,
-      }),
-    ).resolves.toBeDefined();
   });
 
   it("fails plainly for an unknown id", async () => {
@@ -1217,14 +1010,6 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
     expect(result.repositoryPresent).toBe(false);
     expect(allowedRoots.has(older.repositoryRoot)).toBe(false);
     expect(startWatching).not.toHaveBeenCalled();
-    // A repo-touching command against the absent root is refused (not granted by load).
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: older.repositoryRoot,
-      }),
-    ).rejects.toThrow(/Repository access was not granted/);
   });
 
   it("bootstrap reports a deleted latest root without granting or watching it", async () => {
@@ -1247,7 +1032,7 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
   });
 
   it("binds freshness and canvases to the addressed review's stored repository root", async () => {
-    const { dispatch, allowedRoots, buildCanvases } = harnessWith({
+    const { dispatch, allowedRoots } = harnessWith({
       repositoryExists: () => true,
     });
     const { older } = await twoReviews(dispatch);
@@ -1261,28 +1046,12 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
       }),
     ).rejects.toThrow(/does not match this review/i);
     await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: "/allowed-but-unrelated",
-      }),
-    ).rejects.toThrow(/does not match this review/i);
-    expect(buildCanvases).not.toHaveBeenCalled();
-
-    await expect(
       dispatch("review.checkFreshness", {
         commandId: randomUUID(),
         reviewId: older.id,
         repoPath: older.repositoryRoot,
       }),
     ).resolves.toEqual({ review: older });
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: older.id,
-        repoPath: older.repositoryRoot,
-      }),
-    ).resolves.toBeDefined();
   });
 });
 
@@ -2643,12 +2412,6 @@ function frontDoorHarness(seed: {
     startWatching: () => undefined,
     isRepositoryDirty: () => false,
     setRepositoryDirty: () => undefined,
-    buildCanvases: () =>
-      Promise.resolve({
-        canvases: canvasSet(),
-        elementDiffs: {},
-        engine: { aiReview: false, claudeAvailable: false, codexAvailable: false },
-      }),
     publishPort: fakePublishPort(),
     publishConsent: createPublishConsentAuthority(),
     projects: {
@@ -2710,7 +2473,6 @@ function frontDoorHarness(seed: {
     prWorktree: () => Promise.resolve(null),
     flaggedReview: () =>
       Promise.resolve({ review: { status: "ok", findings: [] }, adjudication: null }),
-    readUiEvidence: () => Promise.resolve(null),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk: {
       askOrchestrator: () =>

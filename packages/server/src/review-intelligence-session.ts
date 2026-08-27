@@ -3,16 +3,13 @@ import {
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   reviewInvocationCeiling,
 } from "@rennet/core";
-import type { InvocationBudget, Review, ReviewHypothesis } from "@rennet/protocol";
+import type { InvocationBudget, Review } from "@rennet/protocol";
 
 export type ReviewIntelligenceFlow = "canvases" | "flagged";
 
 export interface ReviewIntelligenceSession {
   readonly budget: InvocationBudget;
   readonly deepReview: boolean;
-  hypothesis(
-    compute: (budget: InvocationBudget) => Promise<ReviewHypothesis | undefined>,
-  ): Promise<ReviewHypothesis | undefined>;
 }
 
 interface MutableSession extends ReviewIntelligenceSession {
@@ -35,26 +32,11 @@ function createSession(deepReview: boolean, flow: ReviewIntelligenceFlow): Mutab
   const budget = createInvocationBudget(
     reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, deepReview),
   );
-  let memo: Promise<ReviewHypothesis | undefined> | undefined;
 
   return {
     budget,
     deepReview,
     enteredFlows: new Set([flow]),
-    hypothesis(compute) {
-      if (memo) return memo;
-      const attempt = Promise.resolve().then(() => compute(budget));
-      memo = attempt;
-      void attempt.then(
-        (hypothesis) => {
-          if (hypothesis === undefined && memo === attempt) memo = undefined;
-        },
-        () => {
-          if (memo === attempt) memo = undefined;
-        },
-      );
-      return attempt;
-    },
   };
 }
 

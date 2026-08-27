@@ -22,10 +22,10 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getClaudeHarness call (no host-default)", () => {
     const calls = callArgs("getClaudeHarness");
-    // Exactly the 11 read-pipeline + handoff + project-contextAsk sites, all
-    // `(locus, distroCwd)`. Exact, not `>=`: a new host-default site added later must
-    // fail this, not slip under a floor.
-    expect(calls).toHaveLength(11);
+    // Exactly the read-pipeline + handoff + project-contextAsk sites that survive the
+    // Board rebuild (B2), all `(locus, distroCwd)`. Exact, not `>=`: a new host-default
+    // site added later must fail this, not slip under a floor.
+    expect(calls).toHaveLength(8);
     for (const arg of calls) {
       // Every call threads the repo-resolved `locus` variable — never `HOST_LOCUS`,
       // never a zero-arg host default.
@@ -35,16 +35,16 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getCodexResolution review turn", () => {
     const calls = callArgs("getCodexResolution");
-    // Exactly 6 call sites. Five review turns thread the repo-resolved `locus`; the one
-    // exception is the host-global availability boot probe, which passes `HOST_LOCUS`
-    // explicitly (no repo in scope). There is NO zero-arg form — the default parameter
-    // was removed, so `getCodexResolution()` no longer typechecks (mutation-reddens at
-    // compile). This guards the remaining risk: a review site hardcoding HOST_LOCUS.
-    expect(calls).toHaveLength(6);
+    // Exactly 4 call sites that survive the Board rebuild (B2). Three review-side turns
+    // thread the repo-resolved `locus`; the one exception is the host-global availability
+    // boot probe, which passes `HOST_LOCUS` explicitly (no repo in scope). There is NO
+    // zero-arg form — the default parameter was removed, so `getCodexResolution()` no
+    // longer typechecks. This guards the remaining risk: a review site hardcoding HOST_LOCUS.
+    expect(calls).toHaveLength(4);
     const hostCalls = calls.filter((arg) => arg === "HOST_LOCUS");
     const locusCalls = calls.filter((arg) => arg.startsWith("locus"));
     expect(hostCalls).toHaveLength(1);
-    expect(locusCalls).toHaveLength(5);
+    expect(locusCalls).toHaveLength(3);
     // Bind that one HOST_LOCUS call to the boot probe specifically: it lives in
     // `getCodexAvailability`, not in any review turn. Hardcoding HOST_LOCUS at a review
     // site would push this count past 1 AND fail this line-context check. (Indentation-

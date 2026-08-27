@@ -3,11 +3,8 @@ import {
   type CodexExecutor,
   DEFAULT_CODEX_UTILITY_EFFORT,
   DEFAULT_CODEX_UTILITY_MODEL,
-  type ReviewPipelineResult,
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/protocol";
-import { parseAnchor } from "@rennet/protocol";
-import type { OrchestratorTurnRunner } from "./orchestrator";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.ask — the LIVE ports (issue #139, bead workspace-alqow).
@@ -53,19 +50,10 @@ function activePatchsetOf(review: Review): Patchset {
 /** The deps the live ports are bound to (all injected so the module stays testable). */
 export interface LiveReviewAskDeps {
   /**
-   * Build the review's pipeline for the orchestrator turn. The app injects a
-   * deterministic-floor build (`buildReviewCanvases` with no lens/model turns): the
-   * ask's model spend is the ONE orchestrator turn, not a fresh lens review, and the
-   * canvasOps@2 surface serves real decomposition + diffs off the floor pipeline.
-   */
-  buildPipeline(review: Review): Promise<ReviewPipelineResult>;
-  /** The live orchestrator turn runner (claude over the canvasOps@2 MCP server). */
-  orchestratorTurn: OrchestratorTurnRunner;
-  /**
    * The live Codex second-opinion port. ABSENT when `codex` is not installed, in
    * which case `askCodex` returns an honest "unavailable" answer rather than
    * crashing the "both" ask (the router awaits it, so a throw would sink the whole
-   * question — the orchestrator's answer already exists and must survive).
+   * question).
    */
   askCodex?(input: {
     review: Review;
@@ -101,32 +89,6 @@ export interface LiveReviewAskPorts {
   }): Promise<AskAnswer>;
 }
 
-function selectionElementSummary(pipeline: ReviewPipelineResult, anchor: string): string {
-  const selected = parseAnchor(anchor);
-  if (!selected.ok) return anchor;
-  for (const canvas of Object.values(pipeline.canvases)) {
-    for (const element of canvas.layers.analysis.elements) {
-      const placed = parseAnchor(element.anchor);
-      if (
-        placed.ok &&
-        placed.anchor.kind === selected.anchor.kind &&
-        placed.anchor.id === selected.anchor.id
-      ) {
-        return element.title;
-      }
-      const diff = pipeline.elementDiffs[element.elementKey];
-      if (
-        diff?.hunkOccurrences.some((hunk) =>
-          hunk.some((occurrence) => occurrence.id === selected.anchor.id),
-        )
-      ) {
-        return element.title;
-      }
-    }
-  }
-  return anchor;
-}
-
 /**
  * Build the LIVE review.ask ports. Drop-in for `reviewAskFixturePorts()`: the same
  * `{ review, question } → AskAnswer` shape the dispatch path calls through the real
@@ -135,65 +97,13 @@ function selectionElementSummary(pipeline: ReviewPipelineResult, anchor: string)
  */
 export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAskPorts {
   return {
-    async askOrchestrator({ review, question, onDelta, selection, onFocus, abortController }) {
-      const pipeline = await deps.buildPipeline(review);
-      const pointing =
-        selection || onFocus
-          ? {
-              ...(onFocus ? { onFocus } : {}),
-              ...(selection
-                ? {
-                    userActs: [
-                      {
-                        kind: "selected" as const,
-                        anchor: selection.anchor,
-                        elementSummary: selectionElementSummary(pipeline, selection.anchor),
-                        ...(selection.excerpt === undefined ? {} : { excerpt: selection.excerpt }),
-                        seq: 1,
-                      },
-                    ],
-                  }
-                : {}),
-            }
-          : undefined;
-      // Thread the AbortController only when present, so a non-reaping caller still
-      // invokes the runner with exactly four args (the runner's back-compat shape).
-      const outcome = pointing
-        ? await deps.orchestratorTurn(
-            review,
-            pipeline,
-            question,
-            onDelta,
-            abortController,
-            pointing,
-          )
-        : abortController
-          ? await deps.orchestratorTurn(review, pipeline, question, onDelta, abortController)
-          : await deps.orchestratorTurn(review, pipeline, question, onDelta);
-      if (!outcome.available) {
-        // Fail-closed, honest: no `claude` on the machine → an answer that SAYS so,
-        // never a fabricated one. (The primary answer is always produced, in every
-        // mode, so this replaces silence with a legible reason.)
-        return {
-          model: ORCHESTRATOR_ASK_LABEL,
-          answer: `The orchestrator is unavailable: ${outcome.reason}`,
-        };
-      }
-      const { result } = outcome;
-      if (result.outcome === "failed") {
-        const detail = result.error?.message ?? "the turn did not complete";
-        return {
-          model: ORCHESTRATOR_ASK_LABEL,
-          answer: `The orchestrator turn failed: ${detail}`,
-        };
-      }
-      const finalText = result.finalText.trim();
+    async askOrchestrator() {
+      // The live orchestrator leg (Claude over the canvasOps@2 MCP server) is gone with
+      // the Board rebuild (B2). The router still asks the primary once; answer honestly
+      // that it is unavailable rather than fabricating a review answer.
       return {
         model: ORCHESTRATOR_ASK_LABEL,
-        answer:
-          finalText.length > 0
-            ? result.finalText
-            : "The orchestrator completed the turn without a final answer.",
+        answer: "The orchestrator is unavailable during the Board rebuild.",
       };
     },
     async askCodex({ review, question, abortController }) {
