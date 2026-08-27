@@ -19,11 +19,11 @@ import { useCoachAnchor } from "./registry";
 
 /** Captures the commit-phase throw the duplicate registration raises. */
 class Catch extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null };
+  override state: { error: Error | null } = { error: null };
   static getDerivedStateFromError(error: Error): { error: Error } {
     return { error };
   }
-  render(): ReactNode {
+  override render(): ReactNode {
     if (this.state.error) return <span data-testid="boundary">{this.state.error.message}</span>;
     return this.props.children;
   }

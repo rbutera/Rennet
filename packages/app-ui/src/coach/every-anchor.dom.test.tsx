@@ -56,7 +56,7 @@ function collectAnchorIds(dir: string, found: Set<string>): void {
     for (const match of readFileSync(path, "utf8").matchAll(
       /useCoachAnchor\(\s*["']([^"']+)["']/g,
     )) {
-      found.add(match[1]);
+      if (match[1]) found.add(match[1]);
     }
   }
 }
