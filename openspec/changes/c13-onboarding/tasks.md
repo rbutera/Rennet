@@ -32,8 +32,10 @@ Serial clusters. Each cluster is one session. Search before implementing
       Strip every `@/lib/*` import; anchor comes from the registry, **not**
       `document.querySelector`. Use `packages/ui` kit primitives (Popover);
       replace any `text-[Npx]` with theme tokens (fence rules 2, 5, 6).
-- [ ] Any `switch` over `MarkId`/side gets an `assertNever` default (fence 9);
-      no `store?.`/`?? []` phantom-null guards (fence 4).
+- [x] Any `switch` over `MarkId`/side gets an `assertNever` default (fence 9);
+      no `store?.`/`?? []` phantom-null guards (fence 4). (No `switch` was
+      introduced; the `??` defaults cover genuinely-optional `Mark` fields, not
+      phantom nulls.)
 
 ## Cluster 3 — Persistence seam (protocol + core + data)
 
