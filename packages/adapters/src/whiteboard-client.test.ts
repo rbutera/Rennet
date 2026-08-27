@@ -1,17 +1,9 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import type { WireSchema } from "@wboard/core";
 import { BoardService, InMemoryBoardStore } from "@wboard/server";
 import { describe, expect, it } from "vitest";
 import { type DraftOp, WhiteboardClient } from "./whiteboard-client";
-
-/**
- * Writer-invariant proof (task 3.2), recorded at implementation time:
- *
- *   grep -rn "\.apply(" packages/ apps/ --include="*.ts" | grep -v ".test.ts"
- *
- * returned exactly one hit — whiteboard-client.ts's own `service.apply` call —
- * and `op_id` appears only here, in the client, and in the server's board test
- * fixtures. WhiteboardClient is the only writer of board ops in Rennet.
- */
 
 const NOTE_SCHEMA: WireSchema = {
   kinds: [
@@ -30,6 +22,38 @@ const note = (id: string, text: string, opId?: string): DraftOp => ({
 });
 
 const client = () => new WhiteboardClient(new BoardService(new InMemoryBoardStore()));
+
+describe("writer invariant (task 3.2) — WhiteboardClient is the only board-op writer", () => {
+  it("no other non-test source calls .apply( anywhere in the workspace", () => {
+    // Executable form of the recorded grep proof: scan packages/ and apps/
+    // sources for `.apply(` call sites. The allowlist names the only
+    // sanctioned writer; Function.prototype.apply or any new BoardService
+    // writer alike must show up here and be consciously allowlisted (a board
+    // writer never should be). Lightweight regex by design, not an AST pass.
+    const workspaceRoot = join(__dirname, "..", "..", "..");
+    const allowed = new Set(["packages/adapters/src/whiteboard-client.ts"]);
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".nx")
+            continue;
+          walk(path);
+          continue;
+        }
+        if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".tsx")) continue;
+        if (entry.name.includes(".test.") || entry.name.endsWith(".d.ts")) continue;
+        if (!/\.apply\(/.test(readFileSync(path, "utf8"))) continue;
+        const rel = relative(workspaceRoot, path).split(sep).join("/");
+        if (!allowed.has(rel)) offenders.push(rel);
+      }
+    };
+    walk(join(workspaceRoot, "packages"));
+    walk(join(workspaceRoot, "apps"));
+    expect(offenders).toEqual([]);
+  });
+});
 
 describe("WhiteboardClient — the five #455 tools", () => {
   it("create → schema round-trips the declared schema", async () => {

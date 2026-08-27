@@ -753,14 +753,17 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             ),
           } satisfies SessionFrame);
         }
-        // One bad socket must not starve the rest of the fan-out.
         try {
           connection.socket.send(projectedPayload);
-        } catch {}
+        } catch {
+          // One bad socket must not starve the rest of the fan-out.
+        }
       } else if (connection.connectionClass === "private") {
         try {
           connection.socket.send(rawPayload);
-        } catch {}
+        } catch {
+          // Same isolation for the raw path.
+        }
       }
     }
   };
