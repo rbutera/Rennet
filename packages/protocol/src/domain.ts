@@ -1,9 +1,6 @@
 // Types owned by the wire schemas in ./index (protocol is the source of truth).
 import type {
-  AnalysisCohort,
-  AnalysisElement,
   AnchorSpan,
-  Annotation,
   CiFailure,
   DecisionEvidence,
   DecisionWhy,
@@ -19,10 +16,8 @@ import type {
   OpenSpecScenario,
   OpenSpecSource,
   Patchset,
-  Proposal,
   ReviewHypothesis,
   RiskCrossCheck,
-  SubstrateChunkRef,
   UiScreenshot,
 } from "./index";
 
@@ -853,22 +848,6 @@ export interface RollupNarrationBody {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The five canvas angles. `blast-radius` is deliberately NOT here: it is an
- * overlay, not a canvas (Canvas Paradigm §1 — promoting it to a sixth canvas
- * would silently turn the overlay into a writable queue).
- */
-export type CanvasAngle = "spec" | "sequence" | "decisions" | "noise" | "flagged";
-
-/** The canvas angles as a frozen list, in a stable order. */
-export const CANVAS_ANGLES: readonly CanvasAngle[] = [
-  "spec",
-  "sequence",
-  "decisions",
-  "noise",
-  "flagged",
-] as const;
-
-/**
  * The canvas-facing shape of a decision. `decisionId`, `anchor`, and `title` are
  * all the projector needs for PLACEMENT (grouping by anchored chunk — the chunk's
  * title IS the theme label the lens shows, e.g. "Storage and state"); the richer
@@ -1398,42 +1377,6 @@ export type NoiseReview =
   | { status: "ok"; groups: NoiseGroup[] }
   | { status: "failed"; reason: string };
 
-/** L0 substrate layer: read-only, owned entirely by deterministic ingest. */
-export interface SubstrateLayer {
-  chunks: SubstrateChunkRef[];
-}
-
-/**
- * L1 analysis layer. `elements` are in canvas order; `cohorts` group them for the
- * decisions canvas (empty for the flat canvases); `readingOrder` is the ordered
- * list of cohort keys (decisions) or element keys (flat) the canvas presents.
- */
-export interface AnalysisLayer {
-  elements: AnalysisElement[];
-  cohorts: AnalysisCohort[];
-  readingOrder: string[];
-}
-
-/** L2 disposition layer: the user's dispositions relevant to this canvas. */
-export interface DispositionLayer {
-  dispositions: Disposition[];
-}
-
-/** The orchestrator's L3 mark kinds (glass — chrome, visually distinct). */
-export type AnnotationKind = "highlight" | "callout" | "link";
-
-/** The kinds of proposal the orchestrator may raise (a suggestion — user decides). */
-export type ProposalKind = "disposition" | "regroup" | "split";
-
-/** A proposal's lifecycle: pending until the user accepts or dismisses it. */
-export type ProposalStatus = "pending" | "accepted" | "dismissed";
-
-/** L3 annotation layer: the orchestrator's marks and proposals. */
-export interface AnnotationLayer {
-  annotations: Annotation[];
-  proposals: Proposal[];
-}
-
 /**
  * The blast-radius signals (issue #35). A signal is a deterministic, one-line-
  * explainable reason a change carries risk. Blast radius is PAINT: it MARKS these,
@@ -1467,20 +1410,6 @@ export type NarrationPlacement =
   | { status: "narrated"; oneLine: string; paragraph: string; evidence?: NarrationEvidence[] }
   | { status: "pending" }
   | { status: "failed" };
-
-/**
- * A canvas-scoped post-commit change notification (R35's ONE change feed, canvas
- * half). Keyed `(reviewId, canvasId, elementKey)` with the covering `seqRange`;
- * a conflated notification names the seq range it covers. This is an
- * INVALIDATION HINT — truth stays the store; a consumer that misses one
- * re-queries the projection. Never a raw event; never a private row.
- */
-export interface CanvasChangeNotification {
-  reviewId: string;
-  canvasId: string;
-  elementKey: string;
-  seqRange: { from: number; to: number };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Model Council (issue #69)
