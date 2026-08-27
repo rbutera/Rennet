@@ -1,5 +1,5 @@
 import { Button } from "@rennet/ui";
-import { Loader2, type LucideIcon } from "lucide-react";
+import { AlertTriangle, Loader2, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11,7 +11,9 @@ import { useState } from "react";
 //
 // The happy path does NOT reset `submitting` on success: `onSubmit` resolving is the lane's cue
 // to swap to its receipt, unmounting this button — so only a REJECTION resets it (retry stays
-// possible). Nothing here posts; nothing leaves without the sign-click `onSubmit` carries.
+// possible) AND surfaces the reason beside the re-armed control. A failed post that renders
+// nothing is a silent lie (the reviewer can't tell it didn't post); the reason is the honest
+// failure state. Nothing here posts; nothing leaves without the sign-click `onSubmit` carries.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface HandoffActionProps {
@@ -22,30 +24,49 @@ export interface HandoffActionProps {
   readonly onSubmit?: () => Promise<void>;
 }
 
+/** The message a rejected `onSubmit` carries, defended for the non-Error throw. */
+function rejectionReason(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) return error.message;
+  return "The submission failed. Nothing left the machine — try again.";
+}
+
 export function HandoffAction({ label, pendingLabel, icon: Icon, onSubmit }: HandoffActionProps) {
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
-    <Button
-      size="lg"
-      disabled={!onSubmit || submitting}
-      onClick={async () => {
-        if (!onSubmit) return;
-        setSubmitting(true);
-        try {
-          await onSubmit();
-        } catch {
-          setSubmitting(false); // a failed post reopens the control; a success unmounts it
-        }
-      }}
-      // In flight keeps full contrast — a live state, not an inert control (R31).
-      className="h-12 w-fit gap-2.5 px-7 text-base font-semibold disabled:opacity-100"
-    >
-      {submitting ? (
-        <Loader2 className="size-5 animate-spin" aria-hidden="true" />
-      ) : (
-        <Icon className="size-5" aria-hidden="true" />
+    <div className="flex flex-col items-start gap-2">
+      <Button
+        size="lg"
+        disabled={!onSubmit || submitting}
+        onClick={async () => {
+          if (!onSubmit) return;
+          setSubmitting(true);
+          setError(null);
+          try {
+            await onSubmit();
+          } catch (caught) {
+            // A failed post reopens the control (a success unmounts it) AND names the reason,
+            // so the reviewer sees the failure honestly instead of a silently re-armed button.
+            setSubmitting(false);
+            setError(rejectionReason(caught));
+          }
+        }}
+        // In flight keeps full contrast — a live state, not an inert control (R31).
+        className="h-12 w-fit gap-2.5 px-7 text-base font-semibold disabled:opacity-100"
+      >
+        {submitting ? (
+          <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+        ) : (
+          <Icon className="size-5" aria-hidden="true" />
+        )}
+        {submitting ? pendingLabel : label}
+      </Button>
+      {error !== null && (
+        <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          {error}
+        </p>
       )}
-      {submitting ? pendingLabel : label}
-    </Button>
+    </div>
   );
 }

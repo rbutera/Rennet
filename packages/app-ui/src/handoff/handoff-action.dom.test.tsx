@@ -18,6 +18,40 @@ describe("HandoffAction", () => {
     expect(r.getByRole("button").textContent).toContain("Post Review");
   });
 
+  it("surfaces the rejection reason and re-arms the control on a failed submit", async () => {
+    const onSubmit = () =>
+      Promise.reject(new Error("GitHub rejected the review: 422 Unprocessable"));
+    const r = mount(
+      <HandoffAction
+        label="Post Review"
+        pendingLabel="Posting review…"
+        icon={GitPullRequest}
+        onSubmit={onSubmit}
+      />,
+    );
+    await r.user.click(r.getByRole("button"));
+    // The reason is shown (honest failure), and the control is re-armed for a retry (not stuck).
+    const alert = await r.findByRole("alert");
+    expect(alert.textContent).toContain("GitHub rejected the review: 422 Unprocessable");
+    expect(r.getByRole("button").textContent).toContain("Post Review");
+    expect(r.getByRole("button").hasAttribute("disabled")).toBe(false);
+  });
+
+  it("shows a default reason when the rejection carries no message", async () => {
+    const onSubmit = () => Promise.reject(new Error(""));
+    const r = mount(
+      <HandoffAction
+        label="Post Review"
+        pendingLabel="Posting review…"
+        icon={GitPullRequest}
+        onSubmit={onSubmit}
+      />,
+    );
+    await r.user.click(r.getByRole("button"));
+    const alert = await r.findByRole("alert");
+    expect(alert.textContent).toMatch(/Nothing left the machine/);
+  });
+
   it("shows the in-flight label while the egress is resolving", async () => {
     let release: () => void = () => undefined;
     const onSubmit = () => new Promise<void>((resolve) => (release = resolve));
