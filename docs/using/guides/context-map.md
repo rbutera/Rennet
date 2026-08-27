@@ -15,8 +15,9 @@ header. It opens as a full view; leaving it lands on that project's New Chat.
 
 The map generates the first time you add a project. A prefilled questionnaire
 about the project runs alongside that generation and is never a gate: the map
-completes and its exits appear whether or not you answer it, and every answer
-stays editable later in **Settings → Projects**. See
+completes and its exits appear whether or not you answer it. Its answers are
+prefilled defaults for a look, not a saved setting — you set them for real in
+**Settings → Projects**. See
 [Getting started](./getting-started.md#what-happens-after-you-add-it) for that
 flow.
 

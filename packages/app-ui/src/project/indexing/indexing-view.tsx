@@ -9,20 +9,22 @@ import { newChatPath, projectMapPath } from "../../routes/url";
 import { useRennetStore } from "../../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Project indexing view (C12 §10.4/§10.5, cluster 3: scout phase + questionnaire).
-// The single surface where everything after Add happens. The scout runs first as
-// its own progression, then the prefilled questionnaire appears the instant the
-// scout returns while the context map generates beneath it (never a gate — the map
-// completes and the exits appear whether or not the questionnaire is answered).
+// Project indexing view (C12 §10.4/§10.5). The single surface where everything after
+// Add happens: the context map generates while a prefilled questionnaire offers the
+// project's setup for confirmation (never a gate — the map completes and the exits
+// appear whether or not the questionnaire is answered).
 //
 // Narration is driven by the REAL `project.process` `onProgress` channel (keyed by a
-// per-project commandId), NOT the spike's 10.5s `setTimeout` — the view holds no
-// timer. `useCommandStream` folds only into a command's output cache ({repos}), which
-// cannot carry per-stage narration, so the raw events are accumulated the way the
-// incumbent `components/project-processing.tsx` proved (an `onProgress` subscription;
-// only `.invoke` is seam-fenced). The map-generation timeline detail + the rich ready
-// card are cluster 4 — this cluster lands the scout, the questionnaire, and a minimal
-// ready block + exits so the never-a-gate positive control can run.
+// per-project commandId), NOT the spike's 10.5s `setTimeout` — the view holds no timer.
+// The one honest event ORDER (verified against `server/process-project.ts`): per repo,
+// `repo-start` → `stage`* → `repo-done`/`repo-error`, then the command resolves with the
+// per-repo summaries. This IS the map build; there is no scout narration on this channel
+// (the deterministic scout runs at ADD time via `project.discover`, and the model-backed
+// scout — B7 — fires server-side after processing with no client-reachable progress key).
+// So the view does NOT fabricate a scout-vs-map split from these events: it renders one
+// build timeline and prefills the questionnaire from the real project. The completion
+// block distinguishes ready / partial / failed / map-unavailable — it never calls a
+// transport error or an all-failed run "Context Map Ready".
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One stable protocol-valid commandId per project, so a remount re-attaches to the
@@ -38,6 +40,9 @@ function processCommandId(projectId: string): string {
 
 type Provenance = "detected" | "guessed";
 
+/** The build's terminal state once `project.process` resolves (or errors). */
+type Outcome = "running" | "ready" | "partial" | "failed";
+
 interface ScoutAnswer {
   readonly id: string;
   readonly label: string;
@@ -48,20 +53,19 @@ interface ScoutAnswer {
   readonly options?: readonly string[];
 }
 
-/** The scout's prefilled answers, seeded from the real project + whatever the scout
- *  narration named. Only fields a real signal backs read "detected"; the rest are an
- *  honest "guessed" (the full scout engine that detects them is B7 — this is its
- *  surface, so those values are editable defaults, never a claimed detection). */
-function baseAnswers(project: Project | undefined, forge: string | undefined): ScoutAnswer[] {
+/** The prefilled setup answers. Only the default branch has a real signal in this view
+ *  (the project's confirmed primary branch, from `project.discover` at add time) and
+ *  reads "detected"; the rest are honest "guessed" editable defaults — the model-backed
+ *  scout that would detect them is B7, server-side, with no client-reachable signal here,
+ *  so this view never CLAIMS a detection it cannot see. */
+function baseAnswers(project: Project | undefined): ScoutAnswer[] {
   return [
     {
       id: "tracker",
       label: "Issue tracker",
-      value: forge ?? "github",
-      provenance: forge ? "detected" : "guessed",
-      hint: forge
-        ? "from the git remote — referenced tickets feed the review"
-        : "no remote read yet — referenced tickets feed the review",
+      value: "github",
+      provenance: "guessed",
+      hint: "referenced tickets feed the review — set the tracker in Settings",
       options: ["github", "gitlab", "linear", "jira", "none"],
     },
     {
@@ -69,7 +73,7 @@ function baseAnswers(project: Project | undefined, forge: string | undefined): S
       label: "Default branch",
       value: project?.primaryBranch ?? "main",
       provenance: project ? "detected" : "guessed",
-      hint: "from the remote HEAD",
+      hint: "the project's confirmed primary branch",
     },
     {
       id: "worktrees",
@@ -93,16 +97,6 @@ function baseAnswers(project: Project | undefined, forge: string | undefined): S
       hint: "cosmetic — shown in the sidebar, never enters agent context",
     },
   ];
-}
-
-/** A forge named anywhere in the scout narration (`detail`), for the tracker prefill. */
-function forgeFrom(events: readonly ProjectProcessEvent[]): string | undefined {
-  for (const event of events) {
-    const detail = event.kind === "stage" ? (event.detail ?? "") : "";
-    if (/gitlab/i.test(detail)) return "gitlab";
-    if (/github/i.test(detail)) return "github";
-  }
-  return undefined;
 }
 
 /** The friendly narration line an event carries, or null for events with no step. */
@@ -163,16 +157,19 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
   // Each event carries a stable append-only id (its insertion length) so the timeline
   // keys are stable without an array index.
   const [events, setEvents] = useState<{ id: number; event: ProjectProcessEvent }[]>([]);
-  const [phase, setPhase] = useState<"running" | "done">("running");
+  // The build's outcome. `running` until the command resolves, then classified from the
+  // per-repo summaries: every repo ok ⇒ ready; some failed ⇒ partial; all failed (or a
+  // transport error) ⇒ failed. A transport error and an all-failed run are NEVER "ready".
+  const [outcome, setOutcome] = useState<Outcome>("running");
   // The per-repo summaries the run resolves with — real file/symbol counts for the ready card.
   const [summaries, setSummaries] = useState<readonly ProcessedRepoSummary[]>([]);
   const startedFor = useRef<string | undefined>(undefined);
 
-  // Drive the real context-map build once per project and accumulate its live
-  // narration off the `project.process` `onProgress` channel. The commandId is stable
-  // per project, so leaving and returning re-attaches to the same run (main replays
-  // its backlog) rather than restarting it — the trigger is guarded to fire once, and a
-  // direct hop to a different project resets the timeline before re-attaching.
+  // Drive the real context-map build once per project and accumulate its live narration
+  // off the `project.process` `onProgress` channel. The commandId is stable per project,
+  // so leaving and returning re-attaches to the same run (main replays its backlog) rather
+  // than restarting it — the trigger is guarded to fire once, and a direct hop to a
+  // different project resets the timeline before re-attaching.
   useEffect(() => {
     const commandId = processCommandId(projectId);
     const unsubscribe = bridge.onProgress?.(commandId, (event) => {
@@ -181,17 +178,27 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
     if (startedFor.current !== projectId) {
       startedFor.current = projectId;
       setEvents([]);
-      setPhase("running");
+      setOutcome("running");
       // The sidebar's indexing spinner tracks THIS run, not this mounted screen:
       // set on start, cleared only when the run resolves — leaving never cancels it.
       const setProcessing = useRennetStore.getState().uiActions.setProjectProcessing;
       setProcessing(projectId, true);
-      const settle = (result?: { repos: readonly ProcessedRepoSummary[] }) => {
-        if (result) setSummaries(result.repos);
-        setPhase("done");
-        setProcessing(projectId, false);
+      // Bind the resolution to THIS run's project so a late resolution can't paint a
+      // DIFFERENT project's view (run-identity guard): the spinner clears for this run
+      // regardless, but the outcome/summaries land only while the view still shows it.
+      const runProjectId = projectId;
+      const finishRun = (result?: { repos: readonly ProcessedRepoSummary[] }) => {
+        setProcessing(runProjectId, false);
+        if (startedFor.current !== runProjectId) return; // navigated away — do not paint
+        if (!result) {
+          setOutcome("failed"); // a transport error is a failure, never "ready"
+          return;
+        }
+        setSummaries(result.repos);
+        const failed = result.repos.filter((repo) => !repo.ok).length;
+        setOutcome(failed === 0 ? "ready" : failed === result.repos.length ? "failed" : "partial");
       };
-      void process({ commandId, projectId }).then(settle, () => settle());
+      void process({ commandId, projectId }).then(finishRun, () => finishRun());
     }
     return () => unsubscribe?.();
   }, [bridge, projectId, process]);
@@ -206,15 +213,10 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [navigate]);
 
-  const done = phase === "done";
-  const firstRepoStart = events.findIndex((item) => item.event.kind === "repo-start");
-  const scoutReturned = firstRepoStart !== -1 || done;
-  const scoutEvents = firstRepoStart === -1 ? events : events.slice(0, firstRepoStart);
-  const mapEvents = firstRepoStart === -1 ? [] : events.slice(firstRepoStart);
-  const status = done ? "indexed" : scoutReturned ? "indexing" : "scouting";
+  const done = outcome !== "running";
+  const status = !done ? "indexing" : outcome === "ready" ? "indexed" : outcome;
 
-  const forge = forgeFrom(scoutEvents.map((item) => item.event));
-  const answers = useMemo(() => baseAnswers(project, forge), [project, forge]);
+  const answers = useMemo(() => baseAnswers(project), [project]);
   const detected = answers.filter((answer) => answer.provenance === "detected").length;
   const guessed = answers.length - detected;
 
@@ -254,9 +256,13 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6 px-8 pt-[10vh] pb-16">
-          {/* Scout phase */}
+          {/* The prefilled setup, offered the moment the view opens (the deterministic scout
+              already ran at add time) while the map builds beneath. Never a gate. */}
+          <ScoutQuestionnaire answers={answers} detected={detected} guessed={guessed} />
+
+          {/* The map build timeline — the one honest `project.process` event stream. */}
           <div className="flex flex-col gap-2">
-            {scoutEvents.map((item, index) => {
+            {events.map((item, index) => {
               const line = narrationLabel(item.event);
               if (!line) return null;
               return (
@@ -268,39 +274,19 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
                 />
               );
             })}
-            {scoutReturned ? (
-              <StepLine
-                label="Scout returned"
-                detail={`${detected} detected · ${guessed} guessed`}
-                running={false}
-              />
-            ) : (
-              scoutEvents.length === 0 && <StepLine label="Scouting the project" running={true} />
-            )}
+            {!done && events.length === 0 ? (
+              <StepLine label="Indexing the project" running={true} />
+            ) : null}
           </div>
 
-          {/* Questionnaire — appears the instant the scout returns, while the map cooks beneath */}
-          {scoutReturned ? <ScoutQuestionnaire answers={answers} /> : null}
-
-          {/* Map generation (minimal here; cluster 4 enriches the timeline + ready card) */}
-          {scoutReturned ? (
-            <div className="flex flex-col gap-2">
-              {mapEvents.map((item, index) => {
-                const line = narrationLabel(item.event);
-                if (!line) return null;
-                return (
-                  <StepLine
-                    key={item.id}
-                    label={line.label}
-                    detail={line.detail}
-                    running={isLast(firstRepoStart + index)}
-                  />
-                );
-              })}
-            </div>
+          {done ? (
+            <CompletionBlock
+              projectId={projectId}
+              outcome={outcome}
+              summaries={summaries}
+              ctaRef={ctaRef}
+            />
           ) : null}
-
-          {done ? <ReadyCard projectId={projectId} summaries={summaries} ctaRef={ctaRef} /> : null}
         </div>
       </div>
     </section>
@@ -308,25 +294,32 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
 }
 
 /**
- * The "Context Map Ready" block (§10.7) — mounted only once the run is done, so its
- * `project.contextMap` read hits the freshly-built snapshot (not an empty pre-build one).
- * File counts come from the run's own summaries; scope + confirmed/rejected counts from
- * the map's real source (`project.contextMap`) when present — an absent map degrades to
- * the file count, never fabricated. Its only action is View Context Map; the full-width
- * Start a Review CTA below is the flow's primary exit, scrolled into view by the parent.
+ * The completion block (§10.7) — mounted only once the run resolves, so its
+ * `project.contextMap` read hits the freshly-built snapshot. It states the HONEST outcome
+ * rather than always claiming readiness: a run whose every repo failed (or that errored in
+ * transport) reads "Indexing failed"; a run with some repos failed reads "partial"; a run
+ * that finished but produced no queryable map reads "map isn't ready yet" — only an all-ok
+ * run with a real map reads "Context Map Ready". View Context Map shows only when a map
+ * actually exists; the full-width Start a Review CTA is always offered (Rule Zero — a
+ * failed index never blocks the reviewer), scrolled into view by the parent.
  */
-function ReadyCard({
+function CompletionBlock({
   projectId,
+  outcome,
   summaries,
   ctaRef,
 }: {
   readonly projectId: string;
+  readonly outcome: Outcome;
   readonly summaries: readonly ProcessedRepoSummary[];
   readonly ctaRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const [, navigate] = useLocation();
   const { data: contextMap } = useCommand("project.contextMap", { projectId });
   const map = contextMap?.status === "ok" ? contextMap : undefined;
+  // Loaded but not "ok" (absent / error) — a real signal the map didn't materialise, as
+  // distinct from "not loaded yet" (undefined). A finished build with no map is not "ready".
+  const mapUnavailable = contextMap != null && contextMap.status !== "ok";
 
   const files = summaries.reduce((total, repo) => total + (repo.files ?? 0), 0);
   const scopes = map?.map.scopes.length;
@@ -339,21 +332,51 @@ function ReadyCard({
   ]
     .filter(Boolean)
     .join(" · ");
+  const failedRepos = summaries.filter((repo) => !repo.ok);
+
+  // The honest state: a failed/partial run, or an ok run whose map didn't materialise.
+  const state =
+    outcome === "failed"
+      ? "failed"
+      : outcome === "partial"
+        ? "partial"
+        : mapUnavailable
+          ? "unavailable"
+          : "ready";
+  const heading =
+    state === "ready"
+      ? "Context Map Ready"
+      : state === "partial"
+        ? "Context map built — some repositories didn't index"
+        : state === "unavailable"
+          ? "Indexing finished — the context map isn't ready yet"
+          : "Indexing failed";
+  const tone = state === "ready" ? "text-green" : "text-danger";
+  const hasMap = state === "ready" || state === "partial";
 
   return (
     <>
-      <div className="flex items-center gap-2 rounded-surface border border-line px-4 py-3.5">
-        <Icon icon={Check} className="size-4 shrink-0 text-green" />
-        <span className="text-sm font-medium text-ink">Context Map Ready</span>
-        <span className="truncate text-xs text-ink-soft">{counts}</span>
-        <button
-          type="button"
-          onClick={() => navigate(projectMapPath(projectId))}
-          className="ml-auto flex shrink-0 items-center gap-1.5 rounded-control border border-line px-3 py-1.5 text-sm text-ink hover:bg-raised"
-        >
-          <Icon icon={MapIcon} className="size-3.5" />
-          View Context Map
-        </button>
+      <div className="flex flex-col gap-1.5 rounded-surface border border-line px-4 py-3.5">
+        <div className="flex items-center gap-2">
+          <Icon icon={Check} className={`size-4 shrink-0 ${tone}`} />
+          <span className="text-sm font-medium text-ink">{heading}</span>
+          {counts ? <span className="truncate text-xs text-ink-soft">{counts}</span> : null}
+          {hasMap ? (
+            <button
+              type="button"
+              onClick={() => navigate(projectMapPath(projectId))}
+              className="ml-auto flex shrink-0 items-center gap-1.5 rounded-control border border-line px-3 py-1.5 text-sm text-ink hover:bg-raised"
+            >
+              <Icon icon={MapIcon} className="size-3.5" />
+              View Context Map
+            </button>
+          ) : null}
+        </div>
+        {failedRepos.length > 0 ? (
+          <span className="text-xs text-ink-soft">
+            Didn't index: {failedRepos.map((repo) => repo.repo).join(", ")}
+          </span>
+        ) : null}
       </div>
 
       <button
@@ -384,14 +407,26 @@ function ProvenanceChip({ provenance }: { provenance: Provenance }) {
 }
 
 /**
- * The scout's answers, offered for confirmation while the map generates. Confirming is
- * optional and never a gate — answers apply as shown unless edited, and stay editable
- * in Settings → Projects. Escape inside a field blurs it (and stops the view's Escape),
- * never leaving the view. The logo/mark is cosmetic and never enters agent context.
+ * The prefilled setup, offered for confirmation while the map generates. Confirming is
+ * optional and never a gate — answers apply as shown unless edited, and stay editable in
+ * Settings → Projects. Escape inside a field blurs it (and stops the view's Escape), never
+ * leaving the view. The logo/mark is cosmetic and never enters agent context.
+ *
+ * ponytail: edits live in component state only. There is no project-config WRITE command in
+ * the protocol yet (Settings → Projects is C10), so "Looks right" does NOT claim it saved —
+ * it dismisses the card and points the reviewer at Settings, where the real edit will land.
  */
-function ScoutQuestionnaire({ answers }: { answers: readonly ScoutAnswer[] }) {
+function ScoutQuestionnaire({
+  answers,
+  detected,
+  guessed,
+}: {
+  readonly answers: readonly ScoutAnswer[];
+  readonly detected: number;
+  readonly guessed: number;
+}) {
   const [edits, setEdits] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const currentValue = (answer: ScoutAnswer) => edits[answer.id] ?? answer.value;
   const patch = (id: string, value: string) => setEdits((prior) => ({ ...prior, [id]: value }));
 
@@ -402,13 +437,11 @@ function ScoutQuestionnaire({ answers }: { answers: readonly ScoutAnswer[] }) {
     }
   }
 
-  if (saved) {
+  if (dismissed) {
     return (
       <div className="flex items-center gap-2 rounded-surface border border-line px-4 py-3">
         <Icon icon={Check} className="size-3.5 shrink-0 text-green" />
-        <span className="text-sm text-ink-soft">
-          Project setup saved — editable anytime in Settings → Projects
-        </span>
+        <span className="text-sm text-ink-soft">Set these anytime in Settings → Projects</span>
       </div>
     );
   }
@@ -416,11 +449,14 @@ function ScoutQuestionnaire({ answers }: { answers: readonly ScoutAnswer[] }) {
   return (
     <div className="flex flex-col gap-3 rounded-surface border border-line px-4 py-3.5">
       <div className="flex flex-col">
-        <span className="text-sm font-medium text-ink">
+        <span className="flex items-center gap-2 text-sm font-medium text-ink">
           While the map generates — does this look right?
+          <span className="text-xs font-normal text-ink-soft">
+            {detected} detected · {guessed} guessed
+          </span>
         </span>
         <span className="text-sm text-ink-soft">
-          The scout prefilled these. Skipping is fine; everything stays editable in Settings.
+          Prefilled from the project. Skipping is fine; everything stays editable in Settings.
         </span>
       </div>
 
@@ -467,7 +503,7 @@ function ScoutQuestionnaire({ answers }: { answers: readonly ScoutAnswer[] }) {
       <div>
         <button
           type="button"
-          onClick={() => setSaved(true)}
+          onClick={() => setDismissed(true)}
           className="rounded-control border border-line px-3 py-1.5 text-sm font-medium text-ink hover:bg-raised"
         >
           Looks right
