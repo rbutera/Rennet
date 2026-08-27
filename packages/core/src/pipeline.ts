@@ -39,7 +39,7 @@ export interface ReviewPipelineInput {
 export interface ReviewPipelineResult {
   /**
    * The canvas set. EMPTY during the Board rebuild — the canvas projection AND the
-   * protocol `Canvas`/`CanvasAngle` state model were deleted (#489, B2) and nothing
+   * protocol canvas-era state model were deleted (#489, B2) and nothing
    * live reads a built canvas; the field is retained (empty) so the result shape is
    * stable for the B-series rewire.
    */

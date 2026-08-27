@@ -33,7 +33,7 @@ import { parseAnchor } from "@rennet/protocol";
 
 /**
  * The slice of a canvas the diff slicer reads: its analysis elements' keys + anchors.
- * Local shape — protocol's `Canvas`/`CanvasAngle` state model was deleted (#489, B2);
+ * Local shape — protocol's canvas-era state model was deleted (#489, B2);
  * the deterministic slicer survives standalone for the B-series to re-wire onto the
  * Board surface. Only `elementKey` + `anchor` are read here.
  */
