@@ -44,4 +44,4 @@ Serial clusters; one cluster per session; each ends on a green gate + commit. Cl
 - [x] 6.2 E2E (a) — durable asks survive reload: stage asks (body + line comment + quote thread + verdict override) → kill the host → restart → the projection is intact. Positive control: a variant that drops one event on restart must fail the assertion.
 - [x] 6.3 E2E (b) — dispatch a round work-order **twice** → exactly one dispatch. Positive control: a variant that omits the idempotency coalescing must observe two dispatches (fails).
 - [x] 6.4 E2E (c) — compose + preview a GitHub review draft for a real PR **without posting** (`dryRun` path; assert nothing left the machine and the previewed bytes equal the compose bytes). Positive control: a mutated payload must fail the exact-preview re-derivation.
-- [ ] 6.5 Full gate: `pnpm check` green. Output the completion sigil and flip `BUILD-STATUS.json` B11 → passes.
+- [x] 6.5 Full gate: `pnpm check` green. Output the completion sigil and flip `BUILD-STATUS.json` B11 → passes.
