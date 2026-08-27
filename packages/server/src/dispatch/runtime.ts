@@ -522,6 +522,20 @@ export interface DispatchDeps {
    * reconnecting client still reads the durable projection via `ask.read`).
    */
   readonly broadcastAskProjection?: (sessionId: string, projection: AskProjection) => void;
+  /**
+   * Dispatch a round's composed work-order to the rounds runtime (B11 cluster 4): run the
+   * review's dispatched asks as ONE coding-agent turn, serialized per session (one round in
+   * flight). Composed by the root over `createRoundsRuntime`. A failure-isolated post-commit
+   * kick (the knowledge-swarm / project-scout precedent): the round runs BEHIND the command,
+   * this never throws into the command path, and `round.dispatch` returns the composed
+   * work-order whether or not the turn later succeeds. Optional so a composition WITHOUT a
+   * rounds runtime still constructs — the command then composes + returns the work-order and
+   * simply runs no round, rather than throwing.
+   */
+  readonly dispatchRound?: (input: {
+    review: Review;
+    workOrder: ComposedHandoffBundle;
+  }) => Promise<void>;
 }
 
 /**

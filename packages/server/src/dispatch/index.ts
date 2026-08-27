@@ -16,6 +16,7 @@ import { projectsHandlers } from "./projects";
 import { publishHandlers } from "./publish";
 import { repositoryHandlers } from "./repository";
 import { reviewHandlers } from "./review";
+import { roundHandlers } from "./round";
 import {
   type CommandHandler,
   createDispatchRuntime,
@@ -83,6 +84,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...publishHandlers(rt),
     ...repositoryHandlers(rt),
     ...reviewHandlers(rt),
+    ...roundHandlers(rt),
     ...settingsHandlers(rt),
   };
   // Compile-time exhaustiveness guard — the successor to the old `switch` default's `never`

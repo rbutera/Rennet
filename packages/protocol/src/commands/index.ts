@@ -1155,6 +1155,17 @@ const definitions = {
     input: z.object({ sessionId: z.string().min(1) }),
     output: z.object({ projection: AskProjectionSchema }),
   },
+  // ── The round exit (B11 cluster 4, #458 R29–R36) ────────────────────────────
+  // Dispatch a round: fold the review's durable ask projection (the ask-log
+  // session id IS the review id) into ONE work-order via `composeHandoffBundle`
+  // and hand it to the rounds runtime, serialized per session and idempotent (a
+  // re-dispatch of the same asks coalesces onto the in-flight round, never a
+  // second run). `dispatched:false` with an empty work-order when the review has
+  // no addressed asks — an honest "nothing to dispatch", never a fabricated run.
+  "round.dispatch": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
+  },
 } as const;
 
 /** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose

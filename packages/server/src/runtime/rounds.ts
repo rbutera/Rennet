@@ -45,6 +45,7 @@ import type {
   RegisterLintContext,
 } from "@rennet/core";
 import {
+  type ComposedHandoffBundle,
   type DraftBoard,
   type Generation,
   LENS_KINDS,
@@ -185,9 +186,28 @@ export interface RoundsRuntimeDeps {
   readonly newGenerationId?: (patchsetId: string) => string;
 }
 
+/** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
+ *  handed to the workers, serialized per session (B11 cluster 4). Lighter than a full
+ *  `RoundInput`: the dispatch runs the coding-agent turn over the composed work-order; the
+ *  board regeneration + `RoundRecord` are `runRound`'s (invoked once its lens-pipeline
+ *  collation context is wired — a follow-on, kept out of the dispatch path). */
+export interface RoundDispatchInput {
+  readonly session: SessionModel;
+  /** The composed work-order the dispatched asks folded into — the workers' input. */
+  readonly workOrder: ComposedHandoffBundle;
+  /** Run the composed work-order WATCHED LIVE (the injected coding-agent turn upstream);
+   *  the runtime owns only the per-session serialization, never the exec. */
+  readonly runWorkers: (workOrder: ComposedHandoffBundle) => Promise<void>;
+}
+
 export interface RoundsRuntime {
   /** Run one round for a session, serialized behind any round already in flight for it. */
   runRound(input: RoundInput): Promise<RoundOutcome>;
+  /** Dispatch a round's composed work-order, serialized per session behind any round already
+   *  in flight for it — one round per session, the SAME serializer `runRound` uses (no second
+   *  lock). Same-asks idempotency is the dispatch-command handler's (it coalesces repeats
+   *  before they reach here), so the workers run once per distinct work-order. */
+  dispatchRound(input: RoundDispatchInput): Promise<void>;
   /** The session's rounds ledger — every `RoundRecord` this runtime recorded, in order. */
   ledger(sessionId: string): readonly RoundRecord[];
 }
@@ -200,6 +220,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   // pattern). The stored tail swallows rejection so a failed round never wedges the
   // queue; the returned promise carries the real outcome.
   const tails = new Map<string, Promise<unknown>>();
+
+  /** Run `task` serialized behind the session's current round — the ONE per-session lock
+   *  both `runRound` and `dispatchRound` share (no second lock, B11 cluster 4). */
+  function enqueue<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
+    const prior = tails.get(sessionId) ?? Promise.resolve();
+    const run = prior.then(task);
+    tails.set(
+      sessionId,
+      run.catch(() => undefined),
+    );
+    return run;
+  }
 
   /** Reconstruct the drafting result from durable BoardMeta (B09 F1): a fresh
    *  runtime after a restart never re-mints or re-drafts an already-drafted
@@ -337,14 +369,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
 
   return {
     runRound(input: RoundInput): Promise<RoundOutcome> {
-      const sessionId = input.session.id;
-      const prior = tails.get(sessionId) ?? Promise.resolve();
-      const run = prior.then(() => runOnce(input));
-      tails.set(
-        sessionId,
-        run.catch(() => undefined),
-      );
-      return run;
+      return enqueue(input.session.id, () => runOnce(input));
+    },
+    dispatchRound(input: RoundDispatchInput): Promise<void> {
+      return enqueue(input.session.id, () => input.runWorkers(input.workOrder));
     },
     ledger(sessionId: string): readonly RoundRecord[] {
       return ledger.get(sessionId) ?? [];

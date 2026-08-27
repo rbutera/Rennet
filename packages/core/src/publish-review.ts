@@ -1,4 +1,9 @@
-import type { AskProjection, Disposition, DispositionType } from "@rennet/protocol";
+import type {
+  AskProjection,
+  Disposition,
+  DispositionType,
+  HandoffDisposition,
+} from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
 
@@ -207,6 +212,45 @@ export function reviewCommentsFromProjection(projection: AskProjection): ReviewC
         ? -1
         : 1
       : (left.line ?? 0) - (right.line ?? 0),
+  );
+}
+
+/**
+ * Compose the ROUND work-order's dispositions from the durable ask projection (B11
+ * cluster 4, #458 R29–R36) — the round-exit twin of {@link reviewCommentsFromProjection},
+ * disjoint by design: the review exit posts only the code-anchored subset to GitHub,
+ * the round exit hands EVERY staged ask (prose + code-anchored) to the coding agent.
+ * So this maps all of `projection.stagedAsks`; `buildHandoffBundle` then keeps the
+ * addressed types (request-change / comment), the same filter the disposition path uses.
+ *
+ * A code-anchored ask (`anchor` = `path:line`) carries its line as a `startLine` span on
+ * the additions side, so the bundle resolves the covering diff hunk; a prose ask (a quoted
+ * board span, no `path:line`) has no repo path, so its anchor text stands as the locator —
+ * the agent addresses the body, and the context resolves to nothing rather than a guess.
+ *
+ * Deterministic order (path, then line) so the same asks always compose the same bundle
+ * (a stable digest — the dispatch idempotency key), regardless of the projection's Record
+ * key order or a disk round-trip.
+ */
+export function handoffDispositionsFromProjection(projection: AskProjection): HandoffDisposition[] {
+  const dispositions: HandoffDisposition[] = Object.values(projection.stagedAsks).map((ask) => {
+    const at = parsePathLine(ask.anchor);
+    return at
+      ? {
+          path: at.path,
+          type: ask.type,
+          body: ask.body,
+          span: { startLine: at.line },
+          side: "additions" as const,
+        }
+      : { path: ask.anchor, type: ask.type, body: ask.body };
+  });
+  return dispositions.sort((left, right) =>
+    left.path !== right.path
+      ? left.path < right.path
+        ? -1
+        : 1
+      : (left.span?.startLine ?? 0) - (right.span?.startLine ?? 0),
   );
 }
 
