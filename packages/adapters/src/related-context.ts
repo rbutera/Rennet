@@ -85,10 +85,12 @@ function* sources(input: ExtractRefsInput): Generator<[RefSource, string]> {
 
 /**
  * Deterministic pass: every GitHub ref, plus tracker keys gated on a configured
- * prefix or plausibility (an unconfigured prefix must appear at least twice
- * across the sources before it is believed — a lone `UTF-8`-shaped token is
- * noise, a repeated `PROJ-…` is a project key). Dedup keeps first-seen
- * provenance; source order is the argument order above.
+ * prefix or plausibility. An unconfigured prefix from a HIGH-SIGNAL source
+ * (branch name, PR title — someone typed the key into the change's identity)
+ * is believed on a single occurrence; in low-signal prose (commit bodies, PR
+ * body) it must appear at least twice — a lone `UTF-8`-shaped token is noise,
+ * a repeated `PROJ-…` is a project key. Dedup keeps first-seen provenance;
+ * source order is the argument order above.
  */
 export function extractRefs(
   input: ExtractRefsInput,
@@ -147,10 +149,14 @@ export function extractRefs(
     }
   }
 
-  // ponytail: repeat-count plausibility for unconfigured prefixes; tighten to a
-  // scout-detected prefix list if real-world noise shows up.
+  // ponytail: repeat-count plausibility for unconfigured low-signal prefixes;
+  // tighten to a scout-detected prefix list if real-world noise shows up.
+  const highSignal = new Set<RefSource>(["branch-name", "pr-title"]);
   const plausible = [...keys.values()].filter(
-    (ref) => ref.tracker !== "unknown" || (prefixCounts.get(ref.prefix) ?? 0) >= 2,
+    (ref) =>
+      ref.tracker !== "unknown" ||
+      highSignal.has(ref.provenance.source) ||
+      (prefixCounts.get(ref.prefix) ?? 0) >= 2,
   );
   return [...github.values(), ...plausible];
 }

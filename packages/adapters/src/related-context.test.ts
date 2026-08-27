@@ -69,7 +69,7 @@ describe("extractRefs", () => {
     ]);
   });
 
-  it("believes an unconfigured prefix only when it repeats", () => {
+  it("believes an unconfigured low-signal prefix only when it repeats", () => {
     const refs = extractRefs({
       commitMessages: ["touch UTF-8 handling", "ACME-1 groundwork"],
       prBody: "finishes ACME-2",
@@ -79,6 +79,24 @@ describe("extractRefs", () => {
       expect.objectContaining({ key: "ACME-2", tracker: "unknown" }),
     ]);
     expect(refs.some((r) => r.kind === "tracker-key" && r.prefix === "UTF")).toBe(false);
+  });
+
+  it("believes a single unconfigured key from a high-signal source", () => {
+    const fromBranch = extractRefs({ branchName: "PROJ-42-fix-the-thing" });
+    expect(fromBranch).toEqual([
+      expect.objectContaining({
+        kind: "tracker-key",
+        key: "PROJ-42",
+        tracker: "unknown",
+        provenance: expect.objectContaining({ source: "branch-name" }),
+      }),
+    ]);
+    const fromTitle = extractRefs({ prTitle: "ENG-7: ship the seam" });
+    expect(fromTitle).toEqual([
+      expect.objectContaining({ kind: "tracker-key", key: "ENG-7", tracker: "unknown" }),
+    ]);
+    // The same single key in low-signal prose stays unbelieved.
+    expect(extractRefs({ prBody: "maybe PROJ-42 related" })).toEqual([]);
   });
 
   it("yields nothing from empty input", () => {

@@ -36,6 +36,8 @@ Add-project UI (C12); standing tracker knowledge through the swarm (B6 owns the 
 
 11. **Tracker routing rides configured prefixes, not endpoint existence (Codex 4).** `TrackerEndpointConfig` gains `projectPrefixes`; a key routes to the endpoint whose prefixes claim it. The old behavior — every seen prefix labeled JIRA the moment a JIRA endpoint existed, Linear-only configs routing nothing — is gone, and `prefixesSeen` with it. Unclaimed prefixes stay `unknown` → missing-config facts.
 
+12. **High-signal single keys are believed (Codex 7, upheld half).** A single unconfigured `PROJ-42` in the branch name or PR title now yields the tracker-key ref (→ the missing-config fact #461 calls out); the twice-seen plausibility rule survives only for low-signal prose (commit messages, PR body). The finding's dedup half was REFUTED by seat 1: `#42` vs `owner/repo#42` canonicalization happens at the fetch layer (`fetchGithub`'s repo-resolved visited set), not in extraction — no change there.
+
 ## Verification (packet)
 
 `pnpm check` green. E2E (ruled approach, reconciliation 4): against the frozen real-Rennet-PR fixture, extraction → retrieval produces a dossier where every item carries provenance + fetched-at, total serialized size respects the bound, and the dossier inlines into a B05 `buildDeltaPacket` call without truncation. Positive controls that can fail: oversize body → bounded (schema rejects / item truncated per the shape's rule); drop provenance from a fixture item → schema rejects; break the ref extractor → zero items and the e2e's item-count assert fails.
