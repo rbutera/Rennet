@@ -37,10 +37,10 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 6. Barrels, dead-code fence, docs, full gate
 
-- [ ] 6.1 `packages/app-ui/src/chat/index.ts`: export `ChatDock` and the seam/projection types; `app-ui/src/index.ts` re-exports it.
-- [ ] 6.2 Fence: `grep -rE 'from "\.\./\.\./spikes|conversation-data|useCodeComments' packages/app-ui/src/chat` returns empty (the spike fixture module and shim do not travel — reconciliation 2/5); record the grep. Keep `test/fence.test.ts` green.
-- [ ] 6.3 Grep `docs/` (excl. `docs/dist`) for pages describing the chat dock, the transcript, or `conversation-data`/scripted replies as unbuilt or fixture-driven; update any page this change makes wrong, or record the grep as a no-op.
-- [ ] 6.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — zero new packages, confirm not assume — lint, typecheck, test, build). Commit.
+- [x] 6.1 `packages/app-ui/src/chat/index.ts`: export `ChatDock` and the seam/projection types; `app-ui/src/index.ts` re-exports it.
+- [x] 6.2 Fence: `grep -rE 'from "\.\./\.\./spikes|conversation-data|useCodeComments' packages/app-ui/src/chat` returns empty (the spike fixture module and shim do not travel — reconciliation 2/5); record the grep. Keep `test/fence.test.ts` green.
+- [x] 6.3 Grep `docs/` (excl. `docs/dist`) for pages describing the chat dock, the transcript, or `conversation-data`/scripted replies as unbuilt or fixture-driven; update any page this change makes wrong, or record the grep as a no-op.
+- [x] 6.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — zero new packages, confirm not assume — lint, typecheck, test, build). Commit.
 
 ## 7. Gated: live wiring (deferred until B9)
 
@@ -52,9 +52,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 8. Verification (packet)
 
-- [ ] 8.1 `pnpm check` green.
-- [ ] 8.2 Live-turn E2E: `chat/live-turn.dom.test.tsx` over `MemoryBridge` — `emitAskStream` a `ask-delta`…`ask-complete` sequence; the folded turn's prose grows then settles in the transcript. **Positive control run**: drop the `ask-complete` settle branch, watch the never-settles assertion fail, revert.
-- [ ] 8.3 Identity E2E: the cluster-1.4 test — same `chat-dock-transcript` DOM node and preserved transcript across session ↔ takeover (and every board/diff transition the router exposes today).
-- [ ] 8.4 Compaction E2E: the cluster-5.3 test — a `compact_boundary` renders its honest row + ask-don't-estimate meter, no fabricated number.
-- [ ] 8.5 INVENTORY §5 sweep: the 34 `[ws:C7]` claims spot-checked against the ported components; record conscious divergences (the scripted-fixture transcript and `setTimeout` reply do NOT travel — reconciliation 2; the board marker for an anchored thread is C5's — reconciliation 6; live-session data is B9's, cluster 7).
-- [ ] 8.6 `BUILD-STATUS.json` left for track-c to land (implementers do not touch it). Sigil `<promise>C07-COMPLETE</promise>` emitted in the completion report.
+- [x] 8.1 `pnpm check` green.
+- [x] 8.2 Live-turn E2E: `chat/live-turn.dom.test.tsx` over `MemoryBridge` — `emitAskStream` a `ask-delta`…`ask-complete` sequence; the folded turn's prose grows then settles in the transcript. **Positive control run**: drop the `ask-complete` settle branch, watch the never-settles assertion fail, revert.
+- [x] 8.3 Identity E2E: the cluster-1.4 test — same `chat-dock-transcript` DOM node and preserved transcript across session ↔ takeover (and every board/diff transition the router exposes today).
+- [x] 8.4 Compaction E2E: the cluster-5.3 test — a `compact_boundary` renders its honest row + ask-don't-estimate meter, no fabricated number.
+- [x] 8.5 INVENTORY §5 sweep: the 34 `[ws:C7]` claims spot-checked against the ported components; record conscious divergences (the scripted-fixture transcript and `setTimeout` reply do NOT travel — reconciliation 2; the board marker for an anchored thread is C5's — reconciliation 6; live-session data is B9's, cluster 7).
+- [x] 8.6 `BUILD-STATUS.json` left for track-c to land (implementers do not touch it). Sigil `<promise>C07-COMPLETE</promise>` emitted in the completion report.

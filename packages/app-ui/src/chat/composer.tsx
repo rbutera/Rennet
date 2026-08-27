@@ -9,7 +9,7 @@ import { useRennetStore } from "../store";
 //
 // RECONCILIATION 5: badges read the REAL `review` slice — comment badges from
 // `review.codeComments`, quote badges from `review.quoteThreads`; removal calls the real
-// `reviewActions.clearCodeComment` / `removeQuoteComment`. No `useCodeComments()` shim,
+// `reviewActions.clearCodeComment` / `removeQuoteComment`. No spike comment-provider shim,
 // no `store?.` guard. Image badges are local composer state. Sending fires the seam's
 // `review.ask` (via `onSend`) and clears the ridden-in comment/quote references — no ask
 // staging (C8), no command effects (B10). Presence follows the real in-flight stream state.
