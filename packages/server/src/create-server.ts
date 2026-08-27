@@ -276,21 +276,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
 
   /**
-   * The effective execution locus for a repo path (add-windows-support): the persisted
-   * per-project override if set, else auto-detected from the path (a `\\wsl$` root ⇒
-   * that distro, else host). Every repo-facing spawn in this composition routes
-   * through it, so a WSL-locus project's git/harness run inside the distro (Rule Zero:
-   * a plain resolution, never a gate). The store keys on the realpath-canonical top
-   * level, matching how settings resolves the same identity.
+   * The effective execution locus for a repo path (add-windows-support): a DETECTED
+   * FACT (#476), auto-detected from the path (a `\\wsl$` root ⇒ that distro, else
+   * host). Every repo-facing spawn in this composition routes through it, so a
+   * WSL-path project's git/harness runs inside the distro (Rule Zero: a plain
+   * resolution, never a gate). A stale stored `config.locus` is deliberately NOT
+   * consumed here — execution matches exactly what the settings surface displays as
+   * detected, so the two can never disagree.
    */
   function locusForRepo(repoRoot: string): Locus {
-    let key: string;
-    try {
-      key = escapePath(realpathSync(repoRoot));
-    } catch {
-      key = escapePath(repoRoot);
-    }
-    return resolveLocus(detectLocus(repoRoot), liveSnapshotStore.loadConfig(key)?.locus).value;
+    return resolveLocus(detectLocus(repoRoot)).value;
   }
 
   /**

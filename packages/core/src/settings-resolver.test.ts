@@ -1,4 +1,4 @@
-import type { ClientSettings, Locus } from "@rennet/protocol";
+import type { ClientSettings, Locus, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_SCHEME,
@@ -143,25 +143,16 @@ describe("settings registry + generic resolve (#28)", () => {
     expect(resolved.provenance.contributions.filter((c) => c.effective)).toHaveLength(1);
   });
 
-  it("a repo override outranks detection, keeping the suppressed detected offer", () => {
-    const resolved = resolve<Locus>(SETTINGS_REGISTRY.locus, {
-      detected: { kind: "wsl", distro: "Ubuntu" },
-      repo: { kind: "host" },
+  it("a repo override outranks detection for a repo-layer key (visibility)", () => {
+    const resolved = resolve<ProjectVisibility>(SETTINGS_REGISTRY.visibility, {
+      repo: "git-visible",
     });
     expect(resolved.layer).toBe("repo");
-    expect(resolved.value).toEqual({ kind: "host" });
-    expect(resolved.provenance.contributions.map((c) => c.layer)).toEqual([
-      "builtin",
-      "detected",
-      "repo",
-    ]);
-    expect(resolved.provenance.contributions.find((c) => c.layer === "detected")?.effective).toBe(
-      false,
-    );
+    expect(resolved.value).toBe("git-visible");
   });
 
   it("detected-only ⇒ effective layer is detected", () => {
-    const resolved = resolveLocus({ kind: "wsl", distro: "Debian" }, undefined);
+    const resolved = resolveLocus({ kind: "wsl", distro: "Debian" });
     expect(resolved.layer).toBe("detected");
   });
 
@@ -174,9 +165,19 @@ describe("settings registry + generic resolve (#28)", () => {
     ).toThrow();
   });
 
-  it("resolveLocus: repo override wins over detection", () => {
-    const resolved = resolveLocus({ kind: "host" }, { kind: "wsl", distro: "Ubuntu" });
-    expect(resolved.layer).toBe("repo");
+  it("locus has NO repo rung — a stored config.locus can never re-enter resolution (finding 3, #476)", () => {
+    // Execution locus is a detected fact; the surface shows "(detected)". If the
+    // registry still permitted a repo offer, a stale stored override could route
+    // execution to a host the surface never admits to. Assert the layer is refused.
+    expect(SETTINGS_REGISTRY.locus.layers).not.toContain("repo");
+    expect(() =>
+      resolve<Locus>(SETTINGS_REGISTRY.locus, { repo: { kind: "wsl", distro: "Ubuntu" } }),
+    ).toThrow(/repo/);
+  });
+
+  it("resolveLocus is detection-only: it returns exactly what detection offers", () => {
+    const resolved = resolveLocus({ kind: "wsl", distro: "Ubuntu" });
+    expect(resolved.layer).toBe("detected");
     expect(resolved.value).toEqual({ kind: "wsl", distro: "Ubuntu" });
   });
 });
