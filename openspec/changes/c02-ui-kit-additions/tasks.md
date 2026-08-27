@@ -30,8 +30,8 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 4. Docs (same change, definition of done)
 
-- [ ] 4.1 `docs/developing/concepts/design-doctrine.md`: record the kit-not-hand-rolled law where the doctrine's enforcement lives (one sentence + the checks-table row): segmented controls come from the kit's `ToggleGroup`, enforced by lint (`eslint.config.mjs` selector, positive control `packages/app-ui/src/toggle-lint.test.ts`), not review.
-- [ ] 4.2 Grep `docs/` (excl. `docs/dist`) for pages enumerating kit components or describing folding/resize behavior at component granularity — expected no-op (the docs point at directories, not component lists; `monorepo-map.md`'s ui row lists workspace deps, unchanged). Record the result; update any page found wrong.
+- [x] 4.1 `docs/developing/concepts/design-doctrine.md`: record the kit-not-hand-rolled law where the doctrine's enforcement lives (one sentence + the checks-table row): segmented controls come from the kit's `ToggleGroup`, enforced by lint (`eslint.config.mjs` selector, positive control `packages/app-ui/src/toggle-lint.test.ts`), not review.
+- [x] 4.2 Grep `docs/` (excl. `docs/dist`) for pages enumerating kit components or describing folding/resize behavior at component granularity — expected no-op (the docs point at directories, not component lists; `monorepo-map.md`'s ui row lists workspace deps, unchanged). Record the result; update any page found wrong.
 
 ## 5. Verification (packet)
 
