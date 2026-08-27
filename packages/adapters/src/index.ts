@@ -481,6 +481,11 @@ export {
   reviewAskFixturePorts,
 } from "./review-ask-fixture";
 export {
+  defaultSessionStoreDir,
+  SessionStore,
+  type SessionStoreDeps,
+} from "./session-store";
+export {
   type EnsureOverlayResult,
   type MergedSnapshotResult,
   type MergedSnapshotSource,
