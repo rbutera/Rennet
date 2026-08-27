@@ -266,6 +266,29 @@
   }
 }
 
+/* Streaming prose word reveal (C07 chat transcript): each word of a LIVE
+ * orchestrator turn fades + un-blurs in, staggered by a per-word animation-delay
+ * set inline. Records render with `animate=false` (no `.animate-word-in`), so this
+ * plays only on arrival. The base reduced-motion rule snaps it to the settled state
+ * (duration → 0.01ms, `both` fill lands on the `to` frame → opacity 1). */
+@layer components {
+  .animate-word-in {
+    animation: word-in 260ms ease-out both;
+  }
+  @keyframes word-in {
+    from {
+      opacity: 0;
+      filter: blur(4px);
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateY(0);
+    }
+  }
+}
+
 /* Deixis focus pulse: when conversation points at code, the row flashes a
  * gold inset once (700ms) and settles. */
 @layer components {

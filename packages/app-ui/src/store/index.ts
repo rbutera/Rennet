@@ -58,7 +58,7 @@ export type { LaneStatus, RunSlice, RunState } from "./run";
 export { createRunSlice, selectRoundRunning, selectRunningLaneCount } from "./run";
 export type { SignalSlice, SignalState } from "./signal";
 export { createSignalSlice, selectSignalAnimating } from "./signal";
-export type { UiSlice, UiState } from "./ui";
+export type { CommandMenuMode, UiSlice, UiState } from "./ui";
 export {
   createUiSlice,
   selectDialogOpen,

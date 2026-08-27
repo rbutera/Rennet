@@ -4,6 +4,7 @@
 export { BridgeProvider, useBridge } from "./bridge";
 export type { QueryState } from "./cache";
 export { commandKey } from "./cache";
+export { useInvoke } from "./dispatch";
 export { type MutationResult, type UseMutationOptions, useMutation } from "./mutate";
 export { type CommandResult, type UseCommandOptions, useCommand } from "./query";
 export { type UseCommandStreamParams, useCommandStream } from "./stream";

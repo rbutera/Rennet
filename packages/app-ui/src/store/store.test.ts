@@ -20,6 +20,24 @@ describe("rennet store", () => {
       expect(store.getState().ui.sidebarFolds["node-a"]).toBe(true);
     });
 
+    it("opens the command menu with a mode; an omitted mode is search", () => {
+      const store = createRennetStore();
+      expect(store.getState().ui.commandMenuOpen).toBe(false);
+      expect(store.getState().ui.commandMenuMode).toBe("search");
+      // ⌘K opens command-first.
+      store.getState().uiActions.setCommandMenuOpen(true, "command");
+      expect(store.getState().ui.commandMenuOpen).toBe(true);
+      expect(store.getState().ui.commandMenuMode).toBe("command");
+      // The sidebar Search row (no mode) opens search-first.
+      store.getState().uiActions.setCommandMenuOpen(true);
+      expect(store.getState().ui.commandMenuMode).toBe("search");
+      // The mode can also be set independently of open state.
+      store.getState().uiActions.setCommandMenuMode("command");
+      expect(store.getState().ui.commandMenuMode).toBe("command");
+      store.getState().uiActions.setCommandMenuOpen(false);
+      expect(store.getState().ui.commandMenuOpen).toBe(false);
+    });
+
     it("tracks a dialog stack via the selector", () => {
       const store = createRennetStore();
       store.getState().uiActions.openDialog("settings");
