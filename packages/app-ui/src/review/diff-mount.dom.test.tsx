@@ -53,15 +53,16 @@ describe("ReviewWorkspace ?view mount (C6 task 4.3)", () => {
     expect(getByText("packages/core/src/a.ts")).toBeTruthy();
   });
 
-  it("keeps the honest placeholder on the default (board) view", () => {
+  it("mounts the board document on the default view, not the diff", () => {
     const { getByText, queryByText } = mountWorkspace("/s/x", [FILE_A]);
-    expect(getByText(/being rebuilt/i)).toBeTruthy();
+    // No BoardSource is wired in this mount, so the board's honest empty state shows.
+    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
     expect(queryByText("1 files changed")).toBeNull();
   });
 
-  it("keeps the placeholder for a non-diff explicit view (map)", () => {
+  it("a non-diff explicit view (map) falls back to the board document", () => {
     const { getByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
-    expect(getByText(/being rebuilt/i)).toBeTruthy();
+    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
   });
 
   it("an empty active patchset shows the honest one-line state, never a blank frame", () => {
