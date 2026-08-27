@@ -140,16 +140,83 @@ export const SessionContextWindowSchema = z.object({
 });
 export type SessionContextWindow = z.infer<typeof SessionContextWindowSchema>;
 
+// A turn/block lifecycle. Inlined (not imported from `../wire`) to keep this leaf shapes
+// module off the root-index import cycle `wire.ts` sits on — three literals, cheap to hold.
+const transcriptTurnStatus = z.enum(["streaming", "complete", "interrupted"]);
+
 /**
- * A session-transcript row. The harness owns the coding transcript (thought/action/prose)
- * — Rennet holds only the `HarnessCursor` (#466 res. 3), so the coding turns are not
- * server-side data and this read returns none of them yet (a future harness-transcript
- * read port is their source). The two honest discontinuity markers the turn loop DOES
- * model are the representable rows: a `compact-boundary` (the harness summarized in place;
- * its own figures, absent ⇒ unknown) and a `context-rebuilt` (the harness lost the
- * transcript and Rennet rebuilt from the canonical boards).
+ * A collapsing "Thinking → Thought" block projected from the harness's reasoning events
+ * (B). Its live/settled look follows `status`; `text` is the reasoning, one entry per line.
+ */
+export const ThoughtBlockSchema = z.object({
+  kind: z.literal("thought"),
+  id,
+  status: transcriptTurnStatus,
+  seconds: z.number().nonnegative().optional(),
+  text: z.array(z.string()),
+});
+
+/**
+ * A running → done tool-call step, projected from a `tool.started` joined with its
+ * `tool.output` (B). `toolKind` is the SERIALIZABLE icon selector — the client maps it to a
+ * concrete icon (C07); the wire never carries a component. `denied` marks a `tool.denied`.
+ * Every path-bearing string here is R19-scrubbed at projection time, before it is persisted.
+ */
+export const ActionStepSchema = z.object({
+  kind: z.literal("action"),
+  id,
+  label: z.string(),
+  detail: z.string().optional(),
+  status: transcriptTurnStatus,
+  doneLabel: z.string().optional(),
+  doneDetail: z.string().optional(),
+  toolKind: z.enum(["read", "write", "exec", "search", "mcp", "subagent", "other"]),
+  denied: z.boolean().optional(),
+});
+
+/** A turn's activity preface: thought blocks and action steps, in occurrence order. */
+export const ActivityStepSchema = z.discriminatedUnion("kind", [
+  ThoughtBlockSchema,
+  ActionStepSchema,
+]);
+export type ActivityStep = z.infer<typeof ActivityStepSchema>;
+
+export const ProseBlockSchema = z.object({ kind: z.literal("text"), text: z.string() });
+export const CodeBlockSchema = z.object({
+  kind: z.literal("code"),
+  path: z.string(),
+  lang: z.string().optional(),
+  code: z.string(),
+  startLine: z.number().int().optional(),
+  highlightLines: z.array(z.number().int()).optional(),
+});
+/** A turn body: prose interleaved with code blocks. */
+export const ContentBlockSchema = z.discriminatedUnion("kind", [ProseBlockSchema, CodeBlockSchema]);
+export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+
+/**
+ * A session-transcript row. The harness CLI stays the CANONICAL owner of the conversation —
+ * resume still rides the `HarnessCursor` (#466 res. 3), untouched. This is ADDITIVE to that:
+ * a DISPLAY read-model projected from the harness events the adapter already normalizes
+ * (tool calls, outputs, thinking, prose), persisted so the dock shows history and survives
+ * reload. Three representable rows:
+ *   - `turn`: one coding turn — orchestrator (or user) — with its thought/action preface and
+ *     its prose/code body. Path-bearing content is R19-scrubbed before persistence.
+ *   - `compact-boundary`: the harness summarized in place; its own figures, absent ⇒ unknown.
+ *   - `context-rebuilt`: the harness lost the transcript and Rennet rebuilt from the boards.
  */
 export const SessionTranscriptRowSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("turn"),
+    id,
+    speaker: z.enum(["user", "orchestrator"]),
+    status: transcriptTurnStatus,
+    paragraphs: z.array(z.string()),
+    time: z.string().optional(),
+    lead: z.string().optional(),
+    preface: z.array(ActivityStepSchema).optional(),
+    body: z.array(ContentBlockSchema).optional(),
+  }),
   z.object({
     kind: z.literal("compact-boundary"),
     id,
