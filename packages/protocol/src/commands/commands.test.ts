@@ -7,8 +7,10 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // span-read contract, client asset risk 2), plus the 12 `ask.*` durable-asks
 // command shapes (B11 cluster 1 — the sole write path onto the ask event log;
 // handlers land in cluster 2), plus review.reviseSpan (B11 cluster 5 — the
-// living-draft span-rework command). A dropped or renamed command fails this
-// loudly; a NEW command is added here deliberately, with its registry row.
+// living-draft span-rework command), plus the two session READS B9/B10 deferred
+// (session.transcript — the chat dock's honest-absent transcript read; session.rounds
+// — the rounds-ledger read). A dropped or renamed command fails this loudly; a NEW
+// command is added here deliberately, with its registry row.
 const ABSORBED_IDS = [
   "app.bootstrap",
   "ask.clearLineComment",
@@ -79,6 +81,8 @@ const ABSORBED_IDS = [
   "review.symbolLookup",
   "review.uiEvidence",
   "round.dispatch",
+  "session.rounds",
+  "session.transcript",
   "settings.get",
   "settings.guidance",
   "settings.pinRepoValue",
@@ -89,8 +93,9 @@ const ABSORBED_IDS = [
   "settings.setRepoVisibility",
 ] as const;
 
-// The #465 v1 agent inventory, mapped by inspection (no session.*/navigate command
-// exists today). Mirrors AGENT_EXPOSED in index.ts so an exposure edit is deliberate.
+// The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
+// unexposed; no navigate command exists yet). Mirrors AGENT_EXPOSED in index.ts so an
+// exposure edit is deliberate.
 // `repository.choose` + `project.discover` are the add-project prerequisites (the
 // tool cannot fabricate a DiscoveryResult); `navigate` stays out until C11 (a
 // client-locus row would force a host dispatch handler). Kept sorted — the invariant
@@ -113,7 +118,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(77);
+    expect(ABSORBED_IDS).toHaveLength(79);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

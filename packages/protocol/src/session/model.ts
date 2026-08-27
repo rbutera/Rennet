@@ -118,6 +118,62 @@ export const RoundRecordSchema = z.object({
 export type RoundRecord = z.infer<typeof RoundRecordSchema>;
 
 /**
+ * The chat dock's header trail (C07) — the session's identity line. Honest-minimal:
+ * the coding transcript lives in the harness, so this carries only the identity facts
+ * Rennet holds. `target`/`targetState` mirror the sidebar's review-target vocabulary.
+ */
+export const SessionTrailSchema = z.object({
+  title: z.string(),
+  projectName: z.string().optional(),
+  target: z.enum(["your-branch", "your-pr", "teammate-pr"]).optional(),
+  targetState: z.enum(["needs-you", "merged", "reviewed"]).optional(),
+});
+export type SessionTrail = z.infer<typeof SessionTrailSchema>;
+
+/**
+ * A harness-reported context-window figure (ask-don't-estimate, #466 res. 3). Absent on
+ * the wire ⇒ the meter reads "unknown"; never estimated. Both figures are the harness's own.
+ */
+export const SessionContextWindowSchema = z.object({
+  used: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+});
+export type SessionContextWindow = z.infer<typeof SessionContextWindowSchema>;
+
+/**
+ * A session-transcript row. The harness owns the coding transcript (thought/action/prose)
+ * — Rennet holds only the `HarnessCursor` (#466 res. 3), so the coding turns are not
+ * server-side data and this read returns none of them yet (a future harness-transcript
+ * read port is their source). The two honest discontinuity markers the turn loop DOES
+ * model are the representable rows: a `compact-boundary` (the harness summarized in place;
+ * its own figures, absent ⇒ unknown) and a `context-rebuilt` (the harness lost the
+ * transcript and Rennet rebuilt from the canonical boards).
+ */
+export const SessionTranscriptRowSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("compact-boundary"),
+    id,
+    tokensBefore: z.number().int().nonnegative().optional(),
+    tokensAfter: z.number().int().nonnegative().optional(),
+  }),
+  z.object({ kind: z.literal("context-rebuilt"), id, reason: z.string() }),
+]);
+export type SessionTranscriptRow = z.infer<typeof SessionTranscriptRowSchema>;
+
+/**
+ * The chat dock's session read (C07): the header trail, the historical transcript rows,
+ * and the harness context figure. Honest-absent today — no coding-transcript store exists
+ * (the harness owns it), so `rows` is empty and `contextWindow` absent until a transcript
+ * read port lands; the live ask threads arrive separately via `review.reattach`.
+ */
+export const SessionTranscriptSchema = z.object({
+  trail: SessionTrailSchema,
+  rows: z.array(SessionTranscriptRowSchema),
+  contextWindow: SessionContextWindowSchema.optional(),
+});
+export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
+
+/**
  * The session (#466 res. 1–2): the first-class durable root. One chat travels
  * with the reviewer across surfaces; it owns the harness cursor, the threads,
  * and the claim. A review attaches 1:0..1 (`reviewId` — referenced, not
