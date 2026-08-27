@@ -10,6 +10,7 @@ import {
   resolveScheme,
   resolveVisibility,
   SETTINGS_REGISTRY,
+  type TrackerKind,
 } from "./settings-resolver";
 
 describe("resolveScheme", () => {
@@ -101,9 +102,21 @@ describe("resolvePromoted", () => {
 });
 
 describe("settings registry + generic resolve (#28)", () => {
-  it("registers exactly the four live keys, each with a builtin default that passes its own validator and merge=replace", () => {
+  it("registers exactly the live keys, each with a builtin default that passes its own validator and merge=replace", () => {
     const keys = Object.keys(SETTINGS_REGISTRY).sort();
-    expect(keys).toEqual(["locus", "promoted", "scheme", "visibility"]);
+    expect(keys).toEqual([
+      "gateCommand",
+      "locus",
+      "logoPath",
+      "promoted",
+      "scheme",
+      "trackerBaseUrl",
+      "trackerKind",
+      "trackerProjectKey",
+      "trackerTokenEnv",
+      "visibility",
+      "worktreeBaseDir",
+    ]);
     for (const decl of Object.values(SETTINGS_REGISTRY)) {
       expect(decl.merge).toBe("replace");
       expect(decl.layers).toContain("builtin");
@@ -170,11 +183,13 @@ describe("settings registry + generic resolve (#28)", () => {
 
 describe("issue-tracker section (#461, B7)", () => {
   it("trackerKind rides the full ladder: detected < global < repo", () => {
-    const detectedOnly = resolve(SETTINGS_REGISTRY.trackerKind, { detected: "github" });
+    const detectedOnly = resolve<TrackerKind>(SETTINGS_REGISTRY.trackerKind, {
+      detected: "github",
+    });
     expect(detectedOnly.value).toBe("github");
     expect(detectedOnly.layer).toBe("detected");
 
-    const overridden = resolve(SETTINGS_REGISTRY.trackerKind, {
+    const overridden = resolve<TrackerKind>(SETTINGS_REGISTRY.trackerKind, {
       detected: "github",
       global: "jira",
       repo: "linear",
@@ -189,10 +204,11 @@ describe("issue-tracker section (#461, B7)", () => {
     ]);
   });
 
-  it("trackerKind rejects out-of-vocabulary values", () => {
-    expect(() => resolve(SETTINGS_REGISTRY.trackerKind, { global: "gitlab" as never })).toThrow(
-      /trackerKind/,
-    );
+  it("trackerKind's validator rejects out-of-vocabulary values", () => {
+    // Validation runs where offers are CONSTRUCTED (callers parse before
+    // offering), so the declaration's own validate is the boundary under test.
+    expect(() => SETTINGS_REGISTRY.trackerKind.validate("gitlab")).toThrow(/trackerKind/);
+    expect(SETTINGS_REGISTRY.trackerKind.validate("jira")).toBe("jira");
   });
 
   it("base URL and token env var are config-only: a detected offer REFUSES", () => {

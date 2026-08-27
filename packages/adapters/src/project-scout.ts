@@ -283,7 +283,7 @@ export async function runProjectScout(deps: ProjectScoutDeps): Promise<ScoutResu
   const detected = await scoutDeterministic(deps);
   const facts: Record<string, ScoutFact> = { ...detected };
 
-  const guidanceTexts = GUIDANCE_DOCS.map((doc) => ({
+  const guidanceTexts = GUIDANCE_DOCS.map((doc): { doc: string; text: string | undefined } => ({
     doc,
     text: readIfPresent(deps.repoRoot, doc),
   })).filter((entry): entry is { doc: string; text: string } => entry.text !== undefined);

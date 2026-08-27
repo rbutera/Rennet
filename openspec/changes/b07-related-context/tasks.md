@@ -28,7 +28,7 @@ Serial clusters; fresh implementer session per cluster; one commit per checked t
 - [x] 4.2 `packages/adapters/src/project-scout.ts`: deterministic pass (git remotes → GitHub owner/repo; JIRA/Linear markers in the repo; README/logo files; package manifests → gate command candidates) emitting provenance-tagged detected values; then the `project-scout` council seat (injected `runTurn`, B6 pattern) fills ONLY what determinism left empty, answers marked guessed. Seed guidance rules (CONTRIBUTING / CLAUDE.md / AGENTS.md) land in the existing repo-layer guidance catalogue. Cosmetics (logo path) → settings only, never agent context. Persist detected values via the mechanism reconciliation 3's inspection records.
 - [x] 4.3 Wire at project add (re-runnable): the existing project-add path in server triggers the scout (implementer inspects where processing starts and records the point, B04 precedent). Missing-config asks surface as the typed facts (reconciliation 7).
 - [x] 4.4 Tests: deterministic pass on fixture repos (GitHub remote detected, JIRA marker detected, no-signal repo → empty with nothing guessed by determinism); scout fills only gaps (a detected value is never overwritten); guidance seeding; provenance rendering data (detected vs guessed).
-- [ ] 4.5 Gate green.
+- [x] 4.5 Gate green.
 
 ## Cluster 5 — session wiring + docs
 
