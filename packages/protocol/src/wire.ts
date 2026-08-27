@@ -1619,18 +1619,14 @@ export const settingsProjectSchema = z
     promoted: z.boolean(),
     promotedProvenance: resolvedProvenanceSchema,
     /**
-     * The project's effective execution locus (add-windows-support): the persisted
-     * override if set, else auto-detected from `repoPath` (a `\\wsl$` root ⇒ that
-     * distro, else host). `locusOverridden` is true when it came from the config,
-     * false when auto-detected — so the UI can show detected-vs-chosen.
+     * The project's execution locus — a DETECTED FACT, not a knob (#476). Auto-detected
+     * from `repoPath` (a `\\wsl$` root ⇒ that distro, else host); Rennet SHOWS where the
+     * harness runs, it does not offer to choose it. No repo-layer override exists.
      */
     locus: locusSchema,
-    locusOverridden: z.boolean(),
     /**
-     * The resolver's own provenance for the locus — the `detected < repo` ladder
-     * (`detected` when auto-detected, `repo` when a persisted override wins, always
-     * listing the suppressed detected offer as a non-effective contribution). Computed
-     * fresh per read, never persisted; `locusOverridden` is derived (`layer === "repo"`).
+     * The provenance for the locus — always the `detected` layer now that locus is a
+     * detected fact (#476). Computed fresh per read, never persisted.
      */
     locusProvenance: resolvedProvenanceSchema.optional(),
     /**
@@ -1641,13 +1637,12 @@ export const settingsProjectSchema = z
     configMalformed: z.boolean(),
   })
   .transform((project) => {
-    const layer = project.locusOverridden ? ("repo" as const) : ("detected" as const);
     const value = project.locus.kind === "host" ? "host" : `WSL · ${project.locus.distro}`;
     return {
       ...project,
       locusProvenance: project.locusProvenance ?? {
-        layer,
-        contributions: [{ layer, value, effective: true }],
+        layer: "detected" as const,
+        contributions: [{ layer: "detected" as const, value, effective: true }],
       },
     };
   });
@@ -1722,37 +1717,14 @@ export const setRepoVisibilityOutcomeSchema = z.object({
 });
 export type SetRepoVisibilityOutcome = z.infer<typeof setRepoVisibilityOutcomeSchema>;
 
-/** The outcome of a repo-locus override write (add-windows-support). */
-export const setRepoLocusOutcomeSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("applied"),
-    locus: locusSchema,
-    locusOverridden: z.boolean(),
-    /** The fresh resolver-owned row after the override was written. */
-    project: settingsProjectSchema,
-  }),
-  z.object({
-    status: z.literal("unresolved"),
-    locus: locusSchema,
-    locusOverridden: z.boolean(),
-    project: z.null(),
-  }),
-  z.object({
-    status: z.literal("malformed"),
-    locus: locusSchema,
-    locusOverridden: z.boolean(),
-    project: z.null(),
-  }),
-]);
-export type SetRepoLocusOutcome = z.infer<typeof setRepoLocusOutcomeSchema>;
-
 /**
  * The repo-scoped settings keys that can be reset-to-inherit and pinned-at-repo.
- * Only the two editable repo-layer settings with a write path — visibility (the
- * gitignore switch) and locus (the override store). Promotion is read-through here,
- * and appearance is a global-layer key (reset via `setAppearance` with a null scheme).
+ * Only `visibility` (the gitignore switch) has a repo-layer write path now — execution
+ * locus was demoted to a detected fact, not a stored/selectable ladder value (#476).
+ * Promotion is read-through, and appearance is a global-layer key (reset via
+ * `setAppearance` with a null scheme).
  */
-export const settingsRepoValueKeySchema = z.enum(["visibility", "locus"]);
+export const settingsRepoValueKeySchema = z.enum(["visibility"]);
 export type SettingsRepoValueKey = z.infer<typeof settingsRepoValueKeySchema>;
 
 /**

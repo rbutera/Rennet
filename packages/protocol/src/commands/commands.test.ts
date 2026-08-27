@@ -68,7 +68,6 @@ const ABSORBED_IDS = [
   "settings.resetRepoValue",
   "settings.setAppearance",
   "settings.setKeybinding",
-  "settings.setRepoLocus",
   "settings.setRepoVisibility",
 ] as const;
 
@@ -84,14 +83,13 @@ const AGENT_INVENTORY = [
   "settings.resetRepoValue",
   "settings.setAppearance",
   "settings.setKeybinding",
-  "settings.setRepoLocus",
   "settings.setRepoVisibility",
 ] as const;
 
 describe("command registry invariants (#465)", () => {
-  it("matches the recorded 63-command snapshot (62 absorbed + span-read)", () => {
+  it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(63);
+    expect(ABSORBED_IDS).toHaveLength(62);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

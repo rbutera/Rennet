@@ -1,4 +1,3 @@
-import { detectLocus } from "@rennet/core";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
@@ -111,27 +110,6 @@ export function settingsHandlers(rt: DispatchRuntime) {
         projectId: input.projectId,
         repoPath: input.repoPath,
         visibility: input.visibility,
-      });
-      return parseCommandOutput(name, result);
-    },
-    "settings.setRepoLocus": async (rawInput) => {
-      const name = "settings.setRepoLocus" as const;
-      // A plain editable setting (add-windows-support, Rule Zero — no gate). Writes
-      // the repo's locus override (or clears it back to auto-detection when
-      // `locus` is null). Absent dep ⇒ a typed `unresolved` no-op.
-      const input = parseCommandInput(name, rawInput);
-      if (!deps.settings) {
-        return parseCommandOutput(name, {
-          status: "unresolved",
-          locus: detectLocus(input.repoPath),
-          locusOverridden: false,
-          project: null,
-        });
-      }
-      const result = await deps.settings.setRepoLocus({
-        projectId: input.projectId,
-        repoPath: input.repoPath,
-        locus: input.locus,
       });
       return parseCommandOutput(name, result);
     },

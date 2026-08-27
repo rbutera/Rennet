@@ -81,20 +81,21 @@ lives under `~/.rennet/projects/<escaped-absolute-path>/config.json`.
 |---|---|---|
 | Map visibility | local, Git-visible | Updates Rennet's entry in `.rennet/.gitignore`. |
 | Map promotion | promoted, not promoted | Reports whether a validated map is mirrored into the repository. |
-| Execution locus | host or named WSL distribution | Chooses where Git and harness commands run. |
+| Runs on | detected host or named WSL distribution | Shows where Git and the harness run, detected from the repository path. Read-only. |
 | Review guidance | rules from `.rennet/conventions.json` | Shows the same catalogue review runners consume. |
 
-Map visibility and execution locus support pin and reset operations. A pinned
-value is stored at the repository layer. Reset removes that layer's value and
-returns to the inherited or detected value. Map promotion is read-only in
-Settings; promotion is a separate project action.
+Map visibility supports pin and reset operations. A pinned value is stored at
+the repository layer. Reset removes that layer's value and returns to the
+inherited value. Map promotion and "Runs on" are read-only in Settings;
+promotion is a separate project action, and "Runs on" is a detected fact.
 
 Changing visibility never stages or commits files. Local visibility keeps the
 promoted map out of ordinary Git status through Rennet's entry in
 `.rennet/.gitignore`. Git-visible removes only that Rennet-owned exclusion.
 
-Rennet detects a WSL locus from a WSL repository path. A repository-level choice
-can select the host or a named distribution instead. Reset restores detection.
+Rennet detects where a repository runs from its path — a WSL locus from a WSL
+path, the host otherwise — and shows it as "Runs on". It is a detected fact, not
+a setting: there is no override to choose the host or a distribution.
 
 Malformed repository config resolves to defaults and disables writes for that
 row. Invalid entries in `.rennet/conventions.json` are dropped individually and
@@ -110,8 +111,8 @@ builtin < detected < global < repo
 ```
 
 Appearance uses `builtin < global`. Map visibility uses `builtin < repo`.
-Execution locus uses `detected < repo`. The UI renders the resolver's answer
-instead of recalculating precedence in React.
+"Runs on" (execution locus) is a detected fact with no ladder layer to override.
+The UI renders the resolver's answer instead of recalculating precedence in React.
 
 ## Device pairing
 

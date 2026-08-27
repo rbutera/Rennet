@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { detectLocus, escapePath, type Locus, resolveLocus } from "@rennet/core";
+import { escapePath } from "@rennet/core";
 import type { ClientSettings, Project, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
@@ -27,8 +25,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
   calls: {
     loadConfigState: string[];
     applyVisibility: { repoKey: string; repoRoot: string; target: ProjectVisibility }[];
-    applyLocus: { repoKey: string; locus: Locus | null }[];
-    clearRepoValue: { repoKey: string; field: "visibility" | "locus" }[];
+    clearRepoValue: { repoKey: string; field: "visibility" }[];
     discoverWorkspaceRepos: number;
     updateGlobal: number;
   };
@@ -36,8 +33,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
   const calls = {
     loadConfigState: [] as string[],
     applyVisibility: [] as { repoKey: string; repoRoot: string; target: ProjectVisibility }[],
-    applyLocus: [] as { repoKey: string; locus: Locus | null }[],
-    clearRepoValue: [] as { repoKey: string; field: "visibility" | "locus" }[],
+    clearRepoValue: [] as { repoKey: string; field: "visibility" }[],
     discoverWorkspaceRepos: 0,
     updateGlobal: 0,
   };
@@ -64,9 +60,6 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
       calls.applyVisibility.push({ repoKey, repoRoot, target });
       return { changed: true, gitignorePath: `${repoRoot}/.rennet/.gitignore` };
     },
-    applyLocus: ({ repoKey, locus }) => {
-      calls.applyLocus.push({ repoKey, locus });
-    },
     clearRepoValue: ({ repoKey, field }) => {
       calls.clearRepoValue.push({ repoKey, field });
     },
@@ -77,30 +70,28 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
 
 /**
  * A composition over a MUTABLE fake config store: writes (applyVisibility,
- * applyLocus, clearRepoValue) mutate the backing config, so a post-write
- * re-resolution reads the state the write left behind — the honest path reset/pin
- * take (they re-resolve the row from the live store after writing).
+ * clearRepoValue) mutate the backing config, so a post-write re-resolution reads the
+ * state the write left behind — the honest path reset/pin take (they re-resolve the
+ * row from the live store after writing).
  */
 function statefulDeps(
-  initial: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus } = {},
+  initial: { visibility?: ProjectVisibility; promoted?: boolean } = {},
   opts: { malformed?: boolean; project?: Project } = {},
 ): {
   deps: SettingsCompositionDeps;
-  store: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus };
+  store: { visibility?: ProjectVisibility; promoted?: boolean };
   calls: {
     applyVisibility: ProjectVisibility[];
-    applyLocus: (Locus | null)[];
-    clearRepoValue: ("visibility" | "locus")[];
+    clearRepoValue: "visibility"[];
     saved: number;
   };
 } {
-  const store: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus } = {
+  const store: { visibility?: ProjectVisibility; promoted?: boolean } = {
     ...initial,
   };
   const calls = {
     applyVisibility: [] as ProjectVisibility[],
-    applyLocus: [] as (Locus | null)[],
-    clearRepoValue: [] as ("visibility" | "locus")[],
+    clearRepoValue: [] as "visibility"[],
     saved: 0,
   };
   const deps: SettingsCompositionDeps = {
@@ -121,12 +112,6 @@ function statefulDeps(
       calls.saved += 1;
       return { changed: true, gitignorePath: `${repoRoot}/.rennet/.gitignore` };
     },
-    applyLocus: ({ locus }) => {
-      calls.applyLocus.push(locus);
-      if (locus === null) delete store.locus;
-      else store.locus = locus;
-      calls.saved += 1;
-    },
     clearRepoValue: ({ field }) => {
       calls.clearRepoValue.push(field);
       delete store[field];
@@ -136,51 +121,25 @@ function statefulDeps(
   return { deps, store, calls };
 }
 
-describe("createSettingsComposition — locus through the ladder (#28)", () => {
-  it("get() carries locusProvenance naming `detected` when auto-detected, suppressed offer present", async () => {
+describe("createSettingsComposition — locus is a detected fact (#476)", () => {
+  it("get() reports the detected locus with `detected` provenance, no override notion", async () => {
     const { deps } = makeDeps();
-    const view = await createSettingsComposition(deps).get();
-    const row = view.projects[0];
-    expect(row?.locusProvenance.layer).toBe("detected");
-    expect(row?.locusOverridden).toBe(false);
-    // The detected offer is present as a contribution (host, alongside the builtin).
-    expect(row?.locusProvenance.contributions.map((c) => c.layer)).toContain("detected");
-  });
-
-  it("get() names `repo` when a persisted override wins, keeping the suppressed detected offer", async () => {
-    const { deps } = makeDeps({
-      loadConfigState: () => ({
-        status: "ok",
-        config: { locus: { kind: "wsl", distro: "Debian" } },
-      }),
-    });
     const row = (await createSettingsComposition(deps).get()).projects[0];
-    expect(row?.locusProvenance.layer).toBe("repo");
-    expect(row?.locusOverridden).toBe(true);
-    expect(row?.locusProvenance.contributions.find((c) => c.layer === "detected")?.effective).toBe(
-      false,
-    );
+    expect(row?.locus).toEqual({ kind: "host" });
+    expect(row?.locusProvenance.layer).toBe("detected");
+    expect(row?.locusProvenance.contributions.every((c) => c.layer === "detected")).toBe(true);
   });
 
-  it("keeps live execution and the settings surface on core's resolved locus", async () => {
+  it("detects a WSL-UNC project's locus straight from the path", async () => {
     const repoPath = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo";
-    const repoValue = { kind: "wsl" as const, distro: "Debian" };
-    const expected = resolveLocus(detectLocus(repoPath), repoValue).value;
     const { deps } = makeDeps({
       listProjects: () => [project({ path: repoPath, openPath: repoPath })],
       gitTopLevel: async () => repoPath,
-      loadConfigState: () => ({ status: "ok", config: { locus: repoValue } }),
     });
-
-    expect((await createSettingsComposition(deps).get()).projects[0]?.locus).toEqual(expected);
-
-    const executionSource = readFileSync(
-      fileURLToPath(new URL("./create-server.ts", import.meta.url)),
-      "utf8",
-    );
-    expect(executionSource).toMatch(
-      /resolveLocus\(\s*detectLocus\(repoRoot\),\s*liveSnapshotStore\.loadConfig\(key\)\?\.locus,?\s*\)\.value/,
-    );
+    expect((await createSettingsComposition(deps).get()).projects[0]?.locus).toEqual({
+      kind: "wsl",
+      distro: "Ubuntu",
+    });
   });
 });
 
@@ -202,43 +161,6 @@ describe("createSettingsComposition — reset / pin (#28)", () => {
     expect(outcome.project?.visibilityProvenance.layer).toBe("builtin");
   });
 
-  it("resetRepoValue(locus) clears the override back to auto-detection (setRepoLocus(null) behaviour)", async () => {
-    const { deps, store } = statefulDeps({ locus: { kind: "wsl", distro: "Debian" } });
-    const outcome = await createSettingsComposition(deps).resetRepoValue({
-      projectId: "p1",
-      repoPath: "/orbital",
-      key: "locus",
-    });
-    expect(outcome.status).toBe("applied");
-    expect(store.locus).toBeUndefined();
-    // `/orbital` is a host path, so detection wins after the reset.
-    expect(outcome.project?.locus).toEqual({ kind: "host" });
-    expect(outcome.project?.locusOverridden).toBe(false);
-    expect(outcome.project?.locusProvenance.layer).toBe("detected");
-  });
-
-  it("pinRepoValue(locus) writes the currently detected locus at the repo layer and the row flips to `repo`", async () => {
-    const { deps, store, calls } = statefulDeps(
-      {},
-      {
-        project: project({
-          path: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
-          openPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
-        }),
-      },
-    );
-    const outcome = await createSettingsComposition(deps).pinRepoValue({
-      projectId: "p1",
-      repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
-      key: "locus",
-    });
-    expect(outcome.status).toBe("applied");
-    expect(calls.applyLocus).toEqual([{ kind: "wsl", distro: "Ubuntu" }]);
-    expect(store.locus).toEqual({ kind: "wsl", distro: "Ubuntu" });
-    expect(outcome.project?.locusOverridden).toBe(true);
-    expect(outcome.project?.locusProvenance.layer).toBe("repo");
-  });
-
   it("reset/pin return `unresolved` for a repoPath not in the project, writing nothing", async () => {
     const { deps, calls } = statefulDeps({ visibility: "git-visible" });
     const composition = createSettingsComposition(deps);
@@ -250,7 +172,7 @@ describe("createSettingsComposition — reset / pin (#28)", () => {
     const pin = await composition.pinRepoValue({
       projectId: "p1",
       repoPath: "/not/this/repo",
-      key: "locus",
+      key: "visibility",
     });
     expect(reset.status).toBe("unresolved");
     expect(reset.project).toBeNull();
@@ -269,7 +191,7 @@ describe("createSettingsComposition — reset / pin (#28)", () => {
     const pin = await composition.pinRepoValue({
       projectId: "p1",
       repoPath: "/orbital",
-      key: "locus",
+      key: "visibility",
     });
     expect(reset.status).toBe("malformed");
     expect(reset.project).toBeNull();
@@ -446,93 +368,6 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     expect(() =>
       createSettingsComposition(deps).setKeybinding({ id: "nav.back", keybinding: "mod+e" }),
     ).toThrow(/malformed/i);
-  });
-
-  it("auto-detects a WSL-UNC project's locus, unset override", async () => {
-    const { deps } = makeDeps({
-      listProjects: () => [
-        project({
-          path: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
-          openPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
-        }),
-      ],
-      gitTopLevel: async (p) => p,
-    });
-    const view = await createSettingsComposition(deps).get();
-    const row = view.projects[0];
-    expect(row?.locus).toEqual({ kind: "wsl", distro: "Ubuntu" });
-    expect(row?.locusOverridden).toBe(false);
-  });
-
-  it("a host project auto-detects the host locus", async () => {
-    const { deps } = makeDeps();
-    const view = await createSettingsComposition(deps).get();
-    expect(view.projects[0]?.locus).toEqual({ kind: "host" });
-    expect(view.projects[0]?.locusOverridden).toBe(false);
-  });
-
-  it("surfaces a persisted locus override with locusOverridden true", async () => {
-    const { deps } = makeDeps({
-      loadConfigState: () => ({
-        status: "ok",
-        config: { locus: { kind: "wsl", distro: "Debian" } },
-      }),
-    });
-    const view = await createSettingsComposition(deps).get();
-    expect(view.projects[0]?.locus).toEqual({ kind: "wsl", distro: "Debian" });
-    expect(view.projects[0]?.locusOverridden).toBe(true);
-  });
-
-  it("setRepoLocus writes the override through applyLocus", async () => {
-    const { deps, calls } = statefulDeps();
-    const outcome = await createSettingsComposition(deps).setRepoLocus({
-      projectId: "p1",
-      repoPath: "/orbital",
-      locus: { kind: "wsl", distro: "Ubuntu" },
-    });
-    expect(outcome.status).toBe("applied");
-    expect(outcome.locus).toEqual({ kind: "wsl", distro: "Ubuntu" });
-    expect(outcome.locusOverridden).toBe(true);
-    expect(calls.applyLocus).toEqual([{ kind: "wsl", distro: "Ubuntu" }]);
-    expect(outcome).toMatchObject({
-      project: {
-        locus: { kind: "wsl", distro: "Ubuntu" },
-        locusOverridden: true,
-        locusProvenance: { layer: "repo" },
-      },
-    });
-  });
-
-  it("setRepoLocus with null clears the override (back to auto-detect)", async () => {
-    const { deps, calls } = statefulDeps({ locus: { kind: "wsl", distro: "Debian" } });
-    const outcome = await createSettingsComposition(deps).setRepoLocus({
-      projectId: "p1",
-      repoPath: "/orbital",
-      locus: null,
-    });
-    expect(outcome.status).toBe("applied");
-    expect(outcome.locusOverridden).toBe(false);
-    expect(calls.applyLocus).toEqual([null]);
-    expect(outcome).toMatchObject({
-      project: {
-        locus: { kind: "host" },
-        locusOverridden: false,
-        locusProvenance: { layer: "detected" },
-      },
-    });
-  });
-
-  it("setRepoLocus refuses a malformed config (Rule 75)", async () => {
-    const { deps, calls } = makeDeps({
-      loadConfigState: () => ({ status: "malformed", config: null }),
-    });
-    const outcome = await createSettingsComposition(deps).setRepoLocus({
-      projectId: "p1",
-      repoPath: "/orbital",
-      locus: { kind: "wsl", distro: "Ubuntu" },
-    });
-    expect(outcome.status).toBe("malformed");
-    expect(calls.applyLocus).toEqual([]);
   });
 });
 

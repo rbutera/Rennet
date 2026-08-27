@@ -3,8 +3,6 @@ import type { ConventionCatalogueLoad } from "@rennet/adapters";
 import {
   detectLocus,
   escapePath,
-  type Locus,
-  resolveLocus,
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
@@ -16,7 +14,6 @@ import type {
   Project,
   ProjectSource,
   ProjectVisibility,
-  SetRepoLocusOutcome,
   SetRepoVisibilityOutcome,
   SettingsGuidance,
   SettingsProject,
@@ -46,7 +43,9 @@ export interface SettingsCompositionDeps {
     | { status: "absent" | "malformed"; config: null }
     | {
         status: "ok";
-        config: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus };
+        // A stale `locus` may still sit in an old config; it is ignored — execution
+        // locus is a detected fact now (#476), read straight off the repo path.
+        config: { visibility?: ProjectVisibility; promoted?: boolean };
       };
   /** The viewer's client-settings state (appearance, keybindings). */
   readGlobalState(): { status: "absent" | "ok" | "malformed"; config: ClientSettings };
@@ -74,11 +73,6 @@ export interface SettingsCompositionDeps {
     repoRoot: string;
     target: ProjectVisibility;
   }): Promise<{ changed: boolean; gitignorePath: string }>;
-  /**
-   * Persist a repo's execution-locus override, or clear it (`locus: null` ⇒ back to
-   * auto-detection). A plain config write — never a gate (Rule Zero).
-   */
-  applyLocus(input: { repoKey: string; locus: Locus | null }): void;
   /**
    * Delete a repo-scoped config field, dropping the repo-layer entry so the value
    * falls back down the ladder (Reset). A plain config write — never a gate. The
@@ -111,11 +105,6 @@ export interface SettingsComposition {
     repoPath: string;
     visibility: ProjectVisibility;
   }): Promise<SetRepoVisibilityOutcome>;
-  setRepoLocus(input: {
-    projectId: string;
-    repoPath: string;
-    locus: Locus | null;
-  }): Promise<SetRepoLocusOutcome>;
   resetRepoValue(input: {
     projectId: string;
     repoPath: string;
@@ -184,9 +173,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     const config = configState.status === "ok" ? configState.config : null;
     const visibility = resolveVisibility(config?.visibility);
     const promoted = resolvePromoted(config?.promoted);
-    // Locus resolves THROUGH the ladder (detected < repo), not around it —
-    // `locusOverridden` is derived from the resolved layer, not a side-channel.
-    const locus = resolveLocus(detectLocus(target.repoPath), config?.locus);
+    // Execution locus is a DETECTED FACT now (#476) — where the harness runs, read
+    // straight off the repo path, not a stored/overridable ladder value.
+    const locus = detectLocus(target.repoPath);
+    const locusValue = locus.kind === "host" ? "host" : `WSL · ${locus.distro}`;
     return {
       projectId: project.id,
       name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
@@ -195,9 +185,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       visibilityProvenance: visibility.provenance,
       promoted: promoted.value,
       promotedProvenance: promoted.provenance,
-      locus: locus.value,
-      locusOverridden: locus.layer === "repo",
-      locusProvenance: locus.provenance,
+      locus,
+      locusProvenance: {
+        layer: "detected",
+        contributions: [{ layer: "detected", value: locusValue, effective: true }],
+      },
       configMalformed,
     };
   };
@@ -367,47 +359,13 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       };
     },
 
-    setRepoLocus: async (input: {
-      projectId: string;
-      repoPath: string;
-      locus: Locus | null;
-    }): Promise<SetRepoLocusOutcome> => {
-      const live = await liveTarget(input.projectId, input.repoPath);
-      if (!live) {
-        const locus = resolveLocus(detectLocus(input.repoPath), undefined);
-        return {
-          status: "unresolved",
-          locus: locus.value,
-          locusOverridden: false,
-          project: null,
-        };
-      }
-      // Refuse a malformed config before any write (Rule 75), mirroring visibility.
-      if (deps.loadConfigState(live.target.repoKey).status === "malformed") {
-        const locus = resolveLocus(detectLocus(live.target.repoPath), undefined);
-        return {
-          status: "malformed",
-          locus: locus.value,
-          locusOverridden: false,
-          project: null,
-        };
-      }
-      deps.applyLocus({ repoKey: live.target.repoKey, locus: input.locus });
-      const project = resolveRow(live.project, live.target, live.multiRepo);
-      return {
-        status: "applied",
-        locus: project.locus,
-        locusOverridden: project.locusOverridden,
-        project,
-      };
-    },
-
     // Reset a repo-scoped value to inheritance: drop the repo-layer entry so the
-    // value falls back down the ladder. For VISIBILITY this also re-applies the
-    // gitignore switch toward the newly effective value FIRST, so `.rennet/.gitignore`
-    // matches the value the row will now resolve to — a reset that changed the
-    // effective value without applying it would be a lie in the UI (design Dec. 4).
-    // Both mirror `setRepoVisibility`'s live re-resolution and Rule-75 refusal.
+    // value falls back down the ladder. For VISIBILITY (the only repo-layer key now —
+    // execution locus is a detected fact, #476) this also re-applies the gitignore
+    // switch toward the newly effective value FIRST, so `.rennet/.gitignore` matches
+    // the value the row will now resolve to — a reset that changed the effective value
+    // without applying it would be a lie in the UI (design Dec. 4). Mirrors
+    // `setRepoVisibility`'s live re-resolution and Rule-75 refusal.
     resetRepoValue: async (input: {
       projectId: string;
       repoPath: string;
@@ -436,9 +394,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     },
 
     // Pin a repo-scoped value at the repo layer: write the CURRENT effective value
-    // explicitly, so a change in a lower layer or in detection no longer moves it
-    // (chiefly: freeze an auto-detected locus). Set-to-current-effective, so it
-    // reuses the SAME setters the explicit controls use — no new write path.
+    // explicitly, so a change in a lower layer no longer moves it. Set-to-current-
+    // effective, reusing the SAME setter the explicit control uses — no new write path.
+    // `visibility` is the only pinnable key (locus is a detected fact now, #476).
     pinRepoValue: async (input: {
       projectId: string;
       repoPath: string;
@@ -452,15 +410,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // Resolve the value at command time (not the renderer's snapshot), then write
       // it at the repo layer through the setter that owns that key's side effects.
       const current = resolveRow(live.project, live.target, live.multiRepo);
-      if (input.key === "visibility") {
-        await deps.applyVisibility({
-          repoKey: live.target.repoKey,
-          repoRoot: live.target.repoRoot,
-          target: current.visibility,
-        });
-      } else {
-        deps.applyLocus({ repoKey: live.target.repoKey, locus: current.locus });
-      }
+      await deps.applyVisibility({
+        repoKey: live.target.repoKey,
+        repoRoot: live.target.repoRoot,
+        target: current.visibility,
+      });
       return {
         status: "applied",
         key: input.key,

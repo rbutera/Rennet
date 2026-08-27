@@ -807,7 +807,6 @@ function RepoPanel({
   const [error, setError] = useState<string>();
   const [note, setNote] = useState<string>();
   const [guidance, setGuidance] = useState<SettingsGuidance | null>(null);
-  const [distroInput, setDistroInput] = useState("");
 
   const selectedProjectId = selected?.projectId;
   useEffect(() => {
@@ -841,40 +840,6 @@ function RepoPanel({
           result.changed
             ? `Updated ${result.gitignorePath}`
             : "No .gitignore change was needed for that setting.",
-        );
-      } else if (result.status === "unresolved") {
-        setError("This repository could not be resolved — nothing was changed.");
-      } else {
-        setError("This repository's config is malformed — the change was refused to protect it.");
-      }
-    } catch (reason) {
-      setError(messageFrom(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // The execution locus is a plain editable setting (add-windows-support, Rule Zero
-  // — never a gate): override to host, override to a named WSL distro, or clear the
-  // override back to the value auto-detected from the repo path.
-  async function chooseLocus(locus: Locus | null): Promise<void> {
-    if (!selected || busy || selected.configMalformed) return;
-    setBusy(true);
-    setError(undefined);
-    setNote(undefined);
-    try {
-      const result = await bridge.invoke("settings.setRepoLocus", {
-        projectId: selected.projectId,
-        repoPath: selected.repoPath,
-        locus,
-      });
-      if (result.status === "applied") {
-        onRowReplaced(result.project);
-        setDistroInput("");
-        setNote(
-          result.project.locusOverridden
-            ? `Execution locus set to ${describeLocus(result.project.locus)}.`
-            : "Execution locus reset to the auto-detected value.",
         );
       } else if (result.status === "unresolved") {
         setError("This repository could not be resolved — nothing was changed.");
@@ -1001,59 +966,17 @@ function RepoPanel({
 
           <div className={`settings-row ${ROW}`}>
             <div className={`settings-row-label ${ROW_LABEL}`}>
-              <span className={`settings-k ${KEY}`}>Execution locus</span>
+              <span className={`settings-k ${KEY}`}>Runs on</span>
               <span className={`settings-d ${DESC}`}>
-                where git and the harness run — the host, or a WSL distro
+                where git and the harness run — detected from the repo path, not a choice
               </span>
             </div>
             <div className={`settings-row-value ${ROW_VALUE}`}>
+              {/* A DETECTED FACT, not a knob (#476): Rennet shows where the harness runs. */}
               <span className="settings-readthrough text-base text-ink-soft">
-                {describeLocus(selected.locus)}
-                {selected.locusOverridden ? "" : " (auto-detected)"}
+                {describeLocus(selected.locus)} (detected)
               </span>
-              <fieldset
-                className="settings-seg m-0 inline-flex min-w-0 items-center gap-1 p-0"
-                aria-label="Execution locus"
-              >
-                <Button
-                  variant={selected.locus.kind === "host" ? "default" : "outline"}
-                  title="Run git and the harness on the host OS"
-                  aria-pressed={selected.locus.kind === "host"}
-                  className={`settings-seg-btn${selected.locus.kind === "host" ? " on" : ""}`}
-                  onClick={() => void chooseLocus({ kind: "host" })}
-                  disabled={busy || selected.configMalformed}
-                >
-                  Host
-                </Button>
-              </fieldset>
               <Provenance provenance={selected.locusProvenance} />
-              <ResetPin
-                layer={selected.locusProvenance.layer}
-                resetLabel="Reset to auto"
-                pinTitle="Pin the execution locus at its detected value"
-                onReset={() => void resetPin("settings.resetRepoValue", "locus")}
-                onPin={() => void resetPin("settings.pinRepoValue", "locus")}
-                disabled={busy || selected.configMalformed}
-              />
-              <div className="settings-locus-distro flex items-center gap-2">
-                <Input
-                  type="text"
-                  aria-label="WSL distro name"
-                  placeholder="WSL distro (e.g. Ubuntu)"
-                  value={distroInput}
-                  onChange={(event) => setDistroInput(event.target.value)}
-                  disabled={busy || selected.configMalformed}
-                  className="w-auto"
-                />
-                <Button
-                  variant="outline"
-                  className="settings-seg-btn"
-                  onClick={() => void chooseLocus({ kind: "wsl", distro: distroInput.trim() })}
-                  disabled={busy || selected.configMalformed || distroInput.trim().length === 0}
-                >
-                  Use WSL distro
-                </Button>
-              </div>
             </div>
           </div>
 

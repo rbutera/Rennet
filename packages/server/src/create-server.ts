@@ -1926,17 +1926,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         );
         return { changed: preview.changed, gitignorePath: preview.gitignorePath };
       },
-      applyLocus: ({ repoKey, locus }) => {
-        snapshotStore.updateConfig(repoKey, (current) => {
-          if (locus === null) {
-            // Clear the override back to auto-detection (drop the field entirely).
-            const next: Record<string, unknown> = { ...current };
-            delete next.locus;
-            return next as unknown as typeof current;
-          }
-          return { ...current, locus };
-        });
-      },
       clearRepoValue: ({ repoKey, field }) => {
         // Drop a repo-scoped field so the value falls back down the ladder (Reset).
         // `updateConfig` refuses a malformed file (Rule 75), so nothing is clobbered.
