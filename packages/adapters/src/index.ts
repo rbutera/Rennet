@@ -412,6 +412,23 @@ export {
   snapshotStoreFor,
 } from "./project-snapshot-store";
 export {
+  type ExtractedRef,
+  type ExtractRefsInput,
+  type ExtractRefsOptions,
+  execaGhFor,
+  extractRefs,
+  type FetchedIssue,
+  type FetchedPr,
+  fetchGithubIssue,
+  fetchPrView,
+  type GhRunner,
+  type GithubRef,
+  type RefFetchResult,
+  type RefProvenance,
+  type RefSource,
+  type TrackerKeyRef,
+} from "./related-context";
+export {
   type DiscoveredGitlink,
   discoverGitlinks,
   discoverWorkspaceScopes,

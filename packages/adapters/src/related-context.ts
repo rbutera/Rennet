@@ -6,6 +6,8 @@
  * `gh` runner the fetchers ride — `gh` holds its own token; Rennet never reads
  * or stores a credential on this path (#483 reversal: gh first-class here).
  */
+import { execa } from "execa";
+import { GITHUB_REQUEST_TIMEOUT_MS } from "./github-fetch";
 
 // ---------------------------------------------------------------------------
 // Deterministic ref extraction (task 2.1)
@@ -140,4 +142,151 @@ export function extractRefs(
     (ref) => ref.tracker !== "unknown" || (prefixCounts.get(ref.prefix) ?? 0) >= 2,
   );
   return [...github.values(), ...plausible];
+}
+
+// ---------------------------------------------------------------------------
+// The gh runner port + fetchers (task 2.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * A narrow `gh` runner, injected so retrieval is testable without spawning a
+ * process (the `GitExec` pattern). Rejects on non-zero exit or timeout.
+ */
+export type GhRunner = (args: string[]) => Promise<string>;
+
+/** The real runner: `gh` in `repoRoot`, bounded by the GitHub request deadline. */
+export function execaGhFor(repoRoot: string, timeoutMs = GITHUB_REQUEST_TIMEOUT_MS): GhRunner {
+  return async (args) => {
+    const result = await execa("gh", args, {
+      cwd: repoRoot,
+      shell: false,
+      timeout: timeoutMs,
+    });
+    return result.stdout;
+  };
+}
+
+export interface FetchedIssue {
+  repo: { owner: string; name: string };
+  number: number;
+  title: string;
+  /** The tracker's own state label, verbatim (`open` / `closed`). */
+  state: string;
+  body: string;
+  /** Comment bodies, thread order. */
+  comments: string[];
+  url: string;
+}
+
+export interface FetchedPr {
+  number: number;
+  title: string;
+  body: string;
+  comments: string[];
+}
+
+/**
+ * One fetch's outcome. A failed ref is a typed fact the flow reports — never a
+ * crash, never a silent absence.
+ */
+export type RefFetchResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: "not-found" | "unreachable" | "invalid"; detail: string };
+
+function failureOf(cause: unknown): { error: "not-found" | "unreachable"; detail: string } {
+  const text =
+    cause instanceof Error
+      ? `${cause.message}\n${(cause as { stderr?: string }).stderr ?? ""}`
+      : String(cause);
+  const timedOut = (cause as { timedOut?: boolean }).timedOut === true;
+  if (!timedOut && /\b404\b|Not Found|Could not resolve/i.test(text)) {
+    return { error: "not-found", detail: text.trim().slice(0, 500) };
+  }
+  return { error: "unreachable", detail: text.trim().slice(0, 500) };
+}
+
+/** `gh api` fetch of one issue (or PR-as-issue) plus its comment thread. */
+export async function fetchGithubIssue(
+  gh: GhRunner,
+  repo: { owner: string; name: string },
+  number: number,
+): Promise<RefFetchResult<FetchedIssue>> {
+  const base = `repos/${repo.owner}/${repo.name}/issues/${number}`;
+  let issueRaw: string;
+  let commentsRaw: string;
+  try {
+    issueRaw = await gh(["api", base]);
+    commentsRaw = await gh(["api", `${base}/comments`, "--paginate"]);
+  } catch (cause) {
+    return { ok: false, ...failureOf(cause) };
+  }
+  try {
+    const issue = JSON.parse(issueRaw) as {
+      title?: string;
+      state?: string;
+      body?: string | null;
+      html_url?: string;
+    };
+    const comments = JSON.parse(commentsRaw) as { body?: string | null }[];
+    if (typeof issue.title !== "string" || typeof issue.state !== "string") {
+      return { ok: false, error: "invalid", detail: `unexpected issue payload for ${base}` };
+    }
+    return {
+      ok: true,
+      value: {
+        repo,
+        number,
+        title: issue.title,
+        state: issue.state,
+        body: issue.body ?? "",
+        comments: comments.map((c) => c.body ?? ""),
+        url: issue.html_url ?? `https://github.com/${repo.owner}/${repo.name}/issues/${number}`,
+      },
+    };
+  } catch (cause) {
+    return {
+      ok: false,
+      error: "invalid",
+      detail: `unparseable gh payload for ${base}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
+}
+
+/** `gh pr view --json` — the PR's own description + comments, extraction input. */
+export async function fetchPrView(
+  gh: GhRunner,
+  number: number,
+): Promise<RefFetchResult<FetchedPr>> {
+  let raw: string;
+  try {
+    raw = await gh(["pr", "view", String(number), "--json", "number,title,body,comments"]);
+  } catch (cause) {
+    return { ok: false, ...failureOf(cause) };
+  }
+  try {
+    const pr = JSON.parse(raw) as {
+      number?: number;
+      title?: string;
+      body?: string | null;
+      comments?: { body?: string | null }[];
+    };
+    if (typeof pr.title !== "string") {
+      return { ok: false, error: "invalid", detail: `unexpected pr payload for #${number}` };
+    }
+    return {
+      ok: true,
+      value: {
+        number: pr.number ?? number,
+        title: pr.title,
+        body: pr.body ?? "",
+        comments: (pr.comments ?? []).map((c) => c.body ?? ""),
+      },
+    };
+  } catch (cause) {
+    return {
+      ok: false,
+      error: "invalid",
+      detail: `unparseable gh pr payload for #${number}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
 }
