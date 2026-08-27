@@ -174,14 +174,25 @@ export class SessionTurnLoop {
       if (freshOutcome.status !== "completed") {
         return { session: rebuilt, outcome: freshOutcome, contextRebuilt: true };
       }
-      const advanced = advanceCursor(rebuilt, freshOutcome);
+      // Reload the latest record before persisting (finding 2): a concurrent
+      // addThread/archive that landed during the async turn must not be erased by
+      // saving our stale pre-turn snapshot. Reload → drop cursor → advance → save
+      // runs synchronously, so no other store write interleaves it.
+      const latest = this.deps.store.load(sessionId) ?? current;
+      const advanced = advanceCursor(dropCursor(latest), freshOutcome);
       this.deps.store.save(advanced);
       return { session: advanced, outcome: freshOutcome, contextRebuilt: true };
     }
 
     if (outcome.status !== "completed") return { session: current, outcome };
-    const advanced = advanceCursor(current, outcome);
-    if (advanced !== current) this.deps.store.save(advanced);
+    // Reload the latest record before persisting the cursor (finding 2): a
+    // concurrent addThread/archive during the async turn wrote the whole record;
+    // saving our stale pre-turn snapshot would silently erase it. Apply a
+    // cursor-only update to the freshly-loaded record instead. Reload → advance →
+    // save runs synchronously, so no store write interleaves it.
+    const latest = this.deps.store.load(sessionId) ?? current;
+    const advanced = advanceCursor(latest, outcome);
+    if (advanced !== latest) this.deps.store.save(advanced);
     return { session: advanced, outcome };
   }
 

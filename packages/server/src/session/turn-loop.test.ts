@@ -215,6 +215,74 @@ describe("SessionTurnLoop: cursor persistence (task 2.2)", () => {
   });
 });
 
+describe("SessionTurnLoop: cursor persistence does not lose concurrent writes (finding 2)", () => {
+  // A whole-record write (addThread/archive) is NOT routed through the turn-loop
+  // serializer; it lands directly on the store. If the loop saved the pre-turn
+  // snapshot it captured at load, that write would be erased. The loop must reload
+  // the latest record and apply a cursor-only update.
+  const someThread = {
+    threadId: "t-mid",
+    anchor: {
+      type: "code",
+      ref: { patchsetId: "ps-1", path: "a.ts", side: "head", startLine: 1, endLine: 1 },
+    },
+    ask: {
+      intent: "rework",
+      exitLane: "dispatch-round",
+      provenance: "board:flagged",
+      lifecycle: "dispatched",
+    },
+  } as unknown as SessionModel["threads"][number];
+
+  it("preserves an addThread that lands mid-turn (completed path)", async () => {
+    const session = mintSession("proj", { id: () => "s1", now: () => 1 });
+    const store = memoryStore(session);
+    const loop = new SessionTurnLoop({
+      // The gate runs inside createSession — AFTER #runOnce already captured its
+      // pre-turn snapshot at load — so this simulates a concurrent whole-record
+      // write landing while the turn is in flight.
+      port: fakePort(() => undefined, {
+        gate: () => {
+          store.save({ ...store.get("s1"), threads: [someThread] });
+          return Promise.resolve();
+        },
+      }),
+      store,
+      buildSpec: spec,
+    });
+
+    const { session: after } = await loop.runTurn("s1", "hi");
+
+    // RED-proof: saving the stale pre-turn snapshot would drop the thread. The
+    // cursor advanced AND the concurrent thread survived.
+    expect(after.harnessCursor?.harnessSessionId).toBe("harness-1");
+    expect(after.threads).toHaveLength(1);
+    expect(store.get("s1").threads).toHaveLength(1);
+    expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("harness-1");
+  });
+
+  it("does not resurrect an archive that lands mid-turn", async () => {
+    const session = mintSession("proj", { id: () => "s1", now: () => 1 });
+    const store = memoryStore(session);
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => undefined, {
+        gate: () => {
+          store.save({ ...store.get("s1"), archivedAt: 12345 });
+          return Promise.resolve();
+        },
+      }),
+      store,
+      buildSpec: spec,
+    });
+
+    await loop.runTurn("s1", "hi");
+
+    // The archive stamp survived the cursor persist — the session is not resurrected.
+    expect(store.get("s1").archivedAt).toBe(12345);
+    expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("harness-1");
+  });
+});
+
 describe("SessionTurnLoop: serialization per session (task 2.2)", () => {
   it("runs two turns for one session serially — the second starts only after the first resolves", async () => {
     const session = mintSession("proj", { id: () => "s1", now: () => 1 });
