@@ -490,18 +490,8 @@ export function Sidebar() {
     0,
   );
 
-  // Inline project rename + remove-confirmation state (local, ephemeral).
-  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
-  const [projectDraft, setProjectDraft] = useState("");
+  // Remove-confirmation target (local, ephemeral).
   const [removeTarget, setRemoveTarget] = useState<SidebarProject | null>(null);
-  const projectInputRef = useRef<HTMLInputElement>(null);
-  // Focus + select the inline project-rename field on open (a11y-safe autoFocus).
-  useEffect(() => {
-    if (!renamingProjectId) return;
-    const el = projectInputRef.current;
-    el?.focus();
-    el?.select();
-  }, [renamingProjectId]);
 
   function standingIn(projectId: string): boolean {
     if (onMap && mapParams?.id === projectId) return true;
@@ -525,11 +515,6 @@ export function Sidebar() {
     void removeProject(project.id);
     setRemoveTarget(null);
     if (standing) navigate(newChatPath());
-  }
-
-  function commitProjectRename(project: SidebarProject) {
-    projection.renameProject(project.id, projectDraft.trim() || project.fallbackName);
-    setRenamingProjectId(null);
   }
 
   const updateControlPanel = updateReady ? (
@@ -664,59 +649,30 @@ export function Sidebar() {
                     return (
                       <ContextMenu key={project.id}>
                         <ContextMenuTrigger render={<div className="flex flex-col" />}>
-                          {renamingProjectId === project.id ? (
-                            <div className="flex h-7 items-center gap-1.5 rounded-chip bg-raised px-2">
-                              <Icon
-                                icon={ChevronDown}
-                                className={cn(
-                                  "size-3 shrink-0 text-ink-faint transition-transform",
-                                  !expanded && "-rotate-90",
-                                )}
-                              />
-                              <Icon icon={Layers} className="size-3.5 shrink-0 text-ink-faint" />
-                              <input
-                                ref={projectInputRef}
-                                value={projectDraft}
-                                onChange={(event) => setProjectDraft(event.target.value)}
-                                onBlur={() => commitProjectRename(project)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") commitProjectRename(project);
-                                  if (event.key === "Escape") {
-                                    event.stopPropagation();
-                                    setRenamingProjectId(null);
-                                  }
-                                }}
-                                aria-label="Project name"
-                                placeholder={project.fallbackName}
-                                className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
-                              />
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => toggleFold(project.id)}
-                              aria-expanded={expanded}
-                              className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised"
-                            >
-                              <Icon
-                                icon={ChevronDown}
-                                className={cn(
-                                  "size-3 shrink-0 text-ink-faint transition-transform",
-                                  !expanded && "-rotate-90",
-                                )}
-                              />
-                              <Icon icon={Layers} className="size-3.5 shrink-0 text-ink-faint" />
-                              <span className="flex-1 truncate">{project.name}</span>
-                              {project.indexing ? (
-                                <span className="flex items-center gap-1 text-2xs text-ink-faint">
-                                  <Icon icon={Loader2} className="size-3 animate-spin" />
-                                  indexing
-                                </span>
-                              ) : (
-                                <span className="text-2xs text-ink-faint">{activeCount}</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleFold(project.id)}
+                            aria-expanded={expanded}
+                            className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised"
+                          >
+                            <Icon
+                              icon={ChevronDown}
+                              className={cn(
+                                "size-3 shrink-0 text-ink-faint transition-transform",
+                                !expanded && "-rotate-90",
                               )}
-                            </button>
-                          )}
+                            />
+                            <Icon icon={Layers} className="size-3.5 shrink-0 text-ink-faint" />
+                            <span className="flex-1 truncate">{project.name}</span>
+                            {project.indexing ? (
+                              <span className="flex items-center gap-1 text-2xs text-ink-faint">
+                                <Icon icon={Loader2} className="size-3 animate-spin" />
+                                indexing
+                              </span>
+                            ) : (
+                              <span className="text-2xs text-ink-faint">{activeCount}</span>
+                            )}
+                          </button>
 
                           <Collapse open={expanded}>
                             {/* biome-ignore lint/a11y/noStaticElementInteractions: stops the row context menu leaking to session rows. */}
@@ -755,15 +711,9 @@ export function Sidebar() {
                             <Icon icon={MapIcon} />
                             View Context Map
                           </ContextMenuItem>
-                          <ContextMenuItem
-                            onClick={() => {
-                              setProjectDraft(project.name);
-                              setRenamingProjectId(project.id);
-                            }}
-                          >
-                            <Icon icon={Pencil} />
-                            Rename
-                          </ContextMenuItem>
+                          {/* Project rename is omitted until B9 supplies the real rename
+                              seam — an inert editor that snaps the name back is worse than
+                              no action (a live no-op lies about what happened). */}
                           <ContextMenuItem
                             onClick={() => navigate(projectSettingsPath(project.id))}
                           >
