@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   type BoardArrivalEvent,
   boardOutputSchema,
+  composeReviewDraft,
   draftToOps,
   reconcileFlaggedBoards,
   runLensPipeline,
@@ -203,6 +204,48 @@ describe("stampSingleSeatConcurrence — the honest single-seat degrade", () => 
   });
 });
 
+describe("composeReviewDraft — the authored composition write-through (C2)", () => {
+  const prose = (id: string, markdown: string): DraftBoard["elements"][number] =>
+    ({
+      id,
+      kind: "prose",
+      data: { author: flaggedAuthor, markdown },
+    }) as unknown as DraftBoard["elements"][number];
+
+  it("authors connective prose, computes the mechanical carry, and screens the register", async () => {
+    const keep = prose("keep", "This section is unchanged across generations.");
+    const previous = new Map([["design", mkBoard([keep])] as const]);
+    const current = new Map([
+      ["design", mkBoard([keep, prose("new1", "A fresh observation.")])] as const,
+    ]);
+
+    const result = await composeReviewDraft({
+      boards: current,
+      previous,
+      voicePromptText: "VOICE RULES",
+      authorTurn: (p) =>
+        `AUTHORED for ${p.includes("VOICE RULES") ? "voice" : "?"}: the change reads cleanly.`,
+      lintCtx: { files: new Map() },
+    });
+
+    expect(result.prose).toContain("the change reads cleanly");
+    // The byte-identical element carried; the new one did not.
+    expect([...(result.carried.get("design") ?? [])]).toEqual(["keep"]);
+    // Clean prose (no machinery, no citations) ⇒ no register violations.
+    expect(result.violations).toEqual([]);
+  });
+
+  it("flags machinery vocabulary in the review register (visible, never blocking)", async () => {
+    const result = await composeReviewDraft({
+      boards: new Map(),
+      voicePromptText: "VOICE",
+      authorTurn: () => "This lens board was drafted by an agent seat.",
+      lintCtx: { files: new Map() },
+    });
+    expect(result.violations.length).toBeGreaterThan(0);
+  });
+});
+
 describe("runLensPipeline — the real drafting path (fake harness, no live model)", () => {
   it("drafts all five lenses, writes each board via whiteboard, and emits arrival on freeze", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
@@ -247,6 +290,25 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(arrivals.map((a) => a.lens)).toEqual(lenses);
     // Coverage: no hunks ⇒ nothing uncovered.
     expect(result.coverage).toEqual([]);
+  });
+
+  it("seeds each drafter turn with the DeltaPacket + lens prompt + host schema (D1)", async () => {
+    const captures: { model?: string; prompt?: string }[] = [];
+    await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (p) => cleanBody(lensFromPrompt(p))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+    const designTurn = captures.find((c) => c.prompt?.includes("design.md"))?.prompt ?? "";
+    expect(designTurn).toContain("PROMPT_FILE:prompts/design.md"); // the lens prompt
+    expect(designTurn).toContain("ps-1"); // the inlined DeltaPacket (patchset id)
+    expect(designTurn).toContain("hostSchema"); // the host board schema
   });
 
   it("council-routes each seat to the right model (claude-only scenario)", async () => {
@@ -394,6 +456,25 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
     expect(result.report).toBeUndefined();
     expect(applied.some((a) => a.boardId === "board:report")).toBe(false);
+  });
+
+  it("runs the authored composition when a composeTurn is supplied (C2)", async () => {
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (p) => cleanBody(lensFromPrompt(p))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      composeTurn: () => "The change is coherent and ready for review.",
+      reviewDraftLintCtx: { files: new Map() },
+    });
+    expect(result.composition?.prose).toBe("The change is coherent and ready for review.");
+    expect(result.composition?.violations).toEqual([]);
   });
 
   it("records an honest failure (never a throw) when no harness resolves the seat", async () => {

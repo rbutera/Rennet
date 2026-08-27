@@ -5,6 +5,7 @@ import { councilSeatTurn } from "@rennet/adapters";
 import {
   assertCoverage,
   type CodexExecutor,
+  carriedElementIds,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
   type HarnessPort,
@@ -12,8 +13,10 @@ import {
   type LintContext,
   type LintHunk,
   type LintTarget,
+  lintReviewDraft,
   NO_CONCERN_ANSWER,
   type Omission,
+  type RegisterLintContext,
   reconcileFindings,
   stampDeltas,
   validateDraft,
@@ -21,6 +24,7 @@ import {
 import {
   LENS_PROMPT_FILES,
   POST_PROCESS_FILE,
+  REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
   renderLayer,
 } from "@rennet/prompts";
@@ -246,6 +250,62 @@ export function stampSingleSeatConcurrence(board: DraftBoard, label: string): Dr
   return { ...(board as object), elements } as DraftBoard;
 }
 
+// ── Composition authoring (C2, cluster 5.4) ──
+
+/** The authored review draft — connective prose plus the mechanical carry facts. */
+export interface ComposeResult {
+  /** The write-through authored connective prose in the reviewer's first-person register. */
+  readonly prose: string;
+  /** The mechanically-carried element ids per lens (cluster-4 verbatim carry). */
+  readonly carried: ReadonlyMap<LintTarget, ReadonlySet<string>>;
+  /** The review-draft register screen (L3/L4/L7) — visible, never blocking (Rule Zero). */
+  readonly violations: readonly Violation[];
+}
+
+export interface ComposeInput {
+  /** The frozen lens boards — the reading surface (C3: compose emits no sixth board). */
+  readonly boards: ReadonlyMap<LintTarget, DraftBoard>;
+  /** The prior generation's boards, for the mechanical verbatim-carry computation. */
+  readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
+  /** `REVIEW_DRAFT_VOICE_FILE` contents — the write-through post-process steps in the review register. */
+  readonly voicePromptText: string;
+  /** The orchestrator's free-text authoring turn (the composition seat). */
+  readonly authorTurn: (prompt: string) => Promise<string> | string;
+  /** The review-draft register lint context (citation files + R20 identifiers). */
+  readonly lintCtx: RegisterLintContext;
+  /** Curation feedback threaded from the prior generation (C2) — inlined into the authoring prompt. */
+  readonly curationFeedback?: string;
+}
+
+/** Assemble the composition authoring prompt: the voice rules + the boards + prior curation. */
+export function renderComposePrompt(input: ComposeInput): string {
+  const context = JSON.stringify({
+    boards: [...input.boards.values()],
+    ...(input.curationFeedback === undefined ? {} : { curationFeedback: input.curationFeedback }),
+  });
+  return `${renderLayer("payload", input.voicePromptText)}\n\n${renderLayer("context", context)}`;
+}
+
+/**
+ * The authored composition (C2): the orchestrator applies the MECHANICAL compose
+ * (cluster-4 verbatim carry; delta stamps already live on each board's sections)
+ * plus the WRITE-THROUGH authored connective prose on the versioned composition
+ * prompt (`REVIEW_DRAFT_VOICE_FILE`, reconciliation 5) — in the reviewer's
+ * first-person register, the voice prompt's own post-process steps applied. The
+ * prose is screened by the review-draft register lint (`lintReviewDraft`),
+ * visible-never-blocking. Curation feedback threads in via `curationFeedback`.
+ * Pure over the injected authoring turn — no live model in the gate.
+ */
+export async function composeReviewDraft(input: ComposeInput): Promise<ComposeResult> {
+  const prose = await input.authorTurn(renderComposePrompt(input));
+  const carried = new Map<LintTarget, ReadonlySet<string>>();
+  for (const [lens, board] of input.boards) {
+    const prev = input.previous?.get(lens);
+    if (prev !== undefined) carried.set(lens, carriedElementIds(prev, board));
+  }
+  return { prose, carried, violations: lintReviewDraft(prose, input.lintCtx) };
+}
+
 // ── Prompt assembly (each turn is a fresh stateless session — carry everything) ──
 
 /**
@@ -356,6 +416,18 @@ export interface LensPipelineDeps {
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
   /** Prior generation's boards, for R58 delta stamps (cluster 4). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
+  /**
+   * The orchestrator's free-text authoring turn for the composition write-through
+   * (C2). Present ⇒ `composeReviewDraft` runs after the lens boards freeze,
+   * authoring the connective review prose on `REVIEW_DRAFT_VOICE_FILE`. Absent ⇒
+   * composition authoring is skipped (the lens boards already ARE the reading
+   * surface — C3).
+   */
+  readonly composeTurn?: (prompt: string) => Promise<string> | string;
+  /** The review-draft register lint context (needed only when `composeTurn` is set). */
+  readonly reviewDraftLintCtx?: RegisterLintContext;
+  /** Curation feedback threaded from the prior generation into the authoring prompt (C2). */
+  readonly curationFeedback?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -369,6 +441,8 @@ export interface LensPipelineResult {
    * so it is excluded from the coverage assert.
    */
   readonly report?: LensBoardOutcome;
+  /** The authored composition (C2), present only when a `composeTurn` was supplied. */
+  readonly composition?: ComposeResult;
 }
 
 // ── Seat resolution (council-routed, the B06 precedent) ──
@@ -481,7 +555,29 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const boards = outcomes.map((o) => o.board).filter((b): b is DraftBoard => b !== undefined);
   const coverage = assertCoverage(boards, deps.hunks);
 
-  return { boards: outcomes, coverage, ...(report === undefined ? {} : { report }) };
+  // C2 — the authored composition write-through, when the orchestrator supplied a
+  // free-text authoring turn. The lens boards ARE the reading surface (C3); this
+  // adds only the connective review prose, not a sixth board.
+  let composition: ComposeResult | undefined;
+  if (deps.composeTurn !== undefined) {
+    const boardsByLens = new Map<LintTarget, DraftBoard>();
+    for (const o of outcomes) if (o.board !== undefined) boardsByLens.set(o.lens, o.board);
+    composition = await composeReviewDraft({
+      boards: boardsByLens,
+      ...(deps.previous === undefined ? {} : { previous: deps.previous }),
+      voicePromptText: await deps.readPrompt(REVIEW_DRAFT_VOICE_FILE),
+      authorTurn: deps.composeTurn,
+      lintCtx: deps.reviewDraftLintCtx ?? { files: new Map() },
+      ...(deps.curationFeedback === undefined ? {} : { curationFeedback: deps.curationFeedback }),
+    });
+  }
+
+  return {
+    boards: outcomes,
+    coverage,
+    ...(report === undefined ? {} : { report }),
+    ...(composition === undefined ? {} : { composition }),
+  };
 }
 
 /**
