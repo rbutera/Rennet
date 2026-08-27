@@ -97,7 +97,11 @@ Serial clusters. Each cluster is one session. Search before implementing
       second registration throws `/already registered/`, caught by an error boundary.
       Proven to actually fail: run against a temporarily weakened guard (throw removed)
       it went RED (no boundary error) — guard then restored (registry.ts unchanged from HEAD).
-- [ ] Docs updated in the same change: using-side onboarding page (contextual,
+- [x] Docs updated in the same change: using-side onboarding page (contextual,
       one-at-a-time, skip-all, replay from Help) + client-settings field list
-      gains `coachmarks`.
+      gains `coachmarks`. New `docs/using/guides/onboarding-tour.md` (registered in
+      the Astro sidebar, `docs/README.md`, and `docs/using/index.md`); the
+      `coachmarks` row added to the client-settings table in
+      `docs/developing/guides/settings-and-setup.md`. `pnpm nx build rennet-docs`
+      green (49 pages, no broken links).
 - [ ] Output `<promise>C13-COMPLETE</promise>` and flip C13 in `BUILD-STATUS.json`.

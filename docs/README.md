@@ -14,6 +14,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
 - Concepts: [product and vision](./using/concepts/product-and-vision.md) and
   [common questions](./using/concepts/common-questions.md)
 - Guides: [getting started](./using/guides/getting-started.md),
+  [the onboarding tour](./using/guides/onboarding-tour.md),
   [connecting to GitHub](./using/guides/github-auth.md),
   [reviewing a GitHub PR](./using/guides/reviewing-a-github-pr.md),
   [the Context Map](./using/guides/context-map.md),
