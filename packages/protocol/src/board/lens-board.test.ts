@@ -42,7 +42,14 @@ const fixture = {
     {
       id: "f1",
       kind: "finding",
-      data: { author, severity: "low", concern: "nit", code: ["cr1"], status: "open" },
+      data: {
+        author,
+        severity: "low",
+        concern: "nit",
+        code: ["cr1"],
+        concurrence: [],
+        status: "open",
+      },
     },
     { id: "p1", kind: "prose", data: { author, markdown: "context." } },
   ],

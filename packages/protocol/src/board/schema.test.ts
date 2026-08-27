@@ -168,6 +168,25 @@ describe("host board schema (#462)", () => {
     expect(HostBoardSchema.safeParse(bad).success).toBe(false);
   });
 
+  // #462 marks optional attributes with `?`; these carry none, so a missing
+  // field must reject (codex review finding 7 — tightening later would be
+  // wire-breaking).
+  it.each([
+    ["finding", "code"],
+    ["finding", "concurrence"],
+    ["decision", "evidence"],
+    ["decision", "alternatives"],
+    ["requirement", "trace"],
+    ["order_step", "children"],
+    ["section", "children"],
+    ["review_comment", "covers"],
+  ] as const)("rejects a %s missing its required %s", (kind, field) => {
+    const el = fullBoard.elements.find((e) => e.kind === kind);
+    if (!el) throw new Error(`fixture has no ${kind}`);
+    const { [field]: _dropped, ...data } = el.data as Record<string, unknown>;
+    expect(HostElementSchema.safeParse({ ...el, data }).success).toBe(false);
+  });
+
   it("passes undeclared data fields through (extras)", () => {
     const withExtra = {
       elements: [{ id: "p1", kind: "prose", data: { author, markdown: "x", note: 1 } }],

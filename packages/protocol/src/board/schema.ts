@@ -101,20 +101,21 @@ const withAuthor = <S extends z.ZodRawShape>(shape: S) =>
 const findingData = withAuthor({
   severity: severitySchema,
   concern: z.string(),
-  code: z.array(z.string()).optional(),
-  concurrence: z.array(concurrenceSchema).optional(),
+  // #462 marks optionals with `?`; code, concurrence carry none — required (may be empty).
+  code: z.array(z.string()),
+  concurrence: z.array(concurrenceSchema),
   status: z.enum(["open", "addressed", "dismissed"]),
 });
 const decisionData = withAuthor({
   statement: z.string(),
-  evidence: z.array(z.string()).optional(),
-  alternatives: z.array(z.string()).optional(),
+  evidence: z.array(z.string()),
+  alternatives: z.array(z.string()),
   why: z.string(),
 });
 const requirementData = withAuthor({
   shall: z.string(),
   coverage: z.enum(["met", "gap", "partial"]),
-  trace: z.array(z.string()).optional(),
+  trace: z.array(z.string()),
 });
 const noiseVerdictData = withAuthor({
   hunk: z.string(),
@@ -125,7 +126,7 @@ const noiseVerdictData = withAuthor({
 const orderStepData = withAuthor({
   title: z.string(),
   span: z.string(),
-  children: z.array(z.string()).optional(),
+  children: z.array(z.string()),
 });
 const roundOutcomeData = withAuthor({
   status: z.enum(["addressed", "partial", "untouched", "beyond"]),
@@ -144,7 +145,7 @@ export const SectionDeltaSchema = z.enum(["new", "reworked"]);
 /** Tier B — the authoring palette (compose / annotate / augment). */
 const sectionData = withAuthor({
   title: z.string(),
-  children: z.array(z.string()).optional(),
+  children: z.array(z.string()),
   // The viewed set that decays the mark is UI-only.
   delta: SectionDeltaSchema.optional(),
 });
@@ -175,7 +176,7 @@ const reviewCommentData = withAuthor({
   body: z.string(),
   code_ref: z.string(),
   status: z.enum(["draft", "posted"]),
-  covers: z.array(z.string()).optional(),
+  covers: z.array(z.string()),
 });
 
 // ─── The kind → element-schema table (single source for the unions) ──────────
@@ -320,21 +321,21 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     {
       severity: a("string", true, "high | medium | low (the shipped FindingSeverity scale)."),
       concern: a("string", true, "The finding, as markdown."),
-      code: a("element", false, "code_ref elements the finding cites.", true),
-      concurrence: a("json", false, "Per-model { model, agree, total } tallies.", true),
+      code: a("element", true, "code_ref elements the finding cites.", true),
+      concurrence: a("json", true, "Per-model { model, agree, total } tallies.", true),
       status: a("string", true, "open | addressed | dismissed."),
     },
   ),
   decision: authored("A design decision recovered from the change.", {
     statement: a("string", true, "The decision, stated."),
-    evidence: a("element", false, "code_ref elements evidencing it.", true),
-    alternatives: a("element", false, "Alternative-option elements considered.", true),
+    evidence: a("element", true, "code_ref elements evidencing it.", true),
+    alternatives: a("element", true, "Alternative-option elements considered.", true),
     why: a("string", true, "Rationale, as markdown."),
   }),
   requirement: authored("A shall-requirement and its coverage in the change.", {
     shall: a("string", true, "The requirement text."),
     coverage: a("string", true, "met | gap | partial."),
-    trace: a("element", false, "code_ref elements tracing coverage.", true),
+    trace: a("element", true, "code_ref elements tracing coverage.", true),
   }),
   noise_verdict: authored("A per-hunk noise/signal verdict.", {
     hunk: a("element", true, "The code_ref element this verdict is on."),
@@ -345,7 +346,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
   order_step: authored("One step in a suggested reading order.", {
     title: a("string", true, "The step title."),
     span: a("element", true, "The code_ref element the step spans."),
-    children: a("element", false, "Child elements under the step.", true),
+    children: a("element", true, "Child elements under the step.", true),
   }),
   round_outcome: authored("One item of a round report (#486): how an ask fared.", {
     status: a("string", true, "addressed | partial | untouched | beyond."),
@@ -355,7 +356,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
   }),
   section: authored("A section of the document: a title and child elements.", {
     title: a("string", true, "The section title."),
-    children: a("element", false, "Child elements in the section.", true),
+    children: a("element", true, "Child elements in the section.", true),
     delta: a("string", false, "new | reworked round-delta stamp; absent = carried."),
   }),
   prose: authored("Freeform markdown — the agent's general expressive surface.", {
@@ -388,7 +389,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     body: a("string", true, "The comment, as markdown."),
     code_ref: a("element", true, "The anchored code_ref element (side=head)."),
     status: a("string", true, "draft | posted."),
-    covers: a("element", false, "Elements this comment covers.", true),
+    covers: a("element", true, "Elements this comment covers.", true),
   }),
 });
 
