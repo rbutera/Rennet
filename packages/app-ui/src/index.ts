@@ -85,3 +85,30 @@ export { CoverageMosaicView } from "./components/coverage";
 export { DirectoryBrowser } from "./components/directory-browser";
 export { FrontDoor } from "./components/front-door";
 export { SettingsScreen } from "./components/settings-screen";
+// The review layer (C4, #489): the shared machinery C5–C9 render — the one code
+// surface, the multi-site evidence viewer, the one line-comment editor, the prose
+// selection toolbar, the R45 markdown-subset renderer, reference chips, and the
+// span-read citations seam. See `review/index.ts`.
+export type {
+  CodeBlockProps,
+  CodeRef,
+  DraftHandlers,
+  LineCommentEditorProps,
+  ReferenceChipProps,
+  RichTextProps,
+  SpanRead,
+} from "./review";
+export {
+  AnchorReveal,
+  CitationBlock,
+  CodeBlock,
+  CodeTabs,
+  LineCommentEditor,
+  lineRef,
+  ProseSelectionLayer,
+  parseRef,
+  ReferenceChip,
+  RichText,
+  spanToBlock,
+  useSpanRead,
+} from "./review";

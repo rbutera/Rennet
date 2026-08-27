@@ -42,10 +42,10 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 7. Barrels, dead-code sweep, docs
 
-- [ ] 7.1 `packages/app-ui/src/review/index.ts`: export `CodeBlock`, `CodeTabs`, `AnchorReveal`, `LineCommentEditor`, `ProseSelectionLayer` (+ `DraftHandlers`), `RichText`, `ReferenceChip`, and the citations-seam types (`CodeRef`, the hook). `app-ui/src/index.ts` re-exports the barrel.
-- [ ] 7.2 Confirm nothing in `packages/app-ui/src` imports from `spikes/` (the fence test, if one exists, must stay green; if it doesn't exist yet, a `grep -r "from \"../../spikes\|from \"@/spikes" packages/app-ui/src` returning empty is the proof, run and recorded here).
-- [ ] 7.3 Grep `docs/` (excl. `docs/dist`) for pages mapping `app-ui`'s module layout (mirroring C3's task 6.2) or describing `/api/source`, code-block, or line comments as unbuilt; update any page this change makes wrong, or record the grep as a no-op.
-- [ ] 7.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — zero new packages, confirm not assume — lint, typecheck, test, build). Commit.
+- [x] 7.1 `packages/app-ui/src/review/index.ts`: export `CodeBlock`, `CodeTabs`, `AnchorReveal`, `LineCommentEditor`, `ProseSelectionLayer` (+ `DraftHandlers`), `RichText`, `ReferenceChip`, and the citations-seam types (`CodeRef`, the hook). `app-ui/src/index.ts` re-exports the barrel.
+- [x] 7.2 Confirm nothing in `packages/app-ui/src` imports from `spikes/` (the fence test, if one exists, must stay green; if it doesn't exist yet, a `grep -r "from \"../../spikes\|from \"@/spikes" packages/app-ui/src` returning empty is the proof, run and recorded here).
+- [x] 7.3 Grep `docs/` (excl. `docs/dist`) for pages mapping `app-ui`'s module layout (mirroring C3's task 6.2) or describing `/api/source`, code-block, or line comments as unbuilt; update any page this change makes wrong, or record the grep as a no-op.
+- [x] 7.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — zero new packages, confirm not assume — lint, typecheck, test, build). Commit.
 
 ## 8. Verification (packet)
 
