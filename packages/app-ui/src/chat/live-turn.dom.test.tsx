@@ -130,7 +130,7 @@ describe("a live turn streams into the transcript (task 8.2)", () => {
 
 describe("the reviewer's own message echoes into the transcript (Fix #1)", () => {
   it("renders the sent user bubble instantly, in the same mount (no orchestrator reply needed)", async () => {
-    const { bridge: _bridge, getByTestId, user } = mountLive();
+    const { getByTestId, user } = mountLive();
     // Settle the initial reattach, then send — the ask stream yields only orchestrator turns,
     // so without the optimistic echo the reviewer's own message would never render.
     await act(async () => {
