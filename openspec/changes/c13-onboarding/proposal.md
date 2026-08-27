@@ -81,3 +81,15 @@ Four findings upheld (3 P2 + 1 P3), fixed at their root, no gates added.
   (`coach/registry.ts`), covering both merge sites (fab, indexing CTA). Proven by
   `coach/merged-refs.dom.test.tsx` — a live→null rerender clears the object ref and
   null-invokes the legacy callback ref.
+
+- **Finding 2 (P2) — persistence failures observed and sequenced latest-wins.** The
+  provider fired `void mutate(snapshot)` and discarded the promise: a rejecting
+  bridge (malformed config, transport) became an unobserved rejection AND the failed
+  write was forgotten, so a reload could resurrect a dismissed mark or undo skip-all
+  while the UI acted as saved. Fixed with `coach/persist.ts` — a lean, no-ceremony
+  wrapper (no dialog, no blocking UI): single-flight so out-of-order completions never
+  let a stale success clobber a newer state, retain-and-retry the latest snapshot on
+  failure (short timer, or sooner when a fresh change arrives). Wired into
+  `coach/provider.tsx`. Proven by `coach/persist.test.ts` — a rejecting bridge lands
+  the newest snapshot after recovery, a timer re-fires with no fresh change, and a
+  delayed bridge's out-of-order completion keeps the latest.

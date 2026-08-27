@@ -1,6 +1,7 @@
 import { type ReactNode, useRef } from "react";
 import { useCommand, useMutation } from "../data";
 import { CoachProvider } from "./context";
+import { createLatestWinsPersist } from "./persist";
 import { type CoachStore, createCoachStore } from "./store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,9 +42,11 @@ export function CoachDataProvider({ children }: { children: ReactNode }) {
         seen: data.coachmarks?.seen ?? [],
         skipAll: data.coachmarks?.skipAll ?? false,
       },
-      persist: (snapshot) => {
-        void persistRef.current(snapshot);
-      },
+      // Observe the write and sequence it latest-wins (finding 2): a rejecting
+      // bridge is retained and retried, out-of-order completions never clobber a
+      // newer state, and nothing leaves an unobserved rejection. `persistRef.current`
+      // is read at call time so it always uses the latest `mutate`.
+      persist: createLatestWinsPersist((snapshot) => persistRef.current(snapshot)),
     });
   }
 
