@@ -126,6 +126,12 @@ RENAME *(census, #457)*: `components/delta-account-panel.tsx` → `successor-acc
 | `app/daemon/[daemonId]/review/[reviewId]/canvas.tsx` | STUB *(census, Q10)* |
 | `src/lib/canvas-rows.ts`, `src/lib/canvas-rows.test.ts` | DELETE *(census)* |
 
+### apps/desktop/src
+
+| File | Verdict |
+|---|---|
+| `persist-publish-privacy.test.ts` | DELETE *(B2 amendment, cluster 2 — untabled census miss)* — its whole invariant is `reviewCommentsPayload(reviewComments(publishedItems(draft)))`, the publish/staging outbound (`publish.ts`/`staging.ts`) deleted this cluster. Nothing survives to trim; an import of the dead functions cannot compile. The privacy proof re-homes with Track C's rebuilt publish surface |
+
 ### packages/instructions — DELETE *(census, whole package)*
 
 All 7 source files (`index.ts`, `index.test.ts`, `ci-classification.test.ts`, `finding-adjudication.test.ts`, `finding-verification.test.ts`, `hypothesis.test.ts`, `ui-verification.test.ts`) plus `package.json`/`project.json`/tsconfig; the exports still imported by surviving code (`FINDING_VERIFICATION_CONTRACT` + verification prompt renderers, `CI_CLASSIFICATION_*`, `NOISE_CONTRACT`, decomposition contracts, `renderLayer`/prompt-layer assembly, `renderConventionLayer`, the `PromptContract` type) are **absorbed into `packages/prompts`** verbatim; the contracts of dead passes (`FINDING_CONTRACT`, `DECISION_CONTRACT`, `ORDERING_CONTRACT`, `ROLLUP_NARRATION_CONTRACT`, `REVIEW_HYPOTHESIS_CONTRACT`, `FINDING_ADJUDICATION_CONTRACT`, `UI_VERIFICATION_CONTRACT` + their renderers) die with them.

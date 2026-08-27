@@ -10,7 +10,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 ## 2. app-ui canvas reduction + mobile stub
 
-- [ ] 2.1 Delete the 34 DELETE-verdict files in `packages/app-ui/src/canvas/` (everything except `registrar`, `read-state`, `symbol`, `collation`, `counterpart` and their tests).
+- [x] 2.1 Delete the 34 DELETE-verdict files in `packages/app-ui/src/canvas/` (everything except `registrar`, `read-state`, `symbol`, `collation`, `counterpart` and their tests).
 - [ ] 2.2 Trim the five survivors self-contained: `collation.ts` inlines the `DispositionType`/`DispositionBatch`/`anchorPathKey`/`DispositionWrite` shapes it used from `authoring.ts`/`logic.ts`; `counterpart.ts` replaces `Canvas`/`CanvasAngle`/`CANVAS_ANGLES` with a local five-value lens union (B3 owns the real `LensKind` home); `read-state.ts` replaces the `Disposition` import with a local shape. No behavior changes — tests still pass.
 - [ ] 2.3 Stub `apps/mobile/app/daemon/[daemonId]/review/[reviewId]/canvas.tsx` (route renders a placeholder, Q10); delete `apps/mobile/src/lib/canvas-rows.ts` + `.test.ts` and their call sites.
 - [ ] 2.4 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
