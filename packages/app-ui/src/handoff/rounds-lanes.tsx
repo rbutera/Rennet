@@ -186,10 +186,11 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr }: RoundsLanesPro
           <p className="text-sm text-muted-foreground">Nothing staged yet.</p>
         )}
 
-        {/* Dispatch Round: inert while nothing is staged (R37). */}
+        {/* Dispatch Round: inert while nothing is staged (R37), and inert until C9 wires the round
+            run (`onDispatch`) — a live button with no handler would be a dead click that lies. */}
         <button
           type="button"
-          disabled={!gathering}
+          disabled={!gathering || !onDispatch}
           onClick={onDispatch}
           className="w-fit rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
         >

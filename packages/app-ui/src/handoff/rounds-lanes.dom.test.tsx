@@ -8,8 +8,13 @@
 // unstages, over the real `review` slice.
 import type { Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Router } from "wouter";
+import { ReviewWorkspace } from "../app/review-workspace-route";
+import { BridgeProvider } from "../data";
+import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount } from "../test/dom";
+import { MemoryBridge } from "../test/memory-bridge";
 import { type PrReceipt, RoundsLanes } from "./rounds-lanes";
 import { selectExitPipCount } from "./selectors";
 
@@ -70,11 +75,22 @@ describe("RoundsLanes", () => {
     expect(r.queryByRole("heading", { name: "Changes" })).toBeNull();
   });
 
-  it("Dispatch Round is inert while nothing is staged, live once an ask is staged", () => {
+  it("Dispatch Round stays inert with no round wired — even once an ask is staged (C9-gated)", () => {
+    // No `onDispatch`: the round run is C9's. A live button here would be a dead click that lies,
+    // so it stays disabled BOTH while nothing is staged AND after an ask stages — until C9 wires it.
     const r = mount(<RoundsLanes review={review} />);
     expect(r.getByText("Nothing staged yet.")).toBeTruthy();
     expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);
 
+    stage("src/a.ts:5", "guard the boundary", "request-change");
+    expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("Dispatch Round goes live only when BOTH an ask is staged and onDispatch is wired", () => {
+    const onDispatch = vi.fn();
+    const r = mount(<RoundsLanes review={review} onDispatch={onDispatch} />);
+    // onDispatch wired but nothing staged → still inert (R37).
+    expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);
     stage("src/a.ts:5", "guard the boundary", "request-change");
     expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(false);
   });
@@ -104,6 +120,24 @@ describe("RoundsLanes", () => {
     await r.user.click(r.getByRole("button", { name: /Open Pull Request/ }));
     expect(await r.findByText(/Pull request opened · #438/)).toBeTruthy();
     expect(r.getByText("github.com/rbutera/rennet/pull/438")).toBeTruthy();
+  });
+
+  it("through the real route (HandoffMount wires no onDispatch) Dispatch Round renders disabled", () => {
+    // The production path: ReviewWorkspace → HandoffMount mounts the own-branch rounds lane and
+    // passes NO onDispatch (C9's job). Even with an ask staged, the button must render disabled —
+    // proving the fix holds where it ships, not only in a direct unit mount.
+    stage("src/a.ts:5", "guard the boundary", "request-change"); // first mount does not reset (id stable)
+    const ownBranch = { id: "ob-1", activePatchsetId: "ps-1" } as unknown as Review;
+    const history = memoryHistory("/s/x?view=handoff");
+    const r = mount(
+      <BridgeProvider bridge={new MemoryBridge({})}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <ReviewWorkspace review={ownBranch} />
+        </Router>
+      </BridgeProvider>,
+    );
+    expect(r.getByRole("heading", { name: "Changes" })).toBeTruthy();
+    expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("selection Drop retires the ask and unstages it (the card leaves, pip drops)", () => {
