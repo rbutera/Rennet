@@ -52,7 +52,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 - [x] 7.1 Reduce `src/index.ts` to the re-export seam: the five folder seams plus the explicitly parked residue (`domain.ts` remainder — project/settings/handoff/locus families awaiting B4–B11, with a header comment saying so; `public-schema.ts`; `sha256.ts`). No export the workspace consumes may vanish: `sh -c 'pnpm nx run-many -t typecheck -p rennet-server rennet-core rennet-adapters rennet-app-ui rennet-client'` is the proof.
 - [x] 7.2 Docs: `docs/developing/reference/protocol-compatibility.md` — the registry (`commands`) replaces `commandDefinitions` as the named single validation authority; name the five contract-folder seams. `docs/developing/reference/monorepo-map.md` — protocol row gains `@wboard/core`, description updated. `docs/developing/concepts/review-lenses.md` — lens vocabulary aligned to `LensKind` (Spec → Design, matching `lens-pipeline.md`/#474; reconciliation 4).
 - [x] 7.3 Re-grep `docs/` (excluding `docs/dist` and the plan doc) for `commandDefinitions`, `CanvasAngle`, lens-name vocabulary, and protocol-structure claims a reader would now find wrong; fix stragglers.
-- [ ] 7.4 Cluster gate green. Commit.
+- [x] 7.4 Cluster gate green. Commit.
 
 ## 8. Verification (packet)
 
