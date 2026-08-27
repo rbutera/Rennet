@@ -13,7 +13,7 @@
 // `.strict()` habit used for intra-process shapes elsewhere in this package.
 
 import { z } from "zod";
-import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "./index";
+import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "../index";
 
 /** The protocol version this build speaks. One integer, bumped append-only. */
 export const PROTOCOL_VERSION = 1;

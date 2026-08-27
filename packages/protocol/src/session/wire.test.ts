@@ -14,7 +14,7 @@ import {
   responseFrameSchema,
   rpcErrorFrameSchema,
   serverInfoFrameSchema,
-} from "./index";
+} from "../index";
 
 // A real command name, so the `request` frame's `isCommandName` refinement passes.
 const REAL_COMMAND = "review.regenerate";
