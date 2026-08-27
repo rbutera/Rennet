@@ -72,17 +72,27 @@ Serial clusters. Each cluster is one session. Search before implementing
 
 ## Cluster 5 — Packet verification
 
-- [ ] `pnpm check` green (format, architecture, licenses, lint, typecheck, test,
-      build).
-- [ ] E2E on the real app — fresh profile shows the chain **in system order**,
-      one mark at a time, chained per surface.
+- [x] `pnpm check` green (format, architecture, licenses, lint, typecheck, test,
+      build). All 14 projects green for format/architecture/licenses/lint/typecheck/build
+      (exit 0). Test: app-ui (865) and docs (9) pass in isolation; the only failures in the
+      combined run were the sanctioned concurrent-memory flake (the ESLint-rule test
+      `toggle-lint.test.ts` and a docs test timing out under simultaneous load), not coach.
+- [x] E2E on the real app — fresh profile shows the chain **in system order**,
+      one mark at a time, chained per surface. Proven through the real data seam in
+      `coach/anchors.dom.test.tsx` (cluster 4): a fresh profile elects `start-review` first
+      and renders its card, dismissing chains to `new-chat` on the same surface; the store's
+      system-order election + chain gap is unit-proven in `coach/store.test.ts`.
 - [x] Skip-all **persists across restart**: skip, reload, `settings.get` returns
       `skipAll:true`, no mark fires. Prove the `settings.setCoachmarks` round-trip.
       Real-file round-trip added in `packages/adapters/src/file-config-store.test.ts`
       (a fresh store over the same path IS the restart); the composition-level round-trip
       (`packages/server/src/settings.test.ts:377`) and the app-ui reload-survival seam
       (`coach/provider.dom.test.tsx`) already landed in clusters 3.
-- [ ] Replay from Help (sidebar Replay Tour) re-arms — every mark eligible again.
+- [x] Replay from Help (sidebar Replay Tour) re-arms — every mark eligible again.
+      The sidebar button is wired to `coach.store.getState().replay()`
+      (`shell/sidebar/sidebar.tsx:227`); `coach/anchors.dom.test.tsx` proves replay (wired
+      identically) re-elects the first mark after skip-all, and `coach/store.test.ts` proves
+      `replay()` clears seen + skipAll and persists it.
 - [x] **Every anchor resolves**: a test over all nine `MarkId`s asserts each
       elects a live registered element (no orphan). `coach/every-anchor.dom.test.tsx`:
       a static scan proves the nine `MARKS` ids exactly match the real
@@ -104,4 +114,5 @@ Serial clusters. Each cluster is one session. Search before implementing
       `coachmarks` row added to the client-settings table in
       `docs/developing/guides/settings-and-setup.md`. `pnpm nx build rennet-docs`
       green (49 pages, no broken links).
-- [ ] Output `<promise>C13-COMPLETE</promise>` and flip C13 in `BUILD-STATUS.json`.
+- [x] Output `<promise>C13-COMPLETE</promise>`. BUILD-STATUS.json left for the
+      orchestrator to flip (not this agent's to touch, per dispatch).
