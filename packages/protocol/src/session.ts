@@ -74,8 +74,8 @@ export const serverInfoFrameSchema = z.object({
 
 /**
  * Client → server: invoke a command. `command` is validated against the
- * existing `commandDefinitions` registry; the `input` payload stays validated by
- * `commandDefinitions[command].input` (single authority), not re-modeled here.
+ * existing command registry (`commands`); the `input` payload stays validated by
+ * `commands[command].args` (single authority), not re-modeled here.
  */
 export const requestFrameSchema = z.object({
   type: z.literal("request"),

@@ -60,7 +60,7 @@ import {
 } from "../wire";
 
 const commandIdSchema = z.uuid();
-export const commandDefinitions = {
+const definitions = {
   "app.bootstrap": {
     input: z.object({}),
     output: z.object({ review: reviewSchema.nullable(), repositoryPresent: z.boolean() }),
@@ -1066,23 +1066,83 @@ export const commandDefinitions = {
   },
 } as const;
 
-export type CommandName = keyof typeof commandDefinitions;
-export type CommandInput<K extends CommandName> = z.input<(typeof commandDefinitions)[K]["input"]>;
-export type CommandOutput<K extends CommandName> = z.output<
-  (typeof commandDefinitions)[K]["output"]
->;
+/** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose
+ * today, mapped by inspection of the resolution's list against the commands that
+ * actually exist (no session.* or navigate command exists yet; none invented). */
+const AGENT_EXPOSED = new Set<string>([
+  "projects.add",
+  "projects.list",
+  "review.openPr",
+  "review.capture",
+  "settings.get",
+  "settings.setAppearance",
+  "settings.setKeybinding",
+  "settings.setRepoVisibility",
+  "settings.setRepoLocus",
+  "settings.resetRepoValue",
+  "settings.pinRepoValue",
+]);
+
+/** Where a command executes: the host daemon, or a connected client (#465). Every
+ * row today is host-locus; client-locus rows arrive with their commands. */
+export type CommandLocus = "host" | "client";
+
+export interface CommandExposure {
+  /** Rendered in app UI surfaces (sidebar and friends). */
+  readonly ui: boolean;
+  /** Listed in the ⌘K command menu (#477). */
+  readonly commandMenu: boolean;
+  /** Handed to the orchestrator as an app_* tool (#465 v1 inventory). */
+  readonly agent: boolean;
+}
+
+/** One registry row per command. #465: tool name = command id = menu label, so
+ * `label` is initialized to the id — a display rename is a one-field edit. */
+export type CommandRegistry = {
+  readonly [K in keyof typeof definitions]: {
+    readonly args: (typeof definitions)[K]["input"];
+    readonly output: (typeof definitions)[K]["output"];
+    readonly label: string;
+    readonly exposure: CommandExposure;
+    readonly locus: CommandLocus;
+  };
+};
+
+/**
+ * The #465 command registry — ONE table, keyed by stable command id. The sidebar,
+ * the ⌘K command menu, and the orchestrator's app tools are three readers of this
+ * table; none carries its own list. Labels and loci are uniform today, so they are
+ * derived rather than hand-repeated per row; `exposure.agent` is the only per-row
+ * datum (the v1 inventory above).
+ */
+export const commands = Object.fromEntries(
+  Object.entries(definitions).map(([id, def]) => [
+    id,
+    {
+      args: def.input,
+      output: def.output,
+      label: id,
+      exposure: { ui: true, commandMenu: false, agent: AGENT_EXPOSED.has(id) },
+      locus: "host",
+    },
+  ]),
+) as CommandRegistry;
+
+export type CommandName = keyof CommandRegistry;
+export type CommandInput<K extends CommandName> = z.input<CommandRegistry[K]["args"]>;
+export type CommandOutput<K extends CommandName> = z.output<CommandRegistry[K]["output"]>;
 
 export function isCommandName(value: string): value is CommandName {
-  return Object.hasOwn(commandDefinitions, value);
+  return Object.hasOwn(commands, value);
 }
 
 export function parseCommandInput<K extends CommandName>(name: K, input: unknown): CommandInput<K> {
-  return commandDefinitions[name].input.parse(input) as CommandInput<K>;
+  return commands[name].args.parse(input) as CommandInput<K>;
 }
 
 export function parseCommandOutput<K extends CommandName>(
   name: K,
   output: unknown,
 ): CommandOutput<K> {
-  return commandDefinitions[name].output.parse(output) as CommandOutput<K>;
+  return commands[name].output.parse(output) as CommandOutput<K>;
 }
