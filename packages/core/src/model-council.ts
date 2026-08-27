@@ -200,6 +200,28 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
         job("self-consistency", "heavy", "per-call", false, "Self-consistency (divergence)", 26),
         // Issue #460: the single verify/synthesis seat over the swarm's output.
         job("map-verify", "heavy", "per-call", false, "Context-map verify/synthesis (#460)", 30),
+        // ── Board-rebuild drafting seats (#489 B08; ids frozen in protocol
+        // COUNCIL_JOB_IDS — this file only ROUTES them). Effort is [extrapolated]:
+        // #464/#493 fix the seats and the routing shape, not the effort knob.
+        job("lens-draft", "heavy", "per-call", false, "Lens board draft (B08)", 31),
+        job(
+          "lens-draft-flagged",
+          "heavy",
+          "per-call",
+          false,
+          "Flagged lens draft — dual seat (B08)",
+          32,
+        ),
+        job("lens-draft-noise", "light", "batched", false, "Noise lens draft (B08)", 33),
+        job(
+          "board-post-process",
+          "light",
+          "per-call",
+          false,
+          "Board post-process editor (B08)",
+          34,
+        ),
+        job("round-report", "heavy", "per-call", false, "Round-report draft (B08 R58)", 35),
         // ── Deterministic floor (§2.1) — no model, ever ──
         job("diff-ingest", "deterministic", "none", false, "Diff ingest + lineage (D1)"),
         job("patchset-immutability", "deterministic", "none", false, "Patchset immutability (D2)"),
@@ -344,6 +366,16 @@ const TABLE_BOTH: AssignmentTable = {
   adjudication: pick("opus-4.8", "high"), // pairs with Sol-high (fresh session); primary seat here
   "self-consistency": pick("opus-4.8", "xhigh"), // generator's model at xhigh; divergence-triggered
   "map-verify": pick("sonnet-5", "medium"), // #460 point 4 verbatim (Claude sonnet-5); packet fixes medium
+  // ── Board-rebuild seats (#489 B08). Heavy drafting stays on Claude (R39);
+  // the two light seats (noise draft, post-process editor) cross to Codex.
+  // Effort [extrapolated] — the rulings fix the routing, not the knob.
+  "lens-draft": pick("opus-4.8", "high"), // the reading surface: the deep review draft
+  // Primary seat only; the Flagged dual SECOND seat pairs Codex via dual-seat.ts
+  // (DEFAULT_CODEX_SECOND_SEAT_MODEL), not a table row — mirrors finding-generation.
+  "lens-draft-flagged": pick("sonnet-5", "medium"),
+  "lens-draft-noise": pick("gpt-5.6-luna", "low"), // mirrors noise-narration (cheap Codex)
+  "board-post-process": pick("gpt-5.6-terra", "medium"), // mirrors comment-refinement (prose editor)
+  "round-report": pick("sonnet-5", "medium"),
 };
 
 /** Table 2 — Claude-only (Haiku / Sonnet 5 / Opus 4.8). */
@@ -382,6 +414,12 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "self-consistency": pick("opus-4.8", "xhigh"),
   "partition-worker": pick("haiku", "low"), // [extrapolated] #460 silent on claude-only; house light model
   "map-verify": pick("sonnet-5", "medium"),
+  // ── Board-rebuild seats (#489 B08). Effort [extrapolated]. ──
+  "lens-draft": pick("opus-4.8", "high"),
+  "lens-draft-flagged": pick("sonnet-5", "medium"),
+  "lens-draft-noise": pick("haiku", "low"), // [extrapolated] house light model, mirrors noise-narration
+  "board-post-process": pick("sonnet-5", "medium"),
+  "round-report": pick("sonnet-5", "medium"),
 };
 
 /** Table 3 — Codex-only (Sol / Terra / Luna). */
@@ -421,6 +459,12 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "self-consistency": pick("gpt-5.6-sol", "xhigh"),
   "partition-worker": pick("gpt-5.6-luna", "low"), // #460 names cheap Codex; effort [extrapolated]
   "map-verify": pick("gpt-5.6-terra", "medium"), // [extrapolated] #460 silent on codex-only; house mid model
+  // ── Board-rebuild seats (#489 B08). Effort [extrapolated]. ──
+  "lens-draft": pick("gpt-5.6-sol", "high"), // strongest Codex model for the review draft
+  "lens-draft-flagged": pick("gpt-5.6-sol", "high"),
+  "lens-draft-noise": pick("gpt-5.6-luna", "low"),
+  "board-post-process": pick("gpt-5.6-terra", "medium"),
+  "round-report": pick("gpt-5.6-sol", "medium"),
 };
 
 export const ASSIGNMENT_TABLES: Readonly<Record<CouncilScenario, AssignmentTable>> = {

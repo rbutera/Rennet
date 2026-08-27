@@ -4,7 +4,7 @@ Serial clusters, each a separately-reviewable **sub-wave** (B08 is XL — the or
 
 ## Cluster 1 — council rows (job ids: J1, J2)
 
-- [ ] 1.1 `core/model-council.ts`: `JOB_CATALOGUE` gains `lens-draft`, `lens-draft-flagged`, `lens-draft-noise` (drafting seats), `board-post-process` (the editor pass), and `round-report` (the per-round seat); all three assignment tables (both / claude-only / codex-only) gain rows. `lens-draft-flagged` is the DUAL seat with cross-harness `agreement` routing (Claude + Codex on the same instructions under `both`); mark `[extrapolated]` where #493/#464 are silent on effort (house style). Ids must match `protocol` `COUNCIL_JOB_IDS` — no protocol edit (reconciliation 3).
+- [x] 1.1 `core/model-council.ts`: `JOB_CATALOGUE` gains `lens-draft`, `lens-draft-flagged`, `lens-draft-noise` (drafting seats), `board-post-process` (the editor pass), and `round-report` (the per-round seat); all three assignment tables (both / claude-only / codex-only) gain rows. `lens-draft-flagged` is the DUAL seat with cross-harness `agreement` routing (Claude + Codex on the same instructions under `both`); mark `[extrapolated]` where #493/#464 are silent on effort (house style). Ids must match `protocol` `COUNCIL_JOB_IDS` — no protocol edit (reconciliation 3).
 - [ ] 1.2 Tests: `resolveAssignment` resolves all five ids under all three scenarios + degraded; `lens-draft-flagged` reports the dual/cross-harness flag correctly under `both`; the Flagged dual-seat merge still routes through `finding-reconcile` (J2).
 - [ ] 1.3 Cluster gate green. Commit.
 
