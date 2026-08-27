@@ -31,7 +31,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 - [x] 4.1 Move the command surface out of `src/index.ts` into `src/commands/` (mechanical: the 64 `commandDefinitions` input/output schema blocks with their JSDoc, `parseCommandInput`/`parseCommandOutput`, `commandIdSchema`/`isCommandName`).
 - [x] 4.2 Rebuild the table as the #465 registry: `commands`, keyed by stable id, each row `{args, output, label, exposure: {ui, commandMenu, agent}, locus: "host" | "client"}`. Initialize: `args`/`output` = today's schemas; `label` = the command id (#465: tool name = command id = menu label); `exposure.agent = true` only for the v1 inventory ids that exist today (project add/list, session list/open, review open-target/start, settings read/write — map by inspection, do not invent missing commands); `exposure.ui = true`, `commandMenu = false` elsewhere; `locus: "host"` throughout. Delete the `commandDefinitions` export and migrate its consumers (`session/wire` `isCommandName`, `packages/server/src/projection.test.ts` iteration, any grep straggler) — no legacy alias.
 - [x] 4.3 Registry invariants test in `src/commands/`: ids unique; every row round-trips `parseCommandInput`/`parseCommandOutput`; every row carries `label`/`exposure`/`locus`; the absorbed id set matches a recorded snapshot of the 64 (a dropped command fails loudly).
-- [ ] 4.4 Cluster gate green. Commit.
+- [x] 4.4 Cluster gate green. Commit.
 
 ## 5. session/ — the durable-session shapes
 
