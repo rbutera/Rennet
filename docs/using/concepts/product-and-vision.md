@@ -15,9 +15,11 @@ Coding agents can produce a changeset faster than a person can understand it. A
 flat list of changed files shows where bytes moved, but not which files form one
 decision or what should be read first.
 
-Rennet groups related changes, orders them for reading, shows model findings and
-disagreements, records the reviewer's decisions, and assembles them into an
-editable outbound artifact. Models assist. The reviewer decides and posts.
+Rennet drafts the change into boards — what it should do, what order to read it
+in, which choices need explaining, what looks wrong, and what can be skimmed.
+What the reviewer raises against those boards gathers as asks, and the asks
+become the outbound review, work order, or pull request. Models assist. The
+reviewer decides and posts.
 
 ## The review loop
 
@@ -26,32 +28,36 @@ flowchart LR
   source{Change source}
   source -->|Your branch| local[Immutable local patchset]
   source -->|Team PR| remote[Pinned GitHub patchset]
-  local --> digest[Digest and lenses]
-  remote --> digest
-  digest --> decide[Read, discuss, decide]
-  decide --> draft[Editable draft]
-  draft --> github[GitHub review]
-  draft --> agent[Coding-agent handoff]
-  agent --> delta[Successor patchset]
-  delta --> digest
+  local --> boards[Boards, one per lens]
+  remote --> boards
+  boards --> decide[Read, discuss, decide]
+  decide --> asks[Staged asks]
+  asks --> github[GitHub review]
+  asks --> round[Work-order round]
+  round --> delta[Successor patchset]
+  delta --> boards
 ```
 
-Both modes use the same review state. A teammate's pull request produces a
-GitHub review. Your own branch can produce a handoff to a coding agent, followed
-by a focused review of what the agent changed. When the branch is ready, Rennet
-can push it and open a pull request.
+Both modes use the same review state. A teammate's pull request produces one
+GitHub review. On your own branch the asks become a work order instead: a
+coding agent runs them, and the round comes back with a report and a new
+generation of boards over what it changed. When nothing is left to ask, the
+same surface pushes the branch and opens the pull request.
 
 ## Product principles
 
-### Group related work
+### Read the change, not the file list
 
-Files and hunks that implement one change should read as one cohort. The
-reviewer can still inspect and act on each anchored item.
+Work that implements one change reads as one thing: a board section with a gist,
+holding the findings, decisions, requirements, and cited code that belong
+together. Folding a section never hides what it contains from the reviewer.
 
-### Preserve every decision
+### Preserve everything the reviewer raises
 
-A decision can apply to a cohort, requirement, chunk, range, or line. Collapsing
-the display must not discard or cap those decisions.
+A review addresses whatever the reviewer is looking at — a board section, a
+single element such as a finding or a requirement, a quoted span of prose, or a
+line of code. Each raises an ask that keeps its anchor and its provenance back
+to the source, and no display state discards or caps them.
 
 ### Keep navigation reversible
 
@@ -80,11 +86,12 @@ the highest-risk line.
 | Design | What should the change do, and which requirements have evidence? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
-| Noise | What remains, and why may it need less attention? |
 | Flagged | Where did automated analysis find a problem or disagreement? |
+| Noise | What remains, and why may it need less attention? |
 
-Blast-radius signals annotate these lenses. Every lens refers to the same
-patchset and anchors, so changing lenses does not change the code under review.
+Each lens is its own board, and a lens with nothing to show is absent rather
+than empty. Every board cites the same patchset and the same anchors, so
+changing boards changes the angle, never the code under review.
 
 Product copy keeps model output separate from the reviewer's judgment. Rennet
 can say that a model flagged a problem. It must not say that the reviewer
@@ -107,9 +114,14 @@ their credentials.
 
 ## Outbound artifacts
 
-The collation draft is private working material. Before sending anything to
-GitHub or a coding agent, Rennet shows the composed review, pull request, or
-handoff. The outbound operation uses that composed artifact.
+Everything staged is private working material. The orchestrator keeps each
+outbound document — the review text, the work order, the pull request
+description — drafted and redrafted as the review progresses, and the reviewer
+steers it by talking or by highlighting a span rather than typing into it.
+Retired content is kept and restorable, never silently dropped.
+
+The draft renders exactly as it will send, so the reviewer reads the real
+artifact before the one action that sends it.
 
 ## Where to go next
 

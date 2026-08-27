@@ -16,7 +16,7 @@ truncated. Binary files and submodules remain explicit capture states rather
 than disappearing from the review.
 
 Recapture adds a successor patchset. It never rewrites the patchset that prior
-analysis, comments, and dispositions name.
+analysis, comments, and asks name.
 
 ```mermaid
 flowchart LR
@@ -68,24 +68,37 @@ express uncertainty; it cannot invent its input identity.
 Deterministic artifacts record their source identities and generators too. The
 distinction is how the result was produced, not whether provenance is required.
 
-## Occurrence lineage and disposition carry
+## Generations, carry, and the successor account
 
-Review dispositions belong to stable occurrences, not screen coordinates. A
-successor patchset carries a disposition only when deterministic lineage proves
-the occurrence is the same reviewed content.
+The boards for one review of one patchset are a **generation**. Within a
+generation the boards are live append-only logs: re-running a lens appends, and
+board-native data on surviving element ids persists. When the code moves, the
+generation **freezes** immutable and a successor generation is minted against
+the successor patchset. Nothing is edited in place — append-then-freeze is the
+only change mechanic, and the frozen generation stays readable as drill-down.
 
-Current carry behavior is exact:
+What survives into the successor generation is decided by evidence, never by
+resemblance:
 
-| Successor relationship | Result |
+| What moves | Rule |
 |---|---|
-| Same path and byte-identical path-grained occurrence | Carry disposition |
-| Byte-identical span with deterministic rename identity | Carry disposition |
-| Changed content | Reopen for review |
-| Deleted or missing source occurrence | Orphan prior disposition |
-| Similar text without exact identity | Do not carry |
+| Board content on an element id a regenerated lens keeps | Carried verbatim, with no delta stamp |
+| Board-native data — marks, groupings, arrangement, notes — on a surviving element id | Carried with its element |
+| An ask, thread, or highlight anchored into board prose | Re-anchored by quote match; a casualty stays visible in the Detached list |
+| A code ref whose cited bytes are identical, including through a Git-proven rename | Resolves against the successor patchset |
+| A code ref whose cited content changed | Redrafted, and the section carries a `new` or `reworked` stamp |
+| A code ref whose source is gone | Orphaned, kept with its reason rather than reattached nearby |
 
-The fuzzy matcher can suggest similarity, but similarity does not drive carry.
-This prevents a plausible match from impersonating reviewed identity.
+The fuzzy lineage matcher can describe a successor relationship, but similarity
+never authorizes carry. This prevents a plausible match from impersonating
+reviewed identity.
+
+The **successor account** bridges the two generations: it compares generation N
+with N+1 and classifies every prior ask against the successor patchset's diff —
+addressed, partial, untouched, or work beyond the asks — each item anchored. It
+is a deterministic account of what changed, not a model's summary of it; the
+round-report seat drafts the reviewer-facing round report from it. See
+[Delta and generations](./delta-rereview-and-lineage.md).
 
 ## Review state and command persistence
 

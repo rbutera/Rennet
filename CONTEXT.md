@@ -33,7 +33,8 @@ This file defines the terms shared by the product, documentation, and code. It c
 
 ## GitHub account
 
-- **Device sign-in**: the GitHub OAuth flow in which Rennet shows a short code and the user enters it on GitHub.
+- **GitHub CLI credential**: the token Rennet reads from the user's installed `gh` (`gh auth token`); the primary GitHub credential, carrying the user's own SSO authorization.
+- **Device sign-in**: the GitHub OAuth flow in which Rennet shows a short code and the user enters it on GitHub. The fallback when `gh` is not installed.
 - **Side door**: the Settings action that accepts a personal access token instead of device sign-in.
 - **Token store**: Rennet's local record of the connected GitHub credential.
 - **Connect card**: the optional first-run control for starting device sign-in.
@@ -76,7 +77,7 @@ This file defines the terms shared by the product, documentation, and code. It c
   _Avoid_: reading-order lens
 - **Element**: the atomic unit of board content — a block, in the headless-CMS / document-block sense, carrying a kind and typed data. Element-typed attributes give the block tree.
   _Avoid_: card, node, widget
-- **Kind**: the named, typed shape an element follows, like a document block-type. Rennet's host schema declares a closed set of twelve; the whiteboard protocol only stores and validates them, and never interprets their meaning.
+- **Kind**: the named, typed shape an element follows, like a document block-type. Rennet's host schema declares a closed set of thirteen; the whiteboard protocol only stores and validates them, and never interprets their meaning.
 - **Finding**: a concern the review raises, carrying a severity and cross-model concurrence and bound to cited code. Shown inline in the sequence thread and sorted by severity in the flagged lens; the flagged lens is a view of findings, not a separate kind.
 - **Decision**: a choice the change embodies — its statement, evidence, the alternatives weighed, and why.
 - **Requirement**: a spec obligation (a *shall*) and whether the change covers it.

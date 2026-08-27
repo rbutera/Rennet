@@ -20,10 +20,10 @@ function repoESLint() {
   return new ESLint({ cwd: repoRoot });
 }
 
-/** The `no-restricted-syntax` messages for a lint of `code` at `filePath`. */
+/** The local `rennet/*` fence messages for a lint of `code` at `filePath`. */
 async function restrictedSyntax(code: string, filePath: string) {
   const [result] = await repoESLint().lintText(code, { filePath, warnIgnored: false });
-  return (result?.messages ?? []).filter((m) => m.ruleId === "no-restricted-syntax");
+  return (result?.messages ?? []).filter((m) => m.ruleId?.startsWith("rennet/"));
 }
 
 describe("no-direct-invoke — the bridge-seam law (against the real repo config)", () => {

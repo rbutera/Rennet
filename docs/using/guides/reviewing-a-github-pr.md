@@ -1,69 +1,36 @@
 ---
 title: Review a GitHub pull request
-description: Open a pull request, inspect its pinned patchset, and post one GitHub review.
+description: Open a teammate's pull request, read its boards, and post one GitHub review under your own name.
 ---
 
-Rennet reads a pull request into an immutable patchset, keeps your decisions with
-that patchset, and posts the selected comments as one GitHub review under your
-account.
+Reviewing someone else's pull request has one exit: a single GitHub review, in
+your voice, under your account, pinned to the commit you read. Rennet pins the
+patchset, drafts the boards over it, gathers what you raise, and drafts the
+review — you post it.
 
-## Connect GitHub
+## Before you start
 
-Reviewing a pull request needs a connected GitHub account. Choose **Connect
-GitHub** on first use or from Settings. Connection is optional for local
-working-tree reviews; when a command needs GitHub and no account is connected,
-the interface offers the sign-in at that point. See
-[Connect GitHub](./github-auth.md) for the device flow, token storage, personal
-access tokens, and reconnection after a failed credential.
+Reviewing a pull request needs a connected GitHub account. See
+[Connect GitHub](./github-auth.md) for connecting, storing, and repairing that
+credential. Local branch reviews need no GitHub connection at all.
 
-Rennet also needs a supported coding harness. It discovers Claude Code without
-asking for a model API key. When Codex is available, it can run as a second review
-seat. An adjudication turn can inspect evidence behind a disagreement without
-blocking the original finding.
+Rennet also needs a coding harness installed and authenticated on the machine
+that serves the project. It discovers Claude Code without asking for a model API
+key. When Codex is available too, the Flagged board runs both as independent
+seats and records where they concurred. **Settings → Environments** lists what
+was detected on each machine and which review roles run on which model.
 
-## Review flow
+## Open the pull request
 
-```mermaid
-sequenceDiagram
-  actor You
-  participant Rennet
-  participant GitHub
-  participant Git as Local Git
-  participant Harness as Coding harness
+Start a **New Chat** in the project and pick the pull request from the list. A
+teammate PR whose review is requested of you carries its icon in the accent
+colour and the words "needs you". The session claims that pull request as its
+review target, and the claimed row leaves the list.
 
-  You->>Rennet: Open a pull request row
-  Rennet->>GitHub: Read PR identity and SHAs
-  Rennet->>Git: Read the pinned diff and context
-  Git-->>Rennet: Immutable patchset
-  Rennet->>Harness: Send selected review material
-  Harness-->>Rennet: Return findings and explanations
-  You->>Rennet: Record dispositions and edit the draft
-  Rennet-->>You: Show the outbound review
-  You->>Rennet: Post
-  Rennet->>GitHub: Post one SHA-bound review
-```
+The session's gold button reads **Write Review** from the start — the target
+decides the exit, and a teammate PR has exactly one.
 
-1. Open a project and select a pull request. Use **PRs** or **Needs you** to
-   narrow the project list.
-2. Read the patchset through Design, Sequence, Decisions, Noise, and Flagged.
-3. Approve, question, comment, or request a change at the relevant anchor.
-4. Open the draft and edit the selected comments.
-5. Review the composed outbound artifact, then post it as one GitHub review.
-
-When a project spans several repositories, pull-request loading reports the
-repository currently being read and the number completed. Local branch rows
-remain usable throughout the fetch.
-
-## Patchset source
-
-GitHub supplies the pull request's base and head commit identities. Local Git
-supplies the diff and nearby repository content. The resulting patchset remains
-pinned to those commits.
-
-If Rennet knows a matching local clone, it uses that clone. Otherwise it creates
-a blobless partial clone under its application data directory. This retains Git
-history and fetches file contents as needed. If an automatic clone cannot access
-a private repository, Rennet asks for a local clone.
+## The pinned patchset
 
 ```mermaid
 flowchart LR
@@ -72,106 +39,134 @@ flowchart LR
   match -->|no| managed[Create managed partial clone]
   managed --> local
   local --> patchset[Pinned patchset]
-  patchset --> review[Review views]
+  patchset --> boards[Boards drafted over the patchset]
 ```
 
-### Pull request worktree
+GitHub supplies the pull request's identity and its base and head commits. Local
+Git supplies the diff and the surrounding repository content. The patchset stays
+pinned to those commits for as long as you read it, so nothing shifts under the
+review while you write it.
 
-Rennet creates a detached worktree at the reviewed commit. This gives review
-conversations an executable copy of the pull request, including retrospective
-reviews.
+If Rennet knows a matching local clone, it reads from that clone. Otherwise it
+creates a blobless partial clone under its own application data directory, which
+keeps the history and fetches file contents as needed. If an automatic clone
+cannot reach a private repository, Rennet asks you for a local clone.
 
-A repository can provide `.rennet/setup` with one shell command per line. Lines
+### The pull request worktree
+
+Rennet checks out a detached worktree at the reviewed commit, so review
+conversations have an executable copy of the pull request.
+
+A repository can carry `.rennet/setup` with one shell command per line; lines
 starting with `#` are comments. Rennet runs those commands after checkout and
-reports the worktree path and setup result. Setup failure does not prevent the
-captured review from opening. When the pull request head changes, Rennet replaces
-the worktree with one at the new commit.
+reports the worktree path and the setup result. A failed setup does not stop the
+review from opening. When the pull request head moves, Rennet replaces the
+worktree with one at the new commit.
+
+## Read the boards
+
+The boards are drafted over that pinned patchset: Design, Sequence, Decisions,
+Flagged, Noise, with the raw files-changed view one click away behind the
+**Map · Diff** pill. [Getting started](./getting-started.md#read-the-boards)
+covers how a board reads — folded sections, cited code, findings and their
+proposed fixes.
+
+Nothing you do while reading changes the patchset under review. Switching boards
+changes the angle, not the code.
+
+## Raise comments
+
+Everything you raise gathers as an **ask**, carrying provenance back to whatever
+produced it:
+
+- **A finding's fix** — **Request This Change** stages the fix with the
+  finding's own code anchor.
+- **A line of code** — click the `+` in the gutter, write the comment, and
+  choose **Request Changes**. On the Diff view these key to new-side line
+  numbers, so the ask carries a real diff position.
+- **A span of board prose** — highlight it and choose **Comment** or **Request
+  Changes**; the quoted span becomes the ask's provenance.
+- **The conversation** — conclude something in chat and the orchestrator stages
+  it, leaving a receipt in the transcript.
+
+The count on the **Write Review** button is your staged asks plus the comments
+and threads not yet folded into one. Questions you asked with **Explain** never
+count — they are yours, not the review's.
+
+## Write the review
+
+**Write Review** opens the hand-off view. On a teammate PR it holds one lane:
+Post Review, headed with the pull request reference.
+
+**The verdict** is a three-way control — Approve, Request Changes, Comment —
+proposed from your own acts, with the arithmetic stated beside it. Any requested
+change proposes Request Changes; other asks propose Comment; nothing proposes
+Approve — approving is always your own act. Flip it whenever you like; an overridden verdict says so and
+offers "use proposal" to revert. An approving review is a real review here: its
+opener is grounded in what you walked and cleared.
+
+**The draft mirrors GitHub's own shape**, because that is what posts. An ask
+carrying a diff position becomes a line comment, grouped under its file with its
+anchor. An ask without one — a quoted span of board prose has no diff line to
+pin to — travels in the review body. Nothing explains the routing; placement
+states it.
+
+**Steer by highlighting.** Selecting draft prose offers **Revise**, **Drop**,
+and **Explain**. Revise takes an instruction and re-streams that block. Drop
+retires it to the **Retired** drawer, which keeps every retired block with its
+reason and restores it with a click. Explain names the comment or finding the
+sentence came from. Your revision survives a verdict change — the edit wins.
+
+**Line-comment cards** expose Edit and Delete. Editing is inline;
+`⌘`/`Ctrl` + Enter saves, Escape cancels. Deleting retires the card and unstages
+its ask.
+
+A residue line states the bare count of threads and code comments that stay
+local. The draft you are reading is exactly what posts, so there is no separate
+preview step. One **Post Review** action sends it as a single review under your
+account, pinned to the reviewed head commit. The posted state names the pull
+request, the verdict, and the line-comment count, and links to the review on
+GitHub.
+
+## When the author pushes again
+
+A push, rebase, or force-push produces a successor patchset. It does not touch
+the review you already captured, and a posted review stays pinned to the commit
+it was written against. Reviewing the successor mints a new generation of boards
+over the new patchset; the earlier generation stays readable.
 
 ## Merged and closed pull requests
 
-The project list shows open pull requests by default. The **PRs** scope can show
-merged, closed, or all states. Rennet pages this history from GitHub in
-most-recent-first order.
+The pull-request list shows open pull requests; it can also show merged, closed,
+or every state, paged from GitHub newest first.
 
-Opening a merged or closed pull request creates a retrospective review. It uses
-the same frozen diff but omits posting controls. Repository context is rebuilt at
-the pull request's historical base. Direct pull request entry also offers a
-retrospective option.
+Opening a merged or closed pull request gives a **retrospective review**. It
+reads the frozen change exactly as any other review does, and it offers no
+exits — there is nothing left to post to.
 
-### CI checks
+## Data and outbound operations
 
-After automated review, Rennet reads GitHub checks for the reviewed commit and
-shows their state in Flagged.
-
-- A failure tied to changed code can become an anchored finding.
-- A failure without a code anchor remains visible as a CI result.
-- Only recognized environmental signatures receive the environmental label.
-- Model classification can attribute a failure to the change or leave it
-  unclassified.
-- Missing, truncated, or timed-out CI is reported as unavailable and does not
-  block review or posting.
-
-## GitHub translation
-
-Rennet converts the staged draft into GitHub's review shape:
-
-- A line-anchored note becomes a review thread.
-- A note without a line anchor is folded into the review body and recorded in
-  the outbound ledger.
-- Private conversations, withdrawn findings, reading progress, and model traces
-  stay in Rennet.
-
-The outbound view identifies what will be sent and pins the request to the
-reviewed head commit.
-
-## New pull request patchsets
-
-A push, rebase, or force-push creates a successor patchset. It does not modify
-the review already captured.
-
-```mermaid
-stateDiagram-v2
-  [*] --> ReadingOldPatchset
-  ReadingOldPatchset --> NewPatchsetAvailable: head SHA changes
-  NewPatchsetAvailable --> DeltaReview: open successor
-  DeltaReview --> Carried: same path and byte-identical
-  DeltaReview --> Reopened: changed or ambiguous
-  Carried --> ReadyToPost
-  Reopened --> ReadyToPost: reviewed again
-```
-
-A disposition carries only across byte-identical content at the same path when
-the match is unambiguous. Changed or ambiguous work reopens. See
-[Delta re-review and lineage](../../developing/concepts/delta-rereview-and-lineage.md)
-for the data model.
-
-## Stored and outbound data
-
-Review state, reading progress, conversations, and Rennet's review structure stay
-in local application storage. Selected model context can go through the coding
-harness and its provider. Rennet records the exact context it assembled for each
-turn.
-
-GitHub receives the outbound review only when it is posted. If GitHub is
-unavailable, reviews already stored on disk remain readable.
+Review state, boards, reading progress, and conversations stay in local
+application storage on the machine serving the project. Material selected for a
+review turn goes to your coding harness and its model provider, and Rennet
+records the exact context it assembled. GitHub receives the review only when you
+post it. If GitHub is unavailable, everything already stored stays readable.
 
 ## GitHub edge cases
 
-For connection failures, Rennet retries once and then reports that GitHub is
-unreachable. No review is recorded as posted without a successful result.
-
-An organization can require SAML SSO authorization for the token. GitHub can then
-return `X-GitHub-SSO: partial-results`. Rennet keeps that response distinct from
-a complete or empty pull request list. The project screen currently shows a
-generic incomplete-list message; authorize the token for the organization, then
-refresh the project.
-
-GitHub can also return a secondary rate limit. Rennet keeps the artifact as one
-batched review and reports the backoff period. An idempotency marker and read-back
-check prevent an uncertain retry from creating a duplicate review.
+- **Connection failure.** Rennet retries once, then reports GitHub as
+  unreachable. No review is recorded as posted without a successful result.
+- **SAML SSO.** An organization can require SSO authorization for the token,
+  after which GitHub returns partial results. Rennet keeps that response
+  distinct from a complete or empty list. Authorize the token for the
+  organization, then refresh the project.
+- **Secondary rate limits.** Rennet keeps the review as one batched submission
+  and reports the backoff period. An idempotency marker and a read-back check
+  stop an uncertain retry from posting a duplicate.
 
 ## Next steps
 
+- [Getting started](./getting-started.md) covers the whole loop, including your own branch.
 - [The Context Map](./context-map.md) covers stored repository structure and claims.
 - [Product and vision](../concepts/product-and-vision.md) explains the shared review model.
-- [Remote access](./remote-access.md) covers review from another device.
+- [Remote access](./remote-access.md) covers reviewing from another device.

@@ -1,26 +1,21 @@
 ---
 title: Hand off and the exits
-description: The decided design for gathering asks, the living drafts, and the three exits — posting a review, running work-order rounds, and opening the pull request.
-status: planned
-tracking: https://github.com/rbutera/rennet/issues/452
+description: How Rennet gathers asks, keeps the outbound documents drafted, and runs the three exits — posting a review, dispatching work-order rounds, and opening the pull request.
 ---
 
-This page records the decided design for the redesigned hand-off surfaces,
-grilled to agreement on 2026-08-25 (ruling log on
-[#458](https://github.com/rbutera/rennet/issues/458)). It is not live on
-`main`: [collation and publishing](./collation-and-publishing.md) and
-[agent handoff](./agent-handoff.md) describe the shipped code this replaces
-at cutover.
+A review ends by leaving through an exit: the posted GitHub review, a
+dispatched work-order round, or the pull request. Everything the reviewer
+concludes along the way gathers as asks, and the orchestrator keeps every
+outbound document drafted as it goes.
 
 ## Asks
 
 Everything gathers as **asks**: typed messages carrying an anchor, text, an
 intent, and an exit lane, minted from findings, code-line comments, quote
 threads, or plain conversation, each with provenance back to its source.
-Dispositions do not exist in this model.
 
-The orchestrator stages asks as they arise. When the reviewer stated the
-conclusion or pressed a shortcut, it stages directly; when it inferred one, it
+The orchestrator stages asks as they arise. When the reviewer states the
+conclusion or presses a shortcut, it stages directly; when it infers one, it
 drops a one-tap offer pill instead. Every staging act leaves an undecorated
 receipt at its source — a transcript line or a chip on the thread — and the
 receipt is also the undo. Findings never auto-stage; staging records the
@@ -49,7 +44,7 @@ lanes depend on the entry mode:
 
 - **Teammate PR** — one lane: *Post review*. Work orders are own-branch only.
 - **Own branch** — one goal with two states, and the page's shape states
-  which one holds: while asks remain the surface is **Changes** (one card per
+  which one holds: while asks remain the surface is **Changes** (one entry per
   ask, Dispatch Round) and the pull request is a single muted destination
   line; when nothing is left to ask, the surface IS the pull request — title,
   drafted description, Open Pull Request. Primacy flips with the state;
@@ -81,8 +76,10 @@ whose provenance carries a diff position — a finding's anchor, a code-line
 comment — becomes a line comment, grouped by file with its citation. An ask
 without one (a quote of board prose has no diff line to pin to) travels in
 the review body, woven in by the orchestrator — its placement under the body
-header is the whole statement, never an explanatory label. The preview
-renders exactly this structure, because it is exactly what posts.
+header is the whole statement, never an explanatory label. A path-only ask has
+no diff position either, so it folds into the body the same way; the conversion
+is recorded in a ledger returned to the client rather than happening silently.
+The preview renders exactly this structure, because it is exactly what posts.
 
 ## Verdict and the approving review
 
@@ -93,6 +90,37 @@ whose body is grounded in what the reviewer actually walked, raised, and
 cleared. Publication keeps the accepted contract: an exact-payload preview
 and one direct Post — no holds, no consent ceremony.
 
+The GitHub review event follows the outbound set: any outbound request-change
+ask makes it `REQUEST_CHANGES`; comments and questions alone make it `COMMENT`.
+An empty outbound set posts nothing at all.
+
+## One payload, one source
+
+The preview and the post are the same object. Before any egress the server
+reconstructs the canonical payload in `@rennet/core`, so the renderer cannot
+construct a different body after preview. A daemon-composed payload carries a
+`compositionId` bound to the review, the active patchset, the mode, and the
+payload itself — a stale preview cannot apply.
+
+The post carries a deterministic idempotency marker. The GitHub adapter checks
+for that marker before creating anything, so a retry returns the review that
+already landed instead of posting a second one.
+
+The outbound payload holds only what the reviewer sent. Internal conversation,
+model traces, and draft history never enter it unless their text became
+outbound draft content. There is no hosted Rennet backend: of the exit
+payload, GitHub receives the review or the pull request, and the harness
+provider receives model-turn context.
+
+## Opening the pull request
+
+The own-branch exit is one action. The server verifies that the previewed head
+matches the branch recorded on the active patchset, resolves the single GitHub
+remote, and pushes the named branch. If an open pull request already exists for
+that head and base it is reused; otherwise one is created from the previewed
+title and body. A detached HEAD fails before the push rather than pushing
+something the preview did not describe.
+
 ## Rounds: the own-branch loop
 
 1. Gather asks into *Changes*.
@@ -100,7 +128,7 @@ and one direct Post — no holds, no consent ceremony.
    gathered mid-run queue for the next round.
 3. Watch the run live.
 4. On completion the **round report** drafts first — its own seat on its own
-   prompt (`packages/prompts`, `prompts/report.md`), through the
+   prompt (`packages/prompts`, `src/prompts/report.md`), through the
    same post-process pass as every draft. It verifies each ask against the
    round's diff rather than taking the worker's word, and classifies the
    outcome: addressed / partial / untouched / beyond the asks, each item
@@ -130,3 +158,24 @@ and one direct Post — no holds, no consent ceremony.
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane
    on one's own pull request.
+
+### What a round measures itself against
+
+A round's diff comes from checkpoints, not from the worker's account of itself.
+`GitCheckpointStore` snapshots tracked, deleted, and non-ignored untracked files
+through a temporary Git index and hidden `refs/rennet/checkpoints/*` refs; HEAD
+and the user's own index are never touched, and the temporary refs are cleaned
+up once the diff has been collected. The changed-path list comes from
+`git diff --name-only -z`, separate from the diff rendered for display.
+
+The after-checkpoint is captured on either terminal outcome, so a failed turn
+still returns its diff and changed paths — a crashed worker is not an empty
+round. The round never modifies the patchset under review; that patchset stays
+the baseline the successor is compared against.
+
+The worker runs at the repository root with the harness's default tool set. The
+round commits its work — the rounds ledger pins those commits — while pushing
+and opening the pull request remain the pull-request exit's job.
+Repositories containing submodules are unsupported
+here — a gitlink can escape the checkpoint diff — and the run fails before it
+starts rather than reporting a diff it cannot trust.

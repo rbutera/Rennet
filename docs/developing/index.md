@@ -11,14 +11,16 @@ are changing.
 
 ```mermaid
 flowchart LR
-  capture[Capture an immutable patchset] --> review[Run deterministic and model review jobs]
-  review --> lenses[Project results onto review lenses]
-  lenses --> draft[Edit the collation draft]
-  draft --> preview[Build the outbound preview]
-  preview --> github[Post a review or open a pull request]
-  preview --> handoff[Run a coding-agent handoff]
-  handoff --> successor[Capture a successor patchset]
-  successor --> review
+  capture[Capture an immutable patchset] --> delta[Build the delta packet]
+  delta --> lenses[Draft one board per lens]
+  lenses --> board[Compose across the lens boards]
+  board --> asks[Stage asks]
+  asks --> exits{Exit}
+  exits -->|Teammate PR| post[Post the GitHub review]
+  exits -->|Your branch| round[Dispatch a work-order round]
+  exits -->|Nothing left to ask| pr[Push and open the pull request]
+  round --> successor[Capture a successor patchset]
+  successor --> capture
 ```
 
 Read these pages in order when you need the whole system:
@@ -27,12 +29,14 @@ Read these pages in order when you need the whole system:
    packages, processes, and review loop.
 2. [Architecture contracts](./concepts/architecture-contracts.md) defines the
    rules for patchsets, project context, persistence, and outbound work.
-3. [Review lenses](./concepts/review-lenses.md) explains the Design, Sequence,
-   Decisions, Noise, and Flagged views and how each shapes the shared patchset.
+3. [The lens pipeline](./concepts/lens-pipeline.md) explains how the delta
+   packet reaches the Design, Sequence, Decisions, Flagged, and Noise
+   drafters, and what the lint and post-process passes guarantee.
 4. [Surfacing and routing](./concepts/surfacing-and-routing.md) covers model
    output, validation, instructions, and model assignment.
-5. [Collation and publishing](./concepts/collation-and-publishing.md) follows
-   review state into a GitHub review or pull request.
+5. [Hand off and the exits](./concepts/handoff-and-exits.md) follows asks and
+   the living drafts into a GitHub review, a work-order round, or a pull
+   request.
 
 ## Find a subsystem
 
@@ -41,10 +45,12 @@ Read these pages in order when you need the whole system:
 | Harness discovery, sessions, or events | [Harness adapters](./concepts/harness-adapters.md) and [surfacing and routing](./concepts/surfacing-and-routing.md) |
 | Prompt context or model assignment | [Context assembly](./concepts/context-assembly.md) and [model council](./concepts/model-council.md) |
 | Definitions, references, or symbol lookup | [Code intelligence](./concepts/code-intelligence.md) |
-| Coding-agent work after review | [Agent handoff](./concepts/agent-handoff.md) and [delta re-review and lineage](./concepts/delta-rereview-and-lineage.md) |
-| Draft editing or comment wording | [Comment refinement](./concepts/comment-refinement.md) and [collation and publishing](./concepts/collation-and-publishing.md) |
+| Board drafting, lint, or lens lanes | [The lens pipeline](./concepts/lens-pipeline.md) |
+| Board storage, elements, or the whiteboard protocol | [How Rennet consumes `@wboard/*`](./reference/whiteboard-consumption.md) |
+| Asks, living drafts, or an exit | [Hand off and the exits](./concepts/handoff-and-exits.md) |
+| Coding-agent rounds and successor patchsets | [Hand off and the exits](./concepts/handoff-and-exits.md) and [Delta and generations](./concepts/delta-rereview-and-lineage.md) |
 | Repository discovery or settings | [Repository bootstrap](./guides/repository-bootstrap.md) and [settings and setup](./guides/settings-and-setup.md) |
-| Interface behavior | [Design doctrine](./concepts/design-doctrine.md) and [review lenses](./concepts/review-lenses.md) |
+| Interface behavior | [Design doctrine](./concepts/design-doctrine.md) and [the lens pipeline](./concepts/lens-pipeline.md) |
 | Dependencies or build configuration | [Dependency standard](./reference/dependency-standard.md) and [monorepo map](./reference/monorepo-map.md) |
 
 ## Source and authority
