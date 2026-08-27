@@ -31,6 +31,7 @@ import {
 } from "@rennet/ui";
 import {
   Archive,
+  Check,
   ChevronDown,
   CircleHelp,
   FolderPlus,
@@ -263,7 +264,12 @@ function SessionRow({
   if (editing) {
     return (
       <div className="flex min-h-8 items-center gap-1.5 rounded-chip bg-raised px-2 py-1">
-        <TargetIcon kind={session.target} state={session.targetState} className="size-3" />
+        {/* Reviewed keeps the plain target icon (the tick is a separate glyph, R36). */}
+        <TargetIcon
+          kind={session.target}
+          state={session.targetState === "reviewed" ? undefined : session.targetState}
+          className="size-3"
+        />
         <input
           ref={inputRef}
           value={draft}
@@ -296,7 +302,13 @@ function SessionRow({
           )}
         >
           <span className="flex items-center gap-1.5">
-            <TargetIcon kind={session.target} state={session.targetState} className="size-3" />
+            {/* The leading icon is always the target KIND (accent when needs-you);
+                reviewed is a separate green tick beside the title, not a recolor (R36). */}
+            <TargetIcon
+              kind={session.target}
+              state={session.targetState === "reviewed" ? undefined : session.targetState}
+              className="size-3"
+            />
             <span
               className={cn(
                 "truncate text-sm leading-tight",
@@ -305,6 +317,14 @@ function SessionRow({
             >
               {session.title}
             </span>
+            {session.targetState === "reviewed" ? (
+              <Icon
+                icon={Check}
+                aria-label="Reviewed"
+                aria-hidden={false}
+                className="size-3 shrink-0 text-green"
+              />
+            ) : null}
             {session.pinned ? (
               <Icon
                 icon={Pin}

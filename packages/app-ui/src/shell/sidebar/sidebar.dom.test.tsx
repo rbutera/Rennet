@@ -185,6 +185,27 @@ describe("sidebar tree (C03 §3)", () => {
     expect(await findByText("dev-box")).toBeTruthy();
   });
 
+  it("shows a reviewed session's green tick beside the title (R36), not a recolored icon", async () => {
+    const { findByLabelText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: {
+        p1: [
+          {
+            id: "s1",
+            slug: "s1",
+            title: "Done",
+            time: "2h",
+            target: "your-pr",
+            targetState: "reviewed",
+          },
+        ],
+      },
+    });
+    // The separate tick carries the "Reviewed" name; the leading target icon stays "Your PR".
+    expect(await findByLabelText("Reviewed")).toBeTruthy();
+    expect(await findByLabelText("Your PR")).toBeTruthy();
+  });
+
   it("folds a project through the ui slice (aria-expanded + ui.sidebarFolds)", async () => {
     const { getByText, findByText } = mountSidebar({
       projects: [project("p1", "atlas")],
