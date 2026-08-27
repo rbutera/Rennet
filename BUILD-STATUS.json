@@ -99,8 +99,9 @@
     "passes": true
   },
   "c07": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #529 landed; live session-transcript projection B9-gated (one-file swap in chat-data.ts). Dock identity + live-turn fold + compaction all work now over MemoryBridge"
   },
   "c08": {
     "status": "pending",
