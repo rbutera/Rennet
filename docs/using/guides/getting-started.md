@@ -56,6 +56,12 @@ and a line naming where it came from. Answer it, or skip it — the map finishes
 and the project works either way, and everything stays editable in
 **Settings → Projects**.
 
+When generation finishes, the processing view shows a **Context Map Ready**
+summary — its scope, file, and confirmed/rejected-claim counts — with **View
+Context Map** to open the [context map](./context-map.md), and a full-width
+**Start a Review** button beneath it that carries you into New Chat for the
+project you just added.
+
 The project remembers which machine it lives on and reconnects there when you
 reopen it. See [Windows and WSL](./windows-and-wsl.md#wsl-requirements) for
 distro requirements.

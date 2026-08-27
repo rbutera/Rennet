@@ -50,7 +50,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 8. Docs (same change, definition of done)
 
-- [ ] 8.1 Update `docs/using/guides/getting-started.md` — the add-project → scout → questionnaire → map → Start a Review journey as it now behaves on the router client (no legacy front-door flow).
+- [x] 8.1 Update `docs/using/guides/getting-started.md` — the add-project → scout → questionnaire → map → Start a Review journey as it now behaves on the router client (no legacy front-door flow). — Added the map-completion step to "What happens after you add it": the **Context Map Ready** summary (scope/file/confirmed-rejected counts), **View Context Map**, and the full-width **Start a Review** CTA into New Chat — bridging the processing view into "Start a session". The rest of the add-project/New-Chat prose already matched the shipped router client (source picker, directory-browser-is-the-picker, scout/questionnaire, searchable project picker + claimed-target-leaves-list); no legacy front-door flow was present to remove.
 - [ ] 8.2 Update `docs/using/guides/context-map.md` — the standalone map view, its entry points, and the never-a-gate questionnaire. Grep `docs/` (excl. `docs/dist`) for any other page describing the old add-project/front-door flow and fix it; record the result even if a no-op.
 
 ## 9. Verification (packet)
