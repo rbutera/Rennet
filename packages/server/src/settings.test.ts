@@ -533,3 +533,28 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     expect(calls.applyLocus).toEqual([]);
   });
 });
+
+describe("setTrackerValue — the global-rung tracker write (#461, B7)", () => {
+  it("writes, resets, and validates through the registry declarations", () => {
+    let stored: GlobalConfig = { version: 1 };
+    const { deps } = makeDeps({
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+
+    expect(composition.setTrackerValue({ key: "kind", value: "jira" })).toEqual({ kind: "jira" });
+    expect(composition.setTrackerValue({ key: "baseUrl", value: " https://j.example " })).toEqual({
+      kind: "jira",
+      baseUrl: "https://j.example",
+    });
+    // Reset drops the entry so the ladder falls back down.
+    expect(composition.setTrackerValue({ key: "baseUrl", value: null })).toEqual({ kind: "jira" });
+    // An illegal kind refuses through the SAME validator the resolver reads.
+    expect(() => composition.setTrackerValue({ key: "kind", value: "asana" })).toThrow(
+      /trackerKind/,
+    );
+  });
+});

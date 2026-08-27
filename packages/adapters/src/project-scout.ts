@@ -23,7 +23,8 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessTurnResult, TrackerKind } from "@rennet/core";
+import { type HarnessTurnResult, resolve, SETTINGS_REGISTRY, type TrackerKind } from "@rennet/core";
+import type { GlobalConfig } from "@rennet/protocol";
 import { z } from "zod";
 import { CONVENTIONS_FILE } from "./convention-catalogue-reader";
 import type { GitExec } from "./git-range-diff";
@@ -465,4 +466,43 @@ export function scoutSettingsOffers(
     if (fact && fact.provenance === "detected") offers[key] = fact.value;
   }
   return offers as ReturnType<typeof scoutSettingsOffers>;
+}
+
+/**
+ * Resolve the retrieval-facing `TrackerConfig` off the settings ladder: the
+ * scout's detected offers under the user's global-rung answers, folded through
+ * core's resolver (one precedence law, no side computation). `undefined` when
+ * the resolved kind needs no endpoint (`none`/`github`) or the endpoint is
+ * incomplete — seen tracker keys then surface as missing-config facts, and
+ * retrieval proceeds (never a gate).
+ */
+export function resolveTrackerConfig(
+  store: ProjectSnapshotStore,
+  repoKey: string,
+  global: GlobalConfig,
+): TrackerConfig | undefined {
+  const detected = scoutSettingsOffers(store, repoKey);
+  const rung = global.tracker ?? {};
+  const offer = (value: string | undefined): string | undefined =>
+    value === undefined || value.trim() === "" ? undefined : value.trim();
+  const kind = resolve(SETTINGS_REGISTRY.trackerKind, {
+    detected: detected.trackerKind,
+    global: rung.kind,
+  }).value;
+  if (kind !== "jira" && kind !== "linear") return undefined;
+  const baseUrl = resolve(SETTINGS_REGISTRY.trackerBaseUrl, { global: offer(rung.baseUrl) }).value;
+  const tokenEnvVar = resolve(SETTINGS_REGISTRY.trackerTokenEnv, {
+    global: offer(rung.tokenEnv),
+  }).value;
+  if (baseUrl === "" || tokenEnvVar === "") return undefined;
+  const projectKey = resolve(SETTINGS_REGISTRY.trackerProjectKey, {
+    detected: detected.trackerProjectKey,
+    global: offer(rung.projectKey),
+  }).value;
+  const endpoint = {
+    baseUrl,
+    tokenEnvVar,
+    ...(projectKey === "" ? {} : { projectPrefixes: [projectKey] }),
+  };
+  return kind === "jira" ? { jira: endpoint } : { linear: endpoint };
 }

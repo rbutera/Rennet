@@ -3248,6 +3248,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
           ? {}
           : { [input.id]: input.keybinding },
       ),
+      setTrackerValue: vi.fn(() => ({})),
     };
     const { dispatch } = harness(undefined, { settings });
 

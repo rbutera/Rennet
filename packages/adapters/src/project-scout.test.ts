@@ -7,6 +7,7 @@ import { loadConventionCatalogue } from "./convention-catalogue-reader";
 import type { GitExec } from "./git-range-diff";
 import {
   loadScoutFacts,
+  resolveTrackerConfig,
   runProjectScout,
   saveScoutFacts,
   scoutDeterministic,
@@ -185,5 +186,61 @@ describe("scout persistence (amendment 9)", () => {
     );
     expect(loadScoutFacts(store, "forged")).toBeNull();
     expect(scoutSettingsOffers(store, "forged")).toEqual({});
+  });
+});
+
+describe("resolveTrackerConfig — the ladder-resolved retrieval config (#461, B7)", () => {
+  const detectedJira = (store: ProjectSnapshotStore, repoKey: string): void => {
+    saveScoutFacts(store, repoKey, {
+      facts: {
+        trackerKind: { value: "jira", provenance: "detected", source: "README badge" },
+        trackerProjectKey: { value: "PROJ", provenance: "detected", source: "commit subjects" },
+      },
+      guidanceSeeded: 0,
+      missingConfig: [],
+    });
+  };
+
+  it("detected kind + prefix under global endpoint config yields a routed endpoint", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    detectedJira(store, "esc");
+    const config = resolveTrackerConfig(store, "esc", {
+      version: 1,
+      tracker: { baseUrl: "https://jira.example", tokenEnv: "JIRA_TOKEN" },
+    });
+    expect(config).toEqual({
+      jira: {
+        baseUrl: "https://jira.example",
+        tokenEnvVar: "JIRA_TOKEN",
+        projectPrefixes: ["PROJ"],
+      },
+    });
+  });
+
+  it("an incomplete endpoint resolves to undefined — missing-config facts downstream, never a gate", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    detectedJira(store, "esc");
+    expect(resolveTrackerConfig(store, "esc", { version: 1 })).toBeUndefined();
+  });
+
+  it("the global rung outranks the detected offer (specificity wins)", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    detectedJira(store, "esc");
+    const config = resolveTrackerConfig(store, "esc", {
+      version: 1,
+      tracker: {
+        kind: "linear",
+        projectKey: "ENG",
+        baseUrl: "https://api.linear.app",
+        tokenEnv: "LINEAR_TOKEN",
+      },
+    });
+    expect(config).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG"],
+      },
+    });
   });
 });
