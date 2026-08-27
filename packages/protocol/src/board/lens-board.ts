@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hunkIdSchema } from "../delta/citations";
 import { LENS_KINDS } from "../manifests";
 import { HostElementSchema, SectionDeltaSchema } from "./schema";
 
@@ -42,7 +43,7 @@ export const LensSectionSchema = z.looseObject({
  */
 export const SkippedHunkSchema = z.looseObject({
   /** The stable patchset hunk id (delta/ owns the id shape). */
-  hunk: z.string().min(1),
+  hunk: hunkIdSchema,
   reason: z.string(),
 });
 

@@ -131,6 +131,12 @@ Handoff task attribution applies to asks, not hunks. One harness turn executes
 the complete work order, so Rennet has no evidence that a particular task caused
 a particular hunk.
 
+On re-review rounds the account also feeds `buildDeltaPacket()` in
+`packages/core/src/delta/` — the folder that owns the hunk index with stable
+content-derived ids and the element differ, and assembles the lens drafters'
+input from them. Drafters see the same deterministic delta facts the account
+records.
+
 ## Code map
 
 | Concern | Owner |
@@ -138,6 +144,7 @@ a particular hunk.
 | Lineage types and exact-only carry policy | `packages/protocol/src/domain.ts` |
 | Anchor resolution over a lineage graph | `packages/protocol/src/delta/rsp.ts` |
 | Fuzzy occurrence classifier | `packages/core/src/lineage-matcher.ts` |
+| Hunk index, element differ, and Delta-packet assembly | `packages/core/src/delta/` |
 | Live disposition carry and successor fold | `packages/core/src/index.ts` |
 | Path and hunk successor account | `packages/core/src/successor-account.ts` |
 | Optional delta digest turn | `packages/server/src/delta-digest-live.ts` |

@@ -22,7 +22,7 @@ import type {
   RoutePlanResult,
 } from "@rennet/protocol";
 import { type DecomposeOptions, decompose } from "./decomposition";
-import type { AdmittedDocument } from "./element-diffs";
+import type { AdmittedDocument } from "./delta";
 import { normalizeMaxInvocations } from "./invocation-budget";
 import { buildRoutePlan, type RoutePlanOptions } from "./route-plan";
 

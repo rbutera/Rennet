@@ -1,13 +1,13 @@
 import type { BlastRadiusSignal, OwnershipRule, PatchFile } from "@rennet/protocol";
 
 /**
- * A single amber blast-radius paint, targeting an element or anchor. Local shape —
- * protocol's `BlastRadiusPaint` (a canvas-overlay type) was deleted (#489, B2); this
- * deterministic producer survives standalone for the B-series to re-home. `assessed:
- * false` marks a signal that was NOT computed (rendered "not assessed", never silently
- * absent, so no-amber never reads as no-risk).
+ * A single blast-radius signal mark, targeting an element or anchor. Local shape —
+ * this deterministic producer's output is Delta-packet input (B5); how a surface
+ * renders it is the consumer's concern. `assessed: false` marks a signal that was
+ * NOT computed (surfaced as "not assessed", never silently absent, so no-mark
+ * never reads as no-risk).
  */
-export interface BlastRadiusPaint {
+export interface BlastRadiusSignalMark {
   target: string;
   docId?: string;
   signal?: BlastRadiusSignal;
@@ -19,12 +19,12 @@ export interface BlastRadiusPaint {
 //
 // Deterministic, model-free. It reads the changeset (and CODEOWNERS ownership)
 // and marks what carries risk, one line of explanation per mark. Blast radius is
-// PAINT (Rule Zero): this computes DATA the overlay renders amber; it never gates
-// an action, never reorders what the reviewer sees, and never withholds a
-// capability. A blast-radius mark is a claim about danger, so every signal is
-// explicit about what it can and cannot see, and a signal that cannot be computed
-// is emitted as visibly NOT ASSESSED rather than left silently absent — otherwise
-// "no amber" would read as "checked and clear".
+// DATA, not a gate (Rule Zero): this computes signal marks the Delta packet
+// carries to the drafters; it never gates an action, never reorders what the
+// reviewer sees, and never withholds a capability. A blast-radius mark is a claim
+// about danger, so every signal is explicit about what it can and cannot see, and
+// a signal that cannot be computed is emitted as visibly NOT ASSESSED rather than
+// left silently absent — otherwise "no mark" would read as "checked and clear".
 //
 // Signals: `deletions`, `irreversibility`, `codeowners`, `safety-net` compute from the
 // changeset + ownership. `fan-in` (#200) computes dependent counts when the reference
@@ -39,8 +39,8 @@ export interface BlastRadiusPaint {
  *
  * ⭐ Providing this at all is the ASSESSED signal: the composition supplies it ONLY when
  * the reference index is genuinely POPULATED. When it is absent, fan-in stays a NOT-ASSESSED
- * chip — never a silent zero. A zero-dependents result must mean "we checked and nothing
- * depends on this", provable, not "the index was missing" (the whole point of the overlay:
+ * mark — never a silent zero. A zero-dependents result must mean "we checked and nothing
+ * depends on this", provable, not "the index was missing" (the whole point of the taxonomy:
  * unmeasured must look unmeasured, not clean).
  */
 export interface FanInIndex {
@@ -57,7 +57,7 @@ export interface BlastRadiusInput {
   readonly ownership: readonly OwnershipRule[];
   /**
    * The fan-in index (#200). Present ⇒ fan-in is ASSESSED (per-file dependent counts);
-   * absent ⇒ fan-in stays a NOT-ASSESSED chip. The composition supplies it only when the
+   * absent ⇒ fan-in stays a NOT-ASSESSED mark. The composition supplies it only when the
    * reference index is populated, so absence is honest, never a masked empty.
    */
   readonly fanIn?: FanInIndex;
@@ -154,35 +154,40 @@ function resolveOwners(path: string, rules: readonly OwnershipRule[]): readonly 
   return owners;
 }
 
-function filePaint(signal: BlastRadiusSignal, path: string, reason: string): BlastRadiusPaint {
+function fileMark(signal: BlastRadiusSignal, path: string, reason: string): BlastRadiusSignalMark {
   return { target: `rennet:file/${path}`, signal, reason, assessed: true };
 }
 
-function compareStrings(left: string, right: string): number {
+/**
+ * Code-unit string compare — locale-independent, so sorted output is identical
+ * on every host (localeCompare is not: default collation varies by locale).
+ * The delta packet's other sorted sections reuse this.
+ */
+export function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**
- * Compute the blast-radius overlay for a changeset. Pure and deterministic; the
- * result is sorted for byte-stable canvas replay. Each returned paint carries the
+ * Compute the blast-radius signal marks for a changeset. Pure and deterministic;
+ * the result is sorted for byte-stable replay. Each returned mark carries the
  * signal, a one-line reason, and `assessed` (false only for the deferred signals).
  */
-export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] {
-  const paint: BlastRadiusPaint[] = [];
+export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusSignalMark[] {
+  const marks: BlastRadiusSignalMark[] = [];
 
   // 1. DELETIONS — a removed file: anything importing it breaks. Deterministic.
   for (const file of input.files) {
     if (file.status === "deleted") {
       const lines = file.deletions != null ? ` (${file.deletions} lines)` : "";
-      paint.push(
-        filePaint("deletions", file.path, `File deleted${lines}; anything importing it breaks.`),
+      marks.push(
+        fileMark("deletions", file.path, `File deleted${lines}; anything importing it breaks.`),
       );
     } else if (file.status === "renamed" && file.previousPath && file.previousPath !== file.path) {
       // A rename removes the OLD path (neighbour case, probed): importers of the
-      // old path break exactly as for a deletion. Painted on the NEW path (a
+      // old path break exactly as for a deletion. Marked on the NEW path (a
       // visible element), naming the old path so the reviewer checks its importers.
-      paint.push(
-        filePaint(
+      marks.push(
+        fileMark(
           "deletions",
           file.path,
           `Renamed from ${file.previousPath}; importers of the old path must be updated.`,
@@ -195,16 +200,16 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
   //    the added lines. Honest scope: path + added-text heuristics, not execution.
   for (const file of input.files) {
     if (IRREVERSIBLE_PATH.test(file.path)) {
-      paint.push(
-        filePaint(
+      marks.push(
+        fileMark(
           "irreversibility",
           file.path,
           "Migration/schema path — hard to roll back once applied.",
         ),
       );
     } else if (DESTRUCTIVE_SQL.test(addedLines(file))) {
-      paint.push(
-        filePaint(
+      marks.push(
+        fileMark(
           "irreversibility",
           file.path,
           "Adds a destructive statement (DROP/DELETE/TRUNCATE).",
@@ -233,8 +238,8 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
   }
   if (distinctOwners.size >= 2) {
     for (const [path, owners] of ownerByFile) {
-      paint.push(
-        filePaint(
+      marks.push(
+        fileMark(
           "codeowners",
           path,
           `Owned by ${owners.join(", ")}; change spans ${distinctOwners.size} code-owner groups.`,
@@ -244,7 +249,7 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
   }
 
   // 4. SAFETY-NET — changes that weaken the checks that would have caught a
-  //    regression. One paint per file, reasons joined. Honest scope: pattern-based
+  //    regression. One mark per file, reasons joined. Honest scope: pattern-based
   //    on paths + added lines (regex, not a parse), so it sees the common shapes
   //    and can miss a cleverly-disguised one.
   for (const file of input.files) {
@@ -262,15 +267,11 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
     // purely additive CI change ADDS coverage, which strengthens the net, so it must not
     // read as weakening. The wording is derived from what was matched — CI lines removed,
     // not merely "CI changed".
-    // A CI change weakens the safety net only when it REMOVES content (issue #278): a
-    // purely additive CI change ADDS coverage, which strengthens the net, so it must not
-    // read as weakening. The wording is derived from what was matched — CI lines removed,
-    // not merely "CI changed".
     if (CI_PATH.test(file.path) && hasRemovedLines(file)) reasons.push("removes CI configuration");
     if (LINT_DISABLE.test(added)) reasons.push("disables a linter or type check");
     if (reasons.length > 0) {
-      paint.push(
-        filePaint("safety-net", file.path, `Weakens the safety net: ${reasons.join("; ")}.`),
+      marks.push(
+        fileMark("safety-net", file.path, `Weakens the safety net: ${reasons.join("; ")}.`),
       );
     }
   }
@@ -279,7 +280,7 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
   //    counted from the snapshot's symbol + reference indices. ASSESSED only when the index
   //    is supplied (the composition supplies it only when populated); otherwise a NOT-
   //    ASSESSED chip, never a silent zero. A changed file with zero dependents gets no
-  //    paint — "checked, nothing depends on it" — exactly like the other per-file signals.
+  //    mark — "checked, nothing depends on it" — exactly like the other per-file signals.
   if (input.fanIn) {
     const fanIn = input.fanIn;
     for (const file of input.files) {
@@ -291,8 +292,8 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
       }
       if (dependents.size > 0) {
         const n = dependents.size;
-        paint.push(
-          filePaint(
+        marks.push(
+          fileMark(
             "fan-in",
             file.path,
             `${n} file${n === 1 ? "" : "s"} reference this file's symbols; changes here ripple to them.`,
@@ -301,16 +302,16 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
       }
     }
     // ASSESSED — emitted WHENEVER the index is supplied, independent of whether any
-    // per-file paint fired. Without this, a review where every changed file has zero
+    // per-file mark fired. Without this, a review where every changed file has zero
     // dependents produces NO fan-in entry at all — structurally identical to a review
-    // where this producer never ran. That collapse is the thing the whole overlay
+    // where this producer never ran. That collapse is the thing the signal taxonomy
     // exists to prevent one layer out: absence-of-index is already a distinct NOT-
-    // ASSESSED chip (below), but "assessed, zero dependents" was mere silence. A
+    // ASSESSED mark (below), but "assessed, zero dependents" was mere silence. A
     // consumer (another lens, an export, a telemetry counter) must be able to read
     // "fan-in WAS computed" as a positive fact, never infer it from what is not there.
-    // Review-scoped target ⇒ paints no chunk and shows no chip (canvas/logic.ts); it
-    // is a data-level statement of assessment, not a mark on the surface.
-    paint.push({
+    // Review-scoped target ⇒ a data-level statement of assessment, not a mark on any
+    // per-file element.
+    marks.push({
       target: "rennet:review/blast-radius",
       signal: "fan-in",
       assessed: true,
@@ -318,7 +319,7 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
     });
   } else {
     // DEFERRED — surfaced as NOT ASSESSED so its absence never reads as "clear".
-    paint.push({
+    marks.push({
       target: "rennet:review/blast-radius",
       signal: "fan-in",
       assessed: false,
@@ -326,7 +327,7 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
         "Fan-in not assessed — the identifier-occurrence reference index (#200) is not available for this review.",
     });
   }
-  paint.push({
+  marks.push({
     target: "rennet:review/blast-radius",
     signal: "contract-surface",
     assessed: false,
@@ -334,7 +335,7 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
   });
 
   // Deterministic order for byte-stable replay (tuple compare, no delimiter).
-  return paint.sort(
+  return marks.sort(
     (left, right) =>
       compareStrings(left.target, right.target) ||
       compareStrings(left.signal ?? "", right.signal ?? "") ||
