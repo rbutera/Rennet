@@ -24,7 +24,7 @@
 
 import type { Blemish, DraftBoard, DraftElement, Violation } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
-import { type LintContext, lint } from "./lint";
+import { type LintContext, lint, taughtHunkIds } from "./lint";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -150,26 +150,14 @@ function ownedCodeRefs(el: DraftElement, codeRefIds: ReadonlySet<string>): Set<s
   return owned;
 }
 
-/** The patchset hunks a set of code_ref elements overlaps (new-image range). */
+/** The patchset hunks a set of code_ref elements overlaps (side-aware, finding 8). */
 function hunksTaughtBy(
   codeRefIds: ReadonlySet<string>,
   draft: DraftBoard,
   ctx: LintContext,
 ): string[] {
-  const taught = new Set<string>();
-  for (const el of draft.elements) {
-    if (el.kind !== "code_ref" || !codeRefIds.has(el.id)) continue;
-    const d = el.data as { path?: unknown; start_line?: unknown; end_line?: unknown };
-    const path = typeof d.path === "string" ? d.path : "";
-    const start = typeof d.start_line === "number" ? d.start_line : 0;
-    const end = typeof d.end_line === "number" ? d.end_line : start;
-    for (const h of ctx.hunks) {
-      if (h.path !== path) continue;
-      const hEnd = h.newStart + h.newLines - 1;
-      if (start <= hEnd && end >= h.newStart) taught.add(h.id);
-    }
-  }
-  return [...taught];
+  const shed = draft.elements.filter((el) => el.kind === "code_ref" && codeRefIds.has(el.id));
+  return [...taughtHunkIds(shed, ctx.hunks)];
 }
 
 // ── Skipped-hunks passthrough helpers ────────────────────────────────────────

@@ -16,6 +16,12 @@ const codeRef = (id: string, path: string, start: number, end: number) => ({
   data: { author, patchset_id: "ps-1", path, side: "head", start_line: start, end_line: end },
 });
 
+const baseRef = (id: string, path: string, start: number, end: number) => ({
+  id,
+  kind: "code_ref",
+  data: { author, patchset_id: "ps-1", path, side: "base", start_line: start, end_line: end },
+});
+
 /** Parse a raw board or throw — keeps every fixture schema-valid, no `as`. */
 const draft = (elements: unknown[], extra: Record<string, unknown> = {}): DraftBoard => {
   const parsed = parseDraft({ elements, ...extra });
@@ -51,6 +57,55 @@ describe("assertCoverage", () => {
     const flagged = draft([codeRef("c1", "src/auth.ts", 11, 12)]); // teaches h1
     const design = draft([codeRef("c2", "src/util.ts", 1, 2)]); // teaches h2
     expect(assertCoverage([flagged, design], HUNKS)).toEqual([]);
+  });
+
+  // ── Finding 8: side + deletion geometry ──────────────────────────────────
+  it("a BASE-side citation does not falsely cover an addition hunk (finding 8)", () => {
+    // h1 is a pure addition on the head side (new image 10..14, no old image).
+    const addHunk: LintHunk[] = [
+      { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5, oldStart: 10, oldLines: 0 },
+    ];
+    // A base-side ref whose OLD-image lines happen to land on 10..14 must NOT cover it.
+    const board = draft([baseRef("c1", "src/auth.ts", 10, 14)]);
+    expect(assertCoverage([board], addHunk)).toHaveLength(1);
+    // The matching HEAD-side ref does cover it.
+    const head = draft([codeRef("c2", "src/auth.ts", 10, 14)]);
+    expect(assertCoverage([head], addHunk)).toEqual([]);
+  });
+
+  it("a DELETION-only hunk is teachable only from the base side (finding 8)", () => {
+    // h1 has no new image (deletion), old image 20..24 on the base path.
+    const delHunk: LintHunk[] = [
+      { id: "h1", path: "src/auth.ts", newStart: 20, newLines: 0, oldStart: 20, oldLines: 5 },
+    ];
+    // A head-side ref can never teach it — there is no new image.
+    const head = draft([codeRef("c1", "src/auth.ts", 20, 24)]);
+    expect(assertCoverage([head], delHunk)).toHaveLength(1);
+    // A base-side ref citing the old image does.
+    const base = draft([baseRef("c2", "src/auth.ts", 20, 24)]);
+    expect(assertCoverage([base], delHunk)).toEqual([]);
+  });
+
+  it("a RENAME resolves each side against its own path (finding 8)", () => {
+    // File moved old.ts → new.ts; the hunk edits both images.
+    const renameHunk: LintHunk[] = [
+      {
+        id: "h1",
+        path: "src/new.ts",
+        newStart: 5,
+        newLines: 3,
+        previousPath: "src/old.ts",
+        oldStart: 5,
+        oldLines: 3,
+      },
+    ];
+    // A base-side ref must cite the PREVIOUS path; the current path does not resolve.
+    expect(assertCoverage([draft([baseRef("c1", "src/new.ts", 5, 7)])], renameHunk)).toHaveLength(
+      1,
+    );
+    expect(assertCoverage([draft([baseRef("c2", "src/old.ts", 5, 7)])], renameHunk)).toEqual([]);
+    // A head-side ref cites the CURRENT path.
+    expect(assertCoverage([draft([codeRef("c3", "src/new.ts", 5, 7)])], renameHunk)).toEqual([]);
   });
 });
 

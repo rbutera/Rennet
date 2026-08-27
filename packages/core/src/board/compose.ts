@@ -31,7 +31,7 @@
  */
 
 import type { DraftBoard, DraftElement, Violation } from "@rennet/protocol";
-import type { LintHunk } from "./lint";
+import { type LintHunk, taughtHunkIds } from "./lint";
 
 // ── Shared tiny board utils ──────────────────────────────────────────────────
 // ponytail: `stableStringify` + the skipped-hunks reader are ~15 trivial lines
@@ -62,22 +62,9 @@ function skippedHunkIds(board: DraftBoard): string[] {
     .filter((h) => h.length > 0);
 }
 
-/** The patchset hunks a board TEACHES: any `code_ref` whose new-image range overlaps. */
+/** The patchset hunks a board TEACHES: any `code_ref` whose side-appropriate range overlaps (finding 8). */
 function boardTaughtHunks(board: DraftBoard, hunks: readonly LintHunk[]): Set<string> {
-  const taught = new Set<string>();
-  for (const el of board.elements) {
-    if (el.kind !== "code_ref") continue;
-    const d = el.data as { path?: unknown; start_line?: unknown; end_line?: unknown };
-    const path = typeof d.path === "string" ? d.path : "";
-    const start = typeof d.start_line === "number" ? d.start_line : 0;
-    const end = typeof d.end_line === "number" ? d.end_line : start;
-    for (const h of hunks) {
-      if (h.path !== path) continue;
-      const hEnd = h.newStart + h.newLines - 1;
-      if (start <= hEnd && end >= h.newStart) taught.add(h.id);
-    }
-  }
-  return taught;
+  return taughtHunkIds(board.elements, hunks);
 }
 
 // ── 1. Coverage assertion (L18 — every hunk taught-or-skipped across all lenses) ─
