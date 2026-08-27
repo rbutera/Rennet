@@ -409,8 +409,8 @@ function reviewShape(prefix: string): Record<string, PathClassification> {
       `${prefix}.patchsets.intent.specSnapshots.path`,
       `${prefix}.dispositions.anchor.path`,
       `${prefix}.orphaned.anchor.path`,
-      `${prefix}.deltaAccount.asks.path`,
-      `${prefix}.deltaAccount.beyondAskHunks.path`,
+      `${prefix}.successorAccount.asks.path`,
+      `${prefix}.successorAccount.beyondAskHunks.path`,
     ]),
   };
 }

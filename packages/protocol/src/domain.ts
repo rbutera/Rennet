@@ -1153,9 +1153,9 @@ export type PrBodyDraftResult =
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
-// ─── review.deltaDigest: the light-tier prose over the delta account (#73/M25) ─
+// ─── review.deltaDigest: the light-tier prose over the successor account (#73/M25) ─
 //
-// The deterministic delta account (N2, `DeltaAccount`) is the ground truth: per-ask
+// The deterministic successor account (N2, `SuccessorAccount`) is the ground truth: per-ask
 // addressed/partially/untouched + the paths changed beyond the asks. This is the
 // optional light-tier LLM rephrasing of that account into a one/two-sentence
 // plain-English TL;DR, rendered ON TOP of the facts (never replacing them). The
@@ -1163,7 +1163,7 @@ export type PrBodyDraftResult =
 // so a scope-creep detector's headline cannot hallucinate. Like `PrBodyDraftResult`,
 // the shape has NO field for a fabricated success:
 //   - `drafted`     — the turn produced a non-empty digest. `model` records who wrote it.
-//   - `unavailable` — no model seat is installed / the review carries no delta account.
+//   - `unavailable` — no model seat is installed / the review carries no successor account.
 //   - `failed`      — a turn ran and produced no usable text.
 // On anything but `drafted` the panel simply shows no headline and the facts are
 // unchanged — an honest "no summary this time", never a blank card and never a guess.
@@ -2597,7 +2597,7 @@ export interface OpenSpecRequirementCoverage {
 /**
  * The ask trace a handoff run hands to the successor capture (issue #73 wave 3) — the
  * verified bundle's `traceMap` and task titles MATERIALISED per ask, projected down to
- * exactly what the delta account needs to attribute each ask to its composed task. One
+ * exactly what the successor account needs to attribute each ask to its composed task. One
  * entry per bundle ask: its stable id, anchor identity (path + span + side + type, so
  * the fold matches it to a review disposition), and the `taskIndex` plus preview
  * `taskTitle` the traceMap assigns it. Deliberately a SMALL projection — no prompts, no

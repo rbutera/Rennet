@@ -403,7 +403,7 @@ async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Prom
 
 describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   // A capture port that yields a DISTINCT successor on regenerate, so the fold stamps a
-  // delta account: a.ts changes (addressed), b.ts is new (beyond-asks).
+  // successor account: a.ts changes (addressed), b.ts is new (beyond-asks).
   function twoPatchsetCapture(): PatchsetCapturePort {
     let n = 0;
     const file = (path: string, patch: string, status: "modified" | "added" = "modified") => ({
@@ -452,7 +452,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
     return regen.review;
   }
 
-  it("calls the producer with the review's delta account and returns its digest", async () => {
+  it("calls the producer with the review's successor account and returns its digest", async () => {
     const draftDeltaDigest = vi.fn<NonNullable<DispatchDeps["draftDeltaDigest"]>>(async () => ({
       status: "drafted",
       text: "Fixed a, and also touched b nobody asked about.",
@@ -467,7 +467,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
       },
     );
     const review = await successorReview(dispatch);
-    expect(review.deltaAccount).toBeDefined(); // precondition: the fold stamped an account
+    expect(review.successorAccount).toBeDefined(); // precondition: the fold stamped an account
 
     const out = await dispatch("review.deltaDigest", {
       commandId: randomUUID(),
@@ -479,14 +479,14 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
       model: "haiku",
     });
     expect(draftDeltaDigest).toHaveBeenCalledOnce();
-    expect(draftDeltaDigest.mock.calls[0]?.[0].account).toEqual(review.deltaAccount);
+    expect(draftDeltaDigest.mock.calls[0]?.[0].account).toEqual(review.successorAccount);
   });
 
-  it("answers unavailable when the review carries no delta account (a first capture)", async () => {
+  it("answers unavailable when the review carries no successor account (a first capture)", async () => {
     const draftDeltaDigest = vi.fn<NonNullable<DispatchDeps["draftDeltaDigest"]>>();
     const { dispatch } = harness(fakePublishPort(), {}, { draftDeltaDigest });
     const review = await capturedReview(dispatch); // one capture, no predecessor → no account
-    expect(review.deltaAccount).toBeUndefined();
+    expect(review.successorAccount).toBeUndefined();
     const out = (await dispatch("review.deltaDigest", {
       commandId: randomUUID(),
       reviewId: review.id,
@@ -498,7 +498,7 @@ describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   it("answers unavailable (never throws) when no producer is wired but an account exists", async () => {
     const { dispatch } = harness(fakePublishPort(), {}, { capturePort: twoPatchsetCapture() });
     const review = await successorReview(dispatch);
-    expect(review.deltaAccount).toBeDefined();
+    expect(review.successorAccount).toBeDefined();
     const out = (await dispatch("review.deltaDigest", {
       commandId: randomUUID(),
       reviewId: review.id,
@@ -3461,7 +3461,7 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   });
 
   it("run's captured review attributes each ask to its composed task (traceMap consumed, #73 wave 3)", async () => {
-    // A capture yielding a distinct successor so the fold stamps a delta account: p1 has
+    // A capture yielding a distinct successor so the fold stamps a successor account: p1 has
     // src/a.ts; the successor changes it (addressed).
     let calls = 0;
     const capturePort: PatchsetCapturePort = {
@@ -3529,7 +3529,7 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
 
     expect(out.status).toBe("ran");
     // The traceMap is consumed: the ask names the composed task that ran it.
-    const ask = out.result.review.deltaAccount?.asks.find((entry) => entry.path === "src/a.ts");
+    const ask = out.result.review.successorAccount?.asks.find((entry) => entry.path === "src/a.ts");
     expect(ask?.handoffTask).toBeDefined();
     expect(ask?.handoffTask?.index).toBe(0);
     // R28 still holds: the prior patchset survives byte-identical alongside the successor.

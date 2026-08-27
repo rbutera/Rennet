@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   commandDefinitions,
-  deltaAccountSchema,
   dispositionSchema,
   globalConfigSchema,
   isCommandName,
@@ -10,6 +9,7 @@ import {
   projectSchema,
   settingsLayerSchema,
   settingsProjectSchema,
+  successorAccountSchema,
 } from "./index";
 
 describe("command protocol", () => {
@@ -198,7 +198,7 @@ describe("ordering is agent-owned: no user-approval command exists (issue #9)", 
   });
 });
 
-describe("delta account schema — hunk grain + handoff attribution round-trip (#73 wave 3)", () => {
+describe("successor account schema — hunk grain + handoff attribution round-trip (#73 wave 3)", () => {
   it("round-trips beyondAskHunks and per-ask handoffTask through the IPC schema", () => {
     const account = {
       asks: [
@@ -229,7 +229,7 @@ describe("delta account schema — hunk grain + handoff attribution round-trip (
         },
       ],
     };
-    const parsed = deltaAccountSchema.parse(account);
+    const parsed = successorAccountSchema.parse(account);
     expect(parsed).toEqual(account);
   });
 
@@ -238,7 +238,7 @@ describe("delta account schema — hunk grain + handoff attribution round-trip (
       asks: [{ path: "a.ts", type: "comment" as const, summary: "", status: "untouched" as const }],
       beyondAsks: ["d.ts"],
     };
-    const parsed = deltaAccountSchema.parse(legacy);
+    const parsed = successorAccountSchema.parse(legacy);
     expect(parsed.beyondAskHunks).toBeUndefined();
     expect(parsed.asks[0]?.handoffTask).toBeUndefined();
   });

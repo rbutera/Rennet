@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { type DeltaAccountLike, deltaCounts } from "./delta-counts";
+import { deltaCounts, type SuccessorAccountLike } from "./delta-counts";
 
 describe("deltaCounts (#382 M2, task 6.3)", () => {
   it("counts asks by status and beyond-asks", () => {
-    const account: DeltaAccountLike = {
+    const account: SuccessorAccountLike = {
       asks: [
         { status: "addressed" },
         { status: "addressed" },
@@ -16,7 +16,11 @@ describe("deltaCounts (#382 M2, task 6.3)", () => {
   });
 
   it("prefers hunk-grain beyond count when present", () => {
-    const account: DeltaAccountLike = { asks: [], beyondAsks: ["a"], beyondAskHunks: [{}, {}, {}] };
+    const account: SuccessorAccountLike = {
+      asks: [],
+      beyondAsks: ["a"],
+      beyondAskHunks: [{}, {}, {}],
+    };
     expect(deltaCounts(account).beyond).toBe(3);
   });
 

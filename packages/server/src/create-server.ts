@@ -1801,7 +1801,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       codexExecutor: codexExecutorForRepo,
     }),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
-    // Rephrases the successor review's DETERMINISTIC delta account into a one-glance
+    // Rephrases the successor review's DETERMINISTIC successor account into a one-glance
     // TL;DR shown ON TOP of the facts, on WHICHEVER seat the council resolves for
     // `delta-rereview-summary` — the SAME probes the drafter uses. Degrades to an honest
     // `unavailable` (the facts still render, no headline) when neither seat is installed.

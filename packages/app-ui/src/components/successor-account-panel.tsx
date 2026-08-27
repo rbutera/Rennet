@@ -1,9 +1,9 @@
 import type {
   AnchorSide,
   AnchorSpan,
-  DeltaAccount,
   DeltaAskStatus,
   DeltaBeyondHunk,
+  SuccessorAccount,
 } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ import type {
 //     (#73 wave 3) — the exact changes beyond the asks, INCLUDING a hunk inside an
 //     asked file that path grain cannot see.
 //
-// Every fact here is the DETERMINISTIC account (`buildDeltaAccount`, model-free); this
+// Every fact here is the DETERMINISTIC account (`buildSuccessorAccount`, model-free); this
 // component only renders it. It is INFORMATIONAL — it gates nothing (Rule Zero): the
 // reviewer reads on and signs without dismissing it. Each item ANCHORS: activating it
 // navigates the diff to that path (`onAnchor`), or to a hunk's exact span when known.
@@ -42,12 +42,12 @@ function formatSpan(span: AnchorSpan): string {
     : `line ${startLine}`;
 }
 
-export function DeltaAccountPanel({
+export function SuccessorAccountPanel({
   account,
   onAnchor,
   digest,
 }: {
-  account: DeltaAccount;
+  account: SuccessorAccount;
   /**
    * Navigate the diff to `path` — or, when a `span`/`side` is given (a hunk-grain
    * beyond-ask row, #73 wave 3), to that exact file line range. Ask rows without a span
@@ -71,54 +71,54 @@ export function DeltaAccountPanel({
 
   return (
     <section
-      className="delta-account flex flex-col gap-2 border-b border-line bg-surface px-5 py-3"
-      data-testid="delta-account"
+      className="successor-account flex flex-col gap-2 border-b border-line bg-surface px-5 py-3"
+      data-testid="successor-account"
       aria-label="Delta re-review account"
     >
-      <p className="delta-account-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+      <p className="successor-account-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
         Since you last reviewed
       </p>
 
       {digest ? (
         <div
-          className="delta-account-digest flex flex-col gap-1 py-0.5"
-          data-testid="delta-account-digest"
+          className="successor-account-digest flex flex-col gap-1 py-0.5"
+          data-testid="successor-account-digest"
         >
-          <p className="delta-account-digest-lead m-0 font-serif text-base leading-relaxed text-ink">
+          <p className="successor-account-digest-lead m-0 font-serif text-base leading-relaxed text-ink">
             {digest}
           </p>
-          <p className="delta-account-digest-tag m-0 text-2xs tracking-wide text-ink-faint">
+          <p className="successor-account-digest-tag m-0 text-2xs tracking-wide text-ink-faint">
             written from the facts below · light model
           </p>
         </div>
       ) : null}
 
       {hasAsks ? (
-        <ul className="delta-account-asks m-0 flex list-none flex-col gap-0.5 p-0">
+        <ul className="successor-account-asks m-0 flex list-none flex-col gap-0.5 p-0">
           {account.asks.map((ask) => (
             <li
               key={`${ask.path}:${ask.side ?? ""}:${ask.span?.startLine ?? ""}:${ask.span?.endLine ?? ""}`}
-              className="delta-account-ask"
+              className="successor-account-ask"
               data-status={ask.status}
             >
               <button
                 type="button"
-                className="delta-account-item flex w-full cursor-pointer items-baseline gap-2.5 rounded-chip border-0 bg-transparent px-2 py-1.5 text-left text-ink hover:bg-raised"
+                className="successor-account-item flex w-full cursor-pointer items-baseline gap-2.5 rounded-chip border-0 bg-transparent px-2 py-1.5 text-left text-ink hover:bg-raised"
                 onClick={() =>
                   ask.span ? onAnchor(ask.path, ask.span, ask.side) : onAnchor(ask.path)
                 }
               >
                 <span
-                  className="delta-account-status min-w-[116px] flex-none text-2xs font-semibold data-[status=addressed]:text-green data-[status=partially-addressed]:text-accent data-[status=untouched]:text-ink-faint"
+                  className="successor-account-status min-w-[116px] flex-none text-2xs font-semibold data-[status=addressed]:text-green data-[status=partially-addressed]:text-accent data-[status=untouched]:text-ink-faint"
                   data-status={ask.status}
                 >
                   {STATUS_LABEL[ask.status]}
                 </span>
-                <code className="delta-account-path flex-none font-mono text-sm text-ink-soft">
+                <code className="successor-account-path flex-none font-mono text-sm text-ink-soft">
                   {ask.path}
                 </code>
                 {ask.summary ? (
-                  <span className="delta-account-summary min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-ink-soft">
+                  <span className="successor-account-summary min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-ink-soft">
                     {ask.summary}
                   </span>
                 ) : null}
@@ -126,8 +126,8 @@ export function DeltaAccountPanel({
                     narration only, 1-based for the human ("task 2 — 'Tighten the parser'"). */}
                 {ask.handoffTask ? (
                   <span
-                    className="delta-account-task flex-none text-2xs text-ink-faint"
-                    data-testid="delta-account-task"
+                    className="successor-account-task flex-none text-2xs text-ink-faint"
+                    data-testid="successor-account-task"
                   >
                     task {ask.handoffTask.index + 1} — “{ask.handoffTask.title}”
                   </span>
@@ -140,23 +140,23 @@ export function DeltaAccountPanel({
 
       {hasBeyond ? (
         <div
-          className="delta-account-beyond flex flex-col gap-1 rounded-control border border-accent-line bg-accent-surface px-2.5 py-2"
-          data-testid="delta-account-beyond"
+          className="successor-account-beyond flex flex-col gap-1 rounded-control border border-accent-line bg-accent-surface px-2.5 py-2"
+          data-testid="successor-account-beyond"
           role="alert"
         >
-          <p className="delta-account-beyond-title m-0 text-sm font-semibold text-ink">
+          <p className="successor-account-beyond-title m-0 text-sm font-semibold text-ink">
             {account.beyondAsks.length} change{account.beyondAsks.length === 1 ? "" : "s"} beyond
             your asks
           </p>
-          <ul className="delta-account-beyond-list m-0 flex list-none flex-col gap-0.5 p-0">
+          <ul className="successor-account-beyond-list m-0 flex list-none flex-col gap-0.5 p-0">
             {account.beyondAsks.map((path) => (
               <li key={path}>
                 <button
                   type="button"
-                  className="delta-account-item delta-account-beyond-item flex w-full cursor-pointer items-baseline gap-2.5 rounded-chip border-0 bg-transparent px-1.5 py-0.5 text-left text-ink hover:bg-raised"
+                  className="successor-account-item successor-account-beyond-item flex w-full cursor-pointer items-baseline gap-2.5 rounded-chip border-0 bg-transparent px-1.5 py-0.5 text-left text-ink hover:bg-raised"
                   onClick={() => onAnchor(path)}
                 >
-                  <code className="delta-account-path flex-none font-mono text-sm text-ink-soft">
+                  <code className="successor-account-path flex-none font-mono text-sm text-ink-soft">
                     {path}
                   </code>
                 </button>
@@ -173,32 +173,32 @@ export function DeltaAccountPanel({
           grain cannot show. Never a violation, never a gate (Rule Zero). */}
       {hasHunks ? (
         <ul
-          className="delta-account-hunks m-0 flex list-none flex-col gap-0.5 p-0"
-          data-testid="delta-account-hunks"
+          className="successor-account-hunks m-0 flex list-none flex-col gap-0.5 p-0"
+          data-testid="successor-account-hunks"
         >
           {hunks.map((hunk) => (
             <li
               key={`${hunk.path}:${hunk.side ?? ""}:${hunk.span.startLine}:${hunk.span.endLine ?? ""}`}
-              className="delta-account-hunk-row"
+              className="successor-account-hunk-row"
             >
               <button
                 type="button"
-                className="delta-account-item delta-account-hunk-item group flex w-full cursor-pointer items-baseline gap-2 rounded-chip border-0 bg-transparent px-1.5 py-0.5 text-left text-ink hover:bg-raised"
-                data-testid="delta-account-hunk"
+                className="successor-account-item successor-account-hunk-item group flex w-full cursor-pointer items-baseline gap-2 rounded-chip border-0 bg-transparent px-1.5 py-0.5 text-left text-ink hover:bg-raised"
+                data-testid="successor-account-hunk"
                 data-bucket={hunk.bucket}
                 onClick={() => onAnchor(hunk.path, hunk.span, hunk.side)}
               >
-                <code className="delta-account-path flex-none font-mono text-sm text-ink-soft">
+                <code className="successor-account-path flex-none font-mono text-sm text-ink-soft">
                   {hunk.path}
                 </code>
-                <span className="delta-account-hunk-span flex-none text-2xs text-ink-soft">
+                <span className="successor-account-hunk-span flex-none text-2xs text-ink-soft">
                   {formatSpan(hunk.span)}
                 </span>
-                <span className="delta-account-hunk-bucket flex-none text-2xs text-ink-faint group-data-[bucket=unasked-file]:text-ink">
+                <span className="successor-account-hunk-bucket flex-none text-2xs text-ink-faint group-data-[bucket=unasked-file]:text-ink">
                   {BUCKET_LABEL[hunk.bucket]}
                 </span>
                 {hunk.excerpt ? (
-                  <code className="delta-account-hunk-excerpt min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-2xs text-ink-faint">
+                  <code className="successor-account-hunk-excerpt min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-2xs text-ink-faint">
                     {hunk.excerpt}
                   </code>
                 ) : null}

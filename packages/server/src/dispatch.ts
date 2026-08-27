@@ -28,7 +28,6 @@ import type {
   AnchorSide,
   AnchorSpan,
   ComposedHandoffBundle,
-  DeltaAccount,
   DeltaDigestResult,
   DispositionType,
   FlaggedReview,
@@ -42,6 +41,7 @@ import type {
   PrBodyDraftResult,
   RefinementResult,
   Review,
+  SuccessorAccount,
   SymbolInspection,
 } from "@rennet/protocol";
 import {
@@ -433,7 +433,7 @@ export interface DispatchDeps {
   }) => Promise<PrBodyDraftResult>;
   /**
    * The delta re-review digest producer (issue #73 / M25): rephrase a successor
-   * review's deterministic `deltaAccount` into a one/two-sentence TL;DR shown ON TOP
+   * review's deterministic `successorAccount` into a one/two-sentence TL;DR shown ON TOP
    * of the facts. Optional so a composition without it (no coding harness) answers an
    * honest `unavailable` and the panel simply shows no headline. Built from ONLY the
    * account, it can add no fact the facts don't carry; it posts NOTHING and gates
@@ -441,7 +441,7 @@ export interface DispatchDeps {
    */
   readonly draftDeltaDigest?: (input: {
     review: Review;
-    account: DeltaAccount;
+    account: SuccessorAccount;
   }) => Promise<DeltaDigestResult>;
   /**
    * Reload the persisted conversation threads for a review, plus any turn still
@@ -1923,7 +1923,7 @@ export function createDispatch(
           // fuzzy occurrence matcher deliberately does NOT drive this carry (issue #254 / #16).
           //
           // Hand the verified bundle's ask trace to the capture (issue #73 wave 3): the
-          // traceMap + task titles MATERIALISED per ask, so the successor's delta account
+          // traceMap + task titles MATERIALISED per ask, so the successor's successor account
           // attributes each ask to the composed task that ran it. A SMALL projection —
           // ask id + anchor identity + task index + preview title, NO prompts/bodies/contexts
           // — so nothing an agent executes enters the event log.
@@ -2014,9 +2014,9 @@ export function createDispatch(
           return parseCommandOutput(name, drafted);
         }
         case "review.deltaDigest": {
-          // Rephrase the successor review's DETERMINISTIC delta account into a one-glance
+          // Rephrase the successor review's DETERMINISTIC successor account into a one-glance
           // TL;DR. Resolve the CURRENT review ONCE (stale/unknown id refused), read its
-          // OWN `deltaAccount` (absent ⇒ honest `unavailable` — a first capture carries
+          // OWN `successorAccount` (absent ⇒ honest `unavailable` — a first capture carries
           // no account), and run the council-routed light turn. ⚠️ EGRESS: the account's
           // paths/statuses ARE sent to the harness (a per-turn egress) — but ONLY the
           // account, never diff or repo content, so the digest can add no fact the facts
@@ -2024,11 +2024,11 @@ export function createDispatch(
           // failed/absent turn, the renderer shows the facts with no headline.
           const input = parseCommandInput(name, rawInput);
           const review = requireReviewById(input.reviewId);
-          const account = review.deltaAccount;
+          const account = review.successorAccount;
           if (account === undefined) {
             return parseCommandOutput(name, {
               status: "unavailable",
-              reason: "this review carries no delta account to summarise",
+              reason: "this review carries no successor account to summarise",
             });
           }
           if (!deps.draftDeltaDigest) {

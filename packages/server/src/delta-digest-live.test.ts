@@ -5,7 +5,7 @@ import type {
   HarnessEvent,
   HarnessPort,
 } from "@rennet/core";
-import type { DeltaAccount, Patchset, Review } from "@rennet/protocol";
+import type { Patchset, Review, SuccessorAccount } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 
@@ -44,7 +44,7 @@ function review(): Review {
   };
 }
 
-const ACCOUNT: DeltaAccount = {
+const ACCOUNT: SuccessorAccount = {
   asks: [
     {
       path: "src/rate/keys.ts",

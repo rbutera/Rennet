@@ -1,6 +1,6 @@
 import { DIFF_TRUNCATION_MARKER, type Disposition, type Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { buildDeltaAccount, changedPathsBetween, newHunksBetween } from "./delta-account";
+import { buildSuccessorAccount, changedPathsBetween, newHunksBetween } from "./successor-account";
 
 // A span-grained ask on `path`, or path-grained when `span` is omitted.
 function ask(
@@ -50,7 +50,7 @@ function patchset(id: string, files: ReturnType<typeof file>[]): Patchset {
   };
 }
 
-describe("buildDeltaAccount — the deterministic delta re-review account (#73)", () => {
+describe("buildSuccessorAccount — the deterministic delta re-review account (#73)", () => {
   // The acceptance fixture: 3 asks where the returned patchset addresses 2, ignores 1,
   // and adds 1 unrequested change. The account must state all four facts.
   const asks = [
@@ -60,7 +60,7 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
   ];
 
   it("states all four facts: 2 addressed, 1 untouched, 1 beyond-asks", () => {
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks,
       // Only c.ts's ask survived byte-identical (the agent ignored it); a.ts and b.ts
       // changed, so they are NOT carried.
@@ -80,7 +80,7 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
   it("RED-PROOF: an unrequested change is flagged beyond-asks (reverting detection reddens)", () => {
     // If beyond-asks detection is reverted (e.g. `beyondAsks = []`), d.ts is not flagged
     // and this assertion reddens — the named guard for the scope-creep detector.
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks,
       carried: [asks[2] as Disposition],
       changedPaths: ["a.ts", "b.ts", "d.ts"],
@@ -90,7 +90,7 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
 
   it("classifies partially-addressed: the flagged span carried but the file changed elsewhere", () => {
     const spanAsk = ask("e.ts", "Fix the loop bound", { startLine: 10, endLine: 12 });
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [spanAsk],
       carried: [spanAsk], // the flagged span survived byte-identical…
       changedPaths: ["e.ts"], // …but the agent changed e.ts elsewhere.
@@ -99,7 +99,7 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
   });
 
   it("classifies untouched: carried and the file was not changed at all", () => {
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [asks[0] as Disposition],
       carried: [asks[0] as Disposition],
       changedPaths: [],
@@ -118,7 +118,7 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
       ...askOnOld,
       anchor: { ...askOnOld.anchor, path: "new.ts", contentDigest: "digest-new.ts" },
     };
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [askOnOld],
       carried: [carriedOnNew],
       changedPaths: ["old.ts", "new.ts"], // old vanished, new appeared (the rename)
@@ -142,13 +142,13 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
       carried: [asks[2] as Disposition],
       changedPaths: ["a.ts", "b.ts", "d.ts"],
     };
-    expect(JSON.stringify(buildDeltaAccount(inputs))).toBe(
-      JSON.stringify(buildDeltaAccount(inputs)),
+    expect(JSON.stringify(buildSuccessorAccount(inputs))).toBe(
+      JSON.stringify(buildSuccessorAccount(inputs)),
     );
   });
 
   it("keeps the partition TOTAL: every changed path is exactly one of asked or beyond", () => {
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks,
       carried: [asks[2] as Disposition],
       changedPaths: ["a.ts", "b.ts", "d.ts"],
@@ -162,7 +162,7 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
   });
 
   it("carries a summary excerpt of each ask body for the 'what moved' line", () => {
-    const account = buildDeltaAccount({ asks, carried: asks, changedPaths: [] });
+    const account = buildSuccessorAccount({ asks, carried: asks, changedPaths: [] });
     expect(account.asks.map((entry) => entry.summary)).toEqual([
       "Rename the export",
       "Guard the null case",
@@ -196,7 +196,7 @@ describe("changedPathsBetween — the deterministic changed-path signal", () => 
 // The case PATH grain structurally cannot see: an unrequested hunk INSIDE an asked
 // file. Path grain reports the file "partially addressed" (an ask covers it), so the
 // extra change vanishes. Hunk grain must surface it in the asked-file bucket.
-describe("buildDeltaAccount — hunk-grain beyond-asks (#73 wave 3)", () => {
+describe("buildSuccessorAccount — hunk-grain beyond-asks (#73 wave 3)", () => {
   // a.ts: the asked span (lines 10–11) carries byte-identically, AND the agent adds a
   // second, non-overlapping hunk (lines 40–41) no ask targets.
   const priorA = patchset("p1", [file("a.ts", "@@ -10,2 +10,2 @@\n-a\n+b")]);
@@ -206,7 +206,7 @@ describe("buildDeltaAccount — hunk-grain beyond-asks (#73 wave 3)", () => {
   const askA = ask("a.ts", "Fix the loop bound", { startLine: 10, endLine: 11 });
 
   it("surfaces an unrequested hunk inside an asked file (the case path grain misses)", () => {
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [askA],
       carried: [askA], // the flagged span survived byte-identical…
       changedPaths: ["a.ts"], // …but the agent changed a.ts elsewhere.
@@ -299,14 +299,14 @@ describe("newHunksBetween — content-identity new-hunk detection (#73 wave 3)",
   });
 });
 
-describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk grain (#73 wave 3)", () => {
+describe("buildSuccessorAccount — hunk buckets and the four-fact fixture at hunk grain (#73 wave 3)", () => {
   it("does not cover a pure insertion with a deletion-side ask at the same line", () => {
     const additionsAsk = ask("a.ts", "Remove the old line", { startLine: 10, endLine: 10 });
     const deletionAsk: Disposition = {
       ...additionsAsk,
       anchor: { ...additionsAsk.anchor, side: "deletions" },
     };
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [deletionAsk],
       carried: [deletionAsk],
       changedPaths: ["a.ts"],
@@ -321,7 +321,7 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
 
   it("does not cover a pure deletion with an insertion-side ask at the same line", () => {
     const insertionAsk = ask("a.ts", "Insert the replacement", { startLine: 10, endLine: 10 });
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [insertionAsk],
       carried: [insertionAsk],
       changedPaths: ["a.ts"],
@@ -341,7 +341,7 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
 
   it("does not cover an adjacent non-overlapping span", () => {
     const adjacentAsk = ask("a.ts", "Change the next line", { startLine: 11, endLine: 11 });
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [adjacentAsk],
       carried: [adjacentAsk],
       changedPaths: ["a.ts"],
@@ -361,7 +361,7 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
       file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+b"),
       file("d.ts", "@@ -5,2 +5,2 @@\n-c\n+e"), // nobody asked about d.ts
     ]);
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [askA],
       carried: [askA],
       changedPaths: ["d.ts"],
@@ -390,7 +390,7 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
       file("b.ts", "@@ -1,2 +1,2 @@\n-b\n+b2"), // addressed
       file("c.ts", "@@ -1,2 +1,2 @@\n-c\n+c1"), // untouched (identical)
     ]);
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [askA, askB, askC],
       carried: [askC], // only c.ts's span survived byte-identical
       changedPaths: ["a.ts", "b.ts"],
@@ -413,7 +413,7 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
     const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
     const prior = patchset("p1", [file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+b")]);
     const successor = patchset("p2", [file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+c")]);
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [askA],
       carried: [],
       changedPaths: ["a.ts"],
@@ -424,13 +424,13 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
   });
 
   it("is ABSENT (legacy path grain) when patchsets are NOT supplied", () => {
-    const account = buildDeltaAccount({ asks: [], carried: [], changedPaths: [] });
+    const account = buildSuccessorAccount({ asks: [], carried: [], changedPaths: [] });
     expect(account.beyondAskHunks).toBeUndefined();
   });
 
   it("attributes an ask to its composed task from the handoff trace (narration only)", () => {
     const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
-    const account = buildDeltaAccount({
+    const account = buildSuccessorAccount({
       asks: [askA],
       carried: [askA],
       changedPaths: [],
@@ -452,7 +452,7 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
 
   it("carries NO attribution on a regenerate (no handoff trace)", () => {
     const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
-    const account = buildDeltaAccount({ asks: [askA], carried: [askA], changedPaths: [] });
+    const account = buildSuccessorAccount({ asks: [askA], carried: [askA], changedPaths: [] });
     expect(account.asks[0]?.handoffTask).toBeUndefined();
   });
 });

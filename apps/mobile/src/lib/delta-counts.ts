@@ -1,10 +1,10 @@
 // Delta-digest count tiles (issue #382 M2, task 6.3). Derived CLIENT-SIDE from the projected
-// review's `deltaAccount` (the same facts the desktop digest counts), so the phone shows the
+// review's `successorAccount` (the same facts the desktop digest counts), so the phone shows the
 // new/resolved/carried breakdown without a new protocol shape. Pure — unit-tested against the
 // account shape; the digest screen renders the tiles it returns.
 
-/** A projected delta account (the subset the counts read). */
-export interface DeltaAccountLike {
+/** A projected successor account (the subset the counts read). */
+export interface SuccessorAccountLike {
   readonly asks: ReadonlyArray<{
     readonly status: "addressed" | "partially-addressed" | "untouched";
   }>;
@@ -21,12 +21,12 @@ export interface DeltaCounts {
 }
 
 /**
- * Derive the delta counts from a review's delta account. Absent account ⇒ all zero (a first
+ * Derive the delta counts from a review's successor account. Absent account ⇒ all zero (a first
  * capture carries no delta — the tiles then read an honest zero, never a fabricated number).
  * `beyond` prefers the hunk-grain `beyondAskHunks` when present (the finer count), else the
  * path-grain `beyondAsks`.
  */
-export function deltaCounts(account: DeltaAccountLike | undefined): DeltaCounts {
+export function deltaCounts(account: SuccessorAccountLike | undefined): DeltaCounts {
   if (!account) return { addressed: 0, partially: 0, untouched: 0, beyond: 0 };
   let addressed = 0;
   let partially = 0;

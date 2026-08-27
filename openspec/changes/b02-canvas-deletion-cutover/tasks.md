@@ -46,7 +46,7 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 
 ## 7. successor-account rename
 
-- [ ] 7.1 Rename `packages/core/src/delta-account.ts` → `successor-account.ts` (+ test), and the exported symbols (`DeltaAccount`-family types in `protocol/src/domain.ts`/`index.ts`, `deltaAccount`/`delta account` identifiers and copy) to successor-account naming across `core`, `protocol`, `server` (`create-server`, `dispatch`, `delta-digest-live`), `app-ui` (`delta-account-panel.tsx` → `successor-account-panel.tsx` + its dom tests, `shell.tsx`, `context-manifest-panel.tsx`), and `apps/mobile` (`digest.tsx`, `delta-counts.*` references). Mechanical rename, zero behavior change; `delta-digest`/pipeline-Delta names are NOT in scope (the collision the rename ends is the re-review "delta" only).
+- [x] 7.1 Rename `packages/core/src/delta-account.ts` → `successor-account.ts` (+ test), and the exported symbols (`DeltaAccount`-family types in `protocol/src/domain.ts`/`index.ts`, `deltaAccount`/`delta account` identifiers and copy) to successor-account naming across `core`, `protocol`, `server` (`create-server`, `dispatch`, `delta-digest-live`), `app-ui` (`delta-account-panel.tsx` → `successor-account-panel.tsx` + its dom tests, `shell.tsx`, `context-manifest-panel.tsx`), and `apps/mobile` (`digest.tsx`, `delta-counts.*` references). Mechanical rename, zero behavior change; `delta-digest`/pipeline-Delta names are NOT in scope (the collision the rename ends is the re-review "delta" only).
 - [ ] 7.2 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
 
 ## 8. Docs (same change, definition of done)

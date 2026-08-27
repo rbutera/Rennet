@@ -1,7 +1,6 @@
 import type {
   AnchorSide,
   AnchorSpan,
-  DeltaAccount,
   DeltaAskAccount,
   DeltaBeyondHunk,
   Disposition,
@@ -9,6 +8,7 @@ import type {
   DispositionType,
   HandoffAskTrace,
   Patchset,
+  SuccessorAccount,
 } from "@rennet/protocol";
 import {
   addedOf,
@@ -208,7 +208,7 @@ function traceKey(id: {
 }
 
 /**
- * Build the deterministic delta account from the carry result + the changed-path set.
+ * Build the deterministic successor account from the carry result + the changed-path set.
  *
  * `asks` are the prior staged dispositions; `carried` are the ones the lineage carry
  * kept byte-identical (RE-ANCHORED to the new path when it carried across a rename);
@@ -228,7 +228,7 @@ function traceKey(id: {
  * earlier `asked === beyond` assertion was removed: it was tautological — `beyond` is
  * defined as `!covered`, so it could never fire, and a dead guard is false confidence.)
  */
-export function buildDeltaAccount(input: {
+export function buildSuccessorAccount(input: {
   asks: readonly Disposition[];
   carried: readonly Disposition[];
   changedPaths: readonly string[];
@@ -242,7 +242,7 @@ export function buildDeltaAccount(input: {
   successor?: Patchset;
   /** A handoff run's per-ask task trace (issue #73 wave 3), for `handoffTask` attribution. */
   handoff?: readonly HandoffAskTrace[];
-}): DeltaAccount {
+}): SuccessorAccount {
   const { asks, carried, changedPaths, renames = [], prior, successor, handoff = [] } = input;
   const changed = new Set(changedPaths);
   // A handoff run's ask trace, keyed by the anchor identity the fold matches asks on.

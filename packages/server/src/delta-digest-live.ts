@@ -7,7 +7,12 @@ import {
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
-import type { CouncilHarnessId, DeltaAccount, DeltaDigestResult, Review } from "@rennet/protocol";
+import type {
+  CouncilHarnessId,
+  DeltaDigestResult,
+  Review,
+  SuccessorAccount,
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.deltaDigest — the LIVE producer (issue #73 / M25).
@@ -179,7 +184,7 @@ export interface LiveDeltaDigestDeps {
  */
 export function createLiveDeltaDigestPort(
   deps: LiveDeltaDigestDeps,
-): (input: { review: Review; account: DeltaAccount }) => Promise<DeltaDigestResult> {
+): (input: { review: Review; account: SuccessorAccount }) => Promise<DeltaDigestResult> {
   return async (input) => {
     const [claudePort, executor] = await Promise.all([
       deps.claudePort(input.review.repositoryRoot),

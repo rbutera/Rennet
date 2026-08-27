@@ -164,7 +164,7 @@ const forgePublishTargetSchema = z.object({
 
 // The delta re-review account (issue #73): the deterministic record of what a
 // successor patchset did to the staged asks + the paths it changed beyond them. It
-// crosses IPC on `Review.deltaAccount`, so it is declared here (an unlisted optional
+// crosses IPC on `Review.successorAccount`, so it is declared here (an unlisted optional
 // on Review would be silently stripped at the boundary — the #242 discipline).
 const deltaAskStatusSchema = z.enum(["addressed", "partially-addressed", "untouched"]);
 const deltaAskAccountSchema = z.object({
@@ -187,7 +187,7 @@ const deltaBeyondHunkSchema = z.object({
   bucket: z.enum(["unasked-file", "asked-file"]),
   excerpt: z.string(),
 });
-export const deltaAccountSchema = z.object({
+export const successorAccountSchema = z.object({
   asks: z.array(deltaAskAccountSchema),
   beyondAsks: z.array(z.string()),
   // Hunk grain (issue #73 wave 3). Optional + additive: ABSENT ⇒ a legacy path-grain
@@ -220,7 +220,7 @@ export const reviewSchema = z.object({
   postTarget: forgePublishTargetSchema.optional(),
   // The delta re-review account (issue #73): stamped on a successor review, absent on
   // a first capture. Optional so every existing snapshot validates unchanged.
-  deltaAccount: deltaAccountSchema.optional(),
+  successorAccount: successorAccountSchema.optional(),
 });
 
 // The rich decision detail (issue #137) carried on `kind:"decision"` elements.
@@ -1380,8 +1380,8 @@ export const prBodyDraftResultSchema: z.ZodType<PrBodyDraftResult> = z.discrimin
   ],
 );
 
-// ── review.deltaDigest: the light-tier prose over the delta account (#73/M25) ──
-// A light-tier model turn rephrases the DETERMINISTIC delta account (per-ask
+// ── review.deltaDigest: the light-tier prose over the successor account (#73/M25) ──
+// A light-tier model turn rephrases the DETERMINISTIC successor account (per-ask
 // addressed/partially/untouched + beyond-asks) into a one/two-sentence TL;DR shown
 // ON TOP of the facts. The producer guarantees `drafted` carries non-empty text (an
 // empty turn is `failed`); the shape has NO field for a fabricated digest, so on
@@ -2068,7 +2068,7 @@ export type DeltaBeyondHunk = z.infer<typeof deltaBeyondHunkSchema>;
  * only) and an EMPTY ARRAY when hunk grain WAS computed and found nothing beyond — the
  * two are distinct, so the panel never shows precision it did not compute.
  */
-export type DeltaAccount = z.infer<typeof deltaAccountSchema>;
+export type SuccessorAccount = z.infer<typeof successorAccountSchema>;
 export type Review = z.infer<typeof reviewSchema>;
 /**
  * One evidence chip a decision is drawn from (issue #137). The Decisions lens
@@ -3094,10 +3094,10 @@ export const commandDefinitions = {
     }),
     output: prBodyDraftResultSchema,
   },
-  // ── review.deltaDigest: the light-tier prose over the delta account (#73/M25) ─
-  // The renderer holds the successor review's `deltaAccount` (it rendered the facts);
+  // ── review.deltaDigest: the light-tier prose over the successor account (#73/M25) ─
+  // The renderer holds the successor review's `successorAccount` (it rendered the facts);
   // it asks MAIN to rephrase it into a one-glance TL;DR. `reviewId` freshness-pins the
-  // review (a stale/unknown id is refused); MAIN reads that review's own deltaAccount
+  // review (a stale/unknown id is refused); MAIN reads that review's own successorAccount
   // (absent ⇒ an honest `unavailable`). The digest is built from ONLY the account, so
   // it can add no fact the facts don't carry; it posts NOTHING and gates nothing.
   "review.deltaDigest": {
