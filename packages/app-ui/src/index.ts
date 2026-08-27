@@ -154,6 +154,10 @@ export {
   RichText,
   useSpanRead,
 } from "./review";
+// The rounds surface (C09): the run route, report-as-greeting, ledger, and the rounds
+// seam. The barrel (`rounds/index.ts`) is already the curated public list, so re-export
+// it whole — the app shell binds the live `RoundsSourceProvider` through it (cluster 8).
+export * from "./rounds";
 // The router IS the running client now (C03 cutover): the desktop entries mount
 // `RennetRouterApp` inside `ConnectionHost`, with the host-selected history.
 export {

@@ -46,8 +46,12 @@ export interface RoundsSource {
   readonly dispatch?: (slug: string) => void;
 }
 
-/** The honest-absent default: no live round, an empty ledger, no report, no dispatch. */
-const ABSENT_ROUNDS_SOURCE: RoundsSource = {
+/** The honest-absent default: no live round, an empty ledger, no report, no dispatch.
+ *  Also the value the app tree binds today (`routes/app.tsx`) — an explicit provider node
+ *  so the top-bar + routes read ONE source, and cluster 8 swaps this for the live runtime
+ *  at the same seam without moving the provider. Wrapping with it changes no behavior now
+ *  (it is the context default); it exists to give the live swap a home. */
+export const ABSENT_ROUNDS_SOURCE: RoundsSource = {
   roundState: () => initialRoundState,
   roundRecords: () => NO_RECORDS,
   reportBoard: () => undefined,

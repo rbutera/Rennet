@@ -7,6 +7,7 @@ import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
+import { ABSENT_ROUNDS_SOURCE, RoundsSourceProvider } from "../rounds/rounds-data";
 import { RunRoute } from "../rounds/run-route";
 import {
   LiveSettingsProjectionProvider,
@@ -186,39 +187,49 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
                 (a reload), which is the spec (C10 §10.2). Settings is a route-local
                 takeover; wrapping it there would drop the state on every exit. */}
             <LiveSettingsProjectionProvider>
-              <AppLayout>
-                <Switch>
-                  <Route path={ROUTES.home}>
-                    <Redirect to={ROUTES.newChat} />
-                  </Route>
-                  <Route path={ROUTES.newChat} component={NewChatScreen} />
-                  <Route path={ROUTES.sessionRun}>{(p) => <RunRoute slug={p.slug ?? ""} />}</Route>
-                  <Route path={ROUTES.session}>
-                    {(p) => <SessionScreen slug={p.slug ?? ""} />}
-                  </Route>
-                  <Route path={ROUTES.archived}>
-                    <ArchivedView />
-                  </Route>
-                  <Route path={ROUTES.projectIndexing}>
-                    {(p) => <IndexingView projectId={p.id ?? ""} />}
-                  </Route>
-                  <Route path={ROUTES.projectMap}>
-                    {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
-                  </Route>
-                  <Route path={ROUTES.settings}>
-                    {(p) => <SettingsScreen page={p.page ?? ""} />}
-                  </Route>
-                  <Route path={ROUTES.projectDetail}>
-                    {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
-                  </Route>
-                  <Route path={ROUTES.projects}>
-                    <Interim screen="projects" title="Projects" />
-                  </Route>
-                  <Route>
-                    <NotFound label="this address" />
-                  </Route>
-                </Switch>
-              </AppLayout>
+              {/* One rounds source for the whole session subtree (C09 cluster 7). The
+                  top-bar's History pill and the run/workspace routes must read the SAME
+                  source, so the provider wraps the layout that owns both. Honest-absent
+                  today (no rounds runtime — Reconciliation 1): the pill stays hidden and
+                  `?view=rounds` falls back, unchanged behaviour. Cluster 8 swaps this one
+                  value for the live runtime; the provider stays put. */}
+              <RoundsSourceProvider value={ABSENT_ROUNDS_SOURCE}>
+                <AppLayout>
+                  <Switch>
+                    <Route path={ROUTES.home}>
+                      <Redirect to={ROUTES.newChat} />
+                    </Route>
+                    <Route path={ROUTES.newChat} component={NewChatScreen} />
+                    <Route path={ROUTES.sessionRun}>
+                      {(p) => <RunRoute slug={p.slug ?? ""} />}
+                    </Route>
+                    <Route path={ROUTES.session}>
+                      {(p) => <SessionScreen slug={p.slug ?? ""} />}
+                    </Route>
+                    <Route path={ROUTES.archived}>
+                      <ArchivedView />
+                    </Route>
+                    <Route path={ROUTES.projectIndexing}>
+                      {(p) => <IndexingView projectId={p.id ?? ""} />}
+                    </Route>
+                    <Route path={ROUTES.projectMap}>
+                      {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
+                    </Route>
+                    <Route path={ROUTES.settings}>
+                      {(p) => <SettingsScreen page={p.page ?? ""} />}
+                    </Route>
+                    <Route path={ROUTES.projectDetail}>
+                      {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
+                    </Route>
+                    <Route path={ROUTES.projects}>
+                      <Interim screen="projects" title="Projects" />
+                    </Route>
+                    <Route>
+                      <NotFound label="this address" />
+                    </Route>
+                  </Switch>
+                </AppLayout>
+              </RoundsSourceProvider>
             </LiveSettingsProjectionProvider>
           </PriorSurfaceTracker>
         </Router>
