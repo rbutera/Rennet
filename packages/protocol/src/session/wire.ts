@@ -15,6 +15,7 @@
 import { EventSchema as boardOpEventSchema } from "@wboard/core";
 import { z } from "zod";
 import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "../index";
+import { AskProjectionSchema as askProjectionSchema } from "./ask-log";
 
 /** The protocol version this build speaks. One integer, bumped append-only. */
 export const PROTOCOL_VERSION = 1;
@@ -276,6 +277,20 @@ export const boardEventFrameSchema = z.object({
   events: z.array(boardOpEventSchema).min(1),
 });
 
+/**
+ * Server → client: the durable ask projection for a session changed (B11 R19 live
+ * push). Emitted after every `ask.*` append so a second paired device sees the
+ * living-draft update without polling; a reconnecting device reads the same
+ * projection via `ask.read`. A `projected` connection receives the privacy-scrubbed
+ * variant (same shapes; the ask projection's line-comment paths are repo-relative,
+ * so only the blanket root/home scrub applies — no structural host path leaks).
+ */
+export const askProjectionFrameSchema = z.object({
+  type: z.literal("askProjection"),
+  sessionId: z.string().min(1),
+  projection: askProjectionSchema,
+});
+
 /** Server → client: an attention item was raised, or one/more were cleared. */
 export const attentionEventFrameSchema = z
   .object({
@@ -315,6 +330,7 @@ export const sessionFrameSchema = z.discriminatedUnion("type", [
   presenceFrameSchema,
   attentionEventFrameSchema,
   boardEventFrameSchema,
+  askProjectionFrameSchema,
 ]);
 
 export type HelloFrame = z.infer<typeof helloFrameSchema>;
@@ -330,6 +346,7 @@ export type ServerRequestResolvedFrame = z.infer<typeof serverRequestResolvedFra
 export type PresenceFrame = z.infer<typeof presenceFrameSchema>;
 export type AttentionEventFrame = z.infer<typeof attentionEventFrameSchema>;
 export type BoardEventFrame = z.infer<typeof boardEventFrameSchema>;
+export type AskProjectionFrame = z.infer<typeof askProjectionFrameSchema>;
 export type SessionFrame = z.infer<typeof sessionFrameSchema>;
 
 /** Parse an untrusted value into a `SessionFrame`, throwing on an invalid frame. */

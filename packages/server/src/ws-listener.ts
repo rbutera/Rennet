@@ -26,6 +26,7 @@ import {
 import { homedir } from "node:os";
 import { extname, normalize, resolve, sep } from "node:path";
 import type {
+  AskProjection,
   AttentionItem,
   BoardEventFrame,
   CommandName,
@@ -232,6 +233,12 @@ export interface WsListener {
    * the privacy-wrapped variant (`projectBoardEvent`); `pairing-only` is excluded.
    */
   broadcastBoardEvent(boardId: string, events: BoardEventFrame["events"]): void;
+  /**
+   * Fan the durable ask projection out after an append (B11 R19 live push). `private`
+   * (loopback) sockets receive the raw projection; `projected` sockets the blanket-scrubbed
+   * variant; `pairing-only` is excluded. A reconnecting client rehydrates via `ask.read`.
+   */
+  broadcastAskProjection(sessionId: string, projection: AskProjection): void;
   /**
    * Ask ONE connection a question and resolve with its answer (issue #380, wire only).
    * Rejects if the connection is unknown or drops before answering. A `serverRequestResolved`
@@ -768,6 +775,46 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     }
   };
 
+  // B11 R19 live push: fan the durable ask projection out after every append, the same
+  // per-class fan-out as `broadcastBoardEvent` — raw to private (loopback) sockets, the
+  // blanket-scrubbed variant to projected ones, `pairing-only` excluded. The ask projection
+  // carries no structural host-path field (line-comment paths are repo-relative), so the
+  // scrub is the blanket root/home pass `projectBoardProjection` uses; a projected client
+  // never sees a raw host path. Fed by the ask handlers' sole write path (append is the choke
+  // point), so every accepted write reaches live clients; a reconnect rehydrates via `ask.read`.
+  const broadcastAskProjection = (sessionId: string, projection: AskProjection): void => {
+    const rawPayload = JSON.stringify({
+      type: "askProjection",
+      sessionId,
+      projection,
+    } satisfies SessionFrame);
+    let projectedPayload: string | null = null;
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      if (connection.connectionClass === "projected") {
+        if (projectedPayload === null) {
+          projectedPayload = JSON.stringify({
+            type: "askProjection",
+            sessionId,
+            projection: scrubProjectedValue(projection, contextOf()) as AskProjection,
+          } satisfies SessionFrame);
+        }
+        try {
+          connection.socket.send(projectedPayload);
+        } catch {
+          // One bad socket must not starve the rest of the fan-out.
+        }
+      } else if (connection.connectionClass === "private") {
+        try {
+          connection.socket.send(rawPayload);
+        } catch {
+          // Same isolation for the raw path.
+        }
+      }
+    }
+  };
+
   // Broadcast a review's ask-stream delta to every live authorized socket by `reviewId`
   // (issue #389 server half). This is the read-side twin of `broadcastProgress`, and it is
   // what lets a mid-turn reconnect keep the live stream flowing to the fresh socket.
@@ -960,6 +1007,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     host: listenHost,
     broadcastProgress,
     broadcastBoardEvent,
+    broadcastAskProjection,
     askConnection,
     raiseAttention,
     acknowledgeAttention,

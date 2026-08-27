@@ -1440,6 +1440,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     service,
     allowedRoots,
     askLog: askLogStore,
+    // R19 live push: after every ask-log append the handlers fan the fresh projection
+    // to live clients (raw to loopback, scrubbed to projected). Absent-safe — a build
+    // with no WS listener still writes durably; only the live push is skipped.
+    broadcastAskProjection: (sessionId, projection) =>
+      wsListener?.broadcastAskProjection(sessionId, projection),
     // Related-context retrieval (#461, B7): kicked at the REAL review-open
     // commands (capture / openPr), fire-and-forget — the kick's own promise
     // never rejects, both harness ports resolve failure-isolated (honest
