@@ -73,7 +73,7 @@
   "b11": {
     "status": "done",
     "passes": true,
-    "note": "PR #537 landed (squash 5caaf247). Deep dual review: opus REQUEST-CHANGES + Codex BLOCK w/ adversarial probes → 10 findings (2 P0 + 6 P1 + 2 P2) all fixed + confirmed by fresh opus (CAS positive control proven red by mutation). Durable append-only ask log (sole write path, receipt-is-undo, corrupt→refuse not silent-empty, fsync), body+line two-strata compose (partition, LEFT-side restored), round.dispatch deterministic-key coalesce + own-branch-only routing (viewerDidAuthor), CAS+splice span rework. 5.1 ask-log architecture SOUND. Ledgered follow-ups: 3c durable cross-restart dispatch-identity (NOT-REACHABLE — no auto-replay, user-triggered only), 7-range multi-line comments (NET-NEW not regression, needs C9 client). Unblocks: C08 c8 REVISE_WIRED, C09 c8 live swap, session.transcript dispatch seam (C07+sidebar), C14 step-0 deferred-swap sweep"
+    "note": "PR #537 landed (squash 5caaf247). Deep dual review: opus REQUEST-CHANGES + Codex BLOCK w/ adversarial probes \u2192 10 findings (2 P0 + 6 P1 + 2 P2) all fixed + confirmed by fresh opus (CAS positive control proven red by mutation). Durable append-only ask log (sole write path, receipt-is-undo, corrupt\u2192refuse not silent-empty, fsync), body+line two-strata compose (partition, LEFT-side restored), round.dispatch deterministic-key coalesce + own-branch-only routing (viewerDidAuthor), CAS+splice span rework. 5.1 ask-log architecture SOUND. Ledgered follow-ups: 3c durable cross-restart dispatch-identity (NOT-REACHABLE \u2014 no auto-replay, user-triggered only), 7-range multi-line comments (NET-NEW not regression, needs C9 client). Unblocks: C08 c8 REVISE_WIRED, C09 c8 live swap, session.transcript dispatch seam (C07+sidebar), C14 step-0 deferred-swap sweep"
   },
   "c01": {
     "status": "done",
@@ -108,12 +108,12 @@
   "c08": {
     "status": "done",
     "passes": true,
-    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. Cluster 8 daemon-swap stays B11-gated (REVISE_WIRED one-bool flip). Deferred w/ record: own-PR resolves teammate-pr (no ownership fact in frozen schema — B-track follow-up). Parked for Rai: publish.requestConsent token"
+    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. Cluster 8 daemon-swap stays B11-gated (REVISE_WIRED one-bool flip). Deferred w/ record: own-PR resolves teammate-pr (no ownership fact in frozen schema \u2014 B-track follow-up). Parked for Rai: publish.requestConsent token"
   },
   "c09": {
     "status": "done",
     "passes": true,
-    "note": "PR #536 landed (squash da8f815e); dual review opus APPROVE / Codex BLOCK, 6 findings upheld + fixed + confirmed by fresh opus. F1 reveal-gate, F4 report-identity validation, F5 lane honesty, F6 delta classification closed. F2 (per-round diff) + F3 (frozen-gen switcher) confirmed GENUINE B9 RoundRecord gaps (producer sets boardGeneration===mintedPatchsetGeneration at rounds.ts:319; no predecessor field) — parked as B9 follow-ups, code made honest (round-diff-pending + hidden switcher). Cluster 8 live swap B11-gated (single provider value in routes/app.tsx, seam bodies in rounds-data.ts)"
+    "note": "PR #536 landed (squash da8f815e); dual review opus APPROVE / Codex BLOCK, 6 findings upheld + fixed + confirmed by fresh opus. F1 reveal-gate, F4 report-identity validation, F5 lane honesty, F6 delta classification closed. F2 (per-round diff) + F3 (frozen-gen switcher) confirmed GENUINE B9 RoundRecord gaps (producer sets boardGeneration===mintedPatchsetGeneration at rounds.ts:319; no predecessor field) \u2014 parked as B9 follow-ups, code made honest (round-diff-pending + hidden switcher). Cluster 8 live swap B11-gated (single provider value in routes/app.tsx, seam bodies in rounds-data.ts)"
   },
   "c10": {
     "status": "done",
@@ -136,6 +136,20 @@
     "note": "PR #535 landed (squash 47fb3c5d); dual review opus APPROVE / Codex BLOCK, 4 findings upheld + fixed + confirmed by fresh opus (detached-ref leak on FAB, fire-and-forget persist now observed+latest-wins, anchor proof on real chrome, malformed-MarkId negatives). Positive control verified on the useMergedRefs fix. Protocol registry (setCoachmarks) will conflict-fold when B11's ask.* lands second"
   },
   "c14": {
+    "status": "pending",
+    "passes": false
+  },
+  "c15": {
+    "status": "pending",
+    "passes": false,
+    "note": "NEW (Rai 2026-08-28, GO): per-round board REGENERATION \u2014 the honest-present half C14 needs (9 C9 claims). Size L, 4 clusters (1 collation bridge GATES rest + smoke-run first task; 2 gen mint/freeze; 3 live progress channel; 4 UI completions incl kicker 'Regenerating/Regenerated the Boards'). RISK: runLensPipeline+runRound have ZERO prod callers, 6 model drafters NEVER ran in prod \u2014 cluster 1 is first prod exercise, a surprise there = STOP-AND-REPORT. Carry-forward = label-honest now (true-skip is a later cost optimization, no cost cap) PENDING (i)/(ii) UI-lie verification. Sequences after C09 (a) RoundRecord-write. Scope: scratchpad/board-regen-scope.md"
+  },
+  "c16": {
+    "status": "pending",
+    "passes": false,
+    "note": "NEW (Rai 2026-08-28): model-council mappings (reviewRoles) \u2014 expose role\u2192model assignments across dual/claudeOnly/codexOnly as readable + editable. Council tables already exist in core/model-council*; #485 specs it. Group B of the re-framed C10 six. IN SCOPE before C14. Size TBD (scoping)."
+  },
+  "c17": {
     "status": "pending",
     "passes": false
   }
