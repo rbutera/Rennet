@@ -10,6 +10,7 @@
   "dependencies": {
     "@rennet/adapters": "workspace:*",
     "@rennet/core": "workspace:*",
+    "@rennet/prompts": "workspace:*",
     "@rennet/protocol": "workspace:*",
     "@wboard/core": "0.1.0-alpha.2",
     "@wboard/server": "0.1.0-alpha.2",

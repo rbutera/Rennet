@@ -53,14 +53,16 @@ describe("ReviewWorkspace ?view mount (C6 task 4.3)", () => {
     expect(getByText("packages/core/src/a.ts")).toBeTruthy();
   });
 
-  it("does not render the diff surface on the default (board) view", () => {
-    const { queryByText } = mountWorkspace("/s/x", [FILE_A]);
+  it("mounts the board document on the default view, not the diff", () => {
+    const { getByText, queryByText } = mountWorkspace("/s/x", [FILE_A]);
+    // No BoardSource is wired in this mount, so the board's honest empty state shows.
+    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
     expect(queryByText("1 files changed")).toBeNull();
   });
 
-  it("does not render the diff surface for a non-diff explicit view (map)", () => {
-    const { queryByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
-    expect(queryByText("1 files changed")).toBeNull();
+  it("a non-diff explicit view (map) falls back to the board document", () => {
+    const { getByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
+    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
   });
 
   it("an empty active patchset shows the honest one-line state, never a blank frame", () => {

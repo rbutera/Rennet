@@ -30,9 +30,18 @@ describe("writer invariant (task 3.2) — WhiteboardClient is the only board-op 
     // sanctioned writer; Function.prototype.apply or any new BoardService
     // writer alike must show up here and be consciously allowlisted (a board
     // writer never should be). Lightweight regex by design, not an AST pass.
+    //
+    // `sanctionedCallers` names files that call the INJECTED WhiteboardClient's
+    // `.apply` — the exact case the client's docstring anticipates ("the B8
+    // drafters ... route their ops through WhiteboardClient.apply"). They are
+    // callers, not writers: the strengthened invariant below proves each one
+    // never imports `BoardService`, so an allowlisted caller can never quietly
+    // become a second direct writer.
     const workspaceRoot = join(__dirname, "..", "..", "..");
     const allowed = new Set(["packages/adapters/src/whiteboard-client.ts"]);
+    const sanctionedCallers = new Set(["packages/server/src/runtime/lens-pipeline.ts"]);
     const offenders: string[] = [];
+    const directWriters: string[] = [];
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name);
@@ -44,14 +53,23 @@ describe("writer invariant (task 3.2) — WhiteboardClient is the only board-op 
         }
         if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".tsx")) continue;
         if (entry.name.includes(".test.") || entry.name.endsWith(".d.ts")) continue;
-        if (!/\.apply\(/.test(readFileSync(path, "utf8"))) continue;
+        const source = readFileSync(path, "utf8");
+        if (!/\.apply\(/.test(source)) continue;
         const rel = relative(workspaceRoot, path).split(sep).join("/");
-        if (!allowed.has(rel)) offenders.push(rel);
+        if (allowed.has(rel)) continue;
+        if (sanctionedCallers.has(rel)) {
+          // A sanctioned caller must route through the client, never the service.
+          if (/BoardService/.test(source)) directWriters.push(rel);
+          continue;
+        }
+        offenders.push(rel);
       }
     };
     walk(join(workspaceRoot, "packages"));
     walk(join(workspaceRoot, "apps"));
     expect(offenders).toEqual([]);
+    // No sanctioned caller has smuggled in a direct BoardService writer.
+    expect(directWriters).toEqual([]);
   });
 });
 
