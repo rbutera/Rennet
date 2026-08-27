@@ -15,6 +15,7 @@ import { OSGlyph } from "../assets/os-glyphs";
 import { type SettingsHost, useSettingsProjection } from "../data";
 import { AgentsSection } from "./agents";
 import { ReviewSettings } from "./model-mappings";
+import { PairingSection } from "./pairing";
 import { SourceControlSection } from "./source-control";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,6 +174,9 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
       <AgentsSection host={host} />
 
       <ReviewSettings host={host} enabledIds={enabledAgentIds} />
+
+      {/* Pairing bootstraps a connection to THIS daemon — local card only (§11 salvage). */}
+      {host.kind === "local" ? <PairingSection /> : null}
 
       <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
         <DialogContent>
