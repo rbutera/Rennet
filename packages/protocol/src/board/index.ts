@@ -3,4 +3,5 @@
  * `@wboard/core`'s host-schema kit. This is the folder's only public seam; the
  * root `src/index.ts` re-exports it.
  */
+export * from "./lens-board";
 export * from "./schema";

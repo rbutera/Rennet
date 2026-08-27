@@ -123,13 +123,19 @@ const roundOutcomeData = withAuthor({
   code_ref: z.string().optional(),
 });
 
+/**
+ * The R58 round-delta stamp, set by the composition step at regeneration;
+ * absence = carried forward. One definition — the `section` kind and the
+ * `LensBoard` projection's section entries both validate against it.
+ */
+export const SectionDeltaSchema = z.enum(["new", "reworked"]);
+
 /** Tier B — the authoring palette (compose / annotate / augment). */
 const sectionData = withAuthor({
   title: z.string(),
   children: z.array(z.string()).optional(),
-  // R58 round-delta stamp, set by the composition step at regeneration; absence
-  // = carried forward. The viewed set that decays the mark is UI-only.
-  delta: z.enum(["new", "reworked"]).optional(),
+  // The viewed set that decays the mark is UI-only.
+  delta: SectionDeltaSchema.optional(),
 });
 const proseData = withAuthor({ markdown: z.string() });
 const calloutData = withAuthor({ variant: z.string(), body: z.string() });
