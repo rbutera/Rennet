@@ -68,6 +68,33 @@ describe("boards runtime", () => {
     expect((await runtime.service.getEvents(boardId)).events).toHaveLength(1);
   });
 
+  it("emits exactly the appended events to onEvents; a replay emits nothing (B4 broadcast hook)", async () => {
+    const emitted: { boardId: string; opIds: string[]; seqs: number[] }[] = [];
+    const observed = createBoardsRuntime(projectRoot, (boardId, events) =>
+      emitted.push({
+        boardId,
+        opIds: events.map((e) => e.op.op_id),
+        seqs: events.map((e) => e.seq),
+      }),
+    );
+    const boardId = await observed.createRennetBoard();
+    await observed.service.apply(boardId, [proseOp("p1", "One."), proseOp("p2", "Two.")], "actor");
+    expect(emitted).toEqual([{ boardId, opIds: ["op-p1", "op-p2"], seqs: [1, 2] }]);
+
+    // Replay dedups before append — nothing new is emitted.
+    await observed.service.apply(boardId, [proseOp("p1", "One.")], "actor");
+    expect(emitted).toHaveLength(1);
+
+    // A rejected batch appends nothing and emits nothing.
+    const bad: Op = {
+      op: "create",
+      op_id: "op-bad",
+      element: { id: "bad", kind: "prose", data: { author: AUTHOR } },
+    };
+    await observed.service.apply(boardId, [bad], "actor");
+    expect(emitted).toHaveLength(1);
+  });
+
   it("persists under <projectRoot>/.rennet/boards/ and survives a fresh runtime", async () => {
     const boardId = await runtime.createRennetBoard();
     await runtime.service.apply(boardId, [proseOp("p1", "Durable.")], "actor");
