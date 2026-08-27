@@ -26,7 +26,7 @@ Each renderer is its own file under `packages/app-ui/src/board/kinds/`, ported f
 - [x] 3.3 Findings-board family: `finding` (severity glyph, concurrence tally from `concurrence`, folding to its title, `status` open/addressed/dismissed dimming, fix callout wired to `reviewActions.stageAsk` — no `store?.` shim, reads the real `review` slice). Register.
 - [x] 3.4 Design/Sequence family: `decision` (`statement`/`why`/`alternatives`/`evidence` → `CodeTabs`/`AnchorReveal`), `requirement` (`shall`/`coverage` met|gap|partial/`trace` → coverage chip + refs), `order_step` (`title`/`span`/`children`). Register.
 - [x] 3.5 Thread family: `message` (the conversational/ask kind — `role`, the exchange, optional `code_ref` anchor via `AnchorReveal`, `quote_target`/`quote` anchor surfaced for cluster 5's highlight; `lifecycle` staged/…/detached read distinctly, detached visible never dropped). Register.
-- [ ] 3.6 `noise_verdict` (`hunk`/`verdict`/`reason`/`judge` llm|deterministic, dismiss/not-noise affordance). Register — the map is now total over its domain (assertNever passes).
+- [x] 3.6 `noise_verdict` (`hunk`/`verdict`/`reason`/`judge` llm|deterministic, dismiss/not-noise affordance). Register — the map is now total over its domain (assertNever passes).
 - [ ] 3.7 DOM tests over `MemoryBridge`: a fixture board exercising each registered kind asserts each renders its distinctive DOM; the honest-error line renders for an unreadable `code_ref`. Cluster gate green. Commit per sub-cluster.
 
 ## 4. Section fold grammar, rollups, and delta marks
