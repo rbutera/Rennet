@@ -1531,6 +1531,20 @@ export const globalConfigSchema = z.object({
         .optional(),
     })
     .optional(),
+  /**
+   * The issue-tracker section's GLOBAL rung (#461, B7): the user's confirmed
+   * answers on the settings ladder (`builtin < detected < global < repo`).
+   * `tokenEnv` names the env var holding the tracker token — the token VALUE
+   * itself never enters any store. Additive-optional like every sibling.
+   */
+  tracker: z
+    .object({
+      kind: z.enum(["none", "github", "jira", "linear"]).optional(),
+      projectKey: z.string().optional(),
+      baseUrl: z.string().optional(),
+      tokenEnv: z.string().optional(),
+    })
+    .optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 

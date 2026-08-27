@@ -112,6 +112,7 @@ export {
   loadConventionCatalogue,
 } from "./convention-catalogue-reader";
 export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
+export { type DossierKey, DossierStore } from "./dossier-store";
 export {
   createExecObservingTurn,
   EXEC_OUTPUT_TAIL,
@@ -255,9 +256,12 @@ export {
   KNOWLEDGE_FILE,
   KnowledgeStore,
   type PromoteKnowledgeResult,
+  writeAtomic,
 } from "./knowledge-store";
 export {
+  type CouncilSeatDeps,
   changedPathsBetween,
+  councilSeatTurn,
   createClaudeSwarmTurn,
   createCodexSwarmTurn,
   type KnowledgeSwarmDeps,
@@ -279,12 +283,14 @@ export {
   type LiveReviewBackend,
   type LiveSnapshotOutcome,
   projectHypothesisRepoContext,
+  type RelatedContextKickDeps,
   type RepoRecord,
   type ReviewContextManifest,
   repoKeyOf,
   repoRecordOf,
   resolveContextFor,
   resolveNoveltyFor,
+  runRelatedContextRetrieval,
 } from "./live-review-backend";
 export { ensureManagedClone, managedCloneRoot } from "./managed-clone";
 export {
@@ -389,6 +395,20 @@ export {
   resolveProjectKey,
 } from "./project-relocate";
 export {
+  loadScoutFacts,
+  PROJECT_SCOUT_SCHEMA,
+  type ProjectScoutDeps,
+  resolveTrackerConfig,
+  runProjectScout,
+  type ScoutFact,
+  type ScoutFacts,
+  type ScoutProvenance,
+  type ScoutResult,
+  saveScoutFacts,
+  scoutDeterministic,
+  scoutSettingsOffers,
+} from "./project-scout";
+export {
   type GenerateOptions,
   type GenerateResult,
   ProjectSnapshotGenerator,
@@ -418,6 +438,36 @@ export {
   type ProjectVisibility,
   snapshotStoreFor,
 } from "./project-snapshot-store";
+export {
+  DOSSIER_TOTAL_MAX_CHARS,
+  type EnrichmentReport,
+  type ExtractedRef,
+  type ExtractRefsInput,
+  type ExtractRefsOptions,
+  execaGhFor,
+  extractRefs,
+  type FetchedIssue,
+  type FetchedPr,
+  fetchGithubIssue,
+  fetchPrView,
+  type GhRunner,
+  type GithubRef,
+  type JsonFetcher,
+  type MissingConfigFact,
+  type OmittedItemFact,
+  type RawContextPayload,
+  RELATED_CONTEXT_ENRICH_SCHEMA,
+  type RefFailure,
+  type RefFetchResult,
+  type RefProvenance,
+  type RefSource,
+  type RelatedContextResult,
+  type RetrieveRelatedContextDeps,
+  retrieveRelatedContext,
+  type TrackerConfig,
+  type TrackerEndpointConfig,
+  type TrackerKeyRef,
+} from "./related-context";
 export {
   type DiscoveredGitlink,
   discoverGitlinks,

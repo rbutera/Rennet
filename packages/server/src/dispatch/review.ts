@@ -41,6 +41,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       deps.setRepositoryDirty(false);
       deps.startWatching(review.repositoryRoot);
       raiseReviewFinished(review);
+      deps.onReviewOpened?.(review);
       return parseCommandOutput(name, { review });
     },
     "review.openPr": async (rawInput) => {
@@ -62,6 +63,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       );
       allowedRoots.add(review.repositoryRoot);
       raiseReviewFinished(review);
+      deps.onReviewOpened?.(review);
       return parseCommandOutput(name, { review });
     },
     "review.load": async (rawInput) => {

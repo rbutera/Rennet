@@ -313,6 +313,124 @@ describe("resolveAssignment — the context-map swarm jobs (#460)", () => {
   });
 });
 
+describe("resolveAssignment — the board-rebuild drafting seats (#489 B08)", () => {
+  const BOARD_SEATS = [
+    "lens-draft",
+    "lens-draft-flagged",
+    "lens-draft-noise",
+    "board-post-process",
+    "round-report",
+  ] as const;
+
+  it("resolves all five board seats under every scenario + degraded", () => {
+    for (const jobId of BOARD_SEATS) {
+      for (const availability of [BOTH, CLAUDE_ONLY, CODEX_ONLY, { installed: [] }] as const) {
+        const resolved = resolveAssignment(jobId, ctx(availability));
+        if (resolved.kind !== "model") throw new Error(`${jobId} should resolve to a model`);
+        // Harness always follows the resolved model — never an incoherent pin.
+        expect(resolved.harness).toBe(providerHarness(resolved.model));
+      }
+      // Degraded (no council harness) falls to the harness default, honestly traced.
+      const degraded = resolveAssignment(jobId, ctx({ installed: [] }));
+      if (degraded.kind !== "model") throw new Error(`${jobId} degraded should be a model`);
+      expect(degraded.trace.source).toBe("degraded");
+    }
+  });
+
+  it("routes the heavy drafting seats to Claude under both (the reading surface stays on Claude, R39)", () => {
+    expect(resolveAssignment("lens-draft", ctx(BOTH))).toMatchObject({
+      harness: "claude-code",
+      model: "opus-4.8",
+    });
+    expect(resolveAssignment("lens-draft-flagged", ctx(BOTH))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+    });
+    expect(resolveAssignment("round-report", ctx(BOTH))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+    });
+  });
+
+  it("the two light board seats cross to Codex under both; the heavy seats do not", () => {
+    for (const jobId of ["lens-draft-noise", "board-post-process"] as const) {
+      const light = resolveAssignment(jobId, ctx(BOTH));
+      if (light.kind !== "model") throw new Error("expected a model resolution");
+      expect(light.harness).toBe("codex");
+      expect(light.trace.crossHarness).toBe(true);
+    }
+    for (const jobId of ["lens-draft", "lens-draft-flagged", "round-report"] as const) {
+      const heavy = resolveAssignment(jobId, ctx(BOTH));
+      if (heavy.kind !== "model") throw new Error("expected a model resolution");
+      expect(heavy.trace.crossHarness).toBeUndefined();
+    }
+  });
+
+  it("resolves the Codex-only board seats to Codex models", () => {
+    for (const jobId of BOARD_SEATS) {
+      const resolved = resolveAssignment(jobId, ctx(CODEX_ONLY));
+      if (resolved.kind !== "model") throw new Error("expected a model resolution");
+      expect(resolved.harness).toBe("codex");
+    }
+  });
+});
+
+describe("resolveAssignment — the related-context jobs (#461)", () => {
+  it("resolves related-context-retrieval per scenario (Luna / Haiku / Luna) and degraded", () => {
+    expect(resolveAssignment("related-context-retrieval", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    expect(resolveAssignment("related-context-retrieval", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "haiku",
+      effort: "low",
+    });
+    expect(resolveAssignment("related-context-retrieval", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    const degraded = resolveAssignment("related-context-retrieval", ctx({ installed: [] }));
+    if (degraded.kind !== "model") throw new Error("expected a model resolution");
+    expect(degraded.trace.source).toBe("degraded");
+  });
+
+  it("resolves project-scout per scenario (Sonnet / Sonnet / Terra) and degraded", () => {
+    expect(resolveAssignment("project-scout", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("project-scout", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("project-scout", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+    const degraded = resolveAssignment("project-scout", ctx({ installed: [] }));
+    if (degraded.kind !== "model") throw new Error("expected a model resolution");
+    expect(degraded.trace.source).toBe("degraded");
+  });
+
+  it("related-context-retrieval is cross-harness under both (light on Codex, review on Claude)", () => {
+    const retrieval = resolveAssignment("related-context-retrieval", ctx(BOTH));
+    if (retrieval.kind !== "model") throw new Error("expected a model resolution");
+    expect(retrieval.trace.crossHarness).toBe(true);
+    // The scout runs ON the review harness — never cross-harness.
+    const scout = resolveAssignment("project-scout", ctx(BOTH));
+    if (scout.kind !== "model") throw new Error("expected a model resolution");
+    expect(scout.trace.crossHarness).toBeUndefined();
+  });
+});
+
 describe("resolveAssignment — deterministic tier + degraded", () => {
   it("a deterministic-tier job resolves to no model", () => {
     const resolved = resolveAssignment("rsp-validation", ctx(BOTH));

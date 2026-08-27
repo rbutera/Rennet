@@ -6,6 +6,7 @@ import {
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
+  SETTINGS_REGISTRY,
 } from "@rennet/core";
 import type {
   ClientSettings,
@@ -100,6 +101,18 @@ export interface SettingsComposition {
    * config, exactly as `setAppearance`. Returns the whole stored map after the write.
    */
   setKeybinding(input: { id: string; keybinding?: string | null }): Record<string, string | null>;
+  /**
+   * Write one issue-tracker value on the GLOBAL rung (#461, B7) — the ordinary
+   * settings write B8's in-chat ask persists through. `null` resets (drops the
+   * entry so the ladder falls back to detected/builtin). Values validate through
+   * the same `SETTINGS_REGISTRY` declarations the resolver reads; a malformed
+   * config refuses the write (throws) exactly as `setAppearance`. Returns the
+   * stored tracker section after the write.
+   */
+  setTrackerValue(input: {
+    key: "kind" | "projectKey" | "baseUrl" | "tokenEnv";
+    value: string | null;
+  }): NonNullable<GlobalConfig["tracker"]>;
   setRepoVisibility(input: {
     projectId: string;
     repoPath: string;
@@ -315,6 +328,25 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         return { ...current, keybindings };
       });
       return written.keybindings ?? {};
+    },
+
+    setTrackerValue: (input): NonNullable<GlobalConfig["tracker"]> => {
+      // Validate through the registry declaration the resolver reads — the write
+      // and the read cannot disagree on what a legal value is. `null` resets.
+      const declaration = {
+        kind: SETTINGS_REGISTRY.trackerKind,
+        projectKey: SETTINGS_REGISTRY.trackerProjectKey,
+        baseUrl: SETTINGS_REGISTRY.trackerBaseUrl,
+        tokenEnv: SETTINGS_REGISTRY.trackerTokenEnv,
+      }[input.key];
+      const value = input.value === null ? null : declaration.validate(input.value);
+      const written = deps.updateGlobal((current) => {
+        const tracker = { ...current.tracker };
+        if (value === null) delete tracker[input.key];
+        else tracker[input.key] = value as never;
+        return { ...current, tracker };
+      });
+      return written.tracker ?? {};
     },
 
     setRepoVisibility: async (input: {

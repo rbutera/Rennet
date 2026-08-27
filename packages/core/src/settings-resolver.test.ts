@@ -10,6 +10,7 @@ import {
   resolveScheme,
   resolveVisibility,
   SETTINGS_REGISTRY,
+  type TrackerKind,
 } from "./settings-resolver";
 
 describe("resolveScheme", () => {
@@ -101,9 +102,21 @@ describe("resolvePromoted", () => {
 });
 
 describe("settings registry + generic resolve (#28)", () => {
-  it("registers exactly the four live keys, each with a builtin default that passes its own validator and merge=replace", () => {
+  it("registers exactly the live keys, each with a builtin default that passes its own validator and merge=replace", () => {
     const keys = Object.keys(SETTINGS_REGISTRY).sort();
-    expect(keys).toEqual(["locus", "promoted", "scheme", "visibility"]);
+    expect(keys).toEqual([
+      "gateCommand",
+      "locus",
+      "logoPath",
+      "promoted",
+      "scheme",
+      "trackerBaseUrl",
+      "trackerKind",
+      "trackerProjectKey",
+      "trackerTokenEnv",
+      "visibility",
+      "worktreeBaseDir",
+    ]);
     for (const decl of Object.values(SETTINGS_REGISTRY)) {
       expect(decl.merge).toBe("replace");
       expect(decl.layers).toContain("builtin");
@@ -165,5 +178,55 @@ describe("settings registry + generic resolve (#28)", () => {
     const resolved = resolveLocus({ kind: "host" }, { kind: "wsl", distro: "Ubuntu" });
     expect(resolved.layer).toBe("repo");
     expect(resolved.value).toEqual({ kind: "wsl", distro: "Ubuntu" });
+  });
+});
+
+describe("issue-tracker section (#461, B7)", () => {
+  it("trackerKind rides the full ladder: detected < global < repo", () => {
+    const detectedOnly = resolve<TrackerKind>(SETTINGS_REGISTRY.trackerKind, {
+      detected: "github",
+    });
+    expect(detectedOnly.value).toBe("github");
+    expect(detectedOnly.layer).toBe("detected");
+
+    const overridden = resolve<TrackerKind>(SETTINGS_REGISTRY.trackerKind, {
+      detected: "github",
+      global: "jira",
+      repo: "linear",
+    });
+    expect(overridden.value).toBe("linear");
+    expect(overridden.layer).toBe("repo");
+    expect(overridden.provenance.contributions.map((c) => c.layer)).toEqual([
+      "builtin",
+      "detected",
+      "global",
+      "repo",
+    ]);
+  });
+
+  it("trackerKind's validator rejects out-of-vocabulary values", () => {
+    // Validation runs where offers are CONSTRUCTED (callers parse before
+    // offering), so the declaration's own validate is the boundary under test.
+    expect(() => SETTINGS_REGISTRY.trackerKind.validate("gitlab")).toThrow(/trackerKind/);
+    expect(SETTINGS_REGISTRY.trackerKind.validate("jira")).toBe("jira");
+  });
+
+  it("base URL and token env var are config-only: a detected offer REFUSES", () => {
+    expect(() =>
+      resolve(SETTINGS_REGISTRY.trackerBaseUrl, { detected: "https://x.atlassian.net" } as never),
+    ).toThrow(/detected/);
+    expect(() =>
+      resolve(SETTINGS_REGISTRY.trackerTokenEnv, { detected: "JIRA_TOKEN" } as never),
+    ).toThrow(/detected/);
+  });
+
+  it("detectable string rows accept a scout offer and render unset honestly", () => {
+    const detected = resolve(SETTINGS_REGISTRY.gateCommand, { detected: "pnpm check" });
+    expect(detected.value).toBe("pnpm check");
+    expect(detected.layer).toBe("detected");
+
+    const unset = resolve(SETTINGS_REGISTRY.logoPath, {});
+    expect(unset.value).toBe("");
+    expect(unset.provenance.contributions[0]?.value).toBe("(unset)");
   });
 });

@@ -133,6 +133,22 @@ describe("sidebar structure (C03 §2)", () => {
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
   });
 
+  it("keeps keyboard focus on the toggle across a collapse AND an expand", async () => {
+    const { getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
+    const collapse = getByLabelText("Collapse sidebar");
+    collapse.focus();
+    expect(document.activeElement).toBe(collapse);
+    // Collapse: the panel subtree unmounts — focus must land on the rail's Expand
+    // toggle, not fall to <body>.
+    fireEvent.click(collapse);
+    const expand = await waitFor(() => getByLabelText("Expand sidebar"));
+    expect(document.activeElement).toBe(expand);
+    // Expand again: focus returns to the panel's Collapse toggle.
+    fireEvent.click(expand);
+    const collapseAgain = await waitFor(() => getByLabelText("Collapse sidebar"));
+    expect(document.activeElement).toBe(collapseAgain);
+  });
+
   it("orders the action block Search → New Chat → Add Project → Add Environment", () => {
     const { getByText } = mountSidebar({ projects: [project("p1", "atlas")] });
     const order = ["Search", "New Chat", "Add Project", "Add Environment"].map((t) => getByText(t));
@@ -141,6 +157,23 @@ describe("sidebar structure (C03 §2)", () => {
       const curr = order[i];
       if (!prev || !curr) throw new Error("missing action row");
       // Node.DOCUMENT_POSITION_FOLLOWING (4) — each item follows the previous one.
+      expect(prev.compareDocumentPosition(curr) & 4).toBe(4);
+    }
+  });
+
+  it("orders the expanded footer Update → Help → Settings (rail order, read left-to-right)", () => {
+    useUpdateReady.setState({ ready: { version: "1.2.3" } });
+    const { getByText, getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
+    const order = [
+      getByText("Update").closest("button"),
+      getByLabelText("Help"),
+      getByLabelText("Settings"),
+    ];
+    for (let i = 1; i < order.length; i += 1) {
+      const prev = order[i - 1];
+      const curr = order[i];
+      if (!prev || !curr) throw new Error("missing footer control");
+      // Node.DOCUMENT_POSITION_FOLLOWING (4) — each control follows the previous one.
       expect(prev.compareDocumentPosition(curr) & 4).toBe(4);
     }
   });
@@ -288,20 +321,52 @@ describe("sidebar tree (C03 §3)", () => {
     await waitFor(() => expect(queryByText("Pinned")).toBeNull());
   });
 
-  it("fires projects.remove from the remove-project confirmation", async () => {
+  it("fires projects.remove DIRECTLY from the menu — no confirmation ceremony (Rule Zero)", async () => {
     const remove = vi.fn(() => ({ projects: [] }));
-    const { getByText, findByText, getByRole } = mountSidebar({
+    const { getByText, findByText, getByRole, queryByText } = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
       extraHandlers: { "projects.remove": remove },
     });
     await findByText("atlas");
     fireEvent.contextMenu(getByText("atlas"));
-    fireEvent.click(getByRole("menuitem", { name: "Remove project…" }));
-    // Confirmation names the project + its session count, then removes.
-    expect(getByText("Remove atlas?")).toBeTruthy();
-    fireEvent.click(getByRole("button", { name: "Remove Project" }));
+    fireEvent.click(getByRole("menuitem", { name: "Remove project" }));
+    // No dialog stands between the menu and the command.
+    expect(queryByText(/Remove atlas/)).toBeNull();
     await waitFor(() => expect(remove).toHaveBeenCalledOnce());
     expect(remove).toHaveBeenCalledWith(expect.objectContaining({ projectId: "p1" }));
+  });
+
+  it("navigates away only AFTER a successful removal of the project you stand in", async () => {
+    const { getByText, findByText, getByRole, history } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      path: "/s/s1", // standing in p1 via session s1
+      extraHandlers: { "projects.remove": () => ({ projects: [] }) },
+    });
+    await findByText("atlas");
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Remove project" }));
+    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat"));
+  });
+
+  it("does NOT navigate (nor claim success) when the removal command rejects", async () => {
+    const { getByText, findByText, getByRole, history } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      path: "/s/s1",
+      extraHandlers: {
+        "projects.remove": () => {
+          throw new Error("daemon connection lost");
+        },
+      },
+    });
+    await findByText("atlas");
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Remove project" }));
+    // Give the rejected mutation a turn to settle, then prove we stayed put.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(history.history).not.toContain("/new-chat");
+    expect(history.history.at(-1)).toBe("/s/s1");
   });
 });
