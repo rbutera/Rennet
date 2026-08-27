@@ -129,8 +129,9 @@
     "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 rename seam B9-gated"
   },
   "c13": {
-    "status": "pending",
-    "passes": false
+    "status": "done",
+    "passes": true,
+    "note": "PR #535 landed (squash 47fb3c5d); dual review opus APPROVE / Codex BLOCK, 4 findings upheld + fixed + confirmed by fresh opus (detached-ref leak on FAB, fire-and-forget persist now observed+latest-wins, anchor proof on real chrome, malformed-MarkId negatives). Positive control verified on the useMergedRefs fix. Protocol registry (setCoachmarks) will conflict-fold when B11's ask.* lands second"
   },
   "c14": {
     "status": "pending",
