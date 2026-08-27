@@ -76,6 +76,7 @@ const ABSORBED_IDS = [
   "review.setDisposition",
   "review.symbolLookup",
   "review.uiEvidence",
+  "round.dispatch",
   "settings.get",
   "settings.guidance",
   "settings.pinRepoValue",
@@ -109,7 +110,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(74);
+    expect(ABSORBED_IDS).toHaveLength(75);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

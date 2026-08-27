@@ -195,7 +195,7 @@ import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
-import { createRoundsRuntime, type PersistedBoardMeta, type RoundsRuntime } from "./runtime/rounds";
+import { createRoundsRuntime, type PersistedBoardMeta } from "./runtime/rounds";
 import { SessionEntry } from "./session/session-entry";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
@@ -1482,12 +1482,53 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       checkpoint: new GitCheckpointStore(repoRoot, locus),
     });
   };
-  // The rounds runtime + session entry (B11 cluster 4, closing B09 tasks 5.1/6.2's
-  // deferral): late-bound because the runtime needs `boardsRuntimeFor`, which is defined
-  // after the WS listener starts (below). The `dispatchRound` deps closure reads them at
-  // command time, so the null-until-assigned window is closed before any round dispatches.
-  let roundsRuntime: RoundsRuntime | undefined;
-  let sessionEntry: SessionEntry | undefined;
+  // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
+  // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
+  // (late-bound: `wsListener` is assigned below, read only when a board event fires), which
+  // fans raw frames to loopback sockets and `projectBoardEvent`-wrapped ones to projected
+  // sockets. One runtime per project root, created on demand.
+  const boardsRuntimes = new Map<string, BoardsRuntime>();
+  const boardsRuntimeFor = (projectRoot: string): BoardsRuntime => {
+    let runtime = boardsRuntimes.get(projectRoot);
+    if (!runtime) {
+      runtime = createBoardsRuntime(projectRoot, (boardId, events) =>
+        wsListener?.broadcastBoardEvent(boardId, events),
+      );
+      boardsRuntimes.set(projectRoot, runtime);
+    }
+    return runtime;
+  };
+  // The rounds runtime + session entry (B11 cluster 4 — closes B09 tasks 5.1/6.2's ledgered
+  // deferral: the mechanism was built and E2E-composed, the create-server trigger is here).
+  // The 6.2 seams, resolved from the composition root following the swarm/scout precedent:
+  // harness ports probe live; `boardsRuntimeFor` mints + broadcasts boards; the durable
+  // `BoardMetaStore` is the crash-boundary idempotency the `runRound` regeneration consults
+  // (persist before arrival, load on restart); prompts read from the on-disk `@rennet/prompts`
+  // src. `composeTurn` is omitted (optional — the lens boards are the surface until the
+  // authoring turn is wired). The round DISPATCH exercises only the per-session serializer;
+  // the full board regeneration `runRound` drives lands when its lens-pipeline collation
+  // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
+  const boardMetaStore = new BoardMetaStore(join(homedir(), ".rennet", "board-meta"));
+  const promptsSrcDir = (() => {
+    try {
+      // `@rennet/prompts` exports `./src/index.ts`; its dir is the prompt-file root the
+      // reader joins `prompts/<lens>.md` against. Resolved best-effort — only `runRound`
+      // reads a prompt, so an unresolved dir never breaks construction or the dispatch path.
+      return dirname(createRequire(import.meta.url).resolve("@rennet/prompts"));
+    } catch {
+      return join(homedir(), ".rennet", "prompts");
+    }
+  })();
+  const sessionEntry = new SessionEntry(new SessionStore());
+  const roundsRuntime = createRoundsRuntime({
+    resolveClaudePort: claudeAdapterForRepo,
+    resolveCodexExecutor: codexExecutorForRepo,
+    boardsRuntimeFor,
+    readPrompt: createNodePromptReader(promptsSrcDir),
+    persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
+    loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
+      boardMetaStore.listForGeneration(sessionId, generation),
+  });
   const dispatch = createDispatch({
     service,
     allowedRoots,
@@ -1565,11 +1606,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // post-commit kick (the swarm/scout precedent): the turn runs behind the command, and its
     // rejection never surfaces — `round.dispatch` already returned the composed work-order.
     dispatchRound: async ({ review, workOrder }) => {
-      if (!roundsRuntime) return;
       const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
       const branch = activePatchset?.repository.headRef;
       const session =
-        branch !== undefined && sessionEntry
+        branch !== undefined
           ? sessionEntry.enter(review.repositoryRoot, {
               branch,
               ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
@@ -2093,54 +2133,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     listen: daemonSettingsStore.read().daemon?.listen,
     // The served browser UI (#381); absent ⇒ headless.
     uiDist: options.uiDist,
-  });
-
-  // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
-  // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`,
-  // which fans raw frames to loopback sockets and `projectBoardEvent`-wrapped ones to
-  // projected sockets. One runtime per project root, created on demand.
-  const boardsRuntimes = new Map<string, BoardsRuntime>();
-  const boardsRuntimeFor = (projectRoot: string): BoardsRuntime => {
-    let runtime = boardsRuntimes.get(projectRoot);
-    if (!runtime) {
-      runtime = createBoardsRuntime(projectRoot, (boardId, events) =>
-        wsListener?.broadcastBoardEvent(boardId, events),
-      );
-      boardsRuntimes.set(projectRoot, runtime);
-    }
-    return runtime;
-  };
-
-  // The rounds runtime + session entry (B11 cluster 4 — closes B09 tasks 5.1/6.2's ledgered
-  // deferral: the mechanism was built and E2E-composed, the create-server trigger is here).
-  // The 6.2 seams, resolved from the composition root following the swarm/scout precedent:
-  // harness ports probe live; `boardsRuntimeFor` mints + broadcasts boards; the durable
-  // `BoardMetaStore` is the crash-boundary idempotency the `runRound` regeneration consults
-  // (persist before arrival, load on restart); prompts read from the on-disk `@rennet/prompts`
-  // src. `composeTurn` is omitted (optional — the lens boards are the surface until the
-  // authoring turn is wired). The round DISPATCH exercises only the per-session serializer;
-  // the full board regeneration `runRound` drives lands when its lens-pipeline collation
-  // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
-  const boardMetaStore = new BoardMetaStore(join(homedir(), ".rennet", "board-meta"));
-  const promptsSrcDir = (() => {
-    try {
-      // `@rennet/prompts` exports `./src/index.ts`; its dir is the prompt-file root the
-      // reader joins `prompts/<lens>.md` against. Resolved best-effort — only `runRound`
-      // reads a prompt, so an unresolved dir never breaks construction or the dispatch path.
-      return dirname(createRequire(import.meta.url).resolve("@rennet/prompts"));
-    } catch {
-      return join(homedir(), ".rennet", "prompts");
-    }
-  })();
-  sessionEntry = new SessionEntry(new SessionStore());
-  roundsRuntime = createRoundsRuntime({
-    resolveClaudePort: claudeAdapterForRepo,
-    resolveCodexExecutor: codexExecutorForRepo,
-    boardsRuntimeFor,
-    readPrompt: createNodePromptReader(promptsSrcDir),
-    persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
-    loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
-      boardMetaStore.listForGeneration(sessionId, generation),
   });
 
   let didShutdown = false;

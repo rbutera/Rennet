@@ -73,7 +73,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
   });
 
   it("a second dispatch of the same asks kicks the runtime exactly once (idempotent)", async () => {
-    const dispatchRound = vi.fn(async () => {});
+    const dispatchRound = vi.fn(() => Promise.resolve());
     const { store, dispatch } = harness(dispatchRound);
     store.append(REVIEW_ID, {
       kind: "stage",
@@ -114,7 +114,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
   });
 
   it("an empty ask set composes nothing to dispatch — no kick, no round", async () => {
-    const dispatchRound = vi.fn(async () => {});
+    const dispatchRound = vi.fn(() => Promise.resolve());
     const { dispatch } = harness(dispatchRound);
 
     const { workOrder, dispatched } = (await dispatch({ reviewId: REVIEW_ID })) as DispatchResult;
