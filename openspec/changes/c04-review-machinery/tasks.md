@@ -24,9 +24,9 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 4. `code-tabs.tsx` + `reference-chip.tsx` — multi-site evidence
 
-- [ ] 4.1 `packages/app-ui/src/review/reference-chip.tsx`: one presentational `basename:line` chip (label via `canvas/symbol.ts#basename`, full path in `title`), used by both this cluster and cluster 6 — no duplicate pill markup (the spike has two).
-- [ ] 4.2 `packages/app-ui/src/review/code-tabs.tsx`: `CodeTabs` (pill tabs over `CodeBlock`s via `reference-chip`, tab strip hidden at one excerpt) and `AnchorReveal` (a row of chips; click fetches via `review/citations.ts` and renders the slice below via `code-block.tsx`, clicking the active chip folds it). Unreadable citation renders the citations seam's `error` state as one line of text, never silently empty.
-- [ ] 4.3 DOM tests over `MemoryBridge`: single-excerpt hides the tab strip; multi-excerpt renders one visible card at a time; `AnchorReveal` toggle fetch/fold/re-fold-without-refetch (assert the underlying `useCommand` call count via the `MemoryBridge` handler's call count, not a separate cache); the honest-failure line when the stub has no handler. Cluster gate green. Commit.
+- [x] 4.1 `packages/app-ui/src/review/reference-chip.tsx`: one presentational `basename:line` chip (label via `canvas/symbol.ts#basename`, full path in `title`), used by both this cluster and cluster 6 — no duplicate pill markup (the spike has two).
+- [x] 4.2 `packages/app-ui/src/review/code-tabs.tsx`: `CodeTabs` (pill tabs over `CodeBlock`s via `reference-chip`, tab strip hidden at one excerpt) and `AnchorReveal` (a row of chips; click fetches via `review/citations.ts` and renders the slice below via `code-block.tsx`, clicking the active chip folds it). Unreadable citation renders the citations seam's `error` state as one line of text, never silently empty.
+- [x] 4.3 DOM tests over `MemoryBridge`: single-excerpt hides the tab strip; multi-excerpt renders one visible card at a time; `AnchorReveal` toggle fetch/fold/re-fold-without-refetch (assert the underlying `useCommand` call count via the `MemoryBridge` handler's call count, not a separate cache); the honest-failure line when the stub has no handler. Cluster gate green. Commit.
 
 ## 5. `selection-toolbar.tsx` — `ProseSelectionLayer`
 
