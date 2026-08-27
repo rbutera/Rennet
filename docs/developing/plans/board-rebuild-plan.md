@@ -45,8 +45,11 @@ best-practices, Huntley's Ralph, Pocock's bounded AFK variant). The rules:
 
 - **Fresh context per iteration.** Every implementing session starts clean and
   reads its state from disk. Never continue a filling session past its wave.
-- **One workstream in flight per track; one task cluster per session.**
-  Bounded iterations with an explicit completion sigil — never `while true`.
+- **One workstream in flight per merge surface; one task cluster per session.**
+  Workstreams whose packets touch disjoint packages/directories may run in
+  parallel, across or within tracks; overlapping footprints serialize. Landing
+  is always serial: one merge to `main` at a time, others rebase. Bounded
+  iterations with an explicit completion sigil — never `while true`.
 - **State lives on disk, not in context**: the OpenSpec change (tasks.md), the
   packet manifest, `BUILD-STATUS.json`, and git history are the only
   continuity. Assume interruption at any moment.
@@ -91,7 +94,14 @@ repo doesn't exist yet.) Each packet carries:
 ## Orchestration topology
 
 A master orchestrator drives three track orchestrators (Claude agent teams).
-**Parallel only at frozen contract boundaries; serial within a track.**
+**Parallel wherever merge surfaces are disjoint; serial only where packets
+overlap or a contract gate blocks.** Cross-track gates stay hard (B4 ← A5,
+Track C ← B3); within those gates, co-dispatch any workstreams whose packet
+footprints don't touch the same packages. The critical path is the dependent
+chain B5 → B8 → B9 → B11 — keep it never-idle and fill spare dispatch slots
+from Track C, whose `MemoryBridge` fixture law decouples most C work from the
+live backend (C10 genuinely waits on B10's settings ladder; C14 runs last,
+alone).
 
 - **Track A (whiteboard)** free-runs immediately — its own repo, zero overlap.
 - **Track B (engine)** starts now on B1–B3 (pure Rennet work); B4 onward
