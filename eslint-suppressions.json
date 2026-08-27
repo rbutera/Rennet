@@ -1,61 +1,62 @@
 {
   "packages/app-ui/src/app/shell.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-direct-invoke": {
       "count": 12
     }
   },
   "packages/app-ui/src/components/connection-host.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-direct-invoke": {
       "count": 1
     }
   },
   "packages/app-ui/src/components/context-map-view.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-direct-invoke": {
       "count": 3
     }
   },
   "packages/app-ui/src/components/directory-browser.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-direct-invoke": {
       "count": 1
     }
   },
   "packages/app-ui/src/components/front-door.tsx": {
-    "no-restricted-syntax": {
-      "count": 10
+    "rennet/no-direct-invoke": {
+      "count": 9
     }
   },
   "packages/app-ui/src/components/github-connect.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-direct-invoke": {
       "count": 6
     }
   },
   "packages/app-ui/src/components/pr-worktree-status.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-direct-invoke": {
       "count": 1
     }
   },
   "packages/app-ui/src/components/project-detail.tsx": {
-    "no-restricted-syntax": {
-      "count": 4
+    "rennet/no-direct-invoke": {
+      "count": 3
+    },
+    "rennet/no-handrolled-toggle": {
+      "count": 1
     }
   },
   "packages/app-ui/src/components/project-processing.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-direct-invoke": {
       "count": 1
     }
   },
   "packages/app-ui/src/components/settings-screen.tsx": {
-    "no-restricted-syntax": {
-      "count": 13
+    "rennet/no-direct-invoke": {
+      "count": 10
+    },
+    "rennet/no-handrolled-toggle": {
+      "count": 2
     }
   },
   "packages/app-ui/src/components/source-switcher.tsx": {
-    "no-restricted-syntax": {
-      "count": 1
-    }
-  },
-  "packages/app-ui/src/components/symbol-inspector.tsx": {
-    "no-restricted-syntax": {
+    "rennet/no-handrolled-toggle": {
       "count": 1
     }
   }

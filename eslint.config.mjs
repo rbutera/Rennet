@@ -1,40 +1,113 @@
 import nx from "@nx/eslint-plugin";
 
-// Shared no-restricted-syntax selectors. Kept as consts because ESLint flat config
-// REPLACES a rule's options rather than merging them: a file matched by two blocks
-// that both set `no-restricted-syntax` keeps only the LAST block's selectors. So the
-// invoke block below re-lists the hex selector to avoid silently dropping it on
-// app-ui surface files (a past stale-pass class of bug). Reference the const, never
-// re-type the selector.
-const NO_HARDCODED_HEX = {
-  selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
-  message:
-    "No hardcoded hex colours in the UI packages — use a theme utility or var(--rn-…) token from @rennet/theme.",
-};
+// ── Local `rennet` plugin: three DISTINCT rule ids ───────────────────────────
+// The strangler baseline (eslint-suppressions.json) suppresses a per-file COUNT
+// per rule id. Folding hex + invoke + toggle under the single `no-restricted-syntax`
+// id merged their counts, so removing one selector's violation while adding another
+// selector's in the same file kept the count equal and PASSED. Splitting them into
+// three own-id rules makes each count independent — a new toggle can no longer hide
+// behind a drained hex, and vice versa.
+const HEX_MESSAGE =
+  "No hardcoded hex colours in the UI packages — use a theme utility or var(--rn-…) token from @rennet/theme.";
+const INVOKE_MESSAGE =
+  "No direct bridge.invoke in app-ui surfaces — read through useCommand, write through useMutation, stream through useCommandStream (data/ hooks over useBridge). Only src/data/ may call .invoke.";
+const TOGGLE_MESSAGE =
+  "No hand-rolled segmented control in app-ui surfaces — use ToggleGroup/Toggle from @rennet/ui instead of hand-rolling a group of aria-pressed buttons or a role=radiogroup with pressed children (autopsy S6).";
 
-// The standing law (C01 §2.7, proposal): no app-ui surface/component code calls the
-// bridge's `.invoke` directly. Reads go through `useCommand`, writes through
-// `useMutation`, live narration through `useCommandStream` — the `src/data/` hooks
-// over `useBridge()`. This bans the method call itself (any `.invoke(...)`), so it
-// catches `bridge.invoke`, `temp.bridge.invoke`, and `RennetBridge.invoke` alike.
-const NO_DIRECT_INVOKE = {
-  selector: "CallExpression[callee.property.name='invoke']",
-  message:
-    "No direct bridge.invoke in app-ui surfaces — read through useCommand, write through useMutation, stream through useCommandStream (data/ hooks over useBridge). Only src/data/ may call .invoke.",
-};
+/** A rule that reports a single esquery selector — the invoke + hex fences. */
+function selectorRule(selector, message) {
+  return {
+    meta: { type: "problem", schema: [], docs: { description: message } },
+    create: (context) => ({
+      [selector](node) {
+        context.report({ node, message });
+      },
+    }),
+  };
+}
+
+/** True if `el` (a JSXElement) has an `aria-pressed` attribute of its own. */
+function hasAriaPressed(el) {
+  return (
+    el?.type === "JSXElement" &&
+    el.openingElement.attributes.some(
+      (a) => a.type === "JSXAttribute" && a.name?.name === "aria-pressed",
+    )
+  );
+}
+
+/** True if any ancestor of `node` is a `.map(...)` call — a dynamic group. */
+function insideMapCallback(node) {
+  for (let n = node.parent; n; n = n.parent) {
+    if (
+      n.type === "CallExpression" &&
+      n.callee?.type === "MemberExpression" &&
+      n.callee.property?.name === "map"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** True if a JSXElement sibling of `el` also carries `aria-pressed` — a static group. */
+function hasPressedSibling(el) {
+  const kids = el.parent?.children;
+  return (
+    Array.isArray(kids) &&
+    kids.some((k) => k !== el && k.type === "JSXElement" && hasAriaPressed(k))
+  );
+}
+
+/** True if any nested JSXElement under `el` carries `aria-pressed` (static subtree). */
+function subtreeHasAriaPressed(el) {
+  for (const child of el.children ?? []) {
+    if (child.type === "JSXElement" && (hasAriaPressed(child) || subtreeHasAriaPressed(child))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Kit-not-hand-rolled (autopsy S6): app-ui surfaces must not hand-roll a
-// "pick one of N" segmented control — the tell is the accessibility markup a
-// hand-roll carries (`aria-pressed` on a button, or `role="radiogroup"` in
-// surface JSX). Those come from the kit's ToggleGroup/Toggle (@rennet/ui), which
-// exists precisely to kill the five incumbent hand-rolls. packages/ui is where
-// that markup legitimately lives, so the rule scopes to app-ui only; the existing
-// sites are quarantined in eslint-suppressions.json so a NEW hand-roll fails.
-const NO_HANDROLLED_TOGGLE = {
-  selector:
-    "JSXAttribute[name.name='aria-pressed'], JSXAttribute[name.name='role'][value.value='radiogroup']",
-  message:
-    "No hand-rolled segmented control in app-ui surfaces — use ToggleGroup/Toggle from @rennet/ui instead of hand-rolling aria-pressed / role=radiogroup markup (autopsy S6).",
+// "pick one of N" segmented control. The tell is a GROUP of pressed buttons — the
+// prior rule flagged EVERY lone `aria-pressed`, which wrongly caught legitimate
+// single two-state buttons (a pin, a mute) and MISSED expression/loop-generated
+// groups. This rule fires only on the group shape: (1) two-or-more sibling
+// `aria-pressed` buttons, (2) an `aria-pressed` rendered in a `.map()` (the dynamic
+// segmented control), or (3) a `role="radiogroup"` whose subtree hand-rolls
+// `aria-pressed` (a real radiogroup uses role=radio + aria-checked). A lone
+// `aria-pressed` passes — that is a genuine toggle, not a segmented control.
+const noHandrolledToggle = {
+  meta: { type: "problem", schema: [], docs: { description: TOGGLE_MESSAGE } },
+  create(context) {
+    return {
+      "JSXAttribute[name.name='aria-pressed']"(node) {
+        const el = node.parent?.parent;
+        if (el?.type !== "JSXElement") return;
+        if (insideMapCallback(el) || hasPressedSibling(el)) {
+          context.report({ node, message: TOGGLE_MESSAGE });
+        }
+      },
+      "JSXAttribute[name.name='role'][value.value='radiogroup']"(node) {
+        const el = node.parent?.parent;
+        if (el?.type === "JSXElement" && subtreeHasAriaPressed(el)) {
+          context.report({ node, message: TOGGLE_MESSAGE });
+        }
+      },
+    };
+  },
+};
+
+const rennet = {
+  rules: {
+    "no-hardcoded-hex": selectorRule("Literal[value=/#[0-9a-fA-F]{3,8}/]", HEX_MESSAGE),
+    "no-direct-invoke": selectorRule(
+      "CallExpression[callee.property.name='invoke']",
+      INVOKE_MESSAGE,
+    ),
+    "no-handrolled-toggle": noHandrolledToggle,
+  },
 };
 
 export default [
@@ -176,8 +249,9 @@ export default [
       // issue refs like #178 that the hex selector would false-match.
       "packages/app-ui/src/canvas/openspec.fixture.ts",
     ],
+    plugins: { rennet },
     rules: {
-      "no-restricted-syntax": ["error", NO_HARDCODED_HEX],
+      "rennet/no-hardcoded-hex": "error",
     },
   },
   {
@@ -185,28 +259,36 @@ export default [
     // every app-ui surface reaches the bridge through the data-seam hooks, never by
     // calling `.invoke` itself. The seam internals under `src/data/` are the ONE
     // sanctioned caller and are exempt; tests drive MemoryBridge directly and are
-    // exempt too. Placed AFTER the hex block so it wins the merge on surface files —
-    // hence it re-lists NO_HARDCODED_HEX to keep hex enforced there.
+    // exempt too. Hex is enforced on these same surfaces by the block ABOVE (app-ui
+    // is in its `files`) — with distinct rule ids there is no options-REPLACE merge to
+    // guard against, so the two fences stack cleanly across blocks.
     //
     // ── LEGACY QUARANTINE (strangler-fig), done as a CHECKED BASELINE ──────────
     // Incumbent surfaces still on the Surface/prop-bridge model carry live `.invoke`
-    // calls today. They are NOT whole-file ignored — that would exempt NEWLY added
-    // `.invoke` calls too, defeating the fence. Instead the EXISTING calls are
-    // recorded in `eslint-suppressions.json` (ESLint's suppressions baseline), which
-    // the CLI auto-loads. Effect: every current legacy call still passes, but a NEW
-    // `.invoke` in a quarantined file pushes the per-file count past the baseline and
-    // FAILS. C03–C14 drain the legacy calls and prune the baseline (a drained call
+    // calls (and map-rendered hand-rolled segmented controls) today. They are NOT
+    // whole-file ignored — that would exempt NEWLY added violations too, defeating the
+    // fence. Instead the EXISTING violations are recorded in `eslint-suppressions.json`
+    // (ESLint's suppressions baseline), which the CLI auto-loads. Because each fence
+    // now has its OWN rule id, the baseline holds a SEPARATE per-file count per rule:
+    // a new toggle can no longer mask itself behind a drained invoke/hex. A new
+    // `.invoke` / hand-rolled group pushes that rule's per-file count past the baseline
+    // and FAILS. C03–C14 drain the legacy sites and prune the baseline (a drained entry
     // leaves an unused suppression, which ESLint also flags); C14 verifies it is empty.
     // Regenerate after draining:
-    //   pnpm exec eslint packages/app-ui/src --suppress-rule no-restricted-syntax --prune-suppressions
+    //   pnpm exec eslint packages/app-ui/src \
+    //     --suppress-rule rennet/no-hardcoded-hex \
+    //     --suppress-rule rennet/no-direct-invoke \
+    //     --suppress-rule rennet/no-handrolled-toggle --prune-suppressions
     files: ["packages/app-ui/src/**/*.ts", "packages/app-ui/src/**/*.tsx"],
     ignores: [
       "packages/app-ui/src/data/**",
       "packages/app-ui/src/**/*.test.ts",
       "packages/app-ui/src/**/*.test.tsx",
     ],
+    plugins: { rennet },
     rules: {
-      "no-restricted-syntax": ["error", NO_HARDCODED_HEX, NO_DIRECT_INVOKE, NO_HANDROLLED_TOGGLE],
+      "rennet/no-direct-invoke": "error",
+      "rennet/no-handrolled-toggle": "error",
     },
   },
 ];
