@@ -1,0 +1,85 @@
+import type { Review } from "@rennet/protocol";
+import type { RennetState, StagedAsk } from "../store";
+import { parseLineAnchor, selectBodyVsLineAsks } from "./selectors";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The hand-off resolution seam (C08 cluster 1, Reconciliation 1/3) — the SINGLE point
+// that resolves (a) a review's ENTRY MODE and (b) the LIVING-DRAFT SOURCE the lanes
+// render. Mirrors C3's `sidebar-data.ts`, C4's `citations.ts`, C5's `board-data.ts`:
+// no mode or draft shape is invented at a call site; every hand-off path goes through here.
+//
+// THE GATED SWAP (cluster 8): the living-draft source is composed from the store's staged
+// asks TODAY. When B11's continuously-redrafted durable composition projection lands (and
+// the registered `publish.compose` read), THIS is the only file that changes — the lanes
+// keep reading `selectLivingDraft`. That is the seam's whole reason to exist.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The hand-off entry mode a review dispatches on (Objective clause 3). */
+export type EntryMode = "teammate-pr" | "own-branch" | "retrospective";
+
+/**
+ * Resolve the entry mode from a review (Reconciliation 1), keyed on the two branch-state
+ * facts the `Review` carries: `retrospective` (read-only, no post) and `postTarget`
+ * (present exactly when the review can post to a real PR — a teammate's PR to review).
+ * A non-retrospective review with no post-target is your own branch: you dispatch rounds
+ * and open the PR yourself. A retrospective review offers NO exits.
+ *
+ * `postTarget` + `retrospective` are the only branch-state signals on the snapshot today;
+ * this resolver is the one place to refine the split (e.g. an own already-open PR) when an
+ * ownership signal is added — no call site re-derives the mode.
+ */
+export function resolveEntryMode(review: Pick<Review, "retrospective" | "postTarget">): EntryMode {
+  if (review.retrospective) return "retrospective";
+  return review.postTarget ? "teammate-pr" : "own-branch";
+}
+
+/** Whether a mode offers any exit at all — retrospective reviews do not (law 10). */
+export const modeHasExits = (mode: EntryMode): boolean => mode !== "retrospective";
+
+/** One line comment in the living draft — its ask, resolved to its `path:line`. */
+export interface LineComment {
+  readonly path: string;
+  readonly line: number;
+  readonly ask: StagedAsk;
+}
+
+/** Line comments sharing a file path — GitHub's line-comment stratum, grouped (R40). */
+export interface LineCommentGroup {
+  readonly path: string;
+  readonly comments: readonly LineComment[];
+}
+
+/**
+ * The living-draft source: the ordered review-body asks and the line comments grouped by
+ * file path, in GitHub's two-strata shape. This is the STRUCTURE a lane renders — the
+ * opener block, intent tags, provenance lines and `RichText` are the lane's presentation;
+ * the seam owns which asks are body, which are line comments, and their file grouping.
+ */
+export interface LivingDraft {
+  readonly body: readonly StagedAsk[];
+  readonly lineGroups: readonly LineCommentGroup[];
+}
+
+/**
+ * Compose the living draft from the store's staged asks (the review's own acts) — the
+ * cluster-1 source. Body asks keep their staged order; line comments group by file path,
+ * each group in first-seen order. The `publish.compose` read and B11's durable projection
+ * are the swap this function absorbs (cluster 8); every lane reads THIS, never the store
+ * directly, so the swap touches this file alone.
+ */
+export const selectLivingDraft = (s: RennetState): LivingDraft => {
+  const { body, line } = selectBodyVsLineAsks(s);
+  const byPath = new Map<string, LineComment[]>();
+  for (const ask of line) {
+    const parsed = parseLineAnchor(ask.anchor);
+    if (!parsed) continue; // selectBodyVsLineAsks already proved the parse; guard for types
+    const group = byPath.get(parsed.path) ?? [];
+    group.push({ path: parsed.path, line: parsed.line, ask });
+    byPath.set(parsed.path, group);
+  }
+  const lineGroups: LineCommentGroup[] = [...byPath.entries()].map(([path, comments]) => ({
+    path,
+    comments,
+  }));
+  return { body, lineGroups };
+};
