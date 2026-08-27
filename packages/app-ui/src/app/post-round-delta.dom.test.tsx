@@ -68,6 +68,17 @@ describe("post-round delta marks — arrival surfaces them, viewing decays them 
     // "Still Open" (reworked) and "Beyond the Asks" (new) — both unviewed on arrival.
     expect(dots()).toHaveLength(2);
 
+    // Finding 6: the marks must carry the RIGHT classification, not merely be present — a
+    // presence+decay test stays green if `new`↔`reworked` are swapped. Pin each section's
+    // `delta` by id: "Still Open" is `reworked`, "Beyond the Asks" is `new`.
+    const section = (id: string) => r.container.querySelector(`[data-section-id="${id}"]`);
+    expect(section("g2-open")?.getAttribute("data-delta")).toBe("reworked");
+    expect(section("g2-beyond")?.getAttribute("data-delta")).toBe("new");
+    // …and the carried-forward frozen section has NEITHER a delta attribute NOR a dot.
+    const frozen = section("g2-gen1");
+    expect(frozen?.hasAttribute("data-delta")).toBe(false);
+    expect(frozen?.querySelector('[data-testid="delta-dot"]')).toBeNull();
+
     // Viewing a changed section decays ITS mark (the C5 viewed set, keyed boardId::ref).
     await r.user.click(r.getByText("Still Open"));
     expect(dots()).toHaveLength(1);
