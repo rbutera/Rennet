@@ -1,5 +1,5 @@
 import { cn } from "@rennet/ui";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { RichText } from "../review";
 import { type QuoteThread, useRennetStore } from "../store";
 
@@ -97,10 +97,41 @@ function QuoteHighlight({
   readonly children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLSpanElement>(null);
   const explainOnly = threads.every(({ thread }) => thread.kind === "explain");
+  const focusedThreadId = useRennetStore((s) => s.review.focusedThreadId);
+  const setFocusedThread = useRennetStore((s) => s.reviewActions.setFocusedThread);
+
+  // The selection-toolbar hand-off (Objective clause 5): Comment/Explain/Request-Changes
+  // mint a thread and CALL `setFocusedThread(id)` — no separate toolbar logic here. When a
+  // thread this highlight covers is focused, open the popover and release the focus, so the
+  // reviewer lands straight in the exchange they just opened.
+  useEffect(() => {
+    if (focusedThreadId && threads.some(({ id }) => id === focusedThreadId)) {
+      setOpen(true);
+      setFocusedThread(null);
+    }
+  }, [focusedThreadId, threads, setFocusedThread]);
+
+  // A usable popover: an outside click or Escape closes it (no gate — just close-on-blur).
+  useEffect(() => {
+    if (!open) return;
+    function onDown(event: MouseEvent) {
+      if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   return (
-    <span className="relative">
+    <span ref={wrapperRef} className="relative">
       {/* biome-ignore lint/a11y/useSemanticElements: highlighted prose can carry citation-chip <button>s, and nested buttons are invalid HTML — a role="button" span is the keep-list pattern. */}
       <span
         role="button"

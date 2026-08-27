@@ -14,7 +14,7 @@ import { QuoteHighlightLayer } from "./quote-highlight";
 const PROSE =
   "The adapter authenticates with the user's subscription and costs nothing per token.\n\nA separate paragraph with untouched prose.";
 
-const { addQuoteComment, resetReview } = useRennetStore.getState().reviewActions;
+const { addQuoteComment, setFocusedThread, resetReview } = useRennetStore.getState().reviewActions;
 
 beforeEach(() => resetReview());
 
@@ -86,5 +86,16 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     expect(container.querySelector('[data-thread-kind="explain"]')).toBeTruthy();
     // Explain is a question to the orchestrator: it never mints a staged ask.
     expect(Object.keys(useRennetStore.getState().review.stagedAsks)).toHaveLength(0);
+  });
+
+  it("the selection-toolbar hand-off: focusing a fresh thread opens its popover, no click", () => {
+    // The toolbar mints a thread then calls setFocusedThread(id) — the highlight opens
+    // straight into the exchange and releases the focus.
+    const id = addQuoteComment("costs nothing per token", "why free?");
+    setFocusedThread(id);
+    const { container } = render();
+    expect(container.textContent).toContain("why free?");
+    expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
+    expect(useRennetStore.getState().review.focusedThreadId).toBeNull();
   });
 });
