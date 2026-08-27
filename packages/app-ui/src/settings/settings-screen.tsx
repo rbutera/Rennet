@@ -13,6 +13,7 @@ import {
   type SettingsPageMeta,
 } from "./pages";
 import { usePriorSurface } from "./prior-surface";
+import { ShortcutsPage } from "./shortcuts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Settings takeover shell (C10 §1.1–1.2, claims 575–577). A full-view takeover
@@ -49,6 +50,7 @@ function SettingsPagePending({ page }: { readonly page: SettingsPageMeta }) {
 function ActivePage({ page }: { readonly page: SettingsPageMeta }) {
   if (page.id === "environments") return <EnvironmentsPage />;
   if (page.id === "appearance") return <AppearancePage />;
+  if (page.id === "keybindings") return <ShortcutsPage />;
   return <SettingsPagePending page={page} />;
 }
 
