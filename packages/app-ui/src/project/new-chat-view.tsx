@@ -1,11 +1,31 @@
-import type { Project } from "@rennet/protocol";
+import type { Project, SmartListCi } from "@rennet/protocol";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
-import { ArrowUp, Check, ChevronDown, GitBranch, Map as MapIcon, MoveLeft } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  GitBranch,
+  GitMerge,
+  GitPullRequest,
+  Map as MapIcon,
+  MoveLeft,
+  Search,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
 import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
+import { TargetIcon } from "../shell/sidebar/target-icon";
+import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../shell/sidebar-data";
+import {
+  buildSmartRows,
+  filterSmartRows,
+  type SmartFilter,
+  type SmartRow,
+  smartListCounts,
+  sortSmartRows,
+} from "./smart-list";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The New Chat view (C12 §10.8, /new-chat?project=…). A full-view takeover — there
@@ -22,8 +42,51 @@ import { newChatPath, projectMapPath } from "../routes/url";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The chosen review target: the whole-project current checkout (default), or a row
- *  from the smart list (cluster 6.2). Kept as a union so 6.2 slots the row in. */
-export type NewChatTarget = { readonly kind: "checkout" };
+ *  from the smart list. */
+export type NewChatTarget =
+  | { readonly kind: "checkout" }
+  | { readonly kind: "row"; readonly row: SmartRow };
+
+/** The tab vocabulary → smart-list filter. One list, no zones — the tabs are a filter. */
+const TABS: readonly { readonly filter: SmartFilter; readonly label: string }[] = [
+  { filter: "all", label: "All" },
+  { filter: "needs-you", label: "Needs you" },
+  { filter: "mine", label: "Mine" },
+  { filter: "local", label: "Local" },
+  { filter: "prs", label: "PRs" },
+];
+
+/** The row's `owner/name`, for the repo column (dropped when the workspace is single-repo). */
+function repoOf(row: SmartRow): string {
+  return row.kind === "pr" ? (row.pr?.repository ?? "") : (row.local?.repository ?? "");
+}
+
+/** The documented text-filter fields: PR number/title/branch/repo/author; local branch+repo. */
+function matchesText(row: SmartRow, needle: string): boolean {
+  if (!needle) return true;
+  const hay =
+    row.kind === "pr"
+      ? `#${row.pr?.number} ${row.title} ${row.branch} ${row.pr?.repository} ${row.author}`
+      : `${row.branch} ${row.local?.repository ?? ""}`;
+  return hay.toLowerCase().includes(needle);
+}
+
+/** Fold a smart-list row onto the unified target vocabulary (R36 icon language). */
+function targetOf(row: SmartRow): { kind: SessionTarget; state?: SessionTargetState } {
+  if (row.kind === "local") return { kind: "your-branch" };
+  if (row.state === "merged" || row.state === "closed") {
+    return { kind: row.mine ? "your-pr" : "teammate-pr", state: "merged" };
+  }
+  if (row.mine) return { kind: "your-pr" };
+  return { kind: "teammate-pr", state: row.needsYou ? "needs-you" : undefined };
+}
+
+/** The composer chip's label for the current target. */
+function targetChipLabel(target: NewChatTarget, branch: string): string {
+  if (target.kind === "checkout") return `Current Checkout · ${branch}`;
+  const row = target.row;
+  return row.kind === "pr" ? `#${row.pr?.number} · ${row.branch}` : row.branch;
+}
 
 export function NewChatView({ projectId }: { readonly projectId: string }) {
   const [, navigate] = useLocation();
@@ -33,6 +96,19 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
 
   const [target, setTarget] = useState<NewChatTarget>({ kind: "checkout" });
   const [message, setMessage] = useState("");
+  const [tab, setTab] = useState<SmartFilter>("all");
+  const [filter, setFilter] = useState("");
+
+  const { data: detail } = useCommand("project.detail", { projectId });
+  const rows = useMemo(
+    () => (detail ? sortSmartRows(buildSmartRows(detail), "hot") : []),
+    [detail],
+  );
+  const counts = useMemo(() => smartListCounts(rows), [rows]);
+  const needle = filter.trim().toLowerCase();
+  const visible = filterSmartRows(rows, tab).filter((row) => matchesText(row, needle));
+  const showRepo = new Set(rows.map(repoOf)).size > 1;
+  const selectedRowId = target.kind === "row" ? target.row.id : null;
 
   const close = () => navigate(newChatPath());
 
@@ -101,7 +177,65 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             ?
           </h1>
 
-          {/* Smart list (the review-target picker) — cluster 6.2. */}
+          <div className="mt-7 flex items-center gap-2">
+            <div className="flex items-center gap-0.5 rounded-control border border-line bg-surface p-0.5">
+              {TABS.map(({ filter: value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTab(value)}
+                  aria-pressed={tab === value}
+                  className={cn(
+                    "flex items-center gap-1.5 whitespace-nowrap rounded-chip px-2 py-1 text-xs font-medium transition-colors",
+                    tab === value ? "bg-raised text-ink" : "text-ink-soft hover:text-ink",
+                  )}
+                >
+                  {label}
+                  <span className="text-2xs text-ink-faint">{counts[value]}</span>
+                </button>
+              ))}
+            </div>
+            <label className="ml-auto flex h-7 w-52 items-center gap-1.5 rounded-control border border-line bg-surface px-2 focus-within:border-accent-line">
+              <Icon icon={Search} className="size-3.5 shrink-0 text-ink-faint" />
+              <input
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+                onKeyDown={(event) => {
+                  // Esc clears the filter first; a second Esc (empty filter) bubbles to
+                  // the window handler and closes the page.
+                  if (event.key === "Escape" && filter) {
+                    event.stopPropagation();
+                    setFilter("");
+                  }
+                }}
+                placeholder="Filter"
+                aria-label="Filter branches and pull requests"
+                className="w-full bg-transparent text-xs text-ink placeholder:text-ink-faint focus-visible:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 flex flex-col divide-y divide-line overflow-hidden rounded-surface border border-line">
+            <CheckoutRow
+              branch={branch}
+              selected={target.kind === "checkout"}
+              onSelect={() => setTarget({ kind: "checkout" })}
+            />
+            {visible.map((row) => (
+              <ItemRow
+                key={row.id}
+                row={row}
+                showRepo={showRepo}
+                selected={selectedRowId === row.id}
+                onSelect={() => setTarget({ kind: "row", row })}
+              />
+            ))}
+            {visible.length === 0 ? (
+              <div className="px-3 py-6 text-center text-xs text-ink-faint">
+                {rows.length === 0 ? "No open branches or pull requests yet." : "Nothing matches."}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -190,8 +324,11 @@ function Composer({
         />
         <div className="flex items-center gap-2 px-3 pt-1 pb-2.5">
           <span className="flex items-center gap-1.5 rounded-chip border border-line bg-raised px-2 py-1 text-xs text-ink-soft">
-            <Icon icon={GitBranch} className="size-3 text-ink-faint" />
-            Current Checkout · {branch}
+            <Icon
+              icon={target.kind === "row" && target.row.kind === "pr" ? GitPullRequest : GitBranch}
+              className="size-3 text-ink-faint"
+            />
+            {targetChipLabel(target, branch)}
             {target.kind !== "checkout" ? (
               <button
                 type="button"
@@ -222,4 +359,165 @@ function Composer({
       </div>
     </div>
   );
+}
+
+function SelectionMark({ selected }: { readonly selected: boolean }) {
+  return (
+    <Icon
+      icon={Check}
+      className={cn(
+        "size-4 shrink-0 text-accent transition-opacity",
+        selected ? "opacity-100" : "opacity-0",
+      )}
+    />
+  );
+}
+
+/** The unified target-vocabulary state chip: the R36 icon + its words. */
+function StateChip({ row }: { readonly row: SmartRow }) {
+  const { kind, state } = targetOf(row);
+  return (
+    <span className="flex shrink-0 items-center gap-1 rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-soft">
+      <TargetIcon kind={kind} state={state} className="size-3" />
+      {TARGET_LABEL[kind]}
+    </span>
+  );
+}
+
+/** The pinned "Current Checkout" row — the default target (whole project, no row). */
+function CheckoutRow({
+  branch,
+  selected,
+  onSelect,
+}: {
+  readonly branch: string;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        "flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors",
+        selected ? "bg-raised" : "hover:bg-raised/60",
+      )}
+    >
+      <Icon icon={GitBranch} className="size-3.5 shrink-0 text-ink-faint" />
+      <span className="text-sm font-medium text-ink">Current Checkout</span>
+      <span className="font-mono text-xs text-ink-soft">{branch}</span>
+      <span className="ml-auto text-2xs text-ink-faint">no target — talk about the project</span>
+      <SelectionMark selected={selected} />
+    </button>
+  );
+}
+
+function ItemRow({
+  row,
+  showRepo,
+  selected,
+  onSelect,
+}: {
+  readonly row: SmartRow;
+  readonly showRepo: boolean;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+}) {
+  const merged = row.state === "merged";
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        "flex flex-col gap-1 px-3.5 py-2.5 text-left transition-colors",
+        selected ? "bg-raised" : "hover:bg-raised/60",
+        // Merged rows dim, and lift on hover/selection.
+        merged && !selected && "opacity-50 hover:opacity-80",
+      )}
+    >
+      {row.kind === "local" ? (
+        <span className="flex w-full items-center gap-2">
+          <Icon
+            icon={GitBranch}
+            className={cn("size-3.5 shrink-0", row.local?.dirty ? "text-accent" : "text-ink-faint")}
+          />
+          <span className="min-w-0 truncate font-mono text-sm font-medium text-ink">
+            {row.branch}
+          </span>
+          {row.local?.dirty ? (
+            <span className="shrink-0 text-2xs font-medium text-accent" title="uncommitted changes">
+              ● dirty
+            </span>
+          ) : null}
+          {row.local?.stage ? (
+            <span className="min-w-0 truncate text-2xs text-ink-faint">{row.local.stage}</span>
+          ) : null}
+          {showRepo ? (
+            <span className="shrink-0 text-2xs text-ink-faint">{repoOf(row)}</span>
+          ) : null}
+          <span className="ml-auto flex shrink-0 items-center gap-2">
+            <StateChip row={row} />
+            <SelectionMark selected={selected} />
+          </span>
+        </span>
+      ) : (
+        <>
+          <span className="flex w-full items-center gap-2">
+            <Icon
+              icon={merged ? GitMerge : GitPullRequest}
+              className={cn("size-3.5 shrink-0", row.needsYou ? "text-accent" : "text-ink-faint")}
+            />
+            <span className="min-w-0 truncate text-sm font-medium text-ink">{row.title}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              <CiDot ci={row.pr?.ci} />
+              <StateChip row={row} />
+              <SelectionMark selected={selected} />
+            </span>
+          </span>
+          <span className="flex w-full items-center gap-2.5 pl-[22px] text-2xs text-ink-soft">
+            <span className="shrink-0 font-mono text-ink-faint">#{row.pr?.number}</span>
+            <span className="min-w-0 truncate font-mono">{row.branch}</span>
+            {showRepo ? <span className="shrink-0">{repoOf(row)}</span> : null}
+            <span className="shrink-0">{row.author}</span>
+            <span className="shrink-0">
+              <span className="text-green">+{row.pr?.additions.toLocaleString()}</span>{" "}
+              <span className="text-danger">−{row.pr?.deletions.toLocaleString()}</span>
+              <span className="text-ink-faint"> · {row.pr?.changedFiles} files</span>
+            </span>
+            {row.checkedOutLocally ? (
+              <span className="shrink-0 rounded-chip border border-line px-1.5 py-px text-ink-faint">
+                checked out locally
+              </span>
+            ) : null}
+          </span>
+        </>
+      )}
+    </button>
+  );
+}
+
+/** CI status: a loud "CI failing" chip, else a small dot (passing = green, pending =
+ *  pulsing); `none`/unknown renders nothing rather than a misleading green tick. */
+function CiDot({ ci }: { readonly ci: SmartListCi | undefined }) {
+  if (ci === "failing") {
+    return (
+      <span className="flex items-center gap-1 rounded-chip border border-danger/40 bg-danger/10 px-2 py-0.5 text-2xs font-medium text-danger">
+        CI failing
+      </span>
+    );
+  }
+  if (ci === "passing" || ci === "pending") {
+    return (
+      <span
+        title={ci === "passing" ? "CI passing" : "CI pending"}
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          ci === "passing" ? "bg-green" : "animate-pulse bg-ink-faint",
+        )}
+      />
+    );
+  }
+  return null;
 }
