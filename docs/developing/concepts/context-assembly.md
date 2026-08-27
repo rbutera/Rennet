@@ -74,6 +74,30 @@ same folder but feeds lineage carry and the successor account, not the packet
 directly. Raw payloads and follow-up questions stay behind the context tools
 above.
 
+## The related-context dossier
+
+The dossier the packet carries is built in three stages, cheapest first. A
+deterministic pass extracts issue references from the branch name, commit
+subjects, and PR title and body — GitHub `#123` and `owner/repo#123` forms,
+issue URLs, and tracker keys gated on a configured or repeatedly-seen project
+prefix. `gh` then fetches each referenced GitHub issue or pull request (the
+token stays inside `gh`; Rennet never reads it), and JIRA or Linear tickets are
+fetched over their REST APIs from per-project config: a base URL and the *name*
+of a token environment variable, read at call time and never stored. Last, the
+`related-context-retrieval` Model Council seat (light tier) follows links one
+hop and trims for relevance. A missing tracker config never blocks retrieval:
+the result carries a typed missing-config fact, the answer becomes an ordinary
+settings write, and the review proceeds meanwhile.
+
+Retrieval fires in the background when a review opens and persists beside the
+project snapshot under `~/.rennet/projects/`, keyed by review target and
+patchset — a re-capture re-runs it, and re-review rounds re-run it per round.
+Every item is structured (id, tracker, title, state, bounded body, acceptance
+criteria, URL, provenance, fetched-at) and size-bounded, so the whole dossier
+inlines verbatim into drafting prompts through the Delta packet. Full comment
+threads and linked-ticket payloads persist beside the dossier for depth on
+demand behind the context tools — they never enter the dossier itself.
+
 ## Selection-aware questions
 
 `context.ask` is a live server operation. The UI sends the current review
