@@ -5,7 +5,7 @@ Serial clusters. Each cluster is one session. Search before implementing
 
 ## Cluster 1 — Mark model + store (`coach/`)
 
-- [ ] Create `packages/app-ui/src/coach/marks.ts`: port the `MarkId` union
+- [x] Create `packages/app-ui/src/coach/marks.ts`: port the `MarkId` union
       (nine ids, `start-review` first), `Mark` interface, `MARKS` array (spike
       copy verbatim — the teaching voice per R55), and `MARK_BY_ID`.
 - [ ] Create `coach/store.ts`: port the one-at-a-time election (first unseen
