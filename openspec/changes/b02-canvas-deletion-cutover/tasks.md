@@ -5,8 +5,8 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first. One cluster per session. T
 ## 1. app-ui: delete the canvas workspace surface
 
 - [x] 1.1 Delete the 24 canvas-era components, their 38 component tests, and the 22 app-level `app.*.dom.test.tsx` files listed DELETE in the proposal's app-ui section (includes `collation-draft-canvas.tsx` and `workspace.tsx`/`lens.tsx`/`flat.tsx` + per-angle renderers). Plus 8 amended dying siblings the census missed (5 component tests, 3 app tests — see proposal amendments): 92 files total.
-- [ ] 1.2 Trim the keepers: `code-view.tsx` drops its `canvas/conversation` + `canvas/logic` wiring (keep `registrar`/`symbol` paths and their two KEEP dom tests); `app/shell.tsx`, `app.tsx`, `app.test.tsx`, `app.dom.test.tsx`, `command/commands.ts`, `index.ts` drop every reference to a deleted component or dying canvas module. `app/review-workspace-route.tsx` becomes a stub route (route stays registered, renders a placeholder; keep its `canvas/registrar` use only if the stub still needs it — otherwise drop it).
-- [ ] 1.3 `sh -c 'pnpm nx affected -t typecheck,test'` green. Commit.
+- [x] 1.2 Trim the keepers: `code-view.tsx` drops its `canvas/conversation` + `canvas/logic` wiring (windowRows/WindowRange INLINED — core rendering; discuss/dispose/spanSelect removed; two KEEP dom tests pass); `app/shell.tsx` gutted to the navigation shell + stub review render; `command/commands.ts` (+ `commands.test.ts` cascade) drop the canvas command surface; `index.ts` drops deleted-component re-exports (dying canvas MODULE re-exports kept — modules live until cluster 2, and apps/desktop consumes them; cluster 2 owns their removal). `app.tsx` unchanged (re-exports resolve). `app/review-workspace-route.tsx` is a placeholder stub. Cascade trims to two KEEP CSS-contract tests (`styles-contract.css.test.ts`, `focus-ring.css.test.ts`) that read now-deleted component source.
+- [x] 1.3 `sh -c 'pnpm nx affected -t typecheck,test'` green (app-ui + desktop, 9 dep tasks). Commit.
 
 ## 2. app-ui canvas reduction + mobile stub
 

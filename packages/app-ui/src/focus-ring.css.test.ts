@@ -25,12 +25,9 @@ describe("systemic focus ring (critique P1-B)", () => {
     expect(entry).toMatch(/\.canvas-app:focus-visible\s*\{[^}]*outline-offset:\s*-3px;[^}]*\}/);
   });
 
-  it("keeps NO bespoke covchip focus ring — it falls through to the systemic ring", () => {
+  it("keeps NO bespoke covchip focus ring in the stylesheet — it falls through to the systemic ring", () => {
+    // The Spec view's `openspec.tsx` component (which carried the covchip) was deleted in
+    // the B2 cutover (#489); the systemic-ring invariant now stands on the stylesheet alone.
     expect(entry).not.toContain("ospec-covchip");
-    const coverage = readFileSync(
-      fileURLToPath(new URL("./components/openspec.tsx", import.meta.url)),
-      "utf8",
-    );
-    expect(coverage).not.toMatch(/covchip[^"]*"[^"]*focus-visible:outline/);
   });
 });

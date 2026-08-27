@@ -194,10 +194,6 @@ export {
   publishReviewType,
   stageItem,
 } from "./canvas/staging";
-export type { AskAnswersProps, AskControlProps } from "./components/ask";
-export { AskAnswers, AskControl } from "./components/ask";
-export { BatchView } from "./components/batch-view";
-export { CollationDraftCanvas } from "./components/collation-draft-canvas";
 // The connections surface (issue #381): the shared daemon-attachment shell both the
 // desktop renderer and the served browser tab mount. Transport-agnostic — the shell
 // injects the bridge factory, so `ui` never imports a client package.
@@ -215,46 +211,9 @@ export type {
 export { ConnectionHost } from "./components/connection-host";
 // The context-composition inspector: Rennet's deterministic, gate-free assembly manifest.
 export { ContextManifestPanel } from "./components/context-manifest-panel";
-// The inline conversation cluster UI (issue #36): the discuss verb (opens a thread),
-// the private thread panel, and the right-margin column (a sibling of the diff, so
-// the diff never reflows).
-export type {
-  ConversationClusterProps,
-  ConversationMarginProps,
-} from "./components/conversation-cluster";
-export {
-  ConversationCluster,
-  ConversationMargin,
-  DiscussControl,
-  ThreadChip,
-} from "./components/conversation-cluster";
-// The LIVE conversation host (issue #36): wires the cluster to the real `review.ask`
-// boundary — opening/continuing a thread invokes the orchestrator and its own answer
-// populates the thread (no fixture). `ConversationPanel` composes this host with the
-// unified general-ask surface.
-export type { ConversationHostProps } from "./components/conversation-host";
-export {
-  ConversationHost,
-  DEFAULT_CONVERSATION_TIMEOUT_MS,
-} from "./components/conversation-host";
 export { CoverageMosaicView } from "./components/coverage";
-export { DestinationFrame } from "./components/destination-frame";
 // The in-app directory browser (source-aware project selection, task 5): fed by
 // `fs.listDir` so browsing works over a remote/WSL source with no native dialog.
 export { DirectoryBrowser } from "./components/directory-browser";
-export type {
-  DispositionAnchorKind,
-  DispositionClusterAnchor,
-} from "./components/disposition-cluster";
-export { DispositionCluster } from "./components/disposition-cluster";
 export { FrontDoor } from "./components/front-door";
-export type { GranularityContext } from "./components/granularity-author";
-export { GranularityAuthor } from "./components/granularity-author";
-export { HypothesisReadingFrame } from "./components/hypothesis";
-export type { MarkIndexEntry } from "./components/mark-index";
-export { MarkIndex } from "./components/mark-index";
-export { OrphanTray } from "./components/orphan-tray";
-export { PublishSheet } from "./components/publish-sheet";
 export { SettingsScreen } from "./components/settings-screen";
-export type { CanvasWorkspaceProps, DiffResolver } from "./components/workspace";
-export { CanvasWorkspace } from "./components/workspace";

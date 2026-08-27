@@ -28,33 +28,14 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     canForward: false,
     canGoToProject: true,
     retrospective: false,
-    canvasReady: true,
-    view: "canvases",
-    deepReviewOn: true,
-    overlayOn: false,
-    scheme: "dark",
-    angle: "decisions",
-    zoomLevel: "cohort",
     back: vi.fn(),
     forward: vi.fn(),
     goToProjects: vi.fn(),
     goToProject: vi.fn(),
-    goToDraft: vi.fn(),
-    goToPaper: vi.fn(),
     goToRecent: vi.fn<(surface: RecentSurface) => void>(),
     openSettings: vi.fn(),
-    showFiles: vi.fn(),
-    showCanvases: vi.fn(),
     reviewDirectly: vi.fn(),
     chooseRepository: vi.fn(),
-    retryReview: vi.fn(),
-    regenerate: vi.fn(),
-    toggleDeepReview: vi.fn(),
-    goToAngle: vi.fn(),
-    zoomIn: vi.fn(),
-    zoomOut: vi.fn(),
-    toggleOverlay: vi.fn(),
-    toggleScheme: vi.fn(),
     ...overrides,
   };
 }
@@ -71,72 +52,21 @@ describe("buildCommands — context-aware registry", () => {
     );
     const ids = commands.map((command) => command.id);
     expect(ids).toEqual(["nav.settings", "nav.reviewDirectly"]);
-    expect(ids).not.toContain("lens.decisions");
-    expect(ids).not.toContain("review.retry");
   });
 
-  it("offers the review + lens + zoom + appearance commands in the workspace", () => {
-    // On the Canvases view at a mid zoom, lens decisions (the active angle) is the one
-    // omitted; every OTHER lens plus both zoom directions and the toggles are present.
+  it("offers navigation + settings on an open review (the canvas surface is stubbed, B2)", () => {
+    // The review command surface (files/canvases/retry/regenerate/dual/lens/zoom/scheme)
+    // was deleted in the delete-first cutover (#489); a review-family surface now offers
+    // only navigation, settings, and recents until Track C rebuilds it.
     const ids = buildCommands(context()).map((command) => command.id);
     expect(ids).toContain("nav.back");
-    expect(ids).toContain("nav.files");
-    expect(ids).toContain("review.retry");
-    for (const angle of ["spec", "sequence", "noise", "flagged"]) {
-      expect(ids).toContain(`lens.${angle}`);
-    }
-    expect(ids).not.toContain("lens.claims");
-    expect(ids).toContain("zoom.in");
-    expect(ids).toContain("zoom.out");
-    expect(ids).toContain("view.scheme");
-  });
-
-  it("omits the inert command: the current view, the active lens, a clamped zoom", () => {
-    // Current view (Canvases) → no "Show Canvases view"; the OTHER view is offered.
-    const canvases = buildCommands(context({ view: "canvases" })).map((c) => c.id);
-    expect(canvases).not.toContain("nav.canvases");
-    expect(canvases).toContain("nav.files");
-    // Current view (Files) → no "Show Files view"; the OTHER view is offered.
-    const files = buildCommands(context({ view: "review" })).map((c) => c.id);
-    expect(files).not.toContain("nav.files");
-    expect(files).toContain("nav.canvases");
-
-    // Active lens is omitted; the others remain.
-    const onFlagged = buildCommands(context({ angle: "flagged" })).map((c) => c.id);
-    expect(onFlagged).not.toContain("lens.flagged");
-    expect(onFlagged).toContain("lens.decisions");
-
-    // Zoom clamps: no "Zoom in" at diff, no "Zoom out" at the roll-up.
-    const atDiff = buildCommands(context({ zoomLevel: "diff" })).map((c) => c.id);
-    expect(atDiff).not.toContain("zoom.in");
-    expect(atDiff).toContain("zoom.out");
-    const atRollup = buildCommands(context({ zoomLevel: "rollup" })).map((c) => c.id);
-    expect(atRollup).not.toContain("zoom.out");
-    expect(atRollup).toContain("zoom.in");
-  });
-
-  it("drops the lens/zoom/appearance commands when the Canvases view is not live", () => {
-    // A workspace on the Files view (or before the canvases load): the store-driven
-    // commands cannot act, so they are absent — but the review commands remain.
-    const ids = buildCommands(context({ canvasReady: false, view: "review" })).map((c) => c.id);
-    expect(ids).toContain("review.retry");
-    expect(ids).not.toContain("lens.decisions");
+    expect(ids).toContain("nav.projects");
+    expect(ids).toContain("nav.settings");
+    expect(ids).not.toContain("nav.files");
+    expect(ids).not.toContain("review.retry");
+    expect(ids.some((id) => id.startsWith("lens."))).toBe(false);
     expect(ids).not.toContain("zoom.in");
-  });
-
-  it("offers no Draft or Paper navigation for a retrospective review", () => {
-    const ids = buildCommands(context({ retrospective: true })).map((command) => command.id);
-
-    expect(ids).not.toContain("nav.draft");
-    expect(ids).not.toContain("nav.paper");
-  });
-
-  it("runs the EXACT wrapped handler — a lens command calls goToAngle with its angle", () => {
-    const ctx = context();
-    const flagged = buildCommands(ctx).find((command) => command.id === "lens.flagged");
-    flagged?.run();
-    expect(ctx.goToAngle).toHaveBeenCalledWith("flagged");
-    expect(ctx.goToAngle).toHaveBeenCalledTimes(1);
+    expect(ids).not.toContain("view.scheme");
   });
 
   it("runs the same back handler exposed by the navigation controls", () => {
@@ -171,15 +101,6 @@ describe("buildCommands — context-aware registry", () => {
       ?.run();
     expect(ctx.openSettings).toHaveBeenCalledTimes(1);
   });
-
-  it("labels the dual-model + scheme toggles from live state", () => {
-    const on = buildCommands(context({ deepReviewOn: true })).find((c) => c.id === "review.dual");
-    expect(on?.title).toMatch(/quick single-model/i);
-    const off = buildCommands(context({ deepReviewOn: false })).find((c) => c.id === "review.dual");
-    expect(off?.title).toMatch(/switch back on/i);
-    const light = buildCommands(context({ scheme: "dark" })).find((c) => c.id === "view.scheme");
-    expect(light?.title).toMatch(/switch to light/i);
-  });
 });
 
 describe("formatKeybinding (add-windows-support)", () => {
@@ -201,8 +122,7 @@ describe("command catalogue (single source)", () => {
     expect(byId.get("palette.toggle")?.keybinding).toBe("mod+k");
     expect(byId.get("nav.back")?.keybinding).toBe("mod+[");
     expect(byId.get("nav.forward")?.keybinding).toBe("mod+]");
-    expect(byId.get("zoom.in")?.keybinding).toBe("l");
-    expect(byId.get("zoom.out")?.keybinding).toBe("h");
+    expect(byId.get("nav.settings")?.keybinding).toBe("mod+,");
     // Every id is unique.
     expect(byId.size).toBe(COMMAND_CATALOGUE.length);
   });
@@ -214,7 +134,7 @@ describe("command catalogue (single source)", () => {
   });
 
   it("catalogueDef resolves a known id and misses an unknown one", () => {
-    expect(catalogueDef("zoom.in")?.group).toBe("Zoom");
+    expect(catalogueDef("nav.settings")?.group).toBe("Navigate");
     expect(catalogueDef("lens.spec")).toBeUndefined();
   });
 
@@ -225,19 +145,9 @@ describe("command catalogue (single source)", () => {
       ["nav.forward", "Forward", "Navigate", "mod+]"],
       ["nav.projects", "Back to projects", "Navigate", null],
       ["nav.project", "Go to project…", "Navigate", null],
-      ["nav.draft", "Go to Draft", "Navigate", null],
-      ["nav.paper", "Go to Paper", "Navigate", null],
       ["nav.settings", "Open Settings", "Navigate", "mod+,"],
       ["nav.openReview", "Open review…", "Navigate", null],
       ["nav.reviewDirectly", "Review directly", "Navigate", null],
-      ["nav.files", "Show Files view", "Navigate", null],
-      ["nav.canvases", "Show Canvases view", "Navigate", null],
-      ["review.retry", "Retry the AI review", "Review", null],
-      ["review.regenerate", "Regenerate the review", "Review", null],
-      ["review.dual", "Dual-model review: switch to quick single-model", "Review", null],
-      ["zoom.in", "Zoom in", "Zoom", "l"],
-      ["zoom.out", "Zoom out", "Zoom", "h"],
-      ["view.scheme", "Switch to light", "Appearance", null],
       ["door.choose", "Choose a repository", "Start", null],
     ];
     const workspace = context();
@@ -251,15 +161,8 @@ describe("command catalogue (single source)", () => {
 
     const contexts = [
       workspace,
-      context({ screen: "frontDoor", surfaceKind: "projects", canvasReady: false }),
-      context({
-        screen: "directEntry",
-        surfaceKind: "projects",
-        canvasReady: false,
-        deepReviewOn: false,
-        overlayOn: true,
-        scheme: "light",
-      }),
+      context({ screen: "frontDoor", surfaceKind: "projects" }),
+      context({ screen: "directEntry", surfaceKind: "projects" }),
     ];
     // Every command the palette builds agrees with its catalogue def (the single source):
     // same title (resolved for this context), group, and default keybinding.
