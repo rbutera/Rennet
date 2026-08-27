@@ -3,14 +3,15 @@
  *
  * The related-context dossier and its RAW payloads (full comment threads,
  * linked tickets — the depth behind the context tool, never in the dossier)
- * persist under the knowledge-store home pattern:
+ * persist under the knowledge-store home pattern as ONE envelope:
  *
- *   `~/.rennet/projects/<esc>/dossier/<escaped target@patchset-ref>/dossier.json`
- *   `~/.rennet/projects/<esc>/dossier/<escaped target@patchset-ref>/raw.json`
+ *   `~/.rennet/projects/<esc>/dossier/<escaped target@patchset-ref>/record.json`
  *
- * keyed by review target + patchset ref. `dossier.json` holds the CANONICAL
- * `serializeDossier` bytes — the same dossier always writes the same bytes, so
- * the stored record is byte-reproducible.
+ * keyed by review target + patchset ref. The envelope's `dossier` field holds
+ * the CANONICAL `serializeDossier` bytes verbatim — the same dossier always
+ * writes the same bytes, so the stored record is byte-reproducible — and the
+ * single `writeAtomic` publish means dossier and raw payloads land together or
+ * not at all (a crash cannot leave a dossier whose raw depth is missing).
  *
  * B8 GENERATION-ATTACH SEAM: #461 stores the dossier "durably on the patchset
  * generation, re-run per round under append-then-freeze". Generation lifecycle
@@ -23,6 +24,7 @@ import { join } from "node:path";
 import { escapePath } from "@rennet/core";
 import type { DossierItem } from "@rennet/protocol";
 import { dossierItemSchema, serializeDossier } from "@rennet/protocol";
+import { z } from "zod";
 import { writeAtomic } from "./knowledge-store";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 import type { RawContextPayload } from "./related-context";
@@ -35,24 +37,48 @@ export interface DossierKey {
   readonly patchsetRef: string;
 }
 
+/** Persisted state crosses a trust boundary on the way back in: parse, never cast. */
+const rawPayloadSchema = z.object({
+  id: z.string(),
+  tracker: z.string(),
+  payload: z.unknown(),
+});
+const recordSchema = z.object({
+  /** The canonical `serializeDossier` bytes, verbatim. */
+  dossier: z.string(),
+  raw: z.array(rawPayloadSchema),
+});
+
 export class DossierStore {
   constructor(private readonly store: ProjectSnapshotStore) {}
 
-  private dir(repoKey: string, key: DossierKey): string {
+  private recordPath(repoKey: string, key: DossierKey): string {
     const segment = escapePath(`${key.target}@${key.patchsetRef}`);
-    return join(this.store.paths(repoKey).projectDir, "dossier", segment);
+    return join(this.store.paths(repoKey).projectDir, "dossier", segment, "record.json");
   }
 
-  /** Persist dossier (canonical `serializeDossier` bytes) + raw payloads atomically. */
+  /** Persist dossier (canonical bytes) + raw payloads in ONE atomic publish. */
   save(
     repoKey: string,
     key: DossierKey,
     items: readonly DossierItem[],
     raw: readonly RawContextPayload[],
   ): void {
-    const dir = this.dir(repoKey, key);
-    writeAtomic(join(dir, "dossier.json"), `${serializeDossier(items)}\n`);
-    writeAtomic(join(dir, "raw.json"), `${JSON.stringify(raw)}\n`);
+    writeAtomic(
+      this.recordPath(repoKey, key),
+      `${JSON.stringify({ dossier: serializeDossier(items), raw })}\n`,
+    );
+  }
+
+  private record(repoKey: string, key: DossierKey): z.infer<typeof recordSchema> | null {
+    try {
+      const parsed = recordSchema.safeParse(
+        JSON.parse(readFileSync(this.recordPath(repoKey, key), "utf8")),
+      );
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -60,12 +86,12 @@ export class DossierStore {
    * read, knowledge-store precedent — an honest absence, never a throw).
    */
   load(repoKey: string, key: DossierKey): DossierItem[] | null {
+    const record = this.record(repoKey, key);
+    if (!record) return null;
     try {
-      const parsed: unknown = JSON.parse(
-        readFileSync(join(this.dir(repoKey, key), "dossier.json"), "utf8"),
-      );
-      if (!Array.isArray(parsed)) return null;
-      return parsed.map((item) => dossierItemSchema.parse(item));
+      const items: unknown = JSON.parse(record.dossier);
+      if (!Array.isArray(items)) return null;
+      return items.map((item) => dossierItemSchema.parse(item));
     } catch {
       return null;
     }
@@ -77,13 +103,6 @@ export class DossierStore {
    * B10 owns dispatch binding). Null on absence/corruption, same fail-safe rule.
    */
   loadRaw(repoKey: string, key: DossierKey): RawContextPayload[] | null {
-    try {
-      const parsed: unknown = JSON.parse(
-        readFileSync(join(this.dir(repoKey, key), "raw.json"), "utf8"),
-      );
-      return Array.isArray(parsed) ? (parsed as RawContextPayload[]) : null;
-    } catch {
-      return null;
-    }
+    return this.record(repoKey, key)?.raw ?? null;
   }
 }

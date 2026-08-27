@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeDossier } from "@rennet/protocol";
@@ -47,5 +47,35 @@ describe("DossierStore", () => {
     const store = new DossierStore(new ProjectSnapshotStore(freshBase()));
     expect(store.load("repo-key", { target: "pr-1", patchsetRef: "x" })).toBeNull();
     expect(store.loadRaw("repo-key", { target: "pr-1", patchsetRef: "x" })).toBeNull();
+  });
+
+  it("publishes dossier + raw as ONE record: both present or both null", () => {
+    const base = freshBase();
+    const key = { target: "pr-489", patchsetRef: "abc1234" };
+    const store = new DossierStore(new ProjectSnapshotStore(base));
+    store.save("repo-key", key, [item("github:x/y#1")], []);
+    // The single-envelope publish means a loadable dossier ALWAYS has its raw
+    // side (empty here, but present) — no torn pair to observe.
+    expect(store.load("repo-key", key)).not.toBeNull();
+    expect(store.loadRaw("repo-key", key)).toEqual([]);
+  });
+
+  it("rejects a malformed persisted record as an honest absence, not typed data", () => {
+    const base = freshBase();
+    const key = { target: "pr-489", patchsetRef: "abc1234" };
+    const snapshotStore = new ProjectSnapshotStore(base);
+    const store = new DossierStore(snapshotStore);
+    store.save("repo-key", key, [item("github:x/y#1")], []);
+
+    // Corrupt the record: raw entries missing required fields must not come
+    // back as RawContextPayload[] via a cast.
+    const dossierDir = join(snapshotStore.paths("repo-key").projectDir, "dossier");
+    const segment = readdirSync(dossierDir)[0] ?? "";
+    writeFileSync(
+      join(dossierDir, segment, "record.json"),
+      JSON.stringify({ dossier: "[]", raw: [{ forged: true }] }),
+    );
+    expect(store.loadRaw("repo-key", key)).toBeNull();
+    expect(store.load("repo-key", key)).toBeNull();
   });
 });

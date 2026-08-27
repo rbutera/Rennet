@@ -24,6 +24,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HarnessTurnResult, TrackerKind } from "@rennet/core";
+import { z } from "zod";
 import { CONVENTIONS_FILE } from "./convention-catalogue-reader";
 import type { GitExec } from "./git-range-diff";
 import { writeAtomic } from "./knowledge-store";
@@ -392,17 +393,54 @@ export function saveScoutFacts(
   );
 }
 
+/** Persisted state crosses a trust boundary on the way back in: parse, never
+ * cast — a forged `provenance: "detected"` in a hand-edited file must not walk
+ * into the settings ladder as anything but what the schema admits. */
+const scoutFactSchema = z.object({
+  value: z.string(),
+  provenance: z.enum(["detected", "guessed"]),
+  source: z.string(),
+});
+const scoutRecordSchema = z.object({
+  facts: z
+    .object({
+      trackerKind: scoutFactSchema.optional(),
+      trackerProjectKey: scoutFactSchema.optional(),
+      worktreeBaseDir: scoutFactSchema.optional(),
+      gateCommand: scoutFactSchema.optional(),
+      logoPath: scoutFactSchema.optional(),
+    })
+    .default({}),
+  missingConfig: z
+    .array(
+      z.object({
+        tracker: z.enum(["jira", "linear", "unknown"]),
+        prefix: z.string(),
+        missing: z.enum(["tracker-kind", "base-url-or-token-env", "token-env-value"]),
+        provenance: z.object({
+          source: z.enum([
+            "branch-name",
+            "commit-message",
+            "pr-title",
+            "pr-body",
+            "scout-detection",
+          ]),
+          match: z.string(),
+        }),
+      }),
+    )
+    .default([]),
+});
+
 export function loadScoutFacts(
   store: ProjectSnapshotStore,
   repoKey: string,
 ): { facts: ScoutFacts; missingConfig: MissingConfigFact[] } | null {
   try {
-    const parsed: unknown = JSON.parse(
-      readFileSync(join(store.paths(repoKey).projectDir, SCOUT_FILE), "utf8"),
+    const parsed = scoutRecordSchema.safeParse(
+      JSON.parse(readFileSync(join(store.paths(repoKey).projectDir, SCOUT_FILE), "utf8")),
     );
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const record = parsed as { facts?: ScoutFacts; missingConfig?: MissingConfigFact[] };
-    return { facts: record.facts ?? {}, missingConfig: record.missingConfig ?? [] };
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }

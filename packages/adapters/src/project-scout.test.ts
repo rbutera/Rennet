@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessTurnResult } from "@rennet/core";
@@ -170,5 +170,20 @@ describe("scout persistence (amendment 9)", () => {
     const store = new ProjectSnapshotStore(tempRepo());
     expect(loadScoutFacts(store, "missing")).toBeNull();
     expect(scoutSettingsOffers(store, "missing")).toEqual({});
+  });
+
+  it("a malformed persisted record is an honest absence, never trusted typed data", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    // A hand-edited file with an out-of-vocabulary provenance must not walk
+    // into the settings ladder — schema-parse, never cast.
+    mkdirSync(store.paths("forged").projectDir, { recursive: true });
+    writeFileSync(
+      join(store.paths("forged").projectDir, "scout.json"),
+      JSON.stringify({
+        facts: { trackerKind: { value: "jira", provenance: "definitely-detected", source: "x" } },
+      }),
+    );
+    expect(loadScoutFacts(store, "forged")).toBeNull();
+    expect(scoutSettingsOffers(store, "forged")).toEqual({});
   });
 });
