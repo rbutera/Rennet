@@ -50,6 +50,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
       return update({ version: 1 });
     },
     updateDaemon: (update) => update({ version: 1 }),
+    listPairedDevices: () => [],
     // Default: the working path IS its own top level (identity).
     gitTopLevel: async (workingPath) => workingPath,
     discoverWorkspaceRepos: async () => {
@@ -105,6 +106,7 @@ function statefulDeps(
     readDaemonSettings: () => ({ version: 1 }),
     updateGlobal: (update) => update({ version: 1 }),
     updateDaemon: (update) => update({ version: 1 }),
+    listPairedDevices: () => [],
     gitTopLevel: async (workingPath) => workingPath,
     discoverWorkspaceRepos: async () => [],
     loadGuidance: () => ({ dropped: 0, reason: "absent" }),
@@ -412,6 +414,41 @@ describe("createSettingsComposition — daemon host sections (#476, §4.2)", () 
       isLocal: false,
     });
     for (const h of hosts.slice(1)) expect(h.listen).toBeUndefined();
+  });
+
+  it("includes a paired host with NO project yet, unioned with project sources (finding 9)", async () => {
+    const { deps } = makeDeps({
+      readDaemonSettings: () => ({ version: 1 }),
+      // One project routes to a paired phone; a second device is paired but routes
+      // nothing yet. Both must show; the device's friendly name labels each.
+      listProjects: () => [project({ id: "a", source: "remote:phone-9" })],
+      listPairedDevices: () => [
+        {
+          deviceId: "phone-9",
+          name: "Rai's phone",
+          createdAt: "2026-08-01T00:00:00.000Z",
+          lastSeenAt: "2026-08-27T00:00:00.000Z",
+          expiresAt: "2026-09-01T00:00:00.000Z",
+        },
+        {
+          deviceId: "tablet-3",
+          name: "Studio tablet",
+          createdAt: "2026-08-02T00:00:00.000Z",
+          lastSeenAt: "2026-08-27T00:00:00.000Z",
+          expiresAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const hosts = (await createSettingsComposition(deps).get()).daemonHosts ?? [];
+    // The project-less paired device (tablet-3) is listed even though nothing routes
+    // to it; the shared host (phone-9) is not duplicated; the friendly name labels both.
+    expect(hosts.map((h) => h.source)).toEqual(["local", "remote:phone-9", "remote:tablet-3"]);
+    expect(hosts.find((h) => h.source === "remote:phone-9")?.label).toBe("Remote · Rai's phone");
+    expect(hosts.find((h) => h.source === "remote:tablet-3")).toEqual({
+      source: "remote:tablet-3",
+      label: "Remote · Studio tablet",
+      isLocal: false,
+    });
   });
 });
 

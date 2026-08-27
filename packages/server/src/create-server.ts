@@ -1929,6 +1929,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // The tracker section (#461, B7) is a global-rung host fact, so it writes to
       // daemon-settings — the same store `resolveTrackerConfig` reads it back from.
       updateDaemon: (update) => daemonSettingsStore.update(update),
+      // Paired devices are the source for project-less remote hosts on the surface
+      // (#476, finding 9) — a device paired before its first project is still listed.
+      listPairedDevices: () => pairingStore.listDevices(),
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {

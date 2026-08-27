@@ -12,6 +12,7 @@ import type {
   ClientSettings,
   DaemonHostSection,
   DaemonSettings,
+  PairedDevice,
   Project,
   ProjectSource,
   ProjectVisibility,
@@ -56,6 +57,12 @@ export interface SettingsCompositionDeps {
    * readable; remote/WSL hosts keep theirs on that host.
    */
   readDaemonSettings(): DaemonSettings;
+  /**
+   * Every paired device (newest first), the source for project-less remote hosts on
+   * the settings surface (#476, finding 9). A device paired but not yet routing a
+   * project still gets a host section, so it is visible before its first project.
+   */
+  listPairedDevices(): PairedDevice[];
   /** Persist a client-settings edit. MUST itself refuse a malformed file (throw). */
   updateGlobal(update: (current: ClientSettings) => ClientSettings): ClientSettings;
   /**
@@ -229,25 +236,35 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
   };
 
   // Every daemon host the surface covers (#476): the LOCAL host first (its
-  // `daemon-settings` listener rung is the only one locally readable), then every
-  // distinct non-local `source` the projects route to. A remote/WSL host is LISTED so
-  // it is visible, but its rung lives on that host — not fabricated here.
-  const labelForSource = (source: ProjectSource): string => {
-    if (source === "local") return "This machine";
-    if (source.startsWith("wsl:")) return `WSL · ${source.slice("wsl:".length)}`;
-    return `Remote · ${source.slice("remote:".length)}`;
-  };
+  // `daemon-settings` listener rung is the only one locally readable), then the UNION
+  // of every distinct non-local `source` the projects route to AND every paired
+  // device (finding 9 — a device paired but with no project yet would otherwise be
+  // invisible). A remote/WSL host is LISTED so it is visible, but its rung lives on
+  // that host — not fabricated here (no `listen`), which IS the unreadable-remote state.
   const daemonHostSections = (projects: Project[]): DaemonHostSection[] => {
     const listen = deps.readDaemonSettings().daemon?.listen;
+    // A paired device's friendly name, keyed by its `remote:<deviceId>` source, so a
+    // remote host reads "Remote · <name>" whether or not a project routes to it.
+    const deviceNames = new Map<ProjectSource, string>();
+    for (const device of deps.listPairedDevices()) {
+      deviceNames.set(`remote:${device.deviceId}`, device.name);
+    }
+    const label = (source: ProjectSource): string => {
+      if (source === "local") return "This machine";
+      if (source.startsWith("wsl:")) return `WSL · ${source.slice("wsl:".length)}`;
+      return `Remote · ${deviceNames.get(source) ?? source.slice("remote:".length)}`;
+    };
     const hosts: DaemonHostSection[] = [
       { source: "local", label: "This machine", isLocal: true, ...(listen ? { listen } : {}) },
     ];
     const seen = new Set<ProjectSource>(["local"]);
-    for (const project of projects) {
-      if (seen.has(project.source)) continue;
-      seen.add(project.source);
-      hosts.push({ source: project.source, label: labelForSource(project.source), isLocal: false });
-    }
+    const add = (source: ProjectSource): void => {
+      if (seen.has(source)) return;
+      seen.add(source);
+      hosts.push({ source, label: label(source), isLocal: false });
+    };
+    for (const project of projects) add(project.source);
+    for (const source of deviceNames.keys()) add(source);
     return hosts;
   };
 
