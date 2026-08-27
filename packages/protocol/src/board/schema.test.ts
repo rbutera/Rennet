@@ -185,7 +185,9 @@ describe("host board schema (#462)", () => {
   ] as const)("rejects a %s missing its required %s", (kind, field) => {
     const el = fullBoard.elements.find((e) => e.kind === kind);
     if (!el) throw new Error(`fixture has no ${kind}`);
-    const { [field]: _dropped, ...data } = el.data as Record<string, unknown>;
+    const data = Object.fromEntries(
+      Object.entries(el.data as Record<string, unknown>).filter(([key]) => key !== field),
+    );
     expect(HostElementSchema.safeParse({ ...el, data }).success).toBe(false);
   });
 

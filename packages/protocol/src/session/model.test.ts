@@ -81,7 +81,7 @@ describe("session/ durable shapes (#466/#457)", () => {
   });
 
   it("rejects an unanchored ask — the ask specialization requires an anchor", () => {
-    const { anchor: _anchor, ...unanchored } = thread;
+    const unanchored = { threadId: thread.threadId, ask: thread.ask };
     expect(SessionThreadSchema.safeParse(unanchored).success).toBe(false);
   });
 
