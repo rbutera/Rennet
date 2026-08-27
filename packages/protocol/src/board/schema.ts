@@ -64,11 +64,21 @@ const concurrenceSchema = z.object({
  * message/thread replies to. The UI highlight is a projection of this — derived
  * state, never stored presentation.
  */
-const quoteAnchorSchema = z.object({
+export const QuoteAnchorSchema = z.object({
   target: z.string().min(1),
   quote: z.string(),
   offsetHint: z.number().int().nonnegative().optional(),
 });
+export type QuoteAnchor = z.infer<typeof QuoteAnchorSchema>;
+
+/**
+ * The ask lifecycle (#462 R29–R34; #466 res. 7). One vocabulary — the board's
+ * `message` kind and the session's ask specialization both validate against it.
+ * Detached is visible, never dropped.
+ */
+export const ASK_LIFECYCLE = ["staged", "dispatched", "addressed", "retired", "detached"] as const;
+export const AskLifecycleSchema = z.enum(ASK_LIFECYCLE);
+export type AskLifecycle = z.infer<typeof AskLifecycleSchema>;
 
 /** A round-outcome's ask reference + its display text (#486 R57 ripple). */
 const askRefSchema = z.object({
@@ -146,8 +156,8 @@ const messageData = withAuthor({
   code_ref: z.string().optional(),
   // #462 R27/R28 selection-thread ripple + R29–R34 ask lifecycle. Detached is
   // visible, never dropped.
-  quote: quoteAnchorSchema.optional(),
-  lifecycle: z.enum(["staged", "dispatched", "addressed", "retired", "detached"]).optional(),
+  quote: QuoteAnchorSchema.optional(),
+  lifecycle: AskLifecycleSchema.optional(),
 });
 const codeRefData = withAuthor({
   patchset_id: z.string().min(1),
