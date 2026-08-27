@@ -80,6 +80,12 @@ export interface RawHunk {
   oldLines: number;
   newStart: number;
   newLines: number;
+  /**
+   * The verbatim `@@` header line as it appeared in the patch. Present on hunks
+   * straight from `parseFilePatch`; absent on synthesized fragments (R18 split),
+   * whose recomputed ranges no longer match any source line.
+   */
+  header?: string;
   /** Body lines with their unified-diff prefix (`+`/`-`/` `). */
   body: string[];
 }
@@ -105,6 +111,7 @@ export function parseFilePatch(patch: string): ParsedFile {
         oldLines: header[2] === undefined ? 1 : Number(header[2]),
         newStart: Number(header[3]),
         newLines: header[4] === undefined ? 1 : Number(header[4]),
+        header: line,
         body: [],
       };
       continue;

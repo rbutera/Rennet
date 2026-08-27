@@ -28,6 +28,7 @@ export * from "./context-ask";
 export * from "./context-assembly";
 export * from "./coverage-mapping";
 export * from "./decomposition";
+export * from "./delta";
 export * from "./delta-digest";
 export * from "./draft-pr-body";
 export * from "./dual-seat";
