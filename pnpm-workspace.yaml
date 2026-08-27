@@ -30,6 +30,12 @@ minimumReleaseAgeExclude:
   - "@anthropic-ai/claude-agent-sdk-linux-x64-musl"
   - "@anthropic-ai/claude-agent-sdk-win32-arm64"
   - "@anthropic-ai/claude-agent-sdk-win32-x64"
+  # First-party: the whiteboard protocol core, published by Track A from Rai's
+  # own rbutera/whiteboard repo under the @wboard scope (alpha dist-tag). The
+  # 7-day floor guards third-party supply-chain risk and does not apply to our
+  # own scope; the alpha is published expressly for this build (#489 B3).
+  # Name-scoped (all versions), same precedent as the Claude Agent SDK above.
+  - "@wboard/core"
 trustPolicy: no-downgrade
 trustPolicyExclude:
   - "semver@5.7.2 || 6.3.1"

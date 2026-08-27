@@ -5,6 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
+    "@wboard/core": "0.1.0-alpha.2",
     "zod": "4.4.3"
   }
 }
