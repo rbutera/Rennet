@@ -3,6 +3,10 @@ import { Popover, PopoverContent, PopoverTrigger, Toaster } from "@rennet/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RennetRouterApp } from "../routes/app";
 import type { RennetHistory } from "../routes/history";
+import {
+  type ConnectionCapabilities,
+  ConnectionCapabilitiesProvider,
+} from "../shell/connection-capabilities";
 import type { SourceOption } from "./source-switcher";
 
 // The connections surface (issue #381, design D3). ONE component both shells mount —
@@ -524,6 +528,35 @@ export function ConnectionHost({
     [activeId, defaultTarget.id, key, saved],
   );
 
+  // Dial a TEMPORARY tokenless bridge at (host, port), exchange the one-time code ON it (the
+  // ONE command a projected connection may invoke), and return the tokened target. The SINGLE
+  // exchange site — both the switcher's "Pair and add" and the router's pairAtAddress route
+  // through it, so the seam-fenced `.invoke` lives in exactly one place.
+  const exchangeAtEndpoint = useCallback(
+    async (
+      host: string,
+      port: number | undefined,
+      code: string,
+      label: string,
+    ): Promise<ConnectionTarget> => {
+      let temp: Connection | undefined;
+      try {
+        temp = makeConnection({ id: `pairing:${Date.now()}`, label, host, port });
+        const result = await temp.bridge.invoke("pairing.exchange", { code, deviceName: label });
+        return {
+          id: `daemon:${result.deviceId}`,
+          label,
+          host,
+          port,
+          deviceToken: result.deviceToken,
+        };
+      } finally {
+        temp?.close();
+      }
+    },
+    [makeConnection],
+  );
+
   const submitAdd = useCallback(async () => {
     setAddError(null);
     const parsed = parseHostPort(addHost);
@@ -538,25 +571,8 @@ export function ConnectionHost({
     }
     const label = addLabel.trim() || parsed.host;
     setAddBusy(true);
-    // Exchange the code through a TEMPORARY tokenless bridge (a pairing-only connection).
-    // Its only legal command is `pairing.exchange`; the returned token makes the saved
-    // daemon a projected connection on every future attach.
-    let temp: Connection | undefined;
     try {
-      temp = makeConnection({
-        id: `pairing:${Date.now()}`,
-        label,
-        host: parsed.host,
-        port: parsed.port,
-      });
-      const result = await temp.bridge.invoke("pairing.exchange", { code, deviceName: label });
-      const target: ConnectionTarget = {
-        id: `daemon:${result.deviceId}`,
-        label,
-        host: parsed.host,
-        port: parsed.port,
-        deviceToken: result.deviceToken,
-      };
+      const target = await exchangeAtEndpoint(parsed.host, parsed.port, code, label);
       setSaved((current) => {
         const next = [...current.filter((t) => t.id !== target.id), target];
         persistDaemons(key, next, target.id);
@@ -573,10 +589,30 @@ export function ConnectionHost({
         error instanceof Error ? error.message : "Pairing failed. Check the code and host.",
       );
     } finally {
-      temp?.close();
       setAddBusy(false);
     }
-  }, [addHost, addCode, addLabel, makeConnection, key]);
+  }, [addHost, addCode, addLabel, exchangeAtEndpoint, key]);
+
+  // Pair a NEW machine at an address (Add Environment dialog, blocker 1). Dials the address,
+  // exchanges the code, and persists the tokened daemon as a selectable source — WITHOUT
+  // switching to it (the dialog decides that via "Browse Its Projects" → connectSource).
+  const pairAtAddress = useCallback(
+    async (address: string, code: string): Promise<{ deviceId: string; name: string }> => {
+      const parsed = parseHostPort(address);
+      if (!parsed) throw new Error("Enter a host, optionally host:port.");
+      const trimmedCode = code.trim();
+      if (trimmedCode.length === 0) throw new Error("Enter the pairing code shown on the daemon.");
+      const label = parsed.host.split(".")[0] || parsed.host;
+      const target = await exchangeAtEndpoint(parsed.host, parsed.port, trimmedCode, label);
+      setSaved((current) => {
+        const next = [...current.filter((t) => t.id !== target.id), target];
+        persistDaemons(key, next, activeId);
+        return next;
+      });
+      return { deviceId: target.id.slice("daemon:".length), name: label };
+    },
+    [exchangeAtEndpoint, key, activeId],
+  );
 
   // Add-or-replace a LOCAL (tokenless) target and make it active — a clean RennetApp remount,
   // reusing the same target list + activeId the switcher drives. A WSL distro daemon is just a
@@ -873,17 +909,22 @@ export function ConnectionHost({
       </div>
     );
 
-  // The WSL / source-aware add-flow plumbing above (connectDaemonForPath,
-  // connectSource, sources, activeSource, the pending-* handoffs) fed the LEGACY
-  // RennetApp's add flow. The C03 cutover mounts the #480 router instead, which has
-  // no counterpart for it until C12 (projects-flow) rebuilds that flow onto the new
-  // frame. The machinery stays here — dormant, not deleted — so C12 rewires it in
-  // one place; a single reference keeps the strangler-fig plumbing honest until then.
-  void [connectDaemonForPath, connectSource, sources, activeSource, logWslConnect];
+  // The source-aware add-flow capabilities (source list, active source, attach-a-source,
+  // pair-at-address) now feed the #480 router's Add Project / Add Environment dialogs
+  // (C12 blockers 1–2) through a context ConnectionHost provides. The FRONT-DOOR WSL repo
+  // pick (connectDaemonForPath) + its pending-* handoffs and the wsl-connect log stay
+  // dormant here — the router has no front-door repo-capture surface yet; a single
+  // reference keeps that strangler-fig plumbing honest until it does.
+  void [connectDaemonForPath, logWslConnect];
   void [pendingRepoPath, pendingAddPath, pendingSourceBrowse];
 
+  const capabilities = useMemo<ConnectionCapabilities>(
+    () => ({ sources, activeSource, connectSource, pairAtAddress }),
+    [sources, activeSource, connectSource, pairAtAddress],
+  );
+
   return bridge ? (
-    <>
+    <ConnectionCapabilitiesProvider value={capabilities}>
       <RennetRouterApp key={activeId} bridge={bridge} history={history} />
       {/* The daemon switcher — a fixed overlay in the interim (C03 cutover): the router
           frame has no chrome slot for it until a later surface change gives it a home.
@@ -894,6 +935,6 @@ export function ConnectionHost({
           module singleton, so any `toast(...)` in the tree routes here; mounted
           above the remount-keyed app so toasts survive a daemon switch. */}
       <Toaster />
-    </>
+    </ConnectionCapabilitiesProvider>
   ) : null;
 }

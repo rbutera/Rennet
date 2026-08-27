@@ -58,6 +58,9 @@ export interface SmartRow {
   };
   /** Present on a local-work row. */
   local?: {
+    /** The `owner/name` identity — surfaced so the New Chat list can show a repo column
+     *  (and drop it for a single-repo workspace) on local rows, not only PR rows. */
+    repository: string;
     dirty: boolean;
     /** `null` when the ahead/behind comparison could not be computed (base unresolvable). */
     ahead: number | null;
@@ -174,6 +177,7 @@ function localRow(local: LocalWork, viewer: string): SmartRow {
     readOnly: false,
     lastActivityAt: local.lastActivityAt,
     local: {
+      repository: local.repository,
       dirty: local.dirty,
       ahead: local.ahead,
       behind: local.behind,
