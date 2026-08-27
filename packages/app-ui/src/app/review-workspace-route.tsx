@@ -7,7 +7,8 @@ import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
 import { DiffViewContainer } from "../review";
-import { useRoundDispatch } from "../rounds/rounds-data";
+import { RoundGreeting } from "../rounds/round-greeting";
+import { useReportBoard, useRoundDispatch, useRoundState } from "../rounds/rounds-data";
 import { ROUTES, readSessionQuery, sessionRunPath, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 
@@ -52,6 +53,26 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     resetReview();
   }, [review.id, resetReview]);
 
+  // The round report as the greeting (C09 §5.2). On return from a round the run route
+  // armed `greetingArmed` and redirected here; while a round is in a report phase and its
+  // board resolves valid, the board surface LEADS with the greeting (the report readable
+  // at once, regeneration streaming beneath) instead of the plain lens board. The reveal
+  // is the single consume: `armGreeting(false)` disarms it, and the surface returns to
+  // `LensBoardView` at the composed round's NEW generation (derived off the machine's
+  // `composed` state, never a stored navigation target — the S9 fence). Stable store
+  // reads only (a primitive + a stable action ref) — no fresh-object selector.
+  const roundState = useRoundState(slug);
+  const greetingArmed = useRennetStore((s) => s.run.greetingArmed);
+  const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
+  const reportBoardId = "reportBoardId" in roundState ? roundState.reportBoardId : "";
+  const report = useReportBoard(reportBoardId);
+  const inReportPhase =
+    roundState.phase === "reporting" ||
+    roundState.phase === "composing" ||
+    roundState.phase === "composed";
+  const boardGeneration =
+    roundState.phase === "composed" ? roundState.newGeneration : LIVE_GENERATION;
+
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
       lens: query.lens,
@@ -66,6 +87,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
         <DiffViewContainer review={review} />
+      ) : greetingArmed && inReportPhase && report.status === "valid" ? (
+        <RoundGreeting
+          board={report.board}
+          state={roundState}
+          onReveal={() => armGreeting(false)}
+        />
       ) : (
         <>
           <header className="border-border border-b px-6 py-3">
@@ -73,7 +100,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
               REVIEW · {review.repositoryRoot.split("/").at(-1)}
             </p>
           </header>
-          <LensBoardView generation={LIVE_GENERATION} />
+          <LensBoardView generation={boardGeneration} />
         </>
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
