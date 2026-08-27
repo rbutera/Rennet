@@ -167,10 +167,13 @@ function FileTree({
     <nav className="flex flex-col gap-0.5" aria-label="Changed files">
       {[...byDir.entries()].map(([dir, dirFiles]) => (
         <div key={dir} className="flex flex-col gap-0.5">
-          <span className="flex items-center gap-1.5 px-1 pt-1.5 text-2xs text-muted-foreground/70">
-            <Icon icon={Folder} className="size-3 shrink-0" />
-            <span className="truncate">{dir}</span>
-          </span>
+          {/* Root-level files (no directory) list directly — no empty folder header. */}
+          {dir !== "" && (
+            <span className="flex items-center gap-1.5 px-1 pt-1.5 text-2xs text-muted-foreground/70">
+              <Icon icon={Folder} className="size-3 shrink-0" />
+              <span className="truncate">{dir}</span>
+            </span>
+          )}
           {dirFiles.map((file) => {
             const name = file.path.split("/").pop();
             const stats = fileStats(file);
