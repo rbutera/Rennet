@@ -76,10 +76,11 @@ describe("CodeBlock — the one code surface", () => {
     try {
       const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
       const { getByText } = mount(<CodeBlock code={CODE} path={PATH} />);
-      fireEvent.click(getByText("Copy"));
+      // The async act flushes the clipboard microtask so setCopied(true) applies.
+      await act(async () => {
+        fireEvent.click(getByText("Copy"));
+      });
       expect(writeText).toHaveBeenCalledWith(CODE);
-      // Flush the clipboard microtask so setCopied(true) applies.
-      await act(async () => {});
       expect(getByText("Copied")).toBeTruthy();
       // The 1.5s timeout must actually clear the confirmation back to "Copy".
       await act(async () => {
