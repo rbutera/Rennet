@@ -6,6 +6,7 @@ import { AskLogStore } from "@rennet/adapters";
 import type { RefinementResult, Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatchRuntime, type DispatchDeps } from "./dispatch";
+import { askHandlers } from "./dispatch/ask";
 import { reworkHandlers } from "./dispatch/rework";
 
 // B11 cluster 5 (task 5.3) — the living-draft span-rework command. A ONE-SHOT worker
@@ -22,19 +23,27 @@ const REVIEW = {
   status: "current",
 } as unknown as Review;
 
+// The seeded ask body is LARGER than the span the reviewer revises, so the splice
+// (replace the span in place) is observable: the surrounding prose must survive.
+const FULL_BODY = "opening line\n\nthe middle paragraph\n\nclosing line";
+
 function harness(reworkSpan?: DispatchDeps["reworkSpan"]) {
   const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-rework-dispatch-")));
   // A staged ask the reviewer will rework — a prose body with a span to revise.
   store.append(REVIEW_ID, {
     kind: "stage",
-    ask: { id: "a1", anchor: "src/x.ts:10", type: "comment", body: "the middle paragraph" },
+    ask: { id: "a1", anchor: "src/x.ts:10", type: "comment", body: FULL_BODY },
   });
   const rt = createDispatchRuntime({
     askLog: store,
     service: { reviewById: (id: string) => (id === REVIEW_ID ? REVIEW : undefined) },
     ...(reworkSpan ? { reworkSpan } : {}),
   } as unknown as DispatchDeps);
-  return { store, reviseSpan: reworkHandlers(rt)["review.reviseSpan"] };
+  return {
+    store,
+    reviseSpan: reworkHandlers(rt)["review.reviseSpan"],
+    editAsk: askHandlers(rt)["ask.edit"],
+  };
 }
 
 const call = (extra: Record<string, unknown> = {}) => ({
@@ -53,39 +62,71 @@ const refined = (text: string): RefinementResult => ({
 });
 
 describe("review.reviseSpan (B11 5.1) — one-shot worker, ask-log write, quote carry", () => {
-  it("dispatches exactly ONE one-shot worker and lands the result through the ask log", async () => {
+  it("SPLICES the refined span into the full body — surrounding prose survives (finding 5)", async () => {
     const reworkSpan = vi.fn(async () => refined("a sharper middle paragraph"));
     const { store, reviseSpan } = harness(reworkSpan);
 
     const out = (await reviseSpan(call())) as { status: string; reworkedBody: string };
 
-    // One fresh turn (never a resident cursor), and the durable ask body is the reworked text.
+    // One fresh turn (never a resident cursor). The reworked span replaces ONLY the selected
+    // span; "opening line" and "closing line" are untouched — revising one sentence does not
+    // delete the document (the whole-body-replacement bug).
     expect(reworkSpan).toHaveBeenCalledTimes(1);
     expect(out.status).toBe("reworked");
-    expect(out.reworkedBody).toBe("a sharper middle paragraph");
-    expect(store.readProjection(REVIEW_ID).stagedAsks.a1?.body).toBe("a sharper middle paragraph");
+    expect(out.reworkedBody).toBe("opening line\n\na sharper middle paragraph\n\nclosing line");
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1?.body).toBe(
+      "opening line\n\na sharper middle paragraph\n\nclosing line",
+    );
   });
 
   it("returns a receipt that reverses the edit (receipt-is-undo)", async () => {
-    const reworkSpan = vi.fn(async () => refined("reworked body"));
+    const reworkSpan = vi.fn(async () => refined("reworked span"));
     const { reviseSpan } = harness(reworkSpan);
 
     const out = (await reviseSpan(call())) as {
       receipt: { kind: string; id: string; body: string };
     };
-    // The inverse of the edit restores the PRIOR body — feeding it back undoes the rework.
-    expect(out.receipt).toEqual({ kind: "edit", id: "a1", body: "the middle paragraph" });
+    // The inverse of the edit restores the PRIOR full body — feeding it back undoes the rework.
+    expect(out.receipt).toEqual({ kind: "edit", id: "a1", body: FULL_BODY });
   });
 
   it("re-anchors the reworked span by quote match after regeneration", async () => {
-    // The regenerated body MOVED the span to the end; the carry finds its new home.
-    const reworkSpan = vi.fn(async () =>
-      refined("a new opener\n\ntrailing\n\nthe middle paragraph"),
-    );
+    // The refined span is the span's new home; the carry finds it in the spliced body.
+    const reworkSpan = vi.fn(async () => refined("a sharper middle paragraph"));
     const { reviseSpan } = harness(reworkSpan);
 
     const out = (await reviseSpan(call())) as { carriedAnchor: string | null };
-    expect(out.carriedAnchor).toBe("the middle paragraph");
+    expect(out.carriedAnchor).toBe("a sharper middle paragraph");
+  });
+
+  it("REPRODUCED RACE (finding 5): a manual ask.edit during the worker is NOT overwritten", async () => {
+    // The one-shot worker awaits a gate — the window in which a concurrent `ask.edit` lands.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const reworkSpan = vi.fn(async () => {
+      await gate;
+      return refined("a sharper middle paragraph");
+    });
+    const { store, reviseSpan, editAsk } = harness(reworkSpan);
+
+    // Start the rework (reads the ask, then blocks on the gate inside the worker).
+    const reworkPromise = reviseSpan(call());
+    await new Promise((r) => setTimeout(r, 0)); // let the worker reach the gate
+
+    // The reviewer manually edits the SAME ask while the worker is in flight.
+    await editAsk({ sessionId: REVIEW_ID, id: "a1", body: "MY MANUAL EDIT — keep this" });
+
+    // Release the worker; its result is derived from the STALE pre-edit body.
+    release();
+    const out = (await reworkPromise) as { status: string; reason?: string };
+
+    // The stale rework is DISCARDED, not silently applied over the manual edit (honest CAS).
+    expect(out.status).toBe("unavailable");
+    expect(out.reason).toMatch(/changed while the rework/i);
+    // The manual edit stands — the lost-update is gone.
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1?.body).toBe("MY MANUAL EDIT — keep this");
   });
 
   it("serializes two reworks on ONE document (the second waits for the first)", async () => {

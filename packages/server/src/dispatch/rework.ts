@@ -41,8 +41,7 @@ export function reworkHandlers(rt: DispatchRuntime) {
       const key = review.id;
       const prior = tails.get(key) ?? Promise.resolve();
       const run = prior.then(async () => {
-        const projection = deps.askLog.readProjection(review.id);
-        const ask = projection.stagedAsks[input.askId];
+        const ask = deps.askLog.readProjection(review.id).stagedAsks[input.askId];
         if (!ask) {
           return { status: "unavailable", reason: "That ask is no longer staged." } as const;
         }
@@ -52,6 +51,8 @@ export function reworkHandlers(rt: DispatchRuntime) {
             reason: "Span rework is not available in this build.",
           } as const;
         }
+        // The body the rework is based on — the CAS baseline (lost-update guard below).
+        const priorBody = ask.body;
         // The one-shot worker: a fresh turn reworking the span. An unavailable/failed
         // turn is answered honestly — never the old body dressed as a rework.
         const result = await deps.reworkSpan({
@@ -68,18 +69,43 @@ export function reworkHandlers(rt: DispatchRuntime) {
         if (result.status === "no-change") {
           return { status: "no-change", reason: "The rework produced no change." } as const;
         }
-        // Re-anchor the reworked span across the regenerated body (fail-closed).
-        const carriedAnchor = carryQuoteAnchor(input.span, result.refined);
-        // Land the regenerated body through the SOLE ask writer (append + receipt + R19 push).
+        // LOST-UPDATE GUARD (P1 finding 5). The per-review tail serializes rework-vs-rework,
+        // but an ordinary `ask.edit` can land WHILE this one-shot worker is awaited above.
+        // Re-read the ask now (synchronously, no further await before the write) and DISCARD
+        // the rework if it changed — a stale worker result must never silently overwrite the
+        // reviewer's newer edit. This is a compare-and-swap on the ask body (honest failure,
+        // not a gate: the newer edit stands, and the caller learns the rework was discarded).
+        const current = deps.askLog.readProjection(review.id).stagedAsks[input.askId];
+        if (!current) {
+          return { status: "unavailable", reason: "That ask is no longer staged." } as const;
+        }
+        if (current.body !== priorBody) {
+          return {
+            status: "unavailable",
+            reason:
+              "The ask changed while the rework was running — discarded so your edit is not overwritten.",
+          } as const;
+        }
+        // SPLICE the refined span back into the FULL body — replace the selected span in
+        // place — so revising one sentence never deletes the surrounding prose (finding 5).
+        // Function replacer ⇒ the refined text is literal ($-sequences are not interpreted).
+        const newBody = current.body.replace(input.span, () => result.refined);
+        if (newBody === current.body) {
+          return { status: "no-change", reason: "The rework produced no change." } as const;
+        }
+        // Re-anchor the reworked span across the SPLICED body (fail-closed): the refined text
+        // is the span's new home, so match it against the full regenerated body.
+        const carriedAnchor = carryQuoteAnchor(result.refined, newBody);
+        // Land the spliced body through the SOLE ask writer (append + receipt + R19 push).
         const { receipt } = applyWrite(rt, review.id, {
           kind: "edit",
           id: input.askId,
-          body: result.refined,
+          body: newBody,
         });
         return {
           status: "reworked",
           carriedAnchor,
-          reworkedBody: result.refined,
+          reworkedBody: newBody,
           receipt,
         } as const;
       });
