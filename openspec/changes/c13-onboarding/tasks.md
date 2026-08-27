@@ -90,9 +90,13 @@ Serial clusters. Each cluster is one session. Search before implementing
       (lenses, highlight, fab, verdict, draft, dispatch) resolve to live elements
       on their real mounted surfaces — including the `useMergedRefs` fab site.
       Marks 1-3 are proven on real hooks by `coach/anchors.dom.test.tsx` (cluster 4).
-- [ ] **Positive control (S8 regression)**: a deliberately duplicated anchor for
+- [x] **Positive control (S8 regression)**: a deliberately duplicated anchor for
       one `MarkId` is caught by the registry guard — the test asserts it fails.
-      A green run therefore proves the check can fail.
+      A green run therefore proves the check can fail. `coach/duplicate-anchor.dom.test.tsx`
+      renders two live `useCoachAnchor("new-chat")` through the real provider; the
+      second registration throws `/already registered/`, caught by an error boundary.
+      Proven to actually fail: run against a temporarily weakened guard (throw removed)
+      it went RED (no boundary error) — guard then restored (registry.ts unchanged from HEAD).
 - [ ] Docs updated in the same change: using-side onboarding page (contextual,
       one-at-a-time, skip-all, replay from Help) + client-settings field list
       gains `coachmarks`.
