@@ -12,8 +12,20 @@ const postTarget: NonNullable<Review["postTarget"]> = {
 
 describe("handoff/handoff-data", () => {
   describe("resolveEntryMode", () => {
-    it("resolves a teammate PR from a present post-target", () => {
-      expect(resolveEntryMode({ postTarget })).toBe("teammate-pr");
+    it("resolves a teammate PR from a present post-target the viewer did NOT author", () => {
+      expect(resolveEntryMode({ postTarget })).toBe("teammate-pr"); // absent ⇒ teammate (legacy-safe)
+      expect(resolveEntryMode({ postTarget: { ...postTarget, viewerDidAuthor: false } })).toBe(
+        "teammate-pr",
+      );
+    });
+
+    it("resolves your OWN branch for a post-target the viewer authored — never Post-review", () => {
+      // The C14 §6 fix: an OWN pull request carries an ownership fact, so it routes the
+      // own-branch lane (Continue / rounds), NOT the teammate Post-review lane. If the
+      // `viewerDidAuthor` branch is removed, this reddens (the mode falls back to teammate-pr).
+      const mode = resolveEntryMode({ postTarget: { ...postTarget, viewerDidAuthor: true } });
+      expect(mode).toBe("own-branch");
+      expect(mode).not.toBe("teammate-pr");
     });
 
     it("resolves your own branch when there is no post-target", () => {

@@ -18,19 +18,24 @@ import { type ProposedVerdict, parseLineAnchor, partitionAsksByAnchor } from "./
 export type EntryMode = "teammate-pr" | "own-branch" | "retrospective";
 
 /**
- * Resolve the entry mode from a review (Reconciliation 1), keyed on the two branch-state
- * facts the `Review` carries: `retrospective` (read-only, no post) and `postTarget`
- * (present exactly when the review can post to a real PR — a teammate's PR to review).
- * A non-retrospective review with no post-target is your own branch: you dispatch rounds
- * and open the PR yourself. A retrospective review offers NO exits.
+ * Resolve the entry mode from a review (Reconciliation 1), keyed on the branch-state facts
+ * the `Review` carries: `retrospective` (read-only, no post), `postTarget` (present when the
+ * review has a real PR to post to), and the post-target's `viewerDidAuthor` ownership fact.
  *
- * `postTarget` + `retrospective` are the only branch-state signals on the snapshot today;
- * this resolver is the one place to refine the split (e.g. an own already-open PR) when an
- * ownership signal is added — no call site re-derives the mode.
+ * A retrospective review offers NO exits. A review with no post-target is your own branch.
+ * A review WITH a post-target splits on ownership: your OWN pull request routes the own-branch
+ * lane (Continue / rounds + work orders), a TEAMMATE'S routes Post-review (the review concludes
+ * under your name). When the ownership fact is absent — a legacy snapshot, or an honestly
+ * unknown author — the split stays teammate-PR rather than claiming an ownership it cannot prove.
+ *
+ * This is the ONE place the mode is derived — no call site re-derives it.
  */
 export function resolveEntryMode(review: Pick<Review, "retrospective" | "postTarget">): EntryMode {
   if (review.retrospective) return "retrospective";
-  return review.postTarget ? "teammate-pr" : "own-branch";
+  if (!review.postTarget) return "own-branch";
+  // An own already-open PR is still your own branch — rounds keep going and work orders are
+  // own-branch-only; it must never be routed down the teammate Post-review lane (C14 §6).
+  return review.postTarget.viewerDidAuthor ? "own-branch" : "teammate-pr";
 }
 
 /** Whether a mode offers any exit at all — retrospective reviews do not (law 10). */
