@@ -100,6 +100,13 @@ export interface WorktreeSettings {
   readonly pattern: Layered<string>;
 }
 
+/** A repo rule the review agents read, with the severity chip it carries (claim 669). */
+export type GuidanceSeverity = "high" | "medium" | "low";
+export interface GuidanceRule {
+  readonly rule: string;
+  readonly severity: GuidanceSeverity;
+}
+
 /** The issue tracker whose referenced tickets are fetched for review agents (#461). */
 export type TrackerKind = "none" | "github" | "jira" | "linear";
 
@@ -130,12 +137,16 @@ export interface SettingsProjection {
   readonly agentsByHost: Readonly<Record<string, readonly DetectedTool[]>>;
   /** The review-role → model mappings shown in the Review section (empty ⇒ no section). */
   readonly reviewRoles: readonly ReviewRole[];
+  /** The chosen display name per project id (absent ⇒ the real `projects.list` name). */
+  readonly nameByProject: Readonly<Record<string, string>>;
   /** The chosen glyph per project id (absent ⇒ the default `layers`). */
   readonly glyphByProject: Readonly<Record<string, ProjectIconName>>;
   /** The worktree settings per project id. */
   readonly worktreeByProject: Readonly<Record<string, WorktreeSettings>>;
   /** The issue-tracker settings per project id. */
   readonly trackerByProject: Readonly<Record<string, IssueTrackerSettings>>;
+  /** The guidance rules the review agents read, per project id. */
+  readonly guidanceByProject: Readonly<Record<string, readonly GuidanceRule[]>>;
 
   /** Rename a host — flows through to the sidebar host-group header (one hosts state). */
   renameHost(id: string, name: string): void;
@@ -149,12 +160,19 @@ export interface SettingsProjection {
     scenario: "dual" | "claudeOnly" | "codexOnly",
     assignment: RoleAssignment | null,
   ): void;
+  /** Set a project's display name (applies live to the sidebar row); the `org/repo`
+   *  default is restored by writing it back (an emptied name never persists). */
+  setProjectName(projectId: string, name: string): void;
   /** Set a project's glyph (applies live to the sidebar row). */
   setProjectGlyph(projectId: string, icon: ProjectIconName): void;
+  /** Set a project's worktree location directory. */
+  setWorktreeRoot(projectId: string, root: string): void;
   /** Set a project's worktree naming pattern. */
   setWorktreePattern(projectId: string, pattern: string): void;
   /** Set a project's issue-tracker config. */
   setTracker(projectId: string, tracker: IssueTrackerSettings): void;
+  /** Set a project's guidance rules (the review agents read them). */
+  setGuidance(projectId: string, rules: readonly GuidanceRule[]): void;
 }
 
 /** The live client's projection: nothing detected, every edit a genuine no-op (there
@@ -164,16 +182,21 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   sourceControlByHost: {},
   agentsByHost: {},
   reviewRoles: [],
+  nameByProject: {},
   glyphByProject: {},
   worktreeByProject: {},
   trackerByProject: {},
+  guidanceByProject: {},
   renameHost: () => undefined,
   removeHost: () => undefined,
   setToolEnabled: () => undefined,
   setRoleAssignment: () => undefined,
+  setProjectName: () => undefined,
   setProjectGlyph: () => undefined,
+  setWorktreeRoot: () => undefined,
   setWorktreePattern: () => undefined,
   setTracker: () => undefined,
+  setGuidance: () => undefined,
 };
 
 const SettingsProjectionContext = createContext<SettingsProjection>(EMPTY_SETTINGS_PROJECTION);

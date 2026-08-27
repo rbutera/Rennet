@@ -19,6 +19,8 @@ export {
   type DaemonInfo,
   type DetectedTool,
   EMPTY_SETTINGS_PROJECTION,
+  type GuidanceRule,
+  type GuidanceSeverity,
   type IssueTrackerSettings,
   type ReviewRole,
   type RoleAssignment,

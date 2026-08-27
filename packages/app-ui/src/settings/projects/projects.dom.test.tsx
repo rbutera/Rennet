@@ -1,0 +1,340 @@
+// @vitest-environment happy-dom
+//
+// C10 §8 — the Projects settings page over the dual-source seam. Real projects from
+// `projects.list` (identity + environment grouping) composed with the per-project
+// settings projection (name, glyph, worktree, tracker, guidance) and the live repo
+// row (`settings.get`). The `?project` param drives the scope (the structural rule);
+// every edit persists through the projection to a second reader (the probe), never a
+// local copy; "Runs on" is a displayed detected fact with no control; the tracker's
+// REST fields carry only the env-var NAME; the guidance editor's Escape closes the
+// editor without bubbling to the takeover.
+import type { Project, SettingsProject } from "@rennet/protocol";
+import { useState } from "react";
+import { describe, expect, it } from "vitest";
+import { Router } from "wouter";
+import { BridgeProvider } from "../../data";
+import { memoryHistory } from "../../routes/history";
+import { cleanup, fireEvent, mount, within } from "../../test/dom";
+import { MemoryBridge } from "../../test/memory-bridge";
+import {
+  EMPTY_SETTINGS_PROJECTION,
+  type GuidanceRule,
+  type IssueTrackerSettings,
+  type SettingsProjection,
+  SettingsProjectionProvider,
+  type WorktreeSettings,
+} from "../data";
+import { ProjectsPage } from "./projects-page";
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────
+
+function mkProject(over: Partial<Project> & Pick<Project, "id" | "name" | "source">): Project {
+  return {
+    path: `/repos/${over.id}`,
+    kind: "repo",
+    repoCount: 1,
+    branchCount: 1,
+    primaryBranch: "main",
+    openPath: `/repos/acme/${over.id}`,
+    addedAt: "2026-08-01T00:00:00.000Z",
+    ...over,
+  };
+}
+
+// openPath's last-two segments are the `org/repo` fallback; a single segment keeps the
+// default name equal to the listed name (no Reset showing on an unrenamed project).
+const PROJECTS: readonly Project[] = [
+  mkProject({ id: "p1", name: "checkout", source: "local", openPath: "/checkout" }),
+  mkProject({ id: "p2", name: "billing", source: "remote:dev-box", openPath: "/billing" }),
+];
+
+/** The live repo row for p1 — visibility/promotion/locus each with the rung it resolved from. */
+const P1_ROW: SettingsProject = {
+  projectId: "p1",
+  name: "checkout",
+  repoPath: "/repos/acme/checkout",
+  visibility: "local",
+  visibilityProvenance: {
+    layer: "builtin",
+    contributions: [{ layer: "builtin", value: "local", effective: true }],
+  },
+  promoted: false,
+  promotedProvenance: {
+    layer: "builtin",
+    contributions: [{ layer: "builtin", value: "not promoted", effective: true }],
+  },
+  locus: { kind: "host" },
+  locusOverridden: false,
+  locusProvenance: {
+    layer: "detected",
+    contributions: [{ layer: "detected", value: "host", effective: true }],
+  },
+  configMalformed: false,
+};
+
+function bridge(): MemoryBridge {
+  return new MemoryBridge({
+    "projects.list": () => ({ projects: [...PROJECTS] }),
+    "settings.get": () => ({
+      scheme: "system",
+      schemeProvenance: {
+        layer: "builtin",
+        contributions: [{ layer: "builtin", value: "system", effective: true }],
+      },
+      appearanceMalformed: false,
+      projects: [P1_ROW],
+    }),
+  });
+}
+
+/** A stateful projection: every edit lands in one state, read by BOTH the page and the probe. */
+function StatefulProjects({
+  seed,
+  path = "/settings/projects?project=p1",
+}: {
+  readonly seed?: Partial<SettingsProjection>;
+  readonly path?: string;
+}) {
+  const [names, setNames] = useState<Record<string, string>>({ ...(seed?.nameByProject ?? {}) });
+  const [glyphs, setGlyphs] = useState<
+    Record<string, import("../assets/project-icon").ProjectIconName>
+  >({
+    ...(seed?.glyphByProject ?? {}),
+  });
+  const [worktrees, setWorktrees] = useState<Record<string, WorktreeSettings>>({
+    ...(seed?.worktreeByProject ?? {}),
+  });
+  const [trackers, setTrackers] = useState<Record<string, IssueTrackerSettings>>({
+    ...(seed?.trackerByProject ?? {}),
+  });
+  const [guidance, setGuidanceState] = useState<Record<string, readonly GuidanceRule[]>>({
+    ...(seed?.guidanceByProject ?? {}),
+  });
+  // Bridge + history must be STABLE across re-renders — a fresh bridge would reset
+  // `projects.list` to pending and collapse the page back to its loading state.
+  const [bridgeInstance] = useState(bridge);
+  const [history] = useState(() => memoryHistory(path));
+
+  const projection: SettingsProjection = {
+    ...EMPTY_SETTINGS_PROJECTION,
+    nameByProject: names,
+    glyphByProject: glyphs,
+    worktreeByProject: worktrees,
+    trackerByProject: trackers,
+    guidanceByProject: guidance,
+    setProjectName: (id, name) => setNames((prev) => ({ ...prev, [id]: name })),
+    setProjectGlyph: (id, icon) => setGlyphs((prev) => ({ ...prev, [id]: icon })),
+    setWorktreeRoot: (id, root) =>
+      setWorktrees((prev) => ({
+        ...prev,
+        [id]: {
+          root: { value: root, layer: "global" },
+          pattern: prev[id]?.pattern ?? { value: "{project}-{branch}", layer: "builtin" },
+        },
+      })),
+    setWorktreePattern: (id, pattern) =>
+      setWorktrees((prev) => ({
+        ...prev,
+        [id]: {
+          root: prev[id]?.root ?? { value: "~/.rennet/worktrees", layer: "builtin" },
+          pattern: { value: pattern, layer: "global" },
+        },
+      })),
+    setTracker: (id, tracker) => setTrackers((prev) => ({ ...prev, [id]: tracker })),
+    setGuidance: (id, rules) => setGuidanceState((prev) => ({ ...prev, [id]: rules })),
+  };
+
+  return (
+    <BridgeProvider bridge={bridgeInstance}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <SettingsProjectionProvider value={projection}>
+          <ProjectsPage />
+          <div data-testid="probe-name">{names.p1 ?? ""}</div>
+          <div data-testid="probe-glyph">{glyphs.p1 ?? ""}</div>
+          <div data-testid="probe-pattern">{worktrees.p1?.pattern.value ?? ""}</div>
+          <div data-testid="probe-tracker">{trackers.p1?.kind.value ?? ""}</div>
+          <div data-testid="probe-guidance">{(guidance.p1 ?? []).map((r) => r.rule).join("|")}</div>
+        </SettingsProjectionProvider>
+      </Router>
+    </BridgeProvider>
+  );
+}
+
+function trackerSection(): HTMLElement {
+  // The Issue Tracker section — located by its Tracker row's group aria-label.
+  const group = document.querySelector<HTMLElement>('[aria-label="Issue tracker"]');
+  const section = group?.closest<HTMLElement>('[data-slot="settings-section"]');
+  if (!section) throw new Error("tracker section not found");
+  return section;
+}
+
+describe("ProjectsPage — dual-source settings", () => {
+  it("scopes to the project named by ?project (the structural rule)", async () => {
+    const { findByLabelText } = mount(<StatefulProjects path="/settings/projects?project=p2" />);
+    // The Identity name field resolves to the scoped project's name (after the tree loads).
+    expect(((await findByLabelText("Project name")) as HTMLInputElement).value).toBe("billing");
+    cleanup();
+  });
+
+  it("a different ?project scopes a different project", async () => {
+    const { findByLabelText } = mount(<StatefulProjects path="/settings/projects?project=p1" />);
+    expect(((await findByLabelText("Project name")) as HTMLInputElement).value).toBe("checkout");
+    cleanup();
+  });
+
+  it("identity: rename persists, Reset restores org/repo, empty blur restores it", async () => {
+    const { findByLabelText, getByRole, queryByRole, getByTestId, user } = mount(
+      <StatefulProjects />,
+    );
+    const input = (await findByLabelText("Project name")) as HTMLInputElement;
+    // Unrenamed ⇒ no Reset yet (the listed name is the org/repo default).
+    expect(queryByRole("button", { name: "Reset" })).toBeNull();
+    fireEvent.change(input, { target: { value: "Checkout Service" } });
+    expect(getByTestId("probe-name").textContent).toBe("Checkout Service");
+    // Renamed ⇒ a Reset appears, restoring the org/repo fallback (checkout).
+    await user.click(getByRole("button", { name: "Reset" }));
+    expect(getByTestId("probe-name").textContent).toBe("checkout");
+    expect(queryByRole("button", { name: "Reset" })).toBeNull();
+    // Emptying and blurring falls back to the default, never an empty name.
+    fireEvent.change(input, { target: { value: "  " } });
+    fireEvent.blur(input);
+    expect(getByTestId("probe-name").textContent).toBe("checkout");
+    cleanup();
+  });
+
+  it("identity: a glyph choice applies live (a second reader sees it)", async () => {
+    const { findByRole, getByTestId, user } = mount(<StatefulProjects />);
+    await user.click(await findByRole("button", { name: "rocket" }));
+    expect(getByTestId("probe-glyph").textContent).toBe("rocket");
+    cleanup();
+  });
+
+  it("worktree: a token insert appends to the pattern and the preview flattens slashes", async () => {
+    // Seed the starting pattern (the field text carries braces userEvent would parse as keys).
+    const seed: Partial<SettingsProjection> = {
+      worktreeByProject: {
+        p1: {
+          root: { value: "~/wt", layer: "global" },
+          pattern: { value: "{project}-", layer: "global" },
+        },
+      },
+    };
+    const { findByText, getByText, getByTestId, user } = mount(<StatefulProjects seed={seed} />);
+    await user.click(await findByText("{branch}"));
+    expect(getByTestId("probe-pattern").textContent).toBe("{project}-{branch}");
+    // {project} resolves to the name; {branch} sample is `fix/session-scope` — the preview
+    // flattens the slash to a dash, so a real worktree folder name never nests a directory.
+    expect(getByText("~/wt/checkout-fix-session-scope")).toBeTruthy();
+    cleanup();
+  });
+
+  it("Runs on is a displayed detected fact with no edit control", async () => {
+    const { findByText, getByText } = mount(<StatefulProjects />);
+    await findByText("Runs on");
+    const label = getByText("Runs on");
+    const row = label.closest("div")?.parentElement as HTMLElement;
+    // The host label shows; the row carries a detected provenance chip and NO control.
+    expect(within(row).getByText("This machine")).toBeTruthy();
+    expect(row.querySelector('[data-slot="provenance-chip"][data-layer="detected"]')).toBeTruthy();
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(row).queryByRole("textbox")).toBeNull();
+    cleanup();
+  });
+
+  it("tracker: a detected pick reads 'detected'; switching to jira lands 'global' and seeds the env var", async () => {
+    const seed: Partial<SettingsProjection> = {
+      trackerByProject: {
+        p1: {
+          kind: { value: "github", layer: "detected" },
+          projectKey: null,
+          baseUrl: null,
+          tokenEnv: null,
+        },
+      },
+    };
+    const { findByRole, getByRole, getByLabelText, queryByLabelText, getByTestId, user } = mount(
+      <StatefulProjects seed={seed} />,
+    );
+    await findByRole("button", { name: "jira" }); // wait for the tree to load
+    // The scout pick shows the detected rung.
+    expect(
+      trackerSection().querySelector('[data-slot="provenance-chip"][data-layer="detected"]'),
+    ).toBeTruthy();
+    // Switching to JIRA is a user pick — the global rung — and seeds the REST fields.
+    await user.click(getByRole("button", { name: "jira" }));
+    expect(getByTestId("probe-tracker").textContent).toBe("jira");
+    expect(
+      trackerSection().querySelector('[data-slot="provenance-chip"][data-layer="global"]'),
+    ).toBeTruthy();
+    // Only the env-var NAME is exposed — never the token value.
+    expect((getByLabelText("Tracker token environment variable") as HTMLInputElement).value).toBe(
+      "JIRA_API_TOKEN",
+    );
+    expect(getByLabelText("Tracker project key")).toBeTruthy();
+    // Switching away to none drops every REST field.
+    await user.click(getByRole("button", { name: "none" }));
+    expect(queryByLabelText("Tracker token environment variable")).toBeNull();
+    expect(queryByLabelText("Tracker project key")).toBeNull();
+    cleanup();
+  });
+
+  it("tracker: Escape inside a field blurs it without closing settings", async () => {
+    let bubbled = 0;
+    const seed: Partial<SettingsProjection> = {
+      trackerByProject: {
+        p1: {
+          kind: { value: "jira", layer: "global" },
+          projectKey: { value: "PAY", layer: "global" },
+          baseUrl: null,
+          tokenEnv: null,
+        },
+      },
+    };
+    const { findByLabelText, user } = mount(
+      // biome-ignore lint/a11y/noStaticElementInteractions: a takeover-root proxy that counts Escape reaching it
+      <div
+        onKeyDown={(e) => {
+          if (e.key === "Escape") bubbled += 1;
+        }}
+      >
+        <StatefulProjects seed={seed} />
+      </div>,
+    );
+    const field = await findByLabelText("Tracker project key");
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    await user.keyboard("{Escape}");
+    // The field blurred (Escape handled here) and the event never reached the takeover.
+    expect(document.activeElement).not.toBe(field);
+    expect(bubbled).toBe(0);
+    cleanup();
+  });
+
+  it("guidance: Enter saves a new rule; empty text is refused; Escape closes only the editor", async () => {
+    let bubbled = 0;
+    const { findByRole, getByRole, getByLabelText, getByTestId, queryByLabelText, user } = mount(
+      // biome-ignore lint/a11y/noStaticElementInteractions: a takeover-root proxy that counts Escape reaching it
+      <div
+        onKeyDown={(e) => {
+          if (e.key === "Escape") bubbled += 1;
+        }}
+      >
+        <StatefulProjects />
+      </div>,
+    );
+    // Empty text is refused — Save stays disabled and Enter does not persist.
+    await user.click(await findByRole("button", { name: "Add Rule" }));
+    const editor = getByLabelText("Guidance rule text");
+    await user.type(editor, "Money amounts are integer cents{Enter}");
+    expect(getByTestId("probe-guidance").textContent).toBe("Money amounts are integer cents");
+
+    // Re-open, type, then Escape: the editor closes, nothing persists, settings stays open.
+    await user.click(getByRole("button", { name: "Add Rule" }));
+    const editor2 = getByLabelText("Guidance rule text");
+    await user.type(editor2, "half-written{Escape}");
+    expect(queryByLabelText("Guidance rule text")).toBeNull();
+    expect(getByTestId("probe-guidance").textContent).toBe("Money amounts are integer cents");
+    expect(bubbled).toBe(0);
+    cleanup();
+  });
+});

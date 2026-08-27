@@ -13,6 +13,7 @@ import {
   type SettingsPageMeta,
 } from "./pages";
 import { usePriorSurface } from "./prior-surface";
+import { ProjectsPage } from "./projects/projects-page";
 import { ShortcutsPage } from "./shortcuts";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ function ActivePage({ page }: { readonly page: SettingsPageMeta }) {
   if (page.id === "environments") return <EnvironmentsPage />;
   if (page.id === "appearance") return <AppearancePage />;
   if (page.id === "keybindings") return <ShortcutsPage />;
+  if (page.id === "projects") return <ProjectsPage />;
   return <SettingsPagePending page={page} />;
 }
 
