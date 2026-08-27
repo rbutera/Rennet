@@ -1,4 +1,5 @@
 import type { Review } from "@rennet/protocol";
+import { useEffect, useRef } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { useHandoffExits } from "../handoff/exits";
@@ -7,6 +8,7 @@ import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
 import { DiffViewContainer } from "../review";
 import { ROUTES, readSessionQuery, viewToggle } from "../routes/url";
+import { useRennetStore } from "../store";
 
 // The review workspace route (B2 stub → Track C rebuild, #489). The canvas-era surface
 // was deleted in the delete-first cutover; the Board rebuild restores it view-by-view
@@ -35,6 +37,19 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const view = query.view;
   const slug = sessionParams?.slug ? decodeURIComponent(sessionParams.slug) : "";
   const mode = resolveEntryMode(review);
+
+  // Review-identity isolation (C05's boardId lesson, applied to the singleton `review` slice): the
+  // reviewer's ephemeral acts (staged asks, retired ledger, inline edits, the verdict override) are
+  // this review's, and MUST NOT survive a switch to another review — A's override becoming B's
+  // submitted verdict is the leak. So the slice resets when `review.id` changes. It resets ONLY on a
+  // real change, never on first mount, so a seed-then-mount (fixtures/tests) is preserved intact.
+  const resetReview = useRennetStore((s) => s.reviewActions.resetReview);
+  const previousReviewId = useRef(review.id);
+  useEffect(() => {
+    if (previousReviewId.current === review.id) return;
+    previousReviewId.current = review.id;
+    resetReview();
+  }, [review.id, resetReview]);
 
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
