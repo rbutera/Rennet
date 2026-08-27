@@ -82,7 +82,12 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
           boardId={board.boardId}
         >
           <ProseSelectionLayer>
+            {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section
+                refs (change/design/tasks), so without a board-identity key switching
+                generation would keep the prior board's per-section fold `useState`.
+                Remounting on boardId resets fold state to the new board's foldAll. */}
             <article
+              key={board.boardId}
               data-lens={board.lens}
               data-generation={board.generation}
               className="flex flex-col gap-1"

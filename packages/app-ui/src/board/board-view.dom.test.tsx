@@ -95,4 +95,32 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     const { container } = renderView("gen1", ["gen1"]);
     expect(container.querySelector("[data-kind=generation-switcher]")).toBeNull();
   });
+
+  it("fold state does NOT cross board identity when drilling generations (finding 5)", async () => {
+    // gen0 and gen1 both carry a Design board whose sections reuse refs (change/design/
+    // tasks). Expand a section on gen1's Design, drill to gen0's Design: without a
+    // board-identity key the same-ref section keeps gen1's expanded fold state. Keyed by
+    // boardId the subtree remounts, so gen0 opens folded (foldAll) as it should.
+    const { container, getByText, user } = renderView("gen1", GENERATIONS);
+    const designTab = container.querySelector<HTMLButtonElement>("[data-lens=design]");
+    if (!designTab) throw new Error("no design tab");
+    await user.click(designTab);
+    expect(lensOf(container)).toBe("design");
+    const changeSection = () =>
+      container.querySelector('[data-kind=board-section][data-section-id="change"]');
+    expect(changeSection()?.getAttribute("data-open")).toBe("false"); // foldAll
+
+    await user.click(getByText("The Change")); // expand it on gen1
+    expect(changeSection()?.getAttribute("data-open")).toBe("true");
+
+    // Drill to gen0's Design board (same `change` ref, different boardId).
+    const gen0Tab = container.querySelector<HTMLButtonElement>(
+      "[data-kind=generation-switcher] [data-generation=gen0]",
+    );
+    if (!gen0Tab) throw new Error("no gen0 tab");
+    await user.click(gen0Tab);
+    expect(lensOf(container)).toBe("design");
+    // Remounted, so the reused-ref section is folded again — not gen1's expanded state.
+    expect(changeSection()?.getAttribute("data-open")).toBe("false");
+  });
 });
