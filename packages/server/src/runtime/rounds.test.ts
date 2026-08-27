@@ -55,7 +55,9 @@ function fakeClaudePort(captures: { prompt?: string }[] = []): HarnessPort {
         send: async (input: { prompt: string }) => {
           capture.prompt = input.prompt;
         },
-        close: async () => {},
+        close: async () => {
+          /* nothing to release */
+        },
         events: (async function* () {
           yield {
             kind: "session.ended",
@@ -203,7 +205,7 @@ describe("createRoundsRuntime", () => {
 
   it("serializes dispatches per session — a second round waits for the first", async () => {
     const events: string[] = [];
-    let releaseA: () => void = () => {};
+    let releaseA!: () => void;
     const gateA = new Promise<void>((r) => {
       releaseA = r;
     });

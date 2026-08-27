@@ -61,7 +61,11 @@ export interface BoardMetaInput {
   readonly boardId: string;
   readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
   readonly blemishes: readonly z.infer<typeof ViolationSchema>[];
-  readonly omissions: readonly z.infer<typeof OmissionSchema>[];
+  readonly omissions: readonly {
+    readonly elementId: string;
+    readonly hunks: readonly string[];
+    readonly reason: string;
+  }[];
   readonly immutability: readonly z.infer<typeof ViolationSchema>[];
 }
 

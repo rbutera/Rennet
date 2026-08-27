@@ -31,7 +31,6 @@
 // `deltaPacket.successorAccount`) — this runtime only wires the seams.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { randomUUID } from "node:crypto";
 import { WhiteboardClient } from "@rennet/adapters";
 import type {
   CodexExecutor,
