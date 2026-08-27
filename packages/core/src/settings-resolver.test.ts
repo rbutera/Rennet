@@ -167,3 +167,50 @@ describe("settings registry + generic resolve (#28)", () => {
     expect(resolved.value).toEqual({ kind: "wsl", distro: "Ubuntu" });
   });
 });
+
+describe("issue-tracker section (#461, B7)", () => {
+  it("trackerKind rides the full ladder: detected < global < repo", () => {
+    const detectedOnly = resolve(SETTINGS_REGISTRY.trackerKind, { detected: "github" });
+    expect(detectedOnly.value).toBe("github");
+    expect(detectedOnly.layer).toBe("detected");
+
+    const overridden = resolve(SETTINGS_REGISTRY.trackerKind, {
+      detected: "github",
+      global: "jira",
+      repo: "linear",
+    });
+    expect(overridden.value).toBe("linear");
+    expect(overridden.layer).toBe("repo");
+    expect(overridden.provenance.contributions.map((c) => c.layer)).toEqual([
+      "builtin",
+      "detected",
+      "global",
+      "repo",
+    ]);
+  });
+
+  it("trackerKind rejects out-of-vocabulary values", () => {
+    expect(() => resolve(SETTINGS_REGISTRY.trackerKind, { global: "gitlab" as never })).toThrow(
+      /trackerKind/,
+    );
+  });
+
+  it("base URL and token env var are config-only: a detected offer REFUSES", () => {
+    expect(() =>
+      resolve(SETTINGS_REGISTRY.trackerBaseUrl, { detected: "https://x.atlassian.net" } as never),
+    ).toThrow(/detected/);
+    expect(() =>
+      resolve(SETTINGS_REGISTRY.trackerTokenEnv, { detected: "JIRA_TOKEN" } as never),
+    ).toThrow(/detected/);
+  });
+
+  it("detectable string rows accept a scout offer and render unset honestly", () => {
+    const detected = resolve(SETTINGS_REGISTRY.gateCommand, { detected: "pnpm check" });
+    expect(detected.value).toBe("pnpm check");
+    expect(detected.layer).toBe("detected");
+
+    const unset = resolve(SETTINGS_REGISTRY.logoPath, {});
+    expect(unset.value).toBe("");
+    expect(unset.provenance.contributions[0]?.value).toBe("(unset)");
+  });
+});
