@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../../data";
 import { memoryHistory } from "../../routes/history";
-import { cleanup, fireEvent, mount, within } from "../../test/dom";
+import { cleanup, fireEvent, mount, waitFor, within } from "../../test/dom";
 import { MemoryBridge } from "../../test/memory-bridge";
 import {
   EMPTY_SETTINGS_PROJECTION,
@@ -414,6 +414,174 @@ describe("ProjectsPage — live projection is honest about the unserved write st
     expect((await findByRole("button", { name: "git-visible" })).hasAttribute("disabled")).toBe(
       false,
     );
+    cleanup();
+  });
+});
+
+// ── The Repository section over the live settings ladder (P1-1/P1-3/P1-5) ────────
+// A project can carry more than one repo (a workspace ⇒ one `SettingsProject` row per
+// repoPath): each repo renders its OWN controls, and a write targets its OWN repoPath —
+// never collapsed onto the first. A non-apply outcome or a rejection is disclosed, not
+// swallowed. The ladder controls (Pin the current effective value / Reset to inherit)
+// ride the real `pinRepoValue` / `resetRepoValue` commands.
+
+type RepoWriteInput = { readonly repoPath: string; readonly key?: string };
+type RepoBridge = {
+  readonly bridge: MemoryBridge;
+  readonly calls: { visibility: RepoWriteInput[]; pin: RepoWriteInput[]; reset: RepoWriteInput[] };
+};
+
+function mkRow(
+  over: Partial<SettingsProject> & Pick<SettingsProject, "repoPath">,
+): SettingsProject {
+  return { ...P1_ROW, ...over };
+}
+
+/** A bridge whose `settings.get` returns the given repo rows and whose repo-write
+ *  commands record their input (so a test can prove which repoPath was addressed). */
+function repoBridge(
+  rows: readonly SettingsProject[],
+  outcomes: {
+    readonly visibility?: { status: "applied" | "unresolved" | "malformed" } | "throw";
+  } = {},
+): RepoBridge {
+  const calls: RepoBridge["calls"] = { visibility: [], pin: [], reset: [] };
+  const bridge = new MemoryBridge({
+    "projects.list": () => ({ projects: [...PROJECTS] }),
+    "settings.get": () => ({
+      scheme: "system",
+      schemeProvenance: {
+        layer: "builtin",
+        contributions: [{ layer: "builtin", value: "system", effective: true }],
+      },
+      appearanceMalformed: false,
+      projects: [...rows],
+    }),
+    "settings.setRepoVisibility": (input) => {
+      calls.visibility.push(input);
+      if (outcomes.visibility === "throw") throw new Error("daemon unreachable");
+      return {
+        status: outcomes.visibility?.status ?? "applied",
+        visibility: input.visibility,
+        changed: true,
+        gitignorePath: `${input.repoPath}/.rennet/.gitignore`,
+      };
+    },
+    "settings.pinRepoValue": (input) => {
+      calls.pin.push(input);
+      return { status: "applied", key: "visibility", project: rows[0] ?? null };
+    },
+    "settings.resetRepoValue": (input) => {
+      calls.reset.push(input);
+      return { status: "applied", key: "visibility", project: rows[0] ?? null };
+    },
+  });
+  return { bridge, calls };
+}
+
+function mountRepo(bridge: MemoryBridge) {
+  const history = memoryHistory("/settings/projects?project=p1");
+  return mount(
+    <BridgeProvider bridge={bridge}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <SettingsProjectionProvider value={EMPTY_SETTINGS_PROJECTION}>
+          <ProjectsPage />
+        </SettingsProjectionProvider>
+      </Router>
+    </BridgeProvider>,
+  );
+}
+
+/** The ToggleGroup element for one repo's Review Context (by its per-repo aria-label). */
+function reviewContext(repoLabel: string): HTMLElement {
+  const group = document.querySelector<HTMLElement>(
+    `[aria-label="Review context for ${repoLabel}"]`,
+  );
+  if (!group) throw new Error(`review-context group not found for ${repoLabel}`);
+  return group;
+}
+
+describe("Repository — multi-repo rows, write outcomes, and ladder controls", () => {
+  it("renders EVERY repo of a workspace and writes to the addressed repoPath (not the first)", async () => {
+    const rows = [
+      mkRow({ repoPath: "/repos/acme/checkout", name: "checkout" }),
+      mkRow({ repoPath: "/repos/acme/api", name: "api" }),
+    ];
+    const { bridge, calls } = repoBridge(rows);
+    const { findByLabelText } = mountRepo(bridge);
+    // Both repos surface their own Review Context control.
+    await findByLabelText("Review context for acme/checkout");
+    expect(reviewContext("acme/api")).toBeTruthy();
+    // Writing the SECOND repo's visibility addresses THAT repoPath — never collapsed onto p1's first repo.
+    fireEvent.click(within(reviewContext("acme/api")).getByRole("button", { name: "git-visible" }));
+    await waitFor(() => expect(calls.visibility.length).toBe(1));
+    expect(calls.visibility[0]?.repoPath).toBe("/repos/acme/api");
+    cleanup();
+  });
+
+  it("discloses a no-op outcome (unresolved) instead of silently snapping back", async () => {
+    const { bridge } = repoBridge([mkRow({ repoPath: "/repos/acme/checkout" })], {
+      visibility: { status: "unresolved" },
+    });
+    const { findByLabelText, findByText } = mountRepo(bridge);
+    await findByLabelText("Review context for acme/checkout");
+    fireEvent.click(
+      within(reviewContext("acme/checkout")).getByRole("button", { name: "git-visible" }),
+    );
+    expect(await findByText(/nothing was written/)).toBeTruthy();
+    cleanup();
+  });
+
+  it("discloses a transport rejection", async () => {
+    const { bridge } = repoBridge([mkRow({ repoPath: "/repos/acme/checkout" })], {
+      visibility: "throw",
+    });
+    const { findByLabelText, findByText } = mountRepo(bridge);
+    await findByLabelText("Review context for acme/checkout");
+    fireEvent.click(
+      within(reviewContext("acme/checkout")).getByRole("button", { name: "git-visible" }),
+    );
+    expect(await findByText(/The write failed: daemon unreachable/)).toBeTruthy();
+    cleanup();
+  });
+
+  it("offers Pin when the value inherits, and Reset when it resolves from the repo layer", async () => {
+    // Inherited (builtin) ⇒ Pin freezes the current effective value at the repo layer.
+    const inherited = repoBridge([
+      mkRow({
+        repoPath: "/repos/acme/checkout",
+        visibilityProvenance: {
+          layer: "builtin",
+          contributions: [{ layer: "builtin", value: "local", effective: true }],
+        },
+      }),
+    ]);
+    const pinned = mountRepo(inherited.bridge);
+    const pinBtn = await pinned.findByRole("button", {
+      name: "Pin review context for acme/checkout at the repo",
+    });
+    fireEvent.click(pinBtn);
+    await waitFor(() => expect(inherited.calls.pin.length).toBe(1));
+    expect(inherited.calls.pin[0]?.key).toBe("visibility");
+    cleanup();
+
+    // Repo-layer entry ⇒ Reset clears it and falls back down the ladder.
+    const explicit = repoBridge([
+      mkRow({
+        repoPath: "/repos/acme/checkout",
+        visibilityProvenance: {
+          layer: "repo",
+          contributions: [{ layer: "repo", value: "git-visible", effective: true }],
+        },
+      }),
+    ]);
+    const reset = mountRepo(explicit.bridge);
+    const resetBtn = await reset.findByRole("button", {
+      name: "Reset review context for acme/checkout to inherit",
+    });
+    fireEvent.click(resetBtn);
+    await waitFor(() => expect(explicit.calls.reset.length).toBe(1));
+    expect(explicit.calls.reset[0]?.key).toBe("visibility");
     cleanup();
   });
 });
