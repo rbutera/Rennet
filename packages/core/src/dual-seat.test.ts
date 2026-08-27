@@ -1,5 +1,6 @@
 import type {
   CouncilResolveContext,
+  FindingElement,
   OfferedManifest,
   RspCapabilitySnapshot,
 } from "@rennet/protocol";
@@ -197,8 +198,49 @@ describe("resolveDualSeat — the dual-model seat resolver (#41)", () => {
       expect(codexOnly.map((s) => s.provider)).toEqual(["codex"]);
     });
 
-    it("merges through finding-reconcile (the dual-seat merge point, J2)", () => {
-      expect(typeof reconcileFindings).toBe("function");
+    it("merges through finding-reconcile: two seats at one location fold to a concur row (J2)", () => {
+      // The production Flagged merge point. Two seats independently raise the same
+      // location; reconcile must fold them into ONE concur row (2 of 2) carrying
+      // one seat's verbatim summary — never a synthesised third summary.
+      const claudeSeat: FindingElement[] = [
+        {
+          findingId: "cl-1",
+          anchor: "rennet:hunk/h1#L10@additions",
+          summary: "a declined refresh is misclassified as a network failure",
+          severity: "high",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+        },
+      ];
+      const codexSeat: FindingElement[] = [
+        {
+          findingId: "cx-1",
+          anchor: "rennet:hunk/h1#L11@additions", // gap 1 ≤ proximity 3 → same location
+          summary: "the refresh error path returns the wrong classification",
+          severity: "high",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+        },
+      ];
+      const merged = reconcileFindings(claudeSeat, codexSeat, { a: "Claude", b: "Codex" });
+      expect(merged).toHaveLength(1);
+      expect(merged[0]?.agreement).toEqual({ kind: "concur", agree: 2, total: 2 });
+      expect(merged[0]?.severity).toBe("high");
+      // Verbatim selection: the surviving summary is one of the two seats', not a merge.
+      expect([claudeSeat[0]?.summary, codexSeat[0]?.summary]).toContain(merged[0]?.summary);
+    });
+
+    it("merges through finding-reconcile: a solo finding surfaces as a labelled disagreement (J2)", () => {
+      const claudeSeat: FindingElement[] = [
+        {
+          findingId: "cl-1",
+          anchor: "rennet:hunk/h9#L4@additions",
+          summary: "only Claude flags the missing guard",
+          severity: "medium",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+        },
+      ];
+      const merged = reconcileFindings(claudeSeat, [], { a: "Claude", b: "Codex" });
+      expect(merged).toHaveLength(1);
+      expect(merged[0]?.agreement.kind).toBe("disagree");
     });
   });
 });
