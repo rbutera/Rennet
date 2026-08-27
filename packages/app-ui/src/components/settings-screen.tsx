@@ -13,7 +13,6 @@ import { Button, Input } from "@rennet/ui";
 import { ArrowLeft, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
-  COMMAND_CATALOGUE,
   type CommandDef,
   chordFromEvent,
   effectiveKeybinding,
@@ -22,6 +21,7 @@ import {
   type KeybindingOverrides,
   normalizeChord,
 } from "../command/commands";
+import { KEY_ACTIONS } from "../command/key-actions";
 import { messageFrom } from "../lib/message-from";
 import { RennetBrandMark } from "./brand-mark";
 import { GitHubAccountRows } from "./github-connect";
@@ -573,7 +573,10 @@ function KeyboardPanel({
   const [recording, setRecording] = useState<string | null>(null);
   const [recordingNote, setRecordingNote] = useState<string>();
 
-  const rows = COMMAND_CATALOGUE;
+  // The six advertised app binds (C11): the Keyboard Shortcuts page lists exactly what
+  // the key owner fires — no advertised-but-dead row (the §14 item 1 UI lie). Remapping
+  // a row here writes the override the key owner reads, so what you rebind is what fires.
+  const rows = KEY_ACTIONS;
   const knownIds = new Set(rows.map((def) => def.id));
   const unknownOverrides = Object.entries(overrides).filter(([id]) => !knownIds.has(id));
   const conflicts = findConflicts(rows, overrides);

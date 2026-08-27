@@ -68,6 +68,12 @@ combinations. It shows shortcut collisions but still stores them; the first
 matching command wins. An invalid stored shortcut falls back to the catalogue
 default or remains unbound.
 
+The Keyboard tab lists the app shortcuts that a single global key owner fires:
+Search (⌘P), Command Menu (⌘K), New Chat (⌘N), Toggle Sidebar (⌘B), Toggle Chat
+(⌘J), and Settings (⌘,). What the tab advertises is exactly what fires — remap a
+row and the action runs on the new chord after the next launch. `⌘R` is bound to
+nothing, so the reload chord stays the platform default.
+
 If `~/.rennet/config.json` is malformed, Rennet uses built-in values and disables
 writes that would replace the unreadable file. Fix or move the file, then reopen
 Settings.

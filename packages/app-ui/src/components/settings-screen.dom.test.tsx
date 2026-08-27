@@ -487,23 +487,23 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
-    // Every catalogue row with a default binding is listed (nav.back among them).
+    // Every six-bind row is listed (Search among them).
     const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     expect(backRow).toBeTruthy();
 
     // Set → the recorder captures the next chord (⌘E) and writes it.
     fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
-    const recorder = getByLabelText("Press the new chord for Back");
+    const recorder = getByLabelText("Press the new chord for Search");
     fireEvent.keyDown(recorder, { key: "e", metaKey: true });
     await waitFor(() => expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true));
     const set = calls.find((c) => c.name === "settings.setKeybinding");
-    expect(set?.input).toEqual({ id: "nav.back", keybinding: "mod+e" });
+    expect(set?.input).toEqual({ id: "search", keybinding: "mod+e" });
 
     // Unbind sends an explicit null.
     const backRow2 = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     fireEvent.click(
       [...(backRow2?.querySelectorAll("button") ?? [])].find(
@@ -523,7 +523,7 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
 
     // A now-overridden row shows Reset, which sends an id-only payload (delete entry).
     const backRow3 = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     const resetBtn = [...(backRow3?.querySelectorAll("button") ?? [])].find(
       (b) => b.textContent === "Reset",
@@ -536,15 +536,15 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
           .filter((c) => c.name === "settings.setKeybinding")
           .some((c) => {
             const input = c.input as Record<string, unknown>;
-            return input.id === "nav.back" && !("keybinding" in input);
+            return input.id === "search" && !("keybinding" in input);
           }),
       ).toBe(true),
     );
   });
 
   it("Keyboard: a conflicting chord is disclosed on both rows AND the write still lands (Rule Zero) (#44)", async () => {
-    // Seed an override that collides nav.forward onto nav.back's default ⌘[.
-    const conflictView: SettingsView = { ...view, keybindings: { "nav.forward": "mod+[" } };
+    // Seed an override that collides Command Menu onto Search's default ⌘P.
+    const conflictView: SettingsView = { ...view, keybindings: { commands: "mod+p" } };
     const { bridge, calls } = fakeBridge({ "settings.get": conflictView });
     const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
@@ -558,18 +558,20 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     // The Rule Zero control: assigning a chord already held is accepted and persisted —
     // the bridge write fires unconditionally, with no are-you-sure gate in between.
     const forwardRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Forward"),
+      row.textContent?.includes("Toggle Chat"),
     );
     fireEvent.click(forwardRow?.querySelector("button") as HTMLButtonElement);
     const recorder = container.querySelector(".settings-key-recorder") as HTMLInputElement;
-    fireEvent.keyDown(recorder, { key: "[", metaKey: true });
+    fireEvent.keyDown(recorder, { key: "p", metaKey: true });
     await waitFor(() => expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true));
     // No confirmation dialog/element is ever rendered.
     expect(container.querySelector("[role='alertdialog']")).toBeNull();
   });
 
-  it("Keyboard: renders no-default commands and assigns their first chord", async () => {
-    const { bridge, calls } = fakeBridge();
+  it("Keyboard: assigns a bare-key chord to an unbound row", async () => {
+    // An override that unbinds Toggle Chat renders it "unbound"; a new bare key rebinds it.
+    const unboundView: SettingsView = { ...view, keybindings: { "toggle-chat": null } };
+    const { bridge, calls } = fakeBridge({ "settings.get": unboundView });
     const { container, getByRole, getByLabelText } = mount(
       <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
     );
@@ -577,18 +579,18 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
 
     const settingsRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back to projects"),
+      row.textContent?.includes("Toggle Chat"),
     );
     expect(settingsRow?.textContent).toContain("unbound");
     fireEvent.click(settingsRow?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(getByLabelText("Press the new chord for Back to projects"), { key: "s" });
+    fireEvent.keyDown(getByLabelText("Press the new chord for Toggle Chat"), { key: "s" });
 
     await waitFor(() =>
       expect(
         calls.some(
           (call) =>
             call.name === "settings.setKeybinding" &&
-            (call.input as { id?: string; keybinding?: string }).id === "nav.projects" &&
+            (call.input as { id?: string; keybinding?: string }).id === "toggle-chat" &&
             (call.input as { keybinding?: string }).keybinding === "s",
         ),
       ).toBe(true),
@@ -603,10 +605,10 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
     const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(getByLabelText("Press the new chord for Back"), {
+    fireEvent.keyDown(getByLabelText("Press the new chord for Search"), {
       key: "J",
       shiftKey: true,
     });
@@ -620,7 +622,7 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
   it("Keyboard: reports invalid raw overrides and lets unknown ids be reset", async () => {
     const staleView: SettingsView = {
       ...view,
-      keybindings: { "palette.toggle": "mod+", "retired.command": "mod+e" },
+      keybindings: { search: "mod+", "retired.command": "mod+e" },
     };
     const { bridge, calls } = fakeBridge({ "settings.get": staleView });
     const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
@@ -661,11 +663,11 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(getByRole("tab", { name: "Keyboard" }));
     await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
     const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
-      row.textContent?.includes("Back"),
+      row.textContent?.includes("Search"),
     );
     fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
-    fireEvent.keyDown(getByLabelText("Press the new chord for Back"), {
-      key: "k",
+    fireEvent.keyDown(getByLabelText("Press the new chord for Search"), {
+      key: "e",
       metaKey: true,
     });
 
