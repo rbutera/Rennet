@@ -8,6 +8,28 @@ dispatched work-order round, or the pull request. Everything the reviewer
 concludes along the way gathers as asks, and the orchestrator keeps every
 outbound document drafted as it goes.
 
+## The session is the durable root
+
+A review lives in a **session** — the first-class durable object that owns the
+harness cursor, the anchored threads, and the **claim** on the target. Entering
+a New-chat row that resolves to a branch or PR **mints a session and claims the
+target in one act**; the branch and its pull request are one claimed thing, and
+every other New-chat row resolving to that same target disappears while the
+claim holds. Re-entering a row whose session is already live **reattaches** to
+it — it never mints a second — and the drafting pipeline starts idempotently per
+session, so a re-entry mid-generation never double-starts a round.
+
+The claim **locks once boards exist**. A session with no target upgrades in
+place when one binds, but once a generation has been minted the claim is
+immutable — a new target requires a **new session**, not a rebind. A merged
+target keeps its claim. **Archive is the only release**, a soft delete: nothing
+else frees a claimed target, so one target has one session, and it persists
+across restarts from its cursor rather than being re-minted per review.
+
+Anchored threads keep their content in the session transcript; the boards and
+the diff hold only anchor→thread references, so a code-line comment, a
+prose-quote thread, and Explain all ride one mechanism.
+
 ## Asks
 
 Everything gathers as **asks**: typed messages carrying an anchor, text, an
@@ -55,8 +77,12 @@ lanes depend on the entry mode:
 
 The orchestrator continuously redrafts every outbound document — the review
 text, the work order, the PR description — as the review progresses. Each
-comment, dismissal, or thread conclusion queues a rework. The reviewer never
-types into a draft; steering happens by talking or by highlighting a span.
+comment, dismissal, or thread conclusion queues a rework. A rework runs as a
+**one-shot worker outside the interactive session**, and reworks are
+**serialized per document** — two edits to one board queue behind each other so
+their writes never race, while edits to different documents run in parallel. The
+reviewer never types into a draft; steering happens by talking or by
+highlighting a span.
 
 - Folding a staged ask into a draft is near-instant assembly; its only
   visibility is the affected block streaming in place. The **drafting
@@ -147,8 +173,10 @@ something the preview did not describe.
    their gists — the board's own shape states the change — with a small
    transient accent dot per touched section that rolls up to the lens
    segment, clears on interaction, and is replaced wholesale next round.
-   The prior generation freezes as drill-down. Asks, threads, and highlights
-   re-anchor by quote match; casualties land in the Detached list.
+   Generations are append-then-freeze: the prior generation's status moves
+   from live to frozen and stays as drill-down while the successor is minted.
+   Asks, threads, and highlights re-anchor by quote match; casualties land in
+   the Detached list.
 7. Every completed round stays readable in the **rounds ledger** — a header
    control beside Map · Diff that exists exactly when a round has completed.
    One row per round; each opens that round's report, and each round pins

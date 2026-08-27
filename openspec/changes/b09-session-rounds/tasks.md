@@ -46,7 +46,7 @@ Serial clusters, each a separately-reviewable sub-wave sized for one implementer
 
 ## Cluster 7 — docs (definition of done)
 
-- [ ] 7.1 Make the session/rounds documentation live: update `docs/developing/concepts/handoff-and-exits.md` and `harness-adapters.md` to describe the built runtime — the durable session root (cursor/threads/claim, target-bind lock, archive-only release), cursor-resume + turn serialization + resume-vanished fallback, honest compaction surfacing, the rounds loop + round record, and rework one-shot workers. Reconcile `docs/developing/concepts/lens-pipeline.md` — drop the "consuming turn wired by B09" future-tense hedging (lines ~33–38, ~123) now that B09 wires it; the pipeline is live on a round.
+- [x] 7.1 Make the session/rounds documentation live: update `docs/developing/concepts/handoff-and-exits.md` and `harness-adapters.md` to describe the built runtime — the durable session root (cursor/threads/claim, target-bind lock, archive-only release), cursor-resume + turn serialization + resume-vanished fallback, honest compaction surfacing, the rounds loop + round record, and rework one-shot workers. Reconcile `docs/developing/concepts/lens-pipeline.md` — drop the "consuming turn wired by B09" future-tense hedging (lines ~33–38, ~123) now that B09 wires it; the pipeline is live on a round.
 - [ ] 7.2 Sweep `docs/` (excluding `docs/dist`) for stale claims a reader would now find wrong about sessions/rounds/resume/compaction/rework. Fix stragglers. If a page describes sessions as ephemeral or per-review, correct it to the durable root.
 - [ ] 7.3 Cluster gate green (docs check inside). Commit.
 
