@@ -15,10 +15,11 @@ import type {
 import { type ContextAskBackendPart, contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
+import { DossierStore } from "./dossier-store";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { type KnowledgeBackendPart, knowledgeBackend } from "./knowledge-backend";
 import { KnowledgeStore } from "./knowledge-store";
-import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import { councilSeatTurn, runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import { resolveMapSource } from "./map-travel";
 import { NestedProjectContext } from "./nested-project-context";
 import {
@@ -38,6 +39,12 @@ import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { projectSnapshotPinResolver } from "./project-snapshot-pin";
 import { type ResolvedBase, resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
+import {
+  execaGhFor,
+  RELATED_CONTEXT_ENRICH_SCHEMA,
+  retrieveRelatedContext,
+  type TrackerConfig,
+} from "./related-context";
 import { RepoCompositionStore } from "./repo-composition-store";
 import { SnapshotOverlayGenerator, SnapshotOverlayReader } from "./snapshot-overlay-generator";
 import { SnapshotOverlayStore } from "./snapshot-overlay-store";
@@ -274,6 +281,12 @@ export interface LiveBackendDeps {
   readonly compositionStore?: RepoCompositionStore;
   /** Override the pipeline's shared per-review invocation meter (tests/composition only). */
   readonly budget?: InvocationBudget;
+  /**
+   * JIRA/Linear endpoints for related-context retrieval (#461, B7). Absent ⇒
+   * GitHub-only retrieval; seen tracker keys surface as missing-config facts.
+   * B8's orchestrator owns resolving these off the settings ladder per session.
+   */
+  readonly trackerConfig?: TrackerConfig;
 }
 
 /** The outcome of the snapshot-on-open generation, for honest reporting/telemetry. */
@@ -420,6 +433,60 @@ export async function createLiveCanvasOpsBackend(
         repoRoot: review.repositoryRoot,
         baseOid: currentBase.baseOid,
       });
+    })().catch((error) => deps.onKnowledgeError?.(error));
+  }
+
+  // Related-context dossier (#461, B7 reconciliation 8): retrieval fires once at
+  // review open — THE session-start choke point (every open routes through this
+  // composition root). Fire-and-forget like the knowledge seed above: a review
+  // never blocks on retrieval, and a failure is reported, not thrown. Keyed by
+  // target + patchset id, so a re-capture (new patchset) re-runs naturally; the
+  // PER-ROUND re-run is B8's round runner (it re-keys nothing — same store).
+  const dossierStore = new DossierStore(deps.store);
+  const dossierKey = {
+    target: review.postTarget
+      ? `pr-${review.postTarget.number}`
+      : (patchset.repository.headRef ?? "local"),
+    patchsetRef: patchset.id,
+  };
+  if (!dossierStore.load(repoKey, dossierKey)) {
+    void (async () => {
+      const port = deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot));
+      // This seam resolves only a Claude port (the B6 initial-run precedent) —
+      // the council sees an honest claude-only availability. No port ⇒ the
+      // deterministic dossier is still built and stored.
+      const seat = port
+        ? councilSeatTurn(
+            "related-context-retrieval",
+            RELATED_CONTEXT_ENRICH_SCHEMA,
+            { claudePort: port, repoRoot: review.repositoryRoot, label: "related-context" },
+            { availability: { installed: ["claude-code"] } },
+          )
+        : null;
+      const intent = patchset.intent;
+      const result = await retrieveRelatedContext(
+        {
+          ...(patchset.repository.headRef ? { branchName: patchset.repository.headRef } : {}),
+          commitMessages: intent?.commitSubjects ?? [],
+          ...(intent?.prTitle ? { prTitle: intent.prTitle } : {}),
+          ...(intent?.prBody ? { prBody: intent.prBody } : {}),
+        },
+        {
+          gh: execaGhFor(review.repositoryRoot),
+          ...(review.postTarget
+            ? {
+                repo: {
+                  owner: review.postTarget.repo.owner,
+                  name: review.postTarget.repo.name,
+                },
+              }
+            : {}),
+          ...(deps.trackerConfig ? { trackerConfig: deps.trackerConfig } : {}),
+          runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
+          budget: deps.budget ?? pipeline.invocationBudget,
+        },
+      );
+      dossierStore.save(repoKey, dossierKey, result.items, result.raw);
     })().catch((error) => deps.onKnowledgeError?.(error));
   }
 

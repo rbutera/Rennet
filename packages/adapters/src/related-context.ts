@@ -356,8 +356,12 @@ type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
 
 export interface RetrieveRelatedContextDeps {
   readonly gh: GhRunner;
-  /** The review's own repo — resolves bare `#123` refs. */
-  readonly repo: { owner: string; name: string };
+  /**
+   * The review's own repo — resolves bare `#123` refs. Absent (a local capture
+   * with no known forge repo), a bare ref is a typed failure; qualified
+   * `owner/repo#123` and URL refs still resolve.
+   */
+  readonly repo?: { owner: string; name: string };
   readonly trackerConfig?: TrackerConfig;
   /** REST seam for JIRA/Linear. Default: global `fetch` returning parsed JSON. */
   readonly fetchJson?: JsonFetcher;
@@ -637,6 +641,14 @@ export async function retrieveRelatedContext(
   const fetchedGithub = new Set<string>();
   const fetchGithub = async (ref: GithubRef, provenance: string): Promise<string[]> => {
     const repo = ref.repo ?? deps.repo;
+    if (!repo) {
+      failures.push({
+        id: `#${ref.number}`,
+        error: "invalid",
+        detail: "bare ref with no known repo (no PR target and no configured forge repo)",
+      });
+      return [];
+    }
     const key = `${repo.owner}/${repo.name}#${ref.number}`.toLowerCase();
     if (fetchedGithub.has(key)) return [];
     fetchedGithub.add(key);

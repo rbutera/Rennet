@@ -22,6 +22,7 @@ import {
 } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContextManifestStore } from "./context-manifest-store";
+import { DossierStore } from "./dossier-store";
 import { KnowledgeStore } from "./knowledge-store";
 import {
   buildReviewContextManifest,
@@ -603,5 +604,24 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     const novelty = backend.novelty();
     expect(novelty.ok).toBe(false);
     if (!novelty.ok) expect(novelty.failure.reason).toBe("stale");
+  });
+
+  it("fires related-context retrieval once at review open and persists the dossier (#461, B7)", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    await createLiveCanvasOpsBackend(review, pipeline, { store });
+
+    // The fixture review has no refs (no PR intent, "first"/"second" subjects),
+    // so retrieval runs deterministically — no gh spawn — and stores the honest
+    // empty dossier. The stored record is what gates a refire on the next open.
+    const dossierStore = new DossierStore(store);
+    const key = { target: "local", patchsetRef: review.activePatchsetId };
+    const { repoKey } = repoRecordOf(review);
+    await vi.waitFor(() => {
+      expect(dossierStore.load(repoKey, key)).toEqual([]);
+    });
+    expect(dossierStore.loadRaw(repoKey, key)).toEqual([]);
   });
 });
