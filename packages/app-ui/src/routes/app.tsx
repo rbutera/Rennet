@@ -7,6 +7,7 @@ import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
+import { RunRoute } from "../rounds/run-route";
 import {
   LiveSettingsProjectionProvider,
   PriorSurfaceTracker,
@@ -191,9 +192,7 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
                     <Redirect to={ROUTES.newChat} />
                   </Route>
                   <Route path={ROUTES.newChat} component={NewChatScreen} />
-                  <Route path={ROUTES.sessionRun}>
-                    {(p) => <Interim screen="session-run" title={`Run — ${p.slug}`} />}
-                  </Route>
+                  <Route path={ROUTES.sessionRun}>{(p) => <RunRoute slug={p.slug ?? ""} />}</Route>
                   <Route path={ROUTES.session}>
                     {(p) => <SessionScreen slug={p.slug ?? ""} />}
                   </Route>
