@@ -1,7 +1,7 @@
 // The Settings surface public barrel (C10 §11.1). The screen + the prior-surface
 // tracker are what `routes/app.tsx` mounts; the shared atoms + the data seam are
 // re-exported for the per-page modules and their tests.
-export { Row, Section, Segmented } from "./atoms";
+export { PillChoice, Row, Section, Segmented } from "./atoms";
 export { BackingFile } from "./backing-file";
 export {
   EMPTY_SETTINGS_PROJECTION,
@@ -23,3 +23,4 @@ export {
 export { PriorSurfaceProvider, PriorSurfaceTracker, usePriorSurface } from "./prior-surface";
 export { LAYER_LABEL, ProvenanceChip } from "./provenance-chip";
 export { SettingsScreen } from "./settings-screen";
+export { type ThemePref, ThemePrefProvider, useThemePref } from "./theme-pref";

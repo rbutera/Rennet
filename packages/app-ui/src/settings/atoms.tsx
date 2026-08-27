@@ -117,3 +117,48 @@ export function Segmented<T extends string>({
     </ToggleGroup>
   );
 }
+
+/**
+ * A wrapping row of pill options — one lit at a time, live-apply on click. The spike's
+ * Appearance page hand-rolled this as a `role="radiogroup"` of `role="radio"` buttons;
+ * autopsy S6 forbids that (the same rule that put {@link Segmented} on the kit), so this
+ * ports the visual onto the kit's single-select `ToggleGroup` too — the segmented
+ * container's joined chrome overridden to a border-less, wrapping pill layout, each pill
+ * the kit's `outline` toggle restyled onto Rennet tokens (raised fill + accent-line
+ * border when lit, never the kit's default gold accent fill).
+ */
+export function PillChoice<T extends string>({
+  options,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  readonly options: readonly { readonly id: T; readonly label: string }[];
+  readonly value: T;
+  readonly onChange: (id: T) => void;
+  readonly ariaLabel: string;
+}) {
+  return (
+    <ToggleGroup
+      aria-label={ariaLabel}
+      value={[value]}
+      onValueChange={(next: string[]) => {
+        const picked = next[0] as T | undefined;
+        if (picked && picked !== value) onChange(picked);
+      }}
+      className="flex w-auto flex-wrap gap-1.5 bg-transparent p-0"
+    >
+      {options.map((option) => (
+        <Toggle
+          key={option.id}
+          value={option.id}
+          size="sm"
+          variant="outline"
+          className="rounded-md border-line px-2.5 text-xs text-ink-soft hover:bg-raised/50 hover:text-ink data-pressed:border-accent-line data-pressed:bg-raised data-pressed:text-ink"
+        >
+          {option.label}
+        </Toggle>
+      ))}
+    </ToggleGroup>
+  );
+}

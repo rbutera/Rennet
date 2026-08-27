@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider, useCommand } from "../data";
-import { PriorSurfaceTracker, SettingsScreen } from "../settings";
+import { PriorSurfaceTracker, SettingsScreen, ThemePrefProvider } from "../settings";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
@@ -138,7 +138,12 @@ function AppearanceSync() {
   const effective: "dark" | "light" =
     scheme === "light" ? "light" : scheme === "dark" ? "dark" : systemDark ? "dark" : "light";
   useEffect(() => {
-    document.documentElement.dataset.scheme = effective;
+    // The resolved scheme stamps BOTH `data-scheme` (the --rn-* swap in palette.css)
+    // and the `dark` class on the root (C10 §6.3, claim 635 — the Tailwind dark-mode
+    // selector, so any `dark:` utility and dark-aware kit component resolves too).
+    const root = document.documentElement;
+    root.dataset.scheme = effective;
+    root.classList.toggle("dark", effective === "dark");
   }, [effective]);
   return null;
 }
@@ -153,41 +158,45 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
   return (
     <BridgeProvider bridge={bridge}>
       <AppearanceSync />
-      <Router hook={history?.hook} searchHook={history?.searchHook}>
-        <PriorSurfaceTracker>
-          <AppLayout>
-            <Switch>
-              <Route path={ROUTES.home}>
-                <Redirect to={ROUTES.newChat} />
-              </Route>
-              <Route path={ROUTES.newChat} component={NewChatScreen} />
-              <Route path={ROUTES.sessionRun}>
-                {(p) => <Interim screen="session-run" title={`Run — ${p.slug}`} />}
-              </Route>
-              <Route path={ROUTES.session}>{(p) => <SessionScreen slug={p.slug ?? ""} />}</Route>
-              <Route path={ROUTES.archived}>
-                <Interim screen="archived" title="Archived" />
-              </Route>
-              <Route path={ROUTES.projectIndexing}>
-                {(p) => <Interim screen="project-indexing" title={`Indexing — ${p.id}`} />}
-              </Route>
-              <Route path={ROUTES.projectMap}>
-                {(p) => <Interim screen="project-map" title={`Context map — ${p.id}`} />}
-              </Route>
-              <Route path={ROUTES.settings}>{(p) => <SettingsScreen page={p.page ?? ""} />}</Route>
-              <Route path={ROUTES.projectDetail}>
-                {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
-              </Route>
-              <Route path={ROUTES.projects}>
-                <Interim screen="projects" title="Projects" />
-              </Route>
-              <Route>
-                <NotFound label="this address" />
-              </Route>
-            </Switch>
-          </AppLayout>
-        </PriorSurfaceTracker>
-      </Router>
+      <ThemePrefProvider>
+        <Router hook={history?.hook} searchHook={history?.searchHook}>
+          <PriorSurfaceTracker>
+            <AppLayout>
+              <Switch>
+                <Route path={ROUTES.home}>
+                  <Redirect to={ROUTES.newChat} />
+                </Route>
+                <Route path={ROUTES.newChat} component={NewChatScreen} />
+                <Route path={ROUTES.sessionRun}>
+                  {(p) => <Interim screen="session-run" title={`Run — ${p.slug}`} />}
+                </Route>
+                <Route path={ROUTES.session}>{(p) => <SessionScreen slug={p.slug ?? ""} />}</Route>
+                <Route path={ROUTES.archived}>
+                  <Interim screen="archived" title="Archived" />
+                </Route>
+                <Route path={ROUTES.projectIndexing}>
+                  {(p) => <Interim screen="project-indexing" title={`Indexing — ${p.id}`} />}
+                </Route>
+                <Route path={ROUTES.projectMap}>
+                  {(p) => <Interim screen="project-map" title={`Context map — ${p.id}`} />}
+                </Route>
+                <Route path={ROUTES.settings}>
+                  {(p) => <SettingsScreen page={p.page ?? ""} />}
+                </Route>
+                <Route path={ROUTES.projectDetail}>
+                  {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
+                </Route>
+                <Route path={ROUTES.projects}>
+                  <Interim screen="projects" title="Projects" />
+                </Route>
+                <Route>
+                  <NotFound label="this address" />
+                </Route>
+              </Switch>
+            </AppLayout>
+          </PriorSurfaceTracker>
+        </Router>
+      </ThemePrefProvider>
     </BridgeProvider>
   );
 }

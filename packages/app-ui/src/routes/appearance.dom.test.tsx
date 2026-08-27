@@ -51,6 +51,7 @@ function schemeBridge(scheme: SettingsView["scheme"]): MemoryBridge {
 afterEach(() => {
   cleanup();
   document.documentElement.removeAttribute("data-scheme");
+  document.documentElement.classList.remove("dark");
 });
 
 describe("RennetRouterApp — app-wide appearance via the document root", () => {
@@ -81,5 +82,17 @@ describe("RennetRouterApp — app-wide appearance via the document root", () => 
     // The OS flips to light; the app re-themes with no reload.
     act(() => media.fire(false));
     await waitFor(() => expect(document.documentElement.getAttribute("data-scheme")).toBe("light"));
+  });
+
+  it("stamps the `dark` class alongside data-scheme, toggling it with the scheme (§6.3)", async () => {
+    // The resolved scheme stamps BOTH data-scheme and the Tailwind `dark` class (claim 635).
+    const media = installMatchMedia(true); // system → dark
+    mount(<RennetRouterApp bridge={schemeBridge("system")} history={memoryHistory("/new-chat")} />);
+    await waitFor(() => expect(document.documentElement.classList.contains("dark")).toBe(true));
+    expect(document.documentElement.getAttribute("data-scheme")).toBe("dark");
+    // Flip to light: the class comes off in lockstep (never a stale `dark`).
+    act(() => media.fire(false));
+    await waitFor(() => expect(document.documentElement.classList.contains("dark")).toBe(false));
+    expect(document.documentElement.getAttribute("data-scheme")).toBe("light");
   });
 });
