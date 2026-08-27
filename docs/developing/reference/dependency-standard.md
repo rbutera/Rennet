@@ -104,6 +104,7 @@ These versions come from the current workspace manifests:
 | Durable IDs | `uuid` | `14.0.1` |
 | Browser UI | `react`, `react-dom` | `19.2.8` |
 | UI failures and transient state | `react-error-boundary`, `zustand` | `6.1.2`, `5.0.14` |
+| Renderer routing | `wouter` | `3.10.0` |
 | Mobile | `expo`, `expo-router`, `react-native` | `~55.0.26`, `~55.0.16`, `0.83.6` |
 
 Update this table with the manifest change that moves a version.
@@ -181,6 +182,20 @@ registries are admitted per component and license-verified at pull time; the
 license blocklist (mixed-licence Origin UI, proprietary Aceternity, Commons-Clause
 animate-ui) is checked then. Syntax highlighting uses `shiki`; icons use
 `lucide-react`; prose uses `react-markdown`.
+
+`wouter` owns renderer routing: it removes the route-matching and
+history-integration subsystem, its history is host-injected (hash in the Electron
+renderer, browser in the served tab, memory in tests), and its layout-wraps-switch
+composition keeps persistent chrome outside the swapped outlet. The `@rennet/app-ui`
+data seam's command cache is **owned, not `@tanstack/react-query`**: the need is
+three hooks over a keyed store (dedupe in-flight, stale-on-invalidate, per-key
+subscribers), and react-query's surface (refetch-on-focus, garbage collection,
+retries, devtools, infinite queries) far exceeds it and would need configuring-off —
+so it fails the admission test at the size that matters. The ~130-line `CommandCache`
+is browser-safe and invisible outside `src/data/` (`useCommand`/`useCommandStream`/
+`useMutation` are the whole contract), so adopting react-query later stays internal.
+Zustand owns transient interaction state; the command cache owns the server-projection
+read cache — distinct owners, no conflict.
 
 The mobile app uses Expo SDK 55, expo-router, and React Native 0.83.6. It imports
 `@rennet/client` and `@rennet/protocol`, not the DOM-bound UI
