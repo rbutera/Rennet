@@ -41,6 +41,69 @@ describe("rennet store", () => {
       store.getState().reviewActions.clearCodeComment("src/a.ts", 12);
       expect(selectCodeComment("src/a.ts", 12)(store.getState())).toBeUndefined();
     });
+
+    it("mints quote threads, appends replies, and removes them; explain carries its kind", () => {
+      const store = createRennetStore();
+      const id = store
+        .getState()
+        .reviewActions.addQuoteComment("the quoted span", "why here?", "explain");
+      expect(store.getState().review.quoteThreads[id]).toEqual({
+        anchor: "the quoted span",
+        kind: "explain",
+        messages: [{ author: "user", text: "why here?" }],
+      });
+      store.getState().reviewActions.addQuoteReply(id, "orchestrator", "because X");
+      expect(store.getState().review.quoteThreads[id]?.messages).toEqual([
+        { author: "user", text: "why here?" },
+        { author: "orchestrator", text: "because X" },
+      ]);
+      // A reply to a missing thread is a no-op, never a throw.
+      store.getState().reviewActions.addQuoteReply("qt-nope", "user", "ignored");
+      store.getState().reviewActions.removeQuoteComment(id);
+      expect(store.getState().review.quoteThreads[id]).toBeUndefined();
+    });
+
+    it("a missing-thread reply is a proven no-op — review state is byte-identical", () => {
+      const store = createRennetStore();
+      store.getState().reviewActions.addQuoteComment("span", "opener");
+      const before = store.getState().review;
+      store.getState().reviewActions.addQuoteReply("qt-does-not-exist", "user", "dropped");
+      // Same reference: the no-op never produced a new review object.
+      expect(store.getState().review).toBe(before);
+    });
+
+    it("the new quote actions never disturb any pre-C04 review field (invariant)", () => {
+      const store = createRennetStore();
+      const a = store.getState().reviewActions;
+      // Seed EVERY pre-C04 field with a distinct value.
+      a.stageAsk({ anchor: "src/x.ts:3", type: "request-change", body: "fix" });
+      a.setCodeComment("src/x.ts", 3, "note");
+      a.retire("ask-old");
+      a.setVerdictOverride("REQUEST_CHANGES");
+      a.setDraftEdit("pr-body", "draft text");
+      a.setFocusedThread("qt-existing");
+      const seeded = store.getState().review;
+      const snapshot = {
+        stagedAsks: seeded.stagedAsks,
+        codeComments: seeded.codeComments,
+        retired: seeded.retired,
+        verdictOverride: seeded.verdictOverride,
+        draftEdits: seeded.draftEdits,
+        focusedThreadId: seeded.focusedThreadId,
+      };
+      // Exercise every NEW (C04) quote action.
+      const id = a.addQuoteComment("quoted span", "opener", "comment");
+      a.addQuoteReply(id, "orchestrator", "reply");
+      a.removeQuoteComment(id);
+      // Every pre-C04 field is untouched — same references, not merely equal values.
+      const after = store.getState().review;
+      expect(after.stagedAsks).toBe(snapshot.stagedAsks);
+      expect(after.codeComments).toBe(snapshot.codeComments);
+      expect(after.retired).toBe(snapshot.retired);
+      expect(after.verdictOverride).toBe(snapshot.verdictOverride);
+      expect(after.draftEdits).toBe(snapshot.draftEdits);
+      expect(after.focusedThreadId).toBe(snapshot.focusedThreadId);
+    });
   });
 
   describe("run slice", () => {

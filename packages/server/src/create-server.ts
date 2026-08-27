@@ -26,19 +26,23 @@ import {
   contextAskBackend,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
+  createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
   createCodexTurnTransport,
   createCodexUtilityAdapter,
   createCoverageTurn,
+  createDaemonSettingsStore,
   createGitHubOctokit,
   createGitHubProjectPrSource,
   createRefPinner,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
+  defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
   defaultCodexTransportEffects,
+  defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
   defaultFsListDirDeps,
   defaultGlobalConfigPath,
@@ -55,7 +59,6 @@ import {
   ensurePrWorktree,
   execaGitFor,
   executeExternalCommand,
-  FileConfigStore,
   FileProjectStore,
   FileThreadStore,
   GITHUB_REQUEST_TIMEOUT_MS,
@@ -72,6 +75,7 @@ import {
   loadConventionCatalogue,
   loadProjectDetail,
   matchWorktree,
+  migrateLegacyGlobalConfig,
   NoveltyLifecycleRegistry,
   ProjectContextReader,
   type ProjectPrSource,
@@ -272,21 +276,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
 
   /**
-   * The effective execution locus for a repo path (add-windows-support): the persisted
-   * per-project override if set, else auto-detected from the path (a `\\wsl$` root ⇒
-   * that distro, else host). Every repo-facing spawn in this composition routes
-   * through it, so a WSL-locus project's git/harness run inside the distro (Rule Zero:
-   * a plain resolution, never a gate). The store keys on the realpath-canonical top
-   * level, matching how settings resolves the same identity.
+   * The effective execution locus for a repo path (add-windows-support): a DETECTED
+   * FACT (#476), auto-detected from the path (a `\\wsl$` root ⇒ that distro, else
+   * host). Every repo-facing spawn in this composition routes through it, so a
+   * WSL-path project's git/harness runs inside the distro (Rule Zero: a plain
+   * resolution, never a gate). A stale stored `config.locus` is deliberately NOT
+   * consumed here — execution matches exactly what the settings surface displays as
+   * detected, so the two can never disagree.
    */
   function locusForRepo(repoRoot: string): Locus {
-    let key: string;
-    try {
-      key = escapePath(realpathSync(repoRoot));
-    } catch {
-      key = escapePath(repoRoot);
-    }
-    return resolveLocus(detectLocus(repoRoot), liveSnapshotStore.loadConfig(key)?.locus).value;
+    return resolveLocus(detectLocus(repoRoot)).value;
   }
 
   /**
@@ -1362,10 +1361,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
     listProjects: () => projectStore.list(),
   });
-  // The global (app-side, personal) config store — layer 1 of the settings ladder
-  // (wireframe #15). A plain document at `~/.rennet/config.json`, sibling to the
-  // project snapshot store; holds the reviewer's scheme, never a repo fact.
-  const configStore = new FileConfigStore(defaultGlobalConfigPath());
+  // The app-side settings stores (B10 #476): viewer preferences (appearance,
+  // keybindings) in `client-settings.json`, the host's global ladder rung (the
+  // listener bind) in `daemon-settings.json`. A legacy `config.json` v1 blob is
+  // migrated mechanically into the two on first construction — one-way, idempotent,
+  // lossless. Both are sibling to the project snapshot store; neither is a repo fact.
+  const clientSettingsPath = defaultClientSettingsPath();
+  const daemonSettingsPath = defaultDaemonSettingsPath();
+  migrateLegacyGlobalConfig({
+    legacyPath: defaultGlobalConfigPath(),
+    clientPath: clientSettingsPath,
+    daemonPath: daemonSettingsPath,
+  });
+  const clientSettingsStore = createClientSettingsStore(clientSettingsPath);
+  const daemonSettingsStore = createDaemonSettingsStore(daemonSettingsPath);
   // The device pairing store (issue #380): server-side secret store for remote
   // device tokens (hashed at rest in `~/.rennet/devices.json`). Shared between the
   // `pairing.*` commands (below) and the WS listener's handshake token check.
@@ -1441,7 +1450,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           trackerConfig: resolveTrackerConfig(
             snapshotStore,
             repoKeyOf(review),
-            configStore.readState().config,
+            daemonSettingsStore.readState().config,
           ),
         });
       } catch {
@@ -1912,8 +1921,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     settings: createSettingsComposition({
       listProjects: () => projectStore.list(),
       loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
-      readGlobalState: () => configStore.readState(),
-      updateGlobal: (update) => configStore.update(update),
+      readGlobalState: () => clientSettingsStore.readState(),
+      updateGlobal: (update) => clientSettingsStore.update(update),
+      // This host's daemon-settings — the local host's global rung, the only one
+      // locally readable; remote/WSL hosts keep theirs on that host (#476, §4.2).
+      readDaemonSettings: () => daemonSettingsStore.read(),
+      // The tracker section (#461, B7) is a global-rung host fact, so it writes to
+      // daemon-settings — the same store `resolveTrackerConfig` reads it back from.
+      updateDaemon: (update) => daemonSettingsStore.update(update),
+      // Paired devices are the source for project-less remote hosts on the surface
+      // (#476, finding 9) — a device paired before its first project is still listed.
+      listPairedDevices: () => pairingStore.listDevices(),
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {
@@ -1956,17 +1974,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           gitForRepo(repoRoot),
         );
         return { changed: preview.changed, gitignorePath: preview.gitignorePath };
-      },
-      applyLocus: ({ repoKey, locus }) => {
-        snapshotStore.updateConfig(repoKey, (current) => {
-          if (locus === null) {
-            // Clear the override back to auto-detection (drop the field entirely).
-            const next: Record<string, unknown> = { ...current };
-            delete next.locus;
-            return next as unknown as typeof current;
-          }
-          return { ...current, locus };
-        });
       },
       clearRepoValue: ({ repoKey, field }) => {
         // Drop a repo-scoped field so the value falls back down the ladder (Reset).
@@ -2019,7 +2026,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       };
     },
     // Opt-in bind beyond loopback (default stays 127.0.0.1:0).
-    listen: configStore.read().daemon?.listen,
+    listen: daemonSettingsStore.read().daemon?.listen,
     // The served browser UI (#381); absent ⇒ headless.
     uiDist: options.uiDist,
   });

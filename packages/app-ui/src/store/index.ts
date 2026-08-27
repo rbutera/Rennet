@@ -34,10 +34,18 @@ export const createRennetStore = () =>
 /** The app-singleton store. */
 export const useRennetStore = createRennetStore();
 
-export type { DispositionKind, ReviewSlice, ReviewState, StagedAsk } from "./review";
+export type {
+  DispositionKind,
+  QuoteMessage,
+  QuoteThread,
+  ReviewSlice,
+  ReviewState,
+  StagedAsk,
+} from "./review";
 export {
   createReviewSlice,
   selectCodeComment,
+  selectCodeComments,
   selectStagedAsk,
   selectStagedAskCount,
 } from "./review";

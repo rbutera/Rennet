@@ -1,6 +1,8 @@
 import type { Project } from "@rennet/protocol";
 import { createContext, useContext, useMemo } from "react";
+import { useRoute } from "wouter";
 import { useCommand, useMutation } from "../data";
+import { ROUTES } from "../routes/url";
 import { selectProcessingProjectIds, useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +113,14 @@ function hostForSource(source: string): { id: string; label: string; kind: "loca
   return { id: source, label: label || source, kind: "remote" };
 }
 
+/** The `org/repo` identity a rename falls back to (R67): the last two path segments of
+ *  the project's location (parent/repo), the closest org/repo the wire carries — the
+ *  Project shape has no explicit remote. Falls back to the whole path if it has fewer. */
+function orgRepo(path: string): string {
+  const parts = path.split(/[/\\]+/).filter(Boolean);
+  return parts.slice(-2).join("/") || path;
+}
+
 function buildHosts(
   projects: readonly Project[],
   projection: SidebarSessionProjection,
@@ -135,7 +145,7 @@ function buildHosts(
     bucket.rows.push({
       id: project.id,
       name: project.name,
-      fallbackName: project.name,
+      fallbackName: orgRepo(project.openPath || project.path),
       indexing: indexing.has(project.id),
       sessions: projection.sessionsByProject[project.id] ?? [],
     });
@@ -163,6 +173,44 @@ export function useSidebarTree(): SidebarTree {
     [data, projection, processing],
   );
   return { hosts, loading: pending };
+}
+
+// ── Active-route resolution (shared) ──────────────────────────────────────────
+
+/** What the current location says is active — the single derivation the sidebar's
+ *  rail, tree, and footer all read from, instead of each re-parsing the route. */
+export interface ActiveRoute {
+  /** The slug of the open session route (`/s/:slug`, or its `/run`), else null. */
+  readonly activeSlug: string | null;
+  /** The project that owns the active session, else null. */
+  readonly activeProjectId: string | null;
+  /** True when the location is "inside" a project (its session, map, or indexing). */
+  standingIn(projectId: string): boolean;
+}
+
+/** Resolve the active session/project from the route + the live tree. One place owns
+ *  the wouter parsing and the slug→project lookup, so nothing drills it around. */
+export function useActiveRoute(): ActiveRoute {
+  const [, sessionParams] = useRoute(ROUTES.session);
+  const [, runParams] = useRoute(ROUTES.sessionRun);
+  const [onMap, mapParams] = useRoute(ROUTES.projectMap);
+  const [onIndexing, indexingParams] = useRoute(ROUTES.projectIndexing);
+  const { hosts } = useSidebarTree();
+  const activeSlug = sessionParams?.slug
+    ? decodeURIComponent(sessionParams.slug)
+    : runParams?.slug
+      ? decodeURIComponent(runParams.slug)
+      : null;
+  const projects = hosts.flatMap((host) => host.projects);
+  const activeProjectId = activeSlug
+    ? (projects.find((p) => p.sessions.some((s) => s.slug === activeSlug))?.id ?? null)
+    : null;
+  const standingIn = (projectId: string): boolean => {
+    if (onMap && mapParams?.id === projectId) return true;
+    if (onIndexing && indexingParams?.id === projectId) return true;
+    return activeProjectId === projectId;
+  };
+  return { activeSlug, activeProjectId, standingIn };
 }
 
 /** The real `projects.remove` mutation — forgets a project, invalidating the tree.
