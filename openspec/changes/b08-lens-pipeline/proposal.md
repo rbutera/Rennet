@@ -37,6 +37,17 @@ Client rendering of the boards (C5). Exits (B11). The rounds machinery that cons
    - **P6 correction.** Parse-time (`DraftBoardSchema`) enforces only the KIND palette — an out-of-palette kind (`code`, `message`, `thread`) is rejected with ZodError issues. It does **not** screen code bytes inside a *legal* prose element; the earlier "R17 enforced at parse time" claim overreached. The `no-code-bytes` lint rule owns code bytes in legal prose. The test asserts both halves (kind rejected at parse; code-bytes-in-prose accepted at parse, caught by lint).
    - **Count**: #493 claims "19 lint rules". Of those, 2 (L18/L19) are other-stage by #493's own staging (composition / post-pass), and 4 (L5/L6/L8 + the never-a-rule S-only entries) reference absent fields; L12 is folded into `citation-resolves`, L16 is implemented as `requirement-order`. The faithful per-draft `lint(draft)` set over the frozen schema is **16 rules** (plus the separate `lintReviewDraft` register entry point) — a schema-shape reconciliation, not a trim to hit a number.
 
+## Cluster 5 wiring points (the runtime seam bindings — recorded per 5.1)
+
+`server/src/runtime/lens-pipeline.ts` binds the seams the earlier clusters left open:
+
+- **`validateDraft`'s `postProcess` seam (identity default) ← the real `board-post-process` editor pass** (`POST_PROCESS_FILE`, council job `board-post-process`). One editor seat resolved via `councilSeatTurn`, run between the lint loop and the immutability gate — NOT a parallel gate runner (binding handoff from cluster 3). A failed/absent editor turn is identity; the immutability gate then has nothing to catch.
+- **`assertCoverage(boards, hunks)` (cluster 4) runs ONCE over the frozen board set**, after every lens freezes — the per-board `compositionGate` seam stays no-op (binding handoff from cluster 4). Coverage violations are returned (visible), never block.
+- **Council routing** reuses B06's `councilSeatTurn` (adapters) verbatim: each lens seat resolves on the RESOLVED harness (Claude port / Codex utility executor) with the board output schema. Lens→job map: `noise → lens-draft-noise`, `flagged → lens-draft-flagged`, the rest → `lens-draft`.
+- **The host is the sole op writer** (`draftToOps` → `whiteboard-client.apply`, actor `lens:<lens>`); drafters never call whiteboard tools (D2). The wire element `{id,kind,data}` IS the draft element, so the projection is a straight `create`-op map.
+- **The board output schema** is derived once from the frozen `DraftBoardSchema` via `z.toJSONSchema` (never hand-authored — reconciliation 2/F4); it is both the session output schema and the inlined host schema (D1).
+- **Prompt files** are read through an injected `readPrompt` seam (the `@rennet/prompts` package is node-free; the composition root supplies `createNodePromptReader(promptsSrcDir)`), keeping the runtime pure/hermetic in the gate.
+
 ## Concurrency measurement (engine asset risk 3 — packet-required, filled in during cluster 6)
 
 *To be recorded by the implementer: the measured warm-session concurrency cost that justifies (or revises) the retry/draft concurrency cap of 10. The runtime's fan-out concurrency is provisional until this lands.*
