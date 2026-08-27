@@ -1,4 +1,4 @@
-import type { Project, ProjectProcessEvent } from "@rennet/protocol";
+import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet/protocol";
 import { Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, Loader2, MapIcon, MessageSquarePlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -164,6 +164,8 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
   // keys are stable without an array index.
   const [events, setEvents] = useState<{ id: number; event: ProjectProcessEvent }[]>([]);
   const [phase, setPhase] = useState<"running" | "done">("running");
+  // The per-repo summaries the run resolves with — real file/symbol counts for the ready card.
+  const [summaries, setSummaries] = useState<readonly ProcessedRepoSummary[]>([]);
   const startedFor = useRef<string | undefined>(undefined);
 
   // Drive the real context-map build once per project and accumulate its live
@@ -184,11 +186,12 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
       // set on start, cleared only when the run resolves — leaving never cancels it.
       const setProcessing = useRennetStore.getState().uiActions.setProjectProcessing;
       setProcessing(projectId, true);
-      const settle = () => {
+      const settle = (result?: { repos: readonly ProcessedRepoSummary[] }) => {
+        if (result) setSummaries(result.repos);
         setPhase("done");
         setProcessing(projectId, false);
       };
-      void process({ commandId, projectId }).then(settle, settle);
+      void process({ commandId, projectId }).then(settle, () => settle());
     }
     return () => unsubscribe?.();
   }, [bridge, projectId, process]);
@@ -297,35 +300,72 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
             </div>
           ) : null}
 
-          {done ? (
-            <>
-              <div className="flex items-center gap-2 rounded-surface border border-line px-4 py-3.5">
-                <Icon icon={Check} className="size-4 shrink-0 text-green" />
-                <span className="text-sm font-medium text-ink">Context Map Ready</span>
-                <button
-                  type="button"
-                  onClick={() => navigate(projectMapPath(projectId))}
-                  className="ml-auto flex items-center gap-1.5 rounded-control border border-line px-3 py-1.5 text-sm text-ink hover:bg-raised"
-                >
-                  <Icon icon={MapIcon} className="size-3.5" />
-                  View Context Map
-                </button>
-              </div>
-
-              <button
-                ref={ctaRef}
-                type="button"
-                onClick={() => navigate(newChatPath(projectId))}
-                className="flex w-full items-center justify-center gap-2 rounded-surface bg-accent-fill px-6 py-4 text-base font-medium text-accent-ink hover:opacity-90"
-              >
-                <Icon icon={MessageSquarePlus} className="size-5" />
-                Start a Review
-              </button>
-            </>
-          ) : null}
+          {done ? <ReadyCard projectId={projectId} summaries={summaries} ctaRef={ctaRef} /> : null}
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * The "Context Map Ready" block (§10.7) — mounted only once the run is done, so its
+ * `project.contextMap` read hits the freshly-built snapshot (not an empty pre-build one).
+ * File counts come from the run's own summaries; scope + confirmed/rejected counts from
+ * the map's real source (`project.contextMap`) when present — an absent map degrades to
+ * the file count, never fabricated. Its only action is View Context Map; the full-width
+ * Start a Review CTA below is the flow's primary exit, scrolled into view by the parent.
+ */
+function ReadyCard({
+  projectId,
+  summaries,
+  ctaRef,
+}: {
+  readonly projectId: string;
+  readonly summaries: readonly ProcessedRepoSummary[];
+  readonly ctaRef: React.RefObject<HTMLButtonElement | null>;
+}) {
+  const [, navigate] = useLocation();
+  const { data: contextMap } = useCommand("project.contextMap", { projectId });
+  const map = contextMap?.status === "ok" ? contextMap : undefined;
+
+  const files = summaries.reduce((total, repo) => total + (repo.files ?? 0), 0);
+  const scopes = map?.map.scopes.length;
+  const confirmed = map?.knowledge?.statements.filter((s) => s.status === "confirmed").length;
+  const rejected = map?.knowledge?.statements.filter((s) => s.status === "rejected").length;
+  const counts = [
+    scopes != null ? `${scopes} scopes` : null,
+    `${files} files`,
+    confirmed != null && rejected != null ? `${confirmed} confirmed · ${rejected} rejected` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <>
+      <div className="flex items-center gap-2 rounded-surface border border-line px-4 py-3.5">
+        <Icon icon={Check} className="size-4 shrink-0 text-green" />
+        <span className="text-sm font-medium text-ink">Context Map Ready</span>
+        <span className="truncate text-xs text-ink-soft">{counts}</span>
+        <button
+          type="button"
+          onClick={() => navigate(projectMapPath(projectId))}
+          className="ml-auto flex shrink-0 items-center gap-1.5 rounded-control border border-line px-3 py-1.5 text-sm text-ink hover:bg-raised"
+        >
+          <Icon icon={MapIcon} className="size-3.5" />
+          View Context Map
+        </button>
+      </div>
+
+      <button
+        ref={ctaRef}
+        type="button"
+        onClick={() => navigate(newChatPath(projectId))}
+        className="flex w-full items-center justify-center gap-2 rounded-surface bg-accent-fill px-6 py-4 text-base font-medium text-accent-ink hover:opacity-90"
+      >
+        <Icon icon={MessageSquarePlus} className="size-5" />
+        Start a Review
+      </button>
+    </>
   );
 }
 
