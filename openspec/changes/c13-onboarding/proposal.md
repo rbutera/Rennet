@@ -93,3 +93,15 @@ Four findings upheld (3 P2 + 1 P3), fixed at their root, no gates added.
   `coach/provider.tsx`. Proven by `coach/persist.test.ts` — a rejecting bridge lands
   the newest snapshot after recovery, a timer re-fires with no fresh change, and a
   delayed bridge's out-of-order completion keeps the latest.
+
+- **Finding 3 (P2) — anchor verification gaps closed.** Two holes in the anchor
+  proofs: (a) `anchors.dom.test.tsx` proved marks 1-3 (start-review, new-chat,
+  smart-list) only against SYNTHETIC buttons, and smart-list resolved on no real
+  surface at all; (b) `every-anchor.dom.test.tsx`'s static no-orphan scan collected
+  ids into a `Set`, so two call sites for one id collapsed before the "exactly one"
+  assertion — the very duplicate-anchor S8 regression could slip through. Fixed: the
+  every-anchor suite now mounts the REAL New Chat view (new-chat + smart-list) and the
+  REAL indexing completion CTA (start-review, through its `useMergedRefs` merge, driven
+  by resolving `project.process`) and asserts each resolves through the typed registry;
+  the static scan now counts occurrences per id and fails on any id with more than one
+  call site. The S8 hook-level duplicate-throw control is sound and untouched.
