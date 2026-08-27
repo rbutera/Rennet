@@ -1554,6 +1554,39 @@ export const globalConfigSchema = z.object({
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
 /**
+ * The closed set of onboarding coach marks (C13 · INVENTORY §11 · R55). Nine ids
+ * per #487 (`start-review` ruled in live, ahead of `new-chat`). Protocol owns this
+ * union so the persisted `coachmarks.seen` slice and app-ui's `coach/marks.ts` share
+ * ONE source of truth — protocol imports no Rennet package, app-ui imports protocol,
+ * so the enum lives here and the mark model re-exports it. The election ORDER and the
+ * teaching copy stay in app-ui; this schema is only the validation set.
+ */
+export const markIdSchema = z.enum([
+  "start-review",
+  "new-chat",
+  "smart-list",
+  "lenses",
+  "highlight",
+  "fab",
+  "verdict",
+  "draft",
+  "dispatch",
+]);
+export type MarkId = z.infer<typeof markIdSchema>;
+
+/**
+ * The persisted coach-mark slice (C13): which marks the viewer has already seen and
+ * whether they skipped the whole tour. Both default empty/false for a fresh install.
+ * Written by `settings.setCoachmarks`, surfaced additively in `settings.get`, so the
+ * client reads its initial `{ seen, skipAll }` in one call and the state survives reload.
+ */
+export const coachMarksSchema = z.object({
+  seen: z.array(markIdSchema),
+  skipAll: z.boolean(),
+});
+export type CoachMarks = z.infer<typeof coachMarksSchema>;
+
+/**
  * Client settings — viewer preferences, stored at `~/.rennet/client-settings.json`
  * (B10 #476). These are personal, app-side choices that live OUTSIDE the config
  * ladder: the appearance scheme the renderer consumes as `data-scheme`, and the
@@ -1568,6 +1601,8 @@ export const clientSettingsSchema = z.object({
   appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
   /** Command-registry keybinding overrides (#44): command id → chord token or `null` to unbind. */
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
+  /** Onboarding coach-mark state (C13): seen marks + skip-all. Additive-optional like the rest. */
+  coachmarks: coachMarksSchema.optional(),
 });
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
 
@@ -1729,6 +1764,13 @@ export const settingsViewSchema = z.object({
    * these on the catalogue defaults for dispatch, display, and conflict detection.
    */
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
+  /**
+   * The persisted onboarding coach-mark state (C13), verbatim from client settings —
+   * seen marks + skip-all. Additive-optional: an untouched install omits it (the client
+   * reads it as empty/false), old callers ignore it. The coach provider seeds its store
+   * from this in one `settings.get` call, so skip-all and seen survive a reload.
+   */
+  coachmarks: coachMarksSchema.optional(),
   /**
    * Every daemon host the surface covers (#476), local section FIRST. Each carries its
    * `daemon-settings` rung where locally readable (the local host); a remote or in-WSL
