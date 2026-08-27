@@ -24,8 +24,10 @@ import { useRoundState } from "./rounds-data";
 /** A stable empty row list — phases without prep/worker rows resolve to the same ref. */
 const NO_ROWS: readonly LaneRow[] = Object.freeze([]);
 
-/** The status glyph for a live row — queued ring, running spinner, done check, failed dot. */
-function StatusIcon({ status }: { readonly status: RowStatus }) {
+/** The status glyph for a live row — queued ring, running spinner, done check, failed dot.
+ *  Shared with the greeting's regeneration lanes (finding 5) so a queued/failed drafter reads
+ *  the same everywhere, never a false green check. */
+export function StatusIcon({ status }: { readonly status: RowStatus }) {
   if (status === "running")
     return <Loader2 className="size-3.5 shrink-0 animate-spin text-model" aria-hidden="true" />;
   if (status === "queued")

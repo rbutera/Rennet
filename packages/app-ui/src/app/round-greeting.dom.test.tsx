@@ -15,13 +15,19 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BoardSourceProvider } from "../board/board-data";
 import { BridgeProvider } from "../data";
+import { RoundGreeting } from "../rounds/round-greeting";
+import type { RoundState } from "../rounds/round-machine";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, mount } from "../test/dom";
 import { fixtureBoardSource } from "../test/fixtures/boards";
-import { createTimelineRoundsSource, FIXTURE_ROUND_COMPLETE_TICK } from "../test/fixtures/rounds";
+import {
+  createTimelineRoundsSource,
+  FIXTURE_ROUND_COMPLETE_TICK,
+  reportBoardFixture,
+} from "../test/fixtures/rounds";
 import { MemoryBridge } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
 
@@ -131,6 +137,44 @@ function renderComposedWithReport(reportBoard: () => unknown) {
     </BridgeProvider>,
   );
 }
+
+describe("regeneration lanes render every status honestly — no false green check (finding 5)", () => {
+  // A composing state carrying one lane of each RowStatus. A queued or failed drafter must NOT
+  // read as a settled "done" success (the old bug collapsed everything but `running` to a green
+  // check + "done").
+  const composing: RoundState = {
+    phase: "composing",
+    reportBoardId: "report-round-1",
+    lanes: [
+      { id: "l-queued", label: "Design", status: "queued" },
+      { id: "l-running", label: "Sequence", status: "running" },
+      { id: "l-done", label: "Decisions", status: "done" },
+      { id: "l-failed", label: "Flagged", status: "failed" },
+    ],
+  };
+
+  function renderGreeting() {
+    return mount(
+      <RoundGreeting board={reportBoardFixture} state={composing} onReveal={() => {}} />,
+    );
+  }
+
+  it("a queued lane reads 'queued', never 'done'", () => {
+    const r = renderGreeting();
+    const row = r.container.querySelector('[data-row="l-queued"]');
+    expect(row?.getAttribute("data-status")).toBe("queued");
+    expect(row?.textContent).toContain("queued");
+    expect(row?.textContent).not.toContain("done");
+  });
+
+  it("a failed lane reads 'failed', never 'done'", () => {
+    const r = renderGreeting();
+    const row = r.container.querySelector('[data-row="l-failed"]');
+    expect(row?.getAttribute("data-status")).toBe("failed");
+    expect(row?.textContent).toContain("failed");
+    expect(row?.textContent).not.toContain("done");
+  });
+});
 
 describe("the report gates the reveal — a broken report never leaks the new boards (finding 1)", () => {
   it("composed + MISSING report: honest missing state, no greeting, no gen2 leak", () => {

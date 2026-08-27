@@ -1,8 +1,8 @@
 import type { LensBoard } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
-import { Check, Loader2 } from "lucide-react";
-import { canRevealNewBoards, type LaneRow, type RoundState } from "./round-machine";
+import { canRevealNewBoards, type LaneRow, type RoundState, type RowStatus } from "./round-machine";
 import { RoundReportBoard } from "./round-report";
+import { StatusIcon } from "./run-route";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The round report as the greeting (C09 §5, Objective "round report as the greeting" +
@@ -24,9 +24,26 @@ import { RoundReportBoard } from "./round-report";
 /** A stable empty lane list — non-`composing` phases resolve to the same ref. */
 const NO_LANES: readonly LaneRow[] = Object.freeze([]);
 
+/** The greeting's per-lane status label — EXHAUSTIVE over `RowStatus` (finding 5). A
+ *  regenerating lane reads "re-drafting"; a queued one "queued"; a FAILED one "failed" — never
+ *  the old "done" that made a queued or failed drafter lie as a settled success. */
+function laneStatusLabel(status: RowStatus): string {
+  switch (status) {
+    case "queued":
+      return "queued";
+    case "running":
+      return "re-drafting";
+    case "failed":
+      return "failed";
+    case "done":
+      return "done";
+  }
+}
+
 /** The lens drafters reworking beneath the report — rows from the machine's `composing`
- *  state (folded `onProgress`, never a wall clock). A running lane reads "re-drafting", a
- *  settled one "done". The report stays readable above while these still run. */
+ *  state (folded `onProgress`, never a wall clock). Every `RowStatus` renders through the SAME
+ *  `StatusIcon` the run route uses (finding 5), so a queued or failed drafter reads honestly
+ *  instead of a false green check. The report stays readable above while these still run. */
 function RegenerationProgress({ lanes }: { readonly lanes: readonly LaneRow[] }) {
   return (
     <div data-testid="regeneration-progress" className="flex flex-col gap-1.5">
@@ -34,26 +51,26 @@ function RegenerationProgress({ lanes }: { readonly lanes: readonly LaneRow[] })
         Re-drafting the boards
       </span>
       <div className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
-        {lanes.map((lane) => {
-          const running = lane.status === "running";
-          return (
-            <div
-              key={lane.id}
-              className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
-              data-row={lane.id}
+        {lanes.map((lane) => (
+          <div
+            key={lane.id}
+            className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
+            data-row={lane.id}
+            data-status={lane.status}
+          >
+            <StatusIcon status={lane.status} />
+            <span className="text-foreground">{lane.label}</span>
+            <span
+              className={
+                lane.status === "failed"
+                  ? "ml-auto text-2xs text-destructive"
+                  : "ml-auto text-2xs text-muted-foreground"
+              }
             >
-              {running ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin text-model" aria-hidden="true" />
-              ) : (
-                <Check className="size-3.5 shrink-0 text-green-500" aria-hidden="true" />
-              )}
-              <span className="text-foreground">{lane.label}</span>
-              <span className="ml-auto text-2xs text-muted-foreground">
-                {running ? "re-drafting" : "done"}
-              </span>
-            </div>
-          );
-        })}
+              {laneStatusLabel(lane.status)}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
