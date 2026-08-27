@@ -1,4 +1,10 @@
-import { createSeqCounter, type EnvelopeContext, type HarnessEvent } from "@rennet/core";
+import {
+  createSeqCounter,
+  type EnvelopeContext,
+  type HarnessEvent,
+  isResumeVanished,
+  type SessionOutcome,
+} from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import {
   ClaudeAdapter,
@@ -242,6 +248,57 @@ describe("mapClaudeError", () => {
       class: "unknown",
       origin: "harness",
     });
+  });
+
+  it("maps the SDK error_during_execution result subtype (B09 F4)", () => {
+    expect(mapClaudeError("error_during_execution", "resume rejected")).toMatchObject({
+      class: "invalid-request",
+      origin: "harness",
+      retryable: false,
+      nativeCode: "error_during_execution",
+    });
+  });
+});
+
+describe("resume-vanished detection through the real adapter mapping (B09 F4)", () => {
+  // Drives a raw SDK result frame through the ACTUAL frame normalizer, then the
+  // pure resume-vanished rule — not a hand-built HarnessError. If the mapping
+  // regresses (subtype no longer preserved as nativeCode), these reddens.
+  const outcomeOf = (frame: Record<string, unknown>): SessionOutcome => {
+    const ended = normalizeClaudeFrame(frame, context()).find((e) => e.kind === "session.ended");
+    if (ended?.kind !== "session.ended") throw new Error("no terminal outcome");
+    return ended.outcome;
+  };
+
+  it("treats a resumed error_during_execution result as a vanished transcript", () => {
+    const outcome = outcomeOf({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "resume rejected: no conversation found",
+    });
+    expect(outcome.status).toBe("failed");
+    expect(isResumeVanished(true, outcome)).toBe(true);
+  });
+
+  it("does NOT treat a resumed error_max_turns result as vanished", () => {
+    const outcome = outcomeOf({
+      type: "result",
+      subtype: "error_max_turns",
+      is_error: true,
+      result: "hit the turn ceiling",
+    });
+    expect(isResumeVanished(true, outcome)).toBe(false);
+  });
+
+  it("does not trigger the rebuild when the turn did not attempt resume", () => {
+    const outcome = outcomeOf({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "some execution error",
+    });
+    expect(isResumeVanished(false, outcome)).toBe(false);
   });
 });
 

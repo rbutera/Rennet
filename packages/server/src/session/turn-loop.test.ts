@@ -435,27 +435,29 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
     harnessCursor: { harnessSessionId: "gone", lastAssistantMessageAnchor: "old", turnCount: 4 },
   });
 
-  const invalidRequest: SessionOutcome = {
+  // The harness's terminal resume-refusal, mapped by the real adapter: the SDK
+  // `error_during_execution` subtype preserved as nativeCode (B09 F4).
+  const resumeRefused: SessionOutcome = {
     status: "failed",
     error: {
       class: "invalid-request",
       origin: "harness",
-      message: "no conversation found for resume id",
+      message: "resume rejected: no conversation found",
       retryable: false,
       retryableSource: "inferred",
-      nativeCode: null,
+      nativeCode: "error_during_execution",
     },
   };
 
   it("rebuilds context on a fresh session and re-mints the cursor from turn 1", async () => {
     const store = memoryStore(withStaleCursor());
     const rows: TurnRow[] = [];
-    // Resumed turn fails invalid-request (vanished); the fresh turn (no resume) succeeds.
+    // Resumed turn is refused (vanished transcript); the fresh turn (no resume) succeeds.
     const loop = new SessionTurnLoop({
       port: fakePort(() => undefined, {
         outcome: (s) =>
           s.resume !== undefined
-            ? invalidRequest
+            ? resumeRefused
             : {
                 status: "completed",
                 finalText: "ok",
@@ -518,5 +520,65 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
     expect(rows).toEqual([]);
     // The stale cursor is left intact — a transient failure is not a vanish.
     expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("gone");
+  });
+
+  it("does not treat a model_not_found resume failure as vanished (F4 narrowing)", async () => {
+    const store = memoryStore(withStaleCursor());
+    const rows: TurnRow[] = [];
+    // `model_not_found` ALSO maps to the invalid-request class, but carries a
+    // different native code — it must NOT trigger the transcript-rebuild path.
+    const modelNotFound: SessionOutcome = {
+      status: "failed",
+      error: {
+        class: "invalid-request",
+        origin: "adapter",
+        message: "model not found",
+        retryable: false,
+        retryableSource: "inferred",
+        nativeCode: "model_not_found",
+      },
+    };
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => undefined, { outcome: () => modelNotFound }),
+      store,
+      buildSpec: spec,
+      emit: (r) => rows.push(r),
+    });
+
+    const { outcome, contextRebuilt } = await loop.runTurn("s1", "hi");
+    expect(outcome.status).toBe("failed");
+    expect(contextRebuilt).toBeUndefined();
+    expect(rows).toEqual([]);
+    // The cursor is NOT dropped — a bad-model failure is a real failure, not a vanish.
+    expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("gone");
+  });
+
+  it("persists the dropped cursor before retrying, so a failed retry does not leave the stale pointer (F4)", async () => {
+    const store = memoryStore(withStaleCursor());
+    const failedFresh: SessionOutcome = {
+      status: "failed",
+      error: {
+        class: "overloaded",
+        origin: "provider",
+        message: "busy",
+        retryable: true,
+        retryableSource: "inferred",
+        nativeCode: null,
+      },
+    };
+    const loop = new SessionTurnLoop({
+      // Resume refused (vanished); the fresh retry ALSO fails (transiently).
+      port: fakePort(() => undefined, {
+        outcome: (s) => (s.resume !== undefined ? resumeRefused : failedFresh),
+      }),
+      store,
+      buildSpec: spec,
+    });
+
+    const { contextRebuilt } = await loop.runTurn("s1", "hi");
+    expect(contextRebuilt).toBe(true);
+    // RED-proof: without the pre-retry persist, the stale "gone" cursor would
+    // survive on disk and next turn would resume the vanished transcript again.
+    expect(store.get("s1").harnessCursor).toBeUndefined();
   });
 });

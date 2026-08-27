@@ -200,6 +200,12 @@ export function mapClaudeError(code: string | null, message: string): HarnessErr
     aborted_streaming: { class: "cancelled", origin: "adapter", retryable: false },
     aborted_tools: { class: "cancelled", origin: "adapter", retryable: false },
     error_max_turns: { class: "max-turns", origin: "harness", retryable: false },
+    // The SDK's terminal execution-error result subtype. A resume against a
+    // transcript the CLI no longer has surfaces here (sdk.d.ts: resume is refused
+    // with an `error_during_execution` result). Preserved as `nativeCode` so the
+    // turn loop's resume-vanished discriminator keys on THIS exact subtype (B09
+    // F4) rather than the broad `invalid-request` class — non-retryable, harness-origin.
+    error_during_execution: { class: "invalid-request", origin: "harness", retryable: false },
   };
   const mapped = code !== null ? table[code] : undefined;
   if (mapped) {

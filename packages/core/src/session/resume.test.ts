@@ -84,12 +84,32 @@ describe("dropCursor", () => {
 });
 
 describe("isResumeVanished", () => {
-  it("is true for an invalid-request failure on a resumed turn (the transcript is gone)", () => {
-    expect(isResumeVanished(true, err("invalid-request"))).toBe(true);
+  // Keyed on the harness's native SUBTYPE (preserved as nativeCode), not the broad
+  // invalid-request class (B09 F4). The real adapter mapping is exercised in the
+  // adapters test through normalizeClaudeFrame.
+  const coded = (nativeCode: string, klass: HarnessError["class"] = "invalid-request") =>
+    ({
+      status: "failed" as const,
+      error: {
+        class: klass,
+        origin: "harness" as const,
+        message: nativeCode,
+        retryable: false,
+        retryableSource: "inferred" as const,
+        nativeCode,
+      },
+    }) satisfies SessionOutcome;
+
+  it("is true for an error_during_execution failure on a resumed turn (the transcript is gone)", () => {
+    expect(isResumeVanished(true, coded("error_during_execution"))).toBe(true);
   });
 
   it("is false when resume was not attempted (a fresh turn cannot vanish)", () => {
-    expect(isResumeVanished(false, err("invalid-request"))).toBe(false);
+    expect(isResumeVanished(false, coded("error_during_execution"))).toBe(false);
+  });
+
+  it("is false for model_not_found — same class, different code — so a bad model is not a vanish", () => {
+    expect(isResumeVanished(true, coded("model_not_found"))).toBe(false);
   });
 
   it("is false for transient and auth failures (they would fail fresh too — not vanished)", () => {

@@ -240,22 +240,23 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
 
     // A turn that RESUMES the persisted (now-vanished) transcript fails
     // invalid-request; the fresh turn (no resume) succeeds and re-mints the cursor.
-    const invalidRequest: SessionOutcome = {
+    const resumeRefused: SessionOutcome = {
       status: "failed",
       error: {
         class: "invalid-request",
         origin: "harness",
-        message: "no conversation found for resume id",
+        message: "resume rejected: no conversation found",
         retryable: false,
         retryableSource: "inferred",
-        nativeCode: null,
+        // The SDK's terminal resume-refusal subtype, preserved by the real adapter (F4).
+        nativeCode: "error_during_execution",
       },
     };
     const port: HarnessPort = {
       createSession: async (spec: SessionSpec) => {
         const outcome: SessionOutcome =
           spec.resume !== undefined
-            ? invalidRequest
+            ? resumeRefused
             : {
                 status: "completed",
                 finalText: "rebuilt",

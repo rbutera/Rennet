@@ -167,19 +167,20 @@ export class SessionTurnLoop {
         kind: "context_rebuilt",
         reason: "the harness no longer has this conversation's transcript",
       });
-      // Drop the stale cursor so the fresh conversation re-mints it from turn 1.
-      // Boards/threads/claim are untouched — only the harness pointer is cleared.
-      const rebuilt = dropCursor(current);
+      // Drop the stale cursor and PERSIST it BEFORE retrying (F4): a retry that
+      // fails must not leave the vanished pointer on disk to be resumed again next
+      // turn. Reload the latest record first (F2) so a concurrent thread/archive
+      // survives; only the harness pointer is cleared — boards/threads/claim stay.
+      const rebuilt = dropCursor(this.deps.store.load(sessionId) ?? current);
+      this.deps.store.save(rebuilt);
       const freshOutcome = await this.#runTurn(rebuilt, prompt, undefined);
       if (freshOutcome.status !== "completed") {
         return { session: rebuilt, outcome: freshOutcome, contextRebuilt: true };
       }
-      // Reload the latest record before persisting (finding 2): a concurrent
-      // addThread/archive that landed during the async turn must not be erased by
-      // saving our stale pre-turn snapshot. Reload → drop cursor → advance → save
-      // runs synchronously, so no other store write interleaves it.
-      const latest = this.deps.store.load(sessionId) ?? current;
-      const advanced = advanceCursor(dropCursor(latest), freshOutcome);
+      // Reload again before persisting the fresh cursor (F2): the on-disk record
+      // already has the cleared cursor (saved above), plus any write that landed
+      // during the fresh turn. advanceCursor re-mints from turnCount 1.
+      const advanced = advanceCursor(this.deps.store.load(sessionId) ?? rebuilt, freshOutcome);
       this.deps.store.save(advanced);
       return { session: advanced, outcome: freshOutcome, contextRebuilt: true };
     }

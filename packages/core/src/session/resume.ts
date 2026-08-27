@@ -66,17 +66,27 @@ export function dropCursor(session: SessionModel): SessionModel {
  * named), so the loop should rebuild context honestly rather than surface a dead
  * turn (B09 task 2.3, #466 res. 3).
  *
- * The signal is a `invalid-request` failure on a turn that attempted resume: the
- * harness rejected the resume pointer as invalid/unknown input. Transient
- * failures (rate-limit, overloaded, upstream) and auth failures are DIFFERENT
- * classes and are deliberately NOT treated as vanished — they would fail a fresh
- * turn too, so they surface as real failures instead of a wasteful rebuild. The
- * live native-code → `invalid-request` mapping for a missing session is confirmed
- * against the real CLI in the packet E2E (cluster 8); this decision is the pure
- * rule the offline gate exercises through an injected port.
+ * The signal is the harness's terminal `error_during_execution` subtype, preserved
+ * verbatim as the outcome error's `nativeCode` (the SDK refuses a resume of a
+ * missing transcript with exactly this result — sdk.d.ts). Keying on the native
+ * SUBTYPE, not the broad `invalid-request` class, is what makes this narrow (B09
+ * F4): `model_not_found` also maps to `invalid-request` but carries a DIFFERENT
+ * native code, so a bad-model turn is no longer mistaken for a vanished transcript.
+ * Transient failures (rate-limit, overloaded, upstream) and auth failures are
+ * different classes and codes — NOT treated as vanished — because they would fail
+ * a fresh turn too, so they surface as real failures instead of a wasteful rebuild.
+ *
+ * Residual breadth (recorded in the ledger, F4): a resumed turn that errors mid-
+ * execution for a NON-resume reason also carries this subtype and would rebuild
+ * fresh — non-destructive (boards stay canonical), the honest degrade. The precise
+ * missing-session message match is confirmed against the live CLI in the packet
+ * E2E (cluster 8); this pure rule is what the offline gate exercises through the
+ * real adapter frame mapping (`normalizeClaudeFrame`), not a synthetic error class.
  */
 export function isResumeVanished(attemptedResume: boolean, outcome: SessionOutcome): boolean {
   return (
-    attemptedResume && outcome.status === "failed" && outcome.error.class === "invalid-request"
+    attemptedResume &&
+    outcome.status === "failed" &&
+    outcome.error.nativeCode === "error_during_execution"
   );
 }
