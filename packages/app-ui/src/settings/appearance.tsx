@@ -1,6 +1,6 @@
 import type { AppearanceScheme } from "@rennet/protocol";
-import { useCommand, useMutation } from "../data";
 import { Row, Section, Segmented } from "./atoms";
+import { useSetAppearance, useSettingsView } from "./data";
 import { ProvenanceChip } from "./provenance-chip";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,10 +24,8 @@ const SCHEMES: readonly { readonly id: AppearanceScheme; readonly label: string 
 ];
 
 export function AppearancePage() {
-  const { data } = useCommand("settings.get", {});
-  const { mutate, pending } = useMutation("settings.setAppearance", {
-    invalidates: ["settings.get"],
-  });
+  const { data } = useSettingsView();
+  const { mutate, pending } = useSetAppearance();
 
   const scheme = data?.scheme ?? "system";
   // A malformed `~/.rennet/config.json` makes the write REFUSE (Rule 75); the
