@@ -75,7 +75,9 @@ function orderedFakeClaudePort(order: string[]): HarnessPort {
         send: async (input: { prompt: string }) => {
           cap.prompt = input.prompt;
         },
-        close: async () => {},
+        close: async () => {
+          /* nothing to release */
+        },
         events: (async function* () {
           const lens = lensFromPrompt(cap.prompt ?? "");
           order.push(lens);

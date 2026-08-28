@@ -154,7 +154,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       const { adapter: claudePort, discovery } = await createClaudeHarness({
         env: process.env,
       });
-      // eslint-disable-next-line no-console
       console.log("[smoke] claude discovery:", JSON.stringify(discovery.health));
       const codexProbe = await discoverCodex(defaultCodexDiscoveryDeps(), {});
       const codexExecutor: CodexExecutor | null = codexProbe.chosen
@@ -166,7 +165,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
               : { runtimePath: codexProbe.chosen.runtimePath }),
           })
         : null;
-      // eslint-disable-next-line no-console
       console.log(
         "[smoke] ports:",
         JSON.stringify({ claude: claudePort !== null, codex: codexExecutor !== null }),
@@ -234,7 +232,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       const realBoards: DraftBoard[] = outcome.pipeline.boards
         .map((b) => b.board)
         .filter((b): b is DraftBoard => b !== undefined);
-      // eslint-disable-next-line no-console
       console.log(
         "[smoke] RESULT:",
         JSON.stringify(
@@ -353,7 +350,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
     } finally {
       await session.close();
     }
-    // eslint-disable-next-line no-console
     console.log(
       `[smoke] delta-digest via fixed adapter: status=${status} structured=${hasStructured}`,
     );
