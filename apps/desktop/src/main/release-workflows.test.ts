@@ -46,10 +46,16 @@ describe("release workflow boundaries", () => {
     expect(autoReleaseWorkflow).not.toMatch(/^permissions:\n {2}contents: write/m);
   });
 
-  it("publishes both manual and automatic releases", () => {
-    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --title');
-    expect(releaseWorkflow).not.toContain("--draft");
+  it("publishes both manual and automatic releases — draft first, undrafted last", () => {
+    // #599 made both workflows draft-first to survive the asset-upload propagation race:
+    // create as a draft, upload with retry, undraft only once the assets are really there.
+    // So "published" is no longer "never a draft" — it is "does not STAY a draft", and the
+    // undraft is the assertion that matters. (This test still forbade `--draft` after #599
+    // landed the flag, so it was red on main; the rule it encodes is what changed, not the
+    // intent — a release must end up visible.)
+    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --draft --title');
+    expect(releaseWorkflow).toContain('gh release edit "$TAG" --draft=false');
     expect(autoReleaseWorkflow).toContain('gh release create "$TAG"');
-    expect(autoReleaseWorkflow).not.toContain("--draft");
+    expect(autoReleaseWorkflow).toContain('gh release edit "$TAG" --draft=false');
   });
 });

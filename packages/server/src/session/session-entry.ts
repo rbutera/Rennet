@@ -178,7 +178,7 @@ export function resolveRoundSessionId(
   // below can never find it, and its rounds would surface under a second sidebar row minted
   // by the dispatch. `SessionEntry.enter` prefers the same holder, so the read and the write
   // cannot drift apart.
-  const holder = sessions.find((s) => s.reviewId === review.id);
+  const holder = sessions.find((s) => s.projectId === projectId && s.reviewId === review.id);
   if (holder) return holder.id;
   const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
   const branch = activePatchset?.repository.headRef;
@@ -224,8 +224,14 @@ export class SessionEntry {
     // The session already HOLDING this review wins outright (#587) — an exact identity, not
     // a claim match. `resolveRoundSessionId` prefers the same one, so the mint and the read
     // resolve to a single session rather than agreeing only by coincidence.
+    //
+    // Project-scoped like every other arm here. A review id is already unique, so the scope
+    // is not what makes this correct — it is what stops the identity arm being the ONE arm
+    // that could ever reach across projects, which is the asymmetry a reader would trip on.
     const existing =
-      (reviewId === undefined ? undefined : sessions.find((s) => s.reviewId === reviewId)) ??
+      (reviewId === undefined
+        ? undefined
+        : sessions.find((s) => s.projectId === projectId && s.reviewId === reviewId)) ??
       claimingSession(sessions, projectId, repositoryRoot, target);
     if (existing !== undefined) {
       const stamp: Partial<SessionModel> = {

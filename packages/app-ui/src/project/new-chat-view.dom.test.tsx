@@ -11,13 +11,7 @@
 // `/s/<sessionId>` carrying the typed ask, and the claimed row LEAVES the list until its
 // session is archived. Those legs are driven here over a MemoryBridge holding a real
 // session list, with the row-vanish positive control both ways.
-import type {
-  CommandInput,
-  Project,
-  ProjectDetail,
-  Review,
-  SidebarSession,
-} from "@rennet/protocol";
+import type { CommandInput, Project, ProjectDetail, SidebarSession } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router, useSearch } from "wouter";
 import { BridgeProvider } from "../data";

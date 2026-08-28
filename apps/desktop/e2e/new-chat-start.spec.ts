@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { basename } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
@@ -17,8 +17,13 @@ import { git, initRepo, launchRennet, makeTempDir, writeRepoFile } from "./harne
 // asked what it now holds. Deterministic and model-free — no harness turn runs — so
 // it stays in the free suite. The PR row is the one kind that cannot be driven here
 // (it needs a GitHub PR and an authenticated forge); its capture is `review.openPr`,
-// already shipped, and the only #587 addition to it is the `sessionId` attach that
-// the branch and checkout rows below both exercise.
+// already shipped, and it resolves its repo through the same identity the branch row does.
+//
+// THE SECOND TEST IS THE ONE THAT MATTERS MOST. The first drives a SINGLE-REPO project,
+// where `Project.openPath` is trivially the right repo — and a single-repo fixture makes
+// the wrong-repo bug invisible while passing honestly. It was control-proven and still
+// could not see it. So the second test builds a WORKSPACE of two repos that share a branch
+// name, which is the only shape where "which repo did the reviewer mean" has a wrong answer.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Daemon {
@@ -182,6 +187,71 @@ test("#587: every New Chat row kind starts a real review of that target", async 
     const emptySession = afterEmpty.find((s) => s.claim?.branch === "already-merged");
     expect(emptySession?.reviewId).toBeTruthy();
     expect((await daemon.review(emptySession?.reviewId ?? "")).files).toEqual([]);
+  } finally {
+    daemon?.close();
+    await application.close();
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A WORKSPACE of two repos that both carry `shared/feature`, each with its own file on it.
+ * Origin remotes give them real `owner/name` identities, so the rows are distinguishable
+ * exactly as they are for a reviewer — and so the capture has an identity to resolve.
+ */
+function seedWorkspace(): string {
+  const workspace = makeTempDir("rennet-e2e-587-ws-");
+  for (const name of ["alpha", "beta"] as const) {
+    const repo = `${workspace}/${name}`;
+    mkdirSync(repo, { recursive: true });
+    initRepo(repo);
+    git(repo, "remote", "add", "origin", `https://github.com/acme/${name}.git`);
+    writeRepoFile(repo, `${name}-base.ts`, `export const base = "${name}";\n`);
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", `${name}: initial`);
+    // The SAME branch name in both repos, each touching a file only its own repo has.
+    git(repo, "checkout", "-qb", "shared/feature");
+    writeRepoFile(repo, `${name}-only.ts`, `export const only = "${name}";\n`);
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", `${name}: the change`);
+    git(repo, "checkout", "-q", "main");
+  }
+  return workspace;
+}
+
+test("#587: in a two-repo workspace, the click captures the repo the ROW named", async () => {
+  test.setTimeout(600_000);
+  const repository = seedWorkspace();
+  const userData = makeTempDir("rennet-e2e-587-ws-state-");
+  const home = makeTempDir("rennet-e2e-587-ws-home-");
+  const { application } = await launchRennet({ repository, userData, home });
+  let daemon: Daemon | undefined;
+  try {
+    const page = await application.firstWindow();
+    daemon = await daemonOf(page);
+    await daemon.completeWelcome();
+    await addProjectAndOpenNewChat(page, repository);
+
+    // Both repos have `shared/feature`, so the list shows two rows and the repo column
+    // disambiguates them. Click BETA's.
+    const betaRow = page
+      .locator('[data-row="target"]', { hasText: /shared\/feature/ })
+      .filter({ hasText: "acme/beta" });
+    await expect(betaRow).toHaveCount(1);
+    await betaRow.click();
+    await expect(page.getByText(/^REVIEW ·/)).toBeVisible({ timeout: 180_000 });
+
+    const session = (await daemon.sessions()).find((s) => s.claim?.branch === "shared/feature");
+    expect(session?.reviewId).toBeTruthy();
+    const review = await daemon.review(session?.reviewId ?? "");
+    const paths = review.files.map((f) => f.path);
+    // THE ASSERTION THIS WHOLE FIXTURE EXISTS FOR. `openPath` is the FIRST included repo —
+    // alpha — so the pre-fix code captured alpha's `shared/feature` when beta's row was
+    // clicked: the wrong repository's content under the right row's label, silently.
+    expect(paths).toContain("beta-only.ts");
+    expect(paths).not.toContain("alpha-only.ts");
   } finally {
     daemon?.close();
     await application.close();
