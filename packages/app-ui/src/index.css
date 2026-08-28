@@ -11,7 +11,15 @@
  */
 
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "@rennet/theme/theme.css";
+
+/* The kit's overlay/animation utilities (animate-in, fade-in-0, zoom-in-95,
+ * slide-in-from-*) come from tw-animate-css above; without it every popover,
+ * dialog and dropdown transition is a silent no-op. `.dark` is the scheme class
+ * the shell stamps on <html>, so `dark:` must resolve through it. */
+@custom-variant dark (&:is(.dark *));
+
 /* Scan the WHOLE app-ui source tree, not named subpaths. A named glob silently
  * stops covering code that moves: `@source "./app.tsx"` missed the Wave-4.1 split
  * that relocated the shell (h-14 titlebar, the pt-14 content offset) into
@@ -28,6 +36,14 @@
 @source not "./**/*.test.ts";
 
 @layer base {
+  /* Tailwind preflight leaves every border at `currentColor`, so any element
+   * given a border width without a border color paints in full ink. The kit and
+   * the prototype both assume this default; without it 14 surfaces read as hard
+   * black/white hairlines instead of the theme's --rn-line. */
+  * {
+    @apply border-border outline-ring/50;
+  }
+
   :root {
     color-scheme: light;
   }
@@ -38,6 +54,18 @@
   html,
   body {
     height: 100%;
+  }
+
+  /* Headings take the display serif from the base layer (not per-component
+   * classes) so component files stay untouched. Deliberately global, matching the
+   * prototype: markdown h2/h3 in chat prose and label-size h2/h3 headings pick up
+   * the display face too — prototype parity, not an oversight. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--rn-font-display);
+    font-weight: 500;
+    letter-spacing: -0.015em;
   }
 
   body {
@@ -113,9 +141,6 @@
   .rn-startup-pending {
     opacity: 0;
     pointer-events: none;
-  }
-  .rn-startup-underlay {
-    display: none;
   }
   .navigation-titlebar {
     -webkit-app-region: drag;

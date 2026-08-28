@@ -1,25 +1,19 @@
-import type { ProjectVisibility, ResolvedProvenance, SettingsProject } from "@rennet/protocol";
+import type { ProjectVisibility, SettingsProject } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { Monitor, Server } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Icon } from "../../components/icon";
 import type { SidebarHost, SidebarProject } from "../../shell/sidebar-data";
 import { Row, Section, Segmented } from "../atoms";
-import {
-  toProvenance,
-  usePinRepoValue,
-  useResetRepoValue,
-  useSetRepoVisibility,
-  useSettingsView,
-} from "../data";
-import { ProvenanceChip } from "../provenance-chip";
+import { usePinRepoValue, useResetRepoValue, useSetRepoVisibility, useSettingsView } from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Projects → Repository section (C10 §8.4, claims 656–658). The LIVE part of
 // the page: Review Context (local vs git-visible) reads and writes the real
-// `settings.setRepoVisibility` with its resolver provenance chip; the promotion
-// state is shown; and "Runs on" is a DISPLAYED DETECTED FACT — a provenance chip,
-// a host glyph, and the host name, with NO editable override (reconciliation 7).
+// `settings.setRepoVisibility`; the promotion state is shown; and "Runs on" is a
+// DISPLAYED DETECTED FACT — a host glyph and the host name, with NO editable
+// override (reconciliation 7). The surface carries NO provenance badges: the
+// resolver ladder still decides the values, it just does not label them here.
 //
 // A project can carry MORE THAN ONE repo (a workspace): the protocol emits one
 // `SettingsProject` row PER repo, each keyed by its own `repoPath`. So this renders
@@ -119,11 +113,6 @@ function RepoRow({
   const busy = setVisibility.pending || pinValue.pending || resetValue.pending;
   const label = repoLabel(row.repoPath);
 
-  // "Runs on" is where this project's commands run — a detected fact: the row's locus
-  // provenance when known, else a detected chip of the host itself (never invented).
-  const locusProvenance: ResolvedProvenance =
-    row.locusProvenance ?? toProvenance({ value: host.label, layer: "detected" });
-
   // Visibility resolved FROM the repo layer ⇒ an explicit repo entry exists, so offer
   // Reset (fall back down the ladder). Otherwise offer Pin (freeze the current effective
   // value at the repo layer so a lower-layer change no longer moves it).
@@ -165,7 +154,6 @@ function RepoRow({
         </Row>
       ) : null}
       <Row label="Review Context" hint="whether .rennet is visible to git">
-        <ProvenanceChip provenance={row.visibilityProvenance} />
         <Segmented
           ariaLabel={`Review context for ${label}`}
           options={VISIBILITY_OPTIONS}
@@ -198,12 +186,10 @@ function RepoRow({
         </div>
       ) : null}
       <Row label="Promotion" hint="review context committed and shared via the repo">
-        <ProvenanceChip provenance={row.promotedProvenance} />
         <span className="text-xs text-ink-soft">{row.promoted ? "promoted" : "not promoted"}</span>
       </Row>
       <Row label="Runs on" hint="where this project's commands run">
         {/* Detection only — no override control on the surface (reconciliation 7). */}
-        <ProvenanceChip provenance={locusProvenance} />
         <span className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-ink">
           <Icon icon={host.kind === "local" ? Monitor : Server} className="size-3 text-ink-soft" />
           {host.label}

@@ -8,9 +8,9 @@ colors:
   light-ink: "#1e1b16"
   light-muted: "#57534a"
   light-line: "#e2ddd2"
-  dark-canvas: "#0e0d0c"
-  dark-surface: "#151413"
-  dark-raised: "#1b1a18"
+  dark-canvas: "#0a0a0a"
+  dark-surface: "#131313"
+  dark-raised: "#1a1a1a"
   dark-ink: "#f2ede4"
   dark-muted: "#a9a196"
   dark-line: "#2a2723"
@@ -86,9 +86,9 @@ Light and dark schemes are complete designs. Use `data-scheme="light|dark"` in R
 
 ### Dark scheme
 
-- Canvas: `#0e0d0c`
-- Surface: `#151413`
-- Raised: `#1b1a18`
+- Canvas: `#0a0a0a`
+- Surface: `#131313`
+- Raised: `#1a1a1a`
 - Text: `#f2ede4`
 - Muted text: `#a9a196`
 

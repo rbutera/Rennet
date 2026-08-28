@@ -215,7 +215,7 @@ async function createWindow(wsPort: number): Promise<void> {
     // asserted by construction, not measured. Rai's manual check on a shipped build is
     // the outstanding proof; do not tune this value blind before then. win32/linux
     // keep the native frame (titlebar, snap, drag) above the web content.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0e0d0c" : "#fbfaf7",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#fbfaf7",
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
     // Version in the native titlebar (visible on the win32 native frame; macOS shows
     // it in the standard titlebar too). `page-title-updated` is suppressed below so

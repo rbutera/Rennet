@@ -62,7 +62,7 @@ const lenses = [
         document.documentElement.dataset.scheme = scheme;
         document.querySelector("#theme-color")?.setAttribute(
           "content",
-          scheme === "dark" ? "#0e0d0c" : "#fbfaf7",
+          scheme === "dark" ? "#0a0a0a" : "#fbfaf7",
         );
       })();
     </script>
@@ -356,7 +356,7 @@ const lenses = [
         toggle?.setAttribute("aria-pressed", String(dark));
         document.querySelector("#theme-color")?.setAttribute(
           "content",
-          dark ? "#0e0d0c" : "#fbfaf7",
+          dark ? "#0a0a0a" : "#fbfaf7",
         );
       };
       updateToggle();

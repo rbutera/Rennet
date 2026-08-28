@@ -458,6 +458,12 @@
         "value": "18px",
         "createdAt": "2026-08-26T00:27:39.884Z",
         "reason": "Rai directed the ramp-step header bump (R40 correction, 2026-08-26): section titles text-lg 18px, on the documented 11-24 ramp"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "0.8rem",
+        "createdAt": "2026-08-28T19:59:03.603Z",
+        "reason": "openspec desktop-styling-convergence design.md D2: verbatim restore of the prototype control ramp (spikes/board-prototype/components/ui/button.tsx sm size)"
       }
     ]
   }

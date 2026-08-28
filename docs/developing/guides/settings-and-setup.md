@@ -314,8 +314,10 @@ project that picks JIRA on its own rung therefore never inherits the host's
 Linear URL and token — an incomplete endpoint surfaces as missing config and
 retrieval proceeds without it. An endpoint set at or above the kind's layer is a
 refinement of the same choice and still applies. The settings surface and
-retrieval share that one resolution, so a provenance chip cannot disagree with
-the endpoint a review actually calls.
+retrieval share that one resolution, so the values you see in project settings
+cannot disagree with the endpoint a review actually calls. The project settings
+sections show the resolved values and their controls; they do not badge the layer
+each value came from.
 "Runs on" (execution locus) is a detected fact with no ladder layer to override.
 The UI renders the resolver's answer instead of recalculating precedence in React.
 
