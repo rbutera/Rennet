@@ -324,37 +324,52 @@ describe("sidebar tree (C03 §3)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// macOS traffic-light clearance. The desktop window is `titleBarStyle:
-// "hiddenInset"` on darwin, so the native close/minimise/zoom buttons paint OVER
-// the renderer's top-left — on top of the lockup, which made the wordmark
-// unreadable on a real packaged build. Both sidebar states must clear them, and
-// no other host may pay for it.
+// macOS traffic-light clearance — state 1 of the corner slot (C20, #558). The
+// desktop window is `titleBarStyle: "hiddenInset"` on darwin, so the native
+// close/minimise/zoom buttons paint OVER the renderer's top-left — on top of the
+// lockup, which made the wordmark unreadable on a real packaged build. With the
+// sidebar expanded the sidebar owns the slot, and the row reads
+// lights → wordmark → toggle. No other host pays for it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The lockup's authored aspect ratio (`lockup.tsx`): width = height × this. */
 const LOCKUP_RATIO = 726.868 / 126;
 
-function headerLockup(header: Element): Element {
-  const svg = header.querySelector("svg");
-  if (!svg) throw new Error("sidebar header has no lockup");
+function cornerSlot(container: Element): Element {
+  const slot = container.querySelector('[data-slot="corner-slot"]');
+  if (!slot) throw new Error("sidebar header has no corner slot");
+  return slot;
+}
+
+function slotLockup(slot: Element): Element {
+  const svg = slot.querySelector("svg:not(.lucide)");
+  if (!svg) throw new Error("corner slot has no lockup");
   return svg;
 }
 
-describe("macOS traffic-light clearance", () => {
-  it("insets the header, shrinks the lockup, and makes the strip the drag surface on darwin", () => {
-    const { getByTestId } = mountSidebar({
+describe("macOS traffic-light clearance (corner slot, state 1)", () => {
+  it("insets the slot, shrinks the lockup, and makes the strip the drag surface on darwin", () => {
+    const { container } = mountSidebar({
       projects: [project("p1", "atlas")],
       platform: "darwin",
     });
-    const header = getByTestId("sidebar-header");
-    expect(header.className).toContain("pl-[76px]");
-    expect(header.className).not.toContain("pl-3");
+    const slot = cornerSlot(container);
+    expect(slot.getAttribute("data-owner")).toBe("sidebar");
+    expect(slot.className).toContain("pl-[76px]");
+    expect(slot.className).not.toContain("pl-3");
     // With hiddenInset the strip IS the titlebar; the shared `navigation-titlebar`
     // rule drags it and opts its buttons back out.
-    expect(header.className).toContain("navigation-titlebar");
+    expect(slot.className).toContain("navigation-titlebar");
 
-    const svg = headerLockup(header);
+    const svg = slotLockup(slot);
     expect(svg.getAttribute("height")).toBe("14");
+    // Reading order is lights → wordmark → toggle: the reserved zone is the slot's
+    // own leading padding, so the lockup is the FIRST child and the toggle follows.
+    const toggle = slot.querySelector('[aria-label="Collapse sidebar"]');
+    if (!toggle) throw new Error("corner slot has no sidebar toggle");
+    // Node.DOCUMENT_POSITION_FOLLOWING (4).
+    expect(svg.compareDocumentPosition(toggle) & 4).toBe(4);
+
     // Unclipped: the 76px reserved zone + the lockup's own rendered width + the
     // 12px trailing pad + the 24px collapse toggle must all fit the 256px panel.
     const width = Number(svg.getAttribute("width"));
@@ -362,31 +377,19 @@ describe("macOS traffic-light clearance", () => {
     expect(76 + width + 12 + 24).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
   });
 
-  it("clears the lights vertically on the collapsed rail, which is narrower than they are", async () => {
-    const { getByLabelText } = mountSidebar({
-      projects: [project("p1", "atlas")],
-      platform: "darwin",
-    });
-    fireEvent.click(getByLabelText("Collapse sidebar"));
-    const rail = await waitFor(() => {
-      const parent = getByLabelText("Expand sidebar").parentElement;
-      if (!parent) throw new Error("rail not mounted");
-      return parent;
-    });
-    expect(rail.className).toContain("pt-8");
-  });
-
   it("leaves every non-darwin host un-inset, full-size and undraggable", () => {
     for (const platform of ["win32", "linux", undefined]) {
-      const { getByTestId } = mountSidebar({
+      const { container } = mountSidebar({
         projects: [project("p1", "atlas")],
         platform,
       });
-      const header = getByTestId("sidebar-header");
-      expect(header.className).toContain("pl-3");
-      expect(header.className).not.toContain("pl-[76px]");
-      expect(header.className).not.toContain("navigation-titlebar");
-      expect(headerLockup(header).getAttribute("height")).toBe("16");
+      const slot = cornerSlot(container);
+      expect(slot.className).toContain("pl-3");
+      expect(slot.className).not.toContain("pl-[76px]");
+      expect(slot.className).not.toContain("navigation-titlebar");
+      expect(slotLockup(slot).getAttribute("height")).toBe("16");
+      // Non-darwin loses the inset, not the affordance: the same single toggle.
+      expect(slot.querySelectorAll('[aria-label="Collapse sidebar"]').length).toBe(1);
       cleanup();
     }
   });
