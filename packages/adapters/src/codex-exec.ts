@@ -223,6 +223,11 @@ export function createCodexExecutor(
         ? {}
         : { outputSchema: sanitizeSchemaForCodex(req.outputSchema) }),
       ...(req.signal === undefined ? {} : { signal: req.signal }),
+      // #585: every utility-executor turn is Rennet's internal one-shot work, so
+      // no rollout file lands in the user's `~/.codex/sessions/`. This is the one
+      // choke point all CodexExecutor callers route through; the agentic transport
+      // (codex-turn-transport) deliberately does NOT set it.
+      ephemeral: true,
     })) {
       if ((frame as { rennet?: unknown }).rennet === "turn-result") {
         terminal = frame as CodexTurnResultFrame;

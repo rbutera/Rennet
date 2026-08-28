@@ -115,6 +115,8 @@ export function createClaudeSwarmTurn(
       cwd: options.cwd,
       outputSchema,
       model,
+      // #585: Rennet's internal one-shot turn — never the user's session history.
+      ephemeral: true,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     const started = now();

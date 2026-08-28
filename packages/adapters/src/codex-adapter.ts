@@ -59,6 +59,8 @@ export interface CodexTurnSpec {
   readonly outputSchema?: unknown;
   /** Loopback canvasOps@2 (and future) MCP servers; ride spawn-time `-c` overrides. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
+  /** #585: start the thread ephemeral — no rollout file in `~/.codex/sessions/`. */
+  readonly ephemeral?: boolean;
   readonly signal?: AbortSignal;
 }
 
@@ -603,6 +605,7 @@ class CodexSession implements HarnessSession {
       ...(this.#spec.model === undefined ? {} : { model: this.#spec.model }),
       ...(this.#spec.outputSchema === undefined ? {} : { outputSchema: this.#spec.outputSchema }),
       ...(this.#config.mcpServers === undefined ? {} : { mcpServers: this.#config.mcpServers }),
+      ...(this.#spec.ephemeral === undefined ? {} : { ephemeral: this.#spec.ephemeral }),
       signal: this.#abort.signal,
     };
   }

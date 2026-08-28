@@ -23,6 +23,8 @@ export function createClaudeCiRefinementTurn(
     const session = await port.createSession({
       cwd: options.cwd,
       outputSchema: CI_CLASSIFICATION_OUTPUT_SCHEMA,
+      // #585: Rennet's internal one-shot turn — never the user's session history.
+      ephemeral: true,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...((signal ?? options.signal) === undefined ? {} : { signal: signal ?? options.signal }),
     });
