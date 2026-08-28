@@ -219,19 +219,50 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
   });
 });
 
-describe("the round-diff link resolves the SELECTED round, never silently the latest (finding 2)", () => {
-  // A producer-shaped landed round: the worker minted `gen`, and the round reported against it,
-  // so `mintedPatchsetGeneration === boardGeneration` (server/src/runtime/rounds.ts:319).
-  const landedRound = (gen: string): RoundRecord => ({
+// ── The round diff (#571) ─────────────────────────────────────────────────────
+//
+// THE DEFECT THIS REPLACES: "Round diff" was a live button on every round that navigated to
+// a surface saying the feature "isn't wired yet". The data was there the whole time —
+// `RoundRecord.diff` is the checkpoint-measured diff of the round's own coding turn, and the
+// durable store preserves it across the regeneration that supersedes the dispatch placeholder.
+//
+// These mount the real surface and CLICK, because reading the ledger source is what missed
+// this: the button looked wired.
+describe("the Round-diff control shows the round's own diff (#571)", () => {
+  const ROUND_ONE_FILE = "packages/core/src/round-one-only.ts";
+  const ROUND_TWO_FILE = "packages/core/src/round-two-only.ts";
+
+  /** A round that ran a work order and captured its diff — the producer shape after the
+   *  `session.rounds` read splits `RoundRecord.diff` per file. */
+  const roundWithDiff = (gen: string, file: string, added: string): RoundRecord => ({
     asksDispatched: ["ask-1"],
-    workerCommitRange: { from: "commit-from", to: "commit-to" },
+    workerCommitRange: { from: `${gen}-from`, to: `${gen}-to` },
     mintedPatchsetGeneration: gen,
+    boardGeneration: gen,
+    reportBoard: "report-round-1",
+    diff: `diff --git a/${file} b/${file}\n@@ -1 +1 @@\n+${added}`,
+    diffFiles: [
+      {
+        path: file,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        binary: false,
+        patch: `@@ -1,1 +1,1 @@\n+${added}`,
+      },
+    ],
+  });
+
+  /** A regeneration-only round: no work order ran, so there is no diff of its own. */
+  const roundWithoutDiff = (gen: string): RoundRecord => ({
+    asksDispatched: ["ask-1"],
+    workerCommitRange: { from: "same", to: "same" },
     boardGeneration: gen,
     reportBoard: "report-round-1",
   });
 
-  // A review whose ACTIVE patchset carries a recognizable file — if the link regressed to
-  // "latest", this filename would render in the diff surface. It must not.
+  // A review whose ACTIVE patchset carries a recognizable file — if the round diff regressed
+  // to "whatever activePatchsetId points at now", this filename would render. It must not.
   const reviewWithPatchset = {
     id: "led-diff",
     activePatchsetId: "ps-latest",
@@ -253,34 +284,99 @@ describe("the round-diff link resolves the SELECTED round, never silently the la
     ],
   } as unknown as Review;
 
-  it("clicking an older round's Round-diff carries ITS generation and shows no latest diff", async () => {
-    const twoRounds: RoundsSource = {
+  function mountLedger(records: readonly RoundRecord[], path = "/s/s-1?view=rounds") {
+    const source: RoundsSource = {
       roundState: () => ({ phase: "absent" }),
-      roundRecords: () => [landedRound("g1"), landedRound("g2")], // oldest→newest
+      roundRecords: () => records,
       reportBoard: (id) => FIXTURE_REPORT_BOARDS[id],
     };
-    const history = memoryHistory("/s/s-1?view=rounds");
+    const history = memoryHistory(path);
     const r = mount(
       <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
         <Router hook={history.hook} searchHook={history.searchHook}>
-          <RoundsSourceProvider value={twoRounds}>
+          <RoundsSourceProvider value={source}>
             <ReviewWorkspace review={reviewWithPatchset} />
           </RoundsSourceProvider>
         </Router>
       </BridgeProvider>,
     );
+    return { r, history };
+  }
 
-    // Select the OLDER round (round 1 = g1), then follow its Round-diff link.
-    await r.user.click(r.container.querySelector('[data-round="1"]') as HTMLElement);
-    const link = r.getByTestId("round-diff-link");
-    expect(link.getAttribute("data-round-generation")).toBe("g1"); // the selected round's identity
-    await r.user.click(link);
+  it("clicking Round diff lands on the round's REAL changed file, not a 'not wired yet' notice", async () => {
+    const { r, history } = mountLedger([roundWithDiff("g1", ROUND_ONE_FILE, "const one = 1;")]);
+    await r.user.click(r.getByTestId("round-diff-link"));
 
-    // The URL carries the round's generation, and the diff surface is the honest round-diff
-    // state for g1 — NOT the latest patchset (its marker file must be absent).
-    expect(history.history.at(-1)).toContain("round=g1");
-    const pending = r.container.querySelector('[data-testid="round-diff-pending"]');
-    expect(pending?.getAttribute("data-round-generation")).toBe("g1");
+    // The URL names the round by its ledger number…
+    expect(history.history.at(-1)).toContain("round=1");
+    // …and the diff surface renders THAT round's file with THAT round's added line.
+    const surface = r.container.querySelector('[data-testid="round-diff"]');
+    expect(surface).not.toBeNull();
+    expect(surface?.getAttribute("data-round")).toBe("1");
+    expect(r.container.textContent).toContain(ROUND_ONE_FILE);
+    expect(r.container.textContent).toContain("const one = 1;");
+    // The exact regression: no pending/placeholder state anywhere on the surface.
+    expect(r.container.textContent).not.toMatch(/isn't wired yet/i);
+    expect(r.container.textContent).not.toMatch(/not wired/i);
+    // …and it is the ROUND's diff, never the review's current patchset.
     expect(r.container.textContent).not.toContain("LATEST_PATCHSET_MARKER.ts");
+  });
+
+  it("an OLDER round's Round diff shows that round's file, never the newest round's", async () => {
+    const { r, history } = mountLedger([
+      roundWithDiff("g1", ROUND_ONE_FILE, "const one = 1;"),
+      roundWithDiff("g2", ROUND_TWO_FILE, "const two = 2;"),
+    ]);
+    // Round 2 leads on open; select round 1 and follow ITS control.
+    await r.user.click(r.container.querySelector('[data-round="1"]') as HTMLElement);
+    expect(r.getByTestId("round-diff-link").getAttribute("data-round-number")).toBe("1");
+    await r.user.click(r.getByTestId("round-diff-link"));
+
+    expect(history.history.at(-1)).toContain("round=1");
+    expect(r.container.textContent).toContain(ROUND_ONE_FILE);
+    expect(r.container.textContent).not.toContain(ROUND_TWO_FILE);
+  });
+
+  // ABSENT, not disabled and not a tooltip (the house convention). A round with no diff of
+  // its own has NO control — the reviewer is never offered a door that opens onto an excuse.
+  it("a round that captured no diff offers NO Round-diff control at all", () => {
+    const { r } = mountLedger([roundWithoutDiff("g1")]);
+    expect(r.container.querySelector('[data-testid="round-diff-link"]')).toBeNull();
+    // Nothing disabled is standing in for it either.
+    expect(r.container.querySelector("button[disabled]")).toBeNull();
+  });
+
+  it("the control appears and disappears WITH the selected round, not with the session", async () => {
+    // Round 1 ran a work order; round 2 only regenerated. Selecting each moves the control.
+    const { r } = mountLedger([
+      roundWithDiff("g1", ROUND_ONE_FILE, "const one = 1;"),
+      roundWithoutDiff("g2"),
+    ]);
+    // Round 2 (no diff) leads on open ⇒ no control.
+    expect(r.container.querySelector('[data-round="2"]')?.getAttribute("aria-current")).toBe(
+      "true",
+    );
+    expect(r.container.querySelector('[data-testid="round-diff-link"]')).toBeNull();
+    // Selecting round 1 (which has a diff) brings it back.
+    await r.user.click(r.container.querySelector('[data-round="1"]') as HTMLElement);
+    expect(r.container.querySelector('[data-testid="round-diff-link"]')).not.toBeNull();
+  });
+
+  it("a ?round= naming no round in the ledger says so — it does not fall back to the live diff", () => {
+    const { r } = mountLedger(
+      [roundWithDiff("g1", ROUND_ONE_FILE, "const one = 1;")],
+      "/s/s-1?view=diff&round=9",
+    );
+    expect(r.getByTestId("round-diff-unknown")).toBeTruthy();
+    expect(r.container.textContent).not.toContain("LATEST_PATCHSET_MARKER.ts");
+  });
+
+  it("the live diff (no ?round=) is unchanged — it still shows the active patchset", () => {
+    const { r } = mountLedger(
+      [roundWithDiff("g1", ROUND_ONE_FILE, "const one = 1;")],
+      "/s/s-1?view=diff",
+    );
+    expect(r.container.textContent).toContain("LATEST_PATCHSET_MARKER.ts");
+    expect(r.container.querySelector('[data-testid="round-diff"]')).toBeNull();
   });
 });
