@@ -120,6 +120,14 @@ export function useHandoffExits(review: Review): HandoffExits {
   // (composed once, submitted verbatim). Enabled only once nothing is left to ask, so a still-
   // gathering review never raises a premature publish-ready. A retrospective/teammate review never
   // composes a PR (the command answers `unavailable`, but `enabled:false` skips the fetch entirely).
+  //
+  // And NOT for your own already-open PR. `resolveEntryMode` routes that here (C14 §6: it is still
+  // your branch, rounds keep going, and the round loop IS the exit), but there is no PR left to
+  // open, so the daemon refuses with `"This is a team-PR review…"`. That refusal is wrong twice
+  // over on this path — the reviewer authored the PR, and nothing is broken — and now that a
+  // refusal RENDERS, asking would narrate a correct session as a fault, in the daemon's internal
+  // mode vocabulary. So do not ask a question whose answer is already known. The Changes surface
+  // with a live Dispatch Round is what states this mode; it needs no caption.
   const noAsks = useRennetStore((s) => Object.keys(s.review.stagedAsks).length === 0);
   // A component-stable correlation id: the useCommand cache key already carries `reviewId` + `mode`,
   // so a review switch refetches on its own; the id only needs to stay put across re-renders.
@@ -127,7 +135,7 @@ export function useHandoffExits(review: Review): HandoffExits {
   const prCompose = useCommand(
     "publish.compose",
     { commandId: prCommandId, reviewId, mode: "pr" },
-    { enabled: mode === "own-branch" && noAsks },
+    { enabled: mode === "own-branch" && noAsks && target === undefined },
   );
   const prComposed = prCompose.data?.status === "pr" ? prCompose.data : undefined;
 

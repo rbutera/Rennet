@@ -355,6 +355,39 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(r.queryByRole("button", { name: /Open Pull Request/ })).toBeNull();
   });
 
+  it("your own already-open PR narrates nothing — it never asks for a PR it cannot open", async () => {
+    // The inverse of the two tests above, and the trap that comes WITH them: a refusal that
+    // renders can state a fault during correct operation. `resolveEntryMode` routes your own
+    // already-open PR to own-branch (C14 §6 — rounds keep going, the round loop IS the exit), and
+    // `publish.compose(mode:"pr")` refuses it with `"This is a team-PR review…"`: wrong twice over
+    // here, since the reviewer AUTHORED the PR and nothing is broken. Driven before the fix, this
+    // exact copy rendered under Dispatch Round on a perfectly healthy session.
+    //
+    // Aimed at the shape that would break it, not at the current absence: this bridge refuses
+    // mode "pr" the way the real daemon does, so re-enabling the fetch reddens BOTH assertions.
+    const modes: string[] = [];
+    const r = mountHandoff(
+      review({
+        postTarget: { ...postTarget, viewerDidAuthor: true },
+      }),
+      {
+        "publish.compose": (input) => {
+          modes.push(input.mode);
+          return {
+            status: "unavailable",
+            reason:
+              'This is a team-PR review — post it as a review (mode "review"), not a new pull request.',
+          };
+        },
+      },
+    );
+    // The own-branch rounds lane, and nothing narrating it.
+    expect(await r.findByRole("button", { name: "Dispatch Round" })).toBeTruthy();
+    expect(r.queryByText(/team-PR review/)).toBeNull();
+    // A round-trip that could only ever have been refused is never made.
+    expect(modes).toEqual([]);
+  });
+
   it("selection Revise dispatches the live review.reviseSpan and stages the reworked body", async () => {
     // The end-to-end revise path (C08 cluster 8, over B11's landed command): the reviewer selects
     // a span in the own-branch Changes surface, drafts an instruction, and Rework fires the
