@@ -174,6 +174,30 @@ describe("regeneration lanes render every status honestly — no false green che
     expect(row?.textContent).toContain("failed");
     expect(row?.textContent).not.toContain("done");
   });
+
+  // ── C15 3.3 — the carry-forward lane label reaches the reviewer's eye ──
+  // The emitter derives `detail` from the SAME `stampDeltas` signal the board's section
+  // markers render (`round-progress.test.ts` proves that half). This is the render half:
+  // a settled lane shows its verdict, and a lens that was REWORKED must never read
+  // "carrying forward" — that lie is the whole point of the constraint.
+  it("renders the settled lane's carry verdict, and a reworked lens never reads 'carrying forward'", () => {
+    const settled: RoundState = {
+      phase: "composing",
+      reportBoardId: "report-round-1",
+      lanes: [
+        { id: "design", label: "Design", status: "done", detail: "reworked" },
+        { id: "sequence", label: "Sequence", status: "done", detail: "carrying forward" },
+      ],
+    };
+    const r = mount(
+      <RoundGreeting board={reportBoardFixture} state={settled} onReveal={() => undefined} />,
+    );
+    const design = r.container.querySelector('[data-row="design"]');
+    const sequence = r.container.querySelector('[data-row="sequence"]');
+    expect(design?.textContent).toContain("reworked");
+    expect(design?.textContent).not.toContain("carrying forward");
+    expect(sequence?.textContent).toContain("carrying forward");
+  });
 });
 
 describe("the report gates the reveal — a broken report never leaks the new boards (finding 1)", () => {

@@ -67,7 +67,12 @@ function RegenerationProgress({ lanes }: { readonly lanes: readonly LaneRow[] })
                   : "ml-auto text-2xs text-muted-foreground"
               }
             >
-              {laneStatusLabel(lane.status)}
+              {/* The lane's own verdict when the emitter supplied one, else the status
+                  (C15 3.3). A settled lens carries "carrying forward" or "reworked" —
+                  derived server-side from the SAME `stampDeltas` signal the board's
+                  section markers render, so a lane can never claim a lens carried while
+                  its sections changed. */}
+              {lane.detail ?? laneStatusLabel(lane.status)}
             </span>
           </div>
         ))}
