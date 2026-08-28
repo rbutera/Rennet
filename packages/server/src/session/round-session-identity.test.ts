@@ -691,4 +691,48 @@ describe("enterRoundSession — the dispatch's own mint, run for real", () => {
     await recordARound(entered.session);
     expectAllFourAnswer(resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID));
   });
+
+  it("a detached HEAD takes the review's HOLDER too — the branch arm's rule, one arm over", async () => {
+    // The fixture the previous test structurally cannot be: a HOLDER in the store. The front
+    // door mints Current Checkout with a `randomUUID()` id and attaches the review, so the
+    // holder's id is NEVER the review id — which is exactly why an id-only match misses it.
+    const checkout = sub.entry.enter(PROJECT_ID, { branch: "main" }, REPO_A).session;
+    const held: SessionModel = { ...checkout, claim: undefined, reviewId: "review-detached" };
+    sub.sessions.save(held);
+    expect(held.id).not.toBe("review-detached");
+
+    const review = reviewFor("review-detached", REPO_A); // detached capture: no headRef
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_A));
+    expect(entered.reattached).toBe(true);
+    expect(entered.session.id).toBe(held.id);
+    expect(sub.sessions.list()).toHaveLength(1);
+
+    const readId = resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID);
+    expect(readId).toBe(held.id);
+    await recordARound(entered.session);
+    expectAllFourAnswer(readId);
+  });
+
+  it("POSITIVE CONTROL: an id-only detached match writes where no read looks", async () => {
+    const checkout = sub.entry.enter(PROJECT_ID, { branch: "main" }, REPO_A).session;
+    const held: SessionModel = { ...checkout, claim: undefined, reviewId: "review-detached" };
+    sub.sessions.save(held);
+    const review = reviewFor("review-detached", REPO_A);
+
+    // The pre-fix arm, verbatim: match on `s.id === reviewId` alone. The holder's id is a
+    // UUID, so nothing matches and it mints a second session under the review id.
+    const idOnly = sub.sessions.list().find((s) => s.id === review.id);
+    expect(idOnly).toBeUndefined();
+    const phantom = sub.entry.enterDetached(PROJECT_ID, `${review.id}-idonly`, REPO_A).session;
+
+    // THE HARM: the read takes the holder FIRST, so all four reads ask a session the round
+    // never touched — ledger, transcript and boards empty under a row the sidebar lists.
+    await recordARound(phantom);
+    const readId = resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID);
+    expect(readId).toBe(held.id);
+    expect(sub.rounds.ledger(readId)).toHaveLength(0);
+    expect(sub.transcripts.read(readId)).toHaveLength(0);
+    expect(sub.boardMeta.listForGeneration(readId, GENERATION)).toHaveLength(0);
+    expect(sub.rounds.ledger(phantom.id)).toHaveLength(1);
+  });
 });

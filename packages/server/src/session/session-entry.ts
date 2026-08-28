@@ -216,7 +216,10 @@ export function resolveRoundSessionId(
  * and a symlinked path, with and without an origin remote, so the two strings agree by
  * construction rather than by hope. If they ever did diverge the cost is bounded to today's
  * behaviour: a positive contradiction mints a fresh root-stamped session, which the read side
- * then resolves exactly — a split, never a wrong ledger and never an empty one.
+ * then resolves exactly — a split rather than a wrong or empty ledger, so long as at most one
+ * live session per (claim, root) exists. The read's exact-root arm is a `find`, so a second
+ * live session on the same claim AND the same root would be settled by store order; the mint
+ * is what prevents that pair, since it reattaches before it ever creates the second.
  */
 export async function enterRoundSession(
   entry: SessionEntry,
@@ -226,8 +229,10 @@ export async function enterRoundSession(
 ): Promise<EntryResult> {
   const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
   const branch = activePatchset?.repository.headRef;
-  // Detached HEAD: no branch, so no claim to dedupe on — the review id keys a REAL PERSISTED
-  // session (#573), and it is the same id the read side's no-branch fallback answers.
+  // Detached HEAD: no branch, so no claim to dedupe on. `enterDetached` takes the review's
+  // HOLDER when there is one and the review id otherwise (#573) — the read side's precedence
+  // exactly, holder arm included, so the two agree on both branches and not just on the
+  // fallback.
   if (branch === undefined) {
     return entry.enterDetached(projectId, review.id, review.repositoryRoot);
   }
@@ -328,7 +333,16 @@ export class SessionEntry {
    * under an identity the product cannot look up.
    */
   enterDetached(projectId: string, reviewId: string, repositoryRoot: string): EntryResult {
-    const existing = this.store.list().find((s) => s.id === reviewId);
+    const sessions = this.store.list();
+    // The HOLDER first, then the review-id key — the SAME precedence `resolveRoundSessionId`
+    // applies, and for the same reason. The front door mints the Current Checkout session with
+    // a `randomUUID()` id and ATTACHES the review, so a holder's id is never the review id; a
+    // detached-HEAD capture from that session would write here under `review.id` while every
+    // read resolved the holder, and all four session-keyed reads would go empty at once. Same
+    // failure as the branch arm's, one arm over.
+    const existing =
+      sessions.find((s) => s.projectId === projectId && s.reviewId === reviewId) ??
+      sessions.find((s) => s.id === reviewId);
     if (existing !== undefined) return { session: existing, reattached: true };
     const session: SessionModel = {
       id: reviewId,
