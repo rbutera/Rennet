@@ -130,14 +130,21 @@ export interface ComposedLineGroup {
 /**
  * The composed outbound review the lane PREVIEWS and POSTS — byte-exact with what
  * `publish.review` receives. `body` is the comments with no line (the review body stratum);
- * `lineGroups` are the line-anchored comments grouped by file path; `verdict` is the daemon's
- * derived proposal (still flippable at the control — the event is a separate post arg);
- * `arithmetic` is the `N request changes · M comments` tally over the composed comments.
+ * `lineGroups` are the line-anchored comments grouped by file path; `arithmetic` is the
+ * `N request changes · M comments` tally over the composed comments.
+ *
+ * `verdict` is the composed event — the daemon's derived proposal, or the durable override when
+ * one is set. It is the ONE verdict: the daemon folds it into the composition binding, so this is
+ * exactly what posts (a different event would be refused as a stale composition). `proposed` is
+ * the verdict the composed comments derive to on their own, so the control can say "overridden —
+ * proposed X" and offer the revert; flipping the verdict writes the durable override and
+ * recomposes, it never travels as a separate post argument.
  */
 export interface ReviewDraft {
   readonly body: readonly ReviewComment[];
   readonly lineGroups: readonly ComposedLineGroup[];
   readonly verdict: ProposedVerdict;
+  readonly proposed: ProposedVerdict;
   readonly arithmetic: { readonly requestChanges: number; readonly comments: number };
   readonly destination: string;
 }
@@ -153,8 +160,10 @@ export function composeReviewDraft(
   const body: ReviewComment[] = [];
   const byPath = new Map<string, ComposedLineComment[]>();
   let requestChanges = 0;
+  let approvals = 0;
   for (const comment of composed.comments) {
     if (comment.type === "request-change") requestChanges += 1;
+    if (comment.type === "approve") approvals += 1;
     if (comment.line === undefined) {
       body.push(comment);
       continue;
@@ -171,6 +180,10 @@ export function composeReviewDraft(
     body,
     lineGroups,
     verdict: composed.verdict,
+    // The same derivation core runs (`deriveReviewEvent`): a request-change wins, else an
+    // approval, else a neutral comment. Mirrored here — app-ui cannot import core — so the
+    // control can name what the composition proposes when the durable override differs.
+    proposed: requestChanges > 0 ? "REQUEST_CHANGES" : approvals > 0 ? "APPROVE" : "COMMENT",
     arithmetic: { requestChanges, comments: composed.comments.length - requestChanges },
     destination: composed.destination,
   };

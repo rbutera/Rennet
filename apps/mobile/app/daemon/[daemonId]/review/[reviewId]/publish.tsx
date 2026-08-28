@@ -7,7 +7,7 @@
 // model, off-limits to the mobile boundary), so the DAEMON composes it via `publish.compose` and
 // the phone posts EXACTLY what it returned. Finding C ruling (a): BOTH loops end on the phone —
 //   • a team-PR review (`postTarget` present) composes in `mode: "review"` and posts via
-//     `publish.requestConsent` + `publish.review` (dryRun:false);
+//     `publish.review` (dryRun:false);
 //   • an own-branch capture composes in `mode: "pr"` and posts via `publish.submitPr`.
 // Idempotency is the engine's — a double tap / retry yields exactly one review (or one PR).
 
@@ -186,17 +186,10 @@ export default function Publish(): ReactNode {
     if (!connection) return;
     setPosting({ phase: "posting" });
     try {
-      // One tap posts. requestConsent mints a single-use token bound to (review, target, payload,
-      // verdict); publish.review consumes it with dryRun:false. The engine's idempotency marker
-      // makes a double tap / retry reuse the same review — exactly one lands.
-      const { authorization } = await connection.supervisor.invoke("publish.requestConsent", {
-        commandId: newCommandId(),
-        reviewId,
-        target: c.target as never,
-        payload: c.payload,
-        verdict: c.verdict,
-        compositionId: c.compositionId,
-      });
+      // One tap posts — the tap IS the authorization, there is no token and no confirm step.
+      // The composed `compositionId` binds these bytes AND this verdict, so the engine refuses
+      // anything but the composition previewed above. The engine's idempotency marker makes a
+      // double tap / retry reuse the same review — exactly one lands.
       const outcome = await connection.supervisor.invoke("publish.review", {
         commandId: newCommandId(),
         reviewId,
@@ -204,7 +197,6 @@ export default function Publish(): ReactNode {
         comments: c.comments as never,
         payload: c.payload,
         verdict: c.verdict,
-        authorization,
         compositionId: c.compositionId,
         dryRun: false,
       });

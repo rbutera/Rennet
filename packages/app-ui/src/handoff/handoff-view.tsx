@@ -17,6 +17,8 @@ export interface HandoffViewProps {
   readonly onPost?: PostReviewLaneProps["onPost"];
   /** The composed outbound review the Post Review lane previews and posts (exact-preview). */
   readonly reviewDraft?: PostReviewLaneProps["draft"];
+  /** Flip the composed verdict — a durable write that recomposes (#435), threaded to the lane. */
+  readonly onSetVerdict?: PostReviewLaneProps["onSetVerdict"];
   /** The own-branch PR draft, threaded to the rounds lanes (B11 draft; cluster 8/6 wire it). */
   readonly pr?: RoundsLanesProps["pr"];
   /** Dispatch a work-order round from the rounds lanes (the C9 run is out of scope). */
@@ -31,6 +33,7 @@ export function HandoffView({
   review,
   onPost,
   reviewDraft,
+  onSetVerdict,
   pr,
   onDispatch,
   onOpenPr,
@@ -40,7 +43,13 @@ export function HandoffView({
   if (mode === "retrospective") return null;
   if (mode === "teammate-pr")
     return (
-      <PostReviewLane review={review} onPost={onPost} draft={reviewDraft} onRevise={onRevise} />
+      <PostReviewLane
+        review={review}
+        onPost={onPost}
+        draft={reviewDraft}
+        onSetVerdict={onSetVerdict}
+        onRevise={onRevise}
+      />
     );
   return (
     <RoundsLanes

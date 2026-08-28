@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 //
 // The hand-off exits, wired LIVE (C08 cluster 6, tasks 6.1/6.3). Load-bearing claims over a
-// MemoryBridge: Post Review resolves `publish.compose(mode:"review")` → `publish.requestConsent`
-// → `publish.review` on the sign-click, and the bytes `publish.review` receives are EXACTLY the
+// MemoryBridge: Post Review resolves `publish.compose(mode:"review")` → `publish.review` on the
+// click, and the bytes `publish.review` receives are EXACTLY the
 // ones `publish.compose` returned (the preview equals what posts, R33); nothing is invoked before
 // the click (nothing leaves without it); a daemon that lands no outcome fails honest (never a faked
 // success); a retrospective review offers no exit; Open Pull Request resolves `publish.compose(
@@ -99,11 +99,11 @@ function mountHandoff(r: Review, handlers: MemoryBridgeHandlers, calls: string[]
 }
 
 describe("hand-off exits (C08 cluster 6)", () => {
-  it("Post Review composes → requests consent → posts the byte-exact bytes, then receipts", async () => {
+  it("Post Review composes → posts the byte-exact bytes and the composed verdict, then receipts", async () => {
     const calls: string[] = [];
     let postedPayload: string | undefined;
     let postedDryRun: boolean | undefined;
-    let postedAuth: string | undefined;
+    let postedVerdict: string | undefined;
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": (input) => {
         calls.push(`compose:${input.mode}`);
@@ -117,18 +117,11 @@ describe("hand-off exits (C08 cluster 6)", () => {
           compositionId: "comp-1",
         };
       },
-      "publish.requestConsent": (input: CommandInput<"publish.requestConsent">) => {
-        calls.push("consent");
-        // The token binds the previewed payload + the human's verdict.
-        expect(input.payload).toBe(PAYLOAD);
-        expect(input.verdict).toBe("REQUEST_CHANGES");
-        return { authorization: "tok-abc" };
-      },
       "publish.review": (input: CommandInput<"publish.review">) => {
         calls.push("review");
         postedPayload = input.payload;
         postedDryRun = input.dryRun;
-        postedAuth = input.authorization;
+        postedVerdict = input.verdict;
         return {
           dryRun: false,
           request: { endpoint: "graphql", method: "POST", body: {} },
@@ -156,13 +149,15 @@ describe("hand-off exits (C08 cluster 6)", () => {
 
     await r.user.click(r.getByRole("button", { name: /Post Review/ }));
 
-    // The sign-click ran the egress in order — and never re-composed (compose stays at one).
-    expect(calls).toEqual(["compose:review", "consent", "review"]);
-    // The preview equals what posts: publish.review received the exact bytes compose returned.
+    // The click ran the egress — and never re-composed (compose stays at one). No consent leg:
+    // the click IS the authorization (#435).
+    expect(calls).toEqual(["compose:review", "review"]);
+    // The preview equals what posts: publish.review received the exact bytes compose returned,
+    // and the COMPOSED verdict — the daemon binds both, so no other event could post.
     expect(postedPayload).toBe(PAYLOAD);
-    // Real egress is the explicit opt-in, carrying the minted token.
+    expect(postedVerdict).toBe("REQUEST_CHANGES");
+    // Real egress is the explicit opt-in.
     expect(postedDryRun).toBe(false);
-    expect(postedAuth).toBe("tok-abc");
     // The receipt names the verdict + line-comment count (one of two comments carries a line) + link.
     expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
     expect(r.getByText(/Request Changes · 1 line comment · body/)).toBeTruthy();
@@ -185,7 +180,6 @@ describe("hand-off exits (C08 cluster 6)", () => {
         title: "acme/orbital#7",
         compositionId: "comp-1",
       }),
-      "publish.requestConsent": () => ({ authorization: "tok-abc" }),
       "publish.review": (input: CommandInput<"publish.review">) => {
         postedPayload = input.payload;
         postedComments = input.comments;
@@ -225,7 +219,6 @@ describe("hand-off exits (C08 cluster 6)", () => {
         title: "acme/orbital#7",
         compositionId: "comp-1",
       }),
-      "publish.requestConsent": () => ({ authorization: "tok-abc" }),
       // A dry-run-shaped response: nothing left the machine (outcome null).
       "publish.review": () => ({
         dryRun: true,
