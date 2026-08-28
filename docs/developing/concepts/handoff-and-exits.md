@@ -206,9 +206,13 @@ Each exit composes from the durable ask projection, never from a private copy:
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces
   onto the first rather than racing a second). A failed kick is evicted so an
-  identical re-dispatch retries. (Board regeneration on a round's return is the
-  planned continuation of this loop and is not yet wired to a production caller;
-  what ships today is the dispatch → one work-order → serialized run.)
+  identical re-dispatch retries. Board **regeneration** is the tail of the same
+  dispatch: once the worker turn lands, the round assembles its collation from
+  the active patchset and runs the drafting pipeline for real, minting a new
+  generation and freezing the prior one. It degrades honestly rather than
+  breaking a landed round — no active patchset to regenerate over, or a
+  regeneration that throws, closes the round's progress channel with a terminal
+  failure and leaves the worker's committed work and its record intact.
 - **The pull request** — `publish.compose(mode:"pr")` feeds the ask set plus the
   verdict override into the PR body draft, with a **stable derived
   `compositionId`** so an unchanged draft re-raises the *same* publish-ready.
@@ -247,10 +251,14 @@ something the preview did not describe.
    greeting, and the successor account the lens drafters receive — which is
    why it must draft before they start.
 5. The reviewer reads the report while the lens drafters regenerate in the
-   background, their progress live beneath it (carried lenses complete as
-   carry-forwards; touched lenses re-draft). The surface never locks. When
-   the new generation composes, the way to it appears — a control that
-   exists only once it is ready, never a disabled button.
+   background, their progress live beneath it — one lane per lens, streamed
+   from the round's real progress, with the kicker reading *Regenerating the
+   Boards* until the generation composes and *Regenerated the Boards* after.
+   A settled lane reads **carrying forward** or **reworked**; see
+   [Carry-forward is a verdict, not a skip](#carry-forward-is-a-verdict-not-a-skip)
+   for exactly what that claims. The surface never locks. When the new
+   generation composes, the way to it appears — a control that exists only
+   once it is ready, never a disabled button.
 6. Each round mints a **new generation** of lens boards, drafted delta-aware:
    unchanged sections carry forward, and the composition step stamps what it
    touched (`new` / `reworked`; absence = carried). The marks read as unread
@@ -274,6 +282,36 @@ something the preview did not describe.
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane
    on one's own pull request.
+
+### Carry-forward is a verdict, not a skip
+
+A round re-drafts **every** lens. "Carrying forward" is what the regeneration
+*found*, not work it declined to do: the drafter ran, and its board came back
+with nothing changed. Three separate honesty properties hold, and it is worth
+keeping them apart.
+
+- **The lane label is honest.** A settled lane's `carrying forward` / `reworked`
+  verdict is read from the same delta stamps the composition step writes — the
+  one signal, not a cheaper guess. A lens whose sections moved therefore cannot
+  render "carrying forward"; that would be a lie about the change, and the
+  regression test for it is the kind that has to be able to fail.
+- **The section grain is honest by construction.** Composition only marks a
+  section carried when its whole subtree signature is unchanged, so the fold
+  state a reviewer reads is a fact about content, never a summary someone
+  computed twice and might have computed differently.
+- **The compute skip is deferred.** Not re-drafting an untouched lens at all
+  would save real model spend, and it is a change to the pipeline rather than to
+  the label — an explicit decision, not something to assume from the wording.
+  Until it lands, a round's cost is six drafters every time.
+
+The round report is a second, narrower gap of the same kind. Its **arrival** is
+live — the progress channel carries the drafted report board's id the moment the
+report seat lands, which is what gates the regeneration and starts the lanes —
+but there is no command that fetches a board *by id*: the board read serves a
+`(review, generation, lens)` triple, and the report is not a lens. So the
+greeting resolves the report honestly absent rather than inventing one. The
+phase, the lanes, and the reveal are all real; the report body waits on that
+read.
 
 ### What a round measures itself against
 

@@ -136,11 +136,23 @@ Remove the shim when the minimum compatible version makes it unreachable.
 | `serverRequestResolved` | server to client | server request ID |
 | `presence` | client to server | focus, visibility, device class, optional focused review |
 | `attentionEvent` | server to client | raised item or cleared IDs |
+| `boardEvent` | server to client | board ID and newly appended board events |
+| `askProjection` | server to client | session ID and the durable ask projection |
+| `roundProgress` | server to client | review ID and one round-progress event |
 
 `progressEvent.event` accepts the `ProjectProgressEvent` union. General project
 processing uses `onProgress(commandId)`; per-repository pull-request loading for
 project detail uses `onProjectDetailProgress(commandId)`. Both share the wire
 frame and remain distinct bridge subscriptions.
+
+`roundProgress` carries one live round-progress event, keyed by the review whose
+round is running. It is a **snapshot** frame: each event re-states the whole of
+its group's rows rather than a delta, and the client's run machine is a
+forward-only fold, so a duplicated or re-ordered frame just restates rows the
+fold already holds. The same events are readable as an ordered log through
+`session.roundEvents`, which is what a client joining mid-round folds to catch
+up — one reducer over one event vocabulary, so a late joiner and a live
+subscriber can never disagree about the phase.
 
 `hello.deviceToken` carries a paired device's bearer token. Loopback clients omit
 it. The daemon hashes stored device tokens and uses the presented value to

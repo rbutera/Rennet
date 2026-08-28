@@ -53,5 +53,24 @@ Replaces `FIXTURE_ROUND_TIMELINE` in the app tree with a real feed. The C09 mach
   | (b) 3.3 carry-forward lane lie | `rounds.ts` `arrived()` hardcodes `detail: "carrying forward"` | `server` `round-progress.test.ts` **2 failed / 5 passed** — `expected 'carrying forward' to be 'reworked'` on the changed-lens lane. |
   | (c) 4.1 kicker verbatim | `round-greeting.tsx` kicker reverts to `"Re-drafting the boards"` | `app-ui` **3 failed / 13 passed** — both greeting kicker tests and the C15 packet E2E. |
   | (d) 2.2 durable frozen predecessor | `rounds.ts` drops the `frozenPredecessor` stamp | `server` `rounds.test.ts` **1 failed / 7 passed** — `expected undefined to be 'gen:ps-0'`, the exact C09 F3 shape the fixture used to fake. |
-- [ ] 5.3 Docs (definition of done): update `docs/developing/concepts/handoff-and-exits.md` items 4–7 from planned-Rennet framing to live where C15 makes it so, and record the carry-forward semantics (label-honest; section-grain honest by construction via `subtreeSignature`; true skip-untouched-lens deferred). Grep `docs/` (excl. `docs/dist`) for pages the change makes wrong and update or record the grep as a no-op.
+- [x] 5.3 Docs (definition of done): update `docs/developing/concepts/handoff-and-exits.md` items 4–7 from planned-Rennet framing to live where C15 makes it so, and record the carry-forward semantics (label-honest; section-grain honest by construction via `subtreeSignature`; true skip-untouched-lens deferred). Grep `docs/` (excl. `docs/dist`) for pages the change makes wrong and update or record the grep as a no-op.
+
+  **Grep result** (`carry forward|carrying forward|carry-forward|regenerat|Re-drafting|re-draft` and
+  `roundProgress|roundEvents|RoundEvent`, `docs/` less `docs/dist`): twelve files hit, four wrong,
+  four updated.
+
+  - `handoff-and-exits.md` — the "board regeneration … is not yet wired to a production caller"
+    caveat is now false (it is the dispatch's tail); item 5 said carried lenses do not re-draft;
+    added **Carry-forward is a verdict, not a skip** recording all three properties (label-honest
+    off the same stamps; section grain honest by construction via the subtree signature; the
+    compute skip DEFERRED) plus the report-body read gap (arrival live, no fetch-by-id command).
+  - `using/guides/getting-started.md` — "Boards nothing touched carry forward; boards the round
+    changed re-draft" read as a compute skip; now the lane verdict it actually is.
+  - `reference/protocol-compatibility.md` — the session-frame table omitted `roundProgress` (C15's,
+    and `boardEvent`/`askProjection` while there); added, with the snapshot/forward-only-fold
+    contract and the `session.roundEvents` catch-up read beside it.
+  - No-op (checked, already correct): `delta-rereview-and-lineage.md` and `architecture-contracts.md`
+    (element/section grain, accurate), `using/concepts/common-questions.md` (section grain),
+    `using/index.md`, `lens-pipeline.md`, `harness-adapters.md`, `dependency-standard.md`,
+    `contracts-and-rulings.md`, `plans/board-rebuild-plan.md`.
 - [ ] 5.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses, lint, typecheck, test, build). Confirm the protocol change is scoped to the `RoundEvent` wire schema + durable RoundRecord fields (not assumed). Commit. Output the completion sigil `<promise>C15-COMPLETE</promise>` and flip C15's entry in `BUILD-STATUS.json`.
