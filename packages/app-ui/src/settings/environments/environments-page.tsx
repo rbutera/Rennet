@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Icon } from "../../components/icon";
 import { useBridge } from "../../data";
 import { useRennetStore } from "../../store";
-import type { HostOS } from "../assets/os-glyphs";
+import { osFromPlatform } from "../assets/os-glyphs";
 import { Section } from "../atoms";
 import { type SettingsHost, useSettingsProjection } from "../data";
 import { HostCard } from "./host-card";
@@ -15,27 +15,22 @@ import { HostCard } from "./host-card";
 // OWN Add Environment button — the second entry point beside the sidebar's, sharing
 // the same `add-environment` dialog flow.
 //
-// The remote hosts + their daemon detection are B10-absent, so they resolve through
-// the projection (honest-empty in the live client until B10). The LOCAL machine is
-// genuinely knowable NOW — its platform and the running app version come straight
-// from the bridge — so an honest local card always shows even with no projection.
-// A test supplies the full hosts list to drive remote-card scenarios.
+// Every host — this machine and each paired one — comes from the projection, which
+// C17 binds to the real per-host detection (`settings.get.daemonHosts` enumerated,
+// `daemon.status` probed, `forge.detect` / `harness.hosts` folded per host). The
+// bridge-synthesised local card below is the fallback for the ZERO-projection case
+// only: before the reads resolve, or when they fail, the one host still honestly
+// knowable is this machine (its platform and running app version come straight from
+// the bridge). A test supplies the full hosts list to drive remote-card scenarios.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Map the bridge platform string to a host OS glyph (WSL is undetectable here). */
-function osFromPlatform(platform: string | undefined): HostOS {
-  if (platform === "darwin") return "macos";
-  if (platform === "win32") return "windows";
-  return "linux";
-}
 
 export function EnvironmentsPage() {
   const projection = useSettingsProjection();
   const bridge = useBridge();
   const openDialog = useRennetStore((s) => s.uiActions.openDialog);
 
-  // The projection owns the hosts when it carries any (tests, and B10 later). Until
-  // then the live client shows the one host it can honestly resolve: the local machine.
+  // The projection owns the hosts whenever it carries any. Until its reads resolve
+  // the client shows the one host it can honestly resolve: the local machine.
   const hosts = useMemo<readonly SettingsHost[]>(() => {
     if (projection.hosts.length > 0) return projection.hosts;
     return [

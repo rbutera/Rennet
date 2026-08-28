@@ -119,11 +119,11 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
         ) : null}
         {host.address ? (
           <span className="truncate font-mono text-2xs text-ink-faint">{host.address}</span>
-        ) : (
+        ) : host.kind === "local" ? (
           <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-2xs font-medium text-ink-soft">
             Local
           </span>
-        )}
+        ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <Button
             variant="ghost"

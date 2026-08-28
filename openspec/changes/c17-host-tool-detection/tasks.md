@@ -109,7 +109,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
   fallback (empty rows / unreachable host), never a stub. Delete the now-obsolete "removed in v4.2" /
   "local-only" gap notes for these three fields and record the #483 reversal (reconciliation 2). `reviewRoles`
   and the per-project fields stay honest-empty (C16 / C10 own them).
-- [ ] 4.2 `packages/app-ui/src/settings/environments/environments-page.tsx`: when the projection carries
+- [x] 4.2 `packages/app-ui/src/settings/environments/environments-page.tsx`: when the projection carries
   hosts, render them (it already prefers `projection.hosts`); the local-only bridge synthesis becomes the
   fallback for the zero-projection case only. Confirm remote cards render their real `DaemonInfo` line and
   their Source Control + Agents sections from the folded detection.
