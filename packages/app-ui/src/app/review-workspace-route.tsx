@@ -202,6 +202,7 @@ function HandoffMount({
       review={review}
       onPost={exits.onPost}
       reviewDraft={exits.reviewDraft}
+      onSetVerdict={exits.onSetVerdict}
       pr={exits.pr}
       onDispatch={onDispatch}
       onOpenPr={exits.onOpenPr}

@@ -130,7 +130,7 @@ export const dispositionSchema = z.object({
 // The real forge post-target — the single source of truth reused by BOTH the
 // review snapshot (`Review.postTarget`) and the publish commands
 // (`publishTargetSchema`), so the coordinates the renderer reads off a review are
-// byte-identical to the ones it hands to `publish.requestConsent`/`publish.review`.
+// byte-identical to the ones it hands to `publish.review`.
 const forgeRepoSchema = z.object({
   forge: z.string().min(1),
   owner: z.string().min(1),
@@ -2419,7 +2419,7 @@ export type HandoffBundle = z.infer<typeof handoffBundleSchema>;
  * "spend is disclosed" invariant). A handoff spends the user's own harness quota AND
  * edits their working tree, so the disclosure names both. `model` is the harness's
  * resolved model when known (absent ⇒ the harness runs its own default). This is the
- * surface the user acts on; `requestConsent` binds a token to the bundle it describes.
+ * surface the user acts on, stated plainly before the run — not a dialog to clear.
  */
 export type HandoffDisclosure = z.infer<typeof handoffDisclosureSchema>;
 /**

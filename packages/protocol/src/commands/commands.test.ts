@@ -56,7 +56,6 @@ const ABSORBED_IDS = [
   "projects.list",
   "projects.remove",
   "publish.compose",
-  "publish.requestConsent",
   "publish.review",
   "publish.submitPr",
   "repository.choose",
@@ -119,7 +118,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(80);
+    expect(ABSORBED_IDS).toHaveLength(79);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
