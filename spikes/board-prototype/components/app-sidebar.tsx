@@ -25,6 +25,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Coachmark } from "@/components/coachmark"
 import { Collapse } from "@/components/collapse"
+import { CornerSlot } from "@/components/corner-slot"
 import { useAppStore } from "@/lib/store"
 import { useTourStore } from "@/lib/tour"
 import { Spinner } from "@/components/ui/spinner"
@@ -394,6 +395,9 @@ export function AppSidebar({
     setRenamingId(null)
   }
 
+  // DEMO: the collapsed icon rail is no longer rendered in the corner-slot
+  // model — collapsed means fully hidden, and the CornerSlot toggle brings it
+  // back. Kept here (unused) so the rail is one line away if the demo is cut.
   const rail = (
       <div className="flex h-full w-12 flex-col items-center py-2">
         <button
@@ -475,31 +479,16 @@ export function AppSidebar({
     // One persistent element animates the width; rail/full swap inside it.
     <div
       className={cn(
-        "h-full shrink-0 overflow-hidden border-r border-border transition-[width] duration-200 ease-out motion-reduce:transition-none",
-        open ? "w-64" : "w-12",
+        "h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        open ? "w-64 border-r border-border" : "w-0",
       )}
     >
       <Coachmark id="new-chat" enabled={noSessions} />
-      {!open && rail}
       {open && (
       <div className="flex h-full min-h-0 w-64 flex-col">
-      <div className="flex h-10 shrink-0 items-center justify-between px-3">
-        {/* The real lockup (mark + wordmark), scheme-swapped; vector artwork, never a font. */}
-        <span className="flex items-center">
-          {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
-          <img src="/brand/lockup-horizontal-white.svg" alt="Rennet" className="hidden h-4 w-auto dark:block" />
-          {/* biome-ignore lint/performance/noImgElement: static brand SVG, no optimization needed */}
-          <img src="/brand/lockup-horizontal-black.svg" alt="Rennet" className="h-4 w-auto dark:hidden" />
-        </span>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label="Collapse sidebar"
-          className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
-        >
-          <PanelLeft className="size-3.5" aria-hidden="true" />
-        </button>
-      </div>
+      {/* Corner slot demo: no wordmark in the frame — the leftmost pane owns
+          the traffic lights, and here that is the sidebar header row. */}
+      <CornerSlot sidebarOpen onToggle={onToggle} />
 
       <div className="flex flex-col gap-0.5 px-2">
         <button

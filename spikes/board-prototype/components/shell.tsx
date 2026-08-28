@@ -7,6 +7,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { AppearanceSync } from "@/components/appearance-sync"
 import { CommandMenu } from "@/components/command-menu"
 import { ChatColumn } from "@/components/chat-column"
+import { CornerSlot } from "@/components/corner-slot"
 import { ResizeHandle } from "@/components/resize-handle"
 import { ScenarioSeeder } from "@/components/scenario-seeder"
 import { AddProjectDialog } from "@/components/add-project-dialog"
@@ -129,6 +130,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             inert={!chatOpen}
           >
             <ChatColumn
+              head={
+                !sidebarOpen ? (
+                  <CornerSlot
+                    sidebarOpen={false}
+                    onToggle={useAppStore.getState().toggleSidebar}
+                    className="border-b border-border"
+                  />
+                ) : null
+              }
               onCollapse={() => useAppStore.getState().setChatOpen(false)}
               width={chatWidth}
               transcript={chatScenario.transcript}
@@ -148,6 +158,17 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         )}
 
         {children}
+
+        {/* STATE 3: nothing is left of the main view, so the corner slot floats
+            over it. (States 1 and 2 mount it inside the sidebar / chat head.) */}
+        {!sidebarOpen && !(showChat && chatOpen) && (
+          <CornerSlot
+            sidebarOpen={false}
+            onToggle={useAppStore.getState().toggleSidebar}
+            floating
+            className="fixed left-1 top-1 z-40"
+          />
+        )}
 
         <AddProjectDialog
           open={addProjectOpen}

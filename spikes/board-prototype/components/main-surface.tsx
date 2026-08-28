@@ -144,10 +144,32 @@ export function MainSurface({
   ).length
   const pipCount = askCount + commentCount + threadCount
 
+  // STATE 3 of the corner-slot demo: nothing is left of the main view, so it
+  // goes full-bleed and its titlebar contents become floating pill chips.
+  const sidebarOpen = useAppStore((s) => s.sidebarOpen)
+  const chatOpen = useAppStore((s) => s.chatOpen)
+  const floatingBar = !sidebarOpen && !chatOpen
+  // Translucent chip skin for the floating variant; solid card otherwise.
+  const pillSkin = floatingBar ? "border-border/50 bg-card/60 backdrop-blur-md" : "border-border bg-card"
+
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border px-3 @container">
-        <div className="flex items-center gap-2 justify-self-start">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <header
+        className={cn(
+          "grid grid-cols-[1fr_auto_1fr] items-center px-3 @container",
+          floatingBar
+            ? "pointer-events-none absolute inset-x-0 top-0 z-30 h-10"
+            : "h-14 shrink-0 border-b border-border",
+        )}
+      >
+        <div
+          className={cn(
+            "flex items-center gap-2 justify-self-start",
+            // Clear the floating corner slot (lights + toggle end near x=116).
+            floatingBar &&
+              "pointer-events-auto ml-[112px] rounded-full border py-1 pl-2.5 pr-3 " + pillSkin,
+          )}
+        >
           {currentView !== "board" && (
             <button
               type="button"
@@ -176,7 +198,14 @@ export function MainSurface({
             </>
           )}
         </div>
-        <div data-tour="lenses" className="flex min-w-0 items-center gap-1.5 justify-self-center">
+        <div
+          data-tour="lenses"
+          className={cn(
+            "flex min-w-0 items-center gap-1.5 justify-self-center",
+            floatingBar &&
+              "pointer-events-auto [&_[role=tablist]]:border-border/50 [&_[role=tablist]]:bg-card/60 [&_[role=tablist]]:backdrop-blur-md",
+          )}
+        >
           <Coachmark id="lenses" />
           <ViewSwitcher
             segments={views.map((v) => ({
@@ -197,7 +226,7 @@ export function MainSurface({
             once a round has completed. Its label folds away earlier than
             Map/Diff's (66rem vs 54rem): it sits nearest the centered lens
             pill and looks janky when the two touch. */}
-        <div className="flex items-center gap-1.5 justify-self-end">
+        <div className={cn("flex items-center gap-1.5 justify-self-end", floatingBar && "pointer-events-auto")}>
         {rounds.length > 0 && (
           <button
             type="button"
@@ -206,7 +235,8 @@ export function MainSurface({
             aria-label="History"
             title="History"
             className={cn(
-              "flex items-center gap-1.5 rounded-full border border-border bg-card py-1 px-2.5 text-[12px] font-medium transition-colors",
+              "flex items-center gap-1.5 rounded-full border py-1 px-2.5 text-[12px] font-medium transition-colors",
+              pillSkin,
               roundsOpen ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -215,7 +245,7 @@ export function MainSurface({
           </button>
         )}
         {/* Map · Diff — one pill, two halves (R49 shape, header home). */}
-        <div className="flex overflow-hidden rounded-full border border-border bg-card">
+        <div className={cn("flex overflow-hidden rounded-full border", pillSkin)}>
           <button
             type="button"
             onClick={() => go(mapOpen ? "board" : "map", view.lens)}
@@ -250,7 +280,13 @@ export function MainSurface({
       </header>
       {/* The view region owns the floating controls: they live in the margin
           beside the centered content column (R49). */}
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden @container">
+      <div
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden @container",
+          // Floating chips have no bar to sit in, so views clear them here.
+          floatingBar && "pt-11",
+        )}
+      >
         {handoffOpen ? (
           <HandoffView
             handoff={scenario.handoff}
@@ -267,7 +303,15 @@ export function MainSurface({
         ) : roundsOpen ? (
           <RoundsLedger rounds={rounds} />
         ) : view?.board ? (
-          <div data-tour="highlight" className="min-h-0 flex-1 overflow-y-auto">
+          <div
+            data-tour="highlight"
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto",
+              // The board takes the clearance as scroll padding instead, so
+              // prose slides under the translucent chips as you scroll.
+              floatingBar && "-mt-11 pt-11",
+            )}
+          >
             <Coachmark id="highlight" />
             <LensBoardView board={view.board} foldAll={view.lens !== "flagged"} />
           </div>

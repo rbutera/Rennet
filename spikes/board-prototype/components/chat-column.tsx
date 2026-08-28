@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import { PanelRight } from "lucide-react"
 import { SessionTrail } from "@/components/location-trail"
 import { ConversationPane } from "@/components/conversation-pane"
@@ -20,12 +20,16 @@ export function ChatColumn({
   transcript,
   projectName,
   session,
+  head,
 }: {
   onCollapse: () => void
   width?: number
   transcript: TurnData[]
   projectName: string
   session: SessionItem
+  /** Corner-slot head strip: rendered above the chat header when the chat
+   * column is the leftmost pane (sidebar collapsed). */
+  head?: ReactNode
 }) {
   const [turns, setTurns] = useState<TurnData[]>(transcript)
   // Turns appended after mount animate in; everything else is a record.
@@ -112,6 +116,7 @@ export function ChatColumn({
       className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border"
       style={{ width }}
     >
+      {head}
       <ChatHeader projectName={projectName} session={session} onCollapse={onCollapse} />
       <ConversationPane
         turns={turns}
