@@ -1,3 +1,4 @@
+import type { LaneRow, LensLane, RoundEvent } from "@rennet/protocol";
 import { type Navigation, sessionPath } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,17 +18,11 @@ import { type Navigation, sessionPath } from "../routes/url";
 // to guard.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A live progress row's status — the spike's queued / spinner / check, as data. */
-export type RowStatus = "queued" | "running" | "done" | "failed";
-
-/** One streamed progress row (a prep step, a worker turn, a lens drafter). The route
- *  renders the rows the current phase carries; status is data, never a wall clock. */
-export interface LaneRow {
-  readonly id: string;
-  readonly label: string;
-  readonly detail?: string;
-  readonly status: RowStatus;
-}
+// The row/event vocabulary is the PROTOCOL's (C15 3.1): the daemon emits these events as a
+// round really runs and this reducer folds them, so one definition serves both ends and the
+// wire cannot drift from the machine. Re-exported here because every rounds surface reads
+// them through the machine.
+export type { LaneRow, LaneVerdict, LensLane, RoundEvent, RowStatus } from "@rennet/protocol";
 
 /**
  * The run machine's state — a discriminated union carrying ONLY what each phase
@@ -60,9 +55,24 @@ export type RoundState =
   | {
       readonly phase: "composing";
       readonly reportBoardId: string;
-      readonly lanes: readonly LaneRow[];
+      readonly lanes: readonly LensLane[];
     }
-  | { readonly phase: "composed"; readonly reportBoardId: string; readonly newGeneration: string }
+  | {
+      readonly phase: "composed";
+      /** The round's report board, when it drafted one. **Optional, and it matters:** a
+       *  round with no successor account is not a round to the pipeline, so its report
+       *  seat never runs and no report board exists — the commonest cause being that the
+       *  coding agent ran and changed nothing. Such a round still regenerates and still
+       *  composes; it simply has no greeting to hand back. */
+      readonly reportBoardId?: string;
+      readonly newGeneration: string;
+      /** The lanes that were still on screen when the generation composed — carried
+       *  through so the settled regeneration block does not blink out at the moment it
+       *  finishes (C15 4.1/4.2: the kicker flips to "Regenerated the Boards" OVER the
+       *  same rows). Optional: a `composed` reached without a preceding `lens` event
+       *  (a round that composed nothing per-lens) honestly carries no lanes. */
+      readonly lanes?: readonly LensLane[];
+    }
   | { readonly phase: "failed"; readonly reason: string };
 
 /** The phase discriminants, in progress order. */
@@ -72,33 +82,38 @@ export type RoundPhase = RoundState["phase"];
 export const initialRoundState: RoundState = { phase: "absent" };
 
 /**
- * A folded progress event — one `onProgress` payload from the rounds runtime (B9) or a
- * fixture tick. Each event carries the current SNAPSHOT of its group's rows (not a
- * delta), so a stream that re-sends the same group's rows just updates them in place.
- */
-export type RoundEvent =
-  | { readonly type: "dispatched" }
-  | { readonly type: "prep"; readonly rows: readonly LaneRow[] }
-  | { readonly type: "worker"; readonly rows: readonly LaneRow[] }
-  | { readonly type: "gate" }
-  | { readonly type: "committed" }
-  | { readonly type: "report"; readonly reportBoardId: string }
-  | { readonly type: "lens"; readonly lanes: readonly LaneRow[] }
-  | { readonly type: "composed"; readonly generation: string }
-  | { readonly type: "failed"; readonly reason: string };
-
-/**
  * The pure transition. Forward-only and tolerant: an event that does not apply to the
  * current phase returns the state unchanged (progress channels can duplicate or
- * re-order, and the machine is a trust boundary). A `failed` event from any IN-FLIGHT
- * phase moves to `failed`; from a terminal or absent state it is ignored, so a settled
- * round never un-settles.
+ * re-order, and the machine is a trust boundary). The two TERMINAL events — `failed` and
+ * `composed` — apply from ANY in-flight phase, so a round that ends is always able to say
+ * so; from a terminal or absent state both are ignored, so a settled round never
+ * un-settles.
  */
 export function advance(state: RoundState, event: RoundEvent): RoundState {
   if (event.type === "failed") {
     return state.phase === "absent" || state.phase === "composed" || state.phase === "failed"
       ? state
       : { phase: "failed", reason: event.reason };
+  }
+  // `composed` is terminal from ANY in-flight phase, for the same reason `failed` is: it
+  // is the round's own account of having finished, and a machine that can only accept it
+  // from one predecessor phase turns a missing intermediate event into a permanent stall.
+  // The intermediate that goes missing in practice is `report` — a round with no successor
+  // account never runs the report seat — and the run view then sat at `committing`
+  // forever, ignoring the lens events and the composed generation behind it, showing a
+  // live-looking round that had already ended.
+  if (event.type === "composed") {
+    if (state.phase === "absent" || state.phase === "composed" || state.phase === "failed") {
+      return state;
+    }
+    const reportBoardId = "reportBoardId" in state ? state.reportBoardId : undefined;
+    const lanes = state.phase === "composing" ? state.lanes : undefined;
+    return {
+      phase: "composed",
+      newGeneration: event.generation,
+      ...(reportBoardId === undefined ? {} : { reportBoardId }),
+      ...(lanes === undefined ? {} : { lanes }),
+    };
   }
   switch (state.phase) {
     case "absent":
@@ -128,19 +143,50 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
         ? { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes }
         : state;
     case "composing":
-      if (event.type === "lens")
-        return { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes };
-      if (event.type === "composed")
-        return {
-          phase: "composed",
-          reportBoardId: state.reportBoardId,
-          newGeneration: event.generation,
-        };
-      return state;
+      return event.type === "lens"
+        ? { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes }
+        : state;
     case "composed":
     case "failed":
       return state; // terminal
   }
+}
+
+/**
+ * Merge a catch-up read's events with the ones the live channel pushed, by the monotonic
+ * `seq` the emitting hub stamps on each (review finding 7).
+ *
+ * Two writers feed one log and neither is authoritative alone: the read answers with the
+ * daemon's log as of the moment it was served, and the push carries whatever happened
+ * since — so installing the read's answer over the folded stream DROPS every event that
+ * landed during the flight, and a dropped terminal event leaves the surface reading
+ * "still working" over a round that finished. Merging by `seq` makes the two orders one:
+ * an event already held is recognised and ignored, and the result is the union in the
+ * order the daemon emitted it, never the order the transports happened to deliver it.
+ *
+ * A `dispatched` STARTS a round (the daemon's hub clears its log on one), so everything
+ * before the NEWEST `dispatched` belongs to a round that is over and is dropped. That is
+ * what stops a late terminal event from the previous round settling the round now running,
+ * and it holds with or without a `seq` — it is a rule about the log, not about the ordering.
+ *
+ * Events with no `seq` come from a daemon that predates it — they cannot be ordered, so
+ * they are kept in arrival order and never deduped. The honest degrade, not a handshake.
+ */
+export function mergeRoundEvents(
+  read: readonly RoundEvent[],
+  streamed: readonly RoundEvent[],
+): readonly RoundEvent[] {
+  if (streamed.length === 0) return [...read];
+  const bySeq = new Map<number, RoundEvent>();
+  const unsequenced: RoundEvent[] = [];
+  for (const event of [...read, ...streamed]) {
+    if (event.seq === undefined) unsequenced.push(event);
+    else if (!bySeq.has(event.seq)) bySeq.set(event.seq, event);
+  }
+  const ordered = [...bySeq.keys()].sort((a, b) => a - b).map((s) => bySeq.get(s) as RoundEvent);
+  const merged = [...unsequenced, ...ordered];
+  const start = merged.findLastIndex((event) => event.type === "dispatched");
+  return start > 0 ? merged.slice(start) : merged;
 }
 
 // ── Derived reads (the route/greeting read these; they never live in an effect) ──

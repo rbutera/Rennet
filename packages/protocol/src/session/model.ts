@@ -118,12 +118,24 @@ export const RoundRecordSchema = z.object({
   workerCommitRange: z.object({ from: id, to: id }),
   /** Generation minted from the worker's commits; absent if nothing landed. */
   mintedPatchsetGeneration: id.optional(),
+  /** The FROZEN predecessor generation this round succeeded — the earlier generation the
+   *  rounds ledger's `GenerationSwitcher` drills back to (C15, un-parks C09 finding F3).
+   *  Present iff the code moved (a distinct id from `boardGeneration`); absent on a
+   *  first-generation or no-move round — honestly, there is no distinct predecessor. */
+  frozenPredecessor: id.optional(),
   /** The generation whose boards this round reported against (`ROUND_NO_REGEN` for a
    *  dispatch round that regenerated no boards). */
   boardGeneration: id,
   /** Board id of the round-report board (the `round_outcome` items live on it), or
    *  `ROUND_NO_REGEN` when the round drafted no report board. */
   reportBoard: id,
+  /** How many reworks the round actually PRODUCED, counted off the round report the
+   *  drafters wrote: its `round_outcome` items that are not `untouched`. The report
+   *  verifies each ask against the round's own diff, so this is the round's verified
+   *  account of the work, never `asksDispatched.length` — a proxy for how many asks went
+   *  OUT, which would read "5 reworks" for a round that changed nothing. Absent when the
+   *  round drafted no report: then the count is honestly unknown, not zero. */
+  reworkCount: z.number().int().nonnegative().optional(),
   /** The write-turn's outcome. A dispatch round records this and the diff below; the
    *  full-regeneration `runRound` path leaves them absent. */
   outcome: z.enum(["completed", "failed"]).optional(),
@@ -134,6 +146,97 @@ export const RoundRecordSchema = z.object({
   changedPaths: z.array(z.string()).optional(),
 });
 export type RoundRecord = z.infer<typeof RoundRecordSchema>;
+
+// ── Live round progress (C15 3.1) — the folded-progress wire ─────────────────
+//
+// The run machine (`app-ui/src/rounds/round-machine.ts`) is a pure fold over these
+// events. They are DEFINED HERE, not in the client, because both ends speak them: the
+// server emits them as a round really runs (prep → worker → gate → commit → report →
+// lenses → composed), and the client folds them through `advance`. The machine's
+// `RoundEvent`/`LaneRow` types are re-exports of these — one definition, so the wire and
+// the reducer cannot drift.
+//
+// Each event carries the current SNAPSHOT of its group's rows (not a delta), so a
+// duplicate or re-ordered frame just re-states rows the fold already holds.
+
+/** A live progress row's status — the run route's queued / spinner / check, as data.
+ *  `drafted` belongs only to a lens lane (its board is written, its delta verdict not yet
+ *  known); the step rows never reach it. */
+export const RowStatusSchema = z.enum(["queued", "running", "drafted", "done", "failed"]);
+export type RowStatus = z.infer<typeof RowStatusSchema>;
+
+const laneBase = { id, label: z.string() };
+
+/**
+ * One streamed progress STEP — a prep line or the worker turn. A discriminated union on
+ * `status` rather than a bag of optionals, so the illegal states are unrepresentable
+ * instead of guarded at each read site: an unstarted step cannot carry an account of
+ * itself, and a failed one cannot omit its reason.
+ */
+export const LaneRowSchema = z.discriminatedUnion("status", [
+  z.object({ ...laneBase, status: z.literal("queued") }),
+  z.object({ ...laneBase, status: z.literal("running") }),
+  /** Settled: `detail` is the step's own account of what it did ("3 files changed"). */
+  z.object({ ...laneBase, status: z.literal("done"), detail: z.string().optional() }),
+  z.object({ ...laneBase, status: z.literal("failed"), reason: z.string() }),
+]);
+export type LaneRow = z.infer<typeof LaneRowSchema>;
+
+/**
+ * The regeneration verdict a SETTLED lens lane carries (C15 3.3). Read off the SAME
+ * `stampDeltas` signal as the board's own section markers, so a lane can never claim a
+ * lens carried while its sections moved.
+ */
+export const LaneVerdictSchema = z.enum(["carrying-forward", "reworked"]);
+export type LaneVerdict = z.infer<typeof LaneVerdictSchema>;
+
+/**
+ * One lens drafter's lane in the regeneration block. Same discipline as {@link
+ * LaneRowSchema}, with the verdict bound to the state that can HAVE one: `queued` and
+ * `running` carry no verdict because none has been computed; `drafted` is the real window
+ * between a board's draft landing and its arrival (cross-lens coverage runs in between,
+ * and the verdict rides the arrival); `done` REQUIRES the verdict; `failed` requires the
+ * drafter's reason. There is no representable "settled lane with no verdict".
+ */
+export const LensLaneSchema = z.discriminatedUnion("status", [
+  z.object({ ...laneBase, status: z.literal("queued") }),
+  z.object({ ...laneBase, status: z.literal("running") }),
+  z.object({ ...laneBase, status: z.literal("drafted") }),
+  z.object({ ...laneBase, status: z.literal("done"), verdict: LaneVerdictSchema }),
+  z.object({ ...laneBase, status: z.literal("failed"), reason: z.string() }),
+]);
+export type LensLane = z.infer<typeof LensLaneSchema>;
+
+/**
+ * The event's position in its review's progress log — monotonic across rounds, assigned
+ * by the emitting hub. It exists so a client can MERGE the catch-up read with the live
+ * push without either clobbering the other: an event already folded is recognised by its
+ * `seq` and dropped, and everything before the newest `dispatched` belongs to a round
+ * that is over, so a late terminal event from it cannot settle the round now running.
+ *
+ * Optional on the wire: a daemon that predates the sequence emits none, and a client
+ * folds those in arrival order exactly as before — the honest degrade, not a handshake.
+ */
+const seq = z.number().int().nonnegative().optional();
+
+/**
+ * One folded round-progress event. The server emits these from REAL round progress —
+ * never a clock — and the client's `advance` walks the phases off them. `failed` is the
+ * terminal arm: a crashed worker or a broken regeneration emits it, so a stalled round
+ * surfaces as a failure rather than silence.
+ */
+export const RoundEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("dispatched"), seq }),
+  z.object({ type: z.literal("prep"), rows: z.array(LaneRowSchema), seq }),
+  z.object({ type: z.literal("worker"), rows: z.array(LaneRowSchema), seq }),
+  z.object({ type: z.literal("gate"), seq }),
+  z.object({ type: z.literal("committed"), seq }),
+  z.object({ type: z.literal("report"), reportBoardId: id, seq }),
+  z.object({ type: z.literal("lens"), lanes: z.array(LensLaneSchema), seq }),
+  z.object({ type: z.literal("composed"), generation: id, seq }),
+  z.object({ type: z.literal("failed"), reason: z.string(), seq }),
+]);
+export type RoundEvent = z.infer<typeof RoundEventSchema>;
 
 /**
  * The chat dock's header trail (C07) — the session's identity line. Honest-minimal:

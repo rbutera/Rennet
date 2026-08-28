@@ -89,14 +89,10 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     expect(r.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
   });
 
-  it("opens the round's own generation; the switcher stays hidden (no persisted predecessor)", async () => {
-    // Finding 3: a PRODUCER-shaped `RoundRecord` carries one generation
-    // (`boardGeneration === mintedPatchsetGeneration` for a landed round), and the frozen
-    // predecessor is never persisted onto the record — so there is NO earlier generation id to
-    // hand the switcher. The ledger opens the round's own boards (gen2), and the generation
-    // switcher does not render. Frozen-predecessor reachability is parked pending a B9
-    // `RoundRecord` predecessor field (C09 ledger, F3) — asserting a gen1 tab here would claim
-    // a reachability production cannot deliver.
+  it("a single-generation round opens its own boards and offers NO drill-down (C15 4.4)", async () => {
+    // `completedRoundRecord` carries no `frozenPredecessor` — a first-generation round really
+    // has no distinct earlier generation. The ledger opens the round's own boards (gen2) and
+    // the switcher does not render: honest absence, not a fabricated gen1 tab.
     const { r } = renderWorkspace("/s/s-1?view=rounds", fixtureCompletedRoundsSource);
     // The lens boards arrive over `board.read`, so wait out the in-flight read.
     await waitFor(() =>
@@ -110,6 +106,116 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     const { r } = renderWorkspace("/s/s-1?view=rounds");
     expect(r.container.querySelector('[data-screen="rounds-ledger"]')).toBeNull();
     expect(r.container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull();
+  });
+
+  // ── An older daemon that cannot answer the rounds reads (review finding 9) ──
+  //
+  // "No rounds have completed" and "nobody could tell us" are different facts, and only
+  // the first is an absence. A client can outrun the daemon it is talking to, and the
+  // ledger's empty state would otherwise state a conclusion nobody established.
+  it("states the daemon's reason instead of falling back to the board as if there were none", () => {
+    const unreadable: RoundsSource = {
+      roundState: () => ({ phase: "absent" }),
+      roundRecords: () => [],
+      reportBoard: () => undefined,
+      roundsUnavailable: () => "Unknown command: session.rounds",
+    };
+    const { r } = renderWorkspace("/s/s-1?view=rounds", unreadable);
+    expect(r.getByTestId("rounds-unavailable")).toBeTruthy();
+    // The daemon's own words, verbatim — no version guess, nothing to acknowledge.
+    expect(r.getByTestId("rounds-unavailable-reason").textContent).toContain(
+      "Unknown command: session.rounds",
+    );
+    // …and it did NOT silently become the board, which is what an empty ledger does.
+    expect(r.container.querySelector('[data-kind="lens-board-view"]')).toBeNull();
+  });
+});
+
+// ── C15 4.3 + 4.4 — the retrospective line and the real gen-1 drill-down ───────
+// C15 2.2 persists `frozenPredecessor` on the durable `RoundRecord`, un-parking C09
+// finding F3: the ledger now walks the review's real generation line out of the records
+// and hands it to the switcher, and the settled report wears the round's own
+// retrospective account. Everything below is read off record data a real round writes.
+describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", () => {
+  /** A round that MOVED code: it froze `gen1` and composed `gen2` (the C15 2.2 shape).
+   *  `asks` and `reworkCount` are DELIBERATELY independent here — the count is the round
+   *  report's own verified tally (C15 finding 10), not a function of how many asks went
+   *  out, and the tests below hold them apart on purpose. */
+  const regeneratedRound = (asks: readonly string[], reworkCount?: number): RoundRecord => ({
+    asksDispatched: [...asks],
+    workerCommitRange: { from: "commit-from", to: "commit-to" },
+    mintedPatchsetGeneration: "gen2",
+    frozenPredecessor: "gen1",
+    boardGeneration: "gen2",
+    reportBoard: "report-round-1",
+    ...(reworkCount === undefined ? {} : { reworkCount }),
+  });
+
+  const sourceFor = (record: RoundRecord): RoundsSource => ({
+    roundState: () => ({ phase: "absent" }),
+    roundRecords: () => [record],
+    reportBoard: (id) => FIXTURE_REPORT_BOARDS[id],
+  });
+
+  it("wears the retrospective line off the durable record — reworks and the composed generation", () => {
+    const { r } = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor(regeneratedRound(["ask-observability", "ask-network"], 2)),
+    );
+    const line = r.getByTestId("round-retrospective");
+    expect(line.textContent).toContain("Regenerated the boards · 2 reworks · generation gen2");
+    expect(line.getAttribute("data-generation")).toBe("gen2");
+  });
+
+  // THE FABRICATION THIS GUARDS (finding 10): the line used to render
+  // `asksDispatched.length`, so five asks that produced NOTHING read "5 reworks". The
+  // number is the report's verified count, and it tracks the round's own work.
+  it("shows the REPORT's count, not the ask count — five asks that reworked nothing read '0 reworks'", () => {
+    const asks = ["a-1", "a-2", "a-3", "a-4", "a-5"];
+    const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(asks, 0)));
+    const line = r.getByTestId("round-retrospective").textContent ?? "";
+    expect(line).toContain("0 reworks");
+    expect(line).not.toContain("5 reworks");
+  });
+
+  it("one rework reads 'rework', not '1 reworks'", () => {
+    const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(["ask-1"], 1)));
+    const line = r.getByTestId("round-retrospective").textContent ?? "";
+    expect(line).toContain("1 rework ·");
+    expect(line).not.toContain("1 reworks");
+  });
+
+  it("a round whose report never drafted states NO count rather than a zero it cannot verify", () => {
+    const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(["ask-1"])));
+    const line = r.getByTestId("round-retrospective").textContent ?? "";
+    expect(line).toContain("Regenerated the boards · generation gen2");
+    expect(line).not.toContain("reworks");
+  });
+
+  it("states the board's generation and round in one quiet intro line", () => {
+    const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(["ask-1"])));
+    // gen1 → gen2 is the review's generation line, so this round composed generation 2.
+    expect(r.getByTestId("board-intro").textContent).toContain("Generation 2 · Round 1");
+  });
+
+  it("offers the frozen predecessor as a drill-down that opens the REAL gen-1 boards", async () => {
+    const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(["ask-1"])));
+    const switcher = r.container.querySelector('[data-kind="generation-switcher"]');
+    expect(switcher).not.toBeNull();
+    // Both generations, oldest→newest: gen1 frozen, gen2 live.
+    const tabs = [...(switcher?.querySelectorAll("[data-generation]") ?? [])];
+    expect(tabs.map((t) => t.getAttribute("data-generation"))).toEqual(["gen1", "gen2"]);
+    expect(tabs[0]?.getAttribute("data-frozen")).toBe("true");
+    // The live generation leads… (the boards arrive over `board.read`, so wait it out).
+    await waitFor(() =>
+      expect(r.container.querySelector('article[data-generation="gen2"]')).not.toBeNull(),
+    );
+    // …and drilling back renders gen1's own board, not a re-labelled gen2.
+    await r.user.click(tabs[0] as HTMLElement);
+    await waitFor(() =>
+      expect(r.container.querySelector('article[data-generation="gen1"]')).not.toBeNull(),
+    );
+    expect(r.container.querySelector('article[data-generation="gen2"]')).toBeNull();
   });
 });
 

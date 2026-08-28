@@ -8,6 +8,7 @@ import {
   advance,
   canRevealNewBoards,
   initialRoundState,
+  type RoundEvent,
   type RoundPhase,
   runNavigation,
   runProgressFraction,
@@ -97,6 +98,37 @@ describe("round-machine — the pure run state machine", () => {
     );
     // A `worker` event before dispatch is ignored.
     expect(advance(initialRoundState, { type: "worker", rows: [] })).toBe(initialRoundState);
+  });
+
+  // ── A round with NO report board still terminates (review finding: the stall) ──
+  //
+  // A round whose report seat never drafts emits no `report` event at all, and the
+  // commonest cause is not exotic: the coding agent ran and changed nothing, so there is
+  // no successor account, so the pipeline is not a round and the report seat does not run.
+  // `committing` used to accept ONLY `report`, so the lens events and the composed
+  // generation were all ignored and the run view watched a live-looking round that never
+  // ended — a lie of exactly the kind this surface exists to kill, and one the committed
+  // docs ("the surface never locks") assert cannot happen.
+  it("reaches a terminal state when the round drafted no report board", () => {
+    const upToCommit: RoundEvent[] = [
+      { type: "dispatched" },
+      { type: "prep", rows: [] },
+      { type: "worker", rows: [] },
+      { type: "gate" },
+      { type: "committed" },
+    ];
+    const committing = upToCommit.reduce(advance, initialRoundState);
+    expect(committing.phase).toBe("committing");
+
+    // The regeneration ran and composed — it simply never had a report to announce.
+    const composed = advance(advance(committing, { type: "lens", lanes: [] }), {
+      type: "composed",
+      generation: "gen:ps-1",
+    });
+    expect(composed).toEqual({ phase: "composed", newGeneration: "gen:ps-1" });
+    // …and the run view LEAVES: a null navigation is what parks the reviewer forever.
+    expect(runNavigation(composed, SLUG)).not.toBeNull();
+    expect(canRevealNewBoards(composed)).toBe(true);
   });
 
   it("a failure moves an in-flight round to failed, but never un-settles a composed one", () => {

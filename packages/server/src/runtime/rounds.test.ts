@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BoardMetaStore } from "@rennet/adapters";
+import { BoardMetaStore, GenerationStore, RoundRecordStore } from "@rennet/adapters";
 import type {
   CodexExecutor,
   DeltaPacket,
@@ -9,7 +9,7 @@ import type {
   LintContext,
   LintTarget,
 } from "@rennet/core";
-import type { DraftBoard, Generation } from "@rennet/protocol";
+import type { ComposedHandoffBundle, DraftBoard, Generation, RoundEvent } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { BoardsRuntime } from "../boards/boards-runtime";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
@@ -45,8 +45,12 @@ const cleanBody = (lens: string): DraftBoard =>
     ],
   }) as unknown as DraftBoard;
 
-/** A fake Claude port that answers a lens-appropriate clean board every turn. */
-function fakeClaudePort(captures: { prompt?: string }[] = []): HarnessPort {
+/** A fake Claude port that answers a lens-appropriate clean board every turn, or whatever
+ *  `bodyFor` decides when a test needs a specific seat to answer something particular. */
+function fakeClaudePort(
+  captures: { prompt?: string }[] = [],
+  bodyFor: (prompt: string) => DraftBoard = (prompt) => cleanBody(lensFromPrompt(prompt)),
+): HarnessPort {
   return {
     createSession: async () => {
       const capture: { prompt?: string } = {};
@@ -64,7 +68,7 @@ function fakeClaudePort(captures: { prompt?: string }[] = []): HarnessPort {
             native: {},
             outcome: {
               status: "completed",
-              structuredOutput: cleanBody(lensFromPrompt(capture.prompt ?? "")),
+              structuredOutput: bodyFor(capture.prompt ?? ""),
             },
           };
         })(),
@@ -160,6 +164,121 @@ describe("createRoundsRuntime", () => {
     expect(runtime.ledger("s1")).toEqual([record]);
   });
 
+  it("exposes both generations by id — the switcher drills back to the frozen predecessor (C15 2.3)", async () => {
+    const genDir = mkdtempSync(join(tmpdir(), "gen-store-"));
+    const roundDir = mkdtempSync(join(tmpdir(), "round-store-"));
+    const generationStore = new GenerationStore(genDir);
+    const roundStore = new RoundRecordStore(roundDir);
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        persistGeneration: (gen) => generationStore.save(gen),
+        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+        readRounds: (sessionId) => roundStore.read(sessionId),
+        loadGeneration: (id) => generationStore.load(id),
+      }),
+    );
+    // The prior generation carries a real drafted board, so drilling back reaches boards.
+    const priorWithBoards: Generation = {
+      id: "gen:ps-0",
+      patchsetId: "ps-0",
+      lensBoards: { design: "board:gen1-design" },
+      status: "live",
+    };
+    const { record } = await runtime.runRound(roundInput({ previousGeneration: priorWithBoards }));
+
+    // The record links back to the frozen predecessor by id.
+    expect(record.frozenPredecessor).toBe("gen:ps-0");
+    expect(record.boardGeneration).toBe("gen:ps-1");
+
+    // Both generations are reachable by id from a fresh store instance (restart-durable).
+    const reader = createRoundsRuntime(
+      baseDeps({ loadGeneration: (id) => new GenerationStore(genDir).load(id) }),
+    );
+    const frozen = reader.generation("gen:ps-0");
+    const live = reader.generation("gen:ps-1");
+    // The switcher-facing read returns the FROZEN gen-1 boards, not the live gen-2.
+    expect(frozen?.status).toBe("frozen");
+    expect(frozen?.lensBoards.design).toBe("board:gen1-design");
+    expect(live?.status).toBe("live");
+    expect(live?.id).toBe("gen:ps-1");
+    // A generation that was never minted is honestly absent.
+    expect(reader.generation("gen:never")).toBeUndefined();
+  });
+
+  // ── The rework count is the REPORT's, not the ask count (review finding 10) ──
+  //
+  // The ledger's "N reworks" used to be `asksDispatched.length`, which counts how many
+  // asks went OUT. This drives a round that dispatched THREE asks and whose report
+  // classified only one as reworked — the two numbers must not agree.
+  it("counts the reworks the round REPORTED, never the asks it dispatched", async () => {
+    const author = { kind: "lens-agent", id: "report-seat" };
+    const outcome = (id: string, status: string) => ({
+      id,
+      kind: "round_outcome",
+      data: { author, status, ask: { ref: `th-${id}`, text: `ask ${id}` }, note: "verified" },
+    });
+    // Two acted-on outcomes, one untouched: the round produced TWO reworks over THREE asks.
+    const reportBoard = {
+      elements: [outcome("o1", "addressed"), outcome("o2", "partial"), outcome("o3", "untouched")],
+    } as unknown as DraftBoard;
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        // The report seat's own turn AND its post-process pass both answer the report
+        // board — otherwise the editor pass would hand back prose and the typed outcomes
+        // would read as dropped. (The lens drafters receive the report as CONTEXT, so the
+        // post-process branch is keyed on the file it is polishing, not on the context.)
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => {
+            const polishingReport =
+              prompt.includes("prompts/post-process.md") && prompt.includes("round_outcome");
+            return prompt.includes("prompts/report.md") || polishingReport
+              ? reportBoard
+              : cleanBody(lensFromPrompt(prompt));
+          }),
+      }),
+    );
+    const { record } = await runtime.runRound(roundInput({ asksDispatched: ["t1", "t2", "t3"] }));
+    expect(record.asksDispatched).toHaveLength(3);
+    expect(record.reworkCount).toBe(2);
+  });
+
+  it("a round whose report never drafted records NO rework count, not a zero", async () => {
+    // No report seat resolves ⇒ no report board ⇒ the count is honestly unknown.
+    const runtime = createRoundsRuntime(baseDeps());
+    const { record, pipeline } = await runtime.runRound(roundInput());
+    // (The fake report board carries no `round_outcome` items, so the count is a real 0.)
+    expect(record.reworkCount).toBe(0);
+    expect(pipeline.report?.boardId).toBeDefined();
+  });
+
+  // ── A restored round cannot claim a coverage it never checked (review finding b) ──
+  //
+  // Reconstructing from durable board meta rebuilds ids and blemishes but NOT the boards,
+  // and cross-lens coverage is computed from the boards. Reporting `[]` said "every hunk
+  // was covered" over a check that never ran.
+  it("a round rebuilt from durable meta says its coverage is UNKNOWN, not clean", async () => {
+    const store = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-restart-")));
+    const deps = baseDeps({ persistBoardMeta: (_repo, meta: BoardMeta) => store.save(meta) });
+    const first = await createRoundsRuntime(deps).runRound(roundInput());
+    // A freshly drafted round DOES know its coverage picture.
+    expect(first.pipeline.coverage).toBeDefined();
+
+    // A fresh runtime over the same on-disk evidence reconstructs rather than re-drafting.
+    const restarted = createRoundsRuntime(
+      baseDeps({
+        loadDraftedBoards: () => store.list(),
+        resolveClaudePort: async () => {
+          throw new Error("a reconstruction must never re-draft");
+        },
+      }),
+    );
+    const after = await restarted.runRound(roundInput());
+    expect(after.pipeline.boards.map((b) => b.lens).sort()).toEqual(
+      ["decisions", "design", "flagged", "noise", "sequence"].sort(),
+    );
+    expect(after.pipeline.coverage).toBeUndefined();
+  });
+
   it("re-reports against the existing generation when no patchset landed", async () => {
     const runtime = createRoundsRuntime(baseDeps());
     const { record, frozenPrevious } = await runtime.runRound(
@@ -201,6 +320,100 @@ describe("createRoundsRuntime", () => {
     expect(lenses).toEqual(
       ["decisions", "design", "flagged", "noise", "report", "sequence"].sort(),
     );
+  });
+
+  // ── The write order (review finding 6) ─────────────────────────────────────
+  //
+  // The RoundRecord used to persist BEFORE its generations, so a crash in between left a
+  // durable ledger row whose generation was never written — the switcher drills into
+  // nothing. Generations first, record last: a crash leaves the round honestly missing.
+  it("a crash while persisting the generation leaves NO dangling record behind", async () => {
+    const genDir = mkdtempSync(join(tmpdir(), "gen-order-"));
+    const roundDir = mkdtempSync(join(tmpdir(), "round-order-"));
+    const generationStore = new GenerationStore(genDir);
+    const roundStore = new RoundRecordStore(roundDir);
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        // The disk gives out exactly between the two writes.
+        persistGeneration: () => {
+          throw new Error("disk went away");
+        },
+        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+        readRounds: (sessionId) => roundStore.read(sessionId),
+        loadGeneration: (id) => generationStore.load(id),
+      }),
+    );
+
+    await expect(
+      runtime.runRound(roundInput({ session: { id: "crashy" } as RoundInput["session"] })),
+    ).rejects.toThrow("disk went away");
+
+    // Restart: fresh stores over the SAME on-disk state. The round is honestly absent —
+    // never a ledger row pointing at a generation that does not exist.
+    const afterRestart = createRoundsRuntime(
+      baseDeps({
+        readRounds: (sessionId) => new RoundRecordStore(roundDir).read(sessionId),
+        loadGeneration: (id) => new GenerationStore(genDir).load(id),
+      }),
+    );
+    expect(afterRestart.ledger("crashy")).toEqual([]);
+    expect(afterRestart.generation("gen:ps-1")).toBeUndefined();
+  });
+
+  // ── A dispatch that THROWS (review finding 5) ──────────────────────────────
+  //
+  // The regeneration half already reported its throws; the DISPATCH half — the real
+  // production worker path — reported none, so a work order that died left the run route
+  // reading "still working" forever. One catch around the whole dispatch body, not a guard
+  // per known failure site: the throws that matter are the ones nobody predicted.
+  it("a thrown worker emits a TERMINAL failed and leaves the session dispatchable", async () => {
+    const events: RoundEvent[] = [];
+    const runtime = createRoundsRuntime(baseDeps());
+    const workOrder = { tasks: [] } as unknown as ComposedHandoffBundle;
+
+    await expect(
+      runtime.dispatchRound({
+        session: { id: "wedge", projectId: "p1", threads: [], createdAt: 0 },
+        workOrder,
+        onProgress: (event) => events.push(event),
+        runWorkers: async () => {
+          throw new Error("the work order blew up");
+        },
+      }),
+    ).rejects.toThrow("the work order blew up");
+    expect(events).toEqual([{ type: "failed", reason: "the work order blew up" }]);
+
+    // The session is NOT wedged: the next dispatch for the same session still runs.
+    let ranAgain = false;
+    await runtime.dispatchRound({
+      session: { id: "wedge", projectId: "p1", threads: [], createdAt: 0 },
+      workOrder,
+      runWorkers: async () => {
+        ranAgain = true;
+      },
+    });
+    expect(ranAgain).toBe(true);
+  });
+
+  it("a FAILED work order reports the same terminal failure (recorded, then rejected)", async () => {
+    const events: RoundEvent[] = [];
+    const runtime = createRoundsRuntime(baseDeps());
+    await expect(
+      runtime.dispatchRound({
+        session: { id: "failed-order", projectId: "p1", threads: [], createdAt: 0 },
+        workOrder: { tasks: [] } as unknown as ComposedHandoffBundle,
+        onProgress: (event) => events.push(event),
+        runWorkers: async () => ({
+          outcome: "failed" as const,
+          diff: "",
+          changedPaths: [],
+          workerCommitRange: { from: "c0", to: "c0" },
+        }),
+      }),
+    ).rejects.toThrow("The round's work order failed.");
+    // Recorded (the partial diff is on disk) AND reported — exactly one terminal row.
+    expect(runtime.ledger("failed-order")).toHaveLength(1);
+    expect(events).toEqual([{ type: "failed", reason: "The round's work order failed." }]);
   });
 
   it("serializes dispatches per session — a second round waits for the first", async () => {

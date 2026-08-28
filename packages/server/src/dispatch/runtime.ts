@@ -33,6 +33,7 @@ import type {
   PrBodyDraftResult,
   RefinementResult,
   Review,
+  RoundEvent,
   RoundRecord,
   SessionTranscriptRow,
   SidebarSession,
@@ -552,6 +553,14 @@ export interface DispatchDeps {
    * the B11 dispatch WRITE runs the workers but the record wiring is a separate deferred piece.
    */
   readonly roundRecordsForReview?: (reviewId: string) => readonly RoundRecord[];
+  /**
+   * The live round-progress catch-up read for `session.roundEvents` (C15 3.1): the ordered
+   * `RoundEvent` log this review's round has emitted so far, from the `RoundProgressHub`.
+   * The client folds it through the same reducer the push channel feeds, so a cold mount or
+   * a mid-round reconnect sees the round it is actually in. Absent ⇒ no hub wired, so the
+   * read answers an honest empty log (the run machine's absent state).
+   */
+  readonly roundEventsForReview?: (reviewId: string) => readonly RoundEvent[];
   /**
    * The display-transcript read for `session.transcript` (issue-set B): the projected coding-turn
    * rows the turn loop captured and persisted for this review's session, resolved read-only via

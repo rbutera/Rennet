@@ -68,6 +68,7 @@ import {
   executeExternalCommand,
   FileProjectStore,
   FileThreadStore,
+  GenerationStore,
   GITHUB_REQUEST_TIMEOUT_MS,
   GitCaptureAdapter,
   GitCheckpointStore,
@@ -90,6 +91,7 @@ import {
   parseGitHubPrRef,
   prWorktreePath,
   RepoWatcher,
+  RoundRecordStore,
   readOpenSpecChange,
   readSetupLogTail,
   readSetupStatus,
@@ -210,10 +212,13 @@ import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { projectLensBoard } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
+import { readPriorGeneration, runBoardRegeneration } from "./runtime/round-collation";
+import { RoundProgressHub } from "./runtime/round-progress";
 import {
   createRoundsRuntime,
   type DispatchRoundResult,
   type PersistedBoardMeta,
+  type WorkerReturn,
 } from "./runtime/rounds";
 import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
 import { createSettingsComposition } from "./settings";
@@ -1729,6 +1734,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // the full board regeneration `runRound` drives lands when its lens-pipeline collation
   // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
   const boardMetaStore = new BoardMetaStore(join(homedir(), ".rennet", "board-meta"));
+  // Durable generation ledger (C15 2.1): the frozen prior + live successor a round mints,
+  // so gen-1 survives a restart as a drill-down the rounds switcher opens by id.
+  const generationStore = new GenerationStore(join(homedir(), ".rennet", "generations"));
+  // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
+  // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
+  const roundRecordStore = new RoundRecordStore(join(homedir(), ".rennet", "rounds"));
+  // The live round-progress channel (C15 3.1): an append-only `RoundEvent` log per review,
+  // pushed to live sockets as it grows and read back by a client that joins mid-round. The
+  // WS listener is late-bound (assigned below), exactly as the board/ask fan-outs are.
+  const roundProgress = new RoundProgressHub((reviewId, event) =>
+    wsListener?.broadcastRoundProgress(reviewId, event),
+  );
   const promptsSrcDir = (() => {
     try {
       // `@rennet/prompts` exports `./src/index.ts`; its dir is the prompt-file root the
@@ -1753,6 +1770,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
+    persistGeneration: (gen) => generationStore.save(gen),
+    recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),
+    readRounds: (sessionId) => roundRecordStore.read(sessionId),
+    loadGeneration: (id) => generationStore.load(id),
   });
   const dispatch = createDispatch({
     service,
@@ -1849,6 +1870,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (!review) return [];
       return transcriptStore.read(resolveRoundSessionId(review, sessionStore.list()));
     },
+    // The live round-progress catch-up read (C15 3.1). Keyed by review id — the same id the
+    // run route's slug carries — so a cold `/s/:slug/run` mount folds the round already in
+    // flight instead of showing an absent one. Honest-empty until a round dispatches.
+    roundEventsForReview: (reviewId: string) => roundProgress.read(reviewId),
     // The sidebar's sessions (C03 cluster 2, bound in C18), served from the SAME durable
     // session store the round dispatch mints into — so a session the reviewer worked in is
     // the session the sidebar lists. Every write persists through the store, so a rename, a
@@ -1908,10 +1933,43 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               threads: [],
               createdAt: Date.now(),
             };
+      // Captured from the worker run below so the C15 regeneration tail can run
+      // `runRound` over what the worker produced WITHOUT re-running the worker: a
+      // WorkerReturn carrying the commit range, plus a `patchsetId` (the post-turn HEAD)
+      // only when the code actually MOVED — nothing landed ⇒ re-report, no successor mint.
+      let workerReturn: WorkerReturn | undefined;
+      // ── C15 3.1: the live round-progress channel ──
+      // Every event below is a REAL point in this dispatch, not a clock tick: the round
+      // starting, the composed work-order being handed over, the coding turn running, the
+      // turn's outcome being classified, its commits being pinned. The regeneration half
+      // (report → per-lens lanes → composed) is emitted by `runRound` itself, through the
+      // `onProgress` sink threaded below.
+      const emit = roundProgress.sinkFor(review.id);
+      const askCount = workOrder.tasks.reduce((n, task) => n + task.asks.length, 0);
+      emit({ type: "dispatched" });
+      emit({
+        type: "prep",
+        rows: [
+          {
+            id: "asks",
+            label: "Folded the round's asks into one work order",
+            status: "done",
+            detail: `${askCount} ${askCount === 1 ? "ask" : "asks"}`,
+          },
+        ],
+      });
       await roundsRuntime.dispatchRound({
         session,
         workOrder,
+        // ONE terminal report for the whole dispatch (C15 3.1): whatever kills the turn —
+        // a failed work order, an unreadable HEAD, a throw nobody predicted — the channel
+        // closes on `failed` instead of leaving the run reading "still working" forever.
+        onProgress: emit,
         runWorkers: async (order): Promise<DispatchRoundResult> => {
+          emit({
+            type: "worker",
+            rows: [{ id: "turn", label: "Ran the work order", status: "running" }],
+          });
           // The round's commit range is HEAD before → after the turn (the round commits
           // its work — the ledger pins those commits; equal when it committed nothing).
           // Read failure-isolated: an unborn/unreadable HEAD collapses to the "HEAD" marker
@@ -1938,7 +1996,42 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             changedPaths: [...outcome.filesTouched],
             workerCommitRange: { from, to },
           };
+          // The board regeneration input (C15): the code MOVED iff HEAD advanced on a
+          // completed turn — then a successor generation mints keyed to the new HEAD;
+          // a no-move or failed turn re-reports against the existing generation.
+          workerReturn = {
+            commitRange: { from, to },
+            ...(from !== to && outcome.status !== "failed" ? { patchsetId: to } : {}),
+          };
+          const touched = outcome.filesTouched.length;
+          const changed = `${touched} ${touched === 1 ? "file" : "files"} changed`;
+          emit({
+            type: "worker",
+            rows: [
+              // A settled row carries the state's own field, not one bag of optionals: the
+              // completed turn accounts for itself ("3 files changed"), the failed one
+              // carries a REASON. Reporting the file count as the reason of a failure would
+              // put an account of the work where the explanation belongs.
+              outcome.status === "failed"
+                ? {
+                    id: "turn",
+                    label: "Ran the work order",
+                    status: "failed",
+                    reason: `The work order failed — ${changed}.`,
+                  }
+                : { id: "turn", label: "Ran the work order", status: "done", detail: changed },
+            ],
+          });
+          // A failed turn returns its recorded result; the runtime then rejects, and the
+          // ONE terminal report above closes the channel. (Emitting here as well would put
+          // two contradictory terminal rows in a log a late-joining client replays.)
           if (outcome.status === "failed") return result;
+          // The gate is the post-turn classification: the checkpoint-measured diff decided
+          // this turn completed rather than failed. The commit point is the round's commit
+          // range being pinned (`from`→`to`) — both are facts already established here, so
+          // the phases the run route walks are the phases that really happened.
+          emit({ type: "gate" });
+          emit({ type: "committed" });
           // PR-lane RIPENING (B11 cluster 5, task 5.2): an own-branch review's PR draft
           // re-composes as the round lands. Reload the review by id (finding 4) so the
           // decision + compose run over the CURRENT persisted state, not the pre-round
@@ -1961,6 +2054,74 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           return result;
         },
       });
+      // ── C15 1.5: the board REGENERATION tail — the rounds loop goes live ──
+      // The worker already ran (above); now regenerate the lens boards over what it
+      // produced. `runRound` runs its own `runWorkers` first, so we hand it a NO-OP
+      // that returns the captured `workerReturn` (never a second worker turn). The tail is
+      // failure-isolated so a regeneration hiccup never unwinds the landed round (the
+      // worker, its record, and PR ripening already committed above) — but it always
+      // closes the live channel with a terminal event rather than stalling at `committing`.
+      if (workerReturn !== undefined) {
+        await runBoardRegeneration(
+          {
+            // The same `review.regenerate` the reviewer's own refresh runs — it activates
+            // the successor patchset over the worker's tree and stamps the REAL
+            // `successorAccount` for this round.
+            recapture: async () => {
+              await dispatch("review.regenerate", {
+                commandId: randomUUID(),
+                reviewId: review.id,
+                repoPath: review.repositoryRoot,
+              });
+            },
+            reviewNow: () => service.reviewById(review.id) ?? review,
+            knowledgeFor: (patchset) => {
+              const repoKey = repoKeyForRoot(review.repositoryRoot);
+              return (
+                new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? {
+                  schemaVersion: 1,
+                  repoKey,
+                  baseOid: patchset.repository.baseOid,
+                  snapshotFingerprint: "",
+                  generator: "round-regeneration",
+                  statements: [],
+                }
+              );
+            },
+            // The REAL prior generation, rebuilt from its two durable halves (the generation
+            // record + the board-meta rows' projected boards). Absent ⇒ this session has
+            // never regenerated, so the round is honestly a first generation.
+            priorGeneration: (generationId) =>
+              readPriorGeneration(
+                {
+                  loadGeneration: (id) => generationStore.load(id),
+                  listBoardMeta: (sessionId, generation) =>
+                    boardMetaStore.listForGeneration(sessionId, generation),
+                  boardElements: async (boardId) => [
+                    ...(
+                      await boardsRuntimeFor(review.repositoryRoot).service.getState(boardId)
+                    ).values(),
+                  ],
+                },
+                session.id,
+                generationId,
+              ),
+            runRound: (input) => roundsRuntime.runRound(input),
+            // The regeneration half of the live channel (C15 3.1): `runRound` emits the
+            // round-report's arrival, each lens drafter starting and finishing with its
+            // carried/reworked verdict, and the composed generation the reveal lands on.
+            emit,
+          },
+          {
+            session,
+            repoRoot: review.repositoryRoot,
+            // The PRE-worker patchset — what the boards described before this round.
+            priorPatchsetId: review.activePatchsetId,
+            asksDispatched: workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
+            worked: workerReturn,
+          },
+        );
+      }
     },
     // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that
     // reworks one staged ask's body per the reviewer's instruction, on WHICHEVER seat the
