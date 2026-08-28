@@ -316,7 +316,9 @@ Verified unchanged — C20 does not contradict these, so they are NOT annotated:
 
   1. the OS traffic lights never overlap an interactive control (bounding-box geometry),
   2. window drag works from the corner strip in every state,
-  3. 5.3's clear-at-rest / slide-under-on-scroll.
+  3. 5.3's clear-at-rest / slide-under-on-scroll — the CLASS placement and the scroller's
+     existence are now machine-proven (review item 1: the board branch had no primary
+     scroller at all, so the rule matched nothing); the PIXEL behaviour still is not.
 
   Their proof path is **Rai's manual verification on real hardware**, once this ships in
   the release he auto-updates to on latios. The drag was always a manual-proof item per
