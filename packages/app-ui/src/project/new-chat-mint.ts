@@ -94,6 +94,13 @@ export function useClaimedTargets(projectId: string): readonly MintTarget[] {
  * row with no repository must keep being hidden by the claim that owns it. Over-tightening
  * here is the worse failure: it un-hides a row whose session already exists, and clicking it
  * mints a SECOND session for one target — the exact collision the claim-dedup prevents.
+ *
+ * `undefined` is the ONLY absence marker, exactly as the host's `claimingSession` tests it.
+ * An empty string is not a second marker to check here: `targetOfRow` normalizes `""` away
+ * before a target is built, and every schema that carries a repository is `z.string().min(1)`
+ * (`SessionModel`, `sidebarSessionSchema`, `session.mint`), so `""` cannot reach either side.
+ * Treating it as absent anyway would make this test STRICTLY LOOSER than the server's, which
+ * is how the two ends drift apart — the failure being guarded against, in the other direction.
  */
 function repositoryAgrees(claimed: string | undefined, row: string | undefined): boolean {
   return claimed === undefined || row === undefined || claimed === row;
