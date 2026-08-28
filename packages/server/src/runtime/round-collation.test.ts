@@ -1,7 +1,22 @@
 import { buildHunkIndex, taughtHunkIds } from "@rennet/core";
-import type { DraftElement, PatchFile, Patchset } from "@rennet/protocol";
+import type {
+  DraftElement,
+  KnowledgeSet,
+  PatchFile,
+  Patchset,
+  SuccessorAccount,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { buildLintContextFor, toLintHunks } from "./round-collation";
+import { assembleRoundCollation, buildLintContextFor, toLintHunks } from "./round-collation";
+
+const KNOWLEDGE: KnowledgeSet = {
+  schemaVersion: 1,
+  repoKey: "repo",
+  baseOid: "0".repeat(40),
+  snapshotFingerprint: "fp",
+  generator: "test",
+  statements: [],
+};
 
 // A modified file with ONE hunk: old 1..3 (3 lines), new 1..4 (4 lines).
 const MODIFIED_PATCH = [
@@ -125,5 +140,26 @@ describe("buildLintContextFor", () => {
     expect(noise.lens).toBe("noise");
     expect(noise.hunks).toBe(design.hunks);
     expect(noise.files).toBe(design.files);
+  });
+});
+
+describe("assembleRoundCollation", () => {
+  it("threads a successor account so the packet is a ROUND (isRound fires)", () => {
+    const successorAccount: SuccessorAccount = { asks: [], beyondAsks: [] };
+    const c = assembleRoundCollation({
+      patchset: PS,
+      knowledge: KNOWLEDGE,
+      dossier: [],
+      successorAccount,
+    });
+    expect(c.deltaPacket.successorAccount).toBeDefined(); // isRound branch fires
+    expect(c.hunks).toHaveLength(2); // derived off the same packet
+    expect(c.lintContextFor("design").patchsetId).toBe("ps-collation");
+  });
+
+  it("degrades to a first-generation (non-round) packet when no successor account", () => {
+    const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [] });
+    expect(c.deltaPacket.successorAccount).toBeUndefined(); // first-generation, not a crash
+    expect(c.hunks).toHaveLength(2);
   });
 });

@@ -7,8 +7,22 @@
 // patchset, these derive the collation universe.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { DeltaPacketFile, HunkIndex, LintContext, LintHunk, LintTarget } from "@rennet/core";
-import type { PatchFile, Patchset } from "@rennet/protocol";
+import {
+  buildDeltaPacket,
+  type DeltaPacket,
+  type DeltaPacketFile,
+  type HunkIndex,
+  type LintContext,
+  type LintHunk,
+  type LintTarget,
+} from "@rennet/core";
+import type {
+  DossierItem,
+  KnowledgeSet,
+  PatchFile,
+  Patchset,
+  SuccessorAccount,
+} from "@rennet/protocol";
 
 /**
  * Map a patchset's `IndexedHunk`s (whose spans are `{ new: {start,lines}, old:
@@ -108,4 +122,37 @@ export function buildLintContextFor(
     baseFiles,
     patchsetId: patchset.id,
   });
+}
+
+/** The three per-round pipeline inputs `runRound`'s `RoundInput` carries. */
+export interface RoundCollation {
+  readonly deltaPacket: DeltaPacket;
+  readonly hunks: readonly LintHunk[];
+  readonly lintContextFor: (lens: LintTarget) => LintContext;
+}
+
+/**
+ * Assemble the collation context `runRound` needs from a patchset + its protocol
+ * contracts (C15 task 1.4): thread the ALREADY-BUILT `successorAccount` (stamped on
+ * the review at patchset activation, `core/src/index.ts`) through `buildDeltaPacket`,
+ * then derive the flat `LintHunk[]` and the per-lens `lintContextFor` off the same
+ * packet. When a successor account is present the packet carries it, so the pipeline's
+ * `isRound` branch fires (the round-report drafts first); when it is absent the packet
+ * is a first-generation (non-round) draft — the honest degrade, never a crash. Pure.
+ */
+export function assembleRoundCollation(input: {
+  patchset: Patchset;
+  knowledge: KnowledgeSet;
+  dossier: readonly DossierItem[];
+  successorAccount?: SuccessorAccount;
+}): RoundCollation {
+  const deltaPacket = buildDeltaPacket(
+    input.patchset,
+    input.knowledge,
+    input.dossier,
+    input.successorAccount,
+  );
+  const hunks = toLintHunks(deltaPacket.hunks, input.patchset.files);
+  const lintContextFor = buildLintContextFor(input.patchset, hunks);
+  return { deltaPacket, hunks, lintContextFor };
 }
