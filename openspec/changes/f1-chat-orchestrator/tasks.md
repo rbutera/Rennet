@@ -188,7 +188,7 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
   narrates the receipt in the transcript") and `reviewing-a-github-pr.md:89` ("conclude something in
   chat and the orchestrator **stages** …"). Chat answers; it does not yet act on the app (proposal,
   Out of scope). Check `docs/` for any other page describing the chat dock as pending.
-- [ ] 6.4 `sh -c 'pnpm check'` green, with a positive control capable of failing. Output
+- [x] 6.4 `sh -c 'pnpm check'` green, with a positive control capable of failing. Output
   `<promise>F1-COMPLETE</promise>`. Commit.
 
 ---
