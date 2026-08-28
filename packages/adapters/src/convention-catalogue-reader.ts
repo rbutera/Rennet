@@ -151,7 +151,8 @@ function readEnvelope(path: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-    const { rules: _rules, ...envelope } = parsed as Record<string, unknown>;
+    const envelope = { ...(parsed as Record<string, unknown>) };
+    delete envelope.rules;
     return envelope;
   } catch {
     return {};
