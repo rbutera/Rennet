@@ -66,6 +66,7 @@ import {
   executeExternalCommand,
   FileProjectStore,
   FileThreadStore,
+  GenerationStore,
   GITHUB_REQUEST_TIMEOUT_MS,
   GitCaptureAdapter,
   GitCheckpointStore,
@@ -1522,6 +1523,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // the full board regeneration `runRound` drives lands when its lens-pipeline collation
   // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
   const boardMetaStore = new BoardMetaStore(join(homedir(), ".rennet", "board-meta"));
+  // Durable generation ledger (C15 2.1): the frozen prior + live successor a round mints,
+  // so gen-1 survives a restart as a drill-down the rounds switcher opens by id.
+  const generationStore = new GenerationStore(join(homedir(), ".rennet", "generations"));
   const promptsSrcDir = (() => {
     try {
       // `@rennet/prompts` exports `./src/index.ts`; its dir is the prompt-file root the
@@ -1541,6 +1545,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
+    persistGeneration: (gen) => generationStore.save(gen),
   });
   const dispatch = createDispatch({
     service,

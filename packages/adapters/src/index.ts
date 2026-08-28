@@ -493,6 +493,11 @@ export {
   reviewAskFixturePorts,
 } from "./review-ask-fixture";
 export {
+  defaultGenerationStoreDir,
+  GenerationStore,
+  RoundStoreCorruptError,
+} from "./round-store";
+export {
   defaultSessionStoreDir,
   SessionStore,
   type SessionStoreDeps,

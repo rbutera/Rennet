@@ -185,6 +185,11 @@ export interface RoundsRuntimeDeps {
   /** The board-generation id minter, derived from the landed patchset so re-drafting
    *  the same patchset shares a key and the start guard dedups. Defaults to `gen:<patchset>`. */
   readonly newGenerationId?: (patchsetId: string) => string;
+  /** Persist a minted generation durably (C15 2.1) — called for the live successor (with
+   *  its lens board ids recorded) and, when the code moved, the frozen prior. Absent ⇒
+   *  generations are process-lived only; present ⇒ the frozen prior survives a restart as
+   *  a drill-down the ledger's switcher can open by id ({@link RoundsRuntime.generation}). */
+  readonly persistGeneration?: (gen: Generation) => void | Promise<void>;
 }
 
 /** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
@@ -378,10 +383,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     records.push(record);
     ledger.set(input.session.id, records);
 
+    // Persist the generations this round minted (C15 2.1) so the frozen prior survives a
+    // restart as a drill-down. The live successor carries its lens board ids; the prior
+    // freezes iff the code moved.
+    const liveSuccessor = withLensBoards(boardGeneration, pipeline);
+    await deps.persistGeneration?.(liveSuccessor);
+    const frozenPrevious = landed ? freezeGeneration(input.previousGeneration) : undefined;
+    if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
+
     return {
       record,
-      boardGeneration: withLensBoards(boardGeneration, pipeline),
-      ...(landed ? { frozenPrevious: freezeGeneration(input.previousGeneration) } : {}),
+      boardGeneration: liveSuccessor,
+      ...(frozenPrevious === undefined ? {} : { frozenPrevious }),
       pipeline,
     };
   }
