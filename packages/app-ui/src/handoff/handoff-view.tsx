@@ -23,6 +23,8 @@ export interface HandoffViewProps {
   readonly onDispatch?: RoundsLanesProps["onDispatch"];
   /** The Open-Pull-Request egress, threaded to the rounds lanes (wired in cluster 6). */
   readonly onOpenPr?: RoundsLanesProps["onOpenPr"];
+  /** Selection-steer Revise — B11's `review.reviseSpan`, threaded to whichever lane renders. */
+  readonly onRevise?: RoundsLanesProps["onRevise"];
 }
 
 export function HandoffView({
@@ -32,10 +34,21 @@ export function HandoffView({
   pr,
   onDispatch,
   onOpenPr,
+  onRevise,
 }: HandoffViewProps) {
   const mode = resolveEntryMode(review);
   if (mode === "retrospective") return null;
   if (mode === "teammate-pr")
-    return <PostReviewLane review={review} onPost={onPost} draft={reviewDraft} />;
-  return <RoundsLanes review={review} pr={pr} onDispatch={onDispatch} onOpenPr={onOpenPr} />;
+    return (
+      <PostReviewLane review={review} onPost={onPost} draft={reviewDraft} onRevise={onRevise} />
+    );
+  return (
+    <RoundsLanes
+      review={review}
+      pr={pr}
+      onDispatch={onDispatch}
+      onOpenPr={onOpenPr}
+      onRevise={onRevise}
+    />
+  );
 }

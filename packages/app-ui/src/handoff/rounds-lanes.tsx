@@ -13,7 +13,7 @@ import {
 import type { DispositionKind, StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
-import { reviseDraftSpan } from "./handoff-data";
+import { type ReviseSpan, reviseDraftSpan } from "./handoff-data";
 import { parseLineAnchor } from "./selectors";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,8 +34,9 @@ import { parseLineAnchor } from "./selectors";
 // Ported from the spike's RoundsLanes, rewritten onto the real `review` slice: the asks are the
 // store's `stagedAsks` (not a god-store), steering is C4's `ProseSelectionLayer` (Drop retires +
 // unstages, Explain answers with provenance over the slice, Revise reaches the `handoff-data.ts`
-// rework seam — execution gated cluster 8). The spike's `applyRevision` string-surgery and
-// `StreamingProse` are dropped (Reconciliation 4/5). The reviewer never types into the draft (R32).
+// rework seam, now bound to B11's live `review.reviseSpan`). The spike's `applyRevision`
+// string-surgery and `StreamingProse` are dropped (Reconciliation 4/5). The reviewer never
+// types into the draft (R32).
 //
 // The PR draft + egress arrive as props (cluster 6 wires `publish.submitPr`; B11 the durable
 // draft): absent them the lane is fully live over the store — every card, Drop, and the Dispatch
@@ -85,16 +86,21 @@ export interface RoundsLanesProps {
    * the Open-PR CTA is present but disabled (honest); nothing another human sees leaves without it.
    */
   readonly onOpenPr?: () => Promise<PrReceipt>;
+  /**
+   * Selection-steer Revise, bound to B11's `review.reviseSpan` (cluster 8). Absent ⇒ the Rework
+   * control is disabled and the panel says so — never a pretend run.
+   */
+  readonly onRevise?: ReviseSpan;
 }
 
-export function RoundsLanes({ review, pr, onDispatch, onOpenPr }: RoundsLanesProps) {
+export function RoundsLanes({ review, pr, onDispatch, onOpenPr, onRevise }: RoundsLanesProps) {
   const patchsetId = review.activePatchsetId;
 
   // Subscribe to the stable `stagedAsks` map (it changes only on a real mutation) and memoize the
   // derived list — a store selector minting a fresh array each render would trip zustand's
   // snapshot cache into an update loop (the C08 pattern, shared with ask-basket / post-review-lane).
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
-  const { retire, unstageAsk } = useRennetStore((s) => s.reviewActions);
+  const { retire, unstageAsk, stageAsk } = useRennetStore((s) => s.reviewActions);
   const asks = useMemo(() => Object.values(stagedAsks), [stagedAsks]);
   const gathering = asks.length > 0;
 
@@ -109,7 +115,14 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr }: RoundsLanesPro
     asks.find((ask) => ask.body.includes(quote) || quote.includes(ask.body.slice(0, 40)));
 
   const draftHandlers: DraftHandlers = {
-    onRevise: (quote, instruction) => reviseDraftSpan(quote, instruction),
+    // Live span rework: resolve the span back to its ask, then route through the ONE seam.
+    onRevise: onRevise
+      ? async (quote, instruction) => {
+          const ask = findAsk(quote);
+          if (!ask) return "That span no longer matches a staged ask.";
+          return reviseDraftSpan(onRevise, stageAsk, ask, quote, instruction);
+        }
+      : undefined,
     onDrop: (quote) => {
       const ask = findAsk(quote);
       if (!ask) return;
