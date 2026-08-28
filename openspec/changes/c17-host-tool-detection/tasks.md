@@ -78,10 +78,18 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
 
 ## 3. Per-host agents + a served enable toggle (Objective: `agentsByHost` per host, per-host enable toggle)
 
-- [ ] 3.1 Run `harness.detect` **per host**, not local-only: the client dispatches harness detection to each
-  paired host's daemon connection (the command already runs on the daemon it reaches), keying results under
-  that host's id. The local host keeps working exactly as today; remote hosts now populate too. No engine
-  change — `harness-discovery.ts` already runs host-side; this is the per-host routing + keying.
+- [ ] 3.1 **RULING AMENDMENT (orchestrator-settled 2026-08-28).** As originally written this task assumed the
+  CLIENT fans harness detection out over one daemon connection per host. That premise is wrong: the client's
+  `ConnectionSupervisor` connects to exactly ONE daemon (`ensureDaemonForProject` picks the locus daemon), by
+  design — there is no second connection to dispatch to. **Re-ruled: per-host harness detection is
+  SERVER-SIDE**, mirroring cluster 2's proven `daemon.status` pattern — the locus daemon asks each paired host
+  the only way it CAN be asked and serves the per-host result, keyed by that host's `source`. So: a sibling
+  `harness.hosts` command served by `SettingsComposition.harnessHosts()` over the SAME `daemonHostSections`
+  enumeration `settings.get` / `daemon.status` use (local → detect directly; `wsl:<distro>` → the distro's own
+  discovery deps over `wsl.exe`; `remote:<deviceId>` → cannot be asked). A host that cannot be asked reports
+  **honest absence** (`asked: false`, no rows) — never the local set copied everywhere. No engine change —
+  `harness-discovery.ts` already runs per-locus; this is the per-host routing + keying. `harness.detect`
+  itself is untouched (the front door and mobile still read it).
 - [ ] 3.2 A served per-host enable store for `setToolEnabled` (closes the named gap): persist a host+tool
   enable/disable decision the way per-host facts persist (daemon-settings rung / a small settings key), so a
   ruled-out agent stays ruled out across reload — replacing the session-only `useState` set in
