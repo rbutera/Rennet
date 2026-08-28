@@ -15,15 +15,32 @@
 // Invoked as `node`, never `pnpm run` — pnpm forwarding its own `--` is exactly
 // what broke v0.3.39.
 
+// Matched by SHAPE, not by exact filename. The filenames come from
+// @electron-forge maker defaults, which this repo does not own and cannot read
+// without running the makers — the very thing being verified — and GitHub then
+// rewrites them again (spaces become dots, so Squirrel's "Rennet-<v> Setup.exe"
+// publishes as "Rennet-<v>.Setup.exe"). Pinning exact names would rot the first
+// time a default changed, and it would rot by failing a good release, which is
+// how a guard gets ignored. Extension + platform token + version survives a
+// rename. What it will NOT survive is dropping a maker outright (.dmg -> .pkg),
+// and failing loudly on that is correct: it is a deliberate change to what
+// ships, and the release notes and updater feed both depend on knowing.
 const REQUIRED = {
-  // Names as GitHub stores them: it replaces spaces with dots, so Squirrel's
-  // "Rennet-<v> Setup.exe" is published as "Rennet-<v>.Setup.exe".
-  macos: (v) => [`Rennet-${v}-arm64.dmg`, `Rennet-darwin-arm64-${v}.zip`],
-  windows: (v) => [
-    `Rennet-${v}.Setup.exe`,
-    `Rennet-${v}-full.nupkg`,
-    `Rennet-win32-x64-${v}.zip`,
-    "RELEASES",
+  macos: [
+    ["macOS installer (.dmg)", (name, v) => name.endsWith(".dmg") && name.includes(v)],
+    [
+      "macOS updater zip (darwin ... .zip)",
+      (name, v) => name.endsWith(".zip") && name.includes("darwin") && name.includes(v),
+    ],
+  ],
+  windows: [
+    ["Windows installer (Setup.exe)", (name, v) => /setup\.exe$/i.test(name) && name.includes(v)],
+    ["Squirrel update package (.nupkg)", (name, v) => name.endsWith(".nupkg") && name.includes(v)],
+    ["Squirrel feed index (RELEASES)", (name) => name === "RELEASES"],
+    [
+      "Windows zip (win32 ... .zip)",
+      (name, v) => name.endsWith(".zip") && name.includes("win32") && name.includes(v),
+    ],
   ],
 };
 
@@ -60,12 +77,19 @@ try {
 }
 
 const missing = platforms
-  .map((platform) => [platform, REQUIRED[platform](version).filter((name) => !present.has(name))])
-  .filter(([, names]) => names.length > 0);
+  .map((platform) => [
+    platform,
+    REQUIRED[platform]
+      .filter(([, matches]) => ![...present].some((name) => matches(name, version)))
+      .map(([label]) => label),
+  ])
+  .filter(([, labels]) => labels.length > 0);
 
 if (missing.length > 0) {
   const platformNames = missing.map(([platform]) => platform).join(" and ");
-  const detail = missing.map(([platform, names]) => `${platform}: ${names.join(", ")}`).join("; ");
+  const detail = missing
+    .map(([platform, labels]) => `${platform}: ${labels.join(", ")}`)
+    .join("; ");
   const found = [...present].join(", ") || "none";
   fail(
     `${tag} shipped nothing for ${platformNames} — missing ${detail}. Release assets: ${found}.`,
