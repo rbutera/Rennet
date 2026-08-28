@@ -477,9 +477,21 @@ const P1_PREFS: NonNullable<SettingsProject["prefs"]> = {
   guidance: [],
 };
 
-function mountServedPrefs(): {
-  writes: { key: string; value: string | null; repoPath: string }[];
-  guidanceWrites: { repoPath: string; rules: { rule: string; severity: string }[] }[];
+function mountServedPrefs() {
+  return mountServedPrefsWith(P1_PREFS);
+}
+
+function mountServedPrefsWith(prefs: NonNullable<SettingsProject["prefs"]>): {
+  writes: {
+    projectId: string;
+    repoPath: string;
+    key: SettingsProjectValueKey;
+    value: string | null;
+  }[];
+  guidanceWrites: {
+    repoPath: string;
+    rules: { id?: string; rule: string; severity: string }[];
+  }[];
   view: ReturnType<typeof mount>;
 } {
   const writes: {
@@ -488,7 +500,10 @@ function mountServedPrefs(): {
     key: SettingsProjectValueKey;
     value: string | null;
   }[] = [];
-  const guidanceWrites: { repoPath: string; rules: { rule: string; severity: string }[] }[] = [];
+  const guidanceWrites: {
+    repoPath: string;
+    rules: { id?: string; rule: string; severity: string }[];
+  }[] = [];
   const served = new MemoryBridge(
     {
       "projects.list": () => ({ projects: [...PROJECTS] }),
@@ -499,7 +514,7 @@ function mountServedPrefs(): {
           contributions: [{ layer: "builtin", value: "system", effective: true }],
         },
         appearanceMalformed: false,
-        projects: [{ ...P1_ROW, prefs: P1_PREFS }],
+        projects: [{ ...P1_ROW, prefs }],
       }),
       "settings.setProjectValue": (input) => {
         const write = input as (typeof writes)[number];
@@ -570,6 +585,65 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     // Switching to a REST tracker seeds its conventional token env-var NAME — the token
     // value itself never enters any store.
     expect(writes.find((write) => write.key === "trackerTokenEnv")?.value).toBe("JIRA_API_TOKEN");
+    cleanup();
+  });
+
+  it("a project whose row is NOT served keeps its editors disabled while a sibling's are live", async () => {
+    // p2 has no settings row (never scanned, or its read has not arrived). The capability
+    // is per project, so p2 stays disabled — an enabled control there would sit over a
+    // write with no repoPath to address, which is the silent no-op this pair guards.
+    const history = memoryHistory("/settings/projects?project=p2");
+    const served = new MemoryBridge(
+      {
+        "projects.list": () => ({ projects: [...PROJECTS] }),
+        "settings.get": () => ({
+          scheme: "system",
+          schemeProvenance: {
+            layer: "builtin",
+            contributions: [{ layer: "builtin", value: "system", effective: true }],
+          },
+          appearanceMalformed: false,
+          projects: [{ ...P1_ROW, prefs: P1_PREFS }],
+        }),
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+    const { findByLabelText } = mount(
+      <BridgeProvider bridge={served}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <LiveSettingsProjectionProvider>
+            <ProjectsPage />
+          </LiveSettingsProjectionProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    expect((await findByLabelText("Worktree naming pattern")).hasAttribute("disabled")).toBe(true);
+    cleanup();
+
+    // …and the SAME served view leaves p1 — the project that has a row — editable.
+    const { view } = mountServedPrefs();
+    expect((await view.findByLabelText("Worktree naming pattern")).hasAttribute("disabled")).toBe(
+      false,
+    );
+    cleanup();
+  });
+
+  it("editing a served rule sends its ID back, so the catalogue can keep what it authored", async () => {
+    const { guidanceWrites, view } = mountServedPrefsWith({
+      ...P1_PREFS,
+      guidance: [
+        { id: "arch-boundary", rule: "file I/O lives only in adapters", severity: "high" },
+      ],
+    });
+    fireEvent.click(await view.findByRole("button", { name: "Edit" }));
+    fireEvent.change(await view.findByLabelText("Guidance rule text"), {
+      target: { value: "file I/O belongs in adapters only" },
+    });
+    fireEvent.click(await view.findByRole("button", { name: "Save" }));
+    await waitFor(() => expect(guidanceWrites.length).toBe(1));
+    expect(guidanceWrites[0]?.rules).toEqual([
+      { id: "arch-boundary", rule: "file I/O belongs in adapters only", severity: "high" },
+    ]);
     cleanup();
   });
 

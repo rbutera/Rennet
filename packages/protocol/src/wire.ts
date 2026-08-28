@@ -1876,7 +1876,16 @@ export const settingsProjectPrefsSchema = z.object({
     baseUrl: layeredStringSchema,
     tokenEnv: layeredStringSchema,
   }),
-  guidance: z.array(z.object({ rule: z.string().min(1), severity: findingSeveritySchema })),
+  guidance: z.array(
+    z.object({
+      /** The catalogue's stable author-facing id, when the rule has one. Carried so an
+       *  EDIT addresses the rule by identity — retyping its statement then keeps the
+       *  rationale and anti-pattern the author wrote. Never model-facing. */
+      id: z.string().min(1).optional(),
+      rule: z.string().min(1),
+      severity: findingSeveritySchema,
+    }),
+  ),
 });
 export type SettingsProjectPrefs = z.infer<typeof settingsProjectPrefsSchema>;
 

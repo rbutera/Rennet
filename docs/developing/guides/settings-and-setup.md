@@ -272,10 +272,23 @@ builtin < detected < global < repo
 ```
 
 Appearance uses `builtin < global`. Map visibility uses `builtin < repo`. The
-per-project preferences use the layers each has a producer for: the glyph is
-`builtin < repo`, the worktree naming pattern `builtin < global < repo`, and the
-worktree location and issue-tracker keys the full ladder, since the project scout
-supplies detected offers for them.
+per-project preferences resolve through the layers that actually have a producer
+today: the glyph and the worktree naming pattern are `builtin < repo`, the
+worktree location is `builtin < detected < repo` (the project scout offers a
+detected location), and the issue-tracker keys are `builtin < detected < global <
+repo` — the tracker is the one section with a host-wide global rung, in
+`daemon-settings.json`.
+
+The tracker section resolves as a **unit**, not key by key. The layer that
+supplies the effective *kind* is the floor for that tracker's project key, base
+URL, and token environment variable: an endpoint offered lower down described a
+different provider, so it is masked and the field reads honestly absent. A
+project that picks JIRA on its own rung therefore never inherits the host's
+Linear URL and token — an incomplete endpoint surfaces as missing config and
+retrieval proceeds without it. An endpoint set at or above the kind's layer is a
+refinement of the same choice and still applies. The settings surface and
+retrieval share that one resolution, so a provenance chip cannot disagree with
+the endpoint a review actually calls.
 "Runs on" (execution locus) is a detected fact with no ladder layer to override.
 The UI renders the resolver's answer instead of recalculating precedence in React.
 

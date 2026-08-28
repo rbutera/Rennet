@@ -1466,8 +1466,36 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
     await composition.setProjectValue(write("trackerKind", "jira"));
     const after = (await composition.get()).projects[0];
     expect(after?.prefs?.tracker.kind).toEqual({ value: "jira", layer: "repo" });
-    // The lower rungs are still there — the repo answer wins, it does not erase them.
-    expect(after?.prefs?.tracker.tokenEnv).toEqual({ value: "LINEAR_TOKEN", layer: "global" });
+    // …and the host's LINEAR credentials do NOT follow the kind up the ladder. They
+    // described a different provider, so they are masked: the JIRA fields read honestly
+    // absent (missing config the surface asks for) rather than a Linear URL and token
+    // env var that a JIRA endpoint would be called with.
+    expect(after?.prefs?.tracker.tokenEnv).toEqual({ value: "", layer: "builtin" });
+    expect(after?.prefs?.tracker.baseUrl).toEqual({ value: "", layer: "builtin" });
+  });
+
+  it("an endpoint field set AT or ABOVE the kind's rung still applies (a refinement, not a mix)", async () => {
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({
+      ...deps,
+      readDaemonSettings: () => ({
+        version: 1 as const,
+        tracker: {
+          kind: "jira" as const,
+          baseUrl: "https://team.atlassian.net",
+          tokenEnv: "JIRA_API_TOKEN",
+        },
+      }),
+    });
+    // The project keeps the host's KIND and only narrows the prefix — same provider.
+    await composition.setProjectValue(write("trackerProjectKey", "PAY"));
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.tracker.kind).toEqual({ value: "jira", layer: "global" });
+    expect(row?.prefs?.tracker.projectKey).toEqual({ value: "PAY", layer: "repo" });
+    expect(row?.prefs?.tracker.baseUrl).toEqual({
+      value: "https://team.atlassian.net",
+      layer: "global",
+    });
   });
 
   it("a value the registry rejects never reaches the store", async () => {

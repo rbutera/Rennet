@@ -144,6 +144,20 @@ export function loadConventionCatalogue(projectRoot: string): ConventionCatalogu
   return { catalogue: { rules, source }, dropped };
 }
 
+/** The file's top-level fields OTHER than `rules` — `source` and anything else an
+ *  author put there. Read raw so a write preserves the envelope it did not author;
+ *  a bare-array or unreadable file has no envelope to keep. */
+function readEnvelope(path: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const { rules: _rules, ...envelope } = parsed as Record<string, unknown>;
+    return envelope;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Write the per-project catalogue back to `<projectRoot>/.rennet/conventions.json`
  * (C18 group A) — the WRITER beside the reader, so the Guidance section's edits are
@@ -152,34 +166,37 @@ export function loadConventionCatalogue(projectRoot: string): ConventionCatalogu
  * degrade on. Throws when the file cannot be written; the caller reports that rather
  * than claiming a save that did not happen.
  *
- * A rule the settings surface authored carries only its statement and its severity —
- * there is no rationale field on that surface — but the reader REQUIRES a rationale
- * (#180: a rule with none is dropped as malformed). So an edited rule KEEPS the
- * rationale (and `id`/`antiPattern`) already on disk for the same convention text,
- * and a newly authored one takes its own statement as its reason. Nothing is invented
- * on the author's behalf.
+ * NOTHING the edit did not author is lost. A rule is addressed by its stable `id`
+ * where it has one, so RETYPING a rule's statement still keeps its rationale, its
+ * anti-pattern and its id (matching on the mutable text alone silently dropped all
+ * three); a rule with no id falls back to matching on its unchanged text. The file's
+ * top-level envelope — `source`, and any field an author added — is preserved too.
  *
- * ponytail: matching by convention text means retyping a rule's statement loses its
- * rationale; carrying rule ids through the settings wire is the upgrade path.
+ * The settings surface authors only a statement and a severity, and the reader
+ * REQUIRES a rationale (#180: a rule with none is dropped as malformed), so a NEWLY
+ * authored rule takes its own statement as its reason. Nothing is invented on the
+ * author's behalf.
  */
 export function saveConventionCatalogue(
   projectRoot: string,
-  rules: readonly { readonly convention: string; readonly severity: FindingSeverity }[],
+  rules: readonly {
+    readonly id?: string;
+    readonly convention: string;
+    readonly severity: FindingSeverity;
+  }[],
 ): ConventionCatalogueLoad {
   const path = join(projectRoot, CONVENTIONS_FILE);
-  const existing = new Map(
-    (loadConventionCatalogue(projectRoot).catalogue?.rules ?? []).map((rule) => [
-      rule.convention,
-      rule,
-    ]),
-  );
+  const current = loadConventionCatalogue(projectRoot).catalogue?.rules ?? [];
+  const byId = new Map(current.filter((rule) => rule.id).map((rule) => [rule.id, rule]));
+  const byText = new Map(current.map((rule) => [rule.convention, rule]));
   const next: ConventionRule[] = rules
     .filter((rule) => isNonEmptyString(rule.convention))
     .map((rule) => {
       const convention = rule.convention.trim();
-      const kept = existing.get(convention);
+      // Identity first, text only as the fallback for a rule that never had an id.
+      const kept = (rule.id ? byId.get(rule.id) : undefined) ?? byText.get(convention);
       return {
-        ...(kept?.id ? { id: kept.id } : {}),
+        ...((kept?.id ?? rule.id) ? { id: kept?.id ?? rule.id } : {}),
         convention,
         rationale: kept?.rationale ?? convention,
         severity: rule.severity,
@@ -188,7 +205,7 @@ export function saveConventionCatalogue(
     });
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify({ rules: next }, null, 2)}\n`);
+  writeFileSync(tmp, `${JSON.stringify({ ...readEnvelope(path), rules: next }, null, 2)}\n`);
   renameSync(tmp, path);
   // Read back through the reader, so the caller renders what the FILE now holds —
   // never the request echoed as if it had been stored.

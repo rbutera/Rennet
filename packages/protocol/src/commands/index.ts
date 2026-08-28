@@ -1105,7 +1105,13 @@ const definitions = {
       projectId: z.string().min(1),
       repoPath: z.string().min(1),
       rules: z.array(
-        z.object({ rule: z.string().min(1), severity: z.enum(["high", "medium", "low"]) }),
+        z.object({
+          /** The rule's stable id where it has one — an edit addresses the rule by
+           *  identity, so retyping the statement keeps its rationale and anti-pattern. */
+          id: z.string().min(1).optional(),
+          rule: z.string().min(1),
+          severity: z.enum(["high", "medium", "low"]),
+        }),
       ),
     }),
     output: z.object({

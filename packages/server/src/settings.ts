@@ -8,10 +8,12 @@ import {
   detectLocus,
   escapePath,
   REVIEW_ROLE_JOB_IDS,
+  type ResolvedTracker,
   type ReviewRoleOverrides,
   resolve,
   resolvePromoted,
   resolveScheme,
+  resolveTracker,
   resolveVisibility,
   reviewRoleJobId,
   reviewRoleMappings,
@@ -110,7 +112,11 @@ export interface SettingsCompositionDeps {
    */
   saveGuidance(
     repoRoot: string,
-    rules: readonly { convention: string; severity: "high" | "medium" | "low" }[],
+    rules: readonly {
+      id?: string;
+      convention: string;
+      severity: "high" | "medium" | "low";
+    }[],
   ): ConventionCatalogueLoad;
   /** The viewer's client-settings state (appearance, keybindings). */
   readGlobalState(): { status: "absent" | "ok" | "malformed"; config: ClientSettings };
@@ -381,7 +387,7 @@ export interface SettingsComposition {
   setGuidance(input: {
     projectId: string;
     repoPath: string;
-    rules: readonly { rule: string; severity: "high" | "medium" | "low" }[];
+    rules: readonly { id?: string; rule: string; severity: "high" | "medium" | "low" }[];
   }): Promise<{ status: "applied" | "unresolved"; guidance: SettingsGuidance }>;
   setRepoVisibility(input: {
     projectId: string;
@@ -517,6 +523,16 @@ function guidanceView(load: ConventionCatalogueLoad): SettingsGuidance {
   };
 }
 
+/** A resolved tracker section → the wire's `{ value, layer }` cells. */
+function trackerView(resolved: ResolvedTracker): SettingsProjectPrefs["tracker"] {
+  return {
+    kind: { value: resolved.kind.value as string, layer: resolved.kind.layer },
+    projectKey: { value: resolved.projectKey.value, layer: resolved.projectKey.layer },
+    baseUrl: { value: resolved.baseUrl.value, layer: resolved.baseUrl.layer },
+    tokenEnv: { value: resolved.tokenEnv.value, layer: resolved.tokenEnv.layer },
+  };
+}
+
 /** A STORED tracker kind as a ladder offer: only the real vocabulary is offered, so a
  *  hand-edited `kind: "jra"` is ignored rather than thrown into resolution. */
 function trackerKindOffer(value: string | undefined): TrackerKind | undefined {
@@ -617,38 +633,33 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       worktreePattern: layered(
         resolve(SETTINGS_REGISTRY.worktreePattern, { repo: offer(config?.worktreePattern) }),
       ),
-      tracker: {
-        kind: layered(
-          resolve(SETTINGS_REGISTRY.trackerKind, {
+      // ONE law for the whole section, the SAME one retrieval resolves through
+      // (`resolveTracker`): an endpoint field offered below the layer that set the
+      // kind belongs to another provider and is masked out. Without that, this
+      // surface would show a JIRA project the host's Linear token — and retrieval
+      // would call it.
+      tracker: trackerView(
+        resolveTracker({
+          kind: {
             detected: trackerKindOffer(detected.trackerKind),
             global: trackerKindOffer(globalTracker.kind),
             repo: trackerKindOffer(repoTracker.kind),
-          }),
-        ),
-        projectKey: layered(
-          resolve(SETTINGS_REGISTRY.trackerProjectKey, {
+          },
+          projectKey: {
             detected: offer(detected.trackerProjectKey),
             global: offer(globalTracker.projectKey),
             repo: offer(repoTracker.projectKey),
-          }),
-        ),
-        baseUrl: layered(
-          resolve(SETTINGS_REGISTRY.trackerBaseUrl, {
-            global: offer(globalTracker.baseUrl),
-            repo: offer(repoTracker.baseUrl),
-          }),
-        ),
-        tokenEnv: layered(
-          resolve(SETTINGS_REGISTRY.trackerTokenEnv, {
-            global: offer(globalTracker.tokenEnv),
-            repo: offer(repoTracker.tokenEnv),
-          }),
-        ),
-      },
+          },
+          baseUrl: { global: offer(globalTracker.baseUrl), repo: offer(repoTracker.baseUrl) },
+          tokenEnv: { global: offer(globalTracker.tokenEnv), repo: offer(repoTracker.tokenEnv) },
+        }),
+      ),
       // The rules as the surface edits them (statement + severity). The authored
       // rationale and anti-pattern stay in the file — read by the review runners,
       // never rewritten from here.
       guidance: (guidance.catalogue?.rules ?? []).map((rule) => ({
+        // The stable id rides out so an edit comes back addressing the SAME rule.
+        ...(rule.id ? { id: rule.id } : {}),
         rule: rule.convention,
         severity: rule.severity,
       })),
@@ -1104,7 +1115,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       }
       const written = deps.saveGuidance(
         live.target.repoRoot,
-        input.rules.map((rule) => ({ convention: rule.rule, severity: rule.severity })),
+        input.rules.map((rule) => ({
+          ...(rule.id ? { id: rule.id } : {}),
+          convention: rule.rule,
+          severity: rule.severity,
+        })),
       );
       return { status: "applied", guidance: guidanceView(written) };
     },

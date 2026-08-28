@@ -65,7 +65,10 @@ export function TrackerSection({
 }) {
   const projection = useSettingsProjection();
   // No served write store yet ⇒ lock the picker + fields and disclose the gap.
-  const backed = projection.projectEditsPersist;
+  // Per PROJECT: the capability belongs to this project's served row, not to the
+  // surface — a project the daemon has no row for stays disabled even when a sibling
+  // project's editors are live.
+  const backed = projection.prefsBackedByProject[project.id] ?? projection.projectEditsPersist;
   const tracker = projection.trackerByProject[project.id] ?? UNSET_TRACKER;
 
   const setKind = (kind: TrackerKind) => {
@@ -114,7 +117,7 @@ export function TrackerSection({
   };
 
   return (
-    <Section title="Issue Tracker" caption={`.rennet/ in ${project.name}`}>
+    <Section title="Issue Tracker" caption="~/.rennet/projects/<repo>/config.json">
       <Row
         label="Tracker"
         hint="tickets a branch or PR references are fetched for the review agents"

@@ -404,6 +404,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         tokenEnv: rest ? prefs.tracker.tokenEnv : null,
       };
       guidanceByProject[projectId] = prefs.guidance.map((rule) => ({
+        ...(rule.id ? { id: rule.id } : {}),
         rule: rule.rule,
         severity: rule.severity,
       }));
@@ -413,6 +414,9 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     // row is not written to — there is nothing to address, and inventing a path would
     // write into some other repo.
     const writePref = (projectId: string, key: ProjectPrefKey, value: string | null): void => {
+      // `prefsBackedByProject` is derived from THIS map, so a project with no row here
+      // renders its editors disabled — there is no enabled control this guard can
+      // silently swallow a write from. It never invents a path into another repo.
       const repoPath = rowByProject.get(projectId)?.repoPath;
       if (!repoPath) return;
       // A refused write (unresolved checkout, malformed repo config) leaves the control
@@ -427,11 +431,18 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       // rung (C18 group A). Two flags because they are two stores — a daemon that serves
       // one and not the other still tells the truth about which controls persist.
       nameEditsPersist: true,
-      // Derived, not asserted: the prefs are editable exactly when the daemon that
-      // answered actually SERVES them. A host still running an older daemon returns rows
-      // with no `prefs`, and those pages keep their honest disabled state rather than
-      // enabling controls whose write that daemon would reject.
-      projectEditsPersist: [...rowByProject.values()].some((row) => row.prefs !== undefined),
+      // Derived per PROJECT from the row this projection can actually address, never
+      // asserted for the surface as a whole. Two failures that fixes: a daemon still
+      // running an older version returns rows with no `prefs` (those editors must stay
+      // disabled), and a project whose row has not arrived has no `repoPath` to write to
+      // — the SAME map decides the capability and the write address, so an enabled
+      // control can never sit over a write with nowhere to go.
+      prefsBackedByProject: Object.fromEntries(
+        [...rowByProject].map(([projectId, row]) => [projectId, row.prefs !== undefined]),
+      ),
+      // The fallback for a project with no row at all: not backed, because nothing here
+      // can address it. It is never an assertion about the daemon's capability.
+      projectEditsPersist: false,
       setProjectName: (projectId, name) => {
         // A refused write leaves the field where it was — the invalidated `projects.list`
         // is the honest answer, never a fabricated rename.
@@ -466,7 +477,11 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         void writeGuidance({
           projectId,
           repoPath,
-          rules: rules.map((rule) => ({ rule: rule.rule, severity: rule.severity })),
+          rules: rules.map((rule) => ({
+            ...(rule.id ? { id: rule.id } : {}),
+            rule: rule.rule,
+            severity: rule.severity,
+          })),
         }).catch(() => undefined);
       },
       reconnectHost: async (hostId) => {

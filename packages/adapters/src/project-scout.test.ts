@@ -285,6 +285,46 @@ describe("resolveTrackerConfig — the ladder-resolved retrieval config (#461, B
     });
   });
 
+  it("a repo kind NEVER inherits the lower rung's credentials — no JIRA call with a Linear token", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    // The exact repro: the project chose JIRA on its own rung; the host's global rung
+    // holds LINEAR endpoint config. Resolving key-by-key produced a `jira` endpoint
+    // carrying `api.linear.app` + `LINEAR_TOKEN` — a real cross-provider call.
+    store.updateConfig("mixed", (current) => ({ ...current, tracker: { kind: "jira" } }));
+    // Masked, so the endpoint is INCOMPLETE: no config beats wrong config. Retrieval
+    // proceeds and the missing keys surface as missing-config facts (never a gate).
+    expect(resolveTrackerConfig(store, "mixed", globalLinear)).toBeUndefined();
+
+    // Supplying the JIRA endpoint on the SAME rung as the kind resolves normally.
+    store.updateConfig("mixed", (current) => ({
+      ...current,
+      tracker: {
+        kind: "jira",
+        baseUrl: "https://pay.atlassian.net",
+        tokenEnv: "PAY_JIRA_TOKEN",
+      },
+    }));
+    expect(resolveTrackerConfig(store, "mixed", globalLinear)).toEqual({
+      jira: { baseUrl: "https://pay.atlassian.net", tokenEnvVar: "PAY_JIRA_TOKEN" },
+    });
+  });
+
+  it("an endpoint field ABOVE the kind's rung refines it — same provider, narrower answer", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    // The host set the kind AND its endpoint; the project only narrows the prefix.
+    store.updateConfig("refined", (current) => ({
+      ...current,
+      tracker: { projectKey: "ENG-PLATFORM" },
+    }));
+    expect(resolveTrackerConfig(store, "refined", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG-PLATFORM"],
+      },
+    });
+  });
+
   it("an untouched install reads the global defaults — the repo rung offers nothing", () => {
     const store = new ProjectSnapshotStore(tempRepo());
     expect(store.loadConfig("untouched")).toBeNull();

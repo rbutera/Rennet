@@ -234,6 +234,59 @@ export function resolve<T>(
   };
 }
 
+/** One tracker section's offers, per key, per layer. */
+export interface TrackerOffers {
+  readonly kind: Partial<Record<SettingsLayer, TrackerKind | undefined>>;
+  readonly projectKey: Partial<Record<SettingsLayer, string | undefined>>;
+  readonly baseUrl: Partial<Record<SettingsLayer, string | undefined>>;
+  readonly tokenEnv: Partial<Record<SettingsLayer, string | undefined>>;
+}
+
+/** A tracker section as the ladder resolves it: the kind plus its endpoint fields. */
+export interface ResolvedTracker {
+  readonly kind: Resolved<TrackerKind>;
+  readonly projectKey: Resolved<string>;
+  readonly baseUrl: Resolved<string>;
+  readonly tokenEnv: Resolved<string>;
+}
+
+/**
+ * Resolve a whole tracker section under ONE law, because the keys are not
+ * independent: `baseUrl`, `tokenEnv` and `projectKey` belong to a PROVIDER. Resolving
+ * them key-by-key mixed rungs — a project that set `kind: jira` on its repo rung
+ * inherited the host's Linear URL and Linear token env var from the global rung, and
+ * retrieval then called a JIRA endpoint with Linear credentials.
+ *
+ * So: the layer that supplies the effective KIND is the floor for its endpoint fields.
+ * An offer BELOW that layer described a different provider and is masked out (the
+ * field falls to its builtin — honestly absent, which reads as missing config and
+ * disables retrieval, never a wrong endpoint). An offer AT or ABOVE it is a
+ * refinement of the same choice and still wins, so a global kind with a per-project
+ * base URL keeps working.
+ *
+ * Shared by the settings surface and by retrieval's `resolveTrackerConfig`, so the
+ * provenance chip can never disagree with the endpoint a review actually calls.
+ */
+export function resolveTracker(offers: TrackerOffers): ResolvedTracker {
+  const kind = resolve(SETTINGS_REGISTRY.trackerKind, offers.kind);
+  const floor = LAYER_ORDER.indexOf(kind.layer);
+  const belowKind = (
+    field: Partial<Record<SettingsLayer, string | undefined>>,
+  ): Partial<Record<SettingsLayer, string | undefined>> => {
+    const kept: Partial<Record<SettingsLayer, string | undefined>> = {};
+    for (const [layer, value] of Object.entries(field) as [SettingsLayer, string | undefined][]) {
+      if (LAYER_ORDER.indexOf(layer) >= floor) kept[layer] = value;
+    }
+    return kept;
+  };
+  return {
+    kind,
+    projectKey: resolve(SETTINGS_REGISTRY.trackerProjectKey, belowKind(offers.projectKey)),
+    baseUrl: resolve(SETTINGS_REGISTRY.trackerBaseUrl, belowKind(offers.baseUrl)),
+    tokenEnv: resolve(SETTINGS_REGISTRY.trackerTokenEnv, belowKind(offers.tokenEnv)),
+  };
+}
+
 /**
  * Resolve the appearance scheme: builtin `system`, overridden by the viewer's
  * personal client settings. There is no repo layer for a personal preference.

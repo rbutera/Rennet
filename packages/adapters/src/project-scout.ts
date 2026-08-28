@@ -23,7 +23,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type HarnessTurnResult, resolve, SETTINGS_REGISTRY, type TrackerKind } from "@rennet/core";
+import { type HarnessTurnResult, resolveTracker, type TrackerKind } from "@rennet/core";
 import type { GlobalConfig } from "@rennet/protocol";
 import { z } from "zod";
 import { CONVENTIONS_FILE } from "./convention-catalogue-reader";
@@ -500,28 +500,36 @@ export function resolveTrackerConfig(
   const repo = store.loadConfig(repoKey)?.tracker ?? {};
   const offer = (value: string | undefined): string | undefined =>
     value === undefined || value.trim() === "" ? undefined : value.trim();
-  const kind = resolve(SETTINGS_REGISTRY.trackerKind, {
-    detected: detected.trackerKind,
-    global: rung.kind,
-    // The stored repo answer rides the SAME validator the write used; an
-    // out-of-vocabulary value is dropped rather than thrown into resolution.
-    repo: TRACKER_KINDS.includes(repo.kind as TrackerKind) ? (repo.kind as TrackerKind) : undefined,
-  }).value;
+  // ONE law for the whole section (`resolveTracker`), shared with the settings
+  // surface: an endpoint field offered BELOW the layer that set the kind belongs to a
+  // different provider and is masked out, so a per-project JIRA can never be called
+  // with the host's Linear credentials.
+  const resolved = resolveTracker({
+    kind: {
+      detected: detected.trackerKind,
+      global: TRACKER_KINDS.includes(rung.kind as TrackerKind)
+        ? (rung.kind as TrackerKind)
+        : undefined,
+      // The stored repo answer rides the SAME validator the write used; an
+      // out-of-vocabulary value is dropped rather than thrown into resolution.
+      repo: TRACKER_KINDS.includes(repo.kind as TrackerKind)
+        ? (repo.kind as TrackerKind)
+        : undefined,
+    },
+    projectKey: {
+      detected: detected.trackerProjectKey,
+      global: offer(rung.projectKey),
+      repo: offer(repo.projectKey),
+    },
+    baseUrl: { global: offer(rung.baseUrl), repo: offer(repo.baseUrl) },
+    tokenEnv: { global: offer(rung.tokenEnv), repo: offer(repo.tokenEnv) },
+  });
+  const kind = resolved.kind.value;
   if (kind !== "jira" && kind !== "linear") return undefined;
-  const baseUrl = resolve(SETTINGS_REGISTRY.trackerBaseUrl, {
-    global: offer(rung.baseUrl),
-    repo: offer(repo.baseUrl),
-  }).value;
-  const tokenEnvVar = resolve(SETTINGS_REGISTRY.trackerTokenEnv, {
-    global: offer(rung.tokenEnv),
-    repo: offer(repo.tokenEnv),
-  }).value;
+  const baseUrl = resolved.baseUrl.value;
+  const tokenEnvVar = resolved.tokenEnv.value;
   if (baseUrl === "" || tokenEnvVar === "") return undefined;
-  const projectKey = resolve(SETTINGS_REGISTRY.trackerProjectKey, {
-    detected: detected.trackerProjectKey,
-    global: offer(rung.projectKey),
-    repo: offer(repo.projectKey),
-  }).value;
+  const projectKey = resolved.projectKey.value;
   const endpoint = {
     baseUrl,
     tokenEnvVar,

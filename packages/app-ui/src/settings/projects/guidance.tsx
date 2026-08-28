@@ -36,7 +36,10 @@ export function GuidanceSection({ project }: { readonly project: SidebarProject 
   const projection = useSettingsProjection();
   // No served guidance-WRITE command yet (`settings.guidance` is read-only) ⇒ the editor
   // is locked and the gap disclosed, never an Add Rule / Save that silently discards.
-  const backed = projection.projectEditsPersist;
+  // Per PROJECT: the capability belongs to this project's served row, not to the
+  // surface — a project the daemon has no row for stays disabled even when a sibling
+  // project's editors are live.
+  const backed = projection.prefsBackedByProject[project.id] ?? projection.projectEditsPersist;
   const rules = projection.guidanceByProject[project.id] ?? [];
 
   return (
@@ -88,7 +91,14 @@ function GuidanceList({
   function save() {
     const text = draftText.trim();
     if (!text) return; // saving with empty text is refused
-    const next: GuidanceRule = { rule: text, severity: draftSeverity };
+    // An EDIT keeps the rule's identity, so retyping its statement still addresses the
+    // same catalogue rule — its authored rationale and anti-pattern are not lost.
+    const existing = typeof editing === "number" ? rules[editing] : undefined;
+    const next: GuidanceRule = {
+      ...(existing?.id ? { id: existing.id } : {}),
+      rule: text,
+      severity: draftSeverity,
+    };
     onChange(
       editing === "new" ? [...rules, next] : rules.map((r, i) => (i === editing ? next : r)),
     );
