@@ -389,6 +389,28 @@ export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
 export const SessionModelSchema = z.object({
   id,
   projectId: id,
+  /**
+   * The repository root the session's work actually runs in (#580). `projectId` is the
+   * SIDEBAR GROUPING key — a `Project.id` — and a workspace project holds MANY repos, so
+   * that mapping is many-to-one and NOT invertible: the project id alone cannot say which
+   * repo a round ran in. This is where the session keeps it, so per-repo rounds in one
+   * workspace never collapse into a single ledger. Absent until something that KNOWS the
+   * root stamps it (a round dispatch does; a New Chat row click does not know which repo
+   * of a workspace it named), and a later dispatch stamps it in place.
+   */
+  repositoryRoot: z.string().min(1).optional(),
+  /**
+   * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
+   * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the
+   * origin remote, else the durable common-dir alias), so it crosses the wire freely where
+   * `repositoryRoot` never could.
+   *
+   * It exists because a New Chat row knows this and cannot know the root: without it, two repos
+   * in one workspace that both have a `main` branch mint ONE session and clicking one row hands
+   * you the other's chat. Absent ⇒ the caller did not name a repository, and matching behaves
+   * exactly as it did before this field existed.
+   */
+  repository: z.string().min(1).optional(),
   claim: ClaimSchema.optional(),
   reviewId: id.optional(),
   harnessCursor: HarnessCursorSchema.optional(),

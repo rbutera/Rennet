@@ -123,21 +123,23 @@ describe("session.rounds — the rounds ledger read (C09)", () => {
 });
 
 describe("resolveRoundSessionId — slug→session resolution (read side of dispatchRound's mint)", () => {
+  // The project key both mints converge on (#580) — a `Project.id`, never a path.
+  const PROJECT_ID = "3f2a1c94-0000-4000-8000-abcdefabcdef";
   const claim = { branch: "feat/seam" };
   const claimingSession = {
     id: "session-abc",
-    projectId: "/home/dev/acme",
+    projectId: PROJECT_ID,
     claim,
     threads: [],
     createdAt: 1,
   } as unknown as SessionModel;
 
   it("resolves the session claiming the review's target (branch)", () => {
-    expect(resolveRoundSessionId(REVIEW, [claimingSession])).toBe("session-abc");
+    expect(resolveRoundSessionId(REVIEW, [claimingSession], PROJECT_ID)).toBe("session-abc");
   });
 
   it("falls back to the review id when no session claims the target yet", () => {
-    expect(resolveRoundSessionId(REVIEW, [])).toBe(REVIEW_ID);
+    expect(resolveRoundSessionId(REVIEW, [], PROJECT_ID)).toBe(REVIEW_ID);
   });
 
   it("falls back to the review id for a detached HEAD (no branch to claim)", () => {
@@ -145,12 +147,22 @@ describe("resolveRoundSessionId — slug→session resolution (read side of disp
       ...REVIEW,
       patchsets: [{ id: "ps-1", repository: {} }],
     } as unknown as Review;
-    expect(resolveRoundSessionId(detached, [claimingSession])).toBe(REVIEW_ID);
+    expect(resolveRoundSessionId(detached, [claimingSession], PROJECT_ID)).toBe(REVIEW_ID);
   });
 
   it("does not cross-attach a claiming session in another project", () => {
-    const otherProject = { ...claimingSession, projectId: "/home/dev/other" } as SessionModel;
-    expect(resolveRoundSessionId(REVIEW, [otherProject])).toBe(REVIEW_ID);
+    const otherProject = { ...claimingSession, projectId: "other-project-id" } as SessionModel;
+    expect(resolveRoundSessionId(REVIEW, [otherProject], PROJECT_ID)).toBe(REVIEW_ID);
+  });
+
+  it("does not cross-attach a session stamped for a DIFFERENT repo in the same project", () => {
+    // The cardinality trap: a workspace maps N repo roots to ONE `Project.id`, so the
+    // project key alone cannot separate repo-a's rounds from repo-b's.
+    const elsewhere = {
+      ...claimingSession,
+      repositoryRoot: "/home/dev/other-repo",
+    } as unknown as SessionModel;
+    expect(resolveRoundSessionId(REVIEW, [elsewhere], PROJECT_ID)).toBe(REVIEW_ID);
   });
 });
 

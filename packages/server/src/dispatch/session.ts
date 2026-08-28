@@ -142,6 +142,9 @@ export function sessionHandlers(rt: DispatchRuntime) {
           : {
               branch: input.branch,
               ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
+              // The row's `owner/name` (#580): a workspace's two `main` branches are two
+              // targets, not one. Absent ⇒ the pre-#580 mint, unchanged.
+              ...(input.repository === undefined ? {} : { repository: input.repository }),
             },
       );
       return parseCommandOutput(name, {
