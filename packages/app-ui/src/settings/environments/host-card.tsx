@@ -69,6 +69,13 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState("");
   const [removeOpen, setRemoveOpen] = useState(false);
+  // The reconnect attempt's own state (C17 cluster 5, #533). `reconnecting` is a REAL
+  // in-flight flag on the dispatched operation, not a timed animation; `reconnectError` is
+  // the reason the last attempt failed, cleared when a new one starts. A successful attempt
+  // sets neither — the refreshed daemon status flips the card, so success is never claimed
+  // here on this component's word.
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Take focus + select the moment the rename field opens (the a11y-safe autofocus).
@@ -88,6 +95,19 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
       // Clear the editor WITHOUT closing settings (the takeover root's Escape handler).
       event.stopPropagation();
       setRenaming(false);
+    }
+  }
+
+  async function reconnect() {
+    setReconnecting(true);
+    setReconnectError(null);
+    const outcome = await projection.reconnectHost(host.id);
+    setReconnecting(false);
+    // Only a FAILED attempt says anything: a success is proved by the host's refreshed daemon
+    // line, never by this card announcing one. An attempt that failed without a reason still
+    // reports the failure — silence would read as success.
+    if (!outcome.reachable) {
+      setReconnectError(outcome.error ?? "Could not reach this host's daemon.");
     }
   }
 
@@ -154,12 +174,14 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
 
       <div className="flex items-center gap-2 text-xs text-ink-soft">
         <span>{daemonLine(host)}</span>
-        {/* Reconnect / Update Daemon are the affordances; the daemon dial + apply are
-            B10-side detection (cluster 10) — button-only here (reconciliation 6), never
-            a faked local action. Their VISIBILITY is the honest, testable behaviour. */}
+        {/* Reconnect dispatches the REAL re-handshake (C17 cluster 5, #533): disabled and
+            reading "Connecting…" for exactly as long as the operation is in flight, then
+            either the card flips reachable (the refreshed status says so) or the failure
+            line below names why. No pretend animation, no optimistic green. Update Daemon
+            is still button-only pending cluster 6. */}
         {!host.daemon.reachable ? (
-          <Button variant="outline" size="xs">
-            Reconnect
+          <Button variant="outline" size="xs" disabled={reconnecting} onClick={reconnect}>
+            {reconnecting ? "Connecting…" : "Reconnect"}
           </Button>
         ) : null}
         {host.daemon.reachable && host.daemon.updateAvailable ? (
@@ -168,6 +190,11 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
           </Button>
         ) : null}
       </div>
+      {/* The failed attempt's reason, shown only while the host is still unreachable — a
+          host that came back has nothing to explain. */}
+      {reconnectError && !host.daemon.reachable ? (
+        <span className="text-xs text-destructive">{reconnectError}</span>
+      ) : null}
 
       <SourceControlSection host={host} />
 

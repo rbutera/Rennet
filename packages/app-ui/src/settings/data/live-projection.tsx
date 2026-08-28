@@ -49,6 +49,12 @@ import {
 //     per host on the daemon-settings rung, so a ruled-out agent stays ruled out across
 //     reload and ruling it out on one host leaves it running on the others.
 //
+//   • reconnectHost ← `daemon.reconnect` (C17 cluster 5, #533). The host card's Reconnect
+//     button dispatches a real per-host re-handshake and reports its real outcome. It
+//     invalidates `daemon.status`, so a card turns reachable only because the refreshed
+//     status says the host answered — a failed attempt keeps the card unreachable and shows
+//     the handshake's own reason.
+//
 // Every OTHER field stays EMPTY on purpose — the backend does not exist even post-fold,
 // so honest-empty is the truthful answer, not a stub. Each named in the cluster-10 report:
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
@@ -133,6 +139,12 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   const { mutate: setEnabled } = useMutation("harness.setEnabled", {
     invalidates: ["harness.hosts"],
   });
+  // Reconnect (C17 cluster 5, #533) is a served operation, not a local state flip: it
+  // invalidates `daemon.status`, so a card only turns reachable when the REFRESHED status
+  // says the host answered — the button can never paint itself green.
+  const { mutate: reconnect } = useMutation("daemon.reconnect", {
+    invalidates: ["daemon.status"],
+  });
 
   const projection = useMemo<SettingsProjection>(() => {
     const agentsByHost: Record<string, readonly DetectedTool[]> = {};
@@ -187,6 +199,19 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       sourceControlByHost:
         detectedForges.length > 0 ? { [connectedSource]: detectedForges.map(forgeRow) } : {},
       agentsByHost,
+      reconnectHost: async (hostId) => {
+        try {
+          const outcome = await reconnect({ source: hostId as ProjectSource });
+          return {
+            reachable: outcome.status.reachable,
+            ...(outcome.error ? { error: outcome.error } : {}),
+          };
+        } catch (reason) {
+          // A rejected dispatch IS a failed reconnect — reported as one, with whatever the
+          // failure said, rather than swallowed into a card that keeps looking hopeful.
+          return { reachable: false, error: reason instanceof Error ? reason.message : undefined };
+        }
+      },
       setToolEnabled: (hostId, toolId, enabled) => {
         // Only a DETECTED harness on that host has a served store behind it. A forge row's
         // toggle has no read to restore it from, so nothing is written for one — better an
@@ -204,7 +229,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         }).catch(() => undefined);
       },
     };
-  }, [data, settings, status, forges, bridge.platform, setEnabled]);
+  }, [data, settings, status, forges, bridge.platform, setEnabled, reconnect]);
 
   return <SettingsProjectionProvider value={projection}>{children}</SettingsProjectionProvider>;
 }

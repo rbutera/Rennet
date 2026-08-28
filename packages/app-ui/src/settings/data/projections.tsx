@@ -159,6 +159,13 @@ export interface SettingsProjection {
   renameHost(id: string, name: string): void;
   /** Forget a remote host (never the local machine). */
   removeHost(id: string): void;
+  /**
+   * Re-attempt the handshake to a host's daemon (C17 cluster 5, #533) — what Reconnect does.
+   * Resolves the honest OUTCOME: `reachable` is what the attempt actually achieved, and
+   * `error` carries the reason when it did not. A projection with no served backend resolves
+   * `{ reachable: false }`, so the button reports a failure instead of pretending to connect.
+   */
+  reconnectHost(id: string): Promise<{ readonly reachable: boolean; readonly error?: string }>;
   /** Enable/disable one detected tool (source-control OR agent) on a host. */
   setToolEnabled(hostId: string, toolId: string, enabled: boolean): void;
   /** Set a review role's assignment in one scenario (the mappings dialog cell edit). */
@@ -197,6 +204,8 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   projectEditsPersist: false,
   renameHost: () => undefined,
   removeHost: () => undefined,
+  // No backend to hand a handshake to, so the honest outcome is a failed reconnect.
+  reconnectHost: async () => ({ reachable: false }),
   setToolEnabled: () => undefined,
   setRoleAssignment: () => undefined,
   setProjectName: () => undefined,

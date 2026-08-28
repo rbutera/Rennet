@@ -178,15 +178,27 @@ const GH_AVAILABLE: DetectedForge = {
 };
 
 /** A bridge serving the four reads the live projection folds. `forges: "reject"` makes
- *  `forge.detect` fail, so the Source Control section's honest fallback is provable. */
+ *  `forge.detect` fail, so the Source Control section's honest fallback is provable.
+ *  `reconnect` is the served re-handshake: it may mutate `status` (a host that comes back)
+ *  or refuse, and the card must follow the STATUS, never the click. */
 function foldBridge(options: {
   readonly sections: readonly DaemonHostSection[];
   readonly status?: readonly DaemonHostStatus[];
   readonly agents?: readonly HarnessHostDetection[];
   readonly forges?: readonly DetectedForge[] | "reject";
+  readonly reconnect?: (source: string) => Promise<{ status: DaemonHostStatus; error?: string }>;
 }) {
+  let status = options.status ?? [];
   return new MemoryBridge(
     {
+      "daemon.reconnect": async (input) => {
+        if (!options.reconnect) throw new Error("no reconnect handler wired");
+        const outcome = await options.reconnect(input.source);
+        // The served operation IS the source of truth: whatever it decided this host's
+        // status now is, that is what the invalidated `daemon.status` read returns.
+        status = status.map((host) => (host.source === input.source ? outcome.status : host));
+        return outcome;
+      },
       "settings.get": () => ({
         scheme: "system",
         schemeProvenance: {
@@ -197,7 +209,7 @@ function foldBridge(options: {
         projects: [],
         daemonHosts: options.sections.map((section) => ({ ...section })),
       }),
-      "daemon.status": () => ({ hosts: (options.status ?? []).map((host) => ({ ...host })) }),
+      "daemon.status": () => ({ hosts: status.map((host) => ({ ...host })) }),
       "harness.hosts": () => ({ hosts: (options.agents ?? []).map((host) => ({ ...host })) }),
       "forge.detect": () => {
         if (options.forges === "reject") throw new Error("gh probe failed");
@@ -365,6 +377,102 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
     );
     expect(await findByText("Connect This Machine to detect its tooling.")).toBeTruthy();
     expect(queryByText("GitHub")).toBeNull();
+    cleanup();
+  });
+});
+
+// ── C17 cluster 5 — Reconnect (#533) is a real operation, honestly reported ────
+// The button dispatches `daemon.reconnect` and shows a REAL in-flight state for exactly as
+// long as the operation is pending. What it must never do is read green off the click: the
+// card turns reachable only when the refreshed `daemon.status` says the host answered.
+
+/** A promise a test resolves by hand, so the in-flight state is observable rather than raced. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+describe("LiveSettingsProjectionProvider — Reconnect performs a real re-handshake", () => {
+  it("POSITIVE CONTROL: a FAILING re-handshake shows Connecting…, then stays unreachable with the reason", async () => {
+    // Paint the card reachable off the click — an optimistic flip, a timed animation, a
+    // swallowed rejection — and this fails: the host never answered, so it must still read
+    // Not connected, with the handshake's own reason on screen.
+    const gate = deferred<{ status: DaemonHostStatus; error?: string }>();
+    const { findByRole, findByText, queryByRole } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: false, lastSeenVersion: "4.1.0" },
+        ],
+        reconnect: () => gate.promise,
+      }),
+    );
+    const button = await findByRole("button", { name: "Reconnect" });
+    button.click();
+
+    // In flight: the honest progress state, disabled so it cannot be double-fired.
+    const pending = await findByRole("button", { name: "Connecting…" });
+    expect(pending.hasAttribute("disabled")).toBe(true);
+    expect(queryByRole("button", { name: "Reconnect" })).toBeNull();
+
+    gate.resolve({
+      status: { source: "wsl:Ubuntu", reachable: false, lastSeenVersion: "4.1.0" },
+      error: 'No Rennet daemon answered in WSL distro "Ubuntu".',
+    });
+
+    expect(await findByText('No Rennet daemon answered in WSL distro "Ubuntu".')).toBeTruthy();
+    const wsl = within(card("wsl:Ubuntu"));
+    // Still unreachable, still last-seen — no version was invented by the attempt.
+    expect(wsl.getByText("Not connected — last seen running Rennet daemon v4.1.0")).toBeTruthy();
+    expect(wsl.queryByText("Rennet daemon v4.1.0")).toBeNull();
+    // And the button is offered again, enabled, so the viewer can retry.
+    expect(wsl.getByRole("button", { name: "Reconnect" }).hasAttribute("disabled")).toBe(false);
+    cleanup();
+  });
+
+  it("a SUCCEEDING re-handshake flips the card to reachable with its real version", async () => {
+    const { findByRole, findByText, queryByRole } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: false, lastSeenVersion: "4.1.0" },
+        ],
+        reconnect: async (source) => ({
+          status: { source: source as "wsl:Ubuntu", reachable: true, version: "4.2.0" },
+        }),
+      }),
+    );
+    (await findByRole("button", { name: "Reconnect" })).click();
+    // The card reads the version the REFRESHED status carries, not the last-seen one.
+    expect(await findByText("Rennet daemon v4.2.0")).toBeTruthy();
+    // Reachable ⇒ there is nothing left to reconnect, so the button is gone.
+    await waitFor(() => expect(queryByRole("button", { name: "Reconnect" })).toBeNull());
+    cleanup();
+  });
+
+  it("a REJECTED dispatch is reported as a failed reconnect, never a hopeful card", async () => {
+    const { findByRole, findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: false },
+        ],
+        reconnect: async () => {
+          throw new Error("daemon.reconnect: no settings composition is wired");
+        },
+      }),
+    );
+    (await findByRole("button", { name: "Reconnect" })).click();
+    expect(await findByText("daemon.reconnect: no settings composition is wired")).toBeTruthy();
+    expect(
+      within(card("wsl:Ubuntu")).getByText("Not connected — daemon unreachable, version unknown"),
+    ).toBeTruthy();
     cleanup();
   });
 });
