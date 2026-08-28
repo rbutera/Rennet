@@ -1,8 +1,16 @@
-import type { HarnessEvent, SessionOutcome } from "@rennet/core";
-import type { SessionTranscriptRow } from "@rennet/protocol";
+import type {
+  HarnessDescriptor,
+  HarnessEvent,
+  HarnessPort,
+  HarnessSession,
+  SessionOutcome,
+  SessionSpec,
+} from "@rennet/core";
+import { mintSession } from "@rennet/core";
+import type { SessionModel, SessionTranscriptRow } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { createTranscriptCapture, turnLoopRunPort } from "./turn-capture";
-import type { TurnResult } from "./turn-loop";
+import { createContextRebuiltEmit, createTranscriptCapture, turnLoopRunPort } from "./turn-capture";
+import { SessionTurnLoop, type TurnResult } from "./turn-loop";
 
 // The two seams that make the session turn loop's instantiation real (B10 cluster 6): the
 // transcript-capture sink that lights up C07's `session.transcript` WRITE side, and the
@@ -168,5 +176,116 @@ describe("turnLoopRunPort — the round's coding turn runs THROUGH the loop", ()
     const loop = loopReturning({ status: "cancelled", partial: true });
     const outcome = await turnLoopRunPort(loop, "sess-1")({ cwd: REPO, prompt: "p" });
     expect(outcome).toEqual({ status: "failed", reason: "the handoff turn was cancelled" });
+  });
+});
+
+// ── The resume-vanished marker, end to end through the real loop ──────────────
+//
+// `context_rebuilt` is reachable ONLY now that resume is live: the loop synthesizes it when
+// the CLI no longer has the conversation the persisted cursor points at. It is not a harness
+// event, so the projector cannot produce it — an unwired `emit` means the transcript reads
+// CONTINUOUS across a context loss, which is the surface claiming something it cannot know.
+
+/** A port whose FIRST turn fails resume-vanished and whose second (fresh) turn completes. */
+function resumeVanishedPort(specs: SessionSpec[]): HarnessPort {
+  let turn = 0;
+  return {
+    descriptor: { id: "claude-code" } as unknown as HarnessDescriptor,
+    health: () => Promise.resolve({ state: "ready", version: "test" }),
+    createSession: (spec: SessionSpec): Promise<HarnessSession> => {
+      specs.push(spec);
+      const n = ++turn;
+      const outcome: SessionOutcome =
+        n === 1
+          ? {
+              status: "failed",
+              error: {
+                class: "invalid-request",
+                origin: "harness",
+                message: "no conversation found to resume",
+                retryable: false,
+                retryableSource: "inferred",
+                nativeCode: "error_during_execution",
+              },
+            }
+          : {
+              status: "completed",
+              finalText: "picked it back up",
+              harnessSessionId: "harness-2",
+              lastAssistantMessageAnchor: "anchor-2",
+            };
+      const events: HarnessEvent[] = [
+        {
+          kind: "text.message",
+          text: n === 1 ? "before the loss" : "picked it back up",
+          parentToolCallId: null,
+        } as unknown as HarnessEvent,
+        { kind: "session.ended", outcome } as unknown as HarnessEvent,
+      ];
+      return Promise.resolve({
+        id: `sess-${n}`,
+        harness: "claude-code",
+        events: {
+          async *[Symbol.asyncIterator]() {
+            for (const e of events) yield e;
+          },
+        },
+        send: () => Promise.resolve("turn"),
+        interrupt: () => Promise.resolve(),
+        close: () => Promise.resolve(),
+      } as HarnessSession);
+    },
+  };
+}
+
+describe("createContextRebuiltEmit — a rebuilt context is never a continuous transcript", () => {
+  it("lands a context-rebuilt row between the lost turn and the rebuilt one", async () => {
+    const store = sink();
+    const seeded: SessionModel = {
+      ...mintSession(REPO, { id: () => "sess-1", now: () => 1 }),
+      harnessCursor: { harnessSessionId: "gone", lastAssistantMessageAnchor: "a1", turnCount: 2 },
+    };
+    const sessions = new Map([["sess-1", seeded]]);
+    const specs: SessionSpec[] = [];
+
+    const loop = new SessionTurnLoop({
+      port: resumeVanishedPort(specs),
+      store: {
+        load: (id) => sessions.get(id),
+        save: (s) => {
+          sessions.set(s.id, s);
+        },
+      },
+      buildSpec: () => ({ cwd: REPO }),
+      emit: createContextRebuiltEmit(store),
+      recordTranscript: createTranscriptCapture(store, undefined, HOME),
+    });
+
+    const result = await loop.runTurn("sess-1", "carry on");
+    expect(result.contextRebuilt).toBe(true);
+    // The resumed turn ran first, then the fresh one — proving the loop really took the fallback.
+    expect(specs[0]?.resume).toEqual({ harnessSessionId: "gone" });
+    expect(specs[1]?.resume).toBeUndefined();
+
+    // Every append, flattened in order: the reader's transcript as it will be read back.
+    const rows = store.appended.flatMap((entry) => entry.rows);
+    const kinds = rows.map((row) => row.kind);
+    expect(kinds).toContain("context-rebuilt");
+    // ORDER is the whole point: the marker sits between the lost turn and the rebuilt one, so
+    // scrolling back cannot read as one unbroken conversation.
+    const marker = kinds.indexOf("context-rebuilt");
+    expect(kinds.slice(0, marker)).toContain("turn");
+    expect(kinds.slice(marker + 1)).toContain("turn");
+    // It is filed under the session it happened to, and says why.
+    expect(store.appended.every((entry) => entry.sessionId === "sess-1")).toBe(true);
+    const rebuilt = rows.find((row) => row.kind === "context-rebuilt");
+    if (rebuilt?.kind !== "context-rebuilt") throw new Error("expected a context-rebuilt row");
+    expect(rebuilt.reason).toMatch(/transcript/);
+  });
+
+  it("leaves compact_boundary alone — the projector already produces those rows", () => {
+    const store = sink();
+    createContextRebuiltEmit(store)("sess-1", { kind: "compact_boundary", trigger: "auto" });
+    expect(store.appended).toEqual([]);
   });
 });

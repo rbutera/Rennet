@@ -221,7 +221,11 @@ import {
   type WorkerReturn,
 } from "./runtime/rounds";
 import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
-import { createTranscriptCapture, turnLoopRunPort } from "./session/turn-capture";
+import {
+  createContextRebuiltEmit,
+  createTranscriptCapture,
+  turnLoopRunPort,
+} from "./session/turn-capture";
 import { SessionTurnLoop } from "./session/turn-loop";
 import { createSettingsComposition } from "./settings";
 import { findHealthyDaemon } from "./supervise";
@@ -1678,21 +1682,30 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const transcriptStore = new TranscriptStore();
   // ── The session turn loop, instantiated (B09 cluster 2's loop, wired here) ───────────────
   //
-  // Every coding turn a round dispatches now runs THROUGH the loop, so the three things that
-  // are Rennet's rather than the harness's are real instead of tested-only: turns SERIALIZE
-  // per session (one harness conversation, one turn in flight), options are RE-PASSED fresh
-  // each turn (a fresh process is never sticky), and the advanced `HarnessCursor` PERSISTS —
-  // so the next round RESUMES the same conversation instead of starting cold, and a
-  // resume the CLI no longer has rebuilds context honestly rather than silently.
+  // Every coding turn a round dispatches now runs THROUGH the loop. TWO of the loop's
+  // behaviours become real by that wiring — and only two:
   //
-  // Its `recordTranscript` sink is the WRITE side of `session.transcript` (C07): the harness
-  // events the loop already sees, projected to display rows and R19-scrubbed at this one
-  // choke point, appended to the durable store the read serves. Nothing is fabricated — a
-  // session whose turns have not run reads back empty because it genuinely has no rows.
+  //   • RESUME. Options are re-passed fresh each turn (a fresh process is never sticky) and
+  //     the advanced `HarnessCursor` persists, so the next round RESUMES the same conversation
+  //     instead of starting cold — and a resume the CLI no longer has rebuilds context
+  //     honestly rather than silently.
+  //   • CAPTURE. The `recordTranscript` sink is the WRITE side of `session.transcript` (C07):
+  //     the harness events the loop already sees, projected to display rows and R19-scrubbed
+  //     at this one choke point, appended to the durable store the read serves. Nothing is
+  //     fabricated — a session whose turns have not run reads back empty because it genuinely
+  //     has no rows. The `emit` sink carries the loop's SYNTHESIZED `context_rebuilt` marker,
+  //     which is not a harness event and so cannot come from the projector.
   //
-  // ONE loop per repo root: a session's `projectId` IS its repo, so a session's turns always
-  // land on the same loop and the per-session serializer holds. The port is that repo's own
-  // resolved `claude` adapter (host or distro), so a WSL project's turns run its claude.
+  // Serialization is NOT one of them: `createRoundsRuntime` already enqueues the whole dispatch
+  // per session id, INCLUDING the checkpoint bracket, and it is the only caller passing a
+  // sessionId. The loop's own serializer is a redundant second lock here — and the weaker one,
+  // since loop-only would leave the brackets unserialized and round 2's `turnDiff` would then
+  // include round 1's changes.
+  //
+  // ONE loop per repo root, and the repo root is the SINGLE source of the turn's cwd: the loop
+  // key IS what `buildSpec` returns, so there is no second copy of that fact to drift. The port
+  // is that repo's own resolved `claude` adapter (host or distro), so a WSL project's turns run
+  // its claude.
   const sessionTurnLoops = new Map<string, SessionTurnLoop>();
   function turnLoopForRepo(repoRoot: string, port: HarnessPort): SessionTurnLoop {
     const existing = sessionTurnLoops.get(repoRoot);
@@ -1700,12 +1713,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const loop = new SessionTurnLoop({
       port,
       store: sessionStore,
-      // Rebuilt fresh every turn: the session's own repo is the cwd. The loop merges the
-      // resume pointer itself from the just-loaded cursor.
-      buildSpec: (session) => ({ cwd: session.projectId }),
+      // Rebuilt fresh every turn, from the loop's own key. The loop merges the resume pointer
+      // itself from the just-loaded cursor.
+      buildSpec: () => ({ cwd: repoRoot }),
       // The WRITE side of `session.transcript`: project → R19-scrub → append (failure-isolated;
       // a display read-model never fails the coding turn that produced it).
       recordTranscript: createTranscriptCapture(transcriptStore, (error) =>
+        console.error("Session transcript capture failed", error),
+      ),
+      // The resume-vanished marker. Without it the transcript reads CONTINUOUS across a context
+      // loss — a surface claiming something it cannot know.
+      emit: createContextRebuiltEmit(transcriptStore, (error) =>
         console.error("Session transcript capture failed", error),
       ),
     });

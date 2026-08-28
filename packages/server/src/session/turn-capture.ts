@@ -55,6 +55,36 @@ export function createTranscriptCapture(
 }
 
 /**
+ * Build the turn loop's `emit` sink, so the loop's synthesized `context_rebuilt` marker reaches
+ * the reader's transcript.
+ *
+ * This row is reachable only because resume is live: when the CLI no longer has the conversation
+ * the persisted cursor points at, the loop rebuilds context on a fresh session. That is a real
+ * discontinuity, and it is NOT a harness event — the projector cannot produce it from the stream.
+ * Dropped, the transcript would read CONTINUOUS across a context loss, which is the surface
+ * claiming something it cannot know.
+ *
+ * `compact_boundary` is deliberately NOT handled here: those ARE harness events, so
+ * `harnessEventsToRows` already projects them out of the captured stream. Appending them again
+ * would double every compaction.
+ */
+export function createContextRebuiltEmit(
+  store: TranscriptSink,
+  onError: (error: unknown) => void = () => undefined,
+): NonNullable<TurnLoopDeps["emit"]> {
+  return (sessionId, row) => {
+    if (row.kind !== "context_rebuilt") return;
+    try {
+      store.append(sessionId, [
+        { kind: "context-rebuilt", id: `rebuilt-${sessionId}-${Date.now()}`, reason: row.reason },
+      ]);
+    } catch (error) {
+      onError(error);
+    }
+  };
+}
+
+/**
  * The turn loop as a `HandoffRunPort`. The cwd comes from the session record (the loop's
  * `buildSpec`), which is the same repo root the checkpoint bracket is taken over, so the
  * port's own `input.cwd` is redundant here. A failed or cancelled turn is reported honestly —
