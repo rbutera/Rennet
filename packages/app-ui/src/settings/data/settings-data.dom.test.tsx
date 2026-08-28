@@ -163,7 +163,7 @@ describe("AppearancePage — reset-to-builtin, read/write states, backing files 
     cleanup();
   });
 
-  it("names client-settings.json as the backing file; theme sections are session-only (P2-8)", async () => {
+  it("names client-settings.json as the backing file; only code theme is session-only (P2-8)", async () => {
     const { findByText, container } = mount(
       <BridgeProvider bridge={settingsBridge({ scheme: "light" })}>
         <AppearancePage />
@@ -176,8 +176,8 @@ describe("AppearancePage — reset-to-builtin, read/write states, backing files 
     // The Appearance section names the REAL live store; no section names the legacy config.json.
     expect(backings).toContain("~/.rennet/client-settings.json");
     expect(backings.some((t) => t?.includes("config.json"))).toBe(false);
-    // Theme Pack + Code Theme carry no backing file — they are session-only.
-    expect(container.querySelectorAll('[data-slot="session-only"]').length).toBe(2);
+    // Theme Pack now persists there; Code Theme remains the one session-only axis.
+    expect(container.querySelectorAll('[data-slot="session-only"]').length).toBe(1);
     cleanup();
   });
 });

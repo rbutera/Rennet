@@ -41,7 +41,7 @@ flowchart LR
 
 - Windows 10 or 11 on x64.
 - Git installed on the host.
-- Claude Code, and optionally Codex, installed on the host.
+- Claude Code or Codex installed on the host. Install both for Dual Harness.
 - A supported editor for line-targeted file opening.
 
 Rennet finds `.cmd` and `.exe` shims on `PATH` and in common per-user locations,
@@ -51,9 +51,8 @@ POSIX shell is not required.
 On Windows, Codex must be installed as the Codex CLI. The binary inside the
 Microsoft Store ChatGPT package cannot be executed by another application.
 
-```sh
-npm install --global @openai/codex
-```
+See [Install a coding harness](./install-a-coding-harness.md) for both supported
+harnesses and their verification commands.
 
 Rennet searches for Visual Studio Code, Cursor, VSCodium, and Sublime Text on
 `PATH` and in their standard per-user and system install locations.
@@ -80,8 +79,8 @@ flowchart LR
   Node and finds a version-managed install (nvm, asdf, fnm) through your login
   shell. A distro with no Node reports that plainly instead of falling back to the
   host.
-- Git and Claude Code installed inside that distro.
-- Codex installed inside the distro if you want a Codex review seat.
+- Git and Claude Code or Codex installed inside that distro. Install both for
+  Dual Harness.
 - The project added by picking the distro as the **source** in [Add a
   project](./getting-started.md#add-a-project): Rennet lists every installed
   distro automatically, then browses its native filesystem directly — no

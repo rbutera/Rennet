@@ -10,7 +10,8 @@ with the tour, then follow the guide for the change in front of you.
 ## Start here
 
 - [Getting started](./guides/getting-started.md) walks the whole loop: add a project, read the boards, stage asks, take an exit.
-- [The onboarding tour](./guides/onboarding-tour.md) explains the first-run coach marks: contextual, one at a time, skippable, and replayable from Help.
+- [Install a coding harness](./guides/install-a-coding-harness.md) sets up Claude Code, Codex, or both for Dual Harness reviews.
+- [The onboarding tour](./guides/onboarding-tour.md) explains the contextual coach marks shown after setup: one at a time, skippable, and replayable from Help.
 - [Connect to GitHub](./guides/github-auth.md) signs Rennet into GitHub for pull request reviews.
 - [Review a GitHub pull request](./guides/reviewing-a-github-pr.md) covers a teammate's pull request and the review you post on it.
 - [The Context Map](./guides/context-map.md) shows the project context available to reviews.

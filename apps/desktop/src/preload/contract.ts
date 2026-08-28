@@ -15,6 +15,7 @@ export const RENNET_PRELOAD_KEYS = [
   "listWslDistros",
   "logWslConnect",
   "onUpdateReady",
+  "openFullDiskAccessSettings",
   "platform",
   "resolveDaemonForPath",
   "version",

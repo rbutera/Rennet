@@ -10,7 +10,9 @@
 // `data-rn-theme` on the document root, and the browser re-binds every token.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ThemePackId = "affineur" | "github" | "one-dark-pro" | "dracula" | "catppuccin-mocha";
+import type { ThemePack } from "@rennet/protocol";
+
+export type ThemePackId = ThemePack;
 
 export const THEME_PACKS: readonly { readonly id: ThemePackId; readonly label: string }[] = [
   { id: "affineur", label: "Affineur's Bench" },

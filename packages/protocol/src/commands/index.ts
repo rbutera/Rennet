@@ -76,6 +76,7 @@ import {
   sidebarSessionSchema,
   sourceSchema,
   symbolInspectionSchema,
+  themePackSchema,
 } from "../wire";
 
 const commandIdSchema = z.uuid();
@@ -362,10 +363,10 @@ const definitions = {
       z.object({ status: z.literal("unavailable"), reason: z.string() }),
     ]),
   },
-  // ── The front door: projects + discovery (issue #29 / #37) ─────────────────
-  // The empty projects list IS first run; the add-a-project flow that lives there
-  // forever is the whole onboarding. Discovery reads the pointed-at path read-only
-  // and never mutates the index or calls a model before harness disclosure.
+  // ── Project setup and discovery (issue #29 / #37) ───────────────────────────
+  // The first-run welcome and the ordinary Add Project entry share these commands.
+  // Discovery reads the pointed-at path read-only and never mutates the index or
+  // calls a model before the user confirms the project draft.
   "harness.detect": {
     // The ambient detection line: which harnesses were found (felt, not ceremonial).
     input: z.object({}),
@@ -579,7 +580,7 @@ const definitions = {
     output: z.object({ project: projectSchema.nullable(), projects: z.array(projectSchema) }),
   },
   "projects.remove": {
-    // Forget a project from the front-door list. Does NOT delete the repo on disk —
+    // Forget a project from Rennet's project list. Does NOT delete the repo on disk —
     // the working tree is untouched; only Rennet's record of it is dropped, so
     // re-adding the same path restores it. Returns the surviving list.
     input: z.object({ commandId: commandIdSchema, projectId: z.string().min(1) }),
@@ -981,6 +982,18 @@ const definitions = {
       scheme: appearanceSchemeSchema,
       schemeProvenance: resolvedProvenanceSchema,
     }),
+  },
+  "settings.setThemePack": {
+    input: z.object({ themePack: themePackSchema }),
+    output: z.object({ themePack: themePackSchema }),
+  },
+  "settings.completeWelcome": {
+    input: z.object({}),
+    output: z.object({ completedAt: z.iso.datetime() }),
+  },
+  "settings.setLastProject": {
+    input: z.object({ source: sourceSchema, projectId: z.string().min(1) }),
+    output: z.object({ source: sourceSchema, projectId: z.string().min(1) }),
   },
   // ── Settings: set (or reset) a command's keybinding override (#44) ─────────
   // A personal, app-side preference — writes only `~/.rennet/config.json`, never a

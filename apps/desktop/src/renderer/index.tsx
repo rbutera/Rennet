@@ -60,6 +60,7 @@ function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close
     onRoundProgress: supervisor.onRoundProgress.bind(supervisor),
     platform: preload.platform,
     version: preload.version,
+    openFullDiskAccessSettings: preload.openFullDiskAccessSettings,
     // App-binary update readiness rides every target like the platform residue — the
     // update is about THIS installed app, not whichever daemon the window watches.
     onUpdateReady: preload.onUpdateReady,

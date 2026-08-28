@@ -78,6 +78,25 @@ export function settingsHandlers(rt: DispatchRuntime) {
         schemeProvenance: (await deps.settings.get()).schemeProvenance,
       });
     },
+    "settings.setThemePack": async (rawInput) => {
+      const name = "settings.setThemePack" as const;
+      const input = parseCommandInput(name, rawInput);
+      return parseCommandOutput(name, {
+        themePack: deps.settings?.setThemePack(input.themePack) ?? input.themePack,
+      });
+    },
+    "settings.completeWelcome": async (rawInput) => {
+      const name = "settings.completeWelcome" as const;
+      parseCommandInput(name, rawInput);
+      return parseCommandOutput(name, {
+        completedAt: deps.settings?.completeWelcome() ?? new Date().toISOString(),
+      });
+    },
+    "settings.setLastProject": async (rawInput) => {
+      const name = "settings.setLastProject" as const;
+      const input = parseCommandInput(name, rawInput);
+      return parseCommandOutput(name, deps.settings?.setLastProject(input) ?? input);
+    },
     "settings.setKeybinding": async (rawInput) => {
       const name = "settings.setKeybinding" as const;
       // Personal, app-side (#44): writes only `~/.rennet/config.json`, never a repo.

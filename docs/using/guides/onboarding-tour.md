@@ -1,11 +1,12 @@
 ---
 title: The onboarding tour
-description: The first-run coach marks — contextual, one at a time, skippable in a click, and replayable from Help.
+description: Contextual coach marks shown after setup — one at a time, skippable in a click, and replayable from Help.
 ---
 
-The first time you use Rennet, small coach marks point out the parts of the app
-as you reach them. Each one teaches a single thing, then gets out of the way.
-This page says how they behave and how to bring them back.
+After the separate [first-run welcome](./getting-started.md#first-run), small
+coach marks point out parts of the app as you reach them. The welcome configures
+the client; the onboarding tour teaches controls in context. Completing,
+skipping, or replaying either one never changes the other.
 
 ## One mark at a time, where it belongs
 

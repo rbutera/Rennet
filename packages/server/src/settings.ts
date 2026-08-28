@@ -48,6 +48,7 @@ import type {
   SettingsRepoValueKey,
   SettingsRepoWriteOutcome,
   SettingsView,
+  ThemePack,
 } from "@rennet/protocol";
 
 /**
@@ -61,6 +62,8 @@ import type {
 
 /** The minimal on-disk config states this composition reads, from the two stores. */
 export interface SettingsCompositionDeps {
+  /** Clock for durable client timestamps. */
+  now?: () => Date;
   /** The persisted projects (newest first). */
   listProjects(): Project[];
   /**
@@ -310,6 +313,12 @@ export interface SettingsComposition {
   setForgeEnabled(input: { source: ProjectSource; forgeId: string; enabled: boolean }): string[];
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
+  setThemePack(themePack: ThemePack): ThemePack;
+  completeWelcome(): string;
+  setLastProject(input: { source: ProjectSource; projectId: string }): {
+    source: ProjectSource;
+    projectId: string;
+  };
   /**
    * Set (`keybinding` string), unbind (`null`), or reset (omitted) a command's
    * keybinding override (#44). A plain global write — refused (throws) on a malformed
@@ -829,6 +838,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         scheme: scheme.value,
         schemeProvenance: scheme.provenance,
         appearanceMalformed: schemeState.status === "malformed",
+        ...(schemeState.config.appearance?.themePack
+          ? { themePack: schemeState.config.appearance.themePack }
+          : {}),
+        ...(schemeState.config.welcome ? { welcome: schemeState.config.welcome } : {}),
+        ...(schemeState.config.navigation ? { navigation: schemeState.config.navigation } : {}),
         projects,
         // The stored override map, verbatim (#44). Additive: absent field ⇒ omitted.
         ...(schemeState.config.keybindings ? { keybindings: schemeState.config.keybindings } : {}),
@@ -996,6 +1010,40 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // A set returns the value just written; a reset re-resolves the effective
       // value the cleared ladder now yields (the builtin).
       return scheme ?? resolveScheme(deps.readGlobalState().config).value;
+    },
+
+    setThemePack: (themePack): ThemePack => {
+      const written = deps.updateGlobal((current) => ({
+        ...current,
+        appearance: { ...current.appearance, themePack },
+      }));
+      return written.appearance?.themePack ?? "affineur";
+    },
+
+    completeWelcome: (): string => {
+      const completedAt = (deps.now?.() ?? new Date()).toISOString();
+      const written = deps.updateGlobal((current) => ({
+        ...current,
+        welcome: { completedAt },
+      }));
+      return written.welcome?.completedAt ?? completedAt;
+    },
+
+    setLastProject: (input) => {
+      const written = deps.updateGlobal((current) => ({
+        ...current,
+        navigation: {
+          ...current.navigation,
+          lastProjectBySource: {
+            ...current.navigation?.lastProjectBySource,
+            [input.source]: input.projectId,
+          },
+        },
+      }));
+      return {
+        source: input.source,
+        projectId: written.navigation?.lastProjectBySource?.[input.source] ?? input.projectId,
+      };
     },
 
     setKeybinding: (input): Record<string, string | null> => {

@@ -24,6 +24,11 @@ export interface UseCommandOptions {
   readonly enabled?: boolean;
 }
 
+export function useRefreshCommand(name: CommandName): () => void {
+  const { cache } = useBridgeContext();
+  return useCallback(() => cache.invalidate(name), [cache, name]);
+}
+
 export function useCommand<K extends CommandName>(
   name: K,
   input: CommandInput<K>,

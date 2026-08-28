@@ -40,6 +40,23 @@ describe("FileConfigStore (client settings)", () => {
     expect(createClientSettingsStore(path).read().appearance?.scheme).toBe("light");
   });
 
+  it("round-trips the first-run client preferences", () => {
+    const path = tmpConfigPath();
+    const store = createClientSettingsStore(path);
+    store.update((current) => ({
+      ...current,
+      appearance: { ...current.appearance, themePack: "catppuccin-mocha" },
+      welcome: { completedAt: "2026-08-28T12:00:00.000Z" },
+      navigation: { lastProjectBySource: { local: "project-1" } },
+    }));
+
+    expect(createClientSettingsStore(path).read()).toMatchObject({
+      appearance: { themePack: "catppuccin-mocha" },
+      welcome: { completedAt: "2026-08-28T12:00:00.000Z" },
+      navigation: { lastProjectBySource: { local: "project-1" } },
+    });
+  });
+
   it("persists the coachmarks slice and reads it back over a fresh store (C13 restart)", () => {
     // Skip-all + seen marks are the onboarding survival criterion: a restart is a NEW store
     // over the SAME file, and the coach provider re-seeds from what `settings.get` reads back.

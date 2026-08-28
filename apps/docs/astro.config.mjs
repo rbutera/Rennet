@@ -46,6 +46,10 @@ export default defineConfig({
                 label: "Guides",
                 items: [
                   { label: "Getting started", link: "/using/guides/getting-started/" },
+                  {
+                    label: "Install a coding harness",
+                    link: "/using/guides/install-a-coding-harness/",
+                  },
                   { label: "The onboarding tour", link: "/using/guides/onboarding-tour/" },
                   { label: "Connect to GitHub", link: "/using/guides/github-auth/" },
                   { label: "Windows and WSL", link: "/using/guides/windows-and-wsl/" },
