@@ -51,6 +51,23 @@ import { createKnowledgeSwarmRuntime } from "../src/runtime/knowledge-swarm";
  *
  * A unit test cannot stand in for any of this: nothing hermetic has a context
  * window, which is exactly why a green unit suite hid the bug.
+ *
+ * STATED LIMITATION — read this before trusting the proof. The 6 minted slices
+ * yield ~44 UNIQUE statements, so reaching 1900 clones them ~43x under fresh
+ * ids. Every claim, subject, aspect and evidence anchor is genuine model
+ * output; only the id is synthetic. So the prompt the seat receives is faithful
+ * in SIZE and in the shape of each hypothesis, and repetitive in CONTENT in a
+ * way a real 1900-statement set would not be.
+ *
+ * What that DOES establish: a 1900-hypothesis prompt overflows the seat, the
+ * chunked path does not, and both were measured on the same input through the
+ * same live seat. Prompt-size overflow is the bug, and prompt size is faithful.
+ *
+ * What it does NOT establish: anything about verdict QUALITY at scale — whether
+ * the seat adjudicates 1900 varied hypotheses well, or whether chunk-local
+ * cross-cutting synthesis loses reach against a genuinely diverse set. Content
+ * variety was deliberately not purchased (~17s per extra slice) because it is
+ * not the property under test.
  */
 
 const LIVE = process.env.RENNET_C22_PROOF === "1";
