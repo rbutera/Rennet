@@ -108,7 +108,7 @@
   "c08": {
     "status": "done",
     "passes": true,
-    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. REVISE wiring BUILT on feat/c08-revise-wired @c610ca56 (flag DELETED not flipped, callers migrated; gate 919 green) \u2014 review seat running, lands next. NEW LEDGER ITEM it surfaced: client never writes ask.stage/ask.edit into B11's durable log, so live reviseSpan answers unavailable (honest) \u2014 'client\u2192ask.* write sync' scheduled with the client swaps, record in c14 ledger at c08 landing. requestConsent: Rai ruled DELETE \u2014 c19 packet"
+    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. REVISE wiring LANDED #550 @b8f6d3b9 (flag DELETED, callers migrated; review seat FIX\u2192LAND: stale draftEdits shadow over rework fixed with CONDITIONAL overwrite \u2014 keeps pendingEditCount truthful; red-without-fix recorded). Posterity note: inline edit STARTED mid-rework can leave a stale shadow (narrow same-class race; fix = read fresh via useRennetStore.getState() in landRework if it bites). New ledger item recorded in c14 packet: client\u2192ask.* write sync (C18 era). requestConsent: Rai ruled DELETE \u2014 c19 packet"
   },
   "c09": {
     "status": "done",
