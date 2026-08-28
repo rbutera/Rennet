@@ -73,6 +73,9 @@ export function knowledgeStageLine(
       ...(detail === undefined ? {} : { detail }),
     };
   }
+  // `aborted` is narrated as what it is: the worker never ran, because an
+  // earlier one failed and the pass is all-or-nothing. Calling that "failed"
+  // would report a failure for work that was never attempted.
   const verb =
     event.status === "queued"
       ? "queued"
@@ -80,7 +83,9 @@ export function knowledgeStageLine(
         ? "running"
         : event.status === "done"
           ? "done"
-          : "failed";
+          : event.status === "aborted"
+            ? "not run"
+            : "failed";
   return {
     kind: "stage",
     repo,

@@ -225,6 +225,54 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     expect(saved).toHaveLength(0);
   });
 
+  it("abandons the workers queued behind a failure, and never calls them failed", async () => {
+    // The pass is all-or-keep-prior, so the first failed worker already decides
+    // the run. On Rennet itself that is up to 198 further live model turns spent
+    // reaching a verdict the first turn reached. They are abandoned instead —
+    // and reported as `aborted`, because a worker that never ran did not fail.
+    const { saved, store } = makeStore();
+    const prompts: string[] = [];
+    const progress: { sliceId: string; status: string }[] = [];
+    const flaky = async (req: CodexExecRequest): Promise<CodexExecResult> => {
+      prompts.push(req.prompt);
+      if (req.prompt.includes("a/one.ts")) throw new Error("codex fell over");
+      return { output: workerBody(req) };
+    };
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: store,
+      claudePort: fakeClaudePort([], verifyBody),
+      codexExecutor: flaky,
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+      // One lane, so the `b` worker is genuinely still queued when `a` fails.
+      concurrency: 1,
+      onProgress: (event) => {
+        if (event.kind === "partition" && event.status !== "queued") {
+          progress.push({ sliceId: event.sliceId, status: event.status });
+        }
+      },
+    });
+
+    // The `b` worker's turn was never spent — the only turns are `a`'s own
+    // attempt and its one retry.
+    expect(prompts.filter((prompt) => prompt.includes("b/two.ts"))).toHaveLength(0);
+    expect(prompts).toHaveLength(2);
+    expect(progress).toEqual([
+      { sliceId: "a", status: "running" },
+      { sliceId: "a", status: "failed" },
+      { sliceId: "b", status: "aborted" },
+    ]);
+    expect(outcome.status).toBe("failed");
+    if (outcome.status === "failed") {
+      expect(outcome.reason).toBe(
+        "1 of 2 partition workers failed; 1 not run (the pass is all-or-nothing, so they were abandoned)",
+      );
+    }
+    expect(saved).toHaveLength(0);
+  });
+
   it("a resolved-but-unavailable harness is an honest failure, not a silent fallback", async () => {
     const { saved, store } = makeStore();
     // codex-only availability resolves partition-worker to codex; with the

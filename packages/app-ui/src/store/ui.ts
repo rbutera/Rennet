@@ -144,7 +144,11 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
       }),
     appendBackgroundEvent: (projectId, event) =>
       set((s) => {
-        const prior = s.ui.backgroundEvents[projectId] ?? [];
+        // `repo-start` IS the run boundary on this channel: a new background pass
+        // supersedes the last rather than piling under it. Without this the
+        // timeline grows across passes with no mark saying where one ended, which
+        // is its own small dishonesty — the reader cannot tell which run failed.
+        const prior = event.kind === "repo-start" ? [] : (s.ui.backgroundEvents[projectId] ?? []);
         const next = [...prior, event].slice(-BACKGROUND_EVENT_LIMIT);
         return {
           ui: { ...s.ui, backgroundEvents: { ...s.ui.backgroundEvents, [projectId]: next } },

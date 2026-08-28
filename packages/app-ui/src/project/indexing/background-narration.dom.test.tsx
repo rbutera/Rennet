@@ -101,6 +101,24 @@ describe("background narration", () => {
     expect(document.body.textContent).toContain("Prompt is too long");
   });
 
+  it("starts a clean timeline when a new background pass begins", async () => {
+    const { openScreen, emitFor } = harness(["alpha"]);
+    openScreen("alpha");
+    await waitFor(() => expect(screen.getByText(/indexed|indexing/)).toBeTruthy());
+
+    emitFor("alpha", knowledgeFailed);
+    await waitFor(() =>
+      expect(useRennetStore.getState().ui.backgroundEvents.alpha).toHaveLength(1),
+    );
+
+    // A new pass begins. The reader must not read last run's failure under this
+    // run's lines with nothing saying where one ended and the next began.
+    emitFor("alpha", { kind: "repo-start", repo: "rennet", index: 1, total: 1 });
+    await waitFor(() => expect(document.body.textContent).toContain("Building rennet"));
+    expect(useRennetStore.getState().ui.backgroundEvents.alpha).toHaveLength(1);
+    expect(document.body.textContent).not.toContain("Knowledge pass failed");
+  });
+
   it("keeps one project's background pass off another project's timeline", async () => {
     const { openScreen, emitFor } = harness(["alpha", "beta"]);
     openScreen("alpha");
