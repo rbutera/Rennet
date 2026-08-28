@@ -9,8 +9,9 @@ import type {
   TestEntry,
   WorkspaceScope,
 } from "@rennet/protocol";
-import { sha256Hex } from "@rennet/protocol";
+import { canonicalize, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { materializeSnapshot } from "./project-context";
 import {
   buildSnapshot,
   computeFingerprint,
@@ -27,11 +28,13 @@ import {
   planIncrementalImports,
   planIncrementalReferences,
   planIncrementalSymbols,
+  type SnapshotImportExtractor,
   type SnapshotStructuralInputs,
   serializeManifest,
   structuralImportExtractor,
   structuralReferenceExtractor,
   structuralTsExtractor,
+  unfingerprinted,
   verifySnapshotIntegrity,
 } from "./project-snapshot";
 
@@ -360,20 +363,59 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
     const b = fullBuild("oid1", treeV2).manifest; // same OID label, different content
     expect(a.fingerprint).not.toBe(b.fingerprint);
     // And it is a pure recomputation, not a stored value.
-    expect(
-      computeFingerprint(
-        {
-          repoKey: a.repoKey,
-          baseRef: a.baseRef,
-          baseRefResolution: a.baseRefResolution,
-          baseOid: a.baseOid,
-        },
-        a.shards,
-        a.symbols,
-        a.references,
-        a.imports,
-      ),
-    ).toBe(a.fingerprint);
+    expect(computeFingerprint(unfingerprinted(a))).toBe(a.fingerprint);
+  });
+
+  it("covers the manifest's own ORDERING: a reordered pointer array fails integrity", () => {
+    // The fingerprint hashes the canonical manifest as written, NOT a re-sorted
+    // projection of it — so a manifest whose `imports` pointers arrived out of
+    // canonical order is a manifest that does not match its own fingerprint, and the
+    // gate refuses it. (It previously re-sorted before hashing, which meant manifest
+    // ordering was never actually validated.) Red-proof: reversing a one-entry array
+    // is a no-op, so the fixture asserts a real reorder happened first.
+    const { manifest, shards } = fullBuild("oid2", treeV2);
+    expect(manifest.symbols.length).toBeGreaterThan(1);
+    const reordered = { ...manifest, symbols: [...manifest.symbols].reverse() };
+    expect(reordered.symbols).not.toEqual(manifest.symbols);
+    expect(verifySnapshotIntegrity(reordered, (d) => shards.get(d)).ok).toBe(false);
+    // The control: the untouched manifest passes the same gate.
+    expect(verifySnapshotIntegrity(manifest, (d) => shards.get(d)).ok).toBe(true);
+  });
+
+  it("covers a structural shard's declared `entries` count", () => {
+    // `entries` is what a reader trusts for "how many files does this map hold?", so
+    // a manifest that inflates it while keeping every digest intact must not verify.
+    const { manifest, shards } = fullBuild("oid2", treeV2);
+    const tampered = {
+      ...manifest,
+      shards: {
+        ...manifest.shards,
+        files: { ...manifest.shards.files, entries: manifest.shards.files.entries + 100 },
+      },
+    };
+    expect(verifySnapshotIntegrity(tampered, (d) => shards.get(d)).ok).toBe(false);
+  });
+
+  it("covers the manifest's own schemaVersion, not just the build-time constant", () => {
+    const { manifest, shards } = fullBuild("oid2", treeV2);
+    const downgraded = { ...manifest, schemaVersion: manifest.schemaVersion - 1 };
+    expect(verifySnapshotIntegrity(downgraded, (d) => shards.get(d)).ok).toBe(false);
+  });
+
+  it("fails closed when a required shard FAMILY is missing (no empty-graph coercion)", () => {
+    // A v3 manifest without `imports` is not "a snapshot with no import edges" — it
+    // is a manifest this build cannot read. Both the integrity gate and materialize
+    // must refuse it rather than answer "nothing imports anything".
+    const { manifest, shards } = fullBuild("oid2", treeV2);
+    const { imports, ...withoutImports } = manifest;
+    void imports;
+    const truncated = withoutImports as typeof manifest;
+    expect(verifySnapshotIntegrity(truncated, (d) => shards.get(d)).ok).toBe(false);
+    const materialized = materializeSnapshot(truncated, (d) => shards.get(d));
+    expect(materialized.ok).toBe(false);
+    // The control: with `imports` present the very same manifest passes both.
+    expect(verifySnapshotIntegrity(manifest, (d) => shards.get(d)).ok).toBe(true);
+    expect(materializeSnapshot(manifest, (d) => shards.get(d)).ok).toBe(true);
   });
 
   it("covers repoKey / baseRef / baseRefResolution (#4): a change to any of them changes the fingerprint", () => {
@@ -527,6 +569,9 @@ describe("structuralReferenceExtractor — deterministic identifier occurrences"
 });
 
 describe("structuralImportExtractor — deterministic raw import specifiers", () => {
+  const shardOf = (text: string, path = "f.ts"): readonly string[] =>
+    extractImportShard({ path, blobOid: "blob", size: text.length, mode: "100644" }, text).imports;
+
   it("records all four import forms", () => {
     const text = [
       "import { a } from './rel';",
@@ -535,7 +580,7 @@ describe("structuralImportExtractor — deterministic raw import specifiers", ()
       "const c = require('pkg-required');",
       "const d = await import('./dynamic');",
     ].join("\n");
-    expect(structuralImportExtractor("f.ts", text)).toEqual([
+    expect(shardOf(text)).toEqual([
       "../up/mod",
       "./dynamic",
       "./rel",
@@ -555,25 +600,137 @@ describe("structuralImportExtractor — deterministic raw import specifiers", ()
     ].join("\n");
     // Block comments are stripped; a LINE comment is an accepted false positive
     // (the same documented textual limit the reference extractor carries).
-    expect(structuralImportExtractor("f.ts", text)).toEqual(["./line-comment", "./shown"]);
+    expect(shardOf(text)).toEqual(["./line-comment", "./shown"]);
   });
 
-  it("de-duplicates and sorts, so the shard bytes are stable", () => {
+  it("de-duplicates and sorts AT THE SHARD BOUNDARY, so the shard bytes are stable", () => {
     const text = ["import { a } from './z';", "import { b } from './a';", "import './z';"].join(
       "\n",
     );
-    expect(structuralImportExtractor("f.ts", text)).toEqual(["./a", "./z"]);
+    // The extractor itself reports raw source-order hits with duplicates kept…
+    expect(structuralImportExtractor(text)).toEqual(["./z", "./a", "./z"]);
+    // …and `extractImportShard` normalizes, so a custom extractor's ordering or
+    // duplicates cannot vary the canonical shard bytes.
+    expect(shardOf(text)).toEqual(["./a", "./z"]);
   });
 
-  it("returns nothing for non-source files", () => {
-    expect(structuralImportExtractor("README.md", "import x from './y';")).toHaveLength(0);
+  it("normalizes a CUSTOM extractor's unsorted, duplicated output too", () => {
+    const noisy: SnapshotImportExtractor = () => ["./z", "./a", "./z", "./a"];
+    const file: SnapshotFileEntry = { path: "f.ts", blobOid: "blob", size: 1, mode: "100644" };
+    expect(extractImportShard(file, "", noisy, "noisy-v1").imports).toEqual(["./a", "./z"]);
   });
 
   it("is a pure function of bytes (same in ⇒ same out)", () => {
     const text = "import { a } from './a';\nrequire('b');\n";
-    expect(structuralImportExtractor("f.ts", text)).toEqual(
-      structuralImportExtractor("f.ts", text),
-    );
+    expect(structuralImportExtractor(text)).toEqual(structuralImportExtractor(text));
+  });
+
+  it("is INSENSITIVE to the file's path: one blob, two paths, identical shard bytes", () => {
+    // The reuse contract (`planIncrementalImports` carries a shard for any unchanged
+    // blob) is only sound if the shard cannot depend on WHERE the blob sits. The
+    // extractor is not given the path, so a path-sensitive extractor is a compile
+    // error rather than a silent incremental-vs-clean divergence. Red-proof: hand
+    // `extract` the path again and this test can start failing.
+    const text = "import { a } from './a';\n";
+    const at = (path: string): ImportShard =>
+      extractImportShard({ path, blobOid: "blob-x", size: 1, mode: "100644" }, text);
+    expect(canonicalize(at("src/deep/nested/f.ts"))).toBe(canonicalize(at("g.mts")));
+  });
+
+  it("eligibility is the CALLER's decision, and eligibleSymbolFiles makes it", () => {
+    const files: SnapshotFileEntry[] = [
+      { path: "README.md", blobOid: "b1", size: 1, mode: "100644" },
+      { path: "a.ts", blobOid: "b2", size: 1, mode: "100644" },
+      { path: "b.mts", blobOid: "b3", size: 1, mode: "100644" },
+    ];
+    expect(eligibleSymbolFiles(files).map((f) => f.path)).toEqual(["a.ts", "b.mts"]);
+  });
+});
+
+describe("import extraction sees FORMATTER-SPLIT statements (the dominant real form)", () => {
+  const shardOf = (text: string): readonly string[] =>
+    extractImportShard({ path: "f.ts", blobOid: "b", size: 1, mode: "100644" }, text).imports;
+
+  it("captures a multiline `import { … } from`", () => {
+    expect(shardOf(["import {", "  alpha,", "  beta,", "} from './split';"].join("\n"))).toEqual([
+      "./split",
+    ]);
+  });
+
+  it("captures a multiline `export { … } from`", () => {
+    expect(shardOf(["export {", "  gamma,", "} from '../re-export';"].join("\n"))).toEqual([
+      "../re-export",
+    ]);
+  });
+
+  it("captures a multiline `import type { … } from`", () => {
+    expect(shardOf(["import type {", "  Delta,", "} from './types';"].join("\n"))).toEqual([
+      "./types",
+    ]);
+  });
+
+  it("captures a multiline import carrying inline comments", () => {
+    const text = [
+      "import {",
+      "  epsilon, // the useful one",
+      "  zeta,",
+      "} from './commented';",
+    ].join("\n");
+    expect(shardOf(text)).toEqual(["./commented"]);
+  });
+
+  it("captures a multiline require() and dynamic import()", () => {
+    const text = [
+      "const a = require(",
+      "  './required'",
+      ");",
+      "await import(",
+      "  './awaited'",
+      ");",
+    ].join("\n");
+    expect(shardOf(text)).toEqual(["./awaited", "./required"]);
+  });
+
+  it("does not let a `from` clause reach BACK across a completed statement", () => {
+    // `export const x = 1;` must not pair with the NEXT statement's `from` clause and
+    // mint a specifier that statement does not name. The semicolon is the bound.
+    const text = ["export const x = 1;", "import { y } from './y';"].join("\n");
+    expect(shardOf(text)).toEqual(["./y"]);
+  });
+
+  it("cannot invent a specifier the text does not contain", () => {
+    // The `from`-clause pattern may not cross a quote, so a match can never skip past
+    // one statement's specifier into another's: every captured specifier is written
+    // in the source. This is the guard that makes the newline-spanning scan safe.
+    const text = [
+      "import { a } from './first';",
+      "import {",
+      "  b,",
+      "} from './second';",
+      "export { c } from './third';",
+    ].join("\n");
+    expect(shardOf(text)).toEqual(["./first", "./second", "./third"]);
+  });
+
+  it("extracts the real edge count from a fixture mirroring biome's output", () => {
+    // A verbatim-shaped slice of what biome emits in this repo: one long split
+    // import, a split type import, a side-effect import and a single-line one.
+    const text = [
+      "import {",
+      "  type BaseRefResolution,",
+      "  type ConventionEntry,",
+      "  type DependencyEdge,",
+      '} from "@rennet/protocol";',
+      "import type {",
+      "  ImportShard,",
+      '} from "./shard";',
+      'import "./register-side-effects";',
+      'import { sha256Hex } from "@rennet/protocol";',
+      "",
+      "export function noop(): void {}",
+    ].join("\n");
+    // Four statements, three DISTINCT specifiers (`@rennet/protocol` appears twice).
+    expect(shardOf(text)).toEqual(["./register-side-effects", "./shard", "@rennet/protocol"]);
   });
 });
 

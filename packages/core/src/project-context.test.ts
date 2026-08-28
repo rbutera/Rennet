@@ -578,6 +578,18 @@ const IMPORT_TREE: Record<string, string[]> = {
   "packages/app/src/helper.ts": ["../../core/src/a"],
   // A dangling relative specifier: the inventory holds no such file ⇒ no edge.
   "packages/app/src/orphan.ts": ["./nowhere"],
+  // A bare workspace specifier for a package whose entry is DECLARED, not
+  // positional: `@x/lib` has no `index` file anywhere, only `src/lib.ts`.
+  "packages/app/src/entrypoint-user.ts": ["@x/lib"],
+  "packages/lib/src/lib.ts": [],
+  // A `.mts` file must be reachable as an EXTENSIONLESS target, not just usable as
+  // an edge source.
+  "packages/core/src/native-user.ts": ["./native"],
+  "packages/core/src/native.mts": [],
+  // A SELF-import beside a same-stem sibling: `twin.ts` importing `./twin` names
+  // itself, so it must produce NO edge — never a phantom edge to `twin.tsx`.
+  "packages/core/src/twin.ts": ["./twin"],
+  "packages/core/src/twin.tsx": [],
 };
 
 const importScopes: WorkspaceScope[] = [
@@ -591,9 +603,20 @@ const importScopes: WorkspaceScope[] = [
   },
   // No `sourceRoot`: the `<root>/src` fallback must still find its files.
   { name: "@x/app", root: "packages/app", private: true, tags: [] },
+  // Its entry is DECLARED (`main: ./src/lib.ts`) and there is no `index` to guess.
+  {
+    name: "@x/lib",
+    root: "packages/lib",
+    sourceRoot: "packages/lib/src",
+    type: "library",
+    private: true,
+    tags: [],
+  },
 ];
 
-function importFixture(overrides: { omitImports?: boolean } = {}): {
+const importEntryPoints: EntryPoint[] = [{ scope: "@x/lib", main: "./src/lib.ts", bin: [] }];
+
+function importFixture(overrides: { omitImports?: boolean; omitEntryPoints?: boolean } = {}): {
   snapshot: LoadedSnapshot;
   load: ShardLoader;
 } {
@@ -606,7 +629,7 @@ function importFixture(overrides: { omitImports?: boolean } = {}): {
     files: paths.map((path) => ({ path, blobOid: `blob:${path}`, size: 1, mode: "100644" })),
     scopes: importScopes,
     edges: [],
-    entryPoints: [],
+    entryPoints: overrides.omitEntryPoints ? [] : importEntryPoints,
     tests: [],
     ownership: [],
     conventions: [],
@@ -744,6 +767,48 @@ describe("queryImportGraph — raw specifiers resolved into real file→file edg
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.graph.edges).toEqual([]);
+  });
+
+  it("resolves a bare workspace alias through the scope's DECLARED entry point", () => {
+    // `@x/lib` declares `main: ./src/lib.ts` and has no `index` file anywhere, so the
+    // root/sourceRoot + `index` probe alone cannot find it. Every package that names
+    // a non-index entry is invisible to the graph without this.
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/app/src/entrypoint-user.ts")).toEqual([
+      "packages/lib/src/lib.ts",
+    ]);
+
+    // The positive control: withhold the entryPoints shard and the SAME specifier in
+    // the SAME tree resolves to nothing — so the edge above is the declaration's
+    // doing, not an index probe that would have found it anyway.
+    const without = queryImportGraph(importFixture({ omitEntryPoints: true }).snapshot);
+    if (!without.ok) return;
+    expect(without.graph.importsOf("packages/app/src/entrypoint-user.ts")).toEqual([]);
+  });
+
+  it("resolves an extensionless specifier to a `.mts` target", () => {
+    // `.mts`/`.cts` are in the extractor's eligible set, so a `.mts` file can be an
+    // edge SOURCE. Leaving them out of the resolution candidates made it impossible
+    // for one to be an extensionless edge TARGET — an asymmetry with no reason.
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/core/src/native-user.ts")).toEqual([
+      "packages/core/src/native.mts",
+    ]);
+  });
+
+  it("mints NO edge for a self-import, rather than a phantom edge to a sibling", () => {
+    // `twin.ts` importing `./twin` names ITSELF. Skipping past the self-candidate and
+    // continuing down the extension list resolved it to `twin.tsx` — an edge between
+    // two files that have nothing to do with each other.
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/core/src/twin.ts")).toEqual([]);
+    expect(result.graph.importersOf("packages/core/src/twin.tsx")).toEqual([]);
+    expect(result.graph.edges.some((edge) => edge.from === "packages/core/src/twin.ts")).toBe(
+      false,
+    );
   });
 });
 

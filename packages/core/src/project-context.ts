@@ -48,7 +48,7 @@ import type {
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import type { FanInIndex } from "./delta";
-import { INDEX_EXTS, RESOLVE_EXTS, resolveRelative } from "./import-specifiers";
+import { resolveCandidate, resolveRelative } from "./import-specifiers";
 
 /** Load a content-addressed shard's bytes by digest, or `undefined` if absent. */
 export type ShardLoader = (digest: string) => string | undefined;
@@ -216,6 +216,19 @@ export function materializeSnapshot(
   manifest: ProjectSnapshotManifest,
   load: ShardLoader,
 ): MaterializeResult {
+  // A required per-blob shard family that is ABSENT is not "an empty index" — it is
+  // a manifest this build cannot read. Refusing here is what stops a v3 manifest
+  // without `imports` from materializing into a snapshot that answers "no import
+  // edges" for a repo full of them. (`verifySnapshotIntegrity` refuses the same
+  // shape; this holds even for a caller that materializes without the whole-snapshot
+  // gate, which is the contract this module states at the top.)
+  const absentFamilies = (["symbols", "references", "imports"] as const).filter(
+    (family) => !Array.isArray(manifest[family]),
+  );
+  if (absentFamilies.length > 0) {
+    return { ok: false, reason: "shard-unavailable", slots: absentFamilies };
+  }
+
   const decoded: Partial<Record<StructuralShardSlot, readonly unknown[]>> = {};
   const failed: string[] = [];
   for (const slot of STRUCTURAL_SLOTS) {
@@ -233,16 +246,12 @@ export function materializeSnapshot(
   for (const [blobOid, digest] of manifest.symbols) symbolDigestByBlob.set(blobOid, digest);
 
   const referenceDigestByBlob = new Map<string, string>();
-  // `references` is required in v2, but tolerate a defensively-parsed manifest that
-  // lacks it (⇒ an empty reference index, an honest "no references known").
-  for (const [blobOid, digest] of manifest.references ?? []) {
+  for (const [blobOid, digest] of manifest.references) {
     referenceDigestByBlob.set(blobOid, digest);
   }
 
   const importDigestByBlob = new Map<string, string>();
-  // `imports` is required in v3, tolerated as absent on the same terms (⇒ an empty
-  // import graph, an honest "no import edges known" — never a claimed empty answer).
-  for (const [blobOid, digest] of manifest.imports ?? []) {
+  for (const [blobOid, digest] of manifest.imports) {
     importDigestByBlob.set(blobOid, digest);
   }
 
@@ -910,9 +919,14 @@ export function queryReferences(snapshot: LoadedSnapshot, query: ReferenceLookup
 //    importing file's directory, then against the inventory through the same
 //    extension/index candidate order the changeset decomposer uses;
 //  - a WORKSPACE specifier (`@scope/pkg`, or anything under it) resolves through
-//    the scopes table to the owning scope, then to a real file under that scope's
-//    root or source root — so `@rennet/core` lands on `packages/core/src/index.ts`,
-//    not on a directory that is not a graph node;
+//    the scopes table to the owning scope. A BARE package name asks that scope's
+//    DECLARED entry points first (`main`, then `module`, then `types`), so a
+//    package whose entry is `./src/lib.ts` resolves to the file it actually
+//    declares, then falls back to a real file under the scope's root or source
+//    root — so `@rennet/core` lands on `packages/core/src/index.ts`, not on a
+//    directory that is not a graph node. A SUBPATH specifier names a file inside
+//    the package, which no entry-point field describes, so it goes straight to the
+//    root/source-root probe;
 //  - anything else — an npm package, a node builtin, a broken relative path, an
 //    asset the inventory holds but the graph does not index — resolves to NOTHING
 //    and contributes NO edge. The graph is file→file only; externals live on in the
@@ -948,21 +962,27 @@ export type ImportGraphResult =
   | { readonly ok: true; readonly graph: ImportGraph }
   | { readonly ok: false; readonly reason: "shard-unavailable"; readonly digest: string };
 
-/** Resolve a base path to a real inventory file, trying plain then `index` extensions. */
-function resolveInInventory(
-  base: string,
-  paths: ReadonlySet<string>,
-  importerPath: string,
-): string | null {
-  for (const ext of RESOLVE_EXTS) {
-    const candidate = base + ext;
-    if (candidate !== importerPath && paths.has(candidate)) return candidate;
+/**
+ * The DECLARED entry files of a scope, in a fixed precedence: `main`, then
+ * `module`, then `types`. A bare `@scope/pkg` specifier names the package's entry
+ * point, and a package is free to declare one that is not `<root>/index` — so
+ * probing only root/sourceRoot + `index` misses every package whose `main` is,
+ * say, `./src/lib.ts`. Each declared path is resolved POSIX-style against the
+ * scope root (`./src/lib.ts` under `packages/p` ⇒ `packages/p/src/lib.ts`).
+ *
+ * The `exports` map is deliberately NOT read here: it is opaque preserved JSON
+ * with conditional/subpath shapes this deterministic resolver has no honest way to
+ * pick a single answer from. A package whose only declaration is `exports` falls
+ * through to the root/sourceRoot index probe, exactly as before.
+ */
+function declaredEntryBases(entry: EntryPoint | undefined, root: string): string[] {
+  if (entry === undefined) return [];
+  const bases: string[] = [];
+  for (const declared of [entry.main, entry.module, entry.types]) {
+    if (declared === undefined || declared === "") continue;
+    bases.push(resolveRelative(`${root}/package.json`, declared));
   }
-  for (const ext of INDEX_EXTS) {
-    const candidate = `${base}/index${ext}`;
-    if (candidate !== importerPath && paths.has(candidate)) return candidate;
-  }
-  return null;
+  return bases;
 }
 
 /**
@@ -974,13 +994,12 @@ function resolveSpecifier(
   importerPath: string,
   paths: ReadonlySet<string>,
   scopes: readonly WorkspaceScope[],
+  entryPointsByScope: ReadonlyMap<string, EntryPoint>,
 ): { path: string; kind: ImportEdge["kind"] } | null {
+  const exists = (path: string): boolean => paths.has(path);
+
   if (specifier.startsWith(".")) {
-    const target = resolveInInventory(
-      resolveRelative(importerPath, specifier),
-      paths,
-      importerPath,
-    );
+    const target = resolveCandidate(resolveRelative(importerPath, specifier), importerPath, exists);
     return target === null ? null : { path: target, kind: "relative" };
   }
 
@@ -994,13 +1013,24 @@ function resolveSpecifier(
   if (owner === undefined) return null;
 
   const subpath = specifier.slice(owner.name.length).replace(/^\//, "");
-  // A package's entry lives under its source root far more often than at its root,
-  // so both are tried, root first. `<root>/src` is the fallback when no tooling
-  // config declared a source root.
-  const roots = [owner.root, owner.sourceRoot ?? `${owner.root}/src`];
-  for (const root of roots) {
-    const base = subpath === "" ? root : `${root}/${subpath}`;
-    const target = resolveInInventory(base, paths, importerPath);
+  // A BARE specifier means "the package's entry point", so the package's OWN
+  // declaration is asked first; only then the positional guesses. A SUBPATH
+  // specifier names a file inside the package, which no entry-point field
+  // describes, so it goes straight to the positional probe.
+  //
+  // Positionally: a package's entry lives under its source root far more often than
+  // at its root, but both are tried, root first. `<root>/src` is the fallback when
+  // no tooling config declared a source root.
+  const bases =
+    subpath === ""
+      ? [
+          ...declaredEntryBases(entryPointsByScope.get(owner.name), owner.root),
+          owner.root,
+          owner.sourceRoot ?? `${owner.root}/src`,
+        ]
+      : [owner.root, owner.sourceRoot ?? `${owner.root}/src`].map((root) => `${root}/${subpath}`);
+  for (const base of bases) {
+    const target = resolveCandidate(base, importerPath, exists);
     if (target !== null) return { path: target, kind: "workspace" };
   }
   return null;
@@ -1016,6 +1046,7 @@ function resolveSpecifier(
  */
 export function queryImportGraph(snapshot: LoadedSnapshot): ImportGraphResult {
   const paths = new Set(snapshot.files.map((file) => file.path));
+  const entryPointsByScope = new Map(snapshot.entryPoints.map((entry) => [entry.scope, entry]));
   const shardByDigest = new Map<string, ImportShard>();
   const edges: ImportEdge[] = [];
 
@@ -1032,7 +1063,13 @@ export function queryImportGraph(snapshot: LoadedSnapshot): ImportGraphResult {
     }
 
     for (const specifier of shard.imports) {
-      const resolved = resolveSpecifier(specifier, file.path, paths, snapshot.scopes);
+      const resolved = resolveSpecifier(
+        specifier,
+        file.path,
+        paths,
+        snapshot.scopes,
+        entryPointsByScope,
+      );
       if (resolved === null) continue;
       edges.push({ from: file.path, to: resolved.path, kind: resolved.kind, specifier });
     }

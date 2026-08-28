@@ -178,63 +178,37 @@ export function importShardBytes(shard: ImportShard): BuiltShard {
 // ── The fingerprint ──────────────────────────────────────────────────────────
 
 /**
- * The identifying pin the fingerprint covers, alongside the shard digests. This
- * is EVERY canonical manifest field except the shard pointers themselves and the
- * fingerprint: so two manifests that differ only in `repoKey`, `baseRef`, or
- * `baseRefResolution` get DIFFERENT fingerprints (#4), while two builds of the
- * same tree on the same repo share one.
+ * A manifest minus its own fingerprint — exactly what the fingerprint is computed
+ * over. Every other canonical field is in here by construction, so no field can be
+ * left out of the digest by forgetting to name it.
  */
-export interface FingerprintPin {
-  /** The store key: `escapePath(realpath(git-top-level))` (design §1.1). */
-  readonly repoKey: string;
-  readonly baseRef: string;
-  readonly baseRefResolution: BaseRefResolution;
-  readonly baseOid: string;
-}
+export type UnfingerprintedManifest = Omit<ProjectSnapshotManifest, "fingerprint">;
 
 /**
- * The freshness/integrity fingerprint: a digest over the pin (`schemaVersion`,
- * `repoKey`, `baseRef`, `baseRefResolution`, `baseOid`) plus every shard digest
- * (structural, symbol, reference, AND import). It covers all canonical manifest
- * content (#4), so the fingerprint alone identifies the snapshot's content.
- * Deterministic and clock-free, so two builds of the same tree on the same repo
- * share a fingerprint; two snapshots are the same content iff their fingerprints
- * match.
+ * The freshness/integrity fingerprint: a digest over the ENTIRE canonical manifest
+ * except the fingerprint field itself. Two manifests that differ in ANY other
+ * respect — `repoKey`, `baseRef`, `baseRefResolution`, `baseOid`, `schemaVersion`,
+ * a shard digest, a shard's declared `entries` count, the ORDER of a per-blob
+ * pointer array, or an extra key smuggled in by a tamperer — get different
+ * fingerprints. Deterministic and clock-free, so two builds of the same tree on the
+ * same repo share a fingerprint; two snapshots are the same content iff their
+ * fingerprints match (#4).
  *
- * `references` and `imports` are required so a caller cannot silently omit a shard
- * dimension and compute a fingerprint that agrees with a build that lacks it — pass
- * `[]` for a snapshot with no reference/import index.
+ * Hashing the whole projection rather than a hand-listed subset is the point: the
+ * earlier version re-derived `structural` from digests alone (dropping `entries`),
+ * re-SORTED the pointer arrays before hashing (so a manifest whose arrays were out
+ * of canonical order still verified), and hashed the schema CONSTANT rather than
+ * the manifest's own `schemaVersion`. All three are covered now, for free.
  */
-export function computeFingerprint(
-  pin: FingerprintPin,
-  shards: Readonly<Record<StructuralShardSlot, ShardRef>>,
-  symbols: readonly (readonly [string, string])[],
-  references: readonly (readonly [string, string])[],
-  imports: readonly (readonly [string, string])[],
-): string {
-  const structural: Record<string, string> = {};
-  for (const slot of Object.keys(shards).sort() as StructuralShardSlot[]) {
-    structural[slot] = shards[slot].digest;
-  }
-  const sortByBlob = (
-    pairs: readonly (readonly [string, string])[],
-  ): (readonly [string, string])[] =>
-    [...pairs]
-      .map(([blobOid, digest]) => [blobOid, digest] as const)
-      .sort((l, r) => byString(l[0], r[0]));
-  return sha256Hex(
-    canonicalize({
-      schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
-      repoKey: pin.repoKey,
-      baseRef: pin.baseRef,
-      baseRefResolution: pin.baseRefResolution,
-      baseOid: pin.baseOid,
-      structural,
-      symbols: sortByBlob(symbols),
-      references: sortByBlob(references),
-      imports: sortByBlob(imports),
-    }),
-  );
+export function computeFingerprint(manifest: UnfingerprintedManifest): string {
+  return sha256Hex(canonicalize(manifest));
+}
+
+/** Strip a manifest's own fingerprint, yielding the value {@link computeFingerprint} covers. */
+export function unfingerprinted(manifest: ProjectSnapshotManifest): UnfingerprintedManifest {
+  const { fingerprint, ...rest } = manifest;
+  void fingerprint;
+  return rest;
 }
 
 // ── The build ────────────────────────────────────────────────────────────────
@@ -289,30 +263,21 @@ export function buildSnapshot(
   const references = perBlobPointers(referenceShards, referenceShardBytes, shardBytes);
   const imports = perBlobPointers(importShards, importShardBytes, shardBytes);
 
-  const fingerprint = computeFingerprint(
-    {
-      repoKey: inputs.repoKey,
-      baseRef: inputs.baseRef,
-      baseRefResolution: inputs.baseRefResolution,
-      baseOid: inputs.baseOid,
-    },
-    shards,
-    symbols,
-    references,
-    imports,
-  );
-
-  const manifest: ProjectSnapshotManifest = {
+  const unpinned: UnfingerprintedManifest = {
     schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
     repoKey: inputs.repoKey,
     baseRef: inputs.baseRef,
     baseRefResolution: inputs.baseRefResolution,
     baseOid: inputs.baseOid,
-    fingerprint,
     shards,
     symbols,
     references,
     imports,
+  };
+
+  const manifest: ProjectSnapshotManifest = {
+    ...unpinned,
+    fingerprint: computeFingerprint(unpinned),
   };
 
   return { manifest, shards: shardBytes };
@@ -374,9 +339,10 @@ export interface IntegrityResult {
 }
 
 /**
- * Verify that every shard the manifest references is present AND its bytes hash
- * back to the referenced digest, and that the manifest's own fingerprint matches
- * its shard digests. This is the gate the harness passes a request through: a
+ * Verify that every shard family the schema requires is PRESENT, that every shard
+ * the manifest references is present AND its bytes hash back to the referenced
+ * digest, and that the manifest's own fingerprint matches the rest of the manifest.
+ * This is the gate the harness passes a request through: a missing shard family, a
  * missing shard, a corrupt shard, or a tampered manifest all fail closed, so a
  * stale/corrupt shard can never enter a request. `load` returns the stored bytes
  * for a digest, or `undefined` if absent.
@@ -385,6 +351,21 @@ export function verifySnapshotIntegrity(
   manifest: ProjectSnapshotManifest,
   load: (digest: string) => string | undefined,
 ): IntegrityResult {
+  // FAIL CLOSED on a missing shard FAMILY, before anything else. `symbols` is
+  // required in v1, `references` in v2 and `imports` in v3, so a manifest that
+  // omits one is not a snapshot with an empty index — it is a manifest this build
+  // cannot read, and materializing it would silently claim "no import edges" for a
+  // repo full of them. (It would also fail the fingerprint check below, since the
+  // digest covers the whole manifest; this makes the refusal explicit rather than
+  // incidental, and keeps the iteration underneath from throwing on a non-array.)
+  if (
+    !Array.isArray(manifest.symbols) ||
+    !Array.isArray(manifest.references) ||
+    !Array.isArray(manifest.imports)
+  ) {
+    return { ok: false, missing: [], mismatched: [] };
+  }
+
   const missing: string[] = [];
   const mismatched: string[] = [];
 
@@ -393,12 +374,8 @@ export function verifySnapshotIntegrity(
     digests.add(manifest.shards[slot].digest);
   }
   for (const [, digest] of manifest.symbols) digests.add(digest);
-  // A tolerant read for a defensively-parsed manifest: `references` is required in
-  // v2 and `imports` in v3, but coerce an absent value to `[]` so this never throws
-  // on a malformed input. (An absent family still fails the fingerprint check below
-  // against a manifest that declared one — the gate stays closed either way.)
-  for (const [, digest] of manifest.references ?? []) digests.add(digest);
-  for (const [, digest] of manifest.imports ?? []) digests.add(digest);
+  for (const [, digest] of manifest.references) digests.add(digest);
+  for (const [, digest] of manifest.imports) digests.add(digest);
 
   for (const digest of digests) {
     const bytes = load(digest);
@@ -409,19 +386,7 @@ export function verifySnapshotIntegrity(
     if (sha256Hex(bytes) !== digest) mismatched.push(digest);
   }
 
-  const fingerprintOk =
-    computeFingerprint(
-      {
-        repoKey: manifest.repoKey,
-        baseRef: manifest.baseRef,
-        baseRefResolution: manifest.baseRefResolution,
-        baseOid: manifest.baseOid,
-      },
-      manifest.shards,
-      manifest.symbols,
-      manifest.references ?? [],
-      manifest.imports ?? [],
-    ) === manifest.fingerprint;
+  const fingerprintOk = computeFingerprint(unfingerprinted(manifest)) === manifest.fingerprint;
 
   return {
     ok: fingerprintOk && missing.length === 0 && mismatched.length === 0,
@@ -815,7 +780,9 @@ export function indexReferenceShards(
 //
 // The shard holds RAW specifiers, never resolved paths: relative resolution depends
 // on the IMPORTING FILE'S path, and a path in the shard bytes would break the
-// rename/copy reuse contract the other two families rely on. Resolution to real
+// rename/copy reuse contract the other two families rely on. The extractor is not
+// even GIVEN the path, so that contract cannot be broken by a substituted
+// extractor. Resolution to real
 // file→file edges is a separate, equally deterministic step over the shard plus the
 // `files` inventory and the `scopes` table (`queryImportGraph`, project-context.ts).
 // Its honest, documented limits:
@@ -826,21 +793,42 @@ export function indexReferenceShards(
 
 export const DEFAULT_IMPORT_EXTRACTOR_ID = "structural-imports-v1";
 
-/** Extract a source file's raw import specifiers. Same bytes ⇒ same specifiers, always. */
-export type SnapshotImportExtractor = (path: string, text: string) => string[];
+/**
+ * Extract a source file's raw import specifiers from its BYTES. Same bytes ⇒ same
+ * specifiers, always.
+ *
+ * ⭐ It is handed no path, ON PURPOSE. `planIncremental` reuses a shard for any file
+ * whose blob is unchanged, on the stated grounds that the shard is a pure function
+ * of blob content — so a path-sensitive extractor would make an incremental build
+ * differ from a clean one (same blob, moved file ⇒ different shard) and break that
+ * contract from the outside. Denying the path makes the contract structural rather
+ * than a promise a custom extractor can quietly break. WHICH files are extracted at
+ * all is an eligibility question the CALLER answers ({@link eligibleSymbolFiles}),
+ * before the bytes ever reach here.
+ */
+export type SnapshotImportExtractor = (text: string) => string[];
 
 /**
- * The default import extractor. Strips block comments, matches the four import
- * forms, and returns the DISTINCT specifiers sorted in code-unit order — a
- * deterministic pure function of the bytes.
+ * The default import extractor. Strips block comments and matches the four import
+ * forms — a deterministic pure function of the bytes. Ordering and de-duplication
+ * are the shard boundary's job ({@link extractImportShard}), not the extractor's.
  */
-export const structuralImportExtractor: SnapshotImportExtractor = (path, text) => {
-  if (!SYMBOL_EXTENSIONS.has(extensionOf(path))) return [];
-  const specifiers = new Set(importSpecifiers(stripBlockComments(text.split("\n"))));
-  return [...specifiers].sort(byString);
-};
+export const structuralImportExtractor: SnapshotImportExtractor = (text) =>
+  importSpecifiers(stripBlockComments(text.split("\n")));
 
-/** Build an import shard for a file from its content and an extractor. */
+/**
+ * Build an import shard for a file from its content and an extractor.
+ *
+ * Only `file.blobOid` is read — never `file.path` — so the shard bytes are a pure
+ * function of blob content and the extractor's identity, which is exactly what
+ * makes blob-keyed reuse safe (see {@link SnapshotImportExtractor}). The specifiers
+ * are NORMALIZED here, distinct and sorted in code-unit order, so a custom
+ * extractor's ordering or duplicates cannot vary the shard's canonical bytes.
+ *
+ * The caller passes only files it has already decided are eligible for extraction
+ * ({@link eligibleSymbolFiles}); this does not re-decide it, because re-deciding
+ * from `file.path` is the path dependence the family is built to avoid.
+ */
 export function extractImportShard(
   file: SnapshotFileEntry,
   text: string,
@@ -850,7 +838,7 @@ export function extractImportShard(
   return {
     blobOid: file.blobOid,
     extractor: extractorId,
-    imports: extract(file.path, text),
+    imports: [...new Set(extract(text))].sort(byString),
   };
 }
 
