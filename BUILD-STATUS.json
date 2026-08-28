@@ -143,7 +143,7 @@
   "c15": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal \u2014 C14 flags claim-vs-live, doesn't fudge). PARKED for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
+    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal \u2014 C14 flags claim-vs-live, doesn't fudge). UNPARKED \u2014 finale in flight; for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
   },
   "c16": {
     "status": "landed",
@@ -158,7 +158,7 @@
   "c18": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #551. TWO SLICES review-ready on feat/c18-wiring-commands @fbf1d810 (board.read \u2014 LensBoard from the two durable halves, BoardSource DELETED, pending/unreadable/missing distinguished; session.list/rename/setPinned/archive + project.rename R67 fallback; registry 87->93; per-slice GATE_EXIT=0). Lands now to UNPARK C15. GROUP-A honestly REFUSED by the worker (no served write rung exists: no registry keys, no per-repo rung, tracker resolves globally, guidance writer absent) \u2014 continuation session running on feat/c18-group-a building the real settings-engine slice (M): registry keys, per-repoKey rung, resolveTrackerConfig repo layer, conventions writer, then the projectEditsPersist flip. C18-COMPLETE only after both land. No sigil yet \u2014 correctly."
+    "note": "Issue #551 (OPEN \u2014 group-A owed). SLICES 1-2 LANDED #562 @2a7bf793: board.read live (three honest states, BoardSource deleted \u2014 c15 UNPARKED), session.list/rename/setPinned/archive + project.rename R67, registry 93. Review FIX->CONFIRMED (keystroke-rename made draft-commit red-first; migration script removed; caption truth). Group-A continuation building the honest settings-engine slice on feat/c18-group-a (registry keys, per-repoKey rung, tracker repo layer, conventions writer, then the projectEditsPersist flip). C18-COMPLETE after it lands."
   },
   "c19": {
     "status": "landed",
