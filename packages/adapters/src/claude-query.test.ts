@@ -7,6 +7,7 @@ import {
   createClaudeHarness,
   createClaudeQueryFn,
   type LoadClaudeQuery,
+  mapCouncilModel,
   normalizeOutputSchema,
   toSdkOptions,
 } from "./claude-query";
@@ -137,6 +138,21 @@ describe("toSdkOptions", () => {
   it("normalizeOutputSchema leaves a dialect-free schema untouched", () => {
     const bare = { type: "object", properties: { ok: { type: "boolean" } } };
     expect(normalizeOutputSchema(bare)).toEqual(bare);
+  });
+
+  it("maps the council's versioned model aliases to the binary's full ids, else passes through", () => {
+    // The council pins a version per role; the installed claude rejects the short versioned
+    // alias but accepts the canonical full id for the SAME version (confirmed live).
+    expect(mapCouncilModel("opus-4.8")).toBe("claude-opus-4-8");
+    expect(mapCouncilModel("sonnet-5")).toBe("claude-sonnet-5");
+    // Bare aliases, already-full ids, and unknowns pass through untouched (no lossy strip).
+    expect(mapCouncilModel("haiku")).toBe("haiku");
+    expect(mapCouncilModel("opus")).toBe("opus");
+    expect(mapCouncilModel("claude-opus-4-8")).toBe("claude-opus-4-8");
+    // And toSdkOptions applies the map on the way to the SDK.
+    expect(
+      (toSdkOptions(baseOptions({ model: "opus-4.8" })) as Record<string, unknown>).model,
+    ).toBe("claude-opus-4-8");
   });
 });
 
