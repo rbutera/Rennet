@@ -15,6 +15,7 @@
 // claim; nothing is shared to serialize.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { realpathSync } from "node:fs";
 import { type GitExec, repositoryIdentity } from "@rennet/adapters";
 import { bindTarget, type MintSessionDeps, mintSession } from "@rennet/core";
 import {
@@ -59,6 +60,21 @@ export interface EntryResult {
 }
 
 /**
+ * A path with its symlinks resolved, falling back to the input. Only ever applied to `local`
+ * projects — a `wsl:` or `remote:` path names a filesystem this host cannot resolve. A path
+ * that no longer exists throws and compares as written, which is the honest answer for a
+ * project whose directory was moved or deleted.
+ */
+function canonicalPath(path: string): string {
+  if (path.length === 0) return path;
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * The `Project.id` a repository root belongs to — the ONE key both session mints converge on
  * (#580). The client's New Chat mint always had a `Project.id`; the round dispatch used to mint
  * with the repo root instead, and a `Project.id` is a `crypto.randomUUID()` stamped at add time,
@@ -73,13 +89,22 @@ export interface EntryResult {
  * rather than filed under a project that does not contain it.
  */
 export function projectIdForRepoRoot(repoRoot: string, projects: readonly Project[]): string {
+  // BOTH sides are canonicalised before comparing, because they arrive spelled differently.
+  // A review's root comes from `git rev-parse --show-toplevel`, which resolves symlinks; a
+  // project's path is whatever was stored when it was added. On macOS `/var/folders` resolves
+  // to `/private/var/folders`, so a project added under an unresolved path never matched its
+  // own review's root — the lookup missed, this fell through to the raw path, and the round's
+  // session was filed under a project id no sidebar row has. #580's bug, one spelling over.
+  const root = canonicalPath(repoRoot);
   const covering = projects.find(
     (p) =>
       p.source === "local" &&
-      (p.openPath === repoRoot ||
-        p.path === repoRoot ||
-        (p.includedRepoPaths ?? []).includes(repoRoot)),
+      (canonicalPath(p.openPath) === root ||
+        canonicalPath(p.path) === root ||
+        (p.includedRepoPaths ?? []).some((included) => canonicalPath(included) === root)),
   );
+  // The fallback stays the caller's own spelling: read and write both pass `review.repositoryRoot`,
+  // so they agree, and canonicalising it here would orphan every session already filed under it.
   return covering?.id ?? repoRoot;
 }
 

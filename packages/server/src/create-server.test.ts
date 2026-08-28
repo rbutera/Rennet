@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -74,11 +74,17 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     // duration, or this test reads and writes the machine's own sessions.
     const home = mkdtempSync(join(tmpdir(), "rennet-round-home-"));
     vi.stubEnv("HOME", home);
-    // `realpathSync`, because the review's root comes from `git rev-parse --show-toplevel`
-    // and macOS resolves `/var/folders` to `/private/var/folders`. A project stored under
-    // the unresolved path never matches that root, and the round's session lands ungrouped.
+    // The project is added under a SYMLINK to the repo, and git reports the resolved path —
+    // so `Project.path` and `review.repositoryRoot` are two spellings of one directory. That
+    // is the shape a single-path fixture cannot contain: without it `projectIdForRepoRoot`
+    // misses, `projectIdOf` falls back to the raw path, and the round mints a second session
+    // filed under a project id no sidebar row has. Built explicitly rather than relying on
+    // macOS resolving `/var/folders`, so it bites on Linux too.
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-repo-")));
-    dirs.push(dataDir, home, repo);
+    const linkDir = mkdtempSync(join(tmpdir(), "rennet-round-link-"));
+    const repoLink = join(linkDir, "repo");
+    symlinkSync(repo, repoLink);
+    dirs.push(dataDir, home, repo, linkDir);
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
     git("init", "-b", "main");
     writeFileSync(join(repo, "a.txt"), "one\n");
@@ -92,9 +98,9 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const added = (await server.dispatch("projects.add", {
       commandId: randomUUID(),
       discovery: {
-        path: repo,
+        path: repoLink,
         kind: "repo",
-        repos: [{ name: "repo", path: repo, branches: 1 }],
+        repos: [{ name: "repo", path: repoLink, branches: 1 }],
         primaryBranch: "main",
       },
       includedRepos: ["repo"],
@@ -138,7 +144,12 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
 
     // The assertion: the store holds ONE session, and it is the one the click made.
     // A call site that drops the review id mints a second row here.
-    const listed = (await server.dispatch("session.list", {})) as { sessions: { id: string }[] };
+    const listed = (await server.dispatch("session.list", {})) as {
+      sessions: { id: string; projectId: string }[];
+    };
     expect(listed.sessions.map((s) => s.id)).toEqual([checkoutId]);
+    // And it is filed under the PROJECT, not under a path — the round resolved the symlinked
+    // project path onto the review's resolved root rather than falling through to it.
+    expect(listed.sessions[0]?.projectId).toBe(added.project.id);
   }, 30_000);
 });
