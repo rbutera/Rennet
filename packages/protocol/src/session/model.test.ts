@@ -112,6 +112,21 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(RoundRecordSchema.parse(unminted).mintedPatchsetGeneration).toBeUndefined();
   });
 
+  it("carries a frozen-predecessor id for a landed round, none for a first-generation round", () => {
+    const landed = {
+      asksDispatched: ["th-1"],
+      workerCommitRange: { from: "abc123", to: "def456" },
+      mintedPatchsetGeneration: "gen-2",
+      boardGeneration: "gen-2",
+      reportBoard: "board-r",
+      frozenPredecessor: "gen-1",
+    };
+    // The earlier generation the switcher drills back to — distinct from the minted id (F3).
+    expect(RoundRecordSchema.parse(landed).frozenPredecessor).toBe("gen-1");
+    const firstGen = { ...landed, frozenPredecessor: undefined };
+    expect(RoundRecordSchema.parse(firstGen).frozenPredecessor).toBeUndefined();
+  });
+
   it("parses the durable root: claimed with a review, and a bare no-target chat", () => {
     const session = {
       id: "s-1",

@@ -190,6 +190,13 @@ export interface RoundsRuntimeDeps {
    *  generations are process-lived only; present ⇒ the frozen prior survives a restart as
    *  a drill-down the ledger's switcher can open by id ({@link RoundsRuntime.generation}). */
   readonly persistGeneration?: (gen: Generation) => void | Promise<void>;
+  /** Persist a round record to the durable ledger (C15 2.2), reconciling to ONE record per
+   *  round — the real-generation record supersedes the dispatch placeholder for the same
+   *  round. Called by BOTH the dispatch and the regeneration paths; absent ⇒ in-memory only. */
+  readonly recordRound?: (sessionId: string, record: RoundRecord) => void;
+  /** Read the durable rounds ledger for a session (C15 2.2). Present ⇒ `ledger()` returns the
+   *  reconciled durable records; absent ⇒ `ledger()` falls back to the in-memory ledger. */
+  readonly readRounds?: (sessionId: string) => readonly RoundRecord[];
 }
 
 /** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
@@ -372,16 +379,24 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // The round-report seat's board, or the pre-minted report board id when the seat
     // wrote nothing — always a valid id, so the `RoundRecord` is never unrepresentable.
     const reportBoard = pipeline.report?.boardId ?? reportBoardId;
+    // The frozen predecessor id (C15 2.2, un-parks C09 F3): when the code moved, the prior
+    // generation freezes and its id is the earlier generation the ledger's switcher drills
+    // back to. Absent on a no-move round — honestly, there is no distinct predecessor.
     const record: RoundRecord = {
       asksDispatched: [...input.asksDispatched],
       workerCommitRange: { from: worked.commitRange.from, to: worked.commitRange.to },
       ...(landed ? { mintedPatchsetGeneration: boardGeneration.id } : {}),
       boardGeneration: boardGeneration.id,
       reportBoard,
+      ...(landed ? { frozenPredecessor: input.previousGeneration.id } : {}),
     };
     const records = ledger.get(input.session.id) ?? [];
     records.push(record);
     ledger.set(input.session.id, records);
+    // Reconcile to ONE durable record (C15 2.2): this real-generation record supersedes the
+    // dispatch path's ROUND_NO_REGEN placeholder for the same round (same worker commit
+    // range), keeping the placeholder's checkpoint diff/outcome. Absent store ⇒ in-memory only.
+    deps.recordRound?.(input.session.id, record);
 
     // Persist the generations this round minted (C15 2.1) so the frozen prior survives a
     // restart as a drill-down. The live successor carries its lens board ids; the prior
@@ -429,6 +444,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         const records = ledger.get(input.session.id) ?? [];
         records.push(record);
         ledger.set(input.session.id, records);
+        // The durable placeholder (C15 2.2): a later `runRound` for the same round supersedes
+        // this in the durable ledger with the real generation; a dispatch-only round keeps it.
+        deps.recordRound?.(input.session.id, record);
         // A FAILED round is RECORDED (its partial diff is on disk) but still REJECTS, so
         // the dispatch command's per-key memo evicts and an identical re-dispatch retries
         // (B11 finding 4). The session tail swallows the rejection — the queue is not wedged.
@@ -438,7 +456,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       });
     },
     ledger(sessionId: string): readonly RoundRecord[] {
-      return ledger.get(sessionId) ?? [];
+      // The durable ledger (reconciled to one record per round) is the truth when a store is
+      // wired; the in-memory map is the fallback for a runtime with no durability (tests).
+      return deps.readRounds?.(sessionId) ?? ledger.get(sessionId) ?? [];
     },
   };
 }

@@ -9,7 +9,14 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type Generation, GenerationSchema } from "@rennet/protocol";
+import {
+  type Generation,
+  GenerationSchema,
+  ROUND_NO_REGEN,
+  type RoundRecord,
+  RoundRecordSchema,
+} from "@rennet/protocol";
+import { z } from "zod";
 
 /**
  * Durable homes for what a round MINTS (C15 cluster 2) — the generation ledger
@@ -114,4 +121,111 @@ export class GenerationStore {
     if (!result.success) throw new RoundStoreCorruptError(id, "schema mismatch");
     return result.data;
   }
+}
+
+/** The current round-record-store schema version. Bumped on a breaking shape change. */
+export const ROUND_RECORD_STORE_VERSION = 1;
+
+const roundLedgerFileSchema = z.object({
+  version: z.number().int(),
+  records: z.array(RoundRecordSchema),
+});
+
+/** The default round-record-store directory: `~/.rennet/rounds`. Tests pass a temp dir. */
+export function defaultRoundRecordStoreDir(): string {
+  return join(homedir(), ".rennet", "rounds");
+}
+
+/**
+ * The durable rounds ledger (C15 2.2) — one JSON document per session at
+ * `<dir>/<sessionId>.json` holding that session's `RoundRecord[]` in round order.
+ * Reconciles the TWO records a regeneration round produces into ONE: the dispatch
+ * path writes a `ROUND_NO_REGEN` placeholder (carrying the checkpoint diff/outcome),
+ * then `runRound` writes the real-generation record for the SAME round (same worker
+ * commit range). {@link record} recognises the second as the first's completion and
+ * REPLACES the placeholder in place — the durable ledger carries one record per round,
+ * the real minted generation plus the frozen-predecessor id, over the placeholder's diff.
+ *
+ * A dispatch-only round (no regeneration follows) keeps its `ROUND_NO_REGEN` marker —
+ * the honest "ran a work-order, regenerated nothing" record. Absent session ⇒ empty
+ * ledger; a corrupt file THROWS rather than dropping the reviewer's round history.
+ */
+export class RoundRecordStore {
+  private tmpSeq = 0;
+
+  constructor(private readonly dir: string = defaultRoundRecordStoreDir()) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  private pathFor(sessionId: string): string {
+    return join(this.dir, `${encodeURIComponent(sessionId)}.json`);
+  }
+
+  /** A session's rounds ledger in order. Absent ⇒ `[]`; corrupt ⇒ THROW. */
+  read(sessionId: string): RoundRecord[] {
+    const parsed = readJsonStrict(this.pathFor(sessionId), sessionId);
+    if (parsed === undefined) return [];
+    const result = roundLedgerFileSchema.safeParse(parsed);
+    if (!result.success) throw new RoundStoreCorruptError(sessionId, "schema mismatch");
+    if (result.data.version !== ROUND_RECORD_STORE_VERSION) {
+      throw new RoundStoreCorruptError(
+        sessionId,
+        `unknown store version ${result.data.version} (expected ${ROUND_RECORD_STORE_VERSION})`,
+      );
+    }
+    return result.data.records;
+  }
+
+  /**
+   * Record one round, reconciling to ONE record per round. A real-generation record
+   * (`boardGeneration !== ROUND_NO_REGEN`) SUPERSEDES the same round's dispatch
+   * placeholder (the last `ROUND_NO_REGEN` record with a matching worker commit range),
+   * keeping the placeholder's checkpoint diff/outcome/changedPaths that the regeneration
+   * path does not carry. Anything else appends. Refuses over a corrupt file.
+   */
+  record(sessionId: string, incoming: RoundRecord): void {
+    const records = this.read(sessionId);
+    if (incoming.boardGeneration !== ROUND_NO_REGEN) {
+      const idx = lastPlaceholderIndex(records, incoming);
+      if (idx >= 0) {
+        const placeholder = records[idx] as RoundRecord;
+        records[idx] = {
+          ...incoming,
+          // Preserve the dispatch placeholder's checkpoint truth (the regeneration path
+          // has no diff of its own) — one record with the real generation AND the diff.
+          ...(placeholder.outcome === undefined ? {} : { outcome: placeholder.outcome }),
+          ...(placeholder.diff === undefined ? {} : { diff: placeholder.diff }),
+          ...(placeholder.changedPaths === undefined
+            ? {}
+            : { changedPaths: placeholder.changedPaths }),
+        };
+        this.write(sessionId, records);
+        return;
+      }
+    }
+    this.write(sessionId, [...records, incoming]);
+  }
+
+  private write(sessionId: string, records: RoundRecord[]): void {
+    atomicWriteJson(this.dir, this.pathFor(sessionId), this.tmpSeq++, {
+      version: ROUND_RECORD_STORE_VERSION,
+      records,
+    });
+  }
+}
+
+/** The index of the dispatch placeholder a real-generation record completes: the LAST
+ *  `ROUND_NO_REGEN` record with the same worker commit range. -1 ⇒ none (append). */
+function lastPlaceholderIndex(records: readonly RoundRecord[], incoming: RoundRecord): number {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i] as RoundRecord;
+    if (
+      r.boardGeneration === ROUND_NO_REGEN &&
+      r.workerCommitRange.from === incoming.workerCommitRange.from &&
+      r.workerCommitRange.to === incoming.workerCommitRange.to
+    ) {
+      return i;
+    }
+  }
+  return -1;
 }

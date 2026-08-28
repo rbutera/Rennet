@@ -89,6 +89,7 @@ import {
   parseGitHubPrRef,
   prWorktreePath,
   RepoWatcher,
+  RoundRecordStore,
   readOpenSpecChange,
   readSetupLogTail,
   readSetupStatus,
@@ -1526,6 +1527,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Durable generation ledger (C15 2.1): the frozen prior + live successor a round mints,
   // so gen-1 survives a restart as a drill-down the rounds switcher opens by id.
   const generationStore = new GenerationStore(join(homedir(), ".rennet", "generations"));
+  // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
+  // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
+  const roundRecordStore = new RoundRecordStore(join(homedir(), ".rennet", "rounds"));
   const promptsSrcDir = (() => {
     try {
       // `@rennet/prompts` exports `./src/index.ts`; its dir is the prompt-file root the
@@ -1546,6 +1550,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
     persistGeneration: (gen) => generationStore.save(gen),
+    recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),
+    readRounds: (sessionId) => roundRecordStore.read(sessionId),
   });
   const dispatch = createDispatch({
     service,

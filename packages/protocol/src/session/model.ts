@@ -118,6 +118,11 @@ export const RoundRecordSchema = z.object({
   workerCommitRange: z.object({ from: id, to: id }),
   /** Generation minted from the worker's commits; absent if nothing landed. */
   mintedPatchsetGeneration: id.optional(),
+  /** The FROZEN predecessor generation this round succeeded — the earlier generation the
+   *  rounds ledger's `GenerationSwitcher` drills back to (C15, un-parks C09 finding F3).
+   *  Present iff the code moved (a distinct id from `boardGeneration`); absent on a
+   *  first-generation or no-move round — honestly, there is no distinct predecessor. */
+  frozenPredecessor: id.optional(),
   /** The generation whose boards this round reported against (`ROUND_NO_REGEN` for a
    *  dispatch round that regenerated no boards). */
   boardGeneration: id,
