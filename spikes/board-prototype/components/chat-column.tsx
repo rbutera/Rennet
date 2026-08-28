@@ -1,7 +1,7 @@
 "use client"
 
 import { type ReactNode, useEffect, useRef, useState } from "react"
-import { PanelRight } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { SessionTrail } from "@/components/location-trail"
 import { ConversationPane } from "@/components/conversation-pane"
 import { InputBar } from "@/components/input-bar"
@@ -15,21 +15,19 @@ function commentBadgeId(path: string, line: number) {
 }
 
 export function ChatColumn({
-  onCollapse,
   width = 420,
   transcript,
   projectName,
   session,
-  head,
+  corner,
 }: {
-  onCollapse: () => void
   width?: number
   transcript: TurnData[]
   projectName: string
   session: SessionItem
-  /** Corner-slot head strip: rendered above the chat header when the chat
+  /** Corner slot: mounted inline at the left of the chat header when the chat
    * column is the leftmost pane (sidebar collapsed). */
-  head?: ReactNode
+  corner?: ReactNode
 }) {
   const [turns, setTurns] = useState<TurnData[]>(transcript)
   // Turns appended after mount animate in; everything else is a record.
@@ -116,8 +114,7 @@ export function ChatColumn({
       className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border"
       style={{ width }}
     >
-      {head}
-      <ChatHeader projectName={projectName} session={session} onCollapse={onCollapse} />
+      <ChatHeader projectName={projectName} session={session} corner={corner} />
       <ConversationPane
         turns={turns}
         comments={comments}
@@ -136,29 +133,25 @@ export function ChatColumn({
 }
 
 /**
- * The one chat-pane header: trail + collapse. Every chat surface (scenario
- * sessions AND the minted new-chat run) renders this — never a bespoke bar.
+ * The one chat-pane header: optional corner slot + trail. Every chat surface
+ * (scenario sessions AND the minted new-chat run) renders this — never a
+ * bespoke bar. The chat's own open/close control lives on the main view now.
  */
 export function ChatHeader({
   projectName,
   session,
-  onCollapse,
+  corner,
 }: {
   projectName: string
   session: SessionItem
-  onCollapse: () => void
+  corner?: ReactNode
 }) {
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-3">
+    <header className={cn("flex h-14 shrink-0 items-center border-b border-border pr-3", corner ? "pl-0" : "pl-3")}>
+      {/* Self-start: the emulated lights hold their real y even though this
+          row is taller than the sidebar's header. */}
+      {corner}
       <SessionTrail projectName={projectName} session={session} />
-      <button
-        type="button"
-        onClick={onCollapse}
-        aria-label="Collapse chat"
-        className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
-      >
-        <PanelRight className="size-3.5" aria-hidden="true" />
-      </button>
     </header>
   )
 }

@@ -130,16 +130,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             inert={!chatOpen}
           >
             <ChatColumn
-              head={
+              corner={
                 !sidebarOpen ? (
                   <CornerSlot
                     sidebarOpen={false}
                     onToggle={useAppStore.getState().toggleSidebar}
-                    className="border-b border-border"
+                    className="mr-2 self-start"
                   />
                 ) : null
               }
-              onCollapse={() => useAppStore.getState().setChatOpen(false)}
               width={chatWidth}
               transcript={chatScenario.transcript}
               projectName={trail.projectName}

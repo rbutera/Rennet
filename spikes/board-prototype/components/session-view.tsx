@@ -66,11 +66,7 @@ export function SessionView({
         className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border"
         style={{ width: chatWidth }}
       >
-        <ChatHeader
-          projectName={projectName}
-          session={session}
-          onCollapse={() => useAppStore.getState().setChatOpen(false)}
-        />
+        <ChatHeader projectName={projectName} session={session} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex h-full w-full max-w-[720px] flex-col justify-end gap-3 px-5 py-4">
             {turns.map((turn, index) => (
@@ -97,7 +93,6 @@ export function SessionView({
       {boardsReady ? (
         <MainSurface
           showLocationTrail={!chatOpen}
-          onExpandChat={() => useAppStore.getState().setChatOpen(true)}
           scenario={scenarios[DEFAULT_SCENARIO]}
           trail={{ projectName, session }}
         />

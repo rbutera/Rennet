@@ -11,7 +11,7 @@ import {
   History,
   ListOrdered,
   Map,
-  PanelLeft,
+  MessageSquare,
   PenLine,
   VolumeX,
   type LucideIcon,
@@ -46,14 +46,12 @@ type ViewParam = "board" | "diff" | "map" | "handoff" | "rounds"
 
 export function MainSurface({
   showLocationTrail,
-  onExpandChat,
   scenario,
   trail,
   onDispatchRound,
   onOpenPullRequest,
 }: {
   showLocationTrail: boolean
-  onExpandChat: () => void
   scenario: Scenario
   /** project + session behind the trail; falls back to the scenario fixture. */
   trail?: { projectName: string; session: SessionItem }
@@ -166,8 +164,7 @@ export function MainSurface({
           className={cn(
             "flex items-center gap-2 justify-self-start",
             // Clear the floating corner slot (lights + toggle end near x=116).
-            floatingBar &&
-              "pointer-events-auto ml-[112px] rounded-full border py-1 pl-2.5 pr-3 " + pillSkin,
+            floatingBar && "pointer-events-auto ml-[112px]",
           )}
         >
           {currentView !== "board" && (
@@ -176,26 +173,39 @@ export function MainSurface({
               onClick={goBack}
               aria-label="Back"
               title="Back"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+              className={cn(
+                "flex shrink-0 items-center justify-center text-muted-foreground hover:bg-secondary hover:text-foreground",
+                floatingBar ? cn("size-8 rounded-full border shadow-sm", pillSkin) : "size-6 rounded-md",
+              )}
             >
               <ArrowLeft className="size-4" aria-hidden="true" />
             </button>
           )}
+          {/* The chat's one open/close control lives here, on the rightmost
+              pane — a plain header button, or a floating FAB in the same spot
+              when the titlebar has dissolved. */}
+          <button
+            type="button"
+            onClick={() => useAppStore.getState().setChatOpen(!chatOpen)}
+            aria-pressed={chatOpen}
+            aria-label={chatOpen ? "Close chat" : "Open chat"}
+            title={chatOpen ? "Close chat" : "Open chat"}
+            className={cn(
+              "flex shrink-0 items-center justify-center text-muted-foreground hover:bg-secondary hover:text-foreground",
+              floatingBar
+                ? cn("size-8 rounded-full border shadow-sm", pillSkin)
+                : "size-6 rounded-md",
+            )}
+          >
+            <MessageSquare className="size-3.5" aria-hidden="true" />
+          </button>
           {showLocationTrail && (
-            <>
-              <button
-                type="button"
-                onClick={onExpandChat}
-                aria-label="Expand chat"
-                className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                <PanelLeft className="size-3.5" aria-hidden="true" />
-              </button>
+            <div className={cn("min-w-0", floatingBar && cn("rounded-full border py-1 pl-2.5 pr-3", pillSkin))}>
               <SessionTrail
                 projectName={trail?.projectName ?? "rennet"}
                 session={trail?.session ?? scenario.session}
               />
-            </>
+            </div>
           )}
         </div>
         <div

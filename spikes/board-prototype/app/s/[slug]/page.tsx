@@ -86,7 +86,6 @@ export default function BoardPage() {
     <Suspense>
       <MainSurface
         showLocationTrail={!chatOpen}
-        onExpandChat={() => useAppStore.getState().setChatOpen(true)}
         scenario={scenario}
         trail={trail}
         onDispatchRound={() => router.push(`/s/${slug}/run`)}
