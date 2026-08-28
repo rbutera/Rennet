@@ -89,29 +89,23 @@ const SESSIONS: readonly SessionSeed[] = [
 ];
 
 describe("sidebar structure (C03 §2)", () => {
-  it("collapses the panel to the rail, writing ui.sidebarOpen both ways", async () => {
-    const { getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
+  it("collapses to NOTHING — zero width, no rail, no nav — writing ui.sidebarOpen", async () => {
+    const { getByLabelText, container } = mountSidebar({ projects: [project("p1", "atlas")] });
+    const aside = container.querySelector('[data-region="sidebar"]');
+    if (!aside) throw new Error("sidebar aside missing");
+    expect(aside.className).toContain("w-64");
     fireEvent.click(getByLabelText("Collapse sidebar"));
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
-    await waitFor(() => expect(getByLabelText("Expand sidebar")).toBeTruthy());
-    fireEvent.click(getByLabelText("Expand sidebar"));
-    expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
-  });
-
-  it("keeps keyboard focus on the toggle across a collapse AND an expand", async () => {
-    const { getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
-    const collapse = getByLabelText("Collapse sidebar");
-    collapse.focus();
-    expect(document.activeElement).toBe(collapse);
-    // Collapse: the panel subtree unmounts — focus must land on the rail's Expand
-    // toggle, not fall to <body>.
-    fireEvent.click(collapse);
-    const expand = await waitFor(() => getByLabelText("Expand sidebar"));
-    expect(document.activeElement).toBe(expand);
-    // Expand again: focus returns to the panel's Collapse toggle.
-    fireEvent.click(expand);
-    const collapseAgain = await waitFor(() => getByLabelText("Collapse sidebar"));
-    expect(document.activeElement).toBe(collapseAgain);
+    // C20: collapsed means HIDDEN. No 48px icon rail, no App nav, no hairline —
+    // a collapsed sidebar contributes zero width so the next pane sits flush to the
+    // window edge and the corner slot's light inset lands where the OS draws them.
+    await waitFor(() => expect(aside.getAttribute("data-open")).toBe("false"));
+    expect(aside.className).toContain("w-0");
+    expect(aside.className).not.toContain("w-12");
+    expect(aside.className).not.toContain("border-r");
+    expect(aside.querySelector('nav[aria-label="App"]')).toBeNull();
+    expect(aside.querySelector('[data-slot="corner-slot"]')).toBeNull();
+    expect(aside.textContent).toBe("");
   });
 
   it("orders the action block Search → New Chat → Add Project → Add Environment", () => {
@@ -126,7 +120,7 @@ describe("sidebar structure (C03 §2)", () => {
     }
   });
 
-  it("orders the expanded footer Update → Help → Settings (rail order, read left-to-right)", () => {
+  it("orders the expanded footer Update → Help → Settings, read left-to-right", () => {
     useUpdateReady.setState({ ready: { version: "1.2.3" } });
     const { getByText, getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
     const order = [

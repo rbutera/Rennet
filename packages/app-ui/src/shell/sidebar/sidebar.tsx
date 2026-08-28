@@ -41,7 +41,6 @@ import {
   Map as MapIcon,
   MessageSquarePlus,
   Monitor,
-  PanelLeft,
   Pencil,
   Pin,
   PinOff,
@@ -83,14 +82,15 @@ import { TargetIcon } from "./target-icon";
 // ─────────────────────────────────────────────────────────────────────────────
 // The app sidebar (C03 §2–3, R35 rewrite — autopsy S5 dies here). ZERO props at
 // EVERY boundary: `Sidebar` is a thin width-shell over four SELF-WIRING regions —
-// `SidebarActions`, `SidebarTree`, `SidebarFooter`, and the collapsed `Rail` — each
+// `SidebarActions`, `SidebarTree`, `SidebarFooter` and the `CornerSlot` header — each
 // resolving its own tree (through `sidebar-data`), fold state (the `ui` slice),
 // active-route highlight (`useActiveRoute`, the one shared resolution), mutations
 // (the seam), and navigation (`routes/url.ts`). Nothing is drilled between them, so
 // no single component carries the whole sidebar's wiring (the autopsy anti-pattern).
 //
-// One persistent `<aside>` animates 256px panel ↔ 48px rail; the content swaps
-// inside it, and both states carry the collapse control. Sessions are B9's
+// One persistent `<aside>` animates 256px panel ↔ 0; collapsed means hidden (C20),
+// and the one collapse/expand toggle rides the corner slot wherever it mounts.
+// Sessions are B9's
 // projection — until it lands the live client shows an honest empty state and the
 // row/mutation proofs run over the projection context (reconciliation 2).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,28 +133,18 @@ function UpdateDialog({
 
 /** The Update control — self-wiring: it subscribes to the host's update-ready channel
  *  (so the badge appears the moment one lands), owns its own dialog open-state, and
- *  renders NOTHING until an update is ready. `variant` picks the rail icon vs the
- *  labelled panel button. Both rail and panel drop in `<UpdateControl>`; neither
- *  threads update state around. */
-function UpdateControl({ variant }: { readonly variant: "rail" | "panel" }) {
+ *  renders NOTHING until an update is ready. One shape: the labelled button in the
+ *  expanded sidebar's footer. (C20 deleted the collapsed rail, its only other
+ *  caller, and the icon-only `variant="rail"` branch went with it.) */
+function UpdateControl() {
   const bridge = useBridge();
   const updateReady = useUpdateReady((s) => s.ready);
   const markReady = useUpdateReady((s) => s.markReady);
   const [open, setOpen] = useState(false);
   useEffect(() => bridge.onUpdateReady?.((info) => markReady(info)), [bridge, markReady]);
   if (!updateReady) return null;
-  const trigger =
-    variant === "rail" ? (
-      <button
-        type="button"
-        aria-label="Update Available"
-        title="Update Available"
-        onClick={() => setOpen(true)}
-        className="flex size-7 items-center justify-center rounded-chip bg-update text-update-ink transition-colors hover:brightness-110"
-      >
-        <Icon icon={RefreshCw} className="size-4" />
-      </button>
-    ) : (
+  return (
+    <>
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -163,10 +153,6 @@ function UpdateControl({ variant }: { readonly variant: "rail" | "panel" }) {
         <Icon icon={RefreshCw} className="size-3.5 shrink-0" />
         <span>Update</span>
       </button>
-    );
-  return (
-    <>
-      {trigger}
       <UpdateDialog
         info={updateReady}
         open={open}
@@ -436,75 +422,6 @@ function SessionRow({
   );
 }
 
-/** The collapsed rail — Search over New Chat at the top; Update, Help, Settings
- *  bottom-anchored in that order (R15/R16). Self-wiring: no drilled props. */
-function Rail() {
-  const mac = useMacTrafficLights();
-  const setSidebarOpen = useRennetStore((s) => s.uiActions.setSidebarOpen);
-  const setCommandMenuOpen = useRennetStore((s) => s.uiActions.setCommandMenuOpen);
-  const openDialog = useRennetStore((s) => s.uiActions.openDialog);
-  const [, navigate] = useLocation();
-  const { hosts } = useSidebarTree();
-  const projects = hosts.flatMap((host) => host.projects);
-  const iconBtn =
-    "flex size-7 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink";
-  return (
-    // The 48px rail is NARROWER than the traffic-light zone, so on macOS the only
-    // clearance available is vertical: push the stack below the lights (32px, vs
-    // the 8px `py-2` every other host keeps).
-    <div className={cn("flex h-full w-12 flex-col items-center py-2", mac && "pt-8")}>
-      <button
-        type="button"
-        onClick={() => setSidebarOpen(true)}
-        aria-label="Expand sidebar"
-        className={cn(iconBtn, "mb-2")}
-      >
-        <Icon icon={PanelLeft} className="size-3.5" />
-      </button>
-      <nav className="flex flex-col items-center gap-1" aria-label="App">
-        <button
-          type="button"
-          aria-label="Search"
-          title="Search"
-          onClick={() => setCommandMenuOpen(true)}
-          className={iconBtn}
-        >
-          <Icon icon={Search} className="size-4" />
-        </button>
-        <NewChatPicker
-          projects={projects}
-          onPick={(id) => navigate(newChatPath(id))}
-          onNewProject={() => openDialog("add-project")}
-          trigger={
-            <button type="button" aria-label="New Chat" title="New Chat" className={iconBtn}>
-              <Icon icon={MessageSquarePlus} className="size-4" />
-            </button>
-          }
-        />
-      </nav>
-      <div className="mt-auto flex flex-col items-center gap-1">
-        <UpdateControl variant="rail" />
-        <HelpPopover
-          trigger={
-            <button type="button" aria-label="Help" title="Help" className={iconBtn}>
-              <Icon icon={CircleHelp} className="size-4" />
-            </button>
-          }
-        />
-        <button
-          type="button"
-          aria-label="Settings"
-          title="Settings"
-          onClick={() => navigate(settingsPath("appearance"))}
-          className={iconBtn}
-        >
-          <Icon icon={Settings} className="size-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 /** The expanded action block: Search → New Chat → Add Project → Add Environment. */
 function SidebarActions() {
   const setCommandMenuOpen = useRennetStore((s) => s.uiActions.setCommandMenuOpen);
@@ -724,7 +641,7 @@ function SidebarTree() {
 }
 
 /** The footer — Archived (when > 0), then Update · Help · Settings (C03 order, the
- *  rail's top-to-bottom order read left-to-right). Self-wiring. */
+ *  C03 order, read left-to-right). Self-wiring. */
 function SidebarFooter() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
@@ -745,7 +662,7 @@ function SidebarFooter() {
         </button>
       ) : null}
       <div className="flex items-center gap-1">
-        <UpdateControl variant="panel" />
+        <UpdateControl />
         <HelpPopover
           trigger={
             <button
@@ -777,31 +694,38 @@ export function Sidebar() {
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const asideRef = useRef<HTMLElement>(null);
   const firstRun = useRef(true);
-  // Collapsing/expanding swaps the panel subtree for the rail (or back), UNMOUNTING
-  // whichever toggle held focus — the browser then drops focus to <body>. When that
-  // happens, hand focus to the counterpart toggle so keyboard operation survives the
-  // swap. Guarded to the focus-was-dropped case, so a toggle fired while focus lived
-  // elsewhere never has focus yanked into the sidebar; skipped on first mount.
+  // Collapsing/expanding UNMOUNTS whichever toggle held focus — the browser then
+  // drops focus to <body>. When that happens, hand focus to the counterpart toggle
+  // so keyboard operation survives the swap. Since C20 the counterpart lives in the
+  // corner slot, which on collapse moves OUT of this `<aside>` (into the chat header
+  // or the floating pill), so the search is document-wide — scoping it to the aside
+  // would strand focus on <body> exactly when the sidebar closes. Guarded to the
+  // focus-was-dropped case, so a toggle fired while focus lived elsewhere never has
+  // focus yanked back here; skipped on first mount.
   useEffect(() => {
     if (firstRun.current) {
       firstRun.current = false;
       return;
     }
-    const aside = asideRef.current;
-    if (!aside) return;
-    const active = aside.ownerDocument.activeElement;
-    if (active && active !== aside.ownerDocument.body) return;
+    const doc = asideRef.current?.ownerDocument;
+    if (!doc) return;
+    const active = doc.activeElement;
+    if (active && active !== doc.body) return;
     const label = open ? "Collapse sidebar" : "Expand sidebar";
-    aside.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+    doc.querySelector<HTMLElement>(`[data-slot="corner-slot"] [aria-label="${label}"]`)?.focus();
   }, [open]);
   return (
+    // Collapsed means HIDDEN (C20): zero width and no hairline, so the pane to the
+    // right sits flush against the window edge and the corner slot's light inset
+    // lands where the OS actually draws the lights. There is no icon rail — a 48px
+    // strip could never contain the light cluster, which is why this model exists.
     <aside
       ref={asideRef}
       data-region="sidebar"
       data-open={open}
       className={cn(
-        "rennet-sidebar h-full shrink-0 overflow-hidden border-r border-line bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none",
-        open ? "w-64" : "w-12",
+        "rennet-sidebar h-full shrink-0 overflow-hidden bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        open ? "w-64 border-r border-line" : "w-0",
       )}
     >
       {open ? (
@@ -819,9 +743,7 @@ export function Sidebar() {
           <SidebarTree />
           <SidebarFooter />
         </div>
-      ) : (
-        <Rail />
-      )}
+      ) : null}
     </aside>
   );
 }

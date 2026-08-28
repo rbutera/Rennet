@@ -13,7 +13,7 @@ import { Keyboard, Layers, type LucideIcon, Monitor, Palette } from "lucide-reac
 // Environments. `keybindings` and `environments` are the canonical slugs (the
 // shipped C3 links and the packet verification target, respectively), and the
 // aliases keep every existing entry point resolving. An unknown slug falls back to
-// `appearance` — the page the sidebar/rail's Settings control opens by default.
+// `appearance` — the page the sidebar's Settings control opens by default.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type SettingsPageId = "environments" | "appearance" | "keybindings" | "projects";

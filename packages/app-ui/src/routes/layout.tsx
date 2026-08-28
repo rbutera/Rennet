@@ -11,8 +11,8 @@ import {
   MIN_CHAT_WIDTH,
   MIN_SURFACE_WIDTH,
   SIDEBAR_PANEL_WIDTH,
-  SIDEBAR_RAIL_WIDTH,
 } from "../shell/constants";
+import { CornerSlot, cornerSlotOwner } from "../shell/corner-slot";
 import { KeyOwner } from "../shell/key-owner";
 import { Sidebar } from "../shell/sidebar/sidebar";
 import { TopBar } from "../shell/top-bar";
@@ -47,6 +47,9 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
   const [onRun] = useRoute(ROUTES.sessionRun);
   const isSessionRoute = onSession || onRun;
   const dockOpen = chatOpen && isSessionRoute;
+  // Which pane owns the corner slot — the ONE authority, so exactly one of the three
+  // call sites renders it (`shell/corner-slot.tsx`).
+  const owner = cornerSlotOwner({ sidebarOpen, dockOpen });
 
   // Suppress the width transition for the LIFETIME of a drag (it would lag the pointer),
   // keyed on the pointer being DOWN — set on pointer-down, cleared on up/cancel/lost-
@@ -64,7 +67,8 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  const sidebarWidth = sidebarOpen ? SIDEBAR_PANEL_WIDTH : SIDEBAR_RAIL_WIDTH;
+  // Collapsed contributes zero width — C20 deleted the 48px rail.
+  const sidebarWidth = sidebarOpen ? SIDEBAR_PANEL_WIDTH : 0;
   const maxChatWidth = Math.max(MIN_CHAT_WIDTH, viewportWidth - sidebarWidth - MIN_SURFACE_WIDTH);
   // The STORED width can outlive the room for it: a narrower viewport or an expanding
   // sidebar shrinks the maximum below what was saved, which would render the dock over
@@ -85,7 +89,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
       <CoachDataProvider>
         <div className="rennet-layout fixed inset-0 flex overflow-hidden bg-canvas text-ink">
           {/* The ⌘P/⌘K command menu — mounted once, outside the outlet, so the sidebar
-            Search row + rail button (C3) drive this single controlled instance. */}
+            Search row (C3) drives this single controlled instance. */}
           <CommandMenu />
 
           {/* Sidebar region — the host/project/session tree is a projection (C3). */}
@@ -131,6 +135,17 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
             {isSessionRoute ? <TopBar /> : null}
             <div className="min-h-0 flex-1">{children}</div>
           </main>
+
+          {/* The corner slot's floating mount (C20 state 3): with the sidebar
+            collapsed and no chat dock open there is no pane header left to host the
+            traffic-light inset and the sidebar toggle, so the slot floats over the
+            main view. It belongs to the LAYOUT, not `TopBar`, because every takeover
+            route (settings, new chat, archived, map, indexing) has no top bar at all
+            and would otherwise have no corner slot and no drag region. */}
+          {/* Cluster 3 narrows this to `owner === "floating"` once the chat header
+            hosts state 2's mount; until then a collapsed sidebar always floats, so the
+            one toggle is never off the screen. */}
+          {owner !== "sidebar" ? <CornerSlot owner="floating" /> : null}
 
           {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
             its own visibility to `ui.openDialogs` and portals over the frame. Inside the
