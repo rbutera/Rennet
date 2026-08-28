@@ -435,9 +435,22 @@ function SessionRow({
   );
 }
 
+/**
+ * Whether the shell is running on macOS, read from the host bridge's `platform`
+ * (`process.platform` through the preload). The window is `titleBarStyle:
+ * "hiddenInset"` there, so the native traffic lights float OVER the renderer's
+ * top-left — which is exactly where the sidebar's lockup and the rail's expand
+ * button sit. Every other host (win32/linux, browser, tests) keeps its native
+ * frame and reserves nothing.
+ */
+function useMacTrafficLights(): boolean {
+  return useBridge().platform === "darwin";
+}
+
 /** The collapsed rail — Search over New Chat at the top; Update, Help, Settings
  *  bottom-anchored in that order (R15/R16). Self-wiring: no drilled props. */
 function Rail() {
+  const mac = useMacTrafficLights();
   const setSidebarOpen = useRennetStore((s) => s.uiActions.setSidebarOpen);
   const setCommandMenuOpen = useRennetStore((s) => s.uiActions.setCommandMenuOpen);
   const openDialog = useRennetStore((s) => s.uiActions.openDialog);
@@ -447,7 +460,10 @@ function Rail() {
   const iconBtn =
     "flex size-7 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink";
   return (
-    <div className="flex h-full w-12 flex-col items-center py-2">
+    // The 48px rail is NARROWER than the traffic-light zone, so on macOS the only
+    // clearance available is vertical: push the stack below the lights (32px, vs
+    // the 8px `py-2` every other host keeps).
+    <div className={cn("flex h-full w-12 flex-col items-center py-2", mac && "pt-8")}>
       <button
         type="button"
         onClick={() => setSidebarOpen(true)}
@@ -768,6 +784,7 @@ function SidebarFooter() {
 }
 
 export function Sidebar() {
+  const mac = useMacTrafficLights();
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const setSidebarOpen = useRennetStore((s) => s.uiActions.setSidebarOpen);
   const asideRef = useRef<HTMLElement>(null);
@@ -801,9 +818,20 @@ export function Sidebar() {
     >
       {open ? (
         <div className="flex h-full min-h-0 w-64 flex-col">
-          {/* Header — the real lockup (scheme-swapped vector artwork, never a font). */}
-          <div className="flex h-10 shrink-0 items-center justify-between px-3">
-            <RennetLockup size={16} className="w-auto" />
+          {/* Header — the real lockup (scheme-swapped vector artwork, never a font).
+              On macOS the traffic lights float over this strip: reserve their 76px
+              zone on the leading edge and drop the lockup 16px → 14px so the wordmark
+              still clears the collapse toggle inside the 256px panel. With the native
+              titlebar hidden, the strip IS the titlebar, so it carries the existing
+              `navigation-titlebar` drag rule (its children opt back out). */}
+          <div
+            data-testid="sidebar-header"
+            className={cn(
+              "flex h-10 shrink-0 items-center justify-between pr-3",
+              mac ? "navigation-titlebar pl-[76px]" : "pl-3",
+            )}
+          >
+            <RennetLockup size={mac ? 14 : 16} className="w-auto" />
             <button
               type="button"
               onClick={() => setSidebarOpen(false)}
