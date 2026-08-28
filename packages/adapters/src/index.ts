@@ -72,11 +72,9 @@ export {
   CODEX_EXEC_BIN,
   type CodexAvailability,
   type CodexExecEffects,
-  type CodexUtilityAdapterDeps,
   type CodexVersionProbe,
   type CreateCodexExecutorOptions,
   createCodexExecutor,
-  createCodexUtilityAdapter,
   defaultCodexExecEffects,
   defaultCodexVersionProbe,
   discoverCodexAvailability,
@@ -443,6 +441,7 @@ export {
 export { ensureProjectSnapshotPin, projectSnapshotPinResolver } from "./project-snapshot-pin";
 export {
   listTree,
+  listTreeLineCounts,
   matchesGlob,
   parseWorkspaceGlobs,
   type ResolvedBase,
@@ -450,6 +449,7 @@ export {
   readConventions,
   readOwnership,
   readTests,
+  readTreeLineCounts,
   readWorkspaceStructure,
   resolveBaseRef,
   type WorkspaceStructure,

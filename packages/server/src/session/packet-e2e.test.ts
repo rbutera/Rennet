@@ -191,6 +191,7 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
       deltaPacket: ROUND_PACKET,
       hunks: [],
       lintContextFor,
+      reviewDraftLintCtx: { files: new Map() },
     };
 
     const first = await runtime.runRound(roundInput);

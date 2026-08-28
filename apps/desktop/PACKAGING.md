@@ -85,6 +85,8 @@ For a manual release:
 
 `.github/workflows/auto-release.yml` remains the nightly and **ship now** path. It creates the version commit and tag, runs the same signed macOS build through the `release` environment, builds unsigned Windows artifacts, and publishes only after every build succeeds.
 
+Both workflows then assert the outcome. `scripts/check-release-assets.mjs` reads the published asset list and requires each platform's installers by shape — extension, platform token, and version — failing with the platform that shipped nothing. Shape rather than exact filename because the names are `@electron-forge` maker defaults that GitHub rewrites again on upload; pinning them would fail a good release the first time a default changed. Dropping a maker outright does fail the check, which is the intended alarm. Auto-release runs it as a final `verify` job that fires from the moment the tag exists, including when publishing was skipped — a tag with no release behind it is invisible to an install that auto-updates from release assets, and it is what happened to `v0.3.39`. The assertion is on assets present, never on an upstream exit code, because both release breaks on 2026-08-28 had green intermediate steps.
+
 Never replace an asset or reuse a version after publication. If signing, notarization, Gatekeeper verification, or update compatibility fails, fix it and create a higher patch version. Keep the last known-good installer published. A future move away from `update.electronjs.org` can use the existing Squirrel-compatible static-feed support without changing the app's update interaction.
 
 ## Build on Windows

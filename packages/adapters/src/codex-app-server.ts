@@ -556,15 +556,22 @@ function renderMcpServersToml(servers: Readonly<Record<string, { readonly url: s
 
 /**
  * The `codex app-server` argv. `codex app-server` REJECTS `--ignore-user-config`
- * (verified: "unexpected argument"), so determinism for the load-bearing MCP key is
- * pinned with a FULL-TABLE `-c mcp_servers=<inline TOML>` override: it REPLACES the
- * whole `mcp_servers` table (never merges), so ONLY Rennet's canvasOps server (or
- * none) is configured for the child, regardless of the user's `~/.codex` config
- * (design D6). No prompt/schema/`-o` flags — the turn rides stdio.
+ * (verified: "unexpected argument"), so when Rennet has loopback servers of its own
+ * to hand the seat they are pinned with a FULL-TABLE `-c mcp_servers=<inline TOML>`
+ * override: it REPLACES the whole table (never merges), so the canvasOps URL the
+ * child dials is the one Rennet is actually serving (design D6). No prompt/schema/
+ * `-o` flags — the turn rides stdio.
+ *
+ * W5 — with NO servers to pin, the override is OMITTED rather than sent empty. An
+ * empty full-table override wiped the user's `~/.codex` MCP table and substituted
+ * nothing, which is the hamstring the plan names: it took a capable seat's tools
+ * away and gave it none back. Rennet makes a harness more efficient additively; it
+ * never denies one the ability to explore.
  */
 export function buildAppServerArgs(
-  mcpServers: Readonly<Record<string, { readonly url: string }>> = {},
+  mcpServers?: Readonly<Record<string, { readonly url: string }>>,
 ): string[] {
+  if (mcpServers === undefined || Object.keys(mcpServers).length === 0) return ["app-server"];
   return ["app-server", "-c", `mcp_servers=${renderMcpServersToml(mcpServers)}`];
 }
 

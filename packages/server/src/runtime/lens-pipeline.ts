@@ -539,7 +539,13 @@ export interface LensPipelineDeps {
    * surface — C3).
    */
   readonly composeTurn?: (prompt: string) => Promise<string> | string;
-  /** The review-draft register lint context (needed only when `composeTurn` is set). */
+  /**
+   * The review-draft register lint context (read only when `composeTurn` is set).
+   * Absent ⇒ the composition is linted against an EMPTY inventory, so every citation
+   * in it is reported unresolvable. Production always supplies the round's real head
+   * inventory (`RoundInput.reviewDraftLintCtx`, required); the fallback exists only
+   * for a caller that drafts no composition.
+   */
   readonly reviewDraftLintCtx?: RegisterLintContext;
   /** Curation feedback threaded from the prior generation into the authoring prompt (C2). */
   readonly curationFeedback?: string;
