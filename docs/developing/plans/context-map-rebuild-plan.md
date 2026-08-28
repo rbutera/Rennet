@@ -204,6 +204,16 @@ above lands near twenty minutes, roughly four times the bar. Batching itself is
 turns. W3 owns the reduction: coalescing the fallback tail, and letting the
 scoping seat decide which of those 1,089 files deserve a turn at all.
 
+**W3 measured the coalesce.** Adjacent fallback slices now merge within one scope
+(or one top-level directory) up to 25 files: the tail went 149 → **54** slices and
+the whole run went 201 → **105** slices (51 module batches over 1,154 files, 54
+fallback slices over 1,095). Batching is 113 ms; the clean build is ~30 s. At 105
+turns and the named concurrency of 8, the arithmetic above lands near 2.6 minutes
+of wall clock rather than twenty — inside the bar, but computed on the *old*
+78 s/turn figure and never yet timed against a live harness. The scoping seat is
+still unbuilt (Stage 1 point 4), so nothing yet decides that an edge-less file
+does not deserve a turn at all.
+
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and
 swarm turns carry `SessionSpec.ephemeral`, which maps to the Claude Agent

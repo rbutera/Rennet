@@ -142,37 +142,47 @@ tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
    so a tiny community that straddles two packages contributes to each package's
    pool rather than landing wholly in the first member's.
 2. **The directory fallback.** Files with no import edge — documentation, config,
-   assets, an unreferenced leaf — keep the original scope-and-subtree partitioner.
-   So does the entire eligible inventory when the import or symbol shards cannot be
-   read: worse partitions, never a refusal to map.
+   assets, an unreferenced leaf — keep the original scope-and-subtree partitioner,
+   and its slices are then *coalesced*: adjacent slices within one workspace scope
+   (or one top-level directory, for unscoped files) merge up to 25 files each. The
+   partitioner alone left a long tail of two- and three-file slices, and every one
+   of them cost a worker turn. Merging is adjacent-only, so a directory is never
+   split across two slices to fill a quota, and a slice already over the cap passes
+   through as it is.
+   The whole eligible inventory takes this tier when the import or symbol shards
+   cannot be read: worse partitions, never a refusal to map. That degraded path is
+   *not* coalesced — there the fallback already runs at a 120-file cap, and merging
+   to 25 would multiply the slice count rather than cut it.
 
 ### Measured on Rennet itself
 
-2,420 files, 179 excluded by policy (166 binary, 5 lockfiles, 7 by banner, 1 by
-path), 2,241 eligible, 3,506 resolved import edges.
+2,428 files, 179 excluded by policy (166 binary, 5 lockfiles, 7 by banner, 1 by
+path), 2,249 eligible, 3,531 resolved import edges.
 
-Those eligible files come out as **201 slices**, not 52:
+Those eligible files come out as **105 slices**:
 
 | Tier | Slices | Files | Size |
 |---|---|---|---|
-| Module batches | 52 | 1,152 | median 27, mean 22.2 |
-| Directory fallback | 149 | 1,089 | median 5, mean 7.3, largest 113 |
+| Module batches | 51 | 1,154 | median 27, mean 22.6, largest 34 |
+| Directory fallback (coalesced) | 54 | 1,095 | median 21, mean 20.3, largest 113 |
 
-Batching itself takes about 65 ms; the clean full snapshot build that feeds it
-takes roughly 35 seconds, dominated by one blob read per path-eligible file.
+Batching itself takes about 110 ms; the clean full snapshot build that feeds it
+takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
-The tail is the headline, not the 52. Two thirds of the slices are
-directory-fallback slices averaging seven files each — files with no resolved
-import edge, which on this repo is mostly documentation, fixtures, and config.
-Every one of them still costs a worker turn, so the plan's speed arithmetic —
-*"at ~50 batches, 78 s/turn clears the five-minute bar at concurrency ~13"* — is
-computed against a batch count that does not exist. At 201 turns the same
-arithmetic lands near twenty minutes, four times over the bar.
+The fallback tail is where the count came from and where it went. Before
+coalescing it held the same 1,089-odd files in **149** slices at a mean of 7.3,
+which made the run 201 turns — and the plan's speed arithmetic, *"at ~50 batches,
+78 s/turn clears the five-minute bar at concurrency ~13"*, was computed against a
+batch count that did not exist. At 201 turns that arithmetic lands near twenty
+minutes, four times over the bar.
 
-Cutting that tail is W3's job, not a property of the batching described here: the
-fallback slices need coalescing, and the scoping seat needs to decide which of
-those 1,089 files deserve a turn at all. Until that lands, the honest statement of
-this design's cost is 201 turns.
+At 105 turns it lands differently: 105 × 78 s ÷ 8 lanes ≈ 17 minutes of lane time,
+or about 2.6 minutes wall at the named concurrency of 8 once the deterministic
+30-second build is added — inside the bar, with no margin to spare and on a
+per-turn figure measured against the *old*, bare-path-list prompt. Skeleton-fed
+prompts should shorten the turn; that has not been measured against a live
+harness, so the honest statement of this design's cost remains **105 turns**, and
+the wall-clock claim above is arithmetic rather than a measurement.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -186,6 +196,13 @@ a membership change moves only the affected batch's id while every untouched bat
 keeps its own. The path half is the routing family: it survives membership churn
 that leaves the first member alone, which is how a delta recognises a re-formed
 batch as the same neighbourhood.
+
+A coalesced fallback slice follows the same rule with a different first half: the
+hierarchical id of its first constituent, plus `#<hash>` over the merged
+membership. Keeping the hierarchical half means the fallback tier's routing family
+is unchanged by coalescing — a delta reaches a merged slice by the same directory
+prefix it used before. A fallback slice that merged with nothing keeps its bare
+hierarchical id and no hash.
 
 ### The neighbor map
 

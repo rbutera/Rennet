@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { ImportEdge, ImportGraph } from "../project-context";
 import { materializeSnapshot } from "../project-context";
 import { buildSnapshot, type SnapshotStructuralInputs } from "../project-snapshot";
+import { routeDelta } from "./incremental";
 import {
   buildModuleBatches,
   buildPartitions,
+  coalesceFallbackSlices,
+  FALLBACK_COALESCE_CAP,
   MAX_BATCH_SIZE,
   NEIGHBOR_CAP,
   POOLED_BATCH_CAP,
@@ -380,6 +383,149 @@ describe("buildModuleBatches — communities, not directories", () => {
     const fallback = batches.filter((b) => !b.id.startsWith("mod:"));
     expect(fallback.map((b) => b.id)).toEqual(["@x/a", "dir:docs"]);
     expect(fallback.every((b) => b.neighbors.length === 0)).toBe(true);
+  });
+});
+
+describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () => {
+  const scopes = [
+    { name: "@x/a", root: "packages/a" },
+    { name: "@x/b", root: "packages/b" },
+  ];
+
+  /** Fallback-shaped slices, the way `buildPartitions` emits them: sorted, disjoint. */
+  function fallbackOf(spec: readonly (readonly [string, readonly string[]])[]) {
+    return spec.map(([id, paths]) => ({ id, files: paths.map(file), neighbors: [] }));
+  }
+
+  it("merges adjacent slices within one bucket up to the cap, and never across buckets", () => {
+    const input = fallbackOf([
+      ["@x/a/docs", ["packages/a/docs/one.md", "packages/a/docs/two.md"]],
+      ["@x/a/fixtures", ["packages/a/fixtures/x.json", "packages/a/fixtures/y.json"]],
+      ["@x/b/docs", ["packages/b/docs/one.md"]],
+      ["dir:docs", ["docs/guide.md"]],
+    ]);
+    const out = coalesceFallbackSlices(input, scopes);
+    assertTotalCoverage(
+      out,
+      input.flatMap((slice) => slice.files),
+    );
+    // `packages/a`'s two slices merged (4 ≤ 25); `packages/b` and the unscoped
+    // `docs/` tree each stayed on their own, because a bucket is never crossed.
+    expect(out).toHaveLength(3);
+    const merged = out.find((slice) => slice.files.length === 4);
+    expect(merged?.files.map((f) => f.path)).toEqual([
+      "packages/a/docs/one.md",
+      "packages/a/docs/two.md",
+      "packages/a/fixtures/x.json",
+      "packages/a/fixtures/y.json",
+    ]);
+    // A bucket that yielded ONE slice keeps its original id — no hash for a merge
+    // that never happened.
+    expect(out.map((slice) => slice.id)).toContain("@x/b/docs");
+    expect(out.map((slice) => slice.id)).toContain("dir:docs");
+  });
+
+  it("respects the cap and passes an already-oversized slice through untouched", () => {
+    const big = files("packages/a/vendor-notes", FALLBACK_COALESCE_CAP + 10).map((f) => f.path);
+    const input = fallbackOf([
+      ["@x/a/vendor-notes", big],
+      ["@x/a/docs", ["packages/a/docs/one.md"]],
+    ]);
+    const out = coalesceFallbackSlices(input, scopes);
+    expect(out).toHaveLength(2);
+    // The oversized slice is its own run, id and membership intact.
+    expect(out[0]?.id).toBe("@x/a/vendor-notes");
+    expect(out[0]?.files).toHaveLength(FALLBACK_COALESCE_CAP + 10);
+    for (const slice of out) {
+      if (slice.files.length > FALLBACK_COALESCE_CAP) continue;
+      expect(slice.files.length).toBeLessThanOrEqual(FALLBACK_COALESCE_CAP);
+    }
+  });
+
+  it("cuts the real slice count: many small same-bucket slices become few", () => {
+    // The shape the measurement found on Rennet: a long tail of ~2-file slices.
+    const input = fallbackOf(
+      Array.from(
+        { length: 30 },
+        (_, i) =>
+          [
+            `@x/a/d${String(i).padStart(2, "0")}`,
+            [`packages/a/d${String(i).padStart(2, "0")}/one.md`],
+          ] as const,
+      ),
+    );
+    const out = coalesceFallbackSlices(input, scopes);
+    expect(input).toHaveLength(30);
+    expect(out).toHaveLength(2); // ceil(30 / 25)
+    assertTotalCoverage(
+      out,
+      input.flatMap((slice) => slice.files),
+    );
+  });
+
+  it("is deterministic, and content-addressed so an untouched bucket keeps its id", () => {
+    const aSlices = fallbackOf([
+      ["@x/a/docs", ["packages/a/docs/one.md", "packages/a/docs/two.md"]],
+      ["@x/a/fixtures", ["packages/a/fixtures/x.json"]],
+    ]);
+    const bSlices = fallbackOf([
+      ["@x/b/docs", ["packages/b/docs/one.md", "packages/b/docs/two.md"]],
+      ["@x/b/fixtures", ["packages/b/fixtures/x.json"]],
+    ]);
+    const first = coalesceFallbackSlices([...aSlices, ...bSlices], scopes);
+    const again = coalesceFallbackSlices([...aSlices, ...bSlices], scopes);
+    expect(again).toEqual(first);
+
+    // Change `packages/a`'s membership only: its id moves, `packages/b`'s does not.
+    const changed = coalesceFallbackSlices(
+      [
+        ...fallbackOf([
+          ["@x/a/docs", ["packages/a/docs/one.md", "packages/a/docs/three.md"]],
+          ["@x/a/fixtures", ["packages/a/fixtures/x.json"]],
+        ]),
+        ...bSlices,
+      ],
+      scopes,
+    );
+    const idFor = (slices: readonly { id: string }[], prefix: string) =>
+      slices.find((slice) => slice.id.startsWith(prefix))?.id;
+    expect(idFor(changed, "@x/a")).not.toBe(idFor(first, "@x/a"));
+    expect(idFor(changed, "@x/b")).toBe(idFor(first, "@x/b"));
+  });
+
+  it("keeps a merged slice ROUTABLE: family prefix and directory walk both still reach it", () => {
+    const coalesced = coalesceFallbackSlices(
+      fallbackOf([
+        ["dir:docs/using", ["docs/using/a.md", "docs/using/b.md"]],
+        ["dir:docs/developing", ["docs/developing/c.md"]],
+      ]),
+      [],
+    );
+    expect(coalesced).toHaveLength(1);
+    const merged = coalesced[0] as (typeof coalesced)[number];
+    expect(merged.files).toHaveLength(3);
+    // The hierarchical half survives as the routing FAMILY.
+    expect(partitionIdFamily(merged.id)).toBe("dir:docs/using");
+    expect(merged.id).not.toBe("dir:docs/using");
+
+    // 1. A changed member routes its own (merged) slice.
+    expect(routeDelta(coalesced, ["docs/developing/c.md"]).map((s) => s.id)).toEqual([merged.id]);
+    // 2. A DELETED path whose prior owner was the pre-coalesce sub-slice routes the
+    //    merged successor by family prefix (`dir:docs/using` ⊂ `dir:docs/using/deep`).
+    const priorFamily = [
+      { id: "dir:docs/using/deep", files: [file("docs/using/deep/gone.md")], neighbors: [] },
+    ];
+    expect(
+      routeDelta(coalesced, ["docs/using/deep/gone.md"], priorFamily).map((s) => s.id),
+    ).toEqual([merged.id]);
+    // 3. A deleted path from a family that matches NOTHING still routes by the
+    //    nearest surviving directory — which after coalescing is the merged slice.
+    const priorStranger = [
+      { id: "mod:docs/using/gone.md#c0ffee00", files: [file("docs/using/gone.md")], neighbors: [] },
+    ];
+    expect(routeDelta(coalesced, ["docs/using/gone.md"], priorStranger).map((s) => s.id)).toEqual([
+      merged.id,
+    ]);
   });
 });
 

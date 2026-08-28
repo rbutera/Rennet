@@ -57,6 +57,21 @@ export const MIN_BATCH_SIZE = 3;
 /** The cap on a pooled misc batch. Lower than {@link MAX_BATCH_SIZE}: pooled files are less coherent. */
 export const POOLED_BATCH_CAP = 25;
 
+/**
+ * The cap a COALESCED fallback slice aims for ({@link coalesceFallbackSlices}).
+ *
+ * The measurement that put it here: on Rennet, the directory fallback held 1,089
+ * edge-less files in 149 slices — a mean of 7.3 — and every one of those slices
+ * costs a worker turn. Two thirds of the run's turns were spent on slices the size
+ * of a small directory. Coalescing to ~25 buys back most of that.
+ *
+ * Same number as {@link POOLED_BATCH_CAP} and for the same reason (a batch of
+ * loosely related files reads worse than a module, so it is held below
+ * {@link MAX_BATCH_SIZE}), but a separate constant: these are different populations
+ * and either may move without the other.
+ */
+export const FALLBACK_COALESCE_CAP = 25;
+
 /** The most cross-batch neighbours recorded for one file. */
 export const NEIGHBOR_CAP = 50;
 
@@ -109,7 +124,12 @@ export interface PartitionSlice {
    *
    * A DIRECTORY-FALLBACK slice keeps the original hierarchical id: the scope name,
    * `<id>/<dir>` per subtree split, `<id>/.` for direct files; `dir:<top-level>` /
-   * `dir:.` for the no-scope fallback. It carries no `#`, so it is its own family.
+   * `dir:.` for the no-scope fallback. A fallback slice that {@link
+   * coalesceFallbackSlices} MERGED carries the first constituent's hierarchical id
+   * plus its own `#<hash8>` over the merged membership — the hierarchical half stays
+   * the family, so `familiesMatch`'s prefix rule reaches it exactly as before, and
+   * the hash half makes the id a pure function of what the slice now holds. An
+   * unmerged fallback slice carries no `#` and is its own family.
    */
   readonly id: string;
   readonly files: readonly FileEntry[];
@@ -281,6 +301,94 @@ export function buildPartitions(
   return out;
 }
 
+// ── Coalescing the fallback tail ─────────────────────────────────────────────
+
+/**
+ * The bucket a fallback slice coalesces WITHIN: its workspace scope root where a
+ * scope owns it, otherwise its top-level directory (`top:` with an empty tail for a
+ * file that lives at the repo root).
+ *
+ * Root, not name — the same identity prefix {@link buildPartitions} and
+ * {@link poolTiny} key on, so two packages sharing a `name` never merge. Deriving
+ * it from the slice's first FILE rather than from its id is what keeps this
+ * independent of the id scheme: `buildPartitions` names a scope slice after the
+ * scope and an unscoped one `dir:<top>`, and both answer here from the path.
+ */
+function coalesceGroupKey(
+  scopes: readonly { readonly name: string; readonly root: string }[],
+  path: string,
+): string {
+  const root = scopeRootOf(scopes, path);
+  if (root !== "") return `scope:${root}`;
+  const slash = path.indexOf("/");
+  return slash < 0 ? "top:" : `top:${path.slice(0, slash)}`;
+}
+
+/** Merge one run of adjacent fallback slices into a single content-addressed slice. */
+function mergeFallbackRun(run: readonly PartitionSlice[]): PartitionSlice {
+  const files = run.flatMap((slice) => slice.files).sort((a, b) => byString(a.path, b.path));
+  if (run.length === 1 && run[0] !== undefined) return run[0];
+  // The FIRST constituent's hierarchical id is kept as the routing family, so the
+  // fallback tier's ids stay legible (`dir:docs`, `@rennet/core`) and
+  // `familiesMatch`'s prefix rule keeps working across the tier exactly as it did
+  // before coalescing. The `#hash` half is the same content-addressing the module
+  // batches use ({@link PartitionSlice.id}): membership decides the id, so an
+  // unchanged rebuild reproduces it and a changed run moves only itself.
+  const head = run[0]?.id ?? "dir:.";
+  return {
+    id: `${head}#${sha256Hex(files.map((file) => file.path).join("\n")).slice(0, 8)}`,
+    files,
+    neighbors: [],
+  };
+}
+
+/**
+ * Coalesce the directory fallback's slices up to {@link FALLBACK_COALESCE_CAP}
+ * files each, merging only ADJACENT slices within one bucket
+ * ({@link coalesceGroupKey}).
+ *
+ * Adjacent, not re-partitioned: `buildPartitions` already emits a bucket's slices
+ * in sorted-path order and never splits a directory across two of them, so merging
+ * runs of them preserves that directory coherence while removing the turns. A
+ * slice already at or over the cap is a run of one and passes through untouched —
+ * as does a bucket that yields a single slice, which keeps its original id rather
+ * than acquiring a hash for a merge that never happened.
+ *
+ * NOT applied on {@link partitionsFromSnapshot}'s degradation path: there the
+ * fallback holds the WHOLE eligible inventory at a 120-file cap, and coalescing to
+ * 25 would multiply the slice count rather than cut it.
+ */
+export function coalesceFallbackSlices(
+  slices: readonly PartitionSlice[],
+  scopes: readonly { readonly name: string; readonly root: string }[],
+  cap: number = FALLBACK_COALESCE_CAP,
+): readonly PartitionSlice[] {
+  const buckets = new Map<string, PartitionSlice[]>();
+  for (const slice of slices) {
+    const key = coalesceGroupKey(scopes, slice.files[0]?.path ?? "");
+    const bucket = buckets.get(key);
+    if (bucket === undefined) buckets.set(key, [slice]);
+    else bucket.push(slice);
+  }
+
+  const out: PartitionSlice[] = [];
+  for (const key of [...buckets.keys()].sort(byString)) {
+    let run: PartitionSlice[] = [];
+    let size = 0;
+    for (const slice of buckets.get(key) as PartitionSlice[]) {
+      if (run.length > 0 && size + slice.files.length > cap) {
+        out.push(mergeFallbackRun(run));
+        run = [];
+        size = 0;
+      }
+      run.push(slice);
+      size += slice.files.length;
+    }
+    if (run.length > 0) out.push(mergeFallbackRun(run));
+  }
+  return out;
+}
+
 // ── Module batching (Louvain over the import graph) ──────────────────────────
 
 /**
@@ -419,8 +527,15 @@ export function buildModuleBatches(input: ModuleBatchInput): readonly PartitionS
   }
   slices.sort((a, b) => byString(a.files[0]?.path ?? "", b.files[0]?.path ?? ""));
 
-  // The isolated tail keeps the directory tier's own ordering, after every batch.
-  return [...slices, ...buildPartitions({ files: isolated, scopes: input.scopes })];
+  // The isolated tail follows every module batch, coalesced so an edge-less file
+  // does not cost a worker turn per handful (see {@link FALLBACK_COALESCE_CAP}).
+  return [
+    ...slices,
+    ...coalesceFallbackSlices(
+      buildPartitions({ files: isolated, scopes: input.scopes }),
+      input.scopes,
+    ),
+  ];
 }
 
 /** Run Louvain, then split the oversized communities and pool the tiny ones. */
