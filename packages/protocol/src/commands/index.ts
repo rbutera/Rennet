@@ -1456,6 +1456,33 @@ const AGENT_EXPOSED = new Set<string>([
   "settings.pinRepoValue",
 ]);
 
+/**
+ * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
+ * all 95 commands, never derived from a blanket rule. The full row-by-row table with a
+ * rationale for every command lives in
+ * `docs/developing/reference/command-menu-exposure.md`.
+ *
+ * The menu invokes a row with NO input and DISCARDS its output (`useInvoke`, C11
+ * cluster 6): `exposure.commandMenu` is a boolean with no input channel and the menu
+ * has no result surface. So a row earns `true` only when all four hold:
+ *
+ * 1. Its input schema is satisfied by `{}` — nothing required the menu cannot supply
+ *    (18 of 95 pass; the rest need a review/session/project/span id or a host path).
+ * 2. It is an ACTION, not a read the UI already drives for itself (`settings.get`,
+ *    `session.list`, `board.read`, `harness.hosts`, `daemon.status`, … all stay false:
+ *    running them from the menu changes nothing a reader would see).
+ * 3. Its output is not the point — a row whose result must be DISPLAYED
+ *    (`github.connectStart`'s device code, `pairing.mint`'s code) would be run and
+ *    thrown away.
+ * 4. It means something outside the surface that owns it — `github.connectCancel`
+ *    only makes sense mid-device-flow.
+ *
+ * That leaves one row today. Under-exposure is honest; an entry that appears to run and
+ * visibly does nothing is a broken row. Widening this set means giving the menu a way to
+ * supply context and show a result — new UI, deliberately not built here.
+ */
+const MENU_EXPOSED = new Set<string>(["github.disconnect"]);
+
 /** Where a command executes: the host daemon, or a connected client (#465). Every
  * row today is host-locus; client-locus rows arrive with their commands. */
 export type CommandLocus = "host" | "client";
@@ -1485,8 +1512,8 @@ export type CommandRegistry = {
  * The #465 command registry — ONE table, keyed by stable command id. The sidebar,
  * the ⌘K command menu, and the orchestrator's app tools are three readers of this
  * table; none carries its own list. Labels and loci are uniform today, so they are
- * derived rather than hand-repeated per row; `exposure.agent` is the only per-row
- * datum (the v1 inventory above).
+ * derived rather than hand-repeated per row; `exposure.agent` and `exposure.commandMenu`
+ * are the per-row data (the two inventories above, each decided command by command).
  */
 export const commands = Object.fromEntries(
   Object.entries(definitions).map(([id, def]) => [
@@ -1495,7 +1522,7 @@ export const commands = Object.fromEntries(
       args: def.input,
       output: def.output,
       label: id,
-      exposure: { ui: true, commandMenu: false, agent: AGENT_EXPOSED.has(id) },
+      exposure: { ui: true, commandMenu: MENU_EXPOSED.has(id), agent: AGENT_EXPOSED.has(id) },
       locus: "host",
     },
   ]),

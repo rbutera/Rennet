@@ -160,17 +160,19 @@ which command runs when a client, the ⌘K menu, or the orchestrator asks for on
 That routing reads a single table: the command registry in
 `packages/protocol/src/commands/index.ts`. Every row is keyed by a stable command
 id and carries the id's argument schema, output schema, label, and an `exposure`
-record. The registry is designed for three consumers, but **two read it today**:
-the dispatch map and the `app_*` agent projection. The command menu / sidebar
-still reads its own `COMMAND_CATALOGUE` (`packages/app-ui/src/command/commands.ts`)
-— every registry row currently carries `commandMenu: false` — and is migrated onto
-the registry by C11. Until then the menu keeps its own list.
+record. All three consumers read it: the dispatch map, the `app_*` agent
+projection, and the ⌘K command menu, which filters the table by
+`exposure.commandMenu` and runs the surviving rows live through the client's data
+seam. That flag is decided command by command — the row-by-row walk of all 95 is
+[command menu exposure](../reference/command-menu-exposure.md). The menu's
+navigation entries (sessions, projects, settings pages, dialog actions) come from
+the same projections the sidebar reads, not from the registry.
 
 ```mermaid
 flowchart LR
   registry["Command registry\n(protocol/commands)"] --> map["Dispatch map\nserver/dispatch/"]
   registry --> tools["app_* agent tools\nserver/agent-tools.ts"]
-  registry -.->|C11: commandMenu still false| menu["Command menu / sidebar\n(reads COMMAND_CATALOGUE today)"]
+  registry -->|exposure.commandMenu| menu["⌘K command menu\napp-ui/shell/command-menu"]
   map --> handler["Family handler runs"]
   tools -.->|exposure.agent (bridge exported, not yet wired)| turn["Orchestrator turn\n(rebuilt in B9/B11)"]
 ```

@@ -4,6 +4,7 @@
 // fuzzy-filters, shows a group label beside each title, states an empty result, runs an
 // entry on select (closing + navigating), and defaults to a different view per mode.
 import type { Project } from "@rennet/protocol";
+import { commands } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
@@ -12,7 +13,7 @@ import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, screen, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { sessionHandlers } from "../test/fixtures/sessions";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { CommandMenu } from "./command-menu";
 import type { RegistryRowView } from "./command-menu-entries";
 
@@ -120,6 +121,73 @@ describe("command menu (§9)", () => {
     expect(useRennetStore.getState().ui.chatOpen).toBe(true);
     expect(history.history).toContain("/s/s1");
     expect(useRennetStore.getState().ui.commandMenuOpen).toBe(false);
+  });
+
+  // ── The live registry channel (C11 exposure pass, #477) ────────────────────
+  // The menu reads the REAL `commands` table here — no fixture registry — so these
+  // prove the shipped `exposure.commandMenu` inventory, not a stand-in.
+  describe("registry commands (live exposure inventory)", () => {
+    function mountLive(handlers: MemoryBridgeHandlers) {
+      const history = memoryHistory("/");
+      const bridge = new MemoryBridge({
+        ...frontDoorHandlers([project("p1", "atlas")]),
+        ...handlers,
+      });
+      useRennetStore.setState((s) => ({
+        ui: { ...s.ui, commandMenuOpen: true, commandMenuMode: "command" },
+      }));
+      return mount(
+        <BridgeProvider bridge={bridge}>
+          <Router hook={history.hook} searchHook={history.searchHook}>
+            <CommandMenu />
+          </Router>
+        </BridgeProvider>,
+      );
+    }
+
+    it("runs an exposed row live through the bridge, once, and closes", async () => {
+      // github family — the one exposed row today. One invoke per selection.
+      let calls = 0;
+      mountLive({
+        "github.disconnect": () => {
+          calls += 1;
+          return {};
+        },
+      });
+      await waitFor(() => expect(screen.getByText("github.disconnect")).toBeTruthy());
+      act(() => {
+        fireEvent.click(screen.getByText("github.disconnect"));
+      });
+      await waitFor(() => expect(useRennetStore.getState().ui.commandMenuOpen).toBe(false));
+      expect(calls).toBe(1);
+    });
+
+    it("renders every menu-exposed row and no unexposed one", async () => {
+      mountLive({ "github.disconnect": () => ({}) });
+      await waitFor(() => expect(screen.getByText("github.disconnect")).toBeTruthy());
+      const exposed = Object.entries(commands)
+        .filter(([, row]) => row.exposure.commandMenu)
+        .map(([id]) => id);
+      for (const id of exposed) expect(screen.getByText(id), id).toBeTruthy();
+      // Plumbing reads and argument-bearing commands stay out of the menu entirely.
+      for (const id of ["settings.get", "session.list", "board.read", "review.capture"]) {
+        expect(screen.queryByText(id), id).toBeNull();
+      }
+    });
+
+    it("surfaces a failed dispatch instead of closing on it", async () => {
+      mountLive({
+        "github.disconnect": () => {
+          throw new Error("no daemon");
+        },
+      });
+      await waitFor(() => expect(screen.getByText("github.disconnect")).toBeTruthy());
+      act(() => {
+        fireEvent.click(screen.getByText("github.disconnect"));
+      });
+      await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("no daemon"));
+      expect(useRennetStore.getState().ui.commandMenuOpen).toBe(true);
+    });
   });
 
   it("⌘P (search) and ⌘K (command) default to a different view", async () => {
