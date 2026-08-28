@@ -57,7 +57,17 @@ export type RoundState =
       readonly reportBoardId: string;
       readonly lanes: readonly LaneRow[];
     }
-  | { readonly phase: "composed"; readonly reportBoardId: string; readonly newGeneration: string }
+  | {
+      readonly phase: "composed";
+      readonly reportBoardId: string;
+      readonly newGeneration: string;
+      /** The lanes that were still on screen when the generation composed — carried
+       *  through so the settled regeneration block does not blink out at the moment it
+       *  finishes (C15 4.1/4.2: the kicker flips to "Regenerated the Boards" OVER the
+       *  same rows). Optional: a `composed` reached without a preceding `lens` event
+       *  (a round that composed nothing per-lens) honestly carries no lanes. */
+      readonly lanes?: readonly LaneRow[];
+    }
   | { readonly phase: "failed"; readonly reason: string };
 
 /** The phase discriminants, in progress order. */
@@ -114,6 +124,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
           phase: "composed",
           reportBoardId: state.reportBoardId,
           newGeneration: event.generation,
+          lanes: state.lanes,
         };
       return state;
     case "composed":

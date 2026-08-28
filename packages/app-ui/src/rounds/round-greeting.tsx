@@ -40,43 +40,97 @@ function laneStatusLabel(status: RowStatus): string {
   }
 }
 
+/**
+ * The synthetic tail steps (C15 4.2) — the two lines the regeneration shows after the
+ * drafters settle, DERIVED from the real phase, never pre-rendered:
+ *
+ *   • "Cleaning up drafts · post-process pass" — the window between the last lens board
+ *     arriving and the generation composing IS the post-process + composition pass
+ *     (`lens-pipeline.ts` funnels every draft through it before `runRound` emits
+ *     `composed`). So it appears once every lane has settled and reads `running` until
+ *     the `composed` event lands. While any lane is still queued or running it is ABSENT.
+ *   • "Composed generation <id>" — the `composed` event itself, naming the generation the
+ *     reveal opens. The spike numbered it ("Composed generation 2") off a fixture round
+ *     counter; the live machine knows the minted generation's IDENTITY and no ordinal, so
+ *     the line carries the real id rather than a fabricated number.
+ */
+function finishSteps(state: RoundState, lanes: readonly LaneRow[]): readonly LaneRow[] {
+  const settled =
+    lanes.length > 0 && lanes.every((l) => l.status === "done" || l.status === "failed");
+  if (state.phase === "composed") {
+    return [
+      { id: "post-process", label: "Cleaning up drafts · post-process pass", status: "done" },
+      { id: "composed", label: `Composed generation ${state.newGeneration}`, status: "done" },
+    ];
+  }
+  if (settled)
+    return [
+      { id: "post-process", label: "Cleaning up drafts · post-process pass", status: "running" },
+    ];
+  return NO_LANES;
+}
+
 /** The lens drafters reworking beneath the report — rows from the machine's `composing`
  *  state (folded `onProgress`, never a wall clock). Every `RowStatus` renders through the SAME
  *  `StatusIcon` the run route uses (finding 5), so a queued or failed drafter reads honestly
- *  instead of a false green check. The report stays readable above while these still run. */
-function RegenerationProgress({ lanes }: { readonly lanes: readonly LaneRow[] }) {
+ *  instead of a false green check. The report stays readable above while these still run.
+ *
+ *  The kicker is Rai's ruled verbatim pair (C15 4.1): "Regenerating the Boards" while the
+ *  regeneration runs, "Regenerated the Boards" once it composed — a label swap on phase,
+ *  not two components. */
+function RegenerationProgress({
+  state,
+  lanes,
+}: {
+  readonly state: RoundState;
+  readonly lanes: readonly LaneRow[];
+}) {
+  const steps = finishSteps(state, lanes);
   return (
     <div data-testid="regeneration-progress" className="flex flex-col gap-1.5">
       <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
-        Re-drafting the boards
+        {state.phase === "composed" ? "Regenerated the Boards" : "Regenerating the Boards"}
       </span>
-      <div className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
-        {lanes.map((lane) => (
-          <div
-            key={lane.id}
-            className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
-            data-row={lane.id}
-            data-status={lane.status}
-          >
-            <StatusIcon status={lane.status} />
-            <span className="text-foreground">{lane.label}</span>
-            <span
-              className={
-                lane.status === "failed"
-                  ? "ml-auto text-2xs text-destructive"
-                  : "ml-auto text-2xs text-muted-foreground"
-              }
+      {lanes.length > 0 && (
+        <div className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
+          {lanes.map((lane) => (
+            <div
+              key={lane.id}
+              className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
+              data-row={lane.id}
+              data-status={lane.status}
             >
-              {/* The lane's own verdict when the emitter supplied one, else the status
-                  (C15 3.3). A settled lens carries "carrying forward" or "reworked" —
-                  derived server-side from the SAME `stampDeltas` signal the board's
-                  section markers render, so a lane can never claim a lens carried while
-                  its sections changed. */}
-              {lane.detail ?? laneStatusLabel(lane.status)}
-            </span>
-          </div>
-        ))}
-      </div>
+              <StatusIcon status={lane.status} />
+              <span className="text-foreground">{lane.label}</span>
+              <span
+                className={
+                  lane.status === "failed"
+                    ? "ml-auto text-2xs text-destructive"
+                    : "ml-auto text-2xs text-muted-foreground"
+                }
+              >
+                {/* The lane's own verdict when the emitter supplied one, else the status
+                    (C15 3.3). A settled lens carries "carrying forward" or "reworked" —
+                    derived server-side from the SAME `stampDeltas` signal the board's
+                    section markers render, so a lane can never claim a lens carried while
+                    its sections changed. */}
+                {lane.detail ?? laneStatusLabel(lane.status)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {steps.map((step) => (
+        <span
+          key={step.id}
+          data-step={step.id}
+          data-status={step.status}
+          className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground"
+        >
+          <StatusIcon status={step.status} />
+          {step.label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -97,14 +151,24 @@ export function RoundGreeting({
   readonly state: RoundState;
   readonly onReveal: () => void;
 }) {
-  const lanes = state.phase === "composing" ? state.lanes : NO_LANES;
+  // The regeneration block lives on both regeneration phases: `composing` carries the
+  // live lanes, and `composed` carries the ones it composed from (the machine forwards
+  // them), so the kicker flips "Regenerating"→"Regenerated" over the same rows instead of
+  // the block vanishing at the finish line.
+  const lanes =
+    state.phase === "composing"
+      ? state.lanes
+      : state.phase === "composed"
+        ? (state.lanes ?? NO_LANES)
+        : NO_LANES;
+  const regenerating = state.phase === "composing" || state.phase === "composed";
   return (
     <section
       data-screen="round-greeting"
       className="mx-auto flex w-full max-w-[820px] flex-col gap-6 p-6"
     >
       <RoundReportBoard board={board} />
-      {lanes.length > 0 && <RegenerationProgress lanes={lanes} />}
+      {regenerating && <RegenerationProgress state={state} lanes={lanes} />}
       {canRevealNewBoards(state) && (
         <Button
           data-testid="reveal-new-boards"

@@ -16,7 +16,7 @@ import { Router } from "wouter";
 import { BoardSourceProvider } from "../board/board-data";
 import { BridgeProvider } from "../data";
 import { RoundGreeting } from "../rounds/round-greeting";
-import type { RoundState } from "../rounds/round-machine";
+import type { LaneRow, RoundState } from "../rounds/round-machine";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
@@ -197,6 +197,82 @@ describe("regeneration lanes render every status honestly — no false green che
     expect(design?.textContent).toContain("reworked");
     expect(design?.textContent).not.toContain("carrying forward");
     expect(sequence?.textContent).toContain("carrying forward");
+  });
+});
+
+// ── C15 4.1 + 4.2 — the ruled kicker and the synthetic tail steps ──────────────
+// 4.1 is Rai's VERBATIM ruling (C14 verifies the exact strings): the regeneration
+// kicker reads "Regenerating the Boards" while it runs and "Regenerated the Boards"
+// when it finishes; the old "Re-drafting the boards" is gone from the surface.
+// 4.2's two steps are DERIVED from the real phase — the post-process pass is the window
+// between the last lens landing and the generation composing, and the composed line is
+// the `composed` event itself. Neither is pre-rendered.
+describe("the regeneration kicker + tail steps (C15 4.1, 4.2)", () => {
+  const settledLanes: readonly LaneRow[] = [
+    { id: "design", label: "Design", status: "done", detail: "carrying forward" },
+    { id: "flagged", label: "Flagged", status: "done", detail: "reworked" },
+  ];
+  const running: RoundState = {
+    phase: "composing",
+    reportBoardId: "report-round-1",
+    lanes: [
+      { id: "design", label: "Design", status: "done", detail: "carrying forward" },
+      { id: "flagged", label: "Flagged", status: "running" },
+    ],
+  };
+  const settled: RoundState = {
+    phase: "composing",
+    reportBoardId: "report-round-1",
+    lanes: settledLanes,
+  };
+  const composed: RoundState = {
+    phase: "composed",
+    reportBoardId: "report-round-1",
+    newGeneration: "gen2",
+    lanes: settledLanes,
+  };
+
+  const render = (state: RoundState) =>
+    mount(<RoundGreeting board={reportBoardFixture} state={state} onReveal={() => undefined} />);
+
+  it("reads 'Regenerating the Boards' while the drafters run — never the old 'Re-drafting the boards'", () => {
+    const r = render(running);
+    const block = r.getByTestId("regeneration-progress");
+    expect(block.textContent).toContain("Regenerating the Boards");
+    expect(r.container.textContent).not.toContain("Re-drafting the boards");
+  });
+
+  it("reads 'Regenerated the Boards' once the generation composed", () => {
+    const r = render(composed);
+    const block = r.getByTestId("regeneration-progress");
+    expect(block.textContent).toContain("Regenerated the Boards");
+    expect(block.textContent).not.toContain("Regenerating the Boards");
+    expect(r.container.textContent).not.toContain("Re-drafting the boards");
+  });
+
+  it("holds both tail steps back until their phase — nothing is pre-rendered", () => {
+    const r = render(running); // a drafter still running: neither step has happened
+    expect(r.container.querySelector('[data-step="post-process"]')).toBeNull();
+    expect(r.container.querySelector('[data-step="composed"]')).toBeNull();
+  });
+
+  it("shows the post-process pass once every lane settles, still before composition", () => {
+    const r = render(settled);
+    const step = r.container.querySelector('[data-step="post-process"]');
+    expect(step?.textContent).toContain("Cleaning up drafts · post-process pass");
+    expect(step?.getAttribute("data-status")).toBe("running");
+    // The generation has not composed, so its line is still absent.
+    expect(r.container.querySelector('[data-step="composed"]')).toBeNull();
+  });
+
+  it("shows both steps settled at composition, the composed line naming the real generation", () => {
+    const r = render(composed);
+    expect(
+      r.container.querySelector('[data-step="post-process"]')?.getAttribute("data-status"),
+    ).toBe("done");
+    const composedStep = r.container.querySelector('[data-step="composed"]');
+    expect(composedStep?.textContent).toContain("Composed generation gen2");
+    expect(composedStep?.getAttribute("data-status")).toBe("done");
   });
 });
 
