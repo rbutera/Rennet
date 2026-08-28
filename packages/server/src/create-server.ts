@@ -24,7 +24,6 @@ import {
   BoardMetaStore,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
-  CodexAdapter,
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
@@ -34,7 +33,6 @@ import {
   createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
-  createCodexTurnTransport,
   createCoverageTurn,
   createDaemonSettingsStore,
   createGitHubOctokit,
@@ -46,7 +44,6 @@ import {
   defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
-  defaultCodexTransportEffects,
   defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
   defaultForgeDetectionDeps,
@@ -54,7 +51,6 @@ import {
   defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
-  deriveCodexImplementedEvidence,
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
@@ -79,7 +75,6 @@ import {
   isGitHubNetworkError,
   KnowledgeStore,
   listDir,
-  listTreeLineCounts,
   loadConventionCatalogue,
   loadProjectDetail,
   matchWorktree,
@@ -95,6 +90,7 @@ import {
   readOpenSpecChange,
   readSetupLogTail,
   readSetupStatus,
+  readTreeLineCounts,
   refreshGitHubCredential,
   repoHasSubmodules,
   repoKeyOf,
@@ -139,6 +135,7 @@ import {
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
+  mintSession,
   queryKnowledge,
   queryProjectMap,
   ReviewService,
@@ -204,7 +201,12 @@ import { createProcessProject } from "./process-project";
 import { buildProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
-import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import {
+  CODEX_ASK_LABEL,
+  createLiveCodexAsk,
+  createLiveOrchestratorAsk,
+  createLiveReviewAskPorts,
+} from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
@@ -499,9 +501,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
      * locus; only this closure is applied per review. Null ⇒ no codex resolved.
      */
     readonly makeExecutor: ((repoRoot: string) => CodexExecutor) | null;
-    readonly agenticPort:
-      | ((mcpServers: Readonly<Record<string, { readonly url: string }>>) => HarnessPort)
-      | null;
     /** The resolved absolute `codex` path (for the ask-AI executor), or null. */
     readonly binPath: string | null;
     /** The resolved codex version, stamped as harness provenance, or null. */
@@ -509,10 +508,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
   // Memoized PER LOCUS (add-windows-support / #334), like the Claude harness: the host
   // resolution is shared as before; a WSL-locus project discovers and runs the DISTRO's
-  // own `codex` (distro discovery deps, locus-wrapped executor + transport, distro-side
-  // scratch). The utility executor and agentic transport carry the locus so every spawn
-  // enters the distro through `locusCommand` — a WSL review is dual-harness rather than
-  // degrading to single-Claude.
+  // own `codex` (distro discovery deps, locus-wrapped executor, distro-side scratch).
+  // The utility executor carries the locus so every spawn enters the distro through
+  // `locusCommand` — a WSL review is dual-harness rather than degrading to
+  // single-Claude. (The agentic transport this once also built went with the dead
+  // `agenticPort`, F1: the orchestrator is Claude.)
   const codexResolutions = new Map<string, Promise<CodexResolution>>();
   function getCodexResolution(locus: Locus): Promise<CodexResolution> {
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
@@ -524,7 +524,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           return {
             availability: { available: false, version: null },
             makeExecutor: null,
-            agenticPort: null,
             binPath: null,
             version: null,
           };
@@ -543,7 +542,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           return {
             availability: { available: false, version: null },
             makeExecutor: null,
-            agenticPort: null,
             binPath: null,
             version: null,
           };
@@ -556,24 +554,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             ...(locus.kind === "wsl" ? { locus } : {}),
             repoRoot,
           });
-        const transport = createCodexTurnTransport(
-          chosen.path,
-          defaultCodexTransportEffects,
-          locus,
-          chosen.runtimePath,
-        );
-        const capabilityEvidence = await deriveCodexImplementedEvidence(chosen.path);
         return {
           availability: { available: true, version: chosen.version },
           makeExecutor,
-          agenticPort: (mcpServers) =>
-            new CodexAdapter({
-              binaryPath: chosen.path,
-              transport,
-              version: chosen.version,
-              ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
-              mcpServers,
-            }),
           binPath: chosen.path,
           version: chosen.version,
         };
@@ -1963,6 +1946,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // pin, and an archive all survive reload; restore is un-archive.
     sessions: {
       list: () => sessionStore.list().map(sidebarSessionOf),
+      // The New Chat front door (C21): mint + claim in one act, through the SAME
+      // `SessionEntry` the round dispatch mints with, so a target claimed here and a target
+      // claimed by a round resolve to one session. No branch ⇒ the no-target mint (the
+      // "talk about the project" row): a fresh claimless session, so every visit is its own
+      // chat rather than reattaching to an unrelated one.
+      mint: (projectId, target) => {
+        if (target === undefined) {
+          const session = mintSession(projectId);
+          sessionStore.save(session);
+          return { session: sidebarSessionOf(session), reattached: false };
+        }
+        const entered = sessionEntry.enter(projectId, target);
+        return { session: sidebarSessionOf(entered.session), reattached: entered.reattached };
+      },
       rename: (sessionId, title) => {
         const session = sessionStore.rename(sessionId, title);
         return session && sidebarSessionOf(session);
@@ -2178,15 +2175,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
             // lint resolves citations against every text file at the reviewed head and
             // base, not only the changed ones. Two `git grep -c` passes over the repo's
-            // own git (locus-aware), ~80 ms on a 2.4k-file tree.
-            fileInventory: async (patchset) => {
-              const git = gitForRepo(patchset.repository.root);
-              const [head, base] = await Promise.all([
-                listTreeLineCounts(patchset.repository.root, patchset.repository.headOid, git),
-                listTreeLineCounts(patchset.repository.root, patchset.repository.baseOid, git),
-              ]);
-              return { head, base };
-            },
+            // own git (locus-aware), ~80 ms on a 2.4k-file tree; a side git could not
+            // read comes back empty and degrades to the diff on that side alone.
+            fileInventory: (patchset) =>
+              readTreeLineCounts(
+                patchset.repository.root,
+                patchset.repository.headOid,
+                patchset.repository.baseOid,
+                gitForRepo(patchset.repository.root),
+              ),
             // The REAL prior generation, rebuilt from its two durable halves (the generation
             // record + the board-meta rows' projected boards). Absent ⇒ this session has
             // never regenerated, so the round is honestly a first generation.
@@ -2492,11 +2489,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // question reaches. The core `askReview` router (invoked in dispatch) still owns
     // the orchestrator-once / both-adds-codex / never-synthesize law; these ports are
     // now the REAL invocation behind that law (replacing `reviewAskFixturePorts()`):
-    //   • askOrchestrator drives the live `claude` turn over the in-process
-    //     canvasOps@2 MCP server (`orchestratorTurn`) — the orchestrator reads the
-    //     review through context.map/file/novelty and answers. The pipeline it turns
-    //     over is a DETERMINISTIC-FLOOR build (no lens/model turns): the ask's model
-    //     spend is the one orchestrator turn, not a fresh lens review.
+    //   • askOrchestrator runs ONE capable `claude` turn at the review's repository
+    //     root, grounded in the active patchset's diff and free to read the repo.
+    //     The ask's model spend is that single turn, not a fresh lens review.
     //   • askCodex shells one `codex exec` over the diff + question (gated on the
     //     honestly-probed `codex` availability; an absent binary yields a legible
     //     "unavailable" answer, never a crash, so a "both" ask still returns the
@@ -2541,7 +2536,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         line,
         locus: locusForRepo(review.repositoryRoot),
       }),
+    // review.ask — BOTH live legs (F1, #570). The orchestrator runs ONE capable
+    // `claude` turn at the review's repository root through the same
+    // `claudeHandoffRunPort` the write handoff uses (no second drain loop, no
+    // checkpoint bracket — an ask has no diff to measure), streaming its text
+    // deltas out through dispatch. No harness ⇒ an honest line naming `claude`.
     reviewAsk: createLiveReviewAskPorts({
+      askOrchestrator: createLiveOrchestratorAsk({
+        resolveRunPort: async (repoRoot) => {
+          const adapter = await claudeAdapterForRepo(repoRoot);
+          return adapter ? claudeHandoffRunPort(adapter) : null;
+        },
+      }),
       askCodex: async ({ review, question, abortController }) => {
         // The ask executor is bound to the RESOLVED absolute codex, same as the
         // pipeline seat (bead workspace-6qp15), and to the review's locus (#334) so a

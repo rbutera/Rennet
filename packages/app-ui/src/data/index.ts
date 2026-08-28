@@ -3,7 +3,7 @@
 // No component calls bridge.invoke directly (a lint rule enforces it).
 export { BridgeProvider, useBridge } from "./bridge";
 export type { QueryState } from "./cache";
-export { commandKey } from "./cache";
+export { commandKey, readCommandId } from "./cache";
 export { useInvoke } from "./dispatch";
 export { type MutationResult, type UseMutationOptions, useMutation } from "./mutate";
 export {

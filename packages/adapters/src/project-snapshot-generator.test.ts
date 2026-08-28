@@ -6,7 +6,12 @@ import { isSnapshotFresh, serializeManifest, verifySnapshotIntegrity } from "@re
 import { PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
-import { listTreeLineCounts, matchesGlob, parseWorkspaceGlobs } from "./project-snapshot-source";
+import {
+  listTreeLineCounts,
+  matchesGlob,
+  parseWorkspaceGlobs,
+  readTreeLineCounts,
+} from "./project-snapshot-source";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
 // win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
@@ -578,5 +583,60 @@ describe("listTreeLineCounts", () => {
   it("parses a path containing a colon (the `-z` record separator earns its keep)", async () => {
     const { root, oid } = repoWith({ "src/we:ird.ts": "a\nb\nc\nd\n" });
     expect((await listTreeLineCounts(root, oid)).get("src/we:ird.ts")).toBe(4);
+  }, 30000);
+
+  // W5 finding 4 — git writes the path RAW between the `:` and the NUL, so a path
+  // containing a newline used to garble its own record AND swallow the next one:
+  // records were split on `\n`, which is not the separator git actually used.
+  it("parses a path containing a NEWLINE, and does not lose the record after it", async () => {
+    const { root, oid } = repoWith({
+      "src/we\nird.ts": "a\nb\nc\nd\n",
+      "src/zz-after.ts": "x\ny\n",
+    });
+    const counts = await listTreeLineCounts(root, oid);
+    expect(counts.get("src/we\nird.ts")).toBe(4);
+    expect(counts.get("src/zz-after.ts")).toBe(2);
+  }, 30000);
+});
+
+// -- readTreeLineCounts -- head and base, SETTLED (W5 finding 3) --------------
+// The two reads are independent. `Promise.all` discarded a perfectly good head
+// inventory whenever the base read failed, degrading BOTH sides to the diff; the
+// whole point of this PR is that partial knowledge beats none.
+
+describe("readTreeLineCounts", () => {
+  function repoWithTwoCommits(): { root: string; head: string; base: string } {
+    const root = mkdtempSync(join(tmpdir(), "rennet-treecounts-"));
+    scratch.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "src/a.ts", "one\ntwo\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base");
+    const base = git(root, "rev-parse", "HEAD");
+    write(root, "src/a.ts", "one\ntwo\nthree\nfour\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "head");
+    return { root, head: git(root, "rev-parse", "HEAD"), base };
+  }
+
+  it("reads both sides at their own commits", async () => {
+    const { root, head, base } = repoWithTwoCommits();
+    const inv = await readTreeLineCounts(root, head, base);
+    expect(inv.head.get("src/a.ts")).toBe(4);
+    expect(inv.base.get("src/a.ts")).toBe(2);
+  }, 30000);
+
+  it("KEEPS the side that answered when the other read fails", async () => {
+    const { root, head, base } = repoWithTwoCommits();
+    // A base oid git cannot resolve — the head read is untouched and must survive.
+    const inv = await readTreeLineCounts(root, head, `${"0".repeat(40)}`);
+    expect(inv.head.get("src/a.ts")).toBe(4);
+    expect(inv.base.size).toBe(0);
+    // ...and symmetrically, a broken head does not cost us the base.
+    const flipped = await readTreeLineCounts(root, `${"0".repeat(40)}`, base);
+    expect(flipped.head.size).toBe(0);
+    expect(flipped.base.get("src/a.ts")).toBe(2);
   }, 30000);
 });

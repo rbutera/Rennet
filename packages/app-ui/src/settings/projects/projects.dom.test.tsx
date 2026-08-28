@@ -160,7 +160,11 @@ function StatefulProjects({
           <div data-testid="probe-name">{names.p1 ?? ""}</div>
           <div data-testid="probe-glyph">{glyphs.p1 ?? ""}</div>
           <div data-testid="probe-pattern">{worktrees.p1?.pattern.value ?? ""}</div>
-          <div data-testid="probe-tracker">{trackers.p1?.kind.value ?? ""}</div>
+          {/* Value AND rung: the surface renders no provenance badge any more, so the
+              ladder move (detected → global) is proven here, at the projection. */}
+          <div data-testid="probe-tracker">
+            {trackers.p1 ? `${trackers.p1.kind.value}@${trackers.p1.kind.layer}` : ""}
+          </div>
           <div data-testid="probe-guidance">{(guidance.p1 ?? []).map((r) => r.rule).join("|")}</div>
         </SettingsProjectionProvider>
       </Router>
@@ -276,9 +280,9 @@ describe("ProjectsPage — dual-source settings", () => {
     await findByText("Runs on");
     const label = getByText("Runs on");
     const row = label.closest("div")?.parentElement as HTMLElement;
-    // The host label shows; the row carries a detected provenance chip and NO control.
+    // The host label shows; the row carries NO provenance badge (D6) and NO control.
     expect(within(row).getByText("This machine")).toBeTruthy();
-    expect(row.querySelector('[data-slot="provenance-chip"][data-layer="detected"]')).toBeTruthy();
+    expect(row.querySelector('[data-slot="provenance-chip"]')).toBeNull();
     expect(within(row).queryByRole("button")).toBeNull();
     expect(within(row).queryByRole("textbox")).toBeNull();
     cleanup();
@@ -299,16 +303,14 @@ describe("ProjectsPage — dual-source settings", () => {
       <StatefulProjects seed={seed} />,
     );
     await findByRole("button", { name: "jira" }); // wait for the tree to load
-    // The scout pick shows the detected rung.
-    expect(
-      trackerSection().querySelector('[data-slot="provenance-chip"][data-layer="detected"]'),
-    ).toBeTruthy();
+    // The scout pick resolved from the detected rung. The surface shows no badge for
+    // it (D6), so the rung is read off the projection itself.
+    expect(getByTestId("probe-tracker").textContent).toBe("github@detected");
     // Switching to JIRA is a user pick — the global rung — and seeds the REST fields.
     await user.click(getByRole("button", { name: "jira" }));
-    expect(getByTestId("probe-tracker").textContent).toBe("jira");
-    expect(
-      trackerSection().querySelector('[data-slot="provenance-chip"][data-layer="global"]'),
-    ).toBeTruthy();
+    expect(getByTestId("probe-tracker").textContent).toBe("jira@global");
+    // …and no provenance badge appeared on the surface to say so.
+    expect(trackerSection().querySelector('[data-slot="provenance-chip"]')).toBeNull();
     // Only the env-var NAME is exposed — never the token value.
     expect((getByLabelText("Tracker token environment variable") as HTMLInputElement).value).toBe(
       "JIRA_API_TOKEN",

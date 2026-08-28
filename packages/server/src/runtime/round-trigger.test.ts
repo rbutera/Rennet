@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CodexExecutor, HarnessPort } from "@rennet/core";
+import { type CodexExecutor, type HarnessPort, lintReviewDraft } from "@rennet/core";
 import type {
   DraftBoard,
   Generation,
@@ -366,6 +366,41 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
     const ctx = seen[0]?.lintContextFor("design");
     expect(ctx?.files.get("src/untouched.ts")).toBe(400);
     expect(ctx?.baseFiles?.get("src/untouched.ts")).toBe(380);
+  });
+
+  // W5 finding 2 — the composed review draft is the surface the reviewer READS, and it
+  // was linted against an empty inventory: no composition root ever supplied
+  // `reviewDraftLintCtx`, so every real `path:line` in the draft came back "does not
+  // resolve". Visible-never-blocking, so nothing was deleted — the draft was just
+  // papered with false ungrounded marks. It must carry the boards' own head inventory.
+  it("grounds the composed review draft on the same head inventory as the boards", async () => {
+    const { deps, seen } = reviewHarness();
+    await runBoardRegeneration(
+      {
+        ...deps,
+        fileInventory: async () => ({
+          head: new Map([["src/untouched.ts", 400]]),
+          base: new Map(),
+        }),
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+      },
+    );
+    const ctx = seen[0]?.reviewDraftLintCtx;
+    if (ctx === undefined) throw new Error("the round carried no review-draft lint context");
+    expect(ctx.files).toEqual(seen[0]?.lintContextFor("design").files);
+
+    const prose = "The refresh guard at src/untouched.ts:200 is correct.";
+    expect(lintReviewDraft(prose, ctx)).toEqual([]);
+    // POSITIVE CONTROL: the `{ files: new Map() }` default this used to fall back to.
+    expect(lintReviewDraft(prose, { files: new Map() }).map((v) => v.ruleId)).toEqual([
+      "citation-resolves",
+    ]);
   });
 
   it("degrades to the diff-derived inventories when the tree read REJECTS", async () => {

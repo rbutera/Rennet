@@ -15,6 +15,7 @@ import {
   type LintContext,
   type LintHunk,
   type LintTarget,
+  type RegisterLintContext,
 } from "@rennet/core";
 import {
   type DossierItem,
@@ -118,6 +119,18 @@ export interface TreeInventories {
   readonly base: ReadonlyMap<string, number>;
 }
 
+/**
+ * The HEAD-side inventory every citation in this round resolves against — the
+ * diff-derived counts widened by the whole-tree read. Shared by the lens boards
+ * and the composed review draft, because they cite the same commit.
+ */
+function mergedHeadInventory(
+  patchset: Patchset,
+  tree: TreeInventories | undefined,
+): Map<string, number> {
+  return mergeByMax(headFileInventory(patchset.files), tree?.head);
+}
+
 /** Union two line-count inventories, keeping the HIGHER count for a shared path. */
 function mergeByMax(
   diff: ReadonlyMap<string, number>,
@@ -162,7 +175,7 @@ export function buildLintContextFor(
   hunks: readonly LintHunk[],
   tree?: TreeInventories,
 ): (lens: LintTarget) => LintContext {
-  const files = mergeByMax(headFileInventory(patchset.files), tree?.head);
+  const files = mergedHeadInventory(patchset, tree);
   const baseFiles = mergeByMax(baseFileInventory(patchset.files), tree?.base);
   return (lens: LintTarget): LintContext => ({
     lens,
@@ -173,11 +186,22 @@ export function buildLintContextFor(
   });
 }
 
-/** The three per-round pipeline inputs `runRound`'s `RoundInput` carries. */
+/** The per-round pipeline inputs `runRound`'s `RoundInput` carries. */
 export interface RoundCollation {
   readonly deltaPacket: DeltaPacket;
   readonly hunks: readonly LintHunk[];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /**
+   * The composed review draft's citation grounding — the SAME head inventory the
+   * lens boards resolve against.
+   *
+   * Without it the composition lint falls back to an EMPTY inventory, and every
+   * real `path:line` in the draft reports "does not resolve: no such file at the
+   * review commit". That violation is visible-never-blocking, so nothing is deleted
+   * — but the surface the reviewer actually reads is then papered with false
+   * ungrounded marks. It is the same grounding bug the lens boards had, one layer up.
+   */
+  readonly reviewDraftLintCtx: RegisterLintContext;
 }
 
 /**
@@ -206,7 +230,12 @@ export function assembleRoundCollation(input: {
   );
   const hunks = toLintHunks(deltaPacket.hunks, input.patchset.files);
   const lintContextFor = buildLintContextFor(input.patchset, hunks, input.tree);
-  return { deltaPacket, hunks, lintContextFor };
+  return {
+    deltaPacket,
+    hunks,
+    lintContextFor,
+    reviewDraftLintCtx: { files: mergedHeadInventory(input.patchset, input.tree) },
+  };
 }
 
 // ── The prior generation (C15 2.1/3.3) — the lineage a round actually has ────

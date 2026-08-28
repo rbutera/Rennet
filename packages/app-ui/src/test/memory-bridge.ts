@@ -10,6 +10,7 @@ import type {
   RoundEvent,
   UpdateReadyInfo,
 } from "@rennet/protocol";
+import { parseCommandInput } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MemoryBridge — the in-memory RennetBridge for tests and fixtures (C01, #489).
@@ -107,6 +108,14 @@ export class MemoryBridge implements RennetBridge {
   }
 
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>> {
+    // PARSE EVERY INVOCATION against the real wire schema, before anything else. The daemon
+    // parses; a stub that does not is a stub that answers commands the wire would reject, and
+    // the whole suite then agrees with a client that cannot talk to the daemon. That is exactly
+    // how `load-${slug}` / `reattach-${reviewId}` — ids `commandIdSchema` (z.uuid()) refuses —
+    // shipped a dead chat dock and a dead `/s/:slug` past a green test run (F1 6.2). Throwing
+    // synchronously is deliberate: a client-side wire violation is a defect in the CALLER, not a
+    // command outcome a surface should get to render an error state for.
+    parseCommandInput(name, input);
     const handler = this.#handlers[name] as CommandHandler<K> | undefined;
     if (!handler) {
       return Promise.reject(new Error(`MemoryBridge: no handler for command "${name}"`));

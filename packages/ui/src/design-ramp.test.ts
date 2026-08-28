@@ -27,8 +27,10 @@ const COLOR_PREFIX =
   "bg|text|border|ring|fill|stroke|from|via|to|caret|accent|outline|decoration|divide|placeholder|shadow";
 
 const BANS: ReadonlyArray<readonly [RegExp, string]> = [
-  // Arbitrary text utilities: sizes AND colors ride the same escape hatch.
-  [/\btext-\[/, "arbitrary text-[…] (use the ramp: text-2xs…text-2xl, text-display)"],
+  // Arbitrary text utilities: sizes AND colors ride the same escape hatch. The
+  // one allowance is `text-[0.8rem]` — the prototype control ramp's `sm` button
+  // step, restored verbatim (openspec desktop-styling-convergence, design D2).
+  [/\btext-\[(?!0\.8rem\])/, "arbitrary text-[…] (use the ramp: text-2xs…text-2xl, text-display)"],
   // Named off-ramp text sizes: the ramp stops at text-2xl (+ text-display).
   // text-3xl and up are Tailwind defaults, untracked by the Rennet scale.
   [/\btext-(?:[3-9]|\d\d)xl\b/, "off-ramp text size (ramp stops at text-2xl / text-display)"],
@@ -107,13 +109,10 @@ describe("kit design ramp (utility contracts)", () => {
     expect(found, found.join("\n")).toEqual([]);
   });
 
-  it("the entry stylesheet only sizes type through ramp variables", () => {
-    const entry = readFileSync(join(SRC, "index.css"), "utf8");
-    const offRamp = [...entry.matchAll(/font-size:\s*([^;]+);/g)].filter(
-      ([, value]) => !/^var\(--text-[\w-]+\)$/.test((value ?? "").trim()),
-    );
-    expect(offRamp.map((m) => m[0]).join("\n")).toBe("");
-  });
+  // The kit has no entry stylesheet of its own: `packages/ui/src/index.css` was a
+  // dead file nothing imported (index.ts is a pure TS barrel), and the app-ui entry
+  // is the one that @source-scans this package. Its type-ramp contract lives with
+  // it, in packages/app-ui.
 
   it("every ban is exercised — each known-bad form is caught (positive control)", () => {
     for (const bad of MUST_REJECT) {

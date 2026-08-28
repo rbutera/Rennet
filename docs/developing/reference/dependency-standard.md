@@ -189,8 +189,10 @@ history-integration subsystem, its history is host-injected (hash in the Electro
 renderer, browser in the served tab, memory in tests), and its layout-wraps-switch
 composition keeps persistent chrome outside the swapped outlet. The `@rennet/app-ui`
 data seam's command cache is **owned, not `@tanstack/react-query`**: the need is
-three hooks over a keyed store (dedupe in-flight, stale-on-invalidate, per-key
-subscribers), and react-query's surface (refetch-on-focus, garbage collection,
+three hooks over a keyed store (dedupe in-flight, stale-on-invalidate,
+stale-on-abandon so a reopened surface re-reads rather than re-showing what it left
+with, per-key subscribers), and react-query's surface (refetch-on-focus, garbage
+collection,
 retries, devtools, infinite queries) far exceeds it and would need configuring-off —
 so it fails the admission test at the size that matters. The ~130-line `CommandCache`
 is browser-safe and invisible outside `src/data/` (`useCommand`/`useCommandStream`/

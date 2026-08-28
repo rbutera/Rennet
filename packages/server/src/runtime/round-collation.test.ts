@@ -1,4 +1,4 @@
-import { buildHunkIndex, lint, taughtHunkIds } from "@rennet/core";
+import { buildHunkIndex, lint, lintReviewDraft, taughtHunkIds } from "@rennet/core";
 import type {
   DraftBoard,
   DraftElement,
@@ -237,5 +237,24 @@ describe("assembleRoundCollation", () => {
     const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [] });
     expect(c.deltaPacket.successorAccount).toBeUndefined(); // first-generation, not a crash
     expect(c.hunks).toHaveLength(2);
+  });
+
+  // W5 finding 2 — the SAME grounding, one layer up. The composed review draft is the
+  // surface the reviewer actually reads; it was linted against an empty inventory, so
+  // every real `path:line` in it reported "no such file at the review commit".
+  it("grounds the review draft on the same head inventory as the boards", () => {
+    const tree = { head: new Map([["src/untouched.ts", 400]]), base: new Map() };
+    const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [], tree });
+    // The off-diff file the tree read found...
+    expect(c.reviewDraftLintCtx.files.get("src/untouched.ts")).toBe(400);
+    // ...and the diff-derived ceiling, unlowered — byte-identical to the boards' own.
+    expect(c.reviewDraftLintCtx.files).toEqual(c.lintContextFor("design").files);
+
+    const prose = "The refresh guard at src/untouched.ts:200 is correct.";
+    expect(lintReviewDraft(prose, c.reviewDraftLintCtx)).toEqual([]);
+    // POSITIVE CONTROL: the empty inventory this used to receive rejects that citation.
+    expect(lintReviewDraft(prose, { files: new Map() }).map((v) => v.ruleId)).toEqual([
+      "citation-resolves",
+    ]);
   });
 });

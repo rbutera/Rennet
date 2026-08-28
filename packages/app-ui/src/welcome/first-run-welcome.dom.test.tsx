@@ -246,7 +246,46 @@ describe("FirstRunWelcome", () => {
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=rennet"));
   });
 
+  it("mounts no shell, so adding a project mid-welcome paints no coach mark", async () => {
+    // The regression control for D7. Coach marks are ARMED here (no `seen`, no
+    // skipAll) — the opposite of the rest of this file — and the project is added
+    // FROM the wizard, which invalidates `projects.list`. Against the old code that
+    // is the exact failing shape: the shell sat mounted in a `display:none` underlay,
+    // the freshly non-empty list rendered `NewChatView` inside it, its `new-chat`
+    // anchor registered, the store elected "Start Here", and the coachmark — a portal
+    // to `document.body`, outside the underlay and outside its `inert` — painted its
+    // spotlight and card over the wizard. Unmounting the shell removes the anchor.
+    const history = memoryHistory("/new-chat");
+    mount(
+      <RennetRouterApp
+        bridge={welcomeBridge({
+          "settings.get": () => ({ ...freshSettings(), coachmarks: undefined }),
+        })}
+        history={history}
+      />,
+    );
+    await advanceToReviewSetup();
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    const add = await screen.findByRole("button", { name: "Add" });
+    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(add);
+    // The wizard advances to its own last stage — it is still the only thing on screen.
+    await screen.findByRole("button", { name: "Start a new chat" });
+    expect(screen.queryByTestId("chat-dock-slot")).toBeNull();
+    // Every coach mark paints as a Popover card; none is here, by name or by slot.
+    expect(document.querySelector('[data-slot="popover-content"]')).toBeNull();
+    expect(screen.queryByText("Start Here")).toBeNull();
+    expect(screen.queryByText("Ready to Go")).toBeNull();
+  });
+
   it("blocks review setup with a friendly install path, then rechecks detection", async () => {
+    // What the DAEMON would answer right now, not "answer differently on the Nth call".
+    // The count of reads before the click is not the point and is not this test's business:
+    // the tree the welcome mounts into re-parents on first run, and a re-mounted reader
+    // re-reads by design (harness detection changes while a surface is closed — that is
+    // exactly what "Check again" exists for). Keyed on installed-or-not, the assertion is
+    // about the button: one click, one fresh read, and the surface moves on.
+    let installed = false;
     let checks = 0;
     mount(
       <RennetRouterApp
@@ -258,7 +297,7 @@ describe("FirstRunWelcome", () => {
                 {
                   source: "local",
                   asked: true,
-                  detected: checks === 1 ? [] : [{ id: "codex", version: "0.38.0", enabled: true }],
+                  detected: installed ? [{ id: "codex", version: "0.38.0", enabled: true }] : [],
                 },
               ],
             };
@@ -273,9 +312,13 @@ describe("FirstRunWelcome", () => {
       "install-a-coding-harness",
     );
     expect(screen.queryByRole("button", { name: /^Continue$/ })).toBeNull();
+
+    // The reviewer goes and installs one, then asks Rennet to look again.
+    const before = checks;
+    installed = true;
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await screen.findByText("Codex will orchestrate reviews.");
-    expect(checks).toBe(2);
+    expect(checks).toBe(before + 1);
     expect(screen.getByRole("button", { name: /^Continue$/ })).toBeTruthy();
   });
 });

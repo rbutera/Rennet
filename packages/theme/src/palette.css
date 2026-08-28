@@ -24,7 +24,8 @@
  *     merged 2026-08-19; review blue and decision amber are retired).
  *     In light scheme gold TEXT uses the ochre --rn-accent (AA on white);
  *     gold FILLS use --rn-accent-fill with near-black ink.
- *   - Evidence green and danger red are the only other functional hues.
+ *   - Evidence green, copper warn, verdigris model, and danger red are the only
+ *     other functional hues.
  */
 
 :root {
@@ -53,8 +54,14 @@
   --rn-green: #41745b;
   --rn-green-soft: rgb(65 116 91 / 0.12);
   --rn-green-line: rgb(65 116 91 / 0.3);
+  /* copper — the caution register (not danger: a flag to weigh, not a failure) */
+  --rn-warn: #8a5a1e;
+  --rn-warn-soft: rgb(138 90 30 / 0.12);
+  --rn-warn-line: rgb(138 90 30 / 0.32);
   /* verdigris — the machine's voice (R53): the unread-orchestrator dot. */
   --rn-model: #2b7d6e;
+  --rn-model-soft: rgb(43 125 110 / 0.1);
+  --rn-model-line: rgb(43 125 110 / 0.3);
   /* danger */
   --rn-danger: #b23b2b;
   --rn-danger-soft: rgb(178 59 43 / 0.1);
@@ -91,16 +98,19 @@
    * across schemes (a scrim darkens content behind it in light AND dark), but the
    * palette contract requires every --rn-* token in both blocks, so it is restated
    * (same value) below. Apply opacity at the call site (bg-scrim/10). */
-  --rn-scrim: #0e0d0c;
+  --rn-scrim: #0a0a0a;
 }
 
 [data-scheme="dark"],
 [data-theme="dark"] {
-  --rn-canvas: #0e0d0c;
-  --rn-surface: #151413;
-  --rn-raised: #1b1a18;
-  --rn-overlay: #090807;
-  --rn-code: #0a0909;
+  /* grounds: conventional neutral near-black, desaturated from the original warm
+   * values after in-practice review — the warm cast read as too saturated and too
+   * bright at canvas size. Ink, lines, and accents keep the warm cast. */
+  --rn-canvas: #0a0a0a;
+  --rn-surface: #131313;
+  --rn-raised: #1a1a1a;
+  --rn-overlay: #060606;
+  --rn-code: #070707;
   --rn-ink: #f2ede4;
   --rn-ink-soft: #a9a196;
   --rn-ink-faint: #948d80;
@@ -115,7 +125,12 @@
   --rn-green: #88bc9b;
   --rn-green-soft: rgb(136 188 155 / 0.14);
   --rn-green-line: rgb(136 188 155 / 0.36);
+  --rn-warn: #d0a978;
+  --rn-warn-soft: rgb(208 169 120 / 0.14);
+  --rn-warn-line: rgb(208 169 120 / 0.38);
   --rn-model: #9fd0c0;
+  --rn-model-soft: rgb(159 208 192 / 0.12);
+  --rn-model-line: rgb(159 208 192 / 0.36);
   --rn-danger: #db7a6a;
   --rn-danger-soft: rgb(219 122 106 / 0.14);
   --rn-sheet: #1c1712;
@@ -137,18 +152,18 @@
   --rn-syn-var: #d9a77a;
   --rn-mark-ink: #f7f4ee;
   --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
-  --rn-scrim: #0e0d0c;
+  --rn-scrim: #0a0a0a;
 }
 
 /* Surfaces that never stamp a scheme follow the OS. A stamped data-scheme or
  * data-theme (the app resolves before paint; Starlight stamps on load) wins. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-scheme="light"]):not([data-theme="light"]) {
-    --rn-canvas: #0e0d0c;
-    --rn-surface: #151413;
-    --rn-raised: #1b1a18;
-    --rn-overlay: #090807;
-    --rn-code: #0a0909;
+  :root:where(:not([data-scheme]):not([data-theme])) {
+    --rn-canvas: #0a0a0a;
+    --rn-surface: #131313;
+    --rn-raised: #1a1a1a;
+    --rn-overlay: #060606;
+    --rn-code: #070707;
     --rn-ink: #f2ede4;
     --rn-ink-soft: #a9a196;
     --rn-ink-faint: #948d80;
@@ -163,7 +178,12 @@
     --rn-green: #88bc9b;
     --rn-green-soft: rgb(136 188 155 / 0.14);
     --rn-green-line: rgb(136 188 155 / 0.36);
+    --rn-warn: #d0a978;
+    --rn-warn-soft: rgb(208 169 120 / 0.14);
+    --rn-warn-line: rgb(208 169 120 / 0.38);
     --rn-model: #9fd0c0;
+    --rn-model-soft: rgb(159 208 192 / 0.12);
+    --rn-model-line: rgb(159 208 192 / 0.36);
     --rn-danger: #db7a6a;
     --rn-danger-soft: rgb(219 122 106 / 0.14);
     --rn-sheet: #1c1712;
@@ -185,6 +205,6 @@
     --rn-syn-var: #d9a77a;
     --rn-mark-ink: #f7f4ee;
     --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
-    --rn-scrim: #0e0d0c;
+    --rn-scrim: #0a0a0a;
   }
 }

@@ -21,9 +21,6 @@ import {
   type CodexExecRequest,
   type CodexExecResult,
   type CodexExecutor,
-  type CodexUtilityPort,
-  type CodexUtilitySeed,
-  createCodexUtilityPort,
   HOST_LOCUS,
   type Locus,
   locusCommand,
@@ -304,31 +301,6 @@ export function createCodexExecutor(
       ...(options.harnessVersion === undefined ? {} : { harnessVersion: options.harnessVersion }),
     };
   };
-}
-
-// ── Composition root ──────────────────────────────────────────────────────────
-
-export interface CodexUtilityAdapterDeps {
-  /** The executor this port runs on — built with the review's repo root, so the seat
-   *  can read the repository it is reasoning about. */
-  readonly executor: CodexExecutor;
-  readonly seed?: CodexUtilitySeed;
-  readonly mintDocId?: () => string;
-  readonly newRunId?: () => string;
-}
-
-/**
- * Compose a runnable CodexUtilityPort wired to the real `codex app-server`
- * executor. This is the seat boundary the Model Council resolver names: a resolved
- * Codex seat executes light-tier RSP emission through this port.
- */
-export function createCodexUtilityAdapter(deps: CodexUtilityAdapterDeps): CodexUtilityPort {
-  return createCodexUtilityPort({
-    executor: deps.executor,
-    ...(deps.seed === undefined ? {} : { seed: deps.seed }),
-    ...(deps.mintDocId === undefined ? {} : { mintDocId: deps.mintDocId }),
-    ...(deps.newRunId === undefined ? {} : { newRunId: deps.newRunId }),
-  });
 }
 
 // ── Codex availability probe (issue #69, bead workspace-sglle) ─────────────────

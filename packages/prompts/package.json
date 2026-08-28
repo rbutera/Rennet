@@ -1,6 +1,6 @@
 {
   "name": "@rennet/prompts",
-  "version": "0.3.38",
+  "version": "0.3.39",
   "private": true,
   "type": "module",
   "license": "LicenseRef-FSL-1.1-MIT",

@@ -2,7 +2,7 @@
   "name": "@rennet/marketing",
   "private": true,
   "type": "module",
-  "version": "0.3.38",
+  "version": "0.3.39",
   "license": "LicenseRef-FSL-1.1-MIT",
   "engines": {
     "node": ">=22.12.0"

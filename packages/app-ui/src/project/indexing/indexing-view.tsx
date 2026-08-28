@@ -349,23 +349,32 @@ function CompletionBlock({
   const failedRepos = summaries.filter((repo) => !repo.ok);
 
   // The honest state: a failed/partial run, or an ok run whose map didn't materialise.
+  // `pending` is its OWN state, not a lean toward readiness: while `project.contextMap`
+  // is still in flight `contextMap` is undefined, so nothing reads as unavailable — and
+  // claiming "Context Map Ready" there asserts a map we have not yet been told exists,
+  // then retracts it when an absent map lands. The block says what it knows and waits.
   const state =
     outcome === "failed"
       ? "failed"
       : outcome === "partial"
         ? "partial"
-        : mapUnavailable
-          ? "unavailable"
-          : "ready";
+        : contextMap == null
+          ? "pending"
+          : mapUnavailable
+            ? "unavailable"
+            : "ready";
   const heading =
     state === "ready"
       ? "Context Map Ready"
       : state === "partial"
         ? "Context map built — some repositories didn't index"
-        : state === "unavailable"
-          ? "Indexing finished — the context map isn't ready yet"
-          : "Indexing failed";
-  const tone = state === "ready" ? "text-green" : "text-danger";
+        : state === "pending"
+          ? "Indexing finished — reading the context map"
+          : state === "unavailable"
+            ? "Indexing finished — the context map isn't ready yet"
+            : "Indexing failed";
+  const tone =
+    state === "ready" ? "text-green" : state === "pending" ? "text-ink-faint" : "text-danger";
   const hasMap = state === "ready" || state === "partial";
 
   return (

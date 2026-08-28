@@ -3,6 +3,7 @@ import {
   type CodexExecutor,
   DEFAULT_CODEX_UTILITY_EFFORT,
   DEFAULT_CODEX_UTILITY_MODEL,
+  type HandoffRunPort,
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/protocol";
 
@@ -14,10 +15,13 @@ import type { Patchset, Review } from "@rennet/protocol";
 // deferred was the LIVE invocation behind the two ports: `reviewAskFixturePorts()`
 // returned canned answers. This module replaces that fixture with the real thing —
 //
-//   • `askOrchestrator` drives the live `claude` turn over the in-process
-//     canvasOps@2 MCP server (`orchestratorTurn`, the runner index.ts already
-//     composes) so the orchestrator can use context.map / context.file /
-//     context.novelty to reason about the review, then returns its final text.
+//   • `askOrchestrator` drives ONE live `claude` turn through `claudeHandoffRunPort`
+//     — the same `HarnessPort.createSession` → `send` → drain → `close` port the
+//     write handoff runs — at the review's repository root, streaming its text
+//     deltas and returning its final text. The turn is capable by default (Bash
+//     included), so the orchestrator can actually read the repository it is being
+//     asked about; "do not commit or push" is a prompt instruction, matching the
+//     handoff precedent, not a withheld capability.
 //   • `askCodex` shells one `codex exec` (the same executor the pipeline's Codex
 //     seat uses) over the review's diff + the question, returning a plain answer.
 //
@@ -36,9 +40,15 @@ export const ORCHESTRATOR_ASK_LABEL = "Orchestrator · Claude";
 export const CODEX_ASK_LABEL = "codex";
 
 /** How much of the raw diff is inlined into the one-shot Codex prompt (bounded so a
- *  huge changeset cannot blow the prompt; the orchestrator, by contrast, reads the
- *  diff through the canvasOps@2 tools rather than inline). */
+ *  huge changeset cannot blow the prompt; Codex has no tools on this call, so the
+ *  inlined diff is its whole context). */
 export const CODEX_ASK_DIFF_CEILING = 40_000;
+
+/** How much of the raw diff is inlined into the orchestrator's prompt. Tighter than
+ *  Codex's ceiling on purpose: the orchestrator holds the repository's real tools and
+ *  can read any hunk the excerpt clips, so the inline diff is orientation, not its
+ *  only context. A declared constant, never a magic number. */
+export const ORCHESTRATOR_ASK_DIFF_CEILING = 16_000;
 
 /** The active patchset a review's diff is read from (the same finder the app uses). */
 function activePatchsetOf(review: Review): Patchset {
@@ -60,6 +70,19 @@ export interface LiveReviewAskDeps {
     question: string;
     /** Cancels the codex exec (#251 criterion 4) — the same controller the
      *  orchestrator leg gets, so one abort on quit cancels BOTH. */
+    abortController?: AbortController;
+  }): Promise<AskAnswer>;
+  /**
+   * The live orchestrator port (`createLiveOrchestratorAsk`). ABSENT when the
+   * composition root wired none, in which case `askOrchestrator` returns the same
+   * honest no-harness line the live port would — never a fabricated answer, and
+   * never a build-vocabulary sentence about a rebuild the reviewer cannot see.
+   */
+  askOrchestrator?(input: {
+    review: Review;
+    question: string;
+    onDelta?: (text: string) => void;
+    selection?: { anchor: string; excerpt?: string };
     abortController?: AbortController;
   }): Promise<AskAnswer>;
 }
@@ -97,14 +120,19 @@ export interface LiveReviewAskPorts {
  */
 export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAskPorts {
   return {
-    async askOrchestrator() {
-      // The live orchestrator leg (Claude over the canvasOps@2 MCP server) is gone with
-      // the Board rebuild (B2). The router still asks the primary once; answer honestly
-      // that it is unavailable rather than fabricating a review answer.
-      return {
-        model: ORCHESTRATOR_ASK_LABEL,
-        answer: "The orchestrator is unavailable during the Board rebuild.",
-      };
+    async askOrchestrator({ review, question, onDelta, selection, abortController }) {
+      if (!deps.askOrchestrator) {
+        return { model: ORCHESTRATOR_ASK_LABEL, answer: NO_HARNESS_ANSWER };
+      }
+      // Include each optional only when present, so a non-streaming caller invokes
+      // the port with exactly the shape it passed (the file's existing style).
+      return deps.askOrchestrator({
+        review,
+        question,
+        ...(onDelta ? { onDelta } : {}),
+        ...(selection ? { selection } : {}),
+        ...(abortController ? { abortController } : {}),
+      });
     },
     async askCodex({ review, question, abortController }) {
       if (!deps.askCodex) {
@@ -224,6 +252,118 @@ export function createLiveCodexAsk(
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       return { model: CODEX_ASK_LABEL, answer: `Codex could not answer: ${detail}` };
+    }
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The LIVE orchestrator leg (F1, #570) — the structural sibling of
+// `createLiveCodexAsk` above. ONE turn through `claudeHandoffRunPort` (Decision 1:
+// there is exactly one orchestration path; never a second drain loop), at the
+// review's repository root, with NO checkpoint bracket (Decision 2: the bracket
+// exists to measure a WRITE turn's diff, and an ask measures nothing).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The honest line when no coding harness is installed. Not a fabricated answer, and
+ *  not build vocabulary: it names the missing binary so the reader can act on it. */
+export const NO_HARNESS_ANSWER =
+  "No coding harness (claude) is installed, so the orchestrator cannot answer.";
+
+/**
+ * Assemble the orchestrator's prompt: the reviewer's question, where the repository
+ * is, which patchset is under review (branch + base/head oids, so "the change" is
+ * unambiguous even though the working tree may have moved on), and the byte-bounded
+ * raw diff for orientation. The turn is capable by default, so the instruction to
+ * read the repository is a real instruction, not a hint at an absent tool.
+ */
+export function buildOrchestratorAskPrompt(
+  review: Review,
+  question: string,
+  selection?: { anchor: string; excerpt?: string },
+): string {
+  const patchset = activePatchsetOf(review);
+  const { text: clipped, truncated } = truncateToBytes(
+    patchset.rawDiff,
+    ORCHESTRATOR_ASK_DIFF_CEILING,
+  );
+  const bounded = truncated
+    ? `${clipped}\n… (diff truncated at ${ORCHESTRATOR_ASK_DIFF_CEILING} bytes — read the repository for the rest)`
+    : clipped;
+  const { repository } = patchset;
+  const lines = [
+    "You are the orchestrator of a code review, answering ONE question from the reviewer.",
+    "Answer the question concretely and concisely, grounded in this actual change.",
+    "You have the repository's full tool surface — read files, grep, run git — whenever",
+    "the inlined diff below is not enough. Do NOT commit and do NOT push: the reviewer",
+    "owns every published artefact.",
+    "",
+    `Repository root: ${review.repositoryRoot}`,
+    `Branch: ${repository.headRef ?? "(detached HEAD)"}`,
+    `Base: ${repository.baseRef} (${repository.baseOid})`,
+    `Head: ${repository.headOid}`,
+    "",
+    "The change under review (unified diff):",
+    "```diff",
+    bounded,
+    "```",
+  ];
+  if (selection) {
+    lines.push("", `The reviewer is looking at: ${selection.anchor}`);
+    if (selection.excerpt) lines.push("```", selection.excerpt, "```");
+  }
+  lines.push("", `The reviewer's question: ${question}`);
+  return lines.join("\n");
+}
+
+/** Deps for the live orchestrator ask. `resolveRunPort` is injected so this module
+ *  stays hermetically testable with fakes — no Electron, no real `claude`. */
+export interface LiveOrchestratorAskDeps {
+  /** The turn port for a repository root, or `null` when no harness is installed. */
+  resolveRunPort(repoRoot: string): Promise<HandoffRunPort | null>;
+}
+
+/**
+ * Build the live orchestrator port. It NEVER throws: the router awaits it, and a
+ * throw would sink a "both" ask alongside Codex's real answer (the same contract
+ * `createLiveCodexAsk`'s catch already honours). A failed turn returns the port's
+ * REAL reason, never a summary and never a plausible-sounding stand-in.
+ */
+export function createLiveOrchestratorAsk(
+  deps: LiveOrchestratorAskDeps,
+): (input: {
+  review: Review;
+  question: string;
+  onDelta?: (text: string) => void;
+  selection?: { anchor: string; excerpt?: string };
+  abortController?: AbortController;
+}) => Promise<AskAnswer> {
+  return async ({ review, question, onDelta, selection, abortController }) => {
+    try {
+      const run = await deps.resolveRunPort(review.repositoryRoot);
+      if (!run) return { model: ORCHESTRATOR_ASK_LABEL, answer: NO_HARNESS_ANSWER };
+      const outcome = await run({
+        cwd: review.repositoryRoot,
+        prompt: buildOrchestratorAskPrompt(review, question, selection),
+        ...(onDelta ? { onDelta } : {}),
+        ...(abortController ? { signal: abortController.signal } : {}),
+      });
+      if (outcome.status === "failed") {
+        return {
+          model: ORCHESTRATOR_ASK_LABEL,
+          answer: `The orchestrator could not answer: ${outcome.reason}`,
+        };
+      }
+      const answer = outcome.finalText.trim();
+      return {
+        model: ORCHESTRATOR_ASK_LABEL,
+        answer: answer.length > 0 ? answer : "The orchestrator returned no answer.",
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return {
+        model: ORCHESTRATOR_ASK_LABEL,
+        answer: `The orchestrator could not answer: ${detail}`,
+      };
     }
   };
 }

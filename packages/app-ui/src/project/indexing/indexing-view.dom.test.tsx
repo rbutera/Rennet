@@ -212,6 +212,34 @@ describe("IndexingView — build timeline & completion", () => {
     expect(screen.getByText(/12 scopes · 456 files · 3 confirmed · 1 rejected/)).toBeTruthy();
   });
 
+  it("does NOT claim Context Map Ready while the map read is still in flight", async () => {
+    // The regression: `mapUnavailable` is false BOTH when the map is fine and when the
+    // read has not answered yet, so the block used to read "Context Map Ready" during
+    // loading — asserting a map nobody had confirmed, and retracting it if one never
+    // arrived. A pending read is its own state, and it claims nothing.
+    const map = deferred<ReturnType<typeof contextMapOk>>();
+    const { finishWith } = renderView("pending1", {
+      "project.contextMap": () => map.promise,
+    });
+    await waitFor(() => expect(screen.getByText("rennet")).toBeTruthy());
+
+    finishWith([okSummary(456, 1200)]);
+    await waitFor(() =>
+      expect(screen.getByText(/Indexing finished — reading the context map/)).toBeTruthy(),
+    );
+    expect(screen.queryByText("Context Map Ready")).toBeNull();
+    // Nothing offers a map that has not been confirmed to exist.
+    expect(screen.queryByRole("button", { name: "View Context Map" })).toBeNull();
+
+    // Once it answers, the honest claim lands — with its counts in the same commit, which
+    // is why the counts assertion below needs no second wait.
+    await act(async () => {
+      map.resolve(contextMapOk(12, 3, 1));
+    });
+    await waitFor(() => expect(screen.getByText("Context Map Ready")).toBeTruthy());
+    expect(screen.getByText(/12 scopes · 456 files · 3 confirmed · 1 rejected/)).toBeTruthy();
+  });
+
   it("a run that finished but produced no queryable map does NOT claim Context Map Ready", async () => {
     const { finishWith } = renderView("r2", {
       "project.contextMap": () => ({ status: "absent", reason: "no snapshot yet" }),
