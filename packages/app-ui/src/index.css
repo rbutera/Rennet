@@ -118,28 +118,36 @@
   }
 }
 
-/* C20 state 3 — the main view goes full-bleed under the floating chip layer.
- * Content CLEARS the chips at rest and SLIDES UNDER them on scroll: the region
- * takes the clearance as top padding, and the pane's primary scrolling view takes
- * it back as negative margin then re-applies it as its own top padding + scroll
- * padding. That is the demo's tested compromise — hard full-bleed clipped headings,
- * and hard clearance left a dead band the prose never passed through.
+/* C20 state 3 — the main view runs full-bleed under the floating chip layer.
+ * TWO different jobs, deliberately two classes:
+ *
+ *  • `rennet-floating-chrome` — plain clearance. A takeover surface (Settings, New
+ *    Chat, Archived, Context Map, Indexing) has its own in-flow header and must NOT
+ *    scroll its content through it; it just needs room for the corner-slot pill.
+ *
+ *  • `rennet-floating-chrome-scroll` — the session surfaces, where Rai approved
+ *    content CLEARING the chips at rest and SLIDING UNDER them on scroll (hard
+ *    full-bleed clipped headings). The clearance lives INSIDE the pane's primary
+ *    scroller as top padding, so the first screenful sits below the chips and later
+ *    ones pass beneath; `scroll-padding-top` keeps programmatic scroll targets
+ *    (anchor jumps, `scrollIntoView`) clear of the chips too.
  *
  * The descendant selector names the repo-wide idiom for a pane's PRIMARY scroller
  * (`min-h-0 flex-1 overflow-y-auto`); secondary scrollers (a diff view's fixed-width
  * aside, the composer's textarea, a bounded list) do not carry all three and are
  * correctly left alone. */
 @layer components {
-  .rennet-floating-chrome {
+  .rennet-floating-chrome,
+  .rennet-floating-chrome-scroll {
     /* The vertical room the chip layer needs (an 11-unit / 44px chip row). Declared
-     * here and inherited by the scroller below, so the clearance and its give-back
-     * can never drift apart. NOT an `--rn-*` name: that prefix belongs to
-     * `@rennet/theme`'s palette and consumer stylesheets may not define one. */
+     * once and inherited by the scroller below. NOT an `--rn-*` name: that prefix
+     * belongs to `@rennet/theme`'s palette and consumer stylesheets may not define one. */
     --floating-chrome-clearance: 2.75rem;
+  }
+  .rennet-floating-chrome {
     padding-top: var(--floating-chrome-clearance);
   }
-  .rennet-floating-chrome .min-h-0.flex-1.overflow-y-auto {
-    margin-top: calc(var(--floating-chrome-clearance) * -1);
+  .rennet-floating-chrome-scroll .min-h-0.flex-1.overflow-y-auto {
     padding-top: var(--floating-chrome-clearance);
     scroll-padding-top: var(--floating-chrome-clearance);
   }

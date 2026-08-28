@@ -99,8 +99,10 @@ export function TopBar() {
     navigate(path, { replace });
   }
 
-  // The chip skin — translucent, blurred, hairlined. Used only by the floating layer.
-  const chip = "border border-line/60 bg-surface/70 shadow-sm backdrop-blur-md";
+  // The chip skin. Rai's 2026-08-28 amendment sanctions TRANSLUCENCY AND BLUR for chrome
+  // floating over content — and nothing else. DESIGN.md's separate ban on decorative
+  // shadows was not amended, so the chips carry a hairline, not a shadow.
+  const chip = "border border-line/60 bg-surface/70 backdrop-blur-md";
   const iconButton = floating
     ? cn("size-8 rounded-full", chip)
     : "size-7 rounded-chip hover:bg-raised";
@@ -155,17 +157,11 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* CENTER slot: the lens switcher — an empty named slot C5 fills. Its chips get
-        the same skin, so whatever C5 mounts joins the floating layer instead of
-        painting an opaque block over the full-bleed view. */}
-      <div
-        data-slot="lens-switcher"
-        className={cn(
-          "flex items-center justify-center",
-          floating &&
-            "pointer-events-auto [&_[role=tablist]]:border [&_[role=tablist]]:border-line/60 [&_[role=tablist]]:bg-surface/70 [&_[role=tablist]]:shadow-sm [&_[role=tablist]]:backdrop-blur-md",
-        )}
-      />
+      {/* CENTER slot: C3's named lens-switcher slot. It is EMPTY in this build — the real
+        `LensSwitcher` renders inside the board document (`board/board-view.tsx`), not here —
+        so it gets no floating skin. Styling an empty div would only look like coverage.
+        Whoever fills this slot styles it for the floating layer at that point. */}
+      <div data-slot="lens-switcher" className="flex items-center justify-center" />
 
       {/* RIGHT slot: the History · Map · Diff pill. */}
       <div className={cn("flex items-center justify-end", floating && "pointer-events-auto")}>

@@ -12,10 +12,11 @@ import { launchRennet, makeTempDir, seedReviewRepo } from "./harness";
 //
 // SCOPE, stated rather than implied (packet risk 8.1): the repo's Playwright-on-
 // Electron harness has no precedent for a window-drag or a traffic-light-geometry
-// case, and inventing one is not worth the hours. So this spec proves what Playwright
-// can genuinely prove — bounding boxes, mount counts, the drag class, and the toggle
-// round-trip — and the window DRAG itself is verified by hand (recorded in the C20
-// tasks record). A synthetic drag would prove nothing about the real window.
+// case, and inventing one is not worth the hours. So this spec covers what Playwright
+// could genuinely prove — bounding boxes, mount counts, the drag class, and the toggle
+// round-trip — and deliberately does NOT attempt a synthetic drag, which would prove
+// nothing about the real window. The real drag has NOT been verified by anyone yet;
+// its proof path is Rai's manual check on a shipped build.
 //
 // KNOWN NOT-RUN (2026-08-28), tracked as #569: this spec has never executed. Playwright's Electron
 // driver cannot launch the app on this toolchain at all — `Electron: bad option:
@@ -82,6 +83,25 @@ test("the corner slot owns the window's top-left in every state, clear of the li
     expect(await appRegion(`${sidebarSlot} button`)).toBe("no-drag");
     await expectClearsLights(page, sidebarSlot);
     await page.screenshot({ path: "test-results/c20-state-1-sidebar.png" });
+
+    // ── State 2: collapsed + chat open — the slot moves into the chat header. ──
+    // Reached from state 1 so the walk is continuous: open the chat, then collapse.
+    // (The dock, and therefore this state, exists only on a session route.)
+    const chatToggle = page.getByRole("button", { name: "Open chat" });
+    if (await chatToggle.count()) {
+      await chatToggle.click();
+      await expect(page.getByTestId("chat-dock-slot")).toHaveAttribute("data-open", "true");
+      await page.getByRole("button", { name: "Collapse sidebar" }).click();
+      const chatSlot = '[data-slot="corner-slot"][data-owner="chat"]';
+      await expect(page.locator(chatSlot)).toBeVisible();
+      expect(await slotOwners(page)).toEqual(["chat"]);
+      await expect(page.locator(chatSlot)).toHaveClass(/navigation-titlebar/);
+      await expectClearsLights(page, chatSlot);
+      await page.screenshot({ path: "test-results/c20-state-2-chat.png" });
+      // Back to state 1 so the state-3 walk below starts from a known place.
+      await page.getByRole("button", { name: "Expand sidebar" }).click();
+      await page.getByRole("button", { name: "Close chat" }).click();
+    }
 
     // ── State 3: collapse the sidebar with the chat closed — the floating pill. ──
     await page.getByRole("button", { name: "Collapse sidebar" }).click();

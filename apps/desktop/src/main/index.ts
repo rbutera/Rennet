@@ -193,9 +193,11 @@ async function createWindow(wsPort: number): Promise<void> {
     // own geometry now — `packages/app-ui/src/shell/corner-slot.tsx`, which moves
     // between the sidebar header, the chat header and a floating pill as panes
     // collapse, and carries the `navigation-titlebar` drag rule wherever it lands.
-    // No `trafficLightPosition` override: the default inset is where the corner slot's
-    // 76px reserve and 40px strip are measured from, and C20's E2E geometry check
-    // confirmed the lights sit clear of every control without moving them. win32/linux
+    // No `trafficLightPosition` override: the default inset is what the corner slot's
+    // 76px reserve and 40px strip were sized against (#557). NOT verified against a real
+    // window — C20's E2E geometry check has never run (#569), so the clearance is
+    // asserted by construction, not measured. Rai's manual check on a shipped build is
+    // the outstanding proof; do not tune this value blind before then. win32/linux
     // keep the native frame (titlebar, snap, drag) above the web content.
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0e0d0c" : "#fbfaf7",
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),

@@ -8,12 +8,18 @@
 // dissolves its CHROME, not its data. Every control it shows in states 1–2 must still
 // render and still work. A chip dropped because it "does not fit the floating layer"
 // is a lie by omission, and it is the failure mode this file exists to catch.
+import type { Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
+import { Router } from "wouter";
+import { ReviewWorkspace } from "../app/review-workspace-route";
+import { BridgeProvider } from "../data";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
+import { fixtureBoardRead } from "../test/fixtures/boards";
 import { frontDoorBridge } from "../test/fixtures/front-door";
+import { MemoryBridge } from "../test/memory-bridge";
 
 afterEach(() => {
   cleanup();
@@ -67,9 +73,12 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     expect(bar.className).toContain("absolute");
     expect(bar.className).toContain("pointer-events-none");
     expect(bar.className).not.toContain("border-b");
-    // Each of the three slots opts its own chips back into pointer events.
-    for (const slot of bar.children) {
-      expect(slot.className).toContain("pointer-events-auto");
+    // Every slot that CARRIES a chip opts back into pointer events (the bar itself is
+    // transparent to them). The centre lens-switcher slot renders nothing in this build,
+    // so it is not styled and not asserted — an empty div proves nothing.
+    for (const slot of [bar.firstElementChild, bar.lastElementChild]) {
+      expect(slot?.className).toContain("pointer-events-auto");
+      expect(slot?.children.length).toBeGreaterThan(0);
     }
   });
 
@@ -83,9 +92,6 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
         .sort();
     const inState1 = labels(bar1);
     const pill1 = [...bar1.querySelectorAll('[role="button"], button')].map((b) => b.textContent);
-    expect(
-      state1.container.ownerDocument.querySelector('[data-slot="lens-switcher"]'),
-    ).toBeTruthy();
     cleanup();
 
     const state3 = mountFrame(STATE_3);
@@ -101,8 +107,6 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     expect([...bar3.querySelectorAll('[role="button"], button')].map((b) => b.textContent)).toEqual(
       pill1,
     );
-    // The named lens-switcher slot C5 fills survives the restyle.
-    expect(bar3.querySelector('[data-slot="lens-switcher"]')).toBeTruthy();
   });
 
   it("reopens the dock from the floating chat FAB, handing the slot back to the chat", async () => {
@@ -119,24 +123,70 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 5.3's clear-at-rest / slide-under-on-scroll. jsdom and happy-dom have no
-  // layout, so the VISUAL behaviour cannot be measured here — see the task note.
-  // What IS genuinely pinnable is that the clearance contract is applied in state 3
-  // and absent otherwise, which is the half a test can honestly prove.
+  // 5.3's clear-at-rest / slide-under-on-scroll. happy-dom has no layout engine, so
+  // the pixel behaviour cannot be measured — but the thing that actually broke IS
+  // assertable: the CSS hangs the clearance off the pane's PRIMARY SCROLLER
+  // (`min-h-0 flex-1 overflow-y-auto`), and the board branch had no such element at
+  // all, so the rule matched nothing and the review read under the chips. Asserting
+  // only "the class is applied" proved a class that did nothing. These assert the
+  // scroller exists, holds the board, and is the element the rule reaches.
   // ───────────────────────────────────────────────────────────────────────────
-  it("applies the full-bleed clearance contract in state 3 and nowhere else", () => {
-    const { container } = mountFrame(STATE_3);
+  it("marks a SESSION surface for the scroll treatment, not the plain pad", () => {
+    const { container } = mountFrame(STATE_3, "/s/review-1");
     const region = container.ownerDocument.querySelector("[data-floating-chrome]");
     if (!region) throw new Error("no outlet content region");
-    expect(region.getAttribute("data-floating-chrome")).toBe("true");
-    expect(region.className).toContain("rennet-floating-chrome");
-    cleanup();
+    expect(region.getAttribute("data-floating-chrome")).toBe("scroll");
+    expect(region.className).toContain("rennet-floating-chrome-scroll");
+  });
 
+  it("gives the board branch a real primary scroller for the clearance to land on", async () => {
+    // THE BUG THIS TEST EXISTS FOR: the CSS hangs the clearance off the pane's primary
+    // scroller, and the board branch had NO element matching that selector — it sat in a
+    // `min-h-screen` block inside the frame's `overflow-hidden`. The rule matched nothing,
+    // so the review read under the chips (and the board could not scroll at all). Asserting
+    // "the class is applied" passed anyway, which is what made it invisible.
+    const history = memoryHistory("/s/review-1");
+    const review = {
+      id: "cs-1",
+      activePatchsetId: "ps-1",
+      repositoryRoot: "/home/dev/rennet",
+    } as unknown as Review;
+    const { container, findByText } = mount(
+      <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <ReviewWorkspace review={review} />
+        </Router>
+      </BridgeProvider>,
+    );
+    await findByText(/REVIEW ·/);
+    // The rule's own selector, run against the live tree: it must match exactly the pane's
+    // one primary scroller. Matching NOTHING is the regression.
+    const scrollers = container.querySelectorAll(".min-h-0.flex-1.overflow-y-auto");
+    expect(scrollers.length).toBe(1);
+    const scroller = scrollers[0];
+    if (!scroller) throw new Error("the board branch has no primary scroller");
+    // ...and it is the element that actually carries the review document, not some
+    // unrelated bounded list that happens to match the selector.
+    expect(scroller.querySelector('[data-kind="lens-board-view"]')).toBeTruthy();
+  });
+
+  it("gives a TAKEOVER surface plain clearance, never the scroll treatment", () => {
+    // Settings has its own in-flow header; scrolling its content through it would be
+    // wrong. It clears the corner-slot pill and stops there.
+    const { container } = mountFrame(STATE_3, "/settings/appearance");
+    const region = container.ownerDocument.querySelector("[data-floating-chrome]");
+    if (!region) throw new Error("no outlet content region");
+    expect(region.getAttribute("data-floating-chrome")).toBe("pad");
+    expect(region.className).toContain("rennet-floating-chrome");
+    expect(region.className).not.toContain("rennet-floating-chrome-scroll");
+  });
+
+  it("applies no clearance at all outside state 3", () => {
     for (const state of [STATE_1, { sidebarOpen: false, chatOpen: true }]) {
       const other = mountFrame(state);
       const el = other.container.ownerDocument.querySelector("[data-floating-chrome]");
       if (!el) throw new Error("no outlet content region");
-      expect(el.getAttribute("data-floating-chrome")).toBe("false");
+      expect(el.getAttribute("data-floating-chrome")).toBe("off");
       expect(el.className).not.toContain("rennet-floating-chrome");
       cleanup();
     }

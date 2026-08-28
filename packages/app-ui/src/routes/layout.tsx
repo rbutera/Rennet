@@ -139,15 +139,19 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
           <main data-region="outlet" className="rennet-outlet flex min-w-0 flex-1 flex-col">
             {isSessionRoute ? <TopBar /> : null}
             {/* State 3 (C20): with no pane to its left the main view runs full-bleed
-              under the floating chip layer. `rennet-floating-chrome` (index.css) holds
-              the clearance the chips need at rest and hands it to the pane's primary
-              scroller as scroll padding, so prose passes UNDER the chips instead of
-              stopping at a dead band. */}
+              under the floating chip layer, and the two surface families need different
+              treatment (index.css). A SESSION surface hands the clearance to its primary
+              scroller, so prose clears the chips at rest and passes under them on scroll.
+              A TAKEOVER surface has its own in-flow header and must not scroll content
+              through it, so it takes the clearance as plain padding and nothing else. */}
             <div
-              data-floating-chrome={owner === "floating"}
+              data-floating-chrome={
+                owner === "floating" ? (isSessionRoute ? "scroll" : "pad") : "off"
+              }
               className={cn(
                 "relative min-h-0 flex-1",
-                owner === "floating" && "rennet-floating-chrome",
+                owner === "floating" &&
+                  (isSessionRoute ? "rennet-floating-chrome-scroll" : "rennet-floating-chrome"),
               )}
             >
               {children}

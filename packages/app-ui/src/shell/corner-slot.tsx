@@ -80,10 +80,12 @@ export function CornerSlot({
         owner === "chat" && cn("self-start pr-2", mac ? "pl-[76px]" : "pl-0"),
         // State 3: a translucent pill floating over the full-bleed main view — the
         // one sanctioned use of translucent chrome (DESIGN.md §Material, amended
-        // 2026-08-28). Inset 4px from the corner, so the mac padding is 76 − 4.
+        // 2026-08-28). That amendment covers translucency and blur ONLY; the separate
+        // ban on decorative shadows stands, so this is a hairline, not a shadow.
+        // Inset 4px from the corner, so the mac padding is 76 − 4.
         owner === "floating" &&
           cn(
-            "fixed top-1 left-1 z-40 h-8 rounded-full border border-line/60 bg-surface/70 pr-1.5 shadow-sm backdrop-blur-md",
+            "fixed top-1 left-1 z-40 h-8 rounded-full border border-line/60 bg-surface/70 pr-1.5 backdrop-blur-md",
             mac ? "pl-[72px]" : "pl-1.5",
           ),
       )}

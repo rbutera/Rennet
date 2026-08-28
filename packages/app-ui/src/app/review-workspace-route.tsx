@@ -93,37 +93,49 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   }
 
   return (
-    <div className="relative min-h-screen bg-canvas">
+    // A flex COLUMN that fills the outlet, not a `min-h-screen` block. The height chain
+    // matters: `DiffViewContainer` and the hand-off lanes each declare `min-h-0 flex-1
+    // overflow-y-auto` for their own scrolling, which does nothing unless this parent is a
+    // height-constrained flex column. The document branches below (board, rounds ledger,
+    // round greeting, report-unavailable) had no scroller at all and were simply clipped by
+    // the frame's `overflow-hidden`; they share ONE primary scroller now. That scroller is
+    // also what C20's floating-chip clearance hangs off, so the board reads correctly under
+    // the state-3 chip layer instead of starting beneath them.
+    <div className="relative flex h-full min-h-0 flex-col bg-canvas">
       {view === "handoff" ? (
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
         <DiffViewContainer review={review} roundGeneration={query.round ?? undefined} />
-      ) : view === "rounds" && roundRecords.length > 0 ? (
-        <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
-      ) : greetingArmed && inReportPhase ? (
-        // Report phase with the greeting armed: the report GATES the reveal. A valid report
-        // leads the surface (regeneration streaming beneath); a missing or invalid report is
-        // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
-        // behind the reveal (finding 1). Falling through to `LensBoardView` here would open
-        // the composed generation with no "View the New Boards" act and hide the failure.
-        report.status === "valid" ? (
-          <RoundGreeting
-            board={report.board}
-            state={roundState}
-            onReveal={() => armGreeting(false)}
-          />
-        ) : (
-          <ReportUnavailable status={report.status} />
-        )
       ) : (
-        <>
-          <header className="border-border border-b px-6 py-3">
-            <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-              REVIEW · {review.repositoryRoot.split("/").at(-1)}
-            </p>
-          </header>
-          <LensBoardView reviewId={review.id} generation={boardGeneration} />
-        </>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {view === "rounds" && roundRecords.length > 0 ? (
+            <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
+          ) : greetingArmed && inReportPhase ? (
+            // Report phase with the greeting armed: the report GATES the reveal. A valid report
+            // leads the surface (regeneration streaming beneath); a missing or invalid report is
+            // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
+            // behind the reveal (finding 1). Falling through to `LensBoardView` here would open
+            // the composed generation with no "View the New Boards" act and hide the failure.
+            report.status === "valid" ? (
+              <RoundGreeting
+                board={report.board}
+                state={roundState}
+                onReveal={() => armGreeting(false)}
+              />
+            ) : (
+              <ReportUnavailable status={report.status} />
+            )
+          ) : (
+            <>
+              <header className="border-border border-b px-6 py-3">
+                <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                  REVIEW · {review.repositoryRoot.split("/").at(-1)}
+                </p>
+              </header>
+              <LensBoardView reviewId={review.id} generation={boardGeneration} />
+            </>
+          )}
+        </div>
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
     </div>
