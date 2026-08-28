@@ -105,6 +105,7 @@ import {
   SessionStore,
   SqliteReviewStore,
   snapshotStoreFor,
+  TranscriptStore,
   validateGitHubToken,
   wslDiscoveryDeps,
 } from "@rennet/adapters";
@@ -207,7 +208,7 @@ import {
   type PersistedBoardMeta,
   type WorkerReturn,
 } from "./runtime/rounds";
-import { SessionEntry } from "./session/session-entry";
+import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
@@ -1540,7 +1541,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return join(homedir(), ".rennet", "prompts");
     }
   })();
-  const sessionEntry = new SessionEntry(new SessionStore());
+  const sessionStore = new SessionStore();
+  // The display-transcript store (issue-set B): the read side of `session.transcript`. The turn
+  // loop's recordTranscript sink writes here once the interactive loop is wired; the read serves
+  // whatever it holds (honest-empty until then).
+  const transcriptStore = new TranscriptStore();
+  const sessionEntry = new SessionEntry(sessionStore);
   const roundsRuntime = createRoundsRuntime({
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
@@ -1630,6 +1636,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // detached HEAD (no branch to claim) falls back to a review-id session. A failure-isolated
     // post-commit kick (the swarm/scout precedent): the turn runs behind the command, and its
     // rejection never surfaces — `round.dispatch` already returned the composed work-order.
+    // The rounds-ledger read for `session.rounds` (B9/B10-deferred seam): project the live
+    // rounds runtime's ledger for the review's session, resolved READ-ONLY (the read side of
+    // dispatchRound's mint below — same target-claim derivation, never minting). An unknown
+    // review or a session with no recorded round ⇒ an honest empty ledger.
+    roundRecordsForReview: (reviewId: string) => {
+      const review = service.reviewById(reviewId);
+      if (!review) return [];
+      return roundsRuntime.ledger(resolveRoundSessionId(review, sessionStore.list()));
+    },
+    // The display-transcript read for `session.transcript` (issue-set B): the coding-turn rows
+    // the turn loop captured and persisted for this review's session, resolved READ-ONLY via the
+    // SAME target-claim derivation the rounds read uses. Rows were R19-scrubbed at projection time.
+    // Honest-empty when no turns were captured yet — the harness CLI stays the canonical owner and
+    // this is an additive display read-model. (The WRITE side — the turn loop's recordTranscript
+    // sink into transcriptStore — lights up when the interactive turn loop is wired here.)
+    transcriptRowsForReview: (reviewId: string) => {
+      const review = service.reviewById(reviewId);
+      if (!review) return [];
+      return transcriptStore.read(resolveRoundSessionId(review, sessionStore.list()));
+    },
     dispatchRound: async ({ review, workOrder }) => {
       const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
       const branch = activePatchset?.repository.headRef;

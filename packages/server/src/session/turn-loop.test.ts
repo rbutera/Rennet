@@ -582,3 +582,48 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
     expect(store.get("s1").harnessCursor).toBeUndefined();
   });
 });
+
+describe("SessionTurnLoop: display-transcript capture (issue-set B)", () => {
+  it("hands recordTranscript the turn's full events with the spec cwd", async () => {
+    const store = memoryStore(mintSession("proj", { id: () => "s1", now: () => 1 }));
+    const toolEvents: HarnessEvent[] = [
+      { kind: "thinking.message", text: "planning" } as unknown as HarnessEvent,
+      {
+        kind: "tool.started",
+        call: {
+          id: "c1",
+          name: "Read",
+          input: { file_path: "/repo/s1/a.ts" },
+          parentToolCallId: null,
+          kind: "read",
+        },
+      } as unknown as HarnessEvent,
+      {
+        kind: "tool.output",
+        callId: "c1",
+        ok: true,
+        output: null,
+        text: "ok",
+      } as unknown as HarnessEvent,
+    ];
+    const captured: Array<{ sessionId: string; cwd: string; events: readonly HarnessEvent[] }> = [];
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => undefined, { prelude: () => toolEvents }),
+      store,
+      buildSpec: spec,
+      recordTranscript: (input) => captured.push(input),
+    });
+
+    await loop.runTurn("s1", "hi");
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.sessionId).toBe("s1");
+    expect(captured[0]?.cwd).toBe("/repo/s1");
+    // The tool events plus the terminal session.ended reached the sink.
+    expect(captured[0]?.events.map((e) => e.kind)).toEqual([
+      "thinking.message",
+      "tool.started",
+      "tool.output",
+      "session.ended",
+    ]);
+  });
+});

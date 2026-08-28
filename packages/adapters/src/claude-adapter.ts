@@ -374,6 +374,15 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
           text: stringField(blockRecord, "text") ?? "",
           parentToolCallId: null,
         });
+      } else if (blockType === "thinking") {
+        // The model's reasoning block. The SDK carries the text on `thinking` (not
+        // `text`); surface it as its own lane so the transcript renders a Thought block
+        // distinct from prose (issue-set B; taxonomy per t3code's reasoning split).
+        events.push({
+          ...envelope(context, frame),
+          kind: "thinking.message",
+          text: stringField(blockRecord, "thinking") ?? "",
+        });
       } else if (blockType === "tool_use") {
         const name = stringField(blockRecord, "name") ?? "unknown";
         events.push({
@@ -422,15 +431,28 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
   if (type === "stream_event") {
     const event = asRecord(record.event);
     const delta = event ? asRecord(event.delta) : null;
-    if (
-      event &&
-      stringField(event, "type") === "content_block_delta" &&
-      delta &&
-      stringField(delta, "type") === "text_delta"
-    ) {
-      return [
-        { ...envelope(context, frame), kind: "text.delta", text: stringField(delta, "text") ?? "" },
-      ];
+    if (event && stringField(event, "type") === "content_block_delta" && delta) {
+      const deltaType = stringField(delta, "type");
+      if (deltaType === "text_delta") {
+        return [
+          {
+            ...envelope(context, frame),
+            kind: "text.delta",
+            text: stringField(delta, "text") ?? "",
+          },
+        ];
+      }
+      // A reasoning increment. The SDK carries it on `thinking`, not `text`; it was a
+      // `passthrough` before B and so never reached the transcript's Thought lane.
+      if (deltaType === "thinking_delta") {
+        return [
+          {
+            ...envelope(context, frame),
+            kind: "thinking.delta",
+            text: stringField(delta, "thinking") ?? "",
+          },
+        ];
+      }
     }
     return [{ ...envelope(context, frame), kind: "passthrough", nativeKind: "stream_event" }];
   }

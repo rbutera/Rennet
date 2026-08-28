@@ -141,6 +141,129 @@ export const RoundRecordSchema = z.object({
 export type RoundRecord = z.infer<typeof RoundRecordSchema>;
 
 /**
+ * The chat dock's header trail (C07) — the session's identity line. Honest-minimal:
+ * the coding transcript lives in the harness, so this carries only the identity facts
+ * Rennet holds. `target`/`targetState` mirror the sidebar's review-target vocabulary.
+ */
+export const SessionTrailSchema = z.object({
+  title: z.string(),
+  projectName: z.string().optional(),
+  target: z.enum(["your-branch", "your-pr", "teammate-pr"]).optional(),
+  targetState: z.enum(["needs-you", "merged", "reviewed"]).optional(),
+});
+export type SessionTrail = z.infer<typeof SessionTrailSchema>;
+
+/**
+ * A harness-reported context-window figure (ask-don't-estimate, #466 res. 3). Absent on
+ * the wire ⇒ the meter reads "unknown"; never estimated. Both figures are the harness's own.
+ */
+export const SessionContextWindowSchema = z.object({
+  used: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+});
+export type SessionContextWindow = z.infer<typeof SessionContextWindowSchema>;
+
+// A turn/block lifecycle. Inlined (not imported from `../wire`) to keep this leaf shapes
+// module off the root-index import cycle `wire.ts` sits on — three literals, cheap to hold.
+const transcriptTurnStatus = z.enum(["streaming", "complete", "interrupted"]);
+
+/**
+ * A collapsing "Thinking → Thought" block projected from the harness's reasoning events
+ * (B). Its live/settled look follows `status`; `text` is the reasoning, one entry per line.
+ */
+export const ThoughtBlockSchema = z.object({
+  kind: z.literal("thought"),
+  id,
+  status: transcriptTurnStatus,
+  seconds: z.number().nonnegative().optional(),
+  text: z.array(z.string()),
+});
+
+/**
+ * A running → done tool-call step, projected from a `tool.started` joined with its
+ * `tool.output` (B). `toolKind` is the SERIALIZABLE icon selector — the client maps it to a
+ * concrete icon (C07); the wire never carries a component. `denied` marks a `tool.denied`.
+ * Every path-bearing string here is R19-scrubbed at projection time, before it is persisted.
+ */
+export const ActionStepSchema = z.object({
+  kind: z.literal("action"),
+  id,
+  label: z.string(),
+  detail: z.string().optional(),
+  status: transcriptTurnStatus,
+  doneLabel: z.string().optional(),
+  doneDetail: z.string().optional(),
+  toolKind: z.enum(["read", "write", "exec", "search", "mcp", "subagent", "other"]),
+  denied: z.boolean().optional(),
+});
+
+/** A turn's activity preface: thought blocks and action steps, in occurrence order. */
+export const ActivityStepSchema = z.discriminatedUnion("kind", [
+  ThoughtBlockSchema,
+  ActionStepSchema,
+]);
+export type ActivityStep = z.infer<typeof ActivityStepSchema>;
+
+export const ProseBlockSchema = z.object({ kind: z.literal("text"), text: z.string() });
+export const CodeBlockSchema = z.object({
+  kind: z.literal("code"),
+  path: z.string(),
+  lang: z.string().optional(),
+  code: z.string(),
+  startLine: z.number().int().optional(),
+  highlightLines: z.array(z.number().int()).optional(),
+});
+/** A turn body: prose interleaved with code blocks. */
+export const ContentBlockSchema = z.discriminatedUnion("kind", [ProseBlockSchema, CodeBlockSchema]);
+export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+
+/**
+ * A session-transcript row. The harness CLI stays the CANONICAL owner of the conversation —
+ * resume still rides the `HarnessCursor` (#466 res. 3), untouched. This is ADDITIVE to that:
+ * a DISPLAY read-model projected from the harness events the adapter already normalizes
+ * (tool calls, outputs, thinking, prose), persisted so the dock shows history and survives
+ * reload. Three representable rows:
+ *   - `turn`: one coding turn — orchestrator (or user) — with its thought/action preface and
+ *     its prose/code body. Path-bearing content is R19-scrubbed before persistence.
+ *   - `compact-boundary`: the harness summarized in place; its own figures, absent ⇒ unknown.
+ *   - `context-rebuilt`: the harness lost the transcript and Rennet rebuilt from the boards.
+ */
+export const SessionTranscriptRowSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("turn"),
+    id,
+    speaker: z.enum(["user", "orchestrator"]),
+    status: transcriptTurnStatus,
+    paragraphs: z.array(z.string()),
+    time: z.string().optional(),
+    lead: z.string().optional(),
+    preface: z.array(ActivityStepSchema).optional(),
+    body: z.array(ContentBlockSchema).optional(),
+  }),
+  z.object({
+    kind: z.literal("compact-boundary"),
+    id,
+    tokensBefore: z.number().int().nonnegative().optional(),
+    tokensAfter: z.number().int().nonnegative().optional(),
+  }),
+  z.object({ kind: z.literal("context-rebuilt"), id, reason: z.string() }),
+]);
+export type SessionTranscriptRow = z.infer<typeof SessionTranscriptRowSchema>;
+
+/**
+ * The chat dock's session read (C07): the header trail, the historical transcript rows,
+ * and the harness context figure. Honest-absent today — no coding-transcript store exists
+ * (the harness owns it), so `rows` is empty and `contextWindow` absent until a transcript
+ * read port lands; the live ask threads arrive separately via `review.reattach`.
+ */
+export const SessionTranscriptSchema = z.object({
+  trail: SessionTrailSchema,
+  rows: z.array(SessionTranscriptRowSchema),
+  contextWindow: SessionContextWindowSchema.optional(),
+});
+export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
+
+/**
  * The session (#466 res. 1–2): the first-class durable root. One chat travels
  * with the reviewer across surfaces; it owns the harness cursor, the threads,
  * and the claim. A review attaches 1:0..1 (`reviewId` — referenced, not

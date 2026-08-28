@@ -521,6 +521,12 @@ export {
 } from "./snapshot-overlay-store";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {
+  defaultTranscriptStoreDir,
+  TRANSCRIPT_STORE_VERSION,
+  TranscriptStore,
+  TranscriptStoreCorruptError,
+} from "./transcript-store";
+export {
   type ClaudeTurnUsage,
   createInstrumentedRunTurn,
   createMetricsCollector,

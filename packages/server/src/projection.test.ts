@@ -573,6 +573,10 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // Span rework (B11 cluster 5) echoes the same `AskEventBody` receipt (its
     // `ask.edit` write), so its receipt's line-comment `path` arm is repo-relative too.
     "review.reviseSpan.output.receipt.path",
+    // The display transcript (issue-set B): a coding turn's `code` body block cites the file
+    // it touched. The projector R19-scrubs every path at capture time BEFORE persistence, so a
+    // remote client already reads a repo-relative reference — no frame-boundary translation.
+    "session.transcript.output.rows.body.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",

@@ -31,6 +31,8 @@ import type {
   PrBodyDraftResult,
   RefinementResult,
   Review,
+  RoundRecord,
+  SessionTranscriptRow,
   SuccessorAccount,
   SymbolInspection,
 } from "@rennet/protocol";
@@ -537,6 +539,23 @@ export interface DispatchDeps {
     review: Review;
     workOrder: ComposedHandoffBundle;
   }) => Promise<void>;
+  /**
+   * The rounds-ledger read for `session.rounds` (B9/B10-deferred seam): the `RoundRecord[]`
+   * the live rounds runtime recorded for this review's session, resolved read-only (the READ
+   * side of `dispatchRound`'s mint — `resolveRoundSessionId`). Absent ⇒ no rounds runtime
+   * wired, so the read answers an honest empty ledger. Empty until a round RECORDS (`runRound`);
+   * the B11 dispatch WRITE runs the workers but the record wiring is a separate deferred piece.
+   */
+  readonly roundRecordsForReview?: (reviewId: string) => readonly RoundRecord[];
+  /**
+   * The display-transcript read for `session.transcript` (issue-set B): the projected coding-turn
+   * rows the turn loop captured and persisted for this review's session, resolved read-only via
+   * the same `resolveRoundSessionId` the rounds read uses. Rows are ALREADY R19-scrubbed at
+   * projection time. Absent ⇒ no transcript store wired; a session with no captured turns yet
+   * returns `[]` (honest-empty — the capability is present, no fabricated content). The harness
+   * CLI stays the canonical conversation owner; this is an additive display read-model.
+   */
+  readonly transcriptRowsForReview?: (reviewId: string) => readonly SessionTranscriptRow[];
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

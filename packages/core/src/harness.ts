@@ -237,6 +237,15 @@ export type HarnessEvent = HarnessEventBase &
         readonly text: string;
         readonly parentToolCallId: ToolCallId | null;
       }
+    /**
+     * The model's reasoning/thinking, modeled first-class so the transcript can show it
+     * as a distinct "Thinking → Thought" lane (mirrors t3code's `reasoning_text` split;
+     * taxonomy borrowed, no code lifted). `thinking.message` is a settled thinking block;
+     * `thinking.delta` is its streaming increment. Prose (`text.*`) and thinking are
+     * separate lanes — never merged — because the reviewer reads them differently.
+     */
+    | { readonly kind: "thinking.delta"; readonly text: string }
+    | { readonly kind: "thinking.message"; readonly text: string }
     | { readonly kind: "tool.started"; readonly call: ToolCall }
     | {
         readonly kind: "tool.output";
