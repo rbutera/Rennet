@@ -141,9 +141,9 @@
     "note": "PRE-C14 GATE ADDITIONS (Rai, 2026-08-28): (1) DONE \u2014 titlebar fix LANDED #557 @f2ac71ff (real-device defect: traffic lights over wordmark; report->auto-update closed loop); (2) RELEASE BEFORE C14 \u2014 after last pre-C14 landing: gh workflow run auto-release.yml (SIGPIPE decide-step fix ca443db0 landed; this dispatch is its real test), verify green through publish + vX.Y.Z with macOS assets, Rai watches latios auto-update, THEN dispatch C14 \u2014 audit drives the released build where practical."
   },
   "c15": {
-    "status": "implementing",
+    "status": "review",
     "passes": false,
-    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal \u2014 C14 flags claim-vs-live, doesn't fudge). UNPARKED \u2014 finale in flight; for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
+    "note": "Issue #541. C15-COMPLETE @22cac013 (pushed, GATE_EXIT=0, roster 94). Cluster-5 E2E over the LIVE source (real events, no fixture clock) \u2014 full chain dispatch->progress->greeting->reveal->gen2 boards over board.read->retro line->gen-1 drill-down. Four controls red from committed baselines (coverage swallow / lane hardcode / kicker revert / frozenPredecessor drop). E2E FOUND+FIXED two live-source bugs: dispatch bounced off /run (reviewer dispatched event now written into the read cache, idempotent) and cold mid-round deep-link bounced (roundPending distinguishes pending from honest-absent). DOCUMENTED SEAM: report board handed in, not fetched (board.read has no report arm \u2014 LensKind gap). Docs: handoff-and-exits items live, carry-forward-is-a-verdict section. Codex round-1 seat running. Last of the original 37."
   },
   "c16": {
     "status": "landed",
@@ -158,7 +158,7 @@
   "c18": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #551 (OPEN \u2014 group-A owed). SLICES 1-2 LANDED #562 @2a7bf793: board.read live (three honest states, BoardSource deleted \u2014 c15 UNPARKED), session.list/rename/setPinned/archive + project.rename R67, registry 93. Review FIX->CONFIRMED (keystroke-rename made draft-commit red-first; migration script removed; caption truth). Group-A continuation building the honest settings-engine slice on feat/c18-group-a (registry keys, per-repoKey rung, tracker repo layer, conventions writer, then the projectEditsPersist flip). C18-COMPLETE after it lands."
+    "note": "Issue #551 (OPEN \u2014 group-A owed). SLICES 1-2 LANDED #562 @2a7bf793: board.read live (three honest states, BoardSource deleted \u2014 c15 UNPARKED), session.list/rename/setPinned/archive + project.rename R67, registry 93. Review FIX->CONFIRMED (keystroke-rename made draft-commit red-first; migration script removed; caption truth). Group-A continuation building the honest settings-engine slice on feat/c18-group-a (registry keys, per-repoKey rung, tracker repo layer, conventions writer, then the projectEditsPersist flip). Group-A @1d589d22 Codex FIX: 5 upheld (tracker kind/cred mixing w/ repro; stale capability flag + silent writePref no-op; guidance clobbers user prose w/ repro; glyph:7 control unbound; caption/docs lies) \u2014 fix loop with warm implementer. C18-COMPLETE after it lands."
   },
   "c19": {
     "status": "landed",
