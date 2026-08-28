@@ -262,7 +262,14 @@ export interface RoundInput {
    * mapping from pipeline callbacks to events. Absent ⇒ no live channel, same round.
    */
   readonly onProgress?: (event: RoundEvent) => void;
-  readonly reviewDraftLintCtx?: RegisterLintContext;
+  /**
+   * The composed review draft's citation grounding. REQUIRED (W5): an absent one
+   * grounds the composition lint on an empty inventory, so every real `path:line`
+   * the draft cites reports "does not resolve" on the surface the reviewer reads.
+   * `assembleRoundCollation` builds it from the same head inventory as the boards,
+   * so a caller that spreads a `RoundCollation` already carries it.
+   */
+  readonly reviewDraftLintCtx: RegisterLintContext;
   readonly curationFeedback?: string;
   readonly signal?: AbortSignal;
 }
@@ -513,9 +520,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           }),
       ...(input.previous === undefined ? {} : { previous: input.previous }),
       ...(composeTurn === undefined ? {} : { composeTurn }),
-      ...(input.reviewDraftLintCtx === undefined
-        ? {}
-        : { reviewDraftLintCtx: input.reviewDraftLintCtx }),
+      reviewDraftLintCtx: input.reviewDraftLintCtx,
       ...(input.curationFeedback === undefined ? {} : { curationFeedback: input.curationFeedback }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });

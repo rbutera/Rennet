@@ -117,6 +117,7 @@ function roundInput(over: Partial<RoundInput> = {}): RoundInput {
     deltaPacket: ROUND_PACKET,
     hunks: [],
     lintContextFor,
+    reviewDraftLintCtx: { files: new Map() },
     ...over,
   };
 }

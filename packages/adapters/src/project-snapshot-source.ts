@@ -147,6 +147,67 @@ export async function listTree(
   return files;
 }
 
+/**
+ * Line counts for every TEXT file in the tree at `oid`, as `path → lines`.
+ *
+ * This is the inventory a citation resolves against when the citing seat read
+ * BEYOND the diff (W5): board lint needs "does `<path>` exist at the review
+ * commit, and does `<start>-<end>` fit inside it?" for the whole tree, not only
+ * the changed files. One `git grep -c` pass answers it for the whole repo in
+ * milliseconds (~80 ms over Rennet's 2.4k files) — every line matches the empty
+ * pattern, so the match count IS the line count.
+ *
+ * `-I` skips binaries (which have no lines to cite) and `-z` writes the count
+ * after a NUL so a path containing `:` still parses. Records are
+ * `<oid>:<path>\0<n>\n`, and the path between the `:` and the NUL is RAW — git
+ * does not escape it, so it may itself contain a newline. The NUL is therefore the
+ * only reliable field separator: the scan anchors on it and reads the decimal count
+ * up to the following newline, rather than splitting records on `\n` (which a path
+ * containing one would corrupt, taking the next record down with it).
+ * A tree with no text files at all makes `git grep` exit 1; that surfaces as a
+ * throw, and the caller degrades to the diff-derived inventory.
+ */
+export async function listTreeLineCounts(
+  root: string,
+  oid: string,
+  git: GitExec = execaGit,
+): Promise<Map<string, number>> {
+  const output = await git(root, ["grep", "-I", "-c", "-z", "-e", "", oid, "--"], { reject: true });
+  const counts = new Map<string, number>();
+  const prefix = `${oid}:`;
+  for (const [, qualified = "", lines = ""] of output.matchAll(/([^\0]*)\0(\d+)(?:\n|$)/g)) {
+    if (!qualified.startsWith(prefix)) continue;
+    counts.set(qualified.slice(prefix.length), Number(lines));
+  }
+  return counts;
+}
+
+/**
+ * Both tree inventories for one review — head and base — as the board lint's
+ * citation grounding.
+ *
+ * SETTLED, never `Promise.all`: the two reads are independent, so a base read that
+ * fails must not throw away a perfectly good head read and degrade BOTH sides. A
+ * side that could not be read comes back EMPTY, which grounds that side exactly as
+ * it was before the whole-tree read existed — the diff-derived inventory alone.
+ * Partial knowledge beats none.
+ */
+export async function readTreeLineCounts(
+  root: string,
+  headOid: string,
+  baseOid: string,
+  git: GitExec = execaGit,
+): Promise<{ head: Map<string, number>; base: Map<string, number> }> {
+  const [head, base] = await Promise.allSettled([
+    listTreeLineCounts(root, headOid, git),
+    listTreeLineCounts(root, baseOid, git),
+  ]);
+  return {
+    head: head.status === "fulfilled" ? head.value : new Map(),
+    base: base.status === "fulfilled" ? base.value : new Map(),
+  };
+}
+
 /** Read a blob's UTF-8 text by its OID at the pinned tree. */
 export async function readBlobText(
   root: string,

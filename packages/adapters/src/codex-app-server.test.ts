@@ -680,8 +680,12 @@ describe("buildAppServerArgs", () => {
     ]);
   });
 
-  it("emits an EMPTY full-table override when no MCP servers are supplied (isolates user MCP)", () => {
-    expect(buildAppServerArgs()).toEqual(["app-server", "-c", "mcp_servers={}"]);
+  // W5: the empty full-table override wiped the user's `~/.codex` MCP table and put
+  // nothing in its place — a seat stripped of tools for no gain. With nothing to pin,
+  // no override is sent at all, so the user's own servers survive.
+  it("sends NO mcp_servers override when there is nothing to pin (user MCP survives)", () => {
+    expect(buildAppServerArgs()).toEqual(["app-server"]);
+    expect(buildAppServerArgs({})).toEqual(["app-server"]);
   });
 });
 
