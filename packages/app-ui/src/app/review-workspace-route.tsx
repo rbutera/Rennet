@@ -125,7 +125,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
   // contract — a PR review is a snapshot taken against the pull request's pinned OIDs, "NOT wired
   // into the working-tree freshness watcher (the renderer gates that off by patchset source)" —
-  // and `patchsetSource` is how the renderer is supposed to tell them apart (wire.ts). Asking
+  // and `isWorkingTreeReview` is how the renderer tells them apart (wire.ts). Asking
   // anyway would capture THIS CLONE's tree, which can never match a `github-local`/`github-rest`
   // patchset id, so the daemon commits `ReviewInvalidated`, the notice claims a change that never
   // happened, and Regenerate replaces the reviewed PR diff with a local capture — a lie, a

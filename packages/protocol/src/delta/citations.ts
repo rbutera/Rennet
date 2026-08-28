@@ -161,7 +161,10 @@ export function isWorkingTreeReview(review: {
 
 /** Did the repository actually change under this review? Working-tree provenance AND invalidated. */
 export function isReviewStale(
-  review: Parameters<typeof isWorkingTreeReview>[0] & { readonly status: string },
+  review: Parameters<typeof isWorkingTreeReview>[0] & {
+    /** The review's own two states, not `string`: a mistyped literal is a compile error, not a silent `false`. */
+    readonly status: "current" | "invalid";
+  },
 ): boolean {
   return isWorkingTreeReview(review) && review.status === "invalid";
 }
