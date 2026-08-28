@@ -89,11 +89,16 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
     await expect(added).toContainText("export const value = 2;");
 
     // Editing the file on disk stales the pinned review, and coming back to the window is what
-    // asks. The save happens ONCE, and it is the FIRST save after the capture — the case #601
-    // was filed for, where the daemon's watcher was still walking the freshly-captured root and
-    // so never reported the write at all. #574 worked around that by re-saving inside the retry,
-    // which made the spec pass and made this defect invisible to it; the save is back outside
-    // the retry so the spec covers the loop it claims to.
+    // asks. The save happens ONCE. #574 re-saved inside the retry to step around #601 (the
+    // watcher losing the first save after a capture); that is fixed, so the workaround is gone
+    // and this is one save again, as a reviewer would make it.
+    //
+    // ⚠️ This spec is NOT a control for #601 and cannot be made into one at this fixture size.
+    // Verified by execution, not by reading: with the #601 fix reverted, this spec still passed.
+    // The defect needs the daemon's watcher to still be walking the tree when the save lands,
+    // and this repository is ONE file — the walk is over in about five milliseconds, long
+    // before the save below. The control that does show the harm drives a 1,000-file repository
+    // through the real daemon: `packages/server/src/freshness-first-save.test.ts`.
     //
     // The FOCUS is still retried, and only the focus: the ask fires on a window focus event, and
     // one focus can land before the daemon's diff has come back. That is a poll for an answer,
