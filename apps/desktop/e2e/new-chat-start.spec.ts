@@ -88,6 +88,12 @@ function seedRowRepo(): string {
 async function addProjectAndOpenNewChat(page: Page, repository: string): Promise<void> {
   await page.getByRole("button", { name: "Add Project" }).first().click();
   const pathBar = page.getByRole("textbox", { name: "Directory path" });
+  // The browser loads its opening directory asynchronously and writes the result BACK into
+  // the path bar (`directory-browser.tsx`: `setTyped(result.path)` in the load handler), so a
+  // fill that lands before that first load resolves is silently overwritten and Enter then
+  // re-navigates to the daemon's home. The breadcrumb renders only once `path !== null`, so
+  // it is the signal that the opening load has settled and the bar is ours to type into.
+  await expect(page.getByRole("navigation", { name: "Current path" })).toBeVisible();
   await pathBar.fill(repository);
   await pathBar.press("Enter");
   await expect(page.getByRole("button", { name: basename(repository), exact: true })).toBeVisible();
