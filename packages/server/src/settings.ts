@@ -160,6 +160,22 @@ export interface SettingsComposition {
    * honest absence, not "no agents installed" — and never the local set copied across.
    */
   harnessHosts(): Promise<HarnessHostDetection[]>;
+  /**
+   * Rule one agent in or out of reviews ON ONE HOST (C17 cluster 3.2) — the served store the
+   * per-host enable toggle writes through, so a ruled-out agent stays ruled out across reload
+   * instead of resetting with the renderer. Persisted on the daemon-settings rung beside the
+   * host's last-seen version, because it is a per-host fact like the rest of that entry.
+   *
+   * Scoped to the host: ruling Codex out on this machine leaves it running on a WSL distro.
+   * It is a DECISION, never a detection — it installs nothing, hides nothing, and an id
+   * disabled on a host with no such agent simply matches no row. Returns the host's ruled-out
+   * ids after the write. A malformed daemon-settings refuses it (throws), as every write here does.
+   */
+  setHarnessEnabled(input: {
+    source: ProjectSource;
+    harnessId: string;
+    enabled: boolean;
+  }): string[];
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   /**
@@ -202,6 +218,25 @@ export interface SettingsComposition {
     repoPath: string;
     key: SettingsRepoValueKey;
   }): Promise<SettingsRepoWriteOutcome>;
+}
+
+type DaemonHostEntry = NonNullable<DaemonSettings["hosts"]>[string];
+
+/**
+ * Merge per-host edits into daemon-settings' `hosts` map, PRESERVING every other fact each
+ * entry already carries. One entry holds two independent things — the version a host was last
+ * seen running and the agents the viewer ruled out there — written by two different paths, so
+ * replacing an entry wholesale would let a background status poll silently un-rule-out an agent.
+ */
+function withHostEntries(
+  current: DaemonSettings,
+  edits: Readonly<Record<string, Partial<DaemonHostEntry>>>,
+): DaemonSettings {
+  const hosts: Record<string, DaemonHostEntry> = { ...current.hosts };
+  for (const [source, edit] of Object.entries(edits)) {
+    hosts[source] = { ...hosts[source], ...edit };
+  }
+  return { ...current, hosts };
 }
 
 export function createSettingsComposition(deps: SettingsCompositionDeps): SettingsComposition {
@@ -400,7 +435,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
 
       if (Object.keys(learned).length > 0) {
         try {
-          deps.updateDaemon((current) => ({ ...current, hosts: { ...current.hosts, ...learned } }));
+          // MERGED into the host's entry, never replacing it: that entry also carries the
+          // viewer's per-host agent decisions (3.2), and learning a version must not
+          // silently un-rule-out an agent they ruled out.
+          deps.updateDaemon((current) => withHostEntries(current, learned));
         } catch {
           // A malformed daemon-settings REFUSES the write (Rule 75) — remembering a version
           // is not worth failing the status read over, so the live answer still returns.
@@ -410,18 +448,43 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     },
 
     harnessHosts: async (): Promise<HarnessHostDetection[]> => {
+      // The viewer's PERSISTED per-host decisions (3.2), read once per pass. A host with no
+      // entry has ruled nothing out, so every agent it reports reads enabled.
+      const remembered = deps.readDaemonSettings().hosts ?? {};
       const hosts: HarnessHostDetection[] = [];
       for (const host of daemonHostSections(deps.listProjects())) {
         // A detection that REJECTS is a host that could not be asked, exactly like a dep
         // that resolves null — either way nothing was observed there, so nothing is claimed.
         const detected = await deps.detectHarnessesOn?.(host.source).catch(() => null);
-        hosts.push(
-          detected
-            ? { source: host.source, asked: true, detected }
-            : { source: host.source, asked: false, detected: [] },
-        );
+        if (!detected) {
+          hosts.push({ source: host.source, asked: false, detected: [] });
+          continue;
+        }
+        const disabled = new Set(remembered[host.source]?.disabledHarnesses ?? []);
+        hosts.push({
+          source: host.source,
+          asked: true,
+          // A ruled-out agent is still DETECTED and still listed — the decision turns its
+          // toggle off, it does not hide a binary that is really installed.
+          detected: detected.map((harness) => ({ ...harness, enabled: !disabled.has(harness.id) })),
+        });
       }
       return hosts;
+    },
+
+    setHarnessEnabled: (input): string[] => {
+      const current = deps.readDaemonSettings().hosts?.[input.source]?.disabledHarnesses ?? [];
+      const disabled = input.enabled
+        ? current.filter((id) => id !== input.harnessId)
+        : current.includes(input.harnessId)
+          ? current
+          : [...current, input.harnessId];
+      // A malformed daemon-settings REFUSES the write (Rule 75) — `updateDaemon` throws and
+      // the caller learns the decision did not persist, rather than being told it did.
+      deps.updateDaemon((stored) =>
+        withHostEntries(stored, { [input.source]: { disabledHarnesses: disabled } }),
+      );
+      return disabled;
     },
 
     guidance: async (projectId: string, repoPath: string): Promise<SettingsGuidance> => {

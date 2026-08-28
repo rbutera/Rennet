@@ -407,6 +407,19 @@ const definitions = {
     input: z.object({}),
     output: z.object({ hosts: z.array(harnessHostDetectionSchema) }),
   },
+  // Rule an agent in or out of reviews ON ONE HOST (C17 cluster 3.2) — the served store behind
+  // the per-host enable toggle, persisted in daemon-settings so the decision survives reload.
+  // Scoped to the host: ruling Codex out here leaves it running on a WSL distro. It never
+  // installs, uninstalls or hides anything — the row stays, with its toggle off.
+  "harness.setEnabled": {
+    input: z.object({
+      source: sourceSchema,
+      harnessId: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    // The host's ruled-out ids after the write — the stored decision, read back verbatim.
+    output: z.object({ disabled: z.array(z.string()) }),
+  },
   // Forge (source-control) CLI detection, mirroring harness.detect (C17, #484 seam / #483
   // "gh rides again"). Runs on the daemon it is dispatched to = that host; the client folds
   // the rows into `sourceControlByHost`. Singleton registry today — GitHub / `gh` only.

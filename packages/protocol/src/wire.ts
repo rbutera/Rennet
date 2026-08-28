@@ -1682,13 +1682,27 @@ export const daemonSettingsSchema = z.object({
     })
     .optional(),
   /**
-   * Per-host daemon memory (C17 reconciliation 4), keyed by the host's `source`. Today it
-   * holds only `lastSeenVersion` — the version a host's daemon actually answered with, so a
-   * host that later goes dark reads "last seen running v…" instead of blank chrome. Written
-   * ONLY from a real answer: a host that has never answered has no entry, and nothing here
-   * is ever fabricated. Additive-optional like the rest of this document.
+   * Per-host daemon memory (C17), keyed by the host's `source`. Two independent facts, each
+   * additive-optional, so an entry may carry either or both:
+   *
+   *  • `lastSeenVersion` (reconciliation 4) — the version a host's daemon actually answered
+   *    with, so a host that later goes dark reads "last seen running v…" instead of blank
+   *    chrome. Written ONLY from a real answer; a host that has never answered has no entry.
+   *  • `disabledHarnesses` (cluster 3.2) — the agents the viewer has RULED OUT of reviews on
+   *    that host. A decision, not a detection: it survives reload, and it is scoped to the
+   *    host, so ruling Codex out on this machine leaves it running on a WSL distro. Nothing
+   *    here claims a harness exists — an id disabled on a host with no such harness simply
+   *    matches no detected row.
    */
-  hosts: z.record(z.string(), z.object({ lastSeenVersion: z.string().min(1) })).optional(),
+  hosts: z
+    .record(
+      z.string(),
+      z.object({
+        lastSeenVersion: z.string().min(1).optional(),
+        disabledHarnesses: z.array(z.string().min(1)).optional(),
+      }),
+    )
+    .optional(),
 });
 export type DaemonSettings = z.infer<typeof daemonSettingsSchema>;
 
@@ -1823,13 +1837,24 @@ export type DaemonHostStatus = z.infer<typeof daemonHostStatusSchema>;
  * which is the real claim "that host has no coding agents installed". The local set is never
  * copied onto a host it was not observed on.
  */
+export const hostHarnessSchema = detectedHarnessSchema.extend({
+  /**
+   * The viewer has NOT ruled this agent out of reviews on this host (C17 cluster 3.2). A
+   * persisted per-host decision, so a ruled-out agent stays ruled out across reload, and
+   * ruling it out here leaves it running everywhere else. Detection is unaffected: a
+   * disabled agent is still detected and still shown, with its toggle off.
+   */
+  enabled: z.boolean(),
+});
+export type HostHarness = z.infer<typeof hostHarnessSchema>;
+
 export const harnessHostDetectionSchema = z.object({
   /** The host these harnesses were detected on — the `source` key `daemonHosts` enumerates. */
   source: sourceSchema,
   /** This daemon could interrogate that host. `false` ⇒ the empty row list claims NOTHING. */
   asked: z.boolean(),
   /** Exactly the harnesses observed ON that host. Empty when unasked, or genuinely none. */
-  detected: z.array(detectedHarnessSchema),
+  detected: z.array(hostHarnessSchema),
 });
 export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
 
