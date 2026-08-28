@@ -89,20 +89,19 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
     await expect(added).toContainText("export const value = 2;");
 
     // Editing the file on disk stales the pinned review, and coming back to the window is what
-    // asks. Both halves are RETRIED rather than done once, because neither is instantaneous and
-    // the daemon short-circuits the ask while its watcher has seen nothing:
-    //   • the save is repeated — a reviewer saves as they work, and the daemon's watcher can
-    //     miss an edit that lands while it is still settling on a freshly-captured root
-    //     (observed: the first save after capture is sometimes not reported — #601).
-    //     Re-saving means the loop under test is the real one, not a lucky first event.
-    //     ⚠️ KNOWN GAP, the price of that retry: this spec can no longer catch "the watcher
-    //     drops the first event", so #601 will not resurface here. It is tracked, not covered.
-    //   • the focus is repeated — the ask fires on window focus, and one focus racing the
-    //     watcher's 250ms debounce would answer "fresh" and never be asked again.
-    // What is NOT retried is the assertion: the notice must appear, or this fails.
+    // asks. The save happens ONCE, and it is the FIRST save after the capture — the case #601
+    // was filed for, where the daemon's watcher was still walking the freshly-captured root and
+    // so never reported the write at all. #574 worked around that by re-saving inside the retry,
+    // which made the spec pass and made this defect invisible to it; the save is back outside
+    // the retry so the spec covers the loop it claims to.
+    //
+    // The FOCUS is still retried, and only the focus: the ask fires on a window focus event, and
+    // one focus can land before the daemon's diff has come back. That is a poll for an answer,
+    // not a second attempt at the thing under test. What is NOT retried is the assertion — the
+    // notice must appear, or this fails.
     const stale = page.getByTestId("review-stale");
+    writeRepoFile(repository, "review-me.ts", "export const value = 3;\n");
     await expect(async () => {
-      writeRepoFile(repository, "review-me.ts", "export const value = 3;\n");
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await expect(stale).toBeVisible({ timeout: 2_000 });
     }).toPass({ timeout: 60_000 });
