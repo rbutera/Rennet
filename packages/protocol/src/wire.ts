@@ -2039,6 +2039,17 @@ export const sidebarSessionSchema = z.object({
   pinned: z.boolean().optional(),
   /** Archived (soft-deleted, the only release); absent reads as live. */
   archived: z.boolean().optional(),
+  /**
+   * The target this session CLAIMED at mint (C21) — a branch and, when the row was a pull
+   * request, its number. A branch and its PR are ONE claimed thing (#466 res. 11), so New
+   * Chat hides every row matching either half while the claim holds. Absent for a
+   * no-target session (the "talk about the project" mint), which claims nothing and
+   * therefore hides nothing. Archive is the only release, so an archived session's rows
+   * come back — the surface reads that off `archived`, not off a second field.
+   */
+  claim: z
+    .object({ branch: z.string().min(1), prNumber: z.number().int().positive().optional() })
+    .optional(),
   /** When the session was minted (epoch ms) — the client renders the relative line. */
   createdAt: z.number(),
 });

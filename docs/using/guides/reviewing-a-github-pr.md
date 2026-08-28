@@ -86,8 +86,9 @@ produced it:
   numbers, so the ask carries a real diff position.
 - **A span of board prose** — highlight it and choose **Comment** or **Request
   Changes**; the quoted span becomes the ask's provenance.
-- **The conversation** — conclude something in chat and the orchestrator stages
-  it, leaving a receipt in the transcript.
+- **A conclusion you reached in chat** — chat answers questions about the change;
+  it does not stage asks for you. Stage the conclusion from the board, the line,
+  or the span it belongs to.
 
 The count on the **Write Review** button is your staged asks plus the comments
 and threads not yet folded into one. Questions you asked with **Explain** never

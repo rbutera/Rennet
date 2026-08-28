@@ -13,6 +13,7 @@ import {
   StagedAskSchema,
   VerdictOverrideSchema,
 } from "../session";
+import { sha256Hex } from "../sha256";
 import {
   appearanceSchemeSchema,
   askModeSchema,
@@ -80,6 +81,44 @@ import {
 } from "../wire";
 
 const commandIdSchema = z.uuid();
+
+/**
+ * The ONE way a client mints a `commandId`.
+ *
+ * `commandIdSchema` is `z.uuid()`, so anything else the daemon simply refuses — and it
+ * refuses it AFTER the client has already rendered as if the command were on its way.
+ * That is not hypothetical: `load-${slug}` and `reattach-${reviewId}` shipped a dead
+ * `/s/:slug` and a permanently empty chat dock, and `apps/mobile` shipped a
+ * `cmd-${Date.now()}-${random}` fallback for the same reason. A per-caller id recipe is
+ * a per-caller chance to invent one the wire rejects, so the recipe lives here, next to
+ * the schema that judges it.
+ *
+ * No fallback. A runtime without `crypto.randomUUID` throws here, loudly, at the call —
+ * which is strictly better than minting a plausible-looking id the daemon discards in
+ * silence. (React Native has no `crypto`; `apps/mobile/src/polyfills.ts` installs a real
+ * v4 shim at entry, so the API is present before any command is sent.)
+ */
+export function newCommandId(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * A STABLE, wire-valid `commandId` derived from an arbitrary key.
+ *
+ * For reads whose id must be the same every time: the cache key of a read includes its
+ * whole input, so a freshly minted id per render would remint the entry each render, and
+ * two surfaces reading the same thing would fetch it twice. Deriving from a SHA-256 of the
+ * key gives both properties with no state at all — no module-level map to mutate during
+ * render, nothing to grow without bound, and the same id in both readers by construction.
+ * The RFC 4122 version (4) and variant bits are stamped so `z.uuid()` accepts it.
+ */
+export function commandIdFor(key: string): string {
+  const hex = sha256Hex(key);
+  const version = `4${hex.slice(13, 16)}`;
+  const variant = ((Number.parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${version}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 const definitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1401,6 +1440,33 @@ const definitions = {
     input: z.object({}),
     output: z.object({ sessions: z.array(sidebarSessionSchema) }),
   },
+  // ── Session minting: the New Chat front door (C21, C12 cluster 7) ───────────
+  // "Start a review" is the product's front door and it had NO server path: C12 built the
+  // target picker behind a `session.*` gate that B9 later cleared, and nothing came back —
+  // a row click selected and did nothing. This is that path. One act (#466 res. 11): mint
+  // a durable session AND claim the target, so the row disappears from New Chat while the
+  // claim holds and archive is the only release.
+  //
+  // `branch` absent ⇒ a NO-TARGET mint (the "Current Checkout · talk about the project"
+  // row): a fresh session with no claim, which claims nothing and hides nothing. `branch`
+  // present ⇒ mint-or-REATTACH: a second click on an already-claimed target returns the
+  // session that owns it (`reattached: true`), never a second session for one target.
+  // `session: null` is the honest no-store answer — nothing was minted — matching the
+  // language the sibling writes already speak.
+  "session.mint": {
+    input: z.object({
+      projectId: z.string().min(1),
+      /** The claimed branch. Absent mints a no-target session (claims nothing). */
+      branch: z.string().min(1).optional(),
+      /** The claimed branch's PR number, when the row was a pull request. */
+      prNumber: z.number().int().positive().optional(),
+    }),
+    output: z.object({
+      session: sidebarSessionSchema.nullable(),
+      /** True when an existing live claim owned the target and this reattached to it. */
+      reattached: z.boolean(),
+    }),
+  },
   "session.rename": {
     // An emptied title is not stored empty: it CLEARS the reviewer's title, so the row
     // falls back to the claimed branch (the same restore-the-default rule as a project).
@@ -1481,7 +1547,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 95 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 97 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *
@@ -1490,7 +1556,7 @@ const AGENT_EXPOSED = new Set<string>([
  * has no result surface. So a row earns `true` only when all four hold:
  *
  * 1. Its input schema is satisfied by `{}` — nothing required the menu cannot supply
- *    (18 of 95 pass; the rest need a review/session/project/span id or a host path).
+ *    (18 of 97 pass; the rest need a review/session/project/span id or a host path).
  * 2. It is an ACTION, not a read the UI already drives for itself (`settings.get`,
  *    `session.list`, `board.read`, `harness.hosts`, `daemon.status`, … all stay false:
  *    running them from the menu changes nothing a reader would see).

@@ -107,6 +107,12 @@ export interface ClaudeQueryOptions {
    */
   readonly resume?: string;
   /**
+   * Ask the SDK for partial-message frames (`stream_event`), the source of every
+   * `text.delta` / `thinking.delta` this adapter maps. The SDK emits NONE unless
+   * asked, so without this a turn settles in one lump. Absent ⇒ settled frames only.
+   */
+  readonly includePartialMessages?: boolean;
+  /**
    * #585: the session is Rennet's internal one-shot work, not the user's. The
    * composition root maps this to the SDK's `persistSession: false`, so the turn
    * is never written to `~/.claude/projects/`.
@@ -696,6 +702,10 @@ export class ClaudeAdapter implements HarnessPort {
       // fresh `claude` process continues the prior conversation (the CLI owns the
       // transcript; Rennet persists only this pointer). Absent ⇒ a fresh session.
       ...(spec.resume === undefined ? {} : { resume: spec.resume.harnessSessionId }),
+      // Partial-message streaming (F1): the source of `text.delta`/`thinking.delta`.
+      ...(spec.streamPartialText === undefined
+        ? {}
+        : { includePartialMessages: spec.streamPartialText }),
       ...(spec.ephemeral === undefined ? {} : { ephemeral: spec.ephemeral }),
     };
   }

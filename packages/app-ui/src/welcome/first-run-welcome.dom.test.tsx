@@ -247,6 +247,13 @@ describe("FirstRunWelcome", () => {
   });
 
   it("blocks review setup with a friendly install path, then rechecks detection", async () => {
+    // What the DAEMON would answer right now, not "answer differently on the Nth call".
+    // The count of reads before the click is not the point and is not this test's business:
+    // the tree the welcome mounts into re-parents on first run, and a re-mounted reader
+    // re-reads by design (harness detection changes while a surface is closed — that is
+    // exactly what "Check again" exists for). Keyed on installed-or-not, the assertion is
+    // about the button: one click, one fresh read, and the surface moves on.
+    let installed = false;
     let checks = 0;
     mount(
       <RennetRouterApp
@@ -258,7 +265,7 @@ describe("FirstRunWelcome", () => {
                 {
                   source: "local",
                   asked: true,
-                  detected: checks === 1 ? [] : [{ id: "codex", version: "0.38.0", enabled: true }],
+                  detected: installed ? [{ id: "codex", version: "0.38.0", enabled: true }] : [],
                 },
               ],
             };
@@ -273,9 +280,13 @@ describe("FirstRunWelcome", () => {
       "install-a-coding-harness",
     );
     expect(screen.queryByRole("button", { name: /^Continue$/ })).toBeNull();
+
+    // The reviewer goes and installs one, then asks Rennet to look again.
+    const before = checks;
+    installed = true;
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await screen.findByText("Codex will orchestrate reviews.");
-    expect(checks).toBe(2);
+    expect(checks).toBe(before + 1);
     expect(screen.getByRole("button", { name: /^Continue$/ })).toBeTruthy();
   });
 });

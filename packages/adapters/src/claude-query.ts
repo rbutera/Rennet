@@ -142,6 +142,11 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   // Cursor-resume (B09): the adapter's `resume` (a harness session id) is the
   // SDK's `resume` option — loads that conversation's history and continues it.
   if (options.resume !== undefined) sdkOptions.resume = options.resume;
+  // Partial-message streaming (F1): without this the SDK emits no `stream_event`
+  // frames at all, so the adapter's `text.delta` mapping has nothing to map.
+  if (options.includePartialMessages !== undefined) {
+    sdkOptions.includePartialMessages = options.includePartialMessages;
+  }
   // #585: a one-shot utility turn is not the user's work. `persistSession: false`
   // keeps it out of `~/.claude/projects/` entirely (sdk.d.ts 0.3.223). Safe to set
   // here: Rennet never passes the SDK's `sessionStore`, which is the one option it

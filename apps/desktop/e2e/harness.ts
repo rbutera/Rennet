@@ -149,12 +149,18 @@ export async function launchRennet(options: {
   repository: string;
   userData: string;
   home: string;
+  /**
+   * Override the model-free environment. The deterministic specs take the default;
+   * the LIVE spec (F1 6.2) needs the reviewer's real `claude` on PATH and their real
+   * HOME, because the whole point of it is to drive an actual harness turn.
+   */
+  env?: NodeJS.ProcessEnv;
 }): Promise<LaunchedRennet> {
   const application = await electron.launch({
     executablePath: electronExecutable,
     args: [resolve("apps/desktop")],
     env: {
-      ...modelFreeEnv(options.home),
+      ...(options.env ?? modelFreeEnv(options.home)),
       RENNET_TEST_REPO: options.repository,
       RENNET_USER_DATA: options.userData,
     },

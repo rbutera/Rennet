@@ -37,6 +37,24 @@ export const ClaimSchema = z.object({
 export type Claim = z.infer<typeof ClaimSchema>;
 
 /**
+ * Does a claim own this target? A branch and its PR are ONE claimed thing, so a match on
+ * EITHER half is a match: a row resolving to the PR is owned by a session that claimed the
+ * branch, and vice versa.
+ *
+ * It lives in protocol because BOTH ends decide with it and they must not drift — the host
+ * reattaches a New-chat entry to the session already claiming its target (`SessionEntry`),
+ * and the client hides the rows a live claim owns (New Chat). Two copies of this rule would
+ * eventually disagree, and the visible symptom would be a row that mints a second session.
+ */
+export function claimMatchesTarget(
+  claim: Claim,
+  target: { readonly branch: string; readonly prNumber?: number },
+): boolean {
+  if (claim.branch === target.branch) return true;
+  return claim.prNumber !== undefined && claim.prNumber === target.prNumber;
+}
+
+/**
  * A thread anchor (#466 res. 7): a code-line citation or a prose quote. One
  * mechanism — code-line comment, prose-quote comment, and Explain are all
  * messages entering the session carrying one of these.

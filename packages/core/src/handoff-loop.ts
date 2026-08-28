@@ -268,6 +268,13 @@ export interface HandoffRunInput {
   /** The bundle prompt — the task contract. */
   readonly prompt: string;
   readonly signal?: AbortSignal;
+  /**
+   * Each assistant text increment as it arrives; absent ⇒ no streaming (the
+   * write-handoff path passes none, so its session spec and behaviour are
+   * byte-identical). Supplying a sink is itself the request for deltas — the port
+   * turns the harness's partial-message streaming on when it sees one.
+   */
+  readonly onDelta?: (text: string) => void;
 }
 
 /** The outcome of one write-enabled turn. A `failed` turn NEVER fabricates success. */

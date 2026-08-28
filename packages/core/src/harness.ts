@@ -342,6 +342,13 @@ export interface SessionSpec {
    */
   readonly resume?: { readonly harnessSessionId: string };
   /**
+   * Ask the harness to emit incremental text/thinking frames as the turn runs;
+   * absent ⇒ settled messages only. Opt-in by design (F1 Decision 4): the
+   * pipeline's lens/utility/compose turns keep their exact current frame volume,
+   * and only a caller that actually consumes deltas (the chat ask) pays for them.
+   */
+  readonly streamPartialText?: boolean;
+  /**
    * Do not materialize this session in the harness's own on-disk history (#585).
    * A one-shot utility turn — a swarm seat, a lens seat, a verification turn — is
    * Rennet's internal work, not the user's; persisting it floods the user's
