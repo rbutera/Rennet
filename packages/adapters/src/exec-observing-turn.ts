@@ -73,6 +73,8 @@ export function createExecObservingTurn(
     const session = await port.createSession({
       cwd: options.cwd,
       outputSchema: options.outputSchema,
+      // #585: Rennet's internal one-shot turn — never the user's session history.
+      ephemeral: true,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });

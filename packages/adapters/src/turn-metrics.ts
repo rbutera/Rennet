@@ -150,6 +150,8 @@ export function createInstrumentedRunTurn(
   return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
     const session = await port.createSession({
       cwd: options.cwd,
+      // #585: Rennet's internal one-shot turn — never the user's session history.
+      ephemeral: true,
       ...(outputSchema === null ? {} : { outputSchema }),
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),

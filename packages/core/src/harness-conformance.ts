@@ -115,7 +115,11 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   {
     capability: "structuredOutput",
     run: async (port, cwd) => {
-      const session = await port.createSession({ cwd, outputSchema: PROBE_SCHEMA });
+      const session = await port.createSession({
+        cwd,
+        outputSchema: PROBE_SCHEMA,
+        ephemeral: true,
+      });
       await session.send({ prompt: PROBE_PROMPT });
       const { outcome } = await drain(session);
       return outcome?.status === "completed" && outcome.structuredOutput !== undefined;
@@ -124,7 +128,7 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   {
     capability: "interrupt",
     run: async (port, cwd) => {
-      const session = await port.createSession({ cwd });
+      const session = await port.createSession({ cwd, ephemeral: true });
       let markReady!: () => void;
       const ready = new Promise<void>((resolve) => {
         markReady = resolve;
@@ -140,7 +144,7 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   {
     capability: "textDeltas",
     run: async (port, cwd) => {
-      const session = await port.createSession({ cwd });
+      const session = await port.createSession({ cwd, ephemeral: true });
       await session.send({ prompt: PROBE_PROMPT });
       const { events } = await drain(session);
       return events.some((event) => event.kind === "text.delta");
@@ -149,7 +153,7 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   {
     capability: "reportsContextWindow",
     run: async (port, cwd) => {
-      const session = await port.createSession({ cwd });
+      const session = await port.createSession({ cwd, ephemeral: true });
       await session.send({ prompt: PROBE_PROMPT });
       const { outcome } = await drain(session);
       return (
@@ -163,7 +167,7 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   {
     capability: "costUsd",
     run: async (port, cwd) => {
-      const session = await port.createSession({ cwd });
+      const session = await port.createSession({ cwd, ephemeral: true });
       await session.send({ prompt: PROBE_PROMPT });
       const { events } = await drain(session);
       const ended = events.find((event) => event.kind === "session.ended");

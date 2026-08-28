@@ -147,6 +147,11 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   if (options.includePartialMessages !== undefined) {
     sdkOptions.includePartialMessages = options.includePartialMessages;
   }
+  // #585: a one-shot utility turn is not the user's work. `persistSession: false`
+  // keeps it out of `~/.claude/projects/` entirely (sdk.d.ts 0.3.223). Safe to set
+  // here: Rennet never passes the SDK's `sessionStore`, which is the one option it
+  // cannot be combined with.
+  if (options.ephemeral === true) sdkOptions.persistSession = false;
   return sdkOptions;
 }
 

@@ -73,6 +73,21 @@ describe("toSdkOptions", () => {
     expect(on.includePartialMessages).toBe(true);
   });
 
+  it("maps ephemeral to the SDK's persistSession: false, and omits it otherwise (#585)", () => {
+    // A one-shot utility turn must not land in ~/.claude/projects/. If this
+    // regresses, one context map floods the user's own session history again.
+    const ephemeral = toSdkOptions(baseOptions({ ephemeral: true })) as Record<string, unknown>;
+    expect(ephemeral.persistSession).toBe(false);
+    // The user's own agentic session is their work — it keeps persisting.
+    expect("persistSession" in (toSdkOptions(baseOptions()) as Record<string, unknown>)).toBe(
+      false,
+    );
+    expect(
+      "persistSession" in
+        (toSdkOptions(baseOptions({ ephemeral: false })) as Record<string, unknown>),
+    ).toBe(false);
+  });
+
   it("omits outputFormat entirely when no schema is set", () => {
     const sdk = toSdkOptions(baseOptions()) as Record<string, unknown>;
     expect("outputFormat" in sdk).toBe(false);

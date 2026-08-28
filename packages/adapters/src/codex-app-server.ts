@@ -100,6 +100,13 @@ export interface AppServerTurnParams {
   readonly outputSchema?: unknown;
   /** canvasOps@2 (and future) loopback MCP servers, pinned as a full-table override. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
+  /**
+   * #585: start the thread ephemeral — "the thread is ephemeral and should not be
+   * materialized on disk" (app-server `ThreadStartParams`, verified against
+   * codex-cli 0.147.0), so no rollout lands in `~/.codex/sessions/`. Absent ⇒
+   * codex's normal persistence, which a user's own agentic thread keeps.
+   */
+  readonly ephemeral?: boolean;
   readonly signal?: AbortSignal;
 }
 
@@ -190,6 +197,7 @@ function threadStartParams(params: AppServerTurnParams): Record<string, unknown>
     approvalPolicy: NEVER_ASK_APPROVAL_POLICY,
     sandbox: "danger-full-access",
     ...(params.model === undefined ? {} : { model: params.model }),
+    ...(params.ephemeral === undefined ? {} : { ephemeral: params.ephemeral }),
   };
 }
 

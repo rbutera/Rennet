@@ -112,6 +112,12 @@ export interface ClaudeQueryOptions {
    * asked, so without this a turn settles in one lump. Absent ⇒ settled frames only.
    */
   readonly includePartialMessages?: boolean;
+  /**
+   * #585: the session is Rennet's internal one-shot work, not the user's. The
+   * composition root maps this to the SDK's `persistSession: false`, so the turn
+   * is never written to `~/.claude/projects/`.
+   */
+  readonly ephemeral?: boolean;
 }
 
 export interface ClaudeQueryArgs {
@@ -700,6 +706,7 @@ export class ClaudeAdapter implements HarnessPort {
       ...(spec.streamPartialText === undefined
         ? {}
         : { includePartialMessages: spec.streamPartialText }),
+      ...(spec.ephemeral === undefined ? {} : { ephemeral: spec.ephemeral }),
     };
   }
 }

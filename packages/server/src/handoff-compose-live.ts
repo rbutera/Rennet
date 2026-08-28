@@ -132,6 +132,7 @@ export function claudeComposePort(port: HarnessPort, cwd: string, model?: string
       session = await port.createSession({
         cwd,
         outputSchema: COMPOSE_OUTPUT_SCHEMA,
+        ephemeral: true,
         ...(model === undefined ? {} : { model }),
       });
     } catch (error) {
