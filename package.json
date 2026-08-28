@@ -107,7 +107,7 @@
     "@nx/vite": "23.1.0",
     "@nx/vitest": "23.1.0",
     "@nx/workspace": "23.1.0",
-    "@playwright/test": "1.62.0",
+    "@playwright/test": "1.62.1",
     "@types/node": "24.12.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",

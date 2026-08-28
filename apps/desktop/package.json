@@ -22,7 +22,7 @@
     "@rennet/server": "workspace:*",
     "@rennet/app-ui": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
-    "electron": "43.2.0",
+    "electron": "43.4.1",
     "electron-squirrel-startup": "1.0.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",

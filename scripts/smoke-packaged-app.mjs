@@ -34,8 +34,12 @@ for (const expected of [
   }
 }
 
+// An inherited ELECTRON_RUN_AS_NODE=1 (any shell whose parent is itself an Electron
+// app exports it) would run the packaged binary as bare Node instead of launching the
+// app, so the smoke would fail on the environment rather than on the artifact (#569).
+const { ELECTRON_RUN_AS_NODE: _runAsNode, ...inheritedEnv } = process.env;
 const child = spawn(executablePath, [], {
-  env: { ...process.env, RENNET_USER_DATA: userData },
+  env: { ...inheritedEnv, RENNET_USER_DATA: userData },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let output = "";
