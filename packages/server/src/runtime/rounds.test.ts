@@ -244,6 +244,44 @@ describe("createRoundsRuntime", () => {
     );
   });
 
+  // ── The write order (review finding 6) ─────────────────────────────────────
+  //
+  // The RoundRecord used to persist BEFORE its generations, so a crash in between left a
+  // durable ledger row whose generation was never written — the switcher drills into
+  // nothing. Generations first, record last: a crash leaves the round honestly missing.
+  it("a crash while persisting the generation leaves NO dangling record behind", async () => {
+    const genDir = mkdtempSync(join(tmpdir(), "gen-order-"));
+    const roundDir = mkdtempSync(join(tmpdir(), "round-order-"));
+    const generationStore = new GenerationStore(genDir);
+    const roundStore = new RoundRecordStore(roundDir);
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        // The disk gives out exactly between the two writes.
+        persistGeneration: () => {
+          throw new Error("disk went away");
+        },
+        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+        readRounds: (sessionId) => roundStore.read(sessionId),
+        loadGeneration: (id) => generationStore.load(id),
+      }),
+    );
+
+    await expect(
+      runtime.runRound(roundInput({ session: { id: "crashy" } as RoundInput["session"] })),
+    ).rejects.toThrow("disk went away");
+
+    // Restart: fresh stores over the SAME on-disk state. The round is honestly absent —
+    // never a ledger row pointing at a generation that does not exist.
+    const afterRestart = createRoundsRuntime(
+      baseDeps({
+        readRounds: (sessionId) => new RoundRecordStore(roundDir).read(sessionId),
+        loadGeneration: (id) => new GenerationStore(genDir).load(id),
+      }),
+    );
+    expect(afterRestart.ledger("crashy")).toEqual([]);
+    expect(afterRestart.generation("gen:ps-1")).toBeUndefined();
+  });
+
   // ── A dispatch that THROWS (review finding 5) ──────────────────────────────
   //
   // The regeneration half already reported its throws; the DISPATCH half — the real

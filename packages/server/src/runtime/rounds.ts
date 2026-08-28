@@ -545,6 +545,16 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       reportBoard,
       ...(predecessor === undefined ? {} : { frozenPredecessor: predecessor.id }),
     };
+    // WRITE ORDER, and it is load-bearing: the generations go down FIRST, the record that
+    // points at them LAST. The record is the ledger row the switcher drills through, so a
+    // crash between the two writes must leave a missing row (honest: the round is not in
+    // the ledger yet) rather than a row whose generation was never written — a drill-down
+    // into nothing. There is no transaction across two stores; ordering is the guarantee.
+    const liveSuccessor = withLensBoards(boardGeneration, pipeline);
+    await deps.persistGeneration?.(liveSuccessor);
+    const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
+    if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
+
     const records = ledger.get(input.session.id) ?? [];
     records.push(record);
     ledger.set(input.session.id, records);
@@ -552,14 +562,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // dispatch path's ROUND_NO_REGEN placeholder for the same round (same worker commit
     // range), keeping the placeholder's checkpoint diff/outcome. Absent store ⇒ in-memory only.
     deps.recordRound?.(input.session.id, record);
-
-    // Persist the generations this round minted (C15 2.1) so the frozen prior survives a
-    // restart as a drill-down. The live successor carries its lens board ids; the prior
-    // freezes iff the code moved.
-    const liveSuccessor = withLensBoards(boardGeneration, pipeline);
-    await deps.persistGeneration?.(liveSuccessor);
-    const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
-    if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
 
     // The round composed (C15 3.1): the terminal event the run machine gates **View the
     // New Boards** on. Emitted with the generation the reveal lands on, so the control
