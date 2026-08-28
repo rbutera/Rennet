@@ -37,9 +37,12 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
   // No served write store yet ⇒ show the controls disabled + disclose the gap, never
   // an enabled field bound to the projection's no-op setter (which would eat input).
   const backed = projection.projectEditsPersist;
+  // The name writes through `project.rename` (C18) even where the glyph does not, so the
+  // field is enabled on its own truth rather than on the unserved editors' flag.
+  const nameBacked = projection.nameEditsPersist;
   const name = projection.nameByProject[project.id] ?? project.name;
   const glyph = projection.glyphByProject[project.id] ?? DEFAULT_PROJECT_ICON;
-  const renamed = backed && name !== project.fallbackName;
+  const renamed = nameBacked && name !== project.fallbackName;
 
   return (
     <Section title="Identity" caption="~/.rennet/client-settings.json">
@@ -63,12 +66,12 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
               projection.setProjectName(project.id, project.fallbackName);
           }}
           onKeyDown={stopEscape}
-          disabled={!backed}
+          disabled={!nameBacked}
           aria-label="Project name"
           placeholder={project.fallbackName}
           className={cn(
             "w-56 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-ink placeholder:text-ink-faint focus-visible:border-accent-line focus-visible:outline-none",
-            !backed && "cursor-not-allowed opacity-60",
+            !nameBacked && "cursor-not-allowed opacity-60",
           )}
         />
       </Row>
@@ -104,7 +107,7 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
       {backed ? null : (
         <div className="py-2.5">
           <UnbackedNote>
-            Naming and glyphs aren&rsquo;t served yet — this lands with the settings engine.
+            Glyphs aren&rsquo;t served yet — this lands with the settings engine.
           </UnbackedNote>
         </div>
       )}

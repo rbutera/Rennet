@@ -120,6 +120,9 @@ function StatefulProjects({
     // A stateful fixture DOES persist (edits reach the probe), so it is a backed
     // projection — the editors render live, exactly as B10's projection will.
     projectEditsPersist: true,
+    // The name has its own served-write flag (C18: `project.rename`), true here for the
+    // same reason — this fixture genuinely persists.
+    nameEditsPersist: true,
     nameByProject: names,
     glyphByProject: glyphs,
     worktreeByProject: worktrees,
@@ -384,8 +387,9 @@ describe("ProjectsPage — live projection is honest about the unserved write st
   it("disables every unbacked editor and discloses the gap (no silent no-op controls)", async () => {
     const { findByLabelText, getByLabelText, getByRole } = mountLiveProjects();
 
-    // Identity: the name field is disabled (not a live field bound to a no-op setter).
-    expect((await findByLabelText("Project name")).hasAttribute("disabled")).toBe(true);
+    // Identity: the name field is LIVE — `project.rename` is served (C18), so it is the one
+    // project editor that is not disabled here.
+    expect((await findByLabelText("Project name")).hasAttribute("disabled")).toBe(false);
     // Identity: the glyph choices are locked (the group disables its members).
     expect(getByRole("button", { name: "rocket" }).hasAttribute("disabled")).toBe(true);
     // Worktrees: both fields disabled.
@@ -401,7 +405,7 @@ describe("ProjectsPage — live projection is honest about the unserved write st
       (n) => n.textContent ?? "",
     );
     expect(notes.length).toBe(4);
-    expect(notes.some((t) => /Naming and glyphs/.test(t))).toBe(true);
+    expect(notes.some((t) => /Glyphs aren/.test(t))).toBe(true);
     expect(notes.some((t) => /Worktree location and naming/.test(t))).toBe(true);
     expect(notes.some((t) => /Issue-tracker config/.test(t))).toBe(true);
     expect(notes.some((t) => /Guidance rules/.test(t))).toBe(true);

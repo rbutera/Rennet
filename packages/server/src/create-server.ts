@@ -171,6 +171,7 @@ import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type FlaggedReviewRun } from "./dispatch";
+import { sidebarSessionOf } from "./dispatch/session";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { stampBlockingStates } from "./flagged-blocking-states";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
@@ -1845,6 +1846,27 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (!review) return [];
       return transcriptStore.read(resolveRoundSessionId(review, sessionStore.list()));
     },
+    // The sidebar's sessions (C03 cluster 2, bound in C18), served from the SAME durable
+    // session store the round dispatch mints into — so a session the reviewer worked in is
+    // the session the sidebar lists. Every write persists through the store, so a rename, a
+    // pin, and an archive all survive reload; restore is un-archive.
+    sessions: {
+      list: () => sessionStore.list().map(sidebarSessionOf),
+      rename: (sessionId, title) => {
+        const session = sessionStore.rename(sessionId, title);
+        return session && sidebarSessionOf(session);
+      },
+      setPinned: (sessionId, pinned) => {
+        const session = sessionStore.setPinned(sessionId, pinned);
+        return session && sidebarSessionOf(session);
+      },
+      setArchived: (sessionId, archived) => {
+        const session = archived
+          ? sessionStore.archive(sessionId)
+          : sessionStore.restore(sessionId);
+        return session && sidebarSessionOf(session);
+      },
+    },
     // The lens-board read for `board.read` (C05 cluster 8, C18): the board this review's
     // session drafted for `(generation, lens)`, rebuilt from its two durable halves — the
     // board-meta record (which board id, and the board-level coverage the element
@@ -1984,6 +2006,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         projectStore.remove(input.projectId);
         return { projects: projectStore.list() };
       },
+      rename: (input) => ({
+        // The store owns the R67 restore rule: an emptied name writes back the project's
+        // own `org/repo` identity rather than persisting a blank.
+        project: projectStore.rename(input.projectId, input.name) ?? null,
+        projects: projectStore.list(),
+      }),
     },
     // The initial context dump (issue #29, wireframe #2): build every included
     // repo's ProjectSnapshot at the CONFIRMED primary branch, streaming the real

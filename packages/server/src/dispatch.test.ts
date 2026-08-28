@@ -304,6 +304,7 @@ function harness(
     projects: {
       list: () => [],
       remove: () => ({ projects: [] }),
+      rename: () => ({ project: null, projects: [] }),
       add: (input) => {
         const project = {
           id: "project-1",
@@ -2231,6 +2232,7 @@ function frontDoorHarness(seed: {
     projects: {
       list: () => stored,
       remove: () => ({ projects: stored }),
+      rename: () => ({ project: null, projects: [...stored] }),
       add: (input) => {
         addCalls.push({ ...input, includedRepos: [...input.includedRepos] });
         const project: Project = {

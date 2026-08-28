@@ -68,6 +68,12 @@ The project remembers which machine it lives on and reconnects there when you
 reopen it. See [Windows and WSL](./windows-and-wsl.md#wsl-requirements) for
 distro requirements.
 
+On macOS, the first run also detects which coding agents and forge CLIs you have
+installed, by asking each one for its version. If one of those binaries is an old
+build, macOS may show an XProtect warning about *that* program. Rennet bundles no
+harness binary and reads nothing but the version each one prints — the warning is
+about your own installed CLI, and updating it clears the notice.
+
 ## Start a session
 
 A **session** is one conversation with the orchestrator and everything hanging
@@ -82,10 +88,11 @@ guessing a percentage. If GitHub is unreachable, local work stays available.
 
 Start a row and the session claims that target. A claimed target leaves the
 list, so two sessions can never fight over one branch. Sessions nest under their
-project in the sidebar, each leading with its target icon — a branch glyph, a
-pull-request glyph, or an incoming pull-request glyph for a teammate PR. A
-teammate PR whose review is requested of you renders its icon in the accent
-colour with the words "needs you" beside it.
+project in the sidebar, each leading with the target icon its claim proves — a
+branch glyph, or a pull-request glyph once the session claims a PR. Whether a
+teammate authored that PR, and whether its review is waiting on you, are not
+facts the session record carries, so a row states neither rather than guessing;
+those states arrive with the source that can answer them.
 
 Once boards exist the target is locked. Reviewing something else means a new
 session.
@@ -316,7 +323,10 @@ pages:
 - **Keyboard Shortcuts** — every named command and its binding.
 - **Projects** — scoped to one project: its name and mark, worktree location
   and naming pattern, review context, issue tracker, and the guidance rules the
-  review agents read.
+  review agents read. The name is live — renaming here renames the sidebar row,
+  and emptying it restores the project's `org/repo` identity. The mark, worktree,
+  issue-tracker and guidance editors have no store behind them yet; they render
+  disabled and say so, rather than accepting edits that would vanish.
 
 Every layered value shows a chip naming where it resolved from — builtin,
 detected, global, or repo — and every section states the file behind it.
