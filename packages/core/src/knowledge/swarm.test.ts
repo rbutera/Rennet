@@ -22,6 +22,7 @@ const SLICE: PartitionSlice = {
     { path: "src/a.ts", blobOid: "blob-a" },
     { path: "src/b.ts", blobOid: "blob-b" },
   ],
+  neighbors: [],
 };
 
 const PROVENANCE = { model: "test-model", apiKeySource: null };

@@ -4,9 +4,9 @@ import { dispositionCarrier, planReverify, routeDelta } from "./incremental";
 import type { PartitionSlice } from "./partition";
 
 const PARTITIONS: readonly PartitionSlice[] = [
-  { id: "src", files: [{ path: "src/a.ts", blobOid: "blob-a" }] },
-  { id: "lib", files: [{ path: "lib/b.ts", blobOid: "blob-b" }] },
-  { id: "dir:docs", files: [{ path: "docs/c.md", blobOid: "blob-c" }] },
+  { id: "src", files: [{ path: "src/a.ts", blobOid: "blob-a" }], neighbors: [] },
+  { id: "lib", files: [{ path: "lib/b.ts", blobOid: "blob-b" }], neighbors: [] },
+  { id: "dir:docs", files: [{ path: "docs/c.md", blobOid: "blob-c" }], neighbors: [] },
 ];
 
 function statement(
@@ -57,6 +57,7 @@ describe("routeDelta", () => {
           { path: "lib/b.ts", blobOid: "blob-b" },
           { path: "lib/gone.ts", blobOid: "blob-gone" },
         ],
+        neighbors: [],
       },
     ];
     // lib/gone.ts no longer exists in any current slice — its prior owner id
@@ -67,11 +68,11 @@ describe("routeDelta", () => {
 
   it("split-boundary drift: a prior parent id routes its current sub-slices", () => {
     const current: readonly PartitionSlice[] = [
-      { id: "lib/x", files: [{ path: "lib/x/a.ts", blobOid: "1" }] },
-      { id: "src", files: [{ path: "src/a.ts", blobOid: "2" }] },
+      { id: "lib/x", files: [{ path: "lib/x/a.ts", blobOid: "1" }], neighbors: [] },
+      { id: "src", files: [{ path: "src/a.ts", blobOid: "2" }], neighbors: [] },
     ];
     const prior: readonly PartitionSlice[] = [
-      { id: "lib", files: [{ path: "lib/x/gone.ts", blobOid: "3" }] },
+      { id: "lib", files: [{ path: "lib/x/gone.ts", blobOid: "3" }], neighbors: [] },
     ];
     const routed = routeDelta(current, ["lib/x/gone.ts"], prior);
     expect(routed.map((slice) => slice.id)).toEqual(["lib/x"]);
@@ -79,7 +80,7 @@ describe("routeDelta", () => {
 
   it("a path whose prior slice family vanished routes nothing (planReverify still covers it)", () => {
     const prior: readonly PartitionSlice[] = [
-      { id: "legacy", files: [{ path: "legacy/gone.ts", blobOid: "1" }] },
+      { id: "legacy", files: [{ path: "legacy/gone.ts", blobOid: "1" }], neighbors: [] },
     ];
     expect(routeDelta(PARTITIONS, ["legacy/gone.ts"], prior)).toEqual([]);
   });

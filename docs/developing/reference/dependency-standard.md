@@ -102,6 +102,7 @@ These versions come from the current workspace manifests:
 | Runtime schemas | `zod` | `4.4.3` |
 | Processes and file watching | `execa`, `chokidar` | `10.0.0`, `5.0.0` |
 | Durable IDs | `uuid` | `14.0.1` |
+| Graph model and community detection | `graphology`, `graphology-communities-louvain` | `0.26.0`, `2.0.2` |
 | Browser UI | `react`, `react-dom` | `19.2.8` |
 | UI failures and transient state | `react-error-boundary`, `zustand` | `6.1.2`, `5.0.14` |
 | Renderer routing | `wouter` | `3.10.0` |
@@ -197,6 +198,18 @@ is browser-safe and invisible outside `src/data/` (`useCommand`/`useCommandStrea
 `useMutation` are the whole contract), so adopting react-query later stays internal.
 Zustand owns transient interaction state; the command cache owns the server-projection
 read cache — distinct owners, no conflict.
+
+`graphology` and `graphology-communities-louvain` own the graph model and the
+Louvain community detection that shapes the knowledge swarm's
+[module batches](../concepts/code-intelligence.md#module-batching). Both are MIT.
+They meet the admission test at the size that matters: modularity optimisation
+with node aggregation is a real algorithm, not a convenience wrapper, and writing
+it here would be a subsystem Rennet then maintained and tuned. They live in
+`@rennet/core` because batching is deterministic product logic, not IO — the
+packages are pure JavaScript with no Node or DOM dependency, so they respect the
+package boundary that keeps core runnable anywhere. Louvain is called with its
+randomisation disabled and its RNG pinned, because the snapshot's byte
+reproducibility extends to everything derived from it.
 
 Motion owns authored React and SVG animation timelines. The first-run welcome
 uses its scoped `useAnimate` sequences, stagger, cleanup, and reduced-motion

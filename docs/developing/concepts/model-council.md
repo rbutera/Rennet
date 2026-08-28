@@ -27,7 +27,8 @@ composition, comment refinement, orchestration, adjudication, and knowledge
 generation.
 
 Knowledge generation runs two council jobs: `partition-worker`, a light batched
-job that reads one repository slice and emits anchored claims, and `map-verify`,
+job that reads one [module batch](./code-intelligence.md#module-batching) and
+emits anchored claims, and `map-verify`,
 a heavy seat that confirms hypotheses against their cited spans and mints
 cross-cutting claims.
 

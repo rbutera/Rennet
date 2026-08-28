@@ -1142,7 +1142,9 @@ export type SymbolIndexResult =
 export function querySymbolIndex(snapshot: LoadedSnapshot): SymbolIndexResult {
   const generatedBlobs = new Set<string>();
   const exportsByBlob = new Map<string, readonly string[]>();
-  for (const [blobOid, digest] of snapshot.manifest.symbols) {
+  // The MATERIALIZED index, not `manifest.symbols`: `materializeSnapshot` already
+  // built it and guaranteed its shape, and the two are the same pointers.
+  for (const [blobOid, digest] of snapshot.symbolDigestByBlob) {
     const shard = loadSymbolShard(snapshot.load, digest);
     if (shard === undefined) return { ok: false, reason: "shard-unavailable", digest };
     if (shard.generated) generatedBlobs.add(blobOid);

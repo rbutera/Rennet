@@ -14,6 +14,7 @@ import {
   PARTITION_WORKER_OUTPUT_SCHEMA,
   type PartitionSlice,
   type PartitionWorkerResult,
+  partitionsFromSnapshot,
   planReverify,
   resolveAssignment,
   routeDelta,
@@ -400,7 +401,9 @@ export async function runKnowledgeSwarmForRepo(
   const verify = turnFor("map-verify", MAP_VERIFY_OUTPUT_SCHEMA, deps, council);
   if ("failure" in verify) return { status: "failed", reason: verify.failure };
 
-  const partitions = buildPartitions(snapshot);
+  // Module batches over the import graph, with the directory tier as the honest
+  // fallback for edge-less files and for a snapshot whose shards cannot be read.
+  const partitions = partitionsFromSnapshot(gated.snapshot);
   const loaded = deps.knowledgeStore.loadLocal(deps.repoKey);
   const priorEligible =
     loaded !== null &&

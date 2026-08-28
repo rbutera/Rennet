@@ -12,7 +12,7 @@
  */
 
 import type { KnowledgeSet, KnowledgeStatement, KnowledgeStatus } from "@rennet/protocol";
-import type { PartitionSlice } from "./partition";
+import { type PartitionSlice, partitionIdFamily } from "./partition";
 import { fileBlobIndex, knowledgeStatementId } from "./read";
 
 /** Whether a statement cites any of the changed paths (⇒ needs re-adjudication). */
@@ -25,12 +25,17 @@ export function statementIntersectsChange(
 
 /**
  * The partitions that own at least one changed path — the only workers a delta
- * re-runs. A changed path with no CURRENT owner (deleted, or ownership moved
- * with the scope graph) routes through its PRIOR owner: the current slices in
- * the same id family (equal id, or split-boundary drift — one id prefixing the
- * other) re-run so the area around the deletion is re-examined. A path whose
- * prior slice family vanished entirely routes nothing; `planReverify` still
- * re-adjudicates every statement citing it.
+ * re-runs. A changed path with no CURRENT owner (deleted, ownership moved with
+ * the scope graph, or the file is now mapping-ineligible) routes through its
+ * PRIOR owner: the current slices in the same id FAMILY re-run so the area around
+ * the deletion is re-examined. A path whose prior slice family vanished entirely
+ * routes nothing; `planReverify` still re-adjudicates every statement citing it.
+ *
+ * Family, not raw id, because a module batch's id carries a content hash over its
+ * members ({@link PartitionSlice.id}) — losing a member changes the hash by
+ * design, so raw-id equality would report every re-formed batch as a stranger.
+ * {@link partitionIdFamily} strips the hash; for the hierarchical fallback ids it
+ * is the identity, so the original equal-or-prefix rule is unchanged there.
  */
 export function routeDelta(
   partitions: readonly PartitionSlice[],
@@ -48,13 +53,16 @@ export function routeDelta(
   for (const path of orphaned) {
     const prior = priorPartitions.find((slice) => slice.files.some((file) => file.path === path));
     if (prior === undefined) continue;
-    for (const slice of partitions)
+    const priorFamily = partitionIdFamily(prior.id);
+    for (const slice of partitions) {
+      const family = partitionIdFamily(slice.id);
       if (
-        slice.id === prior.id ||
-        slice.id.startsWith(`${prior.id}/`) ||
-        prior.id.startsWith(`${slice.id}/`)
+        family === priorFamily ||
+        family.startsWith(`${priorFamily}/`) ||
+        priorFamily.startsWith(`${family}/`)
       )
         routed.add(slice);
+    }
   }
   return partitions.filter((slice) => routed.has(slice));
 }

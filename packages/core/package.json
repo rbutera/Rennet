@@ -7,6 +7,8 @@
   "dependencies": {
     "@rennet/prompts": "workspace:*",
     "@rennet/protocol": "workspace:*",
+    "graphology": "0.26.0",
+    "graphology-communities-louvain": "2.0.2",
     "uuid": "14.0.1"
   }
 }

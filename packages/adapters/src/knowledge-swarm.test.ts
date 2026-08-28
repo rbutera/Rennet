@@ -35,6 +35,15 @@ const SNAPSHOT = {
     { name: "a", root: "a" },
     { name: "b", root: "b" },
   ],
+  // No per-blob shards: the fixture pins the COUNCIL contract, not partitioning, so
+  // it presents a snapshot with an empty (but present, and honestly readable) shard
+  // index. Every file is then edge-less and lands in the directory fallback tier —
+  // the two scope slices this suite expects.
+  entryPoints: [],
+  symbolDigestByBlob: new Map<string, string>(),
+  referenceDigestByBlob: new Map<string, string>(),
+  importDigestByBlob: new Map<string, string>(),
+  load: () => undefined,
 } as unknown as LoadedSnapshot;
 
 const READER = {
