@@ -160,11 +160,15 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     const tabs = [...(switcher?.querySelectorAll("[data-generation]") ?? [])];
     expect(tabs.map((t) => t.getAttribute("data-generation"))).toEqual(["gen1", "gen2"]);
     expect(tabs[0]?.getAttribute("data-frozen")).toBe("true");
-    // The live generation leads…
-    expect(r.container.querySelector('article[data-generation="gen2"]')).not.toBeNull();
+    // The live generation leads… (the boards arrive over `board.read`, so wait it out).
+    await waitFor(() =>
+      expect(r.container.querySelector('article[data-generation="gen2"]')).not.toBeNull(),
+    );
     // …and drilling back renders gen1's own board, not a re-labelled gen2.
     await r.user.click(tabs[0] as HTMLElement);
-    expect(r.container.querySelector('article[data-generation="gen1"]')).not.toBeNull();
+    await waitFor(() =>
+      expect(r.container.querySelector('article[data-generation="gen1"]')).not.toBeNull(),
+    );
     expect(r.container.querySelector('article[data-generation="gen2"]')).toBeNull();
   });
 });

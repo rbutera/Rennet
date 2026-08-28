@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { Redirect } from "wouter";
 import { useRennetStore } from "../store";
 import { type LaneRow, type RoundState, type RowStatus, runNavigation } from "./round-machine";
-import { useRoundState } from "./rounds-data";
+import { useRoundPending, useRoundState } from "./rounds-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The run route (C09 §3) — the live work-order round watched at `/s/:slug/run`. The
@@ -162,6 +162,11 @@ function LiveRun({ state }: { readonly state: RoundState }) {
  */
 export function RunRoute({ slug }: { readonly slug: string }) {
   const state = useRoundState(slug);
+  // The live source has ASKED for this session's round and not been answered yet. `absent`
+  // and "not known yet" are different facts, and only the first means "there is no round":
+  // navigating off the un-answered one bounced a cold mid-round deep-link to the board a
+  // frame before its catch-up read landed, with nothing to bring the reviewer back.
+  const pending = useRoundPending(slug);
   const nav = runNavigation(state, slug);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
 
@@ -175,6 +180,8 @@ export function RunRoute({ slug }: { readonly slug: string }) {
     if (entersGreeting) armGreeting(true);
   }, [entersGreeting, armGreeting]);
 
+  // Hold the route (render nothing, claim nothing) until the source answers.
+  if (pending) return null;
   if (nav) return <Redirect to={nav.path} replace={nav.replace} />;
   return <LiveRun state={state} />;
 }

@@ -1,7 +1,13 @@
-import { type LensBoard, LensBoardSchema, type RoundRecord } from "@rennet/protocol";
+import {
+  type LensBoard,
+  LensBoardSchema,
+  type RoundEvent,
+  type RoundRecord,
+} from "@rennet/protocol";
 import { createContext, useContext, useMemo } from "react";
 import { useRoute } from "wouter";
-import { useCommand, useCommandStream, useMutation } from "../data";
+import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
+import { useBridgeContext } from "../data/bridge";
 import { ROUTES } from "../routes/url";
 import { advance, initialRoundState, type RoundState } from "./round-machine";
 
@@ -47,6 +53,15 @@ export interface RoundsSource {
   readonly reportBoard: (reportBoardId: string) => unknown;
   /** Dispatch a work-order round for `slug`; absent ⇒ no live runtime, button disabled. */
   readonly dispatch?: (slug: string) => void;
+  /**
+   * True while this session's round state has been ASKED for and not yet answered — the
+   * honest "not known yet", which is NOT the same fact as `absent`'s "there is no round".
+   * A surface that would navigate off an absent round (the run route's fallback) waits for
+   * this to clear, so a cold mid-round deep-link is not bounced to the board a frame before
+   * its catch-up read lands. Omitted by sources that always know (the fixtures, and the
+   * honest-absent default) ⇒ never pending.
+   */
+  readonly roundPending?: (slug: string) => boolean;
 }
 
 /** The honest-absent default: no live round, an empty ledger, no report, no dispatch.
@@ -120,6 +135,12 @@ export function useRoundState(slug: string): RoundState {
   return useContext(RoundsSourceContext).roundState(slug);
 }
 
+/** True while the source is still fetching this session's round state — see
+ *  {@link RoundsSource.roundPending}. False for any source that always knows. */
+export function useRoundPending(slug: string): boolean {
+  return useContext(RoundsSourceContext).roundPending?.(slug) ?? false;
+}
+
 /** The session's completed rounds, oldest→newest — empty (stable ref) by default. */
 export function useRoundRecords(slug: string): readonly RoundRecord[] {
   return useContext(RoundsSourceContext).roundRecords(slug);
@@ -179,7 +200,12 @@ export function useLiveRoundsSource(): RoundsSource {
   const reviewId = slug ?? "";
   const eventsCommand = { name: "session.roundEvents" as const, input: { reviewId } };
 
-  const { data: eventsData } = useCommand(eventsCommand.name, eventsCommand.input, { enabled });
+  const { cache } = useBridgeContext();
+  const { data: eventsData, pending: eventsPending } = useCommand(
+    eventsCommand.name,
+    eventsCommand.input,
+    { enabled },
+  );
   // The live push, folded into the read's own cache entry. A `dispatched` event STARTS a
   // round, so it resets the log exactly as the server's hub does — a second dispatch must
   // not replay the first round's composed state.
@@ -211,10 +237,21 @@ export function useLiveRoundsSource(): RoundsSource {
     return {
       roundState: (forSlug: string) => (forSlug === slug ? state : initialRoundState),
       roundRecords: (forSlug: string) => (forSlug === slug ? (records ?? NO_RECORDS) : NO_RECORDS),
+      roundPending: (forSlug: string) => forSlug === slug && eventsPending,
       reportBoard: () => undefined,
       dispatch: (forSlug: string) => {
+        // The reviewer's dispatch IS the round's first event — the very `dispatched` the
+        // server emits a moment later — so write it into the read's own cache entry rather
+        // than waiting to be told. Without it the run route takes over, reads an `absent`
+        // round it has not been informed of yet, and bounces straight back to the board;
+        // and a SECOND dispatch would fold onto the previous round's `composed` state.
+        // Idempotent by the log's own rule: a `dispatched` RESETS the log (the server's hub
+        // does the same), and `advance` ignores the server's duplicate.
+        cache.setData(commandKey("session.roundEvents", { reviewId: forSlug }), () => ({
+          events: [{ type: "dispatched" }] satisfies RoundEvent[],
+        }));
         void mutate({ reviewId: forSlug }).catch(() => undefined);
       },
     };
-  }, [events, records, slug, mutate]);
+  }, [events, records, slug, mutate, cache, eventsPending]);
 }
