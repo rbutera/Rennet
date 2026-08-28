@@ -19,7 +19,6 @@ import {
   groupEntries,
   type MenuAction,
   type MenuEntry,
-  type RegistryRowView,
   SEARCH_GROUP_ORDER,
 } from "./command-menu-entries";
 import { useSidebarTree } from "./sidebar-data";
@@ -33,19 +32,12 @@ import { useSidebarTree } from "./sidebar-data";
 // and navigation runs through wouter (the spike's `next/navigation` dropped).
 //
 // `⌘P` opens search-first, `⌘K` command-first — one component, the mode reorders the
-// groups and swaps the input placeholder. Registry commands render nothing until B10
-// flips `exposure.commandMenu` (reconciliation 2); the reader + execution path are real
-// and proven against a fixture registry.
+// groups and swaps the input placeholder. Registry rows come from the live
+// `exposure.commandMenu` inventory — ONE exposed row today; which rows and why is
+// `docs/developing/reference/command-menu-exposure.md`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function CommandMenu({
-  /** The command registry to read registry-command entries from. Defaults to the real
-   *  `@rennet/protocol` table (zero `commandMenu:true` rows today); a test injects a
-   *  fixture registry to prove a flipped row surfaces + executes. */
-  registry = commands as unknown as Readonly<Record<string, RegistryRowView>>,
-}: {
-  readonly registry?: Readonly<Record<string, RegistryRowView>>;
-} = {}) {
+export function CommandMenu() {
   const open = useRennetStore((s) => s.ui.commandMenuOpen);
   const mode = useRennetStore((s) => s.ui.commandMenuMode);
   const setCommandMenuOpen = useRennetStore((s) => s.uiActions.setCommandMenuOpen);
@@ -58,9 +50,9 @@ export function CommandMenu({
   const [failure, setFailure] = useState<string | null>(null);
 
   // Sessions ride the SAME projection the sidebar tree reads (empty until B9); projects
-  // are real today. Registry entries come from the passed table.
+  // are real today. Registry entries come from the one `@rennet/protocol` table.
   const { hosts } = useSidebarTree();
-  const entries = useMemo(() => buildMenuEntries({ hosts, registry }), [hosts, registry]);
+  const entries = useMemo(() => buildMenuEntries({ hosts, registry: commands }), [hosts]);
   const groups = useMemo(
     () => groupEntries(entries, mode === "command" ? COMMAND_GROUP_ORDER : SEARCH_GROUP_ORDER),
     [entries, mode],

@@ -3,7 +3,7 @@
 // The keybinding E2E (packet verification): every advertised bind fires through the ONE
 // key owner; ⌘R passes through (R69); a remap persists through `settings.setKeybinding`
 // and fires on the NEW chord after a reload; ⌘K executes a registry command end-to-end
-// against a fixture registry; Escape priority resolves a dialog + the real menu.
+// against the live registry; Escape priority resolves a dialog + the real menu.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { COMMAND_CATALOGUE, matchKeybinding, normalizeChord } from "../command/commands";
@@ -17,7 +17,6 @@ import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { settingsBridge } from "../test/fixtures/settings";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { CommandMenu } from "./command-menu";
-import type { RegistryRowView } from "./command-menu-entries";
 import { KeyOwner } from "./key-owner";
 
 function resetUi(): void {
@@ -209,23 +208,20 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
 });
 
 describe("registry-command execution (cluster 6) — ⌘K runs a commandMenu:true row end-to-end", () => {
-  it("opens command mode, surfaces the fixture row, and dispatches it on select", async () => {
-    const ran = vi.fn(() => ({ detected: [] }));
-    // A fixture registry with ONE commandMenu:true row (B10 is unlanded — reconciliation 6).
-    const registry: Record<string, RegistryRowView> = {
-      "harness.detect": { label: "harness.detect", exposure: { commandMenu: true } },
-    };
+  it("opens command mode, surfaces the exposed row, and dispatches it on select", async () => {
+    // The LIVE registry's one menu-exposed row (docs/developing/reference/command-menu-exposure.md).
+    const ran = vi.fn(() => ({}));
     const bridge = new MemoryBridge({
       ...frontDoorHandlers([]),
       "settings.get": () => emptySettings(),
-      "harness.detect": ran as unknown as MemoryBridgeHandlers["harness.detect"],
+      "github.disconnect": ran as unknown as MemoryBridgeHandlers["github.disconnect"],
     });
     const history = memoryHistory("/");
     mount(
       <BridgeProvider bridge={bridge}>
         <Router hook={history.hook} searchHook={history.searchHook}>
           <KeyOwner>
-            <CommandMenu registry={registry} />
+            <CommandMenu />
           </KeyOwner>
         </Router>
       </BridgeProvider>,
@@ -234,11 +230,11 @@ describe("registry-command execution (cluster 6) — ⌘K runs a commandMenu:tru
     // ⌘K opens the menu (command mode) — the registry row is now visible.
     press("k", { meta: true });
     expect(useRennetStore.getState().ui.commandMenuMode).toBe("command");
-    await waitFor(() => expect(screen.getByText("harness.detect")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("github.disconnect")).toBeTruthy());
 
     // Selecting it dispatches the command through the bridge and closes the menu.
     act(() => {
-      fireEvent.click(screen.getByText("harness.detect"));
+      fireEvent.click(screen.getByText("github.disconnect"));
     });
     await waitFor(() => expect(ran).toHaveBeenCalledTimes(1));
     expect(useRennetStore.getState().ui.commandMenuOpen).toBe(false);

@@ -15,7 +15,6 @@ import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { CommandMenu } from "./command-menu";
-import type { RegistryRowView } from "./command-menu-entries";
 
 function project(id: string, name: string): Project {
   return {
@@ -39,9 +38,7 @@ afterEach(() => {
   }));
 });
 
-function mountMenu(
-  opts: { mode?: "search" | "command"; registry?: Record<string, RegistryRowView> } = {},
-) {
+function mountMenu(opts: { mode?: "search" | "command" } = {}) {
   const history = memoryHistory("/");
   const bridge = new MemoryBridge(
     frontDoorHandlers([project("p1", "atlas"), project("p2", "orbit")]),
@@ -52,7 +49,7 @@ function mountMenu(
   const utils = mount(
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <CommandMenu registry={opts.registry} />
+        <CommandMenu />
       </Router>
     </BridgeProvider>,
   );

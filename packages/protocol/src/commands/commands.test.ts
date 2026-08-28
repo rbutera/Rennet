@@ -32,7 +32,8 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // sidebar honest-empty projection was waiting on (session.list plus rename/setPinned/
 // archive, each persisted so it survives reload). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
-// with its registry row.
+// with its registry row — and with its row in docs/developing/reference/command-menu-exposure.md,
+// which carries a menu-exposure verdict for every command in this list.
 const ABSORBED_IDS = [
   "app.bootstrap",
   "ask.clearLineComment",
