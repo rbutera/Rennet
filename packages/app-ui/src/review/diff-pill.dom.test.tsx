@@ -9,15 +9,11 @@ import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
-import {
-  type SidebarSession,
-  type SidebarSessionProjection,
-  SidebarSessionProjectionProvider,
-} from "../shell/sidebar-data";
 import { TopBar } from "../shell/top-bar";
 import { useRennetStore } from "../store";
 import { cleanup, mount } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
+import { type SessionSeed, sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge } from "../test/memory-bridge";
 
 afterEach(() => {
@@ -58,30 +54,23 @@ function project(id: string, name: string): Project {
   };
 }
 
-const SESSIONS: Record<string, readonly SidebarSession[]> = {
-  p1: [
-    { id: "s2", slug: "s2", title: "Beta", time: "1d", target: "your-pr", targetState: "reviewed" },
-  ],
-};
+const SESSIONS: readonly SessionSeed[] = [
+  { id: "s2", projectId: "p1", title: "Beta", target: "your-pr", targetState: "reviewed" },
+];
 
 function mountApp() {
   const history = memoryHistory("/s/s2");
-  const bridge = new MemoryBridge(frontDoorHandlers([project("p1", "atlas")]));
-  const projection: SidebarSessionProjection = {
-    sessionsByProject: SESSIONS,
-    renameSession: () => undefined,
-    setSessionPinned: () => undefined,
-    archiveSession: () => undefined,
-    restoreSession: () => undefined,
-    renameProject: () => undefined,
-  };
+  // This review drafted no boards, so the board read answers honest-missing.
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers([project("p1", "atlas")]),
+    "board.read": () => ({ board: null }),
+    ...sessionHandlers(SESSIONS),
+  });
   return mount(
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <SidebarSessionProjectionProvider value={projection}>
-          <TopBar />
-          <ReviewWorkspace review={review()} />
-        </SidebarSessionProjectionProvider>
+        <TopBar />
+        <ReviewWorkspace review={review()} />
       </Router>
     </BridgeProvider>,
   );
@@ -89,9 +78,9 @@ function mountApp() {
 
 describe("open the diff via the top-bar pill", () => {
   it("clicking Diff navigates to ?view=diff and renders the diff surface", async () => {
-    const { getByText, queryByText, user } = mountApp();
+    const { findByText, getByText, queryByText, user } = mountApp();
     // Board view first: the board document's empty state, no diff surface.
-    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
+    expect(await findByText(/no board for this generation yet/i)).toBeTruthy();
     expect(queryByText("1 files changed")).toBeNull();
     // Click the pill's Diff toggle.
     await user.click(getByText("Diff"));

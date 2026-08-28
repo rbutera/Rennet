@@ -8,10 +8,11 @@ import { type ProposedVerdict, parseLineAnchor, partitionAsksByAnchor } from "./
 // render. Mirrors C3's `sidebar-data.ts`, C4's `citations.ts`, C5's `board-data.ts`:
 // no mode or draft shape is invented at a call site; every hand-off path goes through here.
 //
-// THE GATED SWAP (cluster 8): the living-draft source is composed from the store's staged
-// asks TODAY. When B11's continuously-redrafted durable composition projection lands (and
-// the registered `publish.compose` read), THIS is the only file that changes — the lanes
-// keep reading `selectLivingDraft`. That is the seam's whole reason to exist.
+// THE SWAP (cluster 8): the living-draft source is composed from the store's staged asks
+// TODAY. When B11's continuously-redrafted durable composition projection lands (and the
+// registered `publish.compose` read), THIS is the only file that changes — the lanes keep
+// reading `selectLivingDraft`. That is the seam's whole reason to exist. The span-rework
+// half of that swap is DONE: `reviseDraftSpan` below now fires B11's `review.reviseSpan`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The hand-off entry mode a review dispatches on (Objective clause 3). */
@@ -129,14 +130,21 @@ export interface ComposedLineGroup {
 /**
  * The composed outbound review the lane PREVIEWS and POSTS — byte-exact with what
  * `publish.review` receives. `body` is the comments with no line (the review body stratum);
- * `lineGroups` are the line-anchored comments grouped by file path; `verdict` is the daemon's
- * derived proposal (still flippable at the control — the event is a separate post arg);
- * `arithmetic` is the `N request changes · M comments` tally over the composed comments.
+ * `lineGroups` are the line-anchored comments grouped by file path; `arithmetic` is the
+ * `N request changes · M comments` tally over the composed comments.
+ *
+ * `verdict` is the composed event — the daemon's derived proposal, or the durable override when
+ * one is set. It is the ONE verdict: the daemon folds it into the composition binding, so this is
+ * exactly what posts (a different event would be refused as a stale composition). `proposed` is
+ * the verdict the composed comments derive to on their own, so the control can say "overridden —
+ * proposed X" and offer the revert; flipping the verdict writes the durable override and
+ * recomposes, it never travels as a separate post argument.
  */
 export interface ReviewDraft {
   readonly body: readonly ReviewComment[];
   readonly lineGroups: readonly ComposedLineGroup[];
   readonly verdict: ProposedVerdict;
+  readonly proposed: ProposedVerdict;
   readonly arithmetic: { readonly requestChanges: number; readonly comments: number };
   readonly destination: string;
 }
@@ -166,26 +174,70 @@ export function composeReviewDraft(
     path,
     comments,
   }));
+  // The same derivation core runs (`deriveReviewEvent`) over the same set the daemon uses —
+  // BOTH strata, comments AND body notes: a request-change wins, else an approval, else a
+  // neutral comment. Mirrored here (app-ui cannot import core) so the control names what the
+  // composition actually proposes when the durable override differs. Deriving over the line
+  // comments alone would claim "overridden — proposed comment" for a pathless request-change
+  // ask, with a revert button that reverts to nothing — a lie about the reviewer's own verdict.
+  const outbound = [...composed.comments, ...(composed.bodyNotes ?? [])];
+  const proposed: ProposedVerdict = outbound.some((c) => c.type === "request-change")
+    ? "REQUEST_CHANGES"
+    : outbound.some((c) => c.type === "approve")
+      ? "APPROVE"
+      : "COMMENT";
   return {
     body,
     lineGroups,
     verdict: composed.verdict,
+    proposed,
     arithmetic: { requestChanges, comments: composed.comments.length - requestChanges },
     destination: composed.destination,
   };
 }
 
 /**
- * The span-rework seam (Objective clause 4) — the SINGLE point selection-steer Revise reaches.
- * Cluster 8 binds it to B11/B9's real span-rework command (exactly as `selectLivingDraft` is the
- * living-draft-source swap); until they land the affordance renders (task 4.3) and execution is
- * deliberately gated. No call site reworks a span itself — every Revise routes through here.
+ * Fire B11's registered `review.reviseSpan` for one staged ask. Bound in `exits.ts` over
+ * `useMutation` (no surface calls `bridge.invoke`) and threaded to the lanes as a prop, exactly
+ * like the `publish.*` egresses. Absent ⇒ no rework is wired to that mount.
  */
-export function reviseDraftSpan(span: string, instruction: string): void {
-  // ponytail: gated boundary — the real rework command lands in cluster 8 (B11/B9). Wiring it
-  // here (and nowhere else) is the seam's whole reason to exist; not a hollow pass of a
-  // completable task — a genuinely blocked one, left un-wired on purpose. The args are named
-  // so cluster 8's binding is a body swap, not a signature change.
-  void span;
-  void instruction;
+export type ReviseSpan = (args: {
+  askId: string;
+  span: string;
+  instruction: string;
+}) => Promise<CommandOutput<"review.reviseSpan">>;
+
+/**
+ * The span-rework seam (Objective clause 4) — the SINGLE point selection-steer Revise reaches.
+ * Now bound to B11's real command: the daemon's one-shot worker reworks the ask's body, splices
+ * the refined span back in place (CAS-guarded against a concurrent edit) and lands it on the
+ * durable ask log; this stages the returned body so the lane shows the rework it actually got.
+ *
+ * Resolves the honest reason the rework did NOT land (`no-change` / `unavailable` / a thrown
+ * bridge failure), or `undefined` when it did — never a silent success. No call site reworks a
+ * span itself; every Revise routes through here.
+ *
+ * `land` receives the ask with its reworked body. It is the LANE's job because a lane may render
+ * the ask through a shadow the store's `stagedAsks` does not own (the post-review lane's inline
+ * `draftEdits`): landing only the ask there would leave a stale shadow on screen while the panel
+ * closed as success — a fabricated success. Every lane's `land` must make the rework VISIBLE.
+ */
+export async function reviseDraftSpan(
+  revise: ReviseSpan,
+  land: (ask: StagedAsk) => void,
+  ask: StagedAsk,
+  span: string,
+  instruction: string,
+): Promise<string | undefined> {
+  let result: CommandOutput<"review.reviseSpan">;
+  try {
+    result = await revise({ askId: ask.id, span, instruction });
+  } catch (reason) {
+    return reason instanceof Error ? reason.message : "The rework did not run.";
+  }
+  if (result.status !== "reworked") return result.reason;
+  // A body swap in place, under the ask's own id — exactly like a hand edit (receipt-is-undo
+  // lives on the daemon's ask log, which already recorded the inverse of this write).
+  land({ ...ask, body: result.reworkedBody });
+  return undefined;
 }

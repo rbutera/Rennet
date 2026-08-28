@@ -68,6 +68,26 @@ async function currentHealth(
 }
 
 /**
+ * ASK a distro's daemon whether it is running, without spawning, delivering, or restarting
+ * anything (C17, #485) — the read behind a WSL host card's `reachable` / `version`. Resolves
+ * the distro's `$HOME` to find its data dir, reads the published port, and health-probes it.
+ * `null` means the distro's daemon did not answer (no distro, no daemon, or dead) — the
+ * caller reports that host unreachable and INVENTS NO VERSION for it.
+ */
+export async function probeWslDaemon(
+  distro: string,
+  deps: { readonly run: WslRunner; readonly fetch?: FetchLike },
+): Promise<DaemonIdentity | null> {
+  const { stdout, code } = await deps.run(buildWslHomeProbe(distro));
+  const distroHome = parseWslHome(code === 0 ? stdout : "");
+  if (!distroHome) return null;
+  const location: WslDaemonLocation = { distro, distroDataDir: wslDaemonDataDir(distroHome) };
+  const port = await readWslDaemonPort(location, deps.run);
+  if (port === null) return null;
+  return probeWslDaemonHealth(port, deps.fetch ? { fetch: deps.fetch } : {});
+}
+
+/**
  * Ensure a healthy daemon runs INSIDE `distro` and return its loopback port + identity.
  *
  * Flow: resolve the distro's `$HOME` (so the data dir + bundle path are distro-native),

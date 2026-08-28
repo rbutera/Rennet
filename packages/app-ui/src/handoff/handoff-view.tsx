@@ -17,25 +17,47 @@ export interface HandoffViewProps {
   readonly onPost?: PostReviewLaneProps["onPost"];
   /** The composed outbound review the Post Review lane previews and posts (exact-preview). */
   readonly reviewDraft?: PostReviewLaneProps["draft"];
+  /** Flip the composed verdict — a durable write that recomposes (#435), threaded to the lane. */
+  readonly onSetVerdict?: PostReviewLaneProps["onSetVerdict"];
   /** The own-branch PR draft, threaded to the rounds lanes (B11 draft; cluster 8/6 wire it). */
   readonly pr?: RoundsLanesProps["pr"];
   /** Dispatch a work-order round from the rounds lanes (the C9 run is out of scope). */
   readonly onDispatch?: RoundsLanesProps["onDispatch"];
   /** The Open-Pull-Request egress, threaded to the rounds lanes (wired in cluster 6). */
   readonly onOpenPr?: RoundsLanesProps["onOpenPr"];
+  /** Selection-steer Revise — B11's `review.reviseSpan`, threaded to whichever lane renders. */
+  readonly onRevise?: RoundsLanesProps["onRevise"];
 }
 
 export function HandoffView({
   review,
   onPost,
   reviewDraft,
+  onSetVerdict,
   pr,
   onDispatch,
   onOpenPr,
+  onRevise,
 }: HandoffViewProps) {
   const mode = resolveEntryMode(review);
   if (mode === "retrospective") return null;
   if (mode === "teammate-pr")
-    return <PostReviewLane review={review} onPost={onPost} draft={reviewDraft} />;
-  return <RoundsLanes review={review} pr={pr} onDispatch={onDispatch} onOpenPr={onOpenPr} />;
+    return (
+      <PostReviewLane
+        review={review}
+        onPost={onPost}
+        draft={reviewDraft}
+        onSetVerdict={onSetVerdict}
+        onRevise={onRevise}
+      />
+    );
+  return (
+    <RoundsLanes
+      review={review}
+      pr={pr}
+      onDispatch={onDispatch}
+      onOpenPr={onOpenPr}
+      onRevise={onRevise}
+    />
+  );
 }

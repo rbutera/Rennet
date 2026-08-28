@@ -4,6 +4,8 @@ import type { RenderedHunkOccurrence } from "./delta/citations";
 import { anchorSideSchema, anchorSpanSchema } from "./delta/citations";
 import type {
   CiSignal,
+  CouncilEffort,
+  CouncilModel,
   DeltaDigestResult,
   DispositionAnchor,
   FindingAgreement,
@@ -128,7 +130,7 @@ export const dispositionSchema = z.object({
 // The real forge post-target — the single source of truth reused by BOTH the
 // review snapshot (`Review.postTarget`) and the publish commands
 // (`publishTargetSchema`), so the coordinates the renderer reads off a review are
-// byte-identical to the ones it hands to `publish.requestConsent`/`publish.review`.
+// byte-identical to the ones it hands to `publish.review`.
 const forgeRepoSchema = z.object({
   forge: z.string().min(1),
   owner: z.string().min(1),
@@ -404,6 +406,22 @@ export const detectedHarnessSchema = z.object({
   version: z.string().nullable(),
 });
 export type DetectedHarness = z.infer<typeof detectedHarnessSchema>;
+
+/** The honest state of a forge (source-control) CLI detected on a host (#484 seam; #483
+ *  "gh rides again"). A subset of the client `ToolStatus` — a forge CLI probe never yields
+ *  `unreachable` (that is a host-daemon state, not a CLI state). */
+export const forgeStatusSchema = z.enum(["available", "not-authenticated", "not-installed"]);
+export type ForgeStatus = z.infer<typeof forgeStatusSchema>;
+
+/** A forge CLI detected on the host its daemon runs on (the wire shape `forge.detect`
+ *  returns). The client maps it to a `DetectedTool` row, adding the label + enable toggle. */
+export const detectedForgeSchema = z.object({
+  id: z.string().min(1),
+  version: z.string().nullable(),
+  status: forgeStatusSchema,
+  detail: z.string(),
+});
+export type DetectedForge = z.infer<typeof detectedForgeSchema>;
 
 // ── The GitHub account (v4.2: OAuth device flow replaces the gh-CLI piggyback) ─
 // The renderer-safe projection of the host-side auth state. The TOKEN itself is
@@ -1606,6 +1624,114 @@ export const coachMarksSchema = z.object({
 });
 export type CoachMarks = z.infer<typeof coachMarksSchema>;
 
+// ── Model-council review roles on the wire (C16, #485) ───────────────────────
+//
+// `app-ui` cannot import `@rennet/core`, so the council's role→model assignments
+// reach the Review settings surface only through `settings.get` (read) and
+// `settings.setRoleAssignment` (write). These schemas are that boundary: the
+// wire mirror of core's `resolveReviewRoles` output, each scenario cell carrying
+// `{ value, layer }` provenance — an honest-`null` value where a role does not
+// run in that scenario (never a fabricated pick, Rule Zero).
+
+/**
+ * The council model set (domain `CouncilModel`). `as const satisfies` pins the
+ * enum to the domain union, so a value the resolver can emit but the wire cannot
+ * carry is a compile error — the wire never silently drops a valid pick.
+ */
+const COUNCIL_MODELS = [
+  "haiku",
+  "sonnet-5",
+  "opus-4.8",
+  "gpt-5.5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+] as const satisfies readonly CouncilModel[];
+export const councilModelSchema = z.enum(COUNCIL_MODELS);
+
+/** The effort knob (domain `CouncilEffort`); pinned to the union like the models. */
+const COUNCIL_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly CouncilEffort[];
+export const councilEffortSchema = z.enum(COUNCIL_EFFORTS);
+
+/** One model+effort pick (domain `CouncilPick`). Model + effort only — no harness (#89). */
+export const councilPickSchema = z.object({
+  model: councilModelSchema,
+  effort: councilEffortSchema,
+});
+export type CouncilPickWire = z.infer<typeof councilPickSchema>;
+
+/**
+ * A per-field routing override (domain `CouncilOverridePick`): sets model and/or
+ * effort only, harness always derives from the resolved model's provider (#89).
+ */
+export const councilOverridePickSchema = z.object({
+  model: councilModelSchema.optional(),
+  effort: councilEffortSchema.optional(),
+});
+
+/**
+ * Which layer a resolved cell came from, collapsed to what the surface needs:
+ * `default` — the council table stands; `override` — a `routing.task` entry won.
+ * Maps from core's `ResolutionSource` (`task-override` → `override`, else
+ * `default`); the surface derives "is this a default?" straight off this.
+ */
+export const reviewRoleLayerSchema = z.enum(["default", "override"]);
+export type ReviewRoleLayer = z.infer<typeof reviewRoleLayerSchema>;
+
+/**
+ * One resolved scenario cell: the pick and its provenance, or an honest-`null`
+ * value where the role does not run in this scenario (the Flagged Second Seat in
+ * `claudeOnly`/`codexOnly`). `null` is the em-dash the surface renders — never a
+ * guessed model.
+ */
+export const reviewRoleCellSchema = z.object({
+  value: councilPickSchema.nullable(),
+  layer: reviewRoleLayerSchema,
+});
+export type ReviewRoleCell = z.infer<typeof reviewRoleCellSchema>;
+
+/**
+ * One review role resolved across all three availability scenarios. `id`/`label`/
+ * `hint` are the surface copy (from core's `REVIEW_ROLE_CATALOGUE`); `dual` is the
+ * `both` scenario. An additive-optional `reviewRoles` on `settings.get` carries an
+ * array of these; `settings.setRoleAssignment` returns the re-resolved array.
+ */
+export const reviewRoleMappingSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  hint: z.string(),
+  dual: reviewRoleCellSchema,
+  claudeOnly: reviewRoleCellSchema,
+  codexOnly: reviewRoleCellSchema,
+});
+export type ReviewRoleMapping = z.infer<typeof reviewRoleMappingSchema>;
+
+/**
+ * The scenario a `settings.setRoleAssignment` edit targets — the wire's per-column
+ * name (`dual` is the `both` table). The write maps this back to the core scenario.
+ */
+export const reviewRoleScenarioSchema = z.enum(["dual", "claudeOnly", "codexOnly"]);
+export type ReviewRoleScenario = z.infer<typeof reviewRoleScenarioSchema>;
+
+/**
+ * One council job's routing overrides, keyed BY SCENARIO (Rai, 2026-08-28). Each
+ * column owns its own cell: an edit in `codexOnly` moves the Codex-only column and
+ * nothing else, and clearing it falls back to that scenario's council-table default
+ * while the sibling columns keep whatever they hold. Every cell is optional — a job
+ * with no override at all carries no entry.
+ */
+export const councilScenarioOverridesSchema = z.object({
+  dual: councilOverridePickSchema.optional(),
+  claudeOnly: councilOverridePickSchema.optional(),
+  codexOnly: councilOverridePickSchema.optional(),
+});
+export type CouncilScenarioOverrides = z.infer<typeof councilScenarioOverridesSchema>;
+
 /**
  * Client settings — viewer preferences, stored at `~/.rennet/client-settings.json`
  * (B10 #476). These are personal, app-side choices that live OUTSIDE the config
@@ -1623,6 +1749,17 @@ export const clientSettingsSchema = z.object({
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
   /** Onboarding coach-mark state (C13): seen marks + skip-all. Additive-optional like the rest. */
   coachmarks: coachMarksSchema.optional(),
+  /**
+   * Model-council routing overrides (C16, #485). `task` keys by council job id →
+   * that job's PER-SCENARIO override cells (Rai's 2026-08-28 ruling), each a
+   * model+effort pick the resolver layers over that scenario's table default
+   * (#89: no harness field). Additive-optional: an untouched install omits it,
+   * clearing a job's last cell drops the job entry, and clearing the last job
+   * drops the slice. Written by `settings.setRoleAssignment`, one cell per edit.
+   */
+  routing: z
+    .object({ task: z.record(z.string(), councilScenarioOverridesSchema).optional() })
+    .optional(),
 });
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
 
@@ -1664,6 +1801,32 @@ export const daemonSettingsSchema = z.object({
       baseUrl: z.string().optional(),
       tokenEnv: z.string().optional(),
     })
+    .optional(),
+  /**
+   * Per-host daemon memory (C17), keyed by the host's `source`. Two independent facts, each
+   * additive-optional, so an entry may carry either or both:
+   *
+   *  • `lastSeenVersion` (reconciliation 4) — the version a host's daemon actually answered
+   *    with, so a host that later goes dark reads "last seen running v…" instead of blank
+   *    chrome. Written ONLY from a real answer; a host that has never answered has no entry.
+   *  • `disabledHarnesses` (cluster 3.2) — the agents the viewer has RULED OUT of reviews on
+   *    that host. A decision, not a detection: it survives reload, and it is scoped to the
+   *    host, so ruling Codex out on this machine leaves it running on a WSL distro. Nothing
+   *    here claims a harness exists — an id disabled on a host with no such harness simply
+   *    matches no detected row.
+   *  • `disabledForges` (amendment A) — the same decision for the host's forge CLIs, so the
+   *    Source Control row's toggle keeps what it was told instead of resetting on reload.
+   *    Same rules: a decision, host-scoped, and it claims nothing about what is installed.
+   */
+  hosts: z
+    .record(
+      z.string(),
+      z.object({
+        lastSeenVersion: z.string().min(1).optional(),
+        disabledHarnesses: z.array(z.string().min(1)).optional(),
+        disabledForges: z.array(z.string().min(1)).optional(),
+      }),
+    )
     .optional(),
 });
 export type DaemonSettings = z.infer<typeof daemonSettingsSchema>;
@@ -1765,6 +1928,152 @@ export const daemonHostSectionSchema = z.object({
 });
 export type DaemonHostSection = z.infer<typeof daemonHostSectionSchema>;
 
+/**
+ * One session row in the sidebar (C18) — the wire shape `session.list` serves and every
+ * session mutation echoes. Projected from the persisted `SessionModel`, so every field is
+ * a FACT of that record: `title` is the reviewer's own rename or the claimed branch;
+ * `target` is `your-pr` when the claim carries a PR number and `your-branch` otherwise
+ * (a teammate's PR is not knowable from the session record, so it is never guessed);
+ * `targetState` and unread activity are likewise absent rather than invented.
+ */
+export const sidebarSessionSchema = z.object({
+  id: z.string().min(1),
+  /** The project this session belongs to — the sidebar's grouping key. */
+  projectId: z.string().min(1),
+  /** The reviewer's chosen title, else the claimed branch, else "New review". */
+  title: z.string().min(1),
+  target: z.enum(["your-branch", "your-pr"]),
+  /**
+   * Where the target stands (needs-you / merged / reviewed) and whether the row carries
+   * unread orchestrator activity. The session record proves NEITHER today, so the host
+   * leaves both absent and the row renders without them — the shape carries them so the
+   * surface stays structurally able to show them the moment a source exists, never so a
+   * value can be guessed.
+   */
+  targetState: z.enum(["needs-you", "merged", "reviewed"]).optional(),
+  unread: z.boolean().optional(),
+  /** Pinned to the top of its project group; absent reads as unpinned. */
+  pinned: z.boolean().optional(),
+  /** Archived (soft-deleted, the only release); absent reads as live. */
+  archived: z.boolean().optional(),
+  /** When the session was minted (epoch ms) — the client renders the relative line. */
+  createdAt: z.number(),
+});
+export type SidebarSession = z.infer<typeof sidebarSessionSchema>;
+
+/**
+ * One host's daemon status (C17, #485) — the wire shape `daemon.status` returns, which the
+ * client folds into the host card's `DaemonInfo`. An UNREACHABLE host INVENTS NOTHING: it
+ * carries `reachable: false` and NO `version`, only the `lastSeenVersion` it actually
+ * answered with before (absent for a host that has never answered). `updateAvailable` is
+ * present only when BOTH the running version and the latest known version are real, so a
+ * host with no update mechanism withholds the flag rather than faking one.
+ */
+export const daemonHostStatusSchema = z.discriminatedUnion("reachable", [
+  z.object({
+    /** The host this status is for — the same `source` key `daemonHosts` enumerates. */
+    source: sourceSchema,
+    /** The host's daemon answered just now. */
+    reachable: z.literal(true),
+    /** The RUNNING daemon version — omitted when the host answered but could not name it. */
+    version: z.string().optional(),
+    /** The running version is older than the version this host could be updated TO. Absent ⇒
+     *  not knowable, or this host has no update mechanism at all. */
+    updateAvailable: z.boolean().optional(),
+  }),
+  z.object({
+    source: sourceSchema,
+    reachable: z.literal(false),
+    /** The version this host was last seen running; present only when it answered before. */
+    lastSeenVersion: z.string().optional(),
+  }),
+]);
+export type DaemonHostStatus = z.infer<typeof daemonHostStatusSchema>;
+
+/**
+ * One host's detected coding agents (C17 cluster 3, #485) — the wire shape `harness.hosts`
+ * returns, keyed by the same `source` `daemonHosts` enumerates. Detection is SERVER-side:
+ * the daemon this is dispatched to asks each host the only way it CAN be asked, so the
+ * client never fans out over connections it does not have.
+ *
+ * `asked` is the honesty flag and the whole point of the shape, so it DISCRIMINATES the union:
+ * a host this daemon has no way to interrogate (a paired device that dials US; a distro
+ * `wsl.exe` cannot enter) reads `asked: false` and structurally cannot carry rows — an HONEST
+ * ABSENCE, distinct from `asked: true` with no rows, which is the real claim "that host has no
+ * coding agents installed". The local set is never copied onto a host it was not observed on.
+ */
+export const hostHarnessSchema = detectedHarnessSchema.extend({
+  /**
+   * The viewer has NOT ruled this agent out of reviews on this host (C17 cluster 3.2). A
+   * persisted per-host decision, so a ruled-out agent stays ruled out across reload, and
+   * ruling it out here leaves it running everywhere else. Detection is unaffected: a
+   * disabled agent is still detected and still shown, with its toggle off.
+   */
+  enabled: z.boolean(),
+});
+export type HostHarness = z.infer<typeof hostHarnessSchema>;
+
+/**
+ * The forge CLI ids the viewer has RULED OUT on this host (amendment A) — the served READ that
+ * makes the Source Control row's toggle real. It rides this per-host entry because the ruling
+ * lives on the same daemon-settings record as `disabledHarnesses` and the surface already makes
+ * this one round trip; forge DETECTION is separate (`forge.hosts`), so this is a decision list,
+ * never a claim that any of those CLIs are installed. It is valid on an UNASKED host too — a
+ * decision survives a machine Rennet cannot currently reach. Additive-optional: an engine that
+ * omits it has ruled nothing out.
+ */
+const disabledForgesField = z.array(z.string().min(1)).optional();
+
+export const harnessHostDetectionSchema = z.discriminatedUnion("asked", [
+  z.object({
+    /** The host these harnesses were detected on — the `source` key `daemonHosts` enumerates. */
+    source: sourceSchema,
+    /** This daemon interrogated that host; `detected` is its real answer, empty or not. */
+    asked: z.literal(true),
+    /** Exactly the harnesses observed ON that host. Empty means "asked, none installed". */
+    detected: z.array(hostHarnessSchema),
+    disabledForges: disabledForgesField,
+  }),
+  z.object({
+    source: sourceSchema,
+    /** This daemon could NOT interrogate that host — so it reports no rows, and the empty
+     *  tuple below is the only list it is allowed to carry. Nothing is claimed. */
+    asked: z.literal(false),
+    detected: z.tuple([]),
+    disabledForges: disabledForgesField,
+  }),
+]);
+export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
+
+/**
+ * One host's detected forge (source-control) CLIs (C17 amendment B) — the wire shape
+ * `forge.hosts` returns, the exact mirror of `harness.hosts` for the Source Control section.
+ * `forge.detect` answers for ONE daemon, so keying its rows anywhere else would copy this
+ * machine's `gh` onto a host it was never observed on; this read asks each host the only way
+ * it CAN be asked, so a WSL distro with its own `gh` shows its own.
+ *
+ * `asked` discriminates this union exactly as it does the harness read: a host this daemon
+ * cannot interrogate reads `asked: false` and cannot carry rows at all — an honest absence,
+ * distinct from `asked: true` with no rows ("that host has no forge CLI installed").
+ */
+export const forgeHostDetectionSchema = z.discriminatedUnion("asked", [
+  z.object({
+    /** The host these forge CLIs were detected on — the `source` key `daemonHosts` enumerates. */
+    source: sourceSchema,
+    /** This daemon interrogated that host; `detected` is its real answer, empty or not. */
+    asked: z.literal(true),
+    /** Exactly the forge CLIs observed ON that host. Empty means "asked, none installed". */
+    detected: z.array(detectedForgeSchema),
+  }),
+  z.object({
+    source: sourceSchema,
+    /** Could NOT be interrogated — no rows are expressible, so none can be implied. */
+    asked: z.literal(false),
+    detected: z.tuple([]),
+  }),
+]);
+export type ForgeHostDetection = z.infer<typeof forgeHostDetectionSchema>;
+
 /** The whole settings view: the global layer plus every repo's repo layer. */
 export const settingsViewSchema = z.object({
   /** The resolved effective scheme (builtin `system`, overridden by global). */
@@ -1799,6 +2108,15 @@ export const settingsViewSchema = z.object({
    * optional: an old `settings.get` caller ignores it, an untouched engine may omit it.
    */
   daemonHosts: z.array(daemonHostSectionSchema).optional(),
+  /**
+   * The model-council review-role mappings (C16, #485) — the eight roles, each
+   * resolved across `dual`/`claudeOnly`/`codexOnly` with `{ value, layer }`
+   * provenance. The READ rides `settings.get` (additive-optional, like `keybindings`/
+   * `coachmarks`/`daemonHosts` — one fewer command). Honest-present: the council
+   * tables are static, so this carries the eight roles at their defaults even with
+   * no override set; a role that does not run in a scenario carries a `null` cell.
+   */
+  reviewRoles: z.array(reviewRoleMappingSchema).optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 
@@ -2289,7 +2607,7 @@ export type HandoffBundle = z.infer<typeof handoffBundleSchema>;
  * "spend is disclosed" invariant). A handoff spends the user's own harness quota AND
  * edits their working tree, so the disclosure names both. `model` is the harness's
  * resolved model when known (absent ⇒ the harness runs its own default). This is the
- * surface the user acts on; `requestConsent` binds a token to the bundle it describes.
+ * surface the user acts on, stated plainly before the run — not a dialog to clear.
  */
 export type HandoffDisclosure = z.infer<typeof handoffDisclosureSchema>;
 /**

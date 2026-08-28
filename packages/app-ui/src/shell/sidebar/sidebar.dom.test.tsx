@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 //
-// The sidebar (C03 §2–3) over a MemoryBridge: the projects half is real
-// (`projects.list` / `projects.remove`), the sessions half rides the B9 projection
-// context (reconciliation 2) so rename / pin / archive / highlight are provable
-// today. Zero props — every read and write resolves through `sidebar-data`, folds
-// through the `ui` slice, highlight from the route.
+// The sidebar (C03 §2–3) over a MemoryBridge: BOTH halves are real commands now
+// (`projects.list` / `projects.remove`, and the C18 `session.*` family). The session
+// fixture is a stateful store behind the bridge, so rename / pin / archive are proven
+// through the same served-write-then-re-read path the live client takes. Zero props —
+// every read and write resolves through `sidebar-data`, folds through the `ui` slice,
+// highlight from the route.
 import type { Project } from "@rennet/protocol";
-import { type ReactNode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { useUpdateReady } from "../../components/update-ready";
@@ -15,12 +15,9 @@ import { memoryHistory } from "../../routes/history";
 import { useRennetStore } from "../../store";
 import { cleanup, fireEvent, mount, waitFor } from "../../test/dom";
 import { frontDoorHandlers } from "../../test/fixtures/front-door";
+import { type SessionSeed, sessionHandlers } from "../../test/fixtures/sessions";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../../test/memory-bridge";
-import {
-  type SidebarSession,
-  type SidebarSessionProjection,
-  SidebarSessionProjectionProvider,
-} from "../sidebar-data";
+import { SIDEBAR_PANEL_WIDTH } from "../constants";
 import { Sidebar } from "./sidebar";
 
 afterEach(() => {
@@ -53,76 +50,43 @@ function project(id: string, name: string, source = "local"): Project {
   };
 }
 
-type SessionMap = Record<string, readonly SidebarSession[]>;
-
-/** A state-backed projection so a mutation re-renders the tree (the row appears /
- *  disappears / renames), exactly as B9's real projection will once it lands. */
-function Harness({
-  bridge,
-  history,
-  seed,
-}: {
-  readonly bridge: MemoryBridge;
-  readonly history: ReturnType<typeof memoryHistory>;
-  readonly seed: SessionMap;
-}): ReactNode {
-  const [sessions, setSessions] = useState<SessionMap>(seed);
-  const map = (id: string, patch: (s: SidebarSession) => SidebarSession): void =>
-    setSessions((prev) => {
-      const next: SessionMap = {};
-      for (const [pid, rows] of Object.entries(prev)) {
-        next[pid] = rows.map((s) => (s.id === id ? patch(s) : s));
-      }
-      return next;
-    });
-  const projection: SidebarSessionProjection = {
-    sessionsByProject: sessions,
-    renameSession: (id, title) => map(id, (s) => ({ ...s, title })),
-    setSessionPinned: (id, pinned) => map(id, (s) => ({ ...s, pinned })),
-    archiveSession: (id) => map(id, (s) => ({ ...s, archived: true })),
-    restoreSession: (id) => map(id, (s) => ({ ...s, archived: false })),
-    renameProject: () => undefined,
-  };
-  return (
-    <BridgeProvider bridge={bridge}>
-      <Router hook={history.hook} searchHook={history.searchHook}>
-        <SidebarSessionProjectionProvider value={projection}>
-          <Sidebar />
-        </SidebarSessionProjectionProvider>
-      </Router>
-    </BridgeProvider>
-  );
-}
-
 function mountSidebar(opts: {
   projects?: readonly Project[];
-  sessions?: SessionMap;
+  sessions?: readonly SessionSeed[];
   path?: string;
   extraHandlers?: MemoryBridgeHandlers;
+  platform?: string;
 }) {
   const history = memoryHistory(opts.path ?? "/");
-  const bridge = new MemoryBridge({
-    ...frontDoorHandlers(opts.projects ?? []),
-    ...opts.extraHandlers,
-  });
-  const utils = mount(<Harness bridge={bridge} history={history} seed={opts.sessions ?? {}} />);
+  const bridge = new MemoryBridge(
+    {
+      ...frontDoorHandlers(opts.projects ?? []),
+      ...sessionHandlers(opts.sessions ?? []),
+      ...opts.extraHandlers,
+    },
+    { platform: opts.platform },
+  );
+  const utils = mount(
+    <BridgeProvider bridge={bridge}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <Sidebar />
+      </Router>
+    </BridgeProvider>,
+  );
   return { ...utils, history, bridge };
 }
 
-const SESSIONS: SessionMap = {
-  p1: [
-    { id: "s1", slug: "s1", title: "Alpha", time: "2h", target: "your-branch" },
-    {
-      id: "s2",
-      slug: "s2",
-      title: "Beta",
-      time: "1d",
-      target: "your-pr",
-      targetState: "needs-you",
-      unread: true,
-    },
-  ],
-};
+const SESSIONS: readonly SessionSeed[] = [
+  { id: "s1", projectId: "p1", title: "Alpha", target: "your-branch" },
+  {
+    id: "s2",
+    projectId: "p1",
+    title: "Beta",
+    target: "your-pr",
+    targetState: "needs-you",
+    unread: true,
+  },
+];
 
 describe("sidebar structure (C03 §2)", () => {
   it("collapses the panel to the rail, writing ui.sidebarOpen both ways", async () => {
@@ -192,11 +156,7 @@ describe("sidebar structure (C03 §2)", () => {
     cleanup();
     const some = mountSidebar({
       projects: [project("p1", "atlas")],
-      sessions: {
-        p1: [
-          { id: "s9", slug: "s9", title: "Old", time: "3d", target: "your-branch", archived: true },
-        ],
-      },
+      sessions: [{ id: "s9", projectId: "p1", title: "Old", archived: true }],
     });
     expect(await some.findByText("Archived")).toBeTruthy();
   });
@@ -222,18 +182,9 @@ describe("sidebar tree (C03 §3)", () => {
   it("shows a reviewed session's green tick beside the title (R36), not a recolored icon", async () => {
     const { findByLabelText } = mountSidebar({
       projects: [project("p1", "atlas")],
-      sessions: {
-        p1: [
-          {
-            id: "s1",
-            slug: "s1",
-            title: "Done",
-            time: "2h",
-            target: "your-pr",
-            targetState: "reviewed",
-          },
-        ],
-      },
+      sessions: [
+        { id: "s1", projectId: "p1", title: "Done", target: "your-pr", targetState: "reviewed" },
+      ],
     });
     // The separate tick carries the "Reviewed" name; the leading target icon stays "Your PR".
     expect(await findByLabelText("Reviewed")).toBeTruthy();
@@ -369,5 +320,74 @@ describe("sidebar tree (C03 §3)", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(history.history).not.toContain("/new-chat");
     expect(history.history.at(-1)).toBe("/s/s1");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// macOS traffic-light clearance. The desktop window is `titleBarStyle:
+// "hiddenInset"` on darwin, so the native close/minimise/zoom buttons paint OVER
+// the renderer's top-left — on top of the lockup, which made the wordmark
+// unreadable on a real packaged build. Both sidebar states must clear them, and
+// no other host may pay for it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The lockup's authored aspect ratio (`lockup.tsx`): width = height × this. */
+const LOCKUP_RATIO = 726.868 / 126;
+
+function headerLockup(header: Element): Element {
+  const svg = header.querySelector("svg");
+  if (!svg) throw new Error("sidebar header has no lockup");
+  return svg;
+}
+
+describe("macOS traffic-light clearance", () => {
+  it("insets the header, shrinks the lockup, and makes the strip the drag surface on darwin", () => {
+    const { getByTestId } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      platform: "darwin",
+    });
+    const header = getByTestId("sidebar-header");
+    expect(header.className).toContain("pl-[76px]");
+    expect(header.className).not.toContain("pl-3");
+    // With hiddenInset the strip IS the titlebar; the shared `navigation-titlebar`
+    // rule drags it and opts its buttons back out.
+    expect(header.className).toContain("navigation-titlebar");
+
+    const svg = headerLockup(header);
+    expect(svg.getAttribute("height")).toBe("14");
+    // Unclipped: the 76px reserved zone + the lockup's own rendered width + the
+    // 12px trailing pad + the 24px collapse toggle must all fit the 256px panel.
+    const width = Number(svg.getAttribute("width"));
+    expect(width).toBeCloseTo(14 * LOCKUP_RATIO, 3);
+    expect(76 + width + 12 + 24).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
+  });
+
+  it("clears the lights vertically on the collapsed rail, which is narrower than they are", async () => {
+    const { getByLabelText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      platform: "darwin",
+    });
+    fireEvent.click(getByLabelText("Collapse sidebar"));
+    const rail = await waitFor(() => {
+      const parent = getByLabelText("Expand sidebar").parentElement;
+      if (!parent) throw new Error("rail not mounted");
+      return parent;
+    });
+    expect(rail.className).toContain("pt-8");
+  });
+
+  it("leaves every non-darwin host un-inset, full-size and undraggable", () => {
+    for (const platform of ["win32", "linux", undefined]) {
+      const { getByTestId } = mountSidebar({
+        projects: [project("p1", "atlas")],
+        platform,
+      });
+      const header = getByTestId("sidebar-header");
+      expect(header.className).toContain("pl-3");
+      expect(header.className).not.toContain("pl-[76px]");
+      expect(header.className).not.toContain("navigation-titlebar");
+      expect(headerLockup(header).getAttribute("height")).toBe("16");
+      cleanup();
+    }
   });
 });

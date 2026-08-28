@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WsRennetBridge } from "@rennet/client";
 import { findHealthyDaemon, readDaemonFile, spawnDaemon, waitForHealthy } from "@rennet/server";
@@ -31,8 +31,22 @@ async function waitForClaimGone(dataDir: string, timeoutMs = 5_000): Promise<voi
   }
 }
 
+/** The user's REAL daemon-settings file. A spawned daemon resolves its settings stores from
+ *  `$HOME`, not from `--data-dir`, so a test that lets it inherit this process's HOME writes
+ *  the developer's own config (it recorded a bogus `lastSeenVersion` there once). Every spawn
+ *  below gets a throwaway HOME, and the test asserts this file was left exactly as it was. */
+const realDaemonSettings = join(homedir(), ".rennet", "daemon-settings.json");
+const readRealSettings = (): string | null => {
+  try {
+    return readFileSync(realDaemonSettings, "utf8");
+  } catch {
+    return null;
+  }
+};
+
 describe("daemon survives app quit; client reattaches (#379)", () => {
   let dataDir: string;
+  let home: string;
   let pid: number | undefined;
 
   beforeAll(() => {
@@ -52,17 +66,22 @@ describe("daemon survives app quit; client reattaches (#379)", () => {
       pid = undefined;
     }
     if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+    if (home) rmSync(home, { recursive: true, force: true });
   });
 
   it("a running daemon outlives its client and the relaunch reattaches to the same pid", async () => {
     dataDir = mkdtempSync(resolve(tmpdir(), "rennet-daemon-life-"));
+    home = mkdtempSync(resolve(tmpdir(), "rennet-daemon-home-"));
+    const before = readRealSettings();
 
-    // First launch: the shell spawns the daemon exactly as ensureDaemon does.
+    // First launch: the shell spawns the daemon exactly as ensureDaemon does — but pointed at
+    // a throwaway HOME, because the daemon's settings stores live under `$HOME/.rennet`.
     spawnDaemon({
       dataDir,
       execPath: process.execPath,
       entryPath: daemonBundle,
       serverVersion: "test",
+      env: { ...process.env, HOME: home, USERPROFILE: home },
     });
     const first = await waitForHealthy(dataDir);
     pid = first.identity.pid;
@@ -84,5 +103,8 @@ describe("daemon survives app quit; client reattaches (#379)", () => {
       expect(launch2.result).toHaveProperty("repositoryPresent");
       launch2.bridge.close();
     }
+
+    // The developer's own config is untouched — the daemon wrote under the throwaway HOME.
+    expect(readRealSettings()).toBe(before);
   }, 30_000);
 });

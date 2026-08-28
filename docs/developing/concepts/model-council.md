@@ -125,8 +125,10 @@ Every resolution returns a trace containing:
 - a plain summary of the selected model, effort, and harness.
 
 The caller records the trace with the run ledger. This makes assignment decisions
-inspectable in stored run data. There is no dedicated council diagnostics screen;
-the current product exposes the result through run and provenance data.
+inspectable in stored run data. There is no dedicated council diagnostics screen
+for traces; the current product exposes trace detail through run and provenance
+data. The *assignments themselves* are readable and editable on the Environments
+page — see [Review roles in Settings](#review-roles-in-settings).
 
 ## Invocation budgets
 
@@ -140,12 +142,70 @@ Zero. The knowledge swarm takes no invocation budget at all: complete map
 coverage is the decided behavior, so its runners have no budget parameter to
 consult.
 
+## Review roles in Settings
+
+The council routes jobs; the settings surface shows **review roles** — eight
+user-legible names, each mapped to a council job that already exists in the
+catalogue. The mapping adds no job IDs and changes no table value; it is a reading
+of the tables, not a second source of truth.
+
+| Review role | Council job |
+|---|---|
+| Orchestrator | `orchestrator-chat` |
+| Context-Map Workers | `partition-worker` |
+| Confirmation Worker | `self-consistency` |
+| Lens Drafters | `lens-draft` |
+| Flagged Second Seat | `lens-draft-flagged` |
+| Adjudication | `adjudication` |
+| Post-Process | `board-post-process` |
+| Utility | `context-ask-fetch` |
+
+Settings → Environments → *(host card)* → **Edit Mappings** resolves every role in
+all three availability scenarios and shows the result in two columns: **Dual
+Harness**, and a **Single Harness** column that resolves to whichever provider is
+enabled on that host. The read is
+**honest-present**: the tables are static, so the eight roles are always there with
+real values, even on an install that has never been configured. A role that does
+not run in a scenario resolves to a null cell and renders an em dash — the Flagged
+Second Seat is the case that matters, since it exists only when both providers are
+available. Nothing is ever filled in with a guess.
+
+Each cell carries the layer it came from, so the surface says where the value came
+from rather than inferring it: the council table, or a task override that won.
+
+### Editing a mapping
+
+Changing a cell writes a **task override** — the top rung of the resolution order
+above — into the viewer's `client-settings.json` under
+`routing.task[jobId][scenario]`. It stores **model and effort only**. The harness is
+never stored: it derives from the resolved model's provider, which is why an
+override cannot select an incoherent model/harness pair.
+
+Overrides are keyed by **(job, scenario)**, not by job alone. Rai ruled this on
+2026-08-28: editing one scenario must never move a sibling scenario, because the
+columns read as independent and it would be a lie in the UI for one edit to change
+values the reviewer did not touch. So an override in `codexOnly` leaves `dual` and
+`claudeOnly` resolving from their own council-table defaults, and each scenario can
+hold its own override at the same time. Each *write* touches exactly one cell; the
+role's **Reset to default** control clears every column that role has actually
+overridden, one write per column, and leaves its un-overridden columns untouched.
+A clear drops the layer rather than writing a copy of the default back, so a later
+table change still reaches that cell. Clearing a job's last cell drops the job entry, and clearing the
+last job drops the `routing` slice entirely: an install that reset everything is
+byte-identical to one that never overrode anything.
+
+What the surface deliberately does **not** do: add council job IDs, edit the
+versioned default tables, or persist provider availability. Availability is
+detected — which harnesses are installed and enabled on that host — not a stored
+override.
+
 ## Changing an assignment
 
 Default model changes belong in the versioned tables in
 `packages/core/src/model-council.ts`. Feature code should request a stable job ID
 rather than naming a provider model. User configuration can override a tier or a
-specific task without changing the catalogue.
+specific task without changing the catalogue; the Environments Review section is the
+in-product path for the task override, described above.
 
 Adding a job requires both catalogue metadata and a default assignment for each
 availability scenario if the job is model-facing. It also requires a real caller

@@ -11,7 +11,7 @@ import { cn } from "@rennet/ui";
 // card owns the chip); the glyph itself is the Windows four-pane.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type HostOS = "macos" | "linux" | "windows" | "wsl";
+export type HostOS = "macos" | "linux" | "windows" | "wsl" | "unknown";
 
 const OS_PATHS: Record<HostOS, string> = {
   macos:
@@ -21,6 +21,9 @@ const OS_PATHS: Record<HostOS, string> = {
   windows:
     "M0 3.45 9.75 2.1v9.45H0Zm10.95-1.5L24 0v11.55H10.95ZM0 12.45h9.75v9.45L0 20.55Zm10.95 0H24V24l-13.05-1.95Z",
   wsl: "M0 3.45 9.75 2.1v9.45H0Zm10.95-1.5L24 0v11.55H10.95ZM0 12.45h9.75v9.45L0 20.55Zm10.95 0H24V24l-13.05-1.95Z",
+  // A paired remote host never reports its platform, so there is no mark to show. Two
+  // neutral stacked bays stand for "a machine" — honest absence, not a guessed penguin.
+  unknown: "M2 4h20v6H2Zm0 10h20v6H2Z",
 };
 
 const OS_LABEL: Record<HostOS, string> = {
@@ -28,7 +31,15 @@ const OS_LABEL: Record<HostOS, string> = {
   linux: "Linux",
   windows: "Windows",
   wsl: "Windows (WSL)",
+  unknown: "Platform unknown",
 };
+
+/** Map a bridge/daemon platform string to a host OS glyph (WSL is undetectable here). */
+export function osFromPlatform(platform: string | undefined): HostOS {
+  if (platform === "darwin") return "macos";
+  if (platform === "win32") return "windows";
+  return "linux";
+}
 
 /** The platform mark for one host OS — inline SVG, `currentColor`, `aria-label`ed. */
 export function OSGlyph({ os, className }: { readonly os: HostOS; readonly className?: string }) {

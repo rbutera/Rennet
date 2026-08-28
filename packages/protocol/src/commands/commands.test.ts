@@ -9,8 +9,30 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // handlers land in cluster 2), plus review.reviseSpan (B11 cluster 5 — the
 // living-draft span-rework command), plus the two session READS B9/B10 deferred
 // (session.transcript — the chat dock's honest-absent transcript read; session.rounds
-// — the rounds-ledger read). A dropped or renamed command fails this loudly; a NEW
-// command is added here deliberately, with its registry row.
+// — the rounds-ledger read), plus forge.detect (C17 cluster 1 — the per-host forge/`gh`
+// CLI detection command that mirrors harness.detect and feeds `sourceControlByHost`), plus
+// daemon.status (C17 cluster 2 — per-host daemon reachable/version/lastSeenVersion/
+// updateAvailable, where an unreachable host invents nothing) and daemon.reconnect (C17
+// cluster 5 — the on-demand re-handshake behind the host card's Reconnect button, whose
+// failure carries the reason rather than reading green), plus harness.hosts
+// (C17 cluster 3 — SERVER-side per-host agent detection, where a host that cannot be
+// asked reads honestly absent instead of inheriting the local machine's agents) and
+// harness.setEnabled (C17 cluster 3.2 — the served per-host enable store the toggle writes
+// through, so a ruled-out agent stays ruled out across reload), plus forge.setEnabled (C17
+// amendment A — the same served store for the Source Control row's toggle, which until now
+// wrote nowhere and silently reset on reload), plus forge.hosts (C17 amendment B — the
+// per-host mirror of harness.hosts, so a WSL card shows ITS own `gh` instead of a section
+// it is structurally incapable of filling) and daemon.update (C17 cluster 6 — the real
+// per-host daemon update behind the Update Daemon button, honest when there is no
+// mechanism for that host), plus board.read (C18 — the lens-board read B3 froze the shape
+// for and left to "B4/B10's business": the persisted board for one (reviewId, generation,
+// lens), honest-null when that lens drafted no board that generation), plus project.rename
+// (C18 — the C12 cluster-7 write both the sidebar row and the Settings identity field call,
+// where an emptied name restores the org/repo fallback) and the four session commands the
+// sidebar honest-empty projection was waiting on (session.list plus rename/setPinned/
+// archive, each persisted so it survives reload). A
+// dropped or renamed command fails this loudly; a NEW command is added here deliberately,
+// with its registry row.
 const ABSORBED_IDS = [
   "app.bootstrap",
   "ask.clearLineComment",
@@ -26,9 +48,16 @@ const ABSORBED_IDS = [
   "ask.stage",
   "ask.unstage",
   "attention.acknowledge",
+  "board.read",
+  "daemon.reconnect",
+  "daemon.status",
+  "daemon.update",
   "device.registerPush",
   "flagged.adjudication",
   "flagged.review",
+  "forge.detect",
+  "forge.hosts",
+  "forge.setEnabled",
   "fs.listDir",
   "github.connectCancel",
   "github.connectPoll",
@@ -37,6 +66,8 @@ const ABSORBED_IDS = [
   "github.setToken",
   "github.status",
   "harness.detect",
+  "harness.hosts",
+  "harness.setEnabled",
   "noise.review",
   "openspec.change",
   "openspec.coverage",
@@ -52,11 +83,11 @@ const ABSORBED_IDS = [
   "project.discover",
   "project.knowledgeDisposition",
   "project.process",
+  "project.rename",
   "projects.add",
   "projects.list",
   "projects.remove",
   "publish.compose",
-  "publish.requestConsent",
   "publish.review",
   "publish.submitPr",
   "repository.choose",
@@ -81,8 +112,12 @@ const ABSORBED_IDS = [
   "review.symbolLookup",
   "review.uiEvidence",
   "round.dispatch",
+  "session.archive",
+  "session.list",
+  "session.rename",
   "session.roundEvents",
   "session.rounds",
+  "session.setPinned",
   "session.transcript",
   "settings.get",
   "settings.guidance",
@@ -92,6 +127,7 @@ const ABSORBED_IDS = [
   "settings.setCoachmarks",
   "settings.setKeybinding",
   "settings.setRepoVisibility",
+  "settings.setRoleAssignment",
 ] as const;
 
 // The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
@@ -119,7 +155,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(80);
+    expect(ABSORBED_IDS).toHaveLength(94);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
@@ -160,6 +196,43 @@ describe("command registry invariants (#465)", () => {
     };
     expect(parseCommandOutput("patchset.readSpan", served)).toEqual(served);
     expect(() => parseCommandOutput("patchset.readSpan", { lines: "not-an-array" })).toThrow();
+  });
+
+  it("settings.setRoleAssignment validates its input (C16 write, #485)", () => {
+    // A real cell edit: role + scenario + a concrete model+effort pick.
+    const edit = {
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "opus-4.8", effort: "high" },
+    };
+    expect(parseCommandInput("settings.setRoleAssignment", edit)).toEqual(edit);
+    // `assignment: null` is the Reset-to-council-default path.
+    const reset = { roleId: "lens-workers", scenario: "claudeOnly", assignment: null };
+    expect(parseCommandInput("settings.setRoleAssignment", reset)).toEqual(reset);
+    // Model + effort only — no harness field (#89); an unknown scenario is rejected.
+    expect(() =>
+      parseCommandInput("settings.setRoleAssignment", { ...edit, scenario: "both" }),
+    ).toThrow();
+    expect(() =>
+      parseCommandInput("settings.setRoleAssignment", {
+        ...edit,
+        assignment: { model: "gpt-4o", effort: "high" },
+      }),
+    ).toThrow();
+    // Output echoes the re-resolved mappings for the optimistic adopt.
+    const served = {
+      reviewRoles: [
+        {
+          id: "lens-workers",
+          label: "Lens Drafters",
+          hint: "The heavy seat.",
+          dual: { value: { model: "opus-4.8", effort: "high" }, layer: "override" },
+          claudeOnly: { value: { model: "opus-4.8", effort: "high" }, layer: "default" },
+          codexOnly: { value: { model: "gpt-5.6-sol", effort: "high" }, layer: "default" },
+        },
+      ],
+    };
+    expect(parseCommandOutput("settings.setRoleAssignment", served)).toEqual(served);
   });
 
   it("every row's args/output are the parse seams' schemas", () => {

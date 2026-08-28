@@ -74,11 +74,17 @@ export interface DetectedTool {
 
 export type RoleEffort = "low" | "medium" | "high" | "xhigh";
 
+/** Where a resolved cell came from: the council table stands, or a routing override won.
+ *  The surface derives "is this a default?" from this, never from a copied table. */
+export type RoleLayer = "default" | "override";
+
 /** One role's model + effort in one availability scenario; `null` means the role does
- *  not run in that scenario (the surface renders an em dash, never a fake assignment). */
+ *  not run in that scenario (the surface renders an em dash, never a fake assignment).
+ *  `layer` is the C16 provenance — omitted reads as the council default. */
 export interface RoleAssignment {
   readonly model: string;
   readonly effort: RoleEffort;
+  readonly layer?: RoleLayer;
 }
 
 /** A user-legible review role over the Model Council job catalogue (#460/#464). One
@@ -154,14 +160,39 @@ export interface SettingsProjection {
    *  no UI lie). A stateful test/B10 projection sets it TRUE, so those editors are live
    *  and provable. (`setRepoVisibility` is NOT in this set — Repository is live-backed.) */
   readonly projectEditsPersist: boolean;
+  /**
+   * Whether the project NAME field has a served write store. Separate from
+   * {@link SettingsProjection.projectEditsPersist} because it is separately TRUE: the
+   * name writes through `project.rename` (C18) while the glyph, worktree, tracker and
+   * guidance editors still have no served write. One flag for both would either disable
+   * a live control or enable four dead ones.
+   */
+  readonly nameEditsPersist: boolean;
 
   /** Rename a host — flows through to the sidebar host-group header (one hosts state). */
   renameHost(id: string, name: string): void;
   /** Forget a remote host (never the local machine). */
   removeHost(id: string): void;
+  /**
+   * Re-attempt the handshake to a host's daemon (C17 cluster 5, #533) — what Reconnect does.
+   * Resolves the honest OUTCOME: `reachable` is what the attempt actually achieved, and
+   * `error` carries the reason when it did not. A projection with no served backend resolves
+   * `{ reachable: false }`, so the button reports a failure instead of pretending to connect.
+   */
+  reconnectHost(id: string): Promise<{ readonly reachable: boolean; readonly error?: string }>;
+  /**
+   * UPDATE a host's daemon (C17 cluster 6, #534) — what Update Daemon does, offered only where
+   * the host reported a real `updateAvailable`. Resolves the honest OUTCOME: `reachable` is
+   * whether the host's daemon answered after the attempt, and `error` carries the reason when
+   * the update did not happen. A projection with no served backend resolves `{ reachable:
+   * false }`, so the button reports a failure instead of claiming an update it never performed.
+   */
+  updateHost(id: string): Promise<{ readonly reachable: boolean; readonly error?: string }>;
   /** Enable/disable one detected tool (source-control OR agent) on a host. */
   setToolEnabled(hostId: string, toolId: string, enabled: boolean): void;
-  /** Set a review role's assignment in one scenario (the mappings dialog cell edit). */
+  /** Set a review role's assignment in ONE scenario (the mappings dialog cell edit), or
+   *  RESET that one cell with `null` so it falls back to that scenario's council default.
+   *  Per-scenario by construction (Rai, 2026-08-28): the sibling columns never move. */
   setRoleAssignment(
     roleId: string,
     scenario: "dual" | "claudeOnly" | "codexOnly",
@@ -195,8 +226,13 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   trackerByProject: {},
   guidanceByProject: {},
   projectEditsPersist: false,
+  nameEditsPersist: false,
   renameHost: () => undefined,
   removeHost: () => undefined,
+  // No backend to hand a handshake to, so the honest outcome is a failed reconnect.
+  reconnectHost: async () => ({ reachable: false }),
+  // No backend to hand an update to, so the honest outcome is an update that did not happen.
+  updateHost: async () => ({ reachable: false }),
   setToolEnabled: () => undefined,
   setRoleAssignment: () => undefined,
   setProjectName: () => undefined,

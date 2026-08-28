@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 //
 // The hand-off exits, wired LIVE (C08 cluster 6, tasks 6.1/6.3). Load-bearing claims over a
-// MemoryBridge: Post Review resolves `publish.compose(mode:"review")` → `publish.requestConsent`
-// → `publish.review` on the sign-click, and the bytes `publish.review` receives are EXACTLY the
+// MemoryBridge: Post Review resolves `publish.compose(mode:"review")` → `publish.review` on the
+// click, and the bytes `publish.review` receives are EXACTLY the
 // ones `publish.compose` returned (the preview equals what posts, R33); nothing is invoked before
 // the click (nothing leaves without it); a daemon that lands no outcome fails honest (never a faked
 // success); a retrospective review offers no exit; Open Pull Request resolves `publish.compose(
@@ -14,7 +14,7 @@ import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, cleanup, mount } from "../test/dom";
+import { act, cleanup, fireEvent, mount } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
@@ -62,6 +62,29 @@ function stage(anchor: string, type: "comment" | "request-change" = "request-cha
   );
 }
 
+/** A staged ask whose body is plain prose (no `path:line`, so `RichText` leaves one text node). */
+const PROSE_BODY = "this needs a guard on the boundary";
+function stageProse() {
+  act(() =>
+    useRennetStore.getState().reviewActions.stageAsk({
+      id: "a1",
+      anchor: "src/a.ts:5",
+      type: "request-change",
+      body: PROSE_BODY,
+    }),
+  );
+}
+
+/** Select the contents of `el`, then release the mouse on it (the anchoring gesture). */
+function selectAndRelease(el: Element) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  act(() => el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+}
+
 function mountHandoff(r: Review, handlers: MemoryBridgeHandlers, calls: string[] = []) {
   const history = memoryHistory("/s/x?view=handoff");
   const bridge = new MemoryBridge(handlers);
@@ -76,11 +99,11 @@ function mountHandoff(r: Review, handlers: MemoryBridgeHandlers, calls: string[]
 }
 
 describe("hand-off exits (C08 cluster 6)", () => {
-  it("Post Review composes → requests consent → posts the byte-exact bytes, then receipts", async () => {
+  it("Post Review composes → posts the byte-exact bytes and the composed verdict, then receipts", async () => {
     const calls: string[] = [];
     let postedPayload: string | undefined;
     let postedDryRun: boolean | undefined;
-    let postedAuth: string | undefined;
+    let postedVerdict: string | undefined;
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": (input) => {
         calls.push(`compose:${input.mode}`);
@@ -94,18 +117,11 @@ describe("hand-off exits (C08 cluster 6)", () => {
           compositionId: "comp-1",
         };
       },
-      "publish.requestConsent": (input: CommandInput<"publish.requestConsent">) => {
-        calls.push("consent");
-        // The token binds the previewed payload + the human's verdict.
-        expect(input.payload).toBe(PAYLOAD);
-        expect(input.verdict).toBe("REQUEST_CHANGES");
-        return { authorization: "tok-abc" };
-      },
       "publish.review": (input: CommandInput<"publish.review">) => {
         calls.push("review");
         postedPayload = input.payload;
         postedDryRun = input.dryRun;
-        postedAuth = input.authorization;
+        postedVerdict = input.verdict;
         return {
           dryRun: false,
           request: { endpoint: "graphql", method: "POST", body: {} },
@@ -133,17 +149,87 @@ describe("hand-off exits (C08 cluster 6)", () => {
 
     await r.user.click(r.getByRole("button", { name: /Post Review/ }));
 
-    // The sign-click ran the egress in order — and never re-composed (compose stays at one).
-    expect(calls).toEqual(["compose:review", "consent", "review"]);
-    // The preview equals what posts: publish.review received the exact bytes compose returned.
+    // The click ran the egress — and never re-composed (compose stays at one). No consent leg:
+    // the click IS the authorization (#435).
+    expect(calls).toEqual(["compose:review", "review"]);
+    // The preview equals what posts: publish.review received the exact bytes compose returned,
+    // and the COMPOSED verdict — the daemon binds both, so no other event could post.
     expect(postedPayload).toBe(PAYLOAD);
-    // Real egress is the explicit opt-in, carrying the minted token.
+    expect(postedVerdict).toBe("REQUEST_CHANGES");
+    // Real egress is the explicit opt-in.
     expect(postedDryRun).toBe(false);
-    expect(postedAuth).toBe("tok-abc");
     // The receipt names the verdict + line-comment count (one of two comments carries a line) + link.
     expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
     expect(r.getByText(/Request Changes · 1 line comment · body/)).toBeTruthy();
     expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
+  });
+
+  it("a verdict flip writes the ask log and RECOMPOSES — Post posts the recomposed verdict", async () => {
+    // The single verdict channel (#435). The verdict rides in the composition binding, so it can
+    // only change by changing the COMPOSITION: a flip writes `ask.setVerdictOverride`, the daemon
+    // recomposes, and Post ships the recomposed event. There is no second verdict argument, and a
+    // flip that stayed local would silently post the un-flipped verdict.
+    //
+    // The composed set here has NO request-change among the line comments — the request-change is
+    // a pathless BODY note, exactly like the daemon's own derivation input. So "proposed" must be
+    // derived over BOTH strata; deriving over the line comments alone would report the composition
+    // as "overridden — proposed comment" against its own honest REQUEST_CHANGES.
+    const calls: string[] = [];
+    let composedVerdict: "REQUEST_CHANGES" | "COMMENT" | "APPROVE" = "REQUEST_CHANGES";
+    let postedVerdict: string | undefined;
+    const handlers: MemoryBridgeHandlers = {
+      "publish.compose": () => {
+        calls.push(`compose:${composedVerdict}`);
+        return {
+          status: "review",
+          comments: [
+            { path: "src/a.ts", line: 5, side: "RIGHT", type: "comment", body: "a line note" },
+          ],
+          bodyNotes: [{ type: "request-change", body: "guard the boundary" }],
+          payload: PAYLOAD,
+          verdict: composedVerdict,
+          destination: "acme/orbital#7",
+          title: "acme/orbital#7",
+          compositionId: `comp-${composedVerdict}`,
+        };
+      },
+      "ask.setVerdictOverride": (input) => {
+        calls.push(`override:${input.verdict}`);
+        // The real daemon lands the override on the ask log, so the NEXT compose carries it.
+        composedVerdict = input.verdict ?? "REQUEST_CHANGES";
+        return { receipt: { kind: "verdict-override-set", verdict: "APPROVE" } };
+      },
+      "publish.review": (input) => {
+        calls.push("review");
+        postedVerdict = input.verdict;
+        return {
+          dryRun: false,
+          request: { endpoint: "graphql", method: "POST", body: {} },
+          marker: "m1",
+          ledger: [],
+          outcome: { reviewRef: "R_1", url: "https://x/1", reused: false },
+        };
+      },
+    };
+    const r = mountHandoff(review({ postTarget }), handlers);
+    stage("src/a.ts:5", "request-change");
+    expect(await r.findByText("a line note")).toBeTruthy();
+    // The composition agrees with itself: the body-note request-change IS the proposal, so the
+    // control reports no override and offers no dead revert.
+    expect(r.getByText(/proposed from your review/)).toBeTruthy();
+    expect(r.queryByText(/overridden/)).toBeNull();
+
+    await r.user.click(r.getByRole("button", { name: /Approve/ }));
+
+    // The flip landed on the ask log and the lane RECOMPOSED (the override now differs from the
+    // proposal, which only the recomposed draft can say).
+    expect(await r.findByText(/overridden — proposed request changes/)).toBeTruthy();
+    expect(calls).toEqual(["compose:REQUEST_CHANGES", "override:APPROVE", "compose:APPROVE"]);
+
+    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
+    // What posts is the RECOMPOSED verdict — the event on screen, never a stale one.
+    expect(postedVerdict).toBe("APPROVE");
+    expect(await r.findByText(/Approve · 1 line comment · body/)).toBeTruthy();
   });
 
   it("an inline edit that can't reach the composition is marked pending — never silently divergent", async () => {
@@ -162,7 +248,6 @@ describe("hand-off exits (C08 cluster 6)", () => {
         title: "acme/orbital#7",
         compositionId: "comp-1",
       }),
-      "publish.requestConsent": () => ({ authorization: "tok-abc" }),
       "publish.review": (input: CommandInput<"publish.review">) => {
         postedPayload = input.payload;
         postedComments = input.comments;
@@ -202,7 +287,6 @@ describe("hand-off exits (C08 cluster 6)", () => {
         title: "acme/orbital#7",
         compositionId: "comp-1",
       }),
-      "publish.requestConsent": () => ({ authorization: "tok-abc" }),
       // A dry-run-shaped response: nothing left the machine (outcome null).
       "publish.review": () => ({
         dryRun: true,
@@ -233,6 +317,66 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // The hand-off view renders nothing for a retrospective review (law 10).
     expect(r.queryByRole("button", { name: /Post Review|Open Pull Request/ })).toBeNull();
     expect(calls).toEqual([]);
+  });
+
+  it("selection Revise dispatches the live review.reviseSpan and stages the reworked body", async () => {
+    // The end-to-end revise path (C08 cluster 8, over B11's landed command): the reviewer selects
+    // a span in the own-branch Changes surface, drafts an instruction, and Rework fires the
+    // REGISTERED `review.reviseSpan` once — carrying the review, the ask the span belongs to, the
+    // selected span and the instruction — then stages the body the daemon's CAS+splice returned.
+    const calls: CommandInput<"review.reviseSpan">[] = [];
+    const handlers: MemoryBridgeHandlers = {
+      "review.reviseSpan": (input) => {
+        calls.push(input);
+        return {
+          status: "reworked",
+          carriedAnchor: "guard the boundary on retry",
+          reworkedBody: "guard the boundary on retry",
+          receipt: { kind: "edit", id: input.askId, body: PROSE_BODY },
+        };
+      },
+    };
+    const r = mountHandoff(review(), handlers); // own branch → the rounds lanes
+    stageProse();
+    selectAndRelease(await r.findByText(PROSE_BODY));
+    await r.user.click(r.getByText("Revise"));
+    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "make this concrete" } });
+    await r.user.click(r.getByRole("button", { name: "Rework" }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      reviewId: "r1",
+      askId: "a1",
+      span: PROSE_BODY,
+      instruction: "make this concrete",
+    });
+    expect(typeof calls[0]?.commandId).toBe("string");
+    // The rework landed on the ask — the card renders the reworked body, not the old one.
+    expect(await r.findByText("guard the boundary on retry")).toBeTruthy();
+    expect(useRennetStore.getState().review.stagedAsks.a1?.body).toBe(
+      "guard the boundary on retry",
+    );
+  });
+
+  it("a rework the daemon refuses states the reason and leaves the ask alone", async () => {
+    const handlers: MemoryBridgeHandlers = {
+      "review.reviseSpan": () => ({
+        status: "unavailable",
+        reason: "Span rework is not available in this build.",
+      }),
+    };
+    const r = mountHandoff(review(), handlers);
+    stageProse();
+    selectAndRelease(await r.findByText(PROSE_BODY));
+    await r.user.click(r.getByText("Revise"));
+    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "make this concrete" } });
+    await r.user.click(r.getByRole("button", { name: "Rework" }));
+
+    // The daemon's own reason is shown; the panel stays open and the ask body is untouched.
+    expect(await r.findByText(/Span rework is not available in this build\./)).toBeTruthy();
+    expect(useRennetStore.getState().review.stagedAsks.a1?.body).toBe(PROSE_BODY);
   });
 
   it("Open Pull Request composes(pr) → submits, then receipts the PR number + link", async () => {

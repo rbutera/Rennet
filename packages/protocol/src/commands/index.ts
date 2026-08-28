@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LensBoardSchema, LensKindSchema } from "../board/lens-board";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
 import {
@@ -19,11 +20,15 @@ import {
   coachMarksSchema,
   composedHandoffBundleSchema,
   conversationAnchorSchema,
+  councilPickSchema,
+  daemonHostStatusSchema,
   deltaDigestResultSchema,
+  detectedForgeSchema,
   detectedHarnessSchema,
   discoveryResultSchema,
   dispositionTypeSchema,
   flaggedReviewSchema,
+  forgeHostDetectionSchema,
   forgeRequestSchema,
   forgeReviewEventSchema,
   fsListDirResultSchema,
@@ -33,6 +38,7 @@ import {
   handoffDisclosureSchema,
   handoffDispositionSchema,
   handoffRunOutputSchema,
+  harnessHostDetectionSchema,
   knowledgeDispositionResultSchema,
   noiseReviewSchema,
   openSpecChangeSchema,
@@ -57,12 +63,15 @@ import {
   resolvedProvenanceSchema,
   reviewBodyNoteSchema,
   reviewCommentSchema,
+  reviewRoleMappingSchema,
+  reviewRoleScenarioSchema,
   reviewSchema,
   setRepoVisibilityOutcomeSchema,
   settingsGuidanceSchema,
   settingsRepoValueKeySchema,
   settingsRepoWriteOutcomeSchema,
   settingsViewSchema,
+  sidebarSessionSchema,
   sourceSchema,
   symbolInspectionSchema,
 } from "../wire";
@@ -184,42 +193,6 @@ const definitions = {
     }),
     output: z.object({ review: reviewSchema }),
   },
-  // ── Publish consent request, main-issued (issue #21) ───────────────────────
-  // Posting to GitHub is an EXTERNAL act, so it stays explicitly confirmed (running
-  // a model, by contrast, just runs). The renderer REQUESTS approval to POST a
-  // review; MAIN is the sole issuer of the authorization, and the token is bound to
-  // the exact TARGET (PR + head) AND the exact PAYLOAD bytes.
-  // A token minted to post payload P to PR#5@head-A cannot authorise a different
-  // payload, a different PR, or a different head. Single-use, consumed at egress.
-  "publish.requestConsent": {
-    input: z.object({
-      commandId: commandIdSchema,
-      reviewId: z.string().min(1),
-      target: publishTargetSchema,
-      /** The canonical payload bytes the token authorises (bound by digest). */
-      payload: z.string(),
-      /**
-       * The resolved review VERDICT/event the token authorises. Bound alongside the
-       * payload because it is the one outbound field the payload bytes do not capture
-       * (`buildForgeReviewPost` renders the GraphQL post as a pure function of review +
-       * target + payload + verdict) — so an APPROVE/REQUEST_CHANGES cannot be swapped in
-       * after the human approved a COMMENT. The renderer sends the same value here and
-       * at `publish.review`.
-       */
-      verdict: forgeReviewEventSchema,
-      /**
-       * The compose integrity binding (#382 M2 finding 2), when the artifact was daemon-composed
-       * (the phone flow). Optional/additive: the desktop composes locally and omits it. When
-       * present, the daemon recomputes it from the CURRENT review and refuses a stale/cross-review
-       * mint before a token is issued.
-       */
-      compositionId: z.string().min(1).optional(),
-    }),
-    output: z.object({
-      /** The opaque, single-use authorization bound to (review, target, payload, verdict). */
-      authorization: z.string().min(1),
-    }),
-  },
   // ── Publish a review to GitHub (issue #21) — the FIRST real egress ──────────
   // The pipeline NEVER autonomously posts to a real repo: egress exists ONLY behind
   // this command, from the trusted renderer origin, and every real send is gated.
@@ -228,11 +201,12 @@ const definitions = {
   //   • MAIN re-derives the canonical payload from `comments` and refuses on any
   //     disagreement with `payload` (byte-exact), and refuses an ill-formed target —
   //     both on dry-run and real, so the dry-run surfaces integrity faults too.
-  //   • A real send ALWAYS requires the single-use token from `publish.requestConsent`,
-  //     bound to THIS review, target, and payload; absent / forged / replayed ⇒
-  //     refused, nothing leaves. Posting to GitHub is an external act — it stays
-  //     explicitly confirmed — unlike running a model, which just runs. Dry-run needs
-  //     no token (it posts nothing).
+  //   • The user's click on Post IS the authorization — there is no token and no
+  //     confirmation step (Rule Zero, #435). What a real send still must satisfy: the
+  //     review's OWN pull request as the target, and a `compositionId` (when the client
+  //     composed one) that still matches the CURRENT review AND the verdict being
+  //     posted — so the review that leaves is byte-for-byte, event-for-event the one
+  //     that was previewed.
   //   • The review event is always a neutral COMMENT — the outbound request has no
   //     shape for APPROVE (R33/#80).
   "publish.review": {
@@ -257,11 +231,10 @@ const definitions = {
        * verdict picker feeds this; until then it simply stays unset.
        */
       verdict: forgeReviewEventSchema.optional(),
-      /** The single-use consent token from `publish.requestConsent` (real send only). */
-      authorization: z.string().min(1).optional(),
       /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
-       *  Optional/additive; when present the daemon recomputes it and refuses a stale/cross-review
-       *  post (dry-run included) before building the request. */
+       *  Optional/additive; when present the daemon recomputes it — over the current review AND
+       *  the `verdict` above — and refuses a stale/cross-review/verdict-swapped post (dry-run
+       *  included) before building the request. */
       compositionId: z.string().min(1).optional(),
       /** Default TRUE: an omitted flag never posts. Real egress must opt in with false. */
       dryRun: z.boolean().optional().default(true),
@@ -396,6 +369,97 @@ const definitions = {
     input: z.object({}),
     output: z.object({ detected: z.array(detectedHarnessSchema) }),
   },
+  // Per-host harness detection (C17 cluster 3, #485). SERVER-side fan-out: the daemon this is
+  // dispatched to asks EVERY host the settings surface enumerates — itself directly, a WSL
+  // distro through `wsl.exe`, a paired remote device not at all (it dials US; there is no
+  // outbound connection to dial back). Each entry carries `asked`, so a host that could not be
+  // interrogated reads honestly absent rather than inheriting the local machine's agents.
+  "harness.hosts": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(harnessHostDetectionSchema) }),
+  },
+  // Rule an agent in or out of reviews ON ONE HOST (C17 cluster 3.2) — the served store behind
+  // the per-host enable toggle, persisted in daemon-settings so the decision survives reload.
+  // Scoped to the host: ruling Codex out here leaves it running on a WSL distro. It never
+  // installs, uninstalls or hides anything — the row stays, with its toggle off.
+  "harness.setEnabled": {
+    input: z.object({
+      source: sourceSchema,
+      harnessId: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    // The host's ruled-out ids after the write — the stored decision, read back verbatim.
+    output: z.object({ disabled: z.array(z.string()) }),
+  },
+  // Forge (source-control) CLI detection, mirroring harness.detect (C17, #484 seam / #483
+  // "gh rides again"). Runs on the daemon it is dispatched to = that host; the client folds
+  // the rows into `sourceControlByHost`. Singleton registry today — GitHub / `gh` only.
+  "forge.detect": {
+    input: z.object({}),
+    output: z.object({ detected: z.array(detectedForgeSchema) }),
+  },
+  // Per-host forge detection (C17 amendment B), the exact mirror of `harness.hosts`: the daemon
+  // this is dispatched to walks the SAME host enumeration and runs forge discovery through each
+  // host's OWN deps — itself directly, a WSL distro through `wsl.exe`, a paired remote device not
+  // at all. Each entry carries `asked`, so a host that cannot be interrogated reads honestly
+  // absent rather than inheriting this machine's `gh`. `forge.detect` stays for the single-host
+  // read; this is what the settings surface's Source Control sections are keyed by.
+  "forge.hosts": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(forgeHostDetectionSchema) }),
+  },
+  // Rule a forge CLI in or out ON ONE HOST (amendment A) — the served write behind the Source
+  // Control row's toggle, mirroring harness.setEnabled exactly and persisted on the same
+  // per-host daemon-settings entry, so the decision survives reload. Read back through
+  // `harness.hosts`'s `disabledForges`. It installs nothing and hides nothing: the row stays,
+  // with its toggle off.
+  "forge.setEnabled": {
+    input: z.object({
+      source: sourceSchema,
+      forgeId: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    /** The host's ruled-out forge ids after the write — the stored decision, verbatim. */
+    output: z.object({ disabled: z.array(z.string()) }),
+  },
+  // Per-host daemon status (C17, #485): the daemon this is dispatched to reports, for EVERY
+  // host the settings surface enumerates, whether that host's daemon answered, its running
+  // version, the version it was last seen running, and whether an update is available. A host
+  // that does not answer carries `reachable: false` with NO version — never a guessed one.
+  "daemon.status": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(daemonHostStatusSchema) }),
+  },
+  // Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation behind
+  // the host card's Reconnect button. The same per-host handshake `daemon.status` polls, run on
+  // demand for one host and reporting WHY it failed: `local` re-reads the claim file, a WSL
+  // distro is re-entered over `wsl.exe` and its published port health-checked, a paired remote
+  // device cannot be dialled back at all and says so. The outcome is that host's real status —
+  // a failed reconnect stays `reachable: false` and carries the failure line, never a green card.
+  "daemon.reconnect": {
+    input: z.object({ source: sourceSchema }),
+    output: z.object({
+      /** That host's status AFTER the attempt — the same shape `daemon.status` returns. */
+      status: daemonHostStatusSchema,
+      /** Why the handshake failed, when it did. Absent on success. Never a generic filler. */
+      error: z.string().optional(),
+    }),
+  },
+  // UPDATE one host's daemon (C17 cluster 6, #534) — the operation behind the host card's
+  // Update Daemon button, which shows only when `daemon.status` reported a real
+  // `updateAvailable`. The only host kind with an update mechanism today is `wsl:<distro>`:
+  // the current server bundle is delivered into the distro and the old daemon restarted on it.
+  // A host with no mechanism (this machine's daemon ships with the app; a paired device
+  // updates itself) says so in `error` and changes nothing — never a dead "Updating…".
+  "daemon.update": {
+    input: z.object({ source: sourceSchema }),
+    output: z.object({
+      /** That host's status AFTER the attempt — the same shape `daemon.status` returns. */
+      status: daemonHostStatusSchema,
+      /** Why the update failed, when it did. Absent on success. Never a generic filler. */
+      error: z.string().optional(),
+    }),
+  },
   // ── The GitHub account (v4.2: device flow, no gh CLI) ──────────────────────
   // Connect is SKIPPABLE everywhere it appears (working-tree review needs no
   // GitHub); these commands exist so the first-run card and the settings rows can
@@ -470,6 +534,21 @@ const definitions = {
       contextAfter: z.array(z.string()),
     }),
   },
+  "board.read": {
+    // The lens-board read (C05 cluster 8, registered in C18). `LensBoardSchema` froze
+    // in B3 with the command left to "B4/B10's business"; this is it. Serves the
+    // PERSISTED board for one `(reviewId, generation, lens)` triple, projected from the
+    // whiteboard event log the lens pipeline wrote (`runLensBoard` → `whiteboard.apply`)
+    // plus the board-meta record that carries its board-level coverage. `board: null` is
+    // the honest MISSING answer — that lens drafted no board that generation — and is
+    // never a fabricated or partially-invented board.
+    input: z.object({
+      reviewId: z.string().min(1),
+      generation: z.string().min(1),
+      lens: LensKindSchema,
+    }),
+    output: z.object({ board: LensBoardSchema.nullable() }),
+  },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.
     // MAIN derives the stored shape (name, counts, open target) so the renderer
@@ -487,6 +566,15 @@ const definitions = {
       // silently disagree with `discovery.source` (persisting the wrong daemon).
     }),
     output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
+  },
+  "project.rename": {
+    // Rename a project's display name (C12 cluster 7, bound in C18) — the sidebar row
+    // and the Settings identity field are two callers of this one write. An EMPTIED
+    // name is not an error and is not stored empty: the host restores the `org/repo`
+    // fallback derived from the project's own path (R67), so the row reads its identity
+    // again rather than an unnamed blank. Returns the renamed project and the fresh list.
+    input: z.object({ projectId: z.string().min(1), name: z.string() }),
+    output: z.object({ project: projectSchema.nullable(), projects: z.array(projectSchema) }),
   },
   "projects.remove": {
     // Forget a project from the front-door list. Does NOT delete the repo on disk —
@@ -918,6 +1006,25 @@ const definitions = {
     input: coachMarksSchema,
     output: coachMarksSchema,
   },
+  // ── Settings: set (or reset) a review role's model assignment (C16 · #485) ──
+  // The Environments → Review mappings dialog's cell edit. A personal, app-side
+  // WRITE — writes only `~/.rennet/client-settings.json`'s `routing.task` slice,
+  // never a repo. Mirrors `setKeybinding`/`setCoachmarks`: a plain write, first
+  // click, no confirmation (Rule Zero), REFUSED (throws) when the config is
+  // malformed so an edit never overwrites unparseable bytes (Rule 75). Model +
+  // effort only — harness always derives from the resolved model's provider (#89),
+  // so there is no harness field. `assignment: null` RESETS the cell to the
+  // council-table default (clears the `routing.task` entry). Output echoes the
+  // re-resolved mappings so the surface adopts them optimistically (the READ
+  // itself rides `settings.get` — no separate read command).
+  "settings.setRoleAssignment": {
+    input: z.object({
+      roleId: z.string().min(1),
+      scenario: reviewRoleScenarioSchema,
+      assignment: councilPickSchema.nullable(),
+    }),
+    output: z.object({ reviewRoles: z.array(reviewRoleMappingSchema) }),
+  },
   // ── Settings: set a repo's repo-scope map visibility (wireframe #15) ───────
   // Genuinely consumed: runs the real visibility switch, which writes the repo's
   // Rennet-owned `.rennet/.gitignore` (exclusion state only — never stages,
@@ -1220,6 +1327,31 @@ const definitions = {
   "session.roundEvents": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: z.object({ events: z.array(RoundEventSchema) }),
+  },
+  // ── The sidebar's sessions (C03 cluster 2, bound in C18) ────────────────────
+  // The sidebar showed an honest EMPTY session state because protocol carried no
+  // `session.list`. These four are that projection and its writes, served from the
+  // durable session store: every row is a fact of a persisted `SessionModel`, and
+  // every write persists so a rename, a pin, or an archive survives reload. Archive
+  // carries the boolean rather than minting a fourth command — restore IS un-archive.
+  "session.list": {
+    input: z.object({}),
+    output: z.object({ sessions: z.array(sidebarSessionSchema) }),
+  },
+  "session.rename": {
+    // An emptied title is not stored empty: it CLEARS the reviewer's title, so the row
+    // falls back to the claimed branch (the same restore-the-default rule as a project).
+    input: z.object({ sessionId: z.string().min(1), title: z.string() }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  "session.setPinned": {
+    input: z.object({ sessionId: z.string().min(1), pinned: z.boolean() }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  "session.archive": {
+    // `archived: false` is RESTORE — un-archiving returns the session to the sidebar.
+    input: z.object({ sessionId: z.string().min(1), archived: z.boolean() }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
   },
   // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
   // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;

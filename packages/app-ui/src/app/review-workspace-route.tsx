@@ -24,12 +24,11 @@ import { useRennetStore } from "../store";
 // the FAB toggles to); C5 owns the default: the lens board document — sections in reading
 // order, the lens switcher, and (once a review has frozen predecessors) the generation switcher.
 //
-// The board arrives through `board/board-data.ts`'s seam. No board-fetch command is
-// registered yet (Reconciliation 1 — that is B4/B10's job), so with no `BoardSource`
-// wired the surface renders its honest empty state until B8 emits real boards; the seam
-// then binds `useCommand` in the single gated swap (cluster 8). Generation identity is
-// likewise the session projection's to supply (B4/B9): until then the route opens on the
-// one knowable, live generation.
+// The board arrives through `board/board-data.ts`'s seam, which reads the registered
+// `board.read` command (bound in C18) for this review's `(generation, lens)` pairs — a
+// lens the host drafted no board for is honestly absent. Generation identity is still the
+// session projection's to supply (B4/B9): until then the route opens on the one knowable,
+// live generation.
 //
 // The exit FAB is mounted across the reading views (board/diff) in a `relative` container so its
 // `absolute inset-0` root observes the PANE's width (the 54rem label-drop, C08 cluster 2). It
@@ -100,7 +99,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       ) : view === "diff" ? (
         <DiffViewContainer review={review} roundGeneration={query.round ?? undefined} />
       ) : view === "rounds" && roundRecords.length > 0 ? (
-        <RoundsLedger slug={slug} records={roundRecords} />
+        <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
       ) : greetingArmed && inReportPhase ? (
         // Report phase with the greeting armed: the report GATES the reveal. A valid report
         // leads the surface (regeneration streaming beneath); a missing or invalid report is
@@ -123,7 +122,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
               REVIEW · {review.repositoryRoot.split("/").at(-1)}
             </p>
           </header>
-          <LensBoardView generation={boardGeneration} />
+          <LensBoardView reviewId={review.id} generation={boardGeneration} />
         </>
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
@@ -202,9 +201,11 @@ function HandoffMount({
       review={review}
       onPost={exits.onPost}
       reviewDraft={exits.reviewDraft}
+      onSetVerdict={exits.onSetVerdict}
       pr={exits.pr}
       onDispatch={onDispatch}
       onOpenPr={exits.onOpenPr}
+      onRevise={exits.onRevise}
     />
   );
 }

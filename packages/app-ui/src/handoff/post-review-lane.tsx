@@ -18,6 +18,7 @@ import {
   composeLivingDraft,
   type LineComment,
   type ReviewDraft,
+  type ReviseSpan,
   reviseDraftSpan,
 } from "./handoff-data";
 import {
@@ -38,8 +39,8 @@ import {
 //     routing (R36), placement is the statement, no chrome copy explains the split.
 //   • steering is by SELECTION (R32): the body mounts inside C4's `ProseSelectionLayer` with
 //     Drop (retire + unstage, real) / Explain (provenance over the slice, raises no exit) /
-//     Revise (reaches the `handoff-data.ts` rework seam — the affordance renders, execution is
-//     gated, cluster 8). The reviewer never types into the draft.
+//     Revise (reaches the `handoff-data.ts` rework seam, now bound to B11's live
+//     `review.reviseSpan`). The reviewer never types into the draft.
 //   • RECEIPT-IS-UNDO: every drop/retire/delete/edit/verdict change reads back reversible from
 //     the store; only the final sign-click (`onSubmit`) is irreversible. The draft above IS the
 //     preview — no separate preview stage (R31).
@@ -85,7 +86,7 @@ export interface PostReviewLaneProps {
    * The egress — posts the composed `draft` on the sign-click (cluster 6). Absent ⇒ the Post CTA
    * is present but disabled (no egress wired / review not composed yet).
    */
-  readonly onPost?: (args: { verdict: ProposedVerdict }) => Promise<PostReceipt>;
+  readonly onPost?: () => Promise<PostReceipt>;
   /**
    * The composed outbound review (the daemon's `publish.compose` bytes). When present, the lane
    * PREVIEWS exactly these bytes and posts the same composition (the exact-preview contract,
@@ -93,16 +94,52 @@ export interface PostReviewLaneProps {
    * over the store (used while composing and by unit mounts) with the CTA disabled.
    */
   readonly draft?: ReviewDraft;
+  /**
+   * Flip the composed review's verdict — a durable write that recomposes (#435). Absent ⇒ the
+   * control renders the composed verdict and a flip does nothing (unit mounts).
+   */
+  readonly onSetVerdict?: (verdict: ProposedVerdict | null) => void;
+  /**
+   * Selection-steer Revise, bound to B11's `review.reviseSpan` (cluster 8). Absent ⇒ the Rework
+   * control is disabled and the panel says so — never a pretend run.
+   */
+  readonly onRevise?: ReviseSpan;
 }
 
-export function PostReviewLane({ review, onPost, draft }: PostReviewLaneProps) {
+export function PostReviewLane({
+  review,
+  onPost,
+  draft,
+  onSetVerdict,
+  onRevise,
+}: PostReviewLaneProps) {
   // The composed preview IS what posts (exact-preview): when the daemon's composition is in hand,
   // render THOSE bytes, never the local working draft that recomposed to different bytes on click.
-  if (draft) return <ComposedReviewPreview review={review} draft={draft} onPost={onPost} />;
-  return <WorkingReviewDraft review={review} onPost={onPost} />;
+  if (draft)
+    return (
+      <ComposedReviewPreview
+        review={review}
+        draft={draft}
+        onPost={onPost}
+        onSetVerdict={onSetVerdict}
+      />
+    );
+  return (
+    <WorkingReviewDraft
+      review={review}
+      onPost={onPost}
+      onSetVerdict={onSetVerdict}
+      onRevise={onRevise}
+    />
+  );
 }
 
-function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft">) {
+function WorkingReviewDraft({
+  review,
+  onPost,
+  onSetVerdict,
+  onRevise,
+}: Omit<PostReviewLaneProps, "draft">) {
   const patchsetId = review.activePatchsetId;
   const postTarget = review.postTarget;
   const prRef = postTarget
@@ -129,7 +166,14 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
   );
   const threadsStaying = Object.keys(quoteThreads).length;
 
-  const effectiveVerdict = verdictOverride ?? arithmetic.proposed;
+  // A verdict flip is DURABLE (#435): it writes the ask log, which is what `publish.compose`
+  // reads, so the flip survives into the composition instead of being discarded the moment the
+  // composed preview arrives. The local store keeps this pre-compose lane's control responsive
+  // (there is no composition to read back from yet); the durable write is what makes it real.
+  const flipVerdict = (verdict: ProposedVerdict | null): void => {
+    setVerdictOverride(verdict);
+    onSetVerdict?.(verdict);
+  };
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -152,8 +196,25 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
       return text.includes(quote) || quote.includes(text.slice(0, 40));
     });
 
+  // Land a reworked ask so the lane actually SHOWS it. This lane renders `blockText` — an inline
+  // `draftEdits` shadow WINS over the ask body — so re-staging alone would leave the reviewer's
+  // stale shadow on screen while the panel closed as success. Overwrite the shadow when one
+  // exists (the rework supersedes the edit it was run against); never mint one where there is
+  // none, or the composed preview would count a phantom "inline edit pending".
+  const landRework = (reworked: StagedAsk) => {
+    stageAsk(reworked);
+    if (draftEdits[reworked.id] !== undefined) setDraftEdit(reworked.id, reworked.body);
+  };
+
   const draftHandlers: DraftHandlers = {
-    onRevise: (quote, instruction) => reviseDraftSpan(quote, instruction),
+    // Live span rework: resolve the span back to its ask, then route through the ONE seam.
+    onRevise: onRevise
+      ? async (quote, instruction) => {
+          const ask = findBodyAsk(quote);
+          if (!ask) return "That span no longer matches a staged ask.";
+          return reviseDraftSpan(onRevise, landRework, ask, quote, instruction);
+        }
+      : undefined,
     onDrop: (quote) => {
       const ask = findBodyAsk(quote);
       if (!ask) return;
@@ -225,7 +286,7 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
           <VerdictControl
             arithmetic={arithmetic}
             verdictOverride={verdictOverride}
-            setVerdictOverride={setVerdictOverride}
+            setVerdictOverride={flipVerdict}
           />
         </div>
 
@@ -331,7 +392,7 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
             onSubmit={
               onPost
                 ? async () => {
-                    setReceipt(await onPost({ verdict: effectiveVerdict }));
+                    setReceipt(await onPost());
                   }
                 : undefined
             }
@@ -419,10 +480,12 @@ function ComposedReviewPreview({
   review,
   draft,
   onPost,
+  onSetVerdict,
 }: {
   review: Review;
   draft: ReviewDraft;
-  onPost?: (args: { verdict: ProposedVerdict }) => Promise<PostReceipt>;
+  onPost?: () => Promise<PostReceipt>;
+  onSetVerdict?: (verdict: ProposedVerdict | null) => void;
 }) {
   const patchsetId = review.activePatchsetId;
   const postTarget = review.postTarget;
@@ -430,19 +493,20 @@ function ComposedReviewPreview({
     ? `${postTarget.repo.owner}/${postTarget.repo.name}#${postTarget.number}`
     : draft.destination;
 
-  const verdictOverride = useRennetStore((s) => s.review.verdictOverride);
-  const setVerdictOverride = useRennetStore((s) => s.reviewActions.setVerdictOverride);
   const draftEdits = useRennetStore((s) => s.review.draftEdits);
   const pendingEditCount = Object.keys(draftEdits).length;
 
   const [receipt, setReceipt] = useState<PostReceipt | null>(null);
 
+  // The verdict shown is the COMPOSED one — the daemon binds it into the composition, so it is
+  // exactly what posts (#435). Flipping it writes the durable override and recomposes; there is
+  // no local verdict here to drift from the composition.
   const arithmetic: VerdictArithmetic = {
-    proposed: draft.verdict,
+    proposed: draft.proposed,
     requestChanges: draft.arithmetic.requestChanges,
     comments: draft.arithmetic.comments,
   };
-  const effectiveVerdict = verdictOverride ?? draft.verdict;
+  const verdictOverride = draft.verdict === draft.proposed ? null : draft.verdict;
   const lineCommentCount = draft.lineGroups.reduce((n, g) => n + g.comments.length, 0);
 
   if (receipt) {
@@ -481,7 +545,7 @@ function ComposedReviewPreview({
         <VerdictControl
           arithmetic={arithmetic}
           verdictOverride={verdictOverride}
-          setVerdictOverride={setVerdictOverride}
+          setVerdictOverride={onSetVerdict ?? (() => undefined)}
         />
 
         {/* Any inline edit that cannot reach the composition, named — not silently dropped. */}
@@ -544,7 +608,7 @@ function ComposedReviewPreview({
             onSubmit={
               onPost
                 ? async () => {
-                    setReceipt(await onPost({ verdict: effectiveVerdict }));
+                    setReceipt(await onPost());
                   }
                 : undefined
             }

@@ -14,19 +14,24 @@ import { CardSection, DetectionRow } from "./detection-row";
 // section below the card reads it back to know which harnesses may carry a role,
 // so the mutation flows through `setToolEnabled`, never a local card copy.
 //
-// A host with nothing detected (a disconnected one Rennet could not reach) shows
-// one honest line instead of fake rows — the same honesty as Source Control.
+// Two different emptinesses, two different lines (review finding 3). A host Rennet could
+// not ASK reads "Connect …" — it is an unknown, not an answer. A host that WAS asked and
+// came back with nothing reads "No coding agents detected", which is a real finding about a
+// real machine. Collapsing them told a probed host to connect something already connected.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function AgentsSection({ host }: { readonly host: SettingsHost }) {
   const projection = useSettingsProjection();
-  const tools = projection.agentsByHost[host.id] ?? [];
+  // An ABSENT key is an unasked host; an EMPTY array is an asked host with nothing on it.
+  const tools = projection.agentsByHost[host.id];
 
   return (
     <CardSection title="Agents">
-      {tools.length === 0 ? (
+      {!tools || tools.length === 0 ? (
         <span className="py-2 text-xs text-ink-soft">
-          Connect {host.name} to detect its agents.
+          {tools
+            ? `No coding agents detected on ${host.name}.`
+            : `Connect ${host.name} to detect its agents.`}
         </span>
       ) : (
         tools.map((tool) => (

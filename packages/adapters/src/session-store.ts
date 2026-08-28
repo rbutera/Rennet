@@ -129,6 +129,48 @@ export class SessionStore {
   }
 
   /**
+   * RESTORE an archived session — un-archive is the inverse of the only release, so a
+   * session the reviewer archived by accident comes back rather than being unreachable.
+   * `undefined` if the session is absent; a live session is returned untouched.
+   */
+  restore(sessionId: string): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    if (session.archivedAt === undefined) return session;
+    const restored = { ...session };
+    delete restored.archivedAt;
+    this.save(restored);
+    return restored;
+  }
+
+  /**
+   * Set the reviewer's own title for a session (C18 `session.rename`). An EMPTY title
+   * CLEARS it, so the sidebar row falls back to the claimed branch — the same
+   * restore-the-default rule an emptied project name follows. `undefined` if absent.
+   */
+  rename(sessionId: string, title: string): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const next = { ...session };
+    const trimmed = title.trim();
+    if (trimmed === "") delete next.title;
+    else next.title = trimmed;
+    this.save(next);
+    return next;
+  }
+
+  /** Pin/unpin a session to the top of its project group (C18). `undefined` if absent. */
+  setPinned(sessionId: string, pinned: boolean): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const next = { ...session };
+    if (pinned) next.pinned = true;
+    else delete next.pinned;
+    this.save(next);
+    return next;
+  }
+
+  /**
    * Append a thread reference to a session and persist it (#466 res. 7). Routes
    * through the pure `addThread` so the frozen `SessionThreadSchema` union is
    * enforced — an ask without an anchor is refused, not stored. Returns the

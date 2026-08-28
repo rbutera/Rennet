@@ -10,6 +10,18 @@ export function projectHandlers(rt: DispatchRuntime) {
     progressReplayLimit,
   } = rt;
   return {
+    "project.rename": async (rawInput) => {
+      const name = "project.rename" as const;
+      // Rename the stored display name (C12 cluster 7). An emptied name is not stored
+      // empty — the store restores the `org/repo` identity from the project's own path
+      // (R67), so the row reads its identity again instead of an unnamed blank. An id
+      // that is not stored answers `project: null` with the untouched list, never a throw.
+      const input = parseCommandInput(name, rawInput);
+      return parseCommandOutput(
+        name,
+        deps.projects.rename({ projectId: input.projectId, name: input.name }),
+      );
+    },
     "project.discover": async (rawInput) => {
       const name = "project.discover" as const;
       // Read-only discovery over the path the user just chose (`repository.choose`

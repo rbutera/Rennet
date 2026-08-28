@@ -9,7 +9,6 @@ import {
   reviewCommentsFromProjection,
 } from "@rennet/core";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
-import { publishConsentKey } from "../publish-consent-authority";
 import {
   assertCompositionFresh,
   type CommandHandler,
@@ -30,39 +29,6 @@ export function publishHandlers(rt: DispatchRuntime) {
     raisePublishReady,
   } = rt;
   return {
-    "publish.requestConsent": async (rawInput) => {
-      const name = "publish.requestConsent" as const;
-      // The renderer REQUESTS approval to POST to GitHub; MAIN mints the token. It
-      // is bound to (review, target, payload) via `publishConsentKey`, so the token
-      // authorises exactly one payload onto exactly one PR (coordinates + node id +
-      // head) — the renderer must present the SAME target + payload at egress or the
-      // token cannot consume.
-      const input = parseCommandInput(name, rawInput);
-      // Refuse to mint a token for a stale or unknown review id; only the current
-      // review can be published from this session.
-      const review = requireReviewById(input.reviewId);
-      // Compose-binding integrity (#382 M2 finding 2): when the artifact was daemon-composed
-      // (the phone flow carries `compositionId`), recompute the binding from the CURRENT review
-      // and refuse a stale-revision or cross-review mint. Recomputing from the current
-      // dispositions is what catches a disposition edit landing between preview and post.
-      assertCompositionFresh(
-        review,
-        "review",
-        input.payload,
-        input.compositionId,
-        deps.askLog.readProjection(review.id),
-      );
-      const target = toForgeReviewTarget(input.target);
-      // Bind the mint to the review's OWN pull request (issue #21): a local capture
-      // (no postTarget) or a mismatched target cannot even obtain a token, so the
-      // real-post path below can never receive one for the wrong PR.
-      assertTargetIsReviewOwn(review, target);
-      // Bind the resolved VERDICT into the token too, so an APPROVE/REQUEST_CHANGES
-      // cannot be swapped in after approval (the verdict is the one outbound field
-      // the payload bytes do not capture).
-      const key = publishConsentKey(review.id, target, input.payload, input.verdict);
-      return parseCommandOutput(name, { authorization: deps.publishConsent.grant(key) });
-    },
     "publish.review": async (rawInput) => {
       const name = "publish.review" as const;
       // The FIRST real egress: a decomposed review leaving the machine onto a PR AS
@@ -88,15 +54,23 @@ export function publishHandlers(rt: DispatchRuntime) {
           "Publish refused: this is a retrospective review — it is read-only and nothing can be posted.",
         );
       }
+      // The verdict that will actually ship, resolved the SAME way the post builds it below
+      // (`buildForgeReviewPost` → `resolveReviewEvent`): an explicit verdict wins, else it
+      // derives from the outbound set. It rides into the compose binding, so a verdict swapped
+      // in between preview and post is caught as stale.
+      const resolvedVerdict = resolveReviewEvent([...input.comments, ...bodyNotes], input.verdict);
       // Compose-binding integrity (#382 M2 finding 2): a daemon-composed artifact carries its
       // binding; recompute it from the CURRENT review and refuse a stale/cross-review post
       // (dry-run included, so the fault surfaces as a refusal rather than a plausible request).
+      // The VERDICT is folded in, so "what you previewed is what posts" covers the event too —
+      // an APPROVE cannot be swapped onto a preview the reviewer read as a COMMENT.
       assertCompositionFresh(
         addressed,
         "review",
         input.payload,
         input.compositionId,
         deps.askLog.readProjection(addressed.id),
+        resolvedVerdict,
       );
 
       const target = toForgeReviewTarget(input.target);
@@ -131,31 +105,16 @@ export function publishHandlers(rt: DispatchRuntime) {
       });
 
       if (input.dryRun === false) {
-        // (4) REAL egress. Posting a review to GitHub is an EXTERNAL act — a review
-        // leaving the machine AS THE USER — so unlike running a model (which just
-        // runs), a real send ALWAYS requires an explicit user confirmation.
+        // (4) REAL egress. The user's click on Post IS the authorization — there is no
+        // token, no dialog, nothing to clear (Rule Zero, #435). What survives here are
+        // the correctness checks, all of which run before anything leaves.
         //
         // (4a) TARGET-BINDING gate (most-permissive-fault): the post must target the
         // review's OWN pull request. A local capture (no postTarget) or a mismatched
-        // target is refused BEFORE the token is even looked at, so a token can never
-        // authorise a post to an arbitrary PR — it runs on the same authority
-        // (`addressed.postTarget`) the retrospective gate does.
+        // target is refused, so a post can never land on an arbitrary PR — it runs on
+        // the same authority (`addressed.postTarget`) the retrospective gate does.
         assertTargetIsReviewOwn(addressed, target);
-        // (4b) The single-use CONSENT token MAIN minted for THIS (review, target,
-        // payload, VERDICT) via `publish.requestConsent`, verified + CONSUMED here.
-        // Absent / forged / replayed / target-payload-or-verdict-mismatched ⇒ refused,
-        // and NOTHING leaves. The verdict is resolved the SAME way it is for the post
-        // (`resolveReviewEvent`), so the token authorises exactly the event that ships.
-        const resolvedVerdict = resolveReviewEvent(
-          [...input.comments, ...bodyNotes],
-          input.verdict,
-        );
-        const key = publishConsentKey(input.reviewId, target, input.payload, resolvedVerdict);
-        const authorization = input.authorization;
-        if (typeof authorization !== "string" || !deps.publishConsent.consume(key, authorization)) {
-          throw new Error("Publish refused: not authorized to post — confirm the send first");
-        }
-        // (4c) Single-flight by marker (double-sign race): refuse a concurrent real
+        // (4b) Single-flight by marker (double-sign race): refuse a concurrent real
         // post of the same content while the first is still in flight, so two
         // near-simultaneous signs cannot both pass the adapter's query-before-post
         // check and double-post. A sequential retry (first already resolved) is not
@@ -182,7 +141,6 @@ export function publishHandlers(rt: DispatchRuntime) {
       }
 
       // Dry-run (the default): construct + return the EXACT request, post NOTHING.
-      // No mode/consent check — nothing leaves — and the descriptor carries no token.
       return parseCommandOutput(name, {
         dryRun: true,
         request: deps.publishPort.buildReviewRequest(post),
@@ -194,8 +152,8 @@ export function publishHandlers(rt: DispatchRuntime) {
     "publish.submitPr": async (rawInput) => {
       const name = "publish.submitPr" as const;
       // The own-branch submission (issue #257 / #107): push the review's own branch
-      // and open a real PR. The sign-click is the whole authorization — no consent
-      // token: pushing your own branch is not publishing (AGENTS.md).
+      // and open a real PR. The sign-click is the whole authorization — pushing your
+      // own branch is not publishing (AGENTS.md).
       const input = parseCommandInput(name, rawInput);
       const review = requireReviewById(input.reviewId);
       assertAllowedRepository(review.repositoryRoot);
@@ -318,6 +276,10 @@ export function publishHandlers(rt: DispatchRuntime) {
           patchsetId: review.activePatchsetId,
           mode: "review",
           payload,
+          // The previewed VERDICT rides in the binding: `publish.review` recomputes it from the
+          // verdict it is about to post, so posting a different event than the one previewed is
+          // refused as stale. This is the whole preview-equals-post guarantee for the event.
+          verdict,
         });
         // A composed draft is now ready to post (#382 M2, both modes): raise publish-ready so
         // an away client learns it and deep-links to the preview. Idempotent by derived id.

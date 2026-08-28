@@ -120,12 +120,17 @@ function StatefulProjects({
     // A stateful fixture DOES persist (edits reach the probe), so it is a backed
     // projection — the editors render live, exactly as B10's projection will.
     projectEditsPersist: true,
+    // The name has its own served-write flag (C18: `project.rename`), true here for the
+    // same reason — this fixture genuinely persists.
+    nameEditsPersist: true,
     nameByProject: names,
     glyphByProject: glyphs,
     worktreeByProject: worktrees,
     trackerByProject: trackers,
     guidanceByProject: guidance,
-    setProjectName: (id, name) => setNames((prev) => ({ ...prev, [id]: name })),
+    // A seeded setter WINS, so a test can count the writes the field actually makes.
+    setProjectName:
+      seed?.setProjectName ?? ((id, name) => setNames((prev) => ({ ...prev, [id]: name }))),
     setProjectGlyph: (id, icon) => setGlyphs((prev) => ({ ...prev, [id]: icon })),
     setWorktreeRoot: (id, root) =>
       setWorktrees((prev) => ({
@@ -192,7 +197,9 @@ describe("ProjectsPage — dual-source settings", () => {
     const input = (await findByLabelText("Project name")) as HTMLInputElement;
     // Unrenamed ⇒ no Reset yet (the listed name is the org/repo default).
     expect(queryByRole("button", { name: "Reset" })).toBeNull();
+    // The draft commits on blur, so the write lands once when the field is left.
     fireEvent.change(input, { target: { value: "Checkout Service" } });
+    fireEvent.blur(input);
     expect(getByTestId("probe-name").textContent).toBe("Checkout Service");
     // Renamed ⇒ a Reset appears, restoring the org/repo fallback (checkout).
     await user.click(getByRole("button", { name: "Reset" }));
@@ -202,6 +209,39 @@ describe("ProjectsPage — dual-source settings", () => {
     fireEvent.change(input, { target: { value: "  " } });
     fireEvent.blur(input);
     expect(getByTestId("probe-name").textContent).toBe("checkout");
+    cleanup();
+  });
+
+  it("identity: the name field WRITES ONCE on commit, not once per keystroke", async () => {
+    // `project.rename` is a disk write. A per-keystroke write would fire one for every
+    // character (and, on a controlled input, drop characters when the round trip lags),
+    // so the field holds a local draft and commits on blur/Enter — the same shape the
+    // sidebar's own rename uses.
+    const calls: string[] = [];
+    const { findByLabelText, user } = mount(
+      <StatefulProjects seed={{ setProjectName: (_id, name) => calls.push(name) }} />,
+    );
+    const input = (await findByLabelText("Project name")) as HTMLInputElement;
+    await user.click(input);
+    await user.keyboard("Pay");
+    // Typing alone commits NOTHING — the draft is local until the field is left.
+    expect(calls).toEqual([]);
+    // The field still shows every keystroke (a draft, not a swallowed edit).
+    expect(input.value).toContain("Pay");
+    fireEvent.blur(input);
+    expect(calls).toHaveLength(1);
+    cleanup();
+  });
+
+  it("identity: Enter commits the name once, without waiting for a blur", async () => {
+    const calls: string[] = [];
+    const { findByLabelText, user } = mount(
+      <StatefulProjects seed={{ setProjectName: (_id, name) => calls.push(name) }} />,
+    );
+    const input = (await findByLabelText("Project name")) as HTMLInputElement;
+    await user.click(input);
+    await user.keyboard("Payments{Enter}");
+    expect(calls).toEqual(["checkoutPayments"]);
     cleanup();
   });
 
@@ -384,8 +424,9 @@ describe("ProjectsPage — live projection is honest about the unserved write st
   it("disables every unbacked editor and discloses the gap (no silent no-op controls)", async () => {
     const { findByLabelText, getByLabelText, getByRole } = mountLiveProjects();
 
-    // Identity: the name field is disabled (not a live field bound to a no-op setter).
-    expect((await findByLabelText("Project name")).hasAttribute("disabled")).toBe(true);
+    // Identity: the name field is LIVE — `project.rename` is served (C18), so it is the one
+    // project editor that is not disabled here.
+    expect((await findByLabelText("Project name")).hasAttribute("disabled")).toBe(false);
     // Identity: the glyph choices are locked (the group disables its members).
     expect(getByRole("button", { name: "rocket" }).hasAttribute("disabled")).toBe(true);
     // Worktrees: both fields disabled.
@@ -401,7 +442,7 @@ describe("ProjectsPage — live projection is honest about the unserved write st
       (n) => n.textContent ?? "",
     );
     expect(notes.length).toBe(4);
-    expect(notes.some((t) => /Naming and glyphs/.test(t))).toBe(true);
+    expect(notes.some((t) => /Glyphs aren/.test(t))).toBe(true);
     expect(notes.some((t) => /Worktree location and naming/.test(t))).toBe(true);
     expect(notes.some((t) => /Issue-tracker config/.test(t))).toBe(true);
     expect(notes.some((t) => /Guidance rules/.test(t))).toBe(true);

@@ -94,7 +94,7 @@
   "c05": {
     "status": "done",
     "passes": true,
-    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 audited 2026-08-28: NOT a one-file swap — no board/lensBoard read command was ever registered; goes live via the wiring command-bundle change"
+    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 audited 2026-08-28: NOT a one-file swap \u2014 no board/lensBoard read command was ever registered; goes live via the wiring command-bundle change"
   },
   "c06": {
     "status": "done",
@@ -103,12 +103,12 @@
   "c07": {
     "status": "done",
     "passes": true,
-    "note": "PR #529 landed; #540 landed the host-side session.transcript/rounds reads but the WRITE side (B10 cluster-6 SessionTurnLoop/buildAppTools) is unwired — server would return [], so the chat-data.ts client swap waits behind B10 c6. Dock identity + live-turn fold + compaction all work now over MemoryBridge"
+    "note": "PR #529 landed; #540 landed the host-side session.transcript/rounds reads but the WRITE side (B10 cluster-6 SessionTurnLoop/buildAppTools) is unwired \u2014 server would return [], so the chat-data.ts client swap waits behind B10 c6. Dock identity + live-turn fold + compaction all work now over MemoryBridge"
   },
   "c08": {
     "status": "done",
     "passes": true,
-    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. B11 landed \u2192 REVISE_WIRED flip UNBLOCKED (review.reviseSpan registered+handled server-side; two client files) \u2014 dispatching now. own-PR-as-teammate-pr fixed via viewerDidAuthor (#538). requestConsent: Rai ruled DELETE \u2014 queued as its own change, verdict folds into the compositionId freshness check"
+    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. REVISE wiring LANDED #550 @b8f6d3b9 (flag DELETED, callers migrated; review seat FIX\u2192LAND: stale draftEdits shadow over rework fixed with CONDITIONAL overwrite \u2014 keeps pendingEditCount truthful; red-without-fix recorded). Posterity note: inline edit STARTED mid-rework can leave a stale shadow (narrow same-class race; fix = read fresh via useRennetStore.getState() in landRework if it bites). New ledger item recorded in c14 packet: client\u2192ask.* write sync (C18 era). requestConsent: Rai ruled DELETE \u2014 c19 packet"
   },
   "c09": {
     "status": "done",
@@ -123,12 +123,12 @@
   "c11": {
     "status": "done",
     "passes": true,
-    "note": "PR #528 landed; live execution audited 2026-08-28: exposure.commandMenu is false on every registered command (one derived literal, commands/index.ts) — queued as a deliberate per-row menu inventory, not a blanket flip. Keyboard carry (KEY_ACTIONS + settings.get invalidation) verified closed on eea4e398"
+    "note": "PR #528 landed; live execution audited 2026-08-28: exposure.commandMenu is false on every registered command (one derived literal, commands/index.ts) \u2014 queued as a deliberate per-row menu inventory, not a blanket flip. Keyboard carry (KEY_ACTIONS + settings.get invalidation) verified closed on eea4e398"
   },
   "c12": {
     "status": "done",
     "passes": true,
-    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 audited 2026-08-28: NOT a seam swap — project.rename command was never registered; goes live via the wiring command-bundle change (with session.list/rename/pin/archive + 5 project-pref settings writers)"
+    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 audited 2026-08-28: NOT a seam swap \u2014 project.rename command was never registered; goes live via the wiring command-bundle change (with session.list/rename/pin/archive + 5 project-pref settings writers)"
   },
   "c13": {
     "status": "done",
@@ -137,31 +137,37 @@
   },
   "c14": {
     "status": "pending",
-    "passes": false
+    "passes": false,
+    "note": "PRE-C14 GATE ADDITIONS (Rai, 2026-08-28): (1) DONE \u2014 titlebar fix LANDED #557 @f2ac71ff (real-device defect: traffic lights over wordmark; report->auto-update closed loop); (2) RELEASE BEFORE C14 \u2014 after last pre-C14 landing: gh workflow run auto-release.yml (SIGPIPE decide-step fix ca443db0 landed; this dispatch is its real test), verify green through publish + vX.Y.Z with macOS assets, Rai watches latios auto-update, THEN dispatch C14 \u2014 audit drives the released build where practical."
   },
   "c15": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1 (collation bridge + first prod pipeline run, smoke-run proven) + 2 (durable GenerationStore, RoundRecord frozen-predecessor, gen drill-down) BUILT on branch. Cluster 3 (live progress channel, carry-forward label-honest hard constraint) in flight now; then 4 (UI incl kicker verbatim) + 5 (E2E/docs). Schema-dialect fix it surfaced landed standalone as #544. Stop-and-report stands for live-pipeline surprises."
+    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal \u2014 C14 flags claim-vs-live, doesn't fudge). UNPARKED \u2014 finale in flight; for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
   },
   "c16": {
-    "status": "implementing",
-    "passes": false,
-    "note": "Issue #542, branch feat/c16-council-mappings. Clusters 1-4 DONE @ea7966a1, gate green, controls run red+reverted. Two sound packet deviations recorded in tasks.md (registration+handler atomic \u2014 exhaustiveness guard makes the split unbuildable; 3.1 no-op by design, proving tests instead). PAUSED before cluster 5 dialog work: QUESTION WITH RAI \u2014 routing.task[jobId] overrides are scenario-independent (one edit moves all three columns; made honest, not hidden). Scenario-keyed instead = small packet change, shape unlanded so cheap now. Cluster 6 rides after."
+    "status": "landed",
+    "passes": true,
+    "note": "LANDED #553 @9a850be7 (closes #542). Per-scenario overrides per Rai's ruling \u2014 sibling-leak structurally impossible, flip-to-red proven. Review FIX\u2192CONFIRMED: app-ui's drifted local council-table copy DELETED (6 cells lied; server honest-present at source), REVIEW_ROLE_DEFAULTS now test fixture, Reset doc per-role truth, adopted cleared on refetch-settle. Surface truth: two columns (Dual + provider-resolving Single) over three scenarios. First of the snapshot set down \u2014 c17/c18 rebase over it at landing."
   },
   "c17": {
-    "status": "implementing",
-    "passes": false,
-    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1 (forge.detect) + 2 (daemon.status sibling command; per-host probes; lastSeenVersion additive; updateAvailable withheld-when-unknown; invents-nothing control run red+reverted) done, gate green @8a23b698. Cluster 3 (per-host agents) next — 3.1 re-ruled server-side per-host detection mirroring daemon.status (client is single-connection by design). Then 4 projection fold, 5 Reconnect #533, 6 Update Daemon #534, 7 E2E. Snapshot: 80→81 on branch — three-way serialize with c16/c18 at landing."
+    "status": "landed",
+    "passes": true,
+    "note": "LANDED #560 @a6e1b520 (closes #543, #533, #534). Full host/tool detection: forge.detect + per-host daemon.status + served harness.hosts/setEnabled + forge-enable read (amendment A) + forge.hosts (amendment B) + Reconnect + Update Daemon, real-daemon E2E with real-gh rename control. Codex 8-finding FIX -> opus CONFIRMED (non-strict-arms doctrine endorsed). Fold judgments: c16 session-only disabled set SUPERSEDED by served store; three c16 tests converted harness.detect->harness.hosts (real integration catch); three not-live-yet doc claims dropped (all went live today). FOR C14: detection-eviction remove/restore cycle has MANUAL-ONLY E2E coverage (helper unit + structural eviction committed) \u2014 scoped bounce if the sweep wants it committed. RENNET_DISABLE_HARNESS now also suppresses codex locally. Snapshot 87."
   },
   "c18": {
-    "status": "pending",
+    "status": "implementing",
     "passes": false,
-    "note": "NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle — the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision — serialize)."
+    "note": "Issue #551 (OPEN \u2014 group-A owed). SLICES 1-2 LANDED #562 @2a7bf793: board.read live (three honest states, BoardSource deleted \u2014 c15 UNPARKED), session.list/rename/setPinned/archive + project.rename R67, registry 93. Review FIX->CONFIRMED (keystroke-rename made draft-commit red-first; migration script removed; caption truth). Group-A continuation building the honest settings-engine slice on feat/c18-group-a (registry keys, per-repoKey rung, tracker repo layer, conventions writer, then the projectEditsPersist flip). C18-COMPLETE after it lands."
   },
   "c19": {
+    "status": "landed",
+    "passes": true,
+    "note": "LANDED #559 @0053c25e (closes #552). Token deleted end to end (snapshot 80->79, both clients); verdict folded into publishCompositionId/assertCompositionFresh \u2014 flip-without-recompose refused, red-proven from committed baselines. Desktop verdict override made durable (was local-only; packet falsehood caught by implementer). Review FIX->CONFIRMED. Follow-ups #555 #556. Survivors untouched."
+  },
+  "c20": {
     "status": "pending",
     "passes": false,
-    "note": "NEW (2026-08-28, Rai's #435 ruling executed): publish.requestConsent DELETED end to end (~11 files incl. mobile publish.tsx + create-server composition). The one real property survives without the token: posted verdict must equal previewed verdict, folded as one more input into the EXISTING publishCompositionId/assertCompositionFresh mechanism — no token, no dialog. Surviving correctness gates untouched. Packet: openspec/changes/c19-direct-post/context.md. BLOCKED BY c16 landing + the c08-revise-wired branch (app-ui/handoff files)."
+    "note": "NEW (Rai 2026-08-28, approved from live spike demo): corner-slot macOS chrome \u2014 leftmost pane owns the lights, wordmark + rail deleted, chat toggle on main view. Lands BEFORE C14; closes #558. Packet: openspec/changes/c20-corner-slot-chrome/"
   }
 }

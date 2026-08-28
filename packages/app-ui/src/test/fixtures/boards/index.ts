@@ -33,10 +33,16 @@ export const FIXTURE_BOARDS: Readonly<Record<string, Partial<Record<LensKind, Le
 };
 
 /**
- * A {@link BoardSource} over the fixture set: resolve `(generation, lens)` to its
- * board, or `undefined` when that lens has no board this generation. Handed to
- * `BoardSourceProvider` in tests — the surface never imports this directory (the
- * import fence). Structurally the `BoardSource` board-data declares.
+ * The `board.read` handler over the fixture set — what a test hands its
+ * {@link MemoryBridge} so the board seam resolves fixtures through the SAME command
+ * the live client reads. `board: null` is the honest missing answer for a lens with no
+ * board that generation (absent-not-disabled). The surface never imports this directory
+ * (the import fence); fixtures arrive only through the bridge.
  */
-export const fixtureBoardSource = (generation: string, lens: LensKind): LensBoard | undefined =>
-  FIXTURE_BOARDS[generation]?.[lens];
+export const fixtureBoardRead = ({
+  generation,
+  lens,
+}: {
+  generation: string;
+  lens: LensKind;
+}): { board: LensBoard | null } => ({ board: FIXTURE_BOARDS[generation]?.[lens] ?? null });

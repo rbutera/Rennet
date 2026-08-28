@@ -60,6 +60,7 @@ Global settings live in two machine-local files, split by who owns the value:
 | `~/.rennet/client-settings.json` | Viewer preferences, **outside** the config ladder | Appearance | system, dark, light | Applies the selected color scheme to the app. |
 | `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
 | `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** clears it. |
+| `~/.rennet/client-settings.json` | | Council routing | `routing.task[jobId][scenario]` to model and effort | Overrides one [Model Council](../concepts/model-council.md) job's assignment in one availability scenario. Written by the Environments Review section; absent until you change a mapping. |
 | `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
 
 Appearance and keybindings are personal, app-side choices — never a repo fact,
@@ -125,16 +126,80 @@ previously-seen host, or "Not connected — daemon unreachable, version unknown"
 otherwise, never an invented current version. Reconnect appears only when a host
 is unreachable; Update Daemon only when a reachable host has an update.
 
+Reconnect performs a real re-handshake with that host's daemon. It reads
+"Connecting…" and is disabled for exactly as long as the attempt is in flight,
+then either the card turns reachable — because the refreshed status says the host
+answered, never because the button was pressed — or the card stays unreachable and
+shows the reason the handshake failed. Reconnect re-attempts the connection; it
+does not install or start software that was not already there.
+
+Update Daemon performs a real update of that host's daemon, and appears only when
+the host reported an actual newer version to move to — where there is no update to
+make, or no mechanism to make it with, the button is simply absent. It reads
+"Updating the daemon…" while the update is genuinely in flight, then either the
+daemon line shows the version the host answered with afterwards, or the card shows
+the reason the update did not happen. The mechanism today is a WSL distribution:
+Rennet delivers its own server bundle into the distro and restarts the daemon on
+it. This machine's daemon ships with the Rennet app, so updating Rennet updates it;
+a paired device runs its own Rennet and updates itself. Both say so plainly rather
+than offering a button that would do nothing.
+
 Each card carries a **Source Control** and an **Agents** section. Agents on This
 Machine are live: Rennet lists the coding harnesses it discovered (Claude, Codex)
 with their versions, and disabling one rules it out of reviews on that host
-without uninstalling anything. When at least one agent is enabled, a Review
-section exposes Model Mappings. Detection that is not yet wired renders an honest
-empty state rather than a fabricated row: remote-host agent detection, per-host
-source-control tool detection, and the served model-mapping council are not live
-yet, so those surfaces read empty until their backends land. GitHub sign-in is not
-a source-control row here — it lives on the front door and the project detail
+without uninstalling anything. Agent detection runs per host: the daemon asks each
+paired machine the only way it can be asked, so a card shows that machine's own
+harnesses, and a host the daemon cannot interrogate reads its honest not-detected
+line rather than inheriting this machine's answers. The enable decision is stored
+per host, so ruling an agent out survives a reload and leaves it running elsewhere.
+
+Source Control lists the forge CLIs detected on that host — GitHub / `gh` only;
+GitLab and Bitbucket are planned, not built. It is detected per host exactly as
+agents are: the daemon runs the probes on each machine the only way it can, so a
+WSL distribution shows its own `gh` and its own auth state, and a host the daemon
+cannot interrogate reads its honest "Connect … to detect its tooling" line rather
+than inheriting this machine's answer. Its enable toggle is stored per host the
+same way. A forge whose binary is not on the host's `PATH` has no row at all,
+rather than a stale hit.
+When at least one agent is enabled, a Review section exposes Model Mappings — see
+[Model Mappings](#model-mappings) below. GitHub sign-in is not a source-control row here — it lives on the front door and the project detail
 (see [First run](#first-run)).
+
+### Model Mappings
+
+**Edit Mappings** on a host card opens the [Model Council](../concepts/model-council.md)'s
+role-to-model table for that machine. The dialog is **honest-present**: the council's
+assignment tables are static and always available, so it lists every review role with
+a real model and effort on a fresh install — never a blank waiting on a backend. Values
+come from `settings.get`, which resolves the tables live rather than shipping the
+surface its own copy.
+
+The column headers are the review-mode switch. **Dual Harness** needs both Claude and
+Codex enabled (its hover names the missing one); **Single Harness** shows whichever
+provider is enabled. A role that does not run in a scenario renders an em dash, never a
+fabricated model — the Flagged Second Seat, for one, exists only under Dual.
+
+Changing a cell writes an override through `settings.setRoleAssignment`. Three things
+are true of that write:
+
+- It is **model and effort only**. The harness is never a stored field: it derives from
+  the resolved model's provider, so an override cannot pin an incoherent model/harness pair.
+- It is **per (role, scenario)** — Rai's ruling of 2026-08-28. Editing a cell in Dual
+  moves the `dual` scenario and nothing else; `claudeOnly` and `codexOnly` keep their
+  own values, whether those are council defaults or their own overrides. Editing one
+  scenario never moves a sibling.
+- It is a plain config write. An overridden cell carries an **Overridden** chip, and
+  **Reset to default** clears the override so the council table answers again. Nothing is
+  copied back on reset — the layer is dropped, so a later table change reaches the cell.
+
+Overrides live in the viewer's `client-settings.json` under `routing.task`, keyed by the
+council job id and then the scenario. An install that never changed a mapping has no
+`routing` key at all, and clearing the last override removes it again. A malformed
+config refuses the write rather than overwriting unreadable bytes.
+
+Model Mappings changes **which model carries a role**. It does not add council jobs,
+change the versioned default tables, or persist which providers are available — provider
+availability is detected, not configured.
 
 Device pairing lives on the This Machine card, because a pairing bootstraps a
 connection to this machine's daemon. See [Device pairing](#device-pairing).
@@ -164,11 +229,12 @@ The Projects page also carries project **identity** (display name with the
 the issue tracker's fields — GitHub rides the host's `gh` CLI and exposes no
 further fields; JIRA and Linear expose a project key, a base URL, and the *name*
 of the environment variable holding the token (never the token itself). Of these,
-Review Context (map visibility) is the section wired to a live command today;
-identity, glyph, worktree pattern, issue-tracker, and guidance edits resolve
-through the settings seam but have no served write yet, so they persist once their
-backends land. The page shows them so the surface is complete, not because every
-edit is yet durable.
+Review Context (map visibility) and the display NAME are wired to live commands
+today — the name writes through `project.rename`, which the sidebar's own rename
+also calls, and an emptied name restores the `org/repo` identity host-side. The
+glyph, worktree, issue-tracker, and guidance edits resolve through the settings
+seam but have no served write yet: those controls render DISABLED with a line
+naming the gap, rather than accepting edits that would vanish.
 
 Changing visibility never stages or commits files. Local visibility keeps the
 promoted map out of ordinary Git status through Rennet's entry in

@@ -18,9 +18,10 @@ Prove inventory parity and close the loop:
    | B10 cluster 6 | live-turn wiring | B09 (landed) |
    | C05 cluster 8 | live-wiring swap | B04/B08 (landed) |
    | C07 transcript projection | one-file swap in `chat-data.ts` | B09 (landed) |
-   | C08 cluster 8 | `REVISE_WIRED` one-bool flip | B11 |
+   | C08 cluster 8 | live `review.reviseSpan` wiring | B11 (landed; closed) |
    | C11 live command execution | registry exposure flags on live rows | B10 |
    | C12 cluster 7 | rename seam | B09 (landed) |
+   | client→`ask.*` write sync | client stages/edits write `ask.stage`/`ask.edit` into B11's durable ask log (found at C08 wiring, 2026-08-28: the log is server-truth but the client never writes it, so live `reviseSpan` answers unavailable — honestly) | schedule with the client swaps (C18 era) |
 
    Managers close these opportunistically as gates clear — C14 confirms closure,
    it does not perform the integration.

@@ -24,6 +24,8 @@ import type {
   DispositionType,
   FlaggedReview,
   HandoffBundle,
+  LensBoard,
+  LensKind,
   NoiseReview,
   OpenSpecChange,
   OpenSpecCoverage,
@@ -34,11 +36,13 @@ import type {
   RoundEvent,
   RoundRecord,
   SessionTranscriptRow,
+  SidebarSession,
   SuccessorAccount,
   SymbolInspection,
 } from "@rennet/protocol";
 import {
   type ConversationAnchorWire,
+  type DetectedForge,
   type DetectedHarness,
   type DiscoveryResult,
   type FsListDirResult,
@@ -63,7 +67,6 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { deepLinkFor, type RaisedAttention } from "../attention-planner";
-import type { PublishConsentAuthority } from "../publish-consent-authority";
 import {
   createReviewIntelligenceSessions,
   type ReviewIntelligenceSession,
@@ -190,13 +193,6 @@ export interface DispatchDeps {
     submission: ForgePrSubmission;
   }) => Promise<ForgePrSubmissionOutcome>;
   /**
-   * The main-owned PUBLISH consent authority (issue #21). Mints a single-use token
-   * bound to (review, target, payload) on the user's approval act
-   * (`publish.requestConsent`) and consumes it before the real egress, so a real
-   * post under a consent-requiring mode cannot be forged or replayed.
-   */
-  readonly publishConsent: PublishConsentAuthority;
-  /**
    * The write-enabled handoff turn (issue #18): brackets a coding-harness write turn
    * with workspace checkpoints and returns the turn diff. Composed by the root as
    * `runHandoffTurn` over the live Claude adapter (fully capable, Bash included) + the
@@ -227,6 +223,12 @@ export interface DispatchDeps {
   readonly projects: {
     list(): Project[];
     remove(input: { projectId: string }): { projects: Project[] };
+    /** Rename a project's display name (C12 cluster 7, bound in C18). An emptied name
+     *  restores the `org/repo` fallback (R67); `null` means the id is not stored. */
+    rename(input: { projectId: string; name: string }): {
+      project: Project | null;
+      projects: Project[];
+    };
     add(input: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }): {
       project: Project;
       projects: Project[];
@@ -253,6 +255,9 @@ export interface DispatchDeps {
   listDir(input: { path?: string }): Promise<FsListDirResult>;
   /** The harnesses found on the machine, for the ambient first-run detection line. */
   detectHarnesses(): Promise<DetectedHarness[]>;
+  /** The forge (source-control) CLIs found on this host, for `forge.detect` → the
+   *  Environments surface's `sourceControlByHost` (C17). Singleton registry — `gh` only. */
+  detectForges(): Promise<DetectedForge[]>;
   /**
    * The GitHub account port (v4.2: OAuth device flow, no gh CLI). Status for the
    * settings rows and the first-run card; the one-time device-flow connect
@@ -566,6 +571,30 @@ export interface DispatchDeps {
    */
   readonly transcriptRowsForReview?: (reviewId: string) => readonly SessionTranscriptRow[];
   /**
+   * The sidebar's sessions (C03 cluster 2, bound in C18) — the durable session store's
+   * rows and their persisted writes. Absent ⇒ no session store wired, so `session.list`
+   * answers an honest empty sidebar and each write reports that it found no session
+   * (`null`), never a fabricated row or a silently swallowed edit.
+   */
+  readonly sessions?: {
+    list(): readonly SidebarSession[];
+    rename(sessionId: string, title: string): SidebarSession | undefined;
+    setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
+    setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;
+  };
+  /**
+   * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board
+   * for one `(review, generation, lens)` triple, projected from the whiteboard event log the
+   * lens pipeline wrote plus its board-meta record. `undefined` is the honest MISSING answer —
+   * that lens drafted no board that generation. Absent seam ⇒ no boards runtime wired, so every
+   * pair reads missing; a board is never fabricated to fill the gap.
+   */
+  readonly lensBoardForReview?: (
+    reviewId: string,
+    generation: string,
+    lens: LensKind,
+  ) => Promise<LensBoard | undefined>;
+  /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never
    * the resident cursor. Takes the ALREADY-RESOLVED review (dispatch freshness-pins it
@@ -647,22 +676,34 @@ export function toForgeReviewTarget(target: {
 }
 
 /**
-/**
  * The compose integrity binding (#382 M2 finding 2). A deterministic id over (reviewId, active
- * patchset, mode, canonical payload) — the payload already canonicalises the comments/submission,
- * so binding those four is enough to pin the artifact to one review AT one revision. `publish.compose`
- * returns it; the post commands recompute it from the CURRENT review and refuse a mismatch, so a
- * cross-review or stale-revision artifact cannot post. Pure integrity (recomputable, not a secret):
- * it catches accidental drift and confusion, not adversarial forgery — Rennet is single-user.
+ * patchset, mode, canonical payload, verdict) — the payload already canonicalises the
+ * comments/submission, so binding those is enough to pin the artifact to one review AT one
+ * revision. `publish.compose` returns it; the post commands recompute it from the CURRENT review
+ * and refuse a mismatch, so a cross-review, stale-revision, or verdict-swapped artifact cannot
+ * post. Pure integrity (recomputable, not a secret): it catches accidental drift and confusion,
+ * not adversarial forgery — Rennet is single-user.
  */
 export function publishCompositionId(fields: {
   reviewId: string;
   patchsetId: string;
   mode: "review" | "pr";
   payload: string;
+  /**
+   * The resolved review VERDICT for `mode: "review"` — the one outbound field the payload bytes
+   * do not capture, so it rides in the binding: a post whose verdict differs from the previewed
+   * one fails the freshness check. A `"pr"` submission has no verdict (`undefined`).
+   */
+  verdict?: string;
 }): string {
   return sha256Hex(
-    JSON.stringify([fields.reviewId, fields.patchsetId, fields.mode, fields.payload]),
+    JSON.stringify([
+      fields.reviewId,
+      fields.patchsetId,
+      fields.mode,
+      fields.payload,
+      fields.verdict ?? null,
+    ]),
   );
 }
 
@@ -671,10 +712,15 @@ export function publishCompositionId(fields: {
  * A no-op when `compositionId` is absent (the desktop composes locally and posts without one —
  * additive/back-compat). For a team-PR "review" the expected binding is recomputed from the CURRENT
  * durable ask projection (B11 cluster 3 — the same source `publish.compose` draws from, so the
- * mirror holds), so an ask/line-comment/verdict edit that landed between preview and post is caught
+ * mirror holds), so an ask/line-comment edit that landed between preview and post is caught
  * (stale). For a "pr" submission the payload is model-drafted (not re-derivable), so the binding is
  * recomputed over the posted payload + current patchset — catching a cross-review post or an advanced
  * patchset; the existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload.
+ *
+ * `verdict` is the caller's RESOLVED post verdict (review mode only). It is the one outbound field
+ * the payload bytes do not capture, so it rides in the recomputed binding: posting a verdict other
+ * than the previewed one lands on a different id and is refused as stale. That is the whole
+ * preview-equals-post guarantee for the event — no token, no dialog, no second confirmation.
  */
 export function assertCompositionFresh(
   review: Review,
@@ -682,6 +728,7 @@ export function assertCompositionFresh(
   payload: string,
   compositionId: string | undefined,
   reviewProjection?: AskProjection,
+  verdict?: string,
 ): void {
   if (compositionId === undefined) return;
   const proj = reviewProjection ?? emptyAskProjection();
@@ -699,6 +746,7 @@ export function assertCompositionFresh(
     patchsetId: review.activePatchsetId,
     mode,
     payload: boundPayload,
+    ...(verdict === undefined ? {} : { verdict }),
   });
   if (compositionId !== expected) {
     throw new Error(
@@ -814,11 +862,11 @@ export function createDispatchRuntime(deps: DispatchDeps) {
 
   /**
    * The egress target-binding gate (issue #21, most-permissive-fault): a real post is
-   * legitimate ONLY against the review's OWN pull request. `requestConsent` and the
-   * real `publish.review` both call this so a token can neither be MINTED nor CONSUMED
-   * for a local capture (no `postTarget`) or a mismatched target — even by a
-   * hand-crafted call. A single fault (a renderer bug, a replayed/forged target) cannot
-   * clear it: the review's stored `postTarget` is the authority, not the caller's input.
+   * legitimate ONLY against the review's OWN pull request. The real `publish.review`
+   * calls this before any egress, so a post to a local capture (no `postTarget`) or to
+   * a mismatched target is refused — even by a hand-crafted call. A single fault (a
+   * renderer bug, a forged target) cannot clear it: the review's stored `postTarget`
+   * is the authority, not the caller's input.
    * Mirrors the retrospective structural gate exactly.
    */
   function assertTargetIsReviewOwn(review: Review, target: ForgeReviewTarget): void {

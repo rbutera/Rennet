@@ -17,13 +17,16 @@ import { CardSection, DetectionRow } from "./detection-row";
 
 export function SourceControlSection({ host }: { readonly host: SettingsHost }) {
   const projection = useSettingsProjection();
-  const tools = projection.sourceControlByHost[host.id] ?? [];
+  // An ABSENT key is an unasked host; an EMPTY array is an asked host with nothing on it.
+  const tools = projection.sourceControlByHost[host.id];
 
   return (
     <CardSection title="Source Control">
-      {tools.length === 0 ? (
+      {!tools || tools.length === 0 ? (
         <span className="py-2 text-xs text-ink-soft">
-          Connect {host.name} to detect its tooling.
+          {tools
+            ? `No source-control CLIs detected on ${host.name}.`
+            : `Connect ${host.name} to detect its tooling.`}
         </span>
       ) : (
         tools.map((tool) => (

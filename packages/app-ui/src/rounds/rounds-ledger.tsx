@@ -45,9 +45,12 @@ function generationLine(records: readonly RoundRecord[]): readonly string[] {
 }
 
 export function RoundsLedger({
+  reviewId,
   slug,
   records,
 }: {
+  /** The review whose boards the ledger detail reads (the `board.read` identity). */
+  readonly reviewId: string;
   readonly slug: string;
   readonly records: readonly RoundRecord[];
 }) {
@@ -163,7 +166,7 @@ export function RoundsLedger({
           </p>
         )}
 
-        <LensBoardView generation={liveGeneration} generations={generations} />
+        <LensBoardView reviewId={reviewId} generation={liveGeneration} generations={generations} />
       </div>
     </section>
   );

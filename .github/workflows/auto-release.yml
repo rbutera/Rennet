@@ -68,9 +68,11 @@ jobs:
             exit 0
           fi
           latest=$(git describe --tags --match "v*" --abbrev=0)
-          changed=$(git diff --name-only "${latest}..HEAD" -- \
-            apps/desktop packages pnpm-lock.yaml | head -1)
-          if [ -n "$changed" ]; then
+          # No pipe here: `git diff | head -1` dies of SIGPIPE (exit 141) under
+          # pipefail once the range grows past one page. --quiet exits 1 on any
+          # difference, which is the only bit we need.
+          if ! git diff --quiet "${latest}..HEAD" -- \
+            apps/desktop packages pnpm-lock.yaml; then
             echo "release=true" >> "$GITHUB_OUTPUT"
             echo "app source changed since ${latest} — releasing"
           else
