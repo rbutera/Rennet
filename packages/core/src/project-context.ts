@@ -49,6 +49,7 @@ import type {
 import { PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import type { FanInIndex } from "./delta";
 import { probeReachesImporter, resolveCandidate, resolveRelative } from "./import-specifiers";
+import type { IntegrityRefusal } from "./project-snapshot";
 
 /** Load a content-addressed shard's bytes by digest, or `undefined` if absent. */
 export type ShardLoader = (digest: string) => string | undefined;
@@ -504,7 +505,14 @@ export interface FileContext {
    * lockfile, a vendored or `dist/` file that is not itself TypeScript/JavaScript.
    */
   readonly hasSymbols: boolean;
-  /** The extractor identity that produced `symbols`, or null when the file bears no symbols. */
+  /**
+   * The extractor identity that produced `symbols`, or null when NO symbol shard
+   * exists for this blob — the same bit `hasSymbols` reports, never "the list came
+   * back empty". Since schema v5 a `.md` or `.json` gets a shard too, so it reads
+   * `structural-ts-v1` with an empty `symbols`: the extractor really did run and
+   * really did find nothing, which is a different fact from "no shard was emitted".
+   * Returning null on an empty list would collapse the two.
+   */
   readonly extractor: string | null;
   /** Symbols declared in the file, recovered via `path → blobOid → symbol shard`. */
   readonly symbols: readonly SnapshotSymbol[];
@@ -544,7 +552,37 @@ export type SnapshotGateFailure =
       readonly reason: "corrupt";
       readonly missing: readonly string[];
       readonly mismatched: readonly string[];
+      /**
+       * The whole-manifest refusal, when the gate refused before ever walking a
+       * shard. Present so a caller can tell the three apart — most of all
+       * `schema-version`, which is a snapshot written by an OLDER build and is
+       * STALE, not damaged. It used to surface as a bare "corrupt, missing=0
+       * mismatched=0", which named the wrong problem and implied the wrong fix.
+       */
+      readonly refusal?: IntegrityRefusal;
     };
+
+/**
+ * One honest sentence for a gate failure — the string a caller puts in a message
+ * instead of the bare variant tag. `corrupt` alone told a reader nothing (and for
+ * a schema-version refusal, told them something false).
+ */
+export function describeSnapshotGateFailure(failure: SnapshotGateFailure): string {
+  if (failure.reason === "absent") return "absent: no snapshot has been built for this repository";
+  if (failure.reason === "stale") {
+    return `stale: the snapshot is at ${failure.storedBaseOid.slice(0, 12)}, the request pins ${failure.requestedBaseOid.slice(0, 12)}`;
+  }
+  if (failure.refusal === "schema-version") {
+    return "stale: the snapshot was written by an older Rennet and must be rebuilt";
+  }
+  if (failure.refusal === "missing-family") {
+    return "corrupt: the manifest is missing a required shard family";
+  }
+  if (failure.refusal === "fingerprint") {
+    return "corrupt: the manifest's fingerprint does not match its contents";
+  }
+  return `corrupt: ${failure.missing.length} shard(s) missing, ${failure.mismatched.length} mismatched`;
+}
 
 /**
  * `context.map` gated result: the deterministic map at the requested base OID, or
@@ -633,7 +671,12 @@ export interface FileOverview {
   readonly path: string;
   /** The git blob OID whose symbols these are (content identity — the evidence). */
   readonly blobOid: string;
-  /** The extractor identity that produced `symbols`, or null when the file bears none. */
+  /**
+   * The extractor identity that produced `symbols`, or null when NO symbol shard
+   * exists for this blob (the same bit as `hasSymbols`). An indexed file whose
+   * extractor found nothing reports its extractor with an empty `symbols` — see
+   * {@link FileContext.extractor}.
+   */
   readonly extractor: string | null;
   /** Whether a symbol shard exists for this file's blob. */
   readonly hasSymbols: boolean;

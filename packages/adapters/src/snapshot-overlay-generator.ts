@@ -219,6 +219,7 @@ export class SnapshotOverlayReader implements MergedSnapshotSource {
             reason: "corrupt",
             missing: integrity.missing,
             mismatched: integrity.mismatched,
+            ...(integrity.refusal === undefined ? {} : { refusal: integrity.refusal }),
           },
         };
       }
@@ -226,7 +227,12 @@ export class SnapshotOverlayReader implements MergedSnapshotSource {
       if (!materialized.ok) {
         return {
           ok: false,
-          failure: { reason: "corrupt", missing: materialized.slots, mismatched: [] },
+          failure: {
+            reason: "corrupt",
+            missing: materialized.slots,
+            mismatched: [],
+            ...(materialized.reason === "schema-version" ? { refusal: "schema-version" } : {}),
+          },
         };
       }
       return {

@@ -356,6 +356,16 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
     const tampered = { ...manifest, fingerprint: `${manifest.fingerprint}0` };
     const result = verifySnapshotIntegrity(tampered, (d) => shards.get(d));
     expect(result.ok).toBe(false);
+    // Named, so the caller's message is not "missing=0 mismatched=0".
+    expect(result.refusal).toBe("fingerprint");
+    // …and NOT named when the shard walk already explains the refusal: a missing
+    // digest is the cause, the fingerprint mismatch that follows is a consequence.
+    const missingDigest = manifest.shards.files.digest;
+    const withMissing = verifySnapshotIntegrity(tampered, (d) =>
+      d === missingDigest ? undefined : shards.get(d),
+    );
+    expect(withMissing.missing).toContain(missingDigest);
+    expect(withMissing.refusal).toBeUndefined();
   });
 
   it("fingerprint changes when any shard digest changes", () => {
@@ -417,7 +427,13 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
     expect(Array.isArray(priorSchema.imports)).toBe(true);
     for (const [, digest] of priorSchema.symbols) expect(shards.get(digest)).toBeDefined();
 
-    expect(verifySnapshotIntegrity(priorSchema, (d) => shards.get(d)).ok).toBe(false);
+    const refused = verifySnapshotIntegrity(priorSchema, (d) => shards.get(d));
+    expect(refused.ok).toBe(false);
+    // The REASON, not just the refusal: a bare `missing=0 mismatched=0` reads as
+    // "the store is damaged" for a snapshot that is merely from an older build.
+    expect(refused.refusal).toBe("schema-version");
+    expect(refused.missing).toHaveLength(0);
+    expect(refused.mismatched).toHaveLength(0);
     const materialized = materializeSnapshot(priorSchema, (d) => shards.get(d));
     expect(materialized.ok).toBe(false);
     if (!materialized.ok) expect(materialized.reason).toBe("schema-version");
@@ -435,7 +451,9 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
     const { imports, ...withoutImports } = manifest;
     void imports;
     const truncated = withoutImports as typeof manifest;
-    expect(verifySnapshotIntegrity(truncated, (d) => shards.get(d)).ok).toBe(false);
+    const refused = verifySnapshotIntegrity(truncated, (d) => shards.get(d));
+    expect(refused.ok).toBe(false);
+    expect(refused.refusal).toBe("missing-family");
     const materialized = materializeSnapshot(truncated, (d) => shards.get(d));
     expect(materialized.ok).toBe(false);
     // The control: with `imports` present the very same manifest passes both.

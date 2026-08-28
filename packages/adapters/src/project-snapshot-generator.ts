@@ -331,7 +331,11 @@ export class ProjectSnapshotGenerator {
     const integrity = verifySnapshotIntegrity(built.manifest, (digest) => built.shards.get(digest));
     if (!integrity.ok) {
       throw new Error(
-        `ProjectSnapshot integrity check failed before advance: missing=${integrity.missing.length} mismatched=${integrity.mismatched.length}`,
+        // The refusal, when there is one, is the whole story: a bare
+        // "missing=0 mismatched=0" named nothing at all.
+        integrity.refusal === undefined
+          ? `ProjectSnapshot integrity check failed before advance: missing=${integrity.missing.length} mismatched=${integrity.mismatched.length}`
+          : `ProjectSnapshot integrity check failed before advance: ${integrity.refusal}`,
       );
     }
 

@@ -332,12 +332,32 @@ export function isSnapshotFresh(
   );
 }
 
+/**
+ * WHY the integrity gate refused, when the refusal is not "a shard is missing or
+ * mismatched". Without it the three whole-manifest refusals all surfaced downstream
+ * as `corrupt, missing=0 mismatched=0`, which reads as "the store is damaged" —
+ * and for `schema-version` that is simply untrue. A manifest written by an older
+ * build is STALE: nothing is damaged, the snapshot just needs rebuilding.
+ */
+export type IntegrityRefusal =
+  /** The manifest's schema version is not the one this build speaks. Stale, not corrupt. */
+  | "schema-version"
+  /** A required per-blob shard family (`symbols` / `references` / `imports`) is absent. */
+  | "missing-family"
+  /** The manifest's own fingerprint does not cover its current contents (tampered/damaged). */
+  | "fingerprint";
+
 export interface IntegrityResult {
   readonly ok: boolean;
   /** Shard digests the manifest references but the store could not produce. */
   readonly missing: readonly string[];
   /** Digests whose stored bytes do not hash back to the digest (corruption). */
   readonly mismatched: readonly string[];
+  /**
+   * The whole-manifest refusal, when there is one. Absent on `ok`, and absent when
+   * the refusal is fully described by `missing`/`mismatched`.
+   */
+  readonly refusal?: IntegrityRefusal;
 }
 
 /**
@@ -362,7 +382,7 @@ export function verifySnapshotIntegrity(
   // already rejects it on the live path; this is the same refusal at the second
   // door, for a caller that verifies without asking about freshness.
   if (manifest.schemaVersion !== PROJECT_SNAPSHOT_SCHEMA_VERSION) {
-    return { ok: false, missing: [], mismatched: [] };
+    return { ok: false, missing: [], mismatched: [], refusal: "schema-version" };
   }
 
   // FAIL CLOSED on a missing shard FAMILY. `symbols` is
@@ -377,7 +397,7 @@ export function verifySnapshotIntegrity(
     !Array.isArray(manifest.references) ||
     !Array.isArray(manifest.imports)
   ) {
-    return { ok: false, missing: [], mismatched: [] };
+    return { ok: false, missing: [], mismatched: [], refusal: "missing-family" };
   }
 
   const missing: string[] = [];
@@ -406,6 +426,12 @@ export function verifySnapshotIntegrity(
     ok: fingerprintOk && missing.length === 0 && mismatched.length === 0,
     missing: missing.sort(byString),
     mismatched: mismatched.sort(byString),
+    // Only when the shard walk itself found nothing: a run with missing/mismatched
+    // digests is already described by those lists, and naming the fingerprint too
+    // would report a consequence as if it were the cause.
+    ...(fingerprintOk || missing.length > 0 || mismatched.length > 0
+      ? {}
+      : { refusal: "fingerprint" as const }),
   };
 }
 

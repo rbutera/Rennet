@@ -3,6 +3,7 @@ import {
   buildPartitions,
   type CodexExecutor,
   dedupById,
+  describeSnapshotGateFailure,
   dispositionCarrier,
   type HarnessPort,
   type HarnessTurnResult,
@@ -387,7 +388,7 @@ export async function runKnowledgeSwarmForRepo(
 ): Promise<KnowledgeSwarmOutcome> {
   const gated = deps.reader.loadFresh(deps.repoKey, deps.baseOid);
   if (!gated.ok) {
-    return { status: "snapshot-unavailable", reason: gated.failure.reason };
+    return { status: "snapshot-unavailable", reason: describeSnapshotGateFailure(gated.failure) };
   }
   const snapshot = snapshotContextFromLoaded(gated.snapshot);
 

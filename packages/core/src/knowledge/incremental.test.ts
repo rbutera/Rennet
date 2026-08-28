@@ -155,8 +155,16 @@ describe("routeDelta", () => {
         neighbors: [],
       },
     ];
+    // The prior owner is a MODULE batch, so rule 1 (id-family match) cannot fire:
+    // `mod:CHANGELOG.md` neither equals nor prefixes `dir:.`. What is under test is
+    // rule 2's walk-up bound — delete it and this routes NOTHING, where the old
+    // `dir:.` prior made rule 1 answer and left rule 2 unexercised.
     const prior: readonly PartitionSlice[] = [
-      { id: "dir:.", files: [{ path: "CHANGELOG.md", blobOid: "3" }], neighbors: [] },
+      {
+        id: "mod:CHANGELOG.md#c0ffee00",
+        files: [{ path: "CHANGELOG.md", blobOid: "3" }],
+        neighbors: [],
+      },
     ];
     const routed = routeDelta(current, ["CHANGELOG.md"], prior);
     expect(routed.map((slice) => slice.id)).toEqual(["dir:."]);
