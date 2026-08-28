@@ -48,6 +48,7 @@ import type {
   WorkspaceScope,
 } from "@rennet/protocol";
 import { canonicalize, PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
+import { hasGeneratedMarker } from "./file-classification";
 import { importSpecifiers, stripBlockComments } from "./import-specifiers";
 
 /** Content-address any value: its canonical bytes and their sha256. */
@@ -141,6 +142,7 @@ export function symbolShardBytes(shard: SymbolShard): BuiltShard {
   return contentAddress({
     blobOid: shard.blobOid,
     extractor: shard.extractor,
+    generated: shard.generated,
     symbols: shard.symbols,
   });
 }
@@ -491,7 +493,11 @@ export function indexSymbolShards(shards: readonly SymbolShard[]): Map<string, S
 // changing the snapshot shape. The `extractor` id below invalidates old shards
 // honestly when that upgrade lands.
 
-export const DEFAULT_SYMBOL_EXTRACTOR_ID = "structural-ts-v1";
+// `structural-ts-v2` is the same extraction with one more recorded fact: the
+// generated-banner flag (W2). The id moved because the SHARD BYTES moved, which is
+// exactly what the extractor identity is for — a v1 shard cannot answer
+// `generated`, so it must not be reused as if it could.
+export const DEFAULT_SYMBOL_EXTRACTOR_ID = "structural-ts-v2";
 
 /** Extract a source file's symbols. Same bytes ⇒ same symbols, always. */
 export type SnapshotSymbolExtractor = (path: string, text: string) => SnapshotSymbol[];
@@ -591,6 +597,9 @@ export function extractSymbolShard(
     // extensions), but it is NOT stored on the shard: the shard is a pure
     // function of blob content, so its path is recovered from the `files` shard.
     symbols: extract(file.path, text),
+    // Derived HERE rather than inside `extract`, so a substituted extractor cannot
+    // drop it — and from the text alone, so it stays a pure function of the blob.
+    generated: hasGeneratedMarker(text),
   };
 }
 

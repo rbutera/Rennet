@@ -24,6 +24,7 @@ import {
   queryProjectMap,
   queryReferences,
   querySymbolDefinition,
+  querySymbolIndex,
 } from "./project-context";
 import { buildSnapshot, type SnapshotStructuralInputs } from "./project-snapshot";
 
@@ -88,7 +89,8 @@ const conventions: ConventionEntry[] = [
 const symbolShards: SymbolShard[] = [
   {
     blobOid: B_A,
-    extractor: "structural-ts-v1",
+    extractor: "structural-ts-v2",
+    generated: false,
     symbols: [
       { name: "foo", kind: "function", line: 1 },
       { name: "Bar", kind: "class", line: 5 },
@@ -96,7 +98,8 @@ const symbolShards: SymbolShard[] = [
   },
   {
     blobOid: B_M,
-    extractor: "structural-ts-v1",
+    extractor: "structural-ts-v2",
+    generated: false,
     symbols: [{ name: "main", kind: "function", line: 1 }],
   },
 ];
@@ -281,7 +284,7 @@ describe("queryFileContext", () => {
     expect(result.context.scope).toBe("@x/core");
     expect(result.context.isSymlink).toBe(false);
     expect(result.context.hasSymbols).toBe(true);
-    expect(result.context.extractor).toBe("structural-ts-v1");
+    expect(result.context.extractor).toBe("structural-ts-v2");
     expect(result.context.symbols.map((s) => s.name)).toEqual(["foo", "Bar"]);
     expect(result.context.tests).toHaveLength(0);
   });
@@ -356,7 +359,7 @@ describe("queryFileOverview", () => {
     expect(result.overview.path).toBe("packages/core/src/a.ts");
     expect(result.overview.blobOid).toBe(B_A);
     expect(result.overview.hasSymbols).toBe(true);
-    expect(result.overview.extractor).toBe("structural-ts-v1");
+    expect(result.overview.extractor).toBe("structural-ts-v2");
     expect(result.overview.symbols.map((s) => s.name)).toEqual(["foo", "Bar"]);
   });
 
@@ -655,7 +658,8 @@ function importFixture(overrides: { omitImports?: boolean; omitEntryPoints?: boo
     [
       {
         blobOid: "blob:packages/core/src/a.ts",
-        extractor: "structural-ts-v1",
+        extractor: "structural-ts-v2",
+        generated: false,
         symbols: [{ name: "alpha", kind: "const", line: 1 }],
       },
     ],
@@ -834,6 +838,51 @@ describe("queryImportGraph — raw specifiers resolved into real file→file edg
     if (!result.ok) return;
     expect(result.graph.importsOf("packages/self/index.ts")).toEqual([]);
     expect(result.graph.importersOf("packages/self/src/index.ts")).toEqual([]);
+  });
+});
+
+describe("querySymbolIndex — one pass over the symbol family, for batching", () => {
+  function withGenerated(): { snapshot: LoadedSnapshot; load: ShardLoader } {
+    const built = buildSnapshot(inputs, [
+      { ...(symbolShards[0] as SymbolShard), generated: true },
+      symbolShards[1] as SymbolShard,
+    ]);
+    const load: ShardLoader = (digest) => built.shards.get(digest);
+    const materialized = materializeSnapshot(built.manifest, load);
+    if (!materialized.ok) throw new Error("materialize failed");
+    return { snapshot: materialized.snapshot, load };
+  }
+
+  it("reports the generated blobs and each blob's DISTINCT exported names, sorted", () => {
+    const result = querySymbolIndex(withGenerated().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect([...result.index.generatedBlobs]).toEqual([B_A]);
+    expect(result.index.exportsByBlob.get(B_A)).toEqual(["Bar", "foo"]);
+    expect(result.index.exportsByBlob.get(B_M)).toEqual(["main"]);
+    // A blob with no symbol shard is simply absent — not an empty-export claim.
+    expect(result.index.exportsByBlob.has(B_JSON)).toBe(false);
+  });
+
+  it("reads an ordinary snapshot as carrying no generated blobs", () => {
+    const result = querySymbolIndex(loaded());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect([...result.index.generatedBlobs]).toEqual([]);
+  });
+
+  it("fails closed on an unloadable shard rather than thinning the index", () => {
+    const { snapshot, load } = withGenerated();
+    const digest = snapshot.symbolDigestByBlob.get(B_A) as string;
+    const holed: LoadedSnapshot = {
+      ...snapshot,
+      load: (d) => (d === digest ? undefined : load(d)),
+    };
+    const result = querySymbolIndex(holed);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("shard-unavailable");
+    expect(result.digest).toBe(digest);
   });
 });
 

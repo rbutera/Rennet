@@ -127,10 +127,15 @@ function loadBlobShard(
 function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undefined {
   const shard = loadBlobShard(load, digest);
   if (!shard || !Array.isArray(shard.body.symbols)) return undefined;
+  // `generated` is a v4 field; the hash-check above already proves these are our own
+  // bytes, so a non-boolean can only come from a pre-v4 shard the freshness gate
+  // should have rejected. Reading it as `false` is the safe direction (keep the file
+  // in the map) rather than a crash on a shard we otherwise understand.
   return {
     blobOid: shard.blobOid,
     extractor: shard.extractor,
     symbols: shard.body.symbols as SnapshotSymbol[],
+    generated: shard.body.generated === true,
   };
 }
 
@@ -1102,6 +1107,48 @@ export function queryImportGraph(snapshot: LoadedSnapshot): ImportGraphResult {
       importersOf: (path) => sortedOf(incoming, path),
     },
   };
+}
+
+// ── The repo-wide symbol index (context-map rebuild, W2) ─────────────────────
+//
+// `queryFileOverview` answers about ONE file and decodes ONE shard. Module batching
+// asks two whole-repo questions of the same family — "which blobs carry a generated
+// banner?" (mapping eligibility) and "what does each blob export?" (the neighbor
+// map's symbol names) — so it gets one pass that decodes each shard exactly once,
+// rather than two whole-corpus walks or one per file.
+
+/** The whole-repo symbol-shard read, keyed by blob (the shard's own identity). */
+export interface SymbolIndex {
+  /** Blobs whose text opened with a generator's banner ({@link SymbolShard.generated}). */
+  readonly generatedBlobs: ReadonlySet<string>;
+  /** `blobOid → the DISTINCT names the blob exports`, sorted. Absent for an unindexed blob. */
+  readonly exportsByBlob: ReadonlyMap<string, readonly string[]>;
+}
+
+export type SymbolIndexResult =
+  | { readonly ok: true; readonly index: SymbolIndex }
+  | { readonly ok: false; readonly reason: "shard-unavailable"; readonly digest: string };
+
+/**
+ * Decode every symbol shard the manifest references, once. Fail-closed on the same
+ * terms as {@link queryImportGraph}: a shard the manifest names but the loader
+ * cannot produce intact is a refusal, never a silently thinner index — a partial
+ * answer here would silently mark generated files as mappable and strip real symbol
+ * names off the neighbour map.
+ *
+ * Pure over the snapshot, and independent of the `files` inventory: the result is
+ * keyed by blob, and callers join `path → blobOid` themselves.
+ */
+export function querySymbolIndex(snapshot: LoadedSnapshot): SymbolIndexResult {
+  const generatedBlobs = new Set<string>();
+  const exportsByBlob = new Map<string, readonly string[]>();
+  for (const [blobOid, digest] of snapshot.manifest.symbols) {
+    const shard = loadSymbolShard(snapshot.load, digest);
+    if (shard === undefined) return { ok: false, reason: "shard-unavailable", digest };
+    if (shard.generated) generatedBlobs.add(blobOid);
+    exportsByBlob.set(blobOid, [...new Set(shard.symbols.map((s) => s.name))].sort(byPath));
+  }
+  return { ok: true, index: { generatedBlobs, exportsByBlob } };
 }
 
 function byPath(left: string, right: string): number {

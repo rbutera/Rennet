@@ -38,7 +38,8 @@ const scopes: WorkspaceScope[] = [
 const symbolShards: SymbolShard[] = [
   {
     blobOid: B_A,
-    extractor: "structural-ts-v1",
+    extractor: "structural-ts-v2",
+    generated: false,
     symbols: [{ name: "foo", kind: "function", line: 1 }],
   },
 ];

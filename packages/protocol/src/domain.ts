@@ -1584,8 +1584,12 @@ export interface InvocationBudget {
  * v3 (context-map rebuild, W1) adds the per-file IMPORT index (`manifest.imports`
  * + import shards), on the same terms: every v2 snapshot is stale under v3 and
  * re-derives, rather than being served with a missing import dimension.
+ * v4 (context-map rebuild, W2) adds {@link SymbolShard.generated}: a symbol shard
+ * now records whether the blob opens with a generator's banner. The bump is what
+ * forces re-derivation — a v3 snapshot at the SAME `baseOid` would otherwise pass
+ * the freshness gate carrying shards that cannot answer the question.
  */
-export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 3;
+export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 4;
 
 /** How the pinned default-branch ref was resolved (most-authoritative first). */
 export type BaseRefResolution =
@@ -1714,6 +1718,23 @@ export interface SymbolShard {
   /** The extractor identity, so a future upgrade invalidates old shards honestly. */
   readonly extractor: string;
   readonly symbols: readonly SnapshotSymbol[];
+  /**
+   * Whether the blob opens with a generator's banner ("@generated", "Code generated
+   * by …", "DO NOT EDIT") in its first few lines — the one mapping-eligibility signal
+   * that cannot be read off a path (context-map rebuild, W2).
+   *
+   * It lives on THIS shard rather than in a family of its own because it is the same
+   * kind of fact by the same rules: a pure function of blob content, carrying no path,
+   * derived from the single blob read the generator already performs, and reused
+   * verbatim for an unchanged blob. A separate family would duplicate the manifest
+   * pointer array, the integrity gate and the incremental planner to carry one bit.
+   *
+   * Honest scope: symbol shards exist only for files the symbol extractor is eligible
+   * for (TypeScript/JavaScript), so a generated `.py` or `.sql` with a banner and no
+   * path signal is NOT caught here. Path classification still covers it, and the safe
+   * direction is the one taken — a missed banner keeps a file in the map.
+   */
+  readonly generated: boolean;
 }
 
 /**
