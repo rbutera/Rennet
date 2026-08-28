@@ -12,7 +12,9 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // — the rounds-ledger read), plus forge.detect (C17 cluster 1 — the per-host forge/`gh`
 // CLI detection command that mirrors harness.detect and feeds `sourceControlByHost`), plus
 // daemon.status (C17 cluster 2 — per-host daemon reachable/version/lastSeenVersion/
-// updateAvailable, where an unreachable host invents nothing), plus harness.hosts
+// updateAvailable, where an unreachable host invents nothing) and daemon.reconnect (C17
+// cluster 5 — the on-demand re-handshake behind the host card's Reconnect button, whose
+// failure carries the reason rather than reading green), plus harness.hosts
 // (C17 cluster 3 — SERVER-side per-host agent detection, where a host that cannot be
 // asked reads honestly absent instead of inheriting the local machine's agents) and
 // harness.setEnabled (C17 cluster 3.2 — the served per-host enable store the toggle writes
@@ -34,6 +36,7 @@ const ABSORBED_IDS = [
   "ask.stage",
   "ask.unstage",
   "attention.acknowledge",
+  "daemon.reconnect",
   "daemon.status",
   "device.registerPush",
   "flagged.adjudication",
@@ -130,7 +133,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(83);
+    expect(ABSORBED_IDS).toHaveLength(84);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

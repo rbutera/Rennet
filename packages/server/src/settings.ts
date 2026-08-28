@@ -78,6 +78,16 @@ export interface SettingsCompositionDeps {
    */
   probeDaemon?(source: ProjectSource): Promise<{ version: string | null } | null>;
   /**
+   * RE-ATTEMPT the handshake to one host's daemon on demand (C17 cluster 5, #533) — the effect
+   * behind the host card's Reconnect button. Same contract as `probeDaemon` (`null` ⇒ did not
+   * answer), with one difference that matters: it may THROW, and the message is shown to the
+   * viewer as the reason the reconnect failed. A host kind that cannot be dialled from here at
+   * all throws saying so, rather than resolving `null` and reading as a silent timeout.
+   *
+   * Absent dep ⇒ falls back to `probeDaemon`, which is still a real handshake attempt.
+   */
+  reconnectDaemon?(source: ProjectSource): Promise<{ version: string | null } | null>;
+  /**
    * Ask ONE host which coding harnesses are installed ON IT (C17 cluster 3, #485). Resolves
    * `null` when that host CANNOT BE ASKED from here — the caller then reports honest absence
    * (`asked: false`, no rows) rather than copying this machine's agents onto it. An empty
@@ -150,6 +160,15 @@ export interface SettingsComposition {
    * refresh status on its own cadence.
    */
   daemonStatus(): Promise<DaemonHostStatus[]>;
+  /**
+   * Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation the
+   * host card's Reconnect button performs. Runs the same per-host handshake `daemonStatus`
+   * polls, for one host, on demand, and reports the OUTCOME rather than a state change: a
+   * successful reconnect returns that host reachable with its real version (and remembers it
+   * as last-seen, exactly as the poll does); a failed one returns it still unreachable, with
+   * the reason. It never reads green on a handshake that did not complete.
+   */
+  reconnect(source: ProjectSource): Promise<{ status: DaemonHostStatus; error?: string }>;
   /**
    * The coding agents detected ON EACH HOST (C17 cluster 3, #485), for exactly the hosts
    * `get().daemonHosts` enumerates — the same enumeration `daemonStatus` walks, so a card can
@@ -237,6 +256,31 @@ function withHostEntries(
     hosts[source] = { ...hosts[source], ...edit };
   }
   return { ...current, hosts };
+}
+
+/**
+ * One host's status from ONE probe answer (C17) — the single place the honesty rules live, so
+ * the polled read (`daemonStatus`) and the on-demand re-handshake (`reconnect`) can never
+ * disagree about what a non-answer means. A `null` answer INVENTS NOTHING: no `version`, no
+ * `updateAvailable` (an unknown running version compares to nothing), only a `lastSeenVersion`
+ * the host really answered with before. `updateAvailable` needs BOTH sides real.
+ */
+function hostStatus(
+  source: ProjectSource,
+  answer: { version: string | null } | null,
+  lastSeenVersion: string | undefined,
+  latest: string | undefined,
+): DaemonHostStatus {
+  if (!answer) {
+    return { source, reachable: false, ...(lastSeenVersion ? { lastSeenVersion } : {}) };
+  }
+  const version = answer.version ?? undefined;
+  return {
+    source,
+    reachable: true,
+    ...(version ? { version } : {}),
+    ...(version && latest ? { updateAvailable: compareVersions(version, latest) < 0 } : {}),
+  };
 }
 
 export function createSettingsComposition(deps: SettingsCompositionDeps): SettingsComposition {
@@ -409,28 +453,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       for (const host of daemonHostSections(deps.listProjects())) {
         const answer = await deps.probeDaemon?.(host.source).catch(() => null);
         const lastSeenVersion = remembered[host.source]?.lastSeenVersion;
-        if (!answer) {
-          // UNREACHABLE INVENTS NOTHING: no `version`, no `updateAvailable` (an unknown
-          // running version cannot be compared to anything) — only a real last-seen.
-          statuses.push({
-            source: host.source,
-            reachable: false,
-            ...(lastSeenVersion ? { lastSeenVersion } : {}),
-          });
-          continue;
+        const status = hostStatus(host.source, answer, lastSeenVersion, latest);
+        if (status.version && status.version !== lastSeenVersion) {
+          learned[host.source] = { lastSeenVersion: status.version };
         }
-        const version = answer.version ?? undefined;
-        if (version && version !== lastSeenVersion) {
-          learned[host.source] = { lastSeenVersion: version };
-        }
-        statuses.push({
-          source: host.source,
-          reachable: true,
-          ...(version ? { version } : {}),
-          // Both sides must be real: an answering host with no version, or no known latest
-          // version to update TO, withholds the flag rather than guessing one.
-          ...(version && latest ? { updateAvailable: compareVersions(version, latest) < 0 } : {}),
-        });
+        statuses.push(status);
       }
 
       if (Object.keys(learned).length > 0) {
@@ -445,6 +472,34 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         }
       }
       return statuses;
+    },
+
+    reconnect: async (source): Promise<{ status: DaemonHostStatus; error?: string }> => {
+      const lastSeenVersion = deps.readDaemonSettings().hosts?.[source]?.lastSeenVersion;
+      const attempt = deps.reconnectDaemon ?? deps.probeDaemon;
+      let answer: { version: string | null } | null = null;
+      let error: string | undefined;
+      try {
+        answer = (await attempt?.(source)) ?? null;
+      } catch (reason) {
+        // The handshake's OWN reason (no Node in the distro, a device that dials us and cannot
+        // be dialled back, a dead port) — shown verbatim, because a generic "failed" tells the
+        // viewer nothing about which thing to go fix.
+        error = reason instanceof Error ? reason.message : String(reason);
+      }
+      const status = hostStatus(source, answer, lastSeenVersion, deps.latestDaemonVersion);
+      if (status.version && status.version !== lastSeenVersion) {
+        try {
+          // Same merge as the poll: a reconnect that succeeded is a real sighting, so it is
+          // remembered — and it must not clobber the agent decisions on that host's entry.
+          deps.updateDaemon((current) =>
+            withHostEntries(current, { [source]: { lastSeenVersion: status.version as string } }),
+          );
+        } catch {
+          // A malformed daemon-settings refuses the write; the live outcome still returns.
+        }
+      }
+      return { status, ...(error ? { error } : {}) };
     },
 
     harnessHosts: async (): Promise<HarnessHostDetection[]> => {

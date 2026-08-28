@@ -639,6 +639,83 @@ describe("daemonStatus — per-host daemon detection (C17 cluster 2, #485)", () 
   });
 });
 
+describe("reconnect — the on-demand re-handshake (C17 cluster 5, #533)", () => {
+  /** A composition over a mutable daemon-settings store plus a swappable reconnect effect. */
+  function reconnectDeps(options: {
+    reconnect?: SettingsCompositionDeps["reconnectDaemon"];
+    probe?: SettingsCompositionDeps["probeDaemon"];
+    stored?: DaemonSettings;
+    latestDaemonVersion?: string;
+  }) {
+    let stored: DaemonSettings = options.stored ?? { version: 1 };
+    const { deps } = makeDeps({
+      listProjects: () => [project({ source: "local" })],
+      readDaemonSettings: () => stored,
+      updateDaemon: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+      ...(options.reconnect ? { reconnectDaemon: options.reconnect } : {}),
+      ...(options.probe ? { probeDaemon: options.probe } : {}),
+      ...(options.latestDaemonVersion ? { latestDaemonVersion: options.latestDaemonVersion } : {}),
+    });
+    return { deps, read: () => stored };
+  }
+
+  it("a successful re-handshake reports the host reachable and remembers the version", async () => {
+    const { deps, read } = reconnectDeps({ reconnect: async () => ({ version: "0.1.5" }) });
+    expect(await createSettingsComposition(deps).reconnect("local")).toEqual({
+      status: { source: "local", reachable: true, version: "0.1.5" },
+    });
+    // A real sighting, remembered exactly as the poll remembers one.
+    expect(read().hosts).toEqual({ local: { lastSeenVersion: "0.1.5" } });
+  });
+
+  it("POSITIVE CONTROL: a FAILING re-handshake stays unreachable and carries the reason", async () => {
+    // The whole point of the button being real: an attempt that did not complete must not
+    // read green. Return a reachable status here from anything but a real answer and this fails.
+    const { deps } = reconnectDeps({
+      stored: { version: 1, hosts: { local: { lastSeenVersion: "0.1.3" } } },
+      reconnect: async () => {
+        throw new Error('No Rennet daemon answered in WSL distro "Ubuntu".');
+      },
+    });
+    const outcome = await createSettingsComposition(deps).reconnect("local");
+    expect(outcome.status.reachable).toBe(false);
+    // The handshake's own reason, verbatim — not a generic "failed".
+    expect(outcome.error).toBe('No Rennet daemon answered in WSL distro "Ubuntu".');
+    // And no fabricated running version: only the last-seen it really answered with before.
+    expect(outcome.status).not.toHaveProperty("version");
+    expect(outcome.status.lastSeenVersion).toBe("0.1.3");
+  });
+
+  it("a host that answers NOTHING (no throw) is unreachable with no error line invented", async () => {
+    const { deps } = reconnectDeps({ reconnect: async () => null });
+    expect(await createSettingsComposition(deps).reconnect("local")).toEqual({
+      status: { source: "local", reachable: false },
+    });
+  });
+
+  it("ruled-out agents on the host survive a reconnect that learns a new version", async () => {
+    const { deps, read } = reconnectDeps({
+      stored: { version: 1, hosts: { local: { disabledHarnesses: ["codex"] } } },
+      reconnect: async () => ({ version: "0.1.6" }),
+    });
+    await createSettingsComposition(deps).reconnect("local");
+    expect(read().hosts?.local).toEqual({
+      disabledHarnesses: ["codex"],
+      lastSeenVersion: "0.1.6",
+    });
+  });
+
+  it("with no reconnect effect wired it falls back to the ordinary probe — still a real attempt", async () => {
+    const { deps } = reconnectDeps({ probe: async () => ({ version: "0.1.5" }) });
+    expect(await createSettingsComposition(deps).reconnect("local")).toEqual({
+      status: { source: "local", reachable: true, version: "0.1.5" },
+    });
+  });
+});
+
 describe("setTrackerValue — the global-rung tracker write (#461, B7)", () => {
   it("writes, resets, and validates through the registry declarations", () => {
     let stored: DaemonSettings = { version: 1 };

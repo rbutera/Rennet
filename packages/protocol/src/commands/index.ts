@@ -435,6 +435,21 @@ const definitions = {
     input: z.object({}),
     output: z.object({ hosts: z.array(daemonHostStatusSchema) }),
   },
+  // Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation behind
+  // the host card's Reconnect button. The same per-host handshake `daemon.status` polls, run on
+  // demand for one host and reporting WHY it failed: `local` re-reads the claim file, a WSL
+  // distro is re-entered over `wsl.exe` and its published port health-checked, a paired remote
+  // device cannot be dialled back at all and says so. The outcome is that host's real status —
+  // a failed reconnect stays `reachable: false` and carries the failure line, never a green card.
+  "daemon.reconnect": {
+    input: z.object({ source: sourceSchema }),
+    output: z.object({
+      /** That host's status AFTER the attempt — the same shape `daemon.status` returns. */
+      status: daemonHostStatusSchema,
+      /** Why the handshake failed, when it did. Absent on success. Never a generic filler. */
+      error: z.string().optional(),
+    }),
+  },
   // ── The GitHub account (v4.2: device flow, no gh CLI) ──────────────────────
   // Connect is SKIPPABLE everywhere it appears (working-tree review needs no
   // GitHub); these commands exist so the first-run card and the settings rows can

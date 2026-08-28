@@ -254,6 +254,36 @@ async function probeDaemonForHost(
   return null;
 }
 
+/**
+ * RE-ATTEMPT one host's handshake on demand (C17 cluster 5, #533) — the effect behind the host
+ * card's Reconnect button. It is the same handshake `probeDaemonForHost` performs, run fresh for
+ * one host, with one difference: a host kind that cannot be reached from here at ALL throws its
+ * reason instead of resolving `null`, so the card can say WHY rather than showing a bare failure.
+ *
+ * What it deliberately does NOT do is start a daemon that is not running. Delivering a bundle
+ * and spawning inside a distro is the UPDATE path (`ensureWslDaemon`, which owns the host bundle
+ * the shell resolves) — Reconnect re-attempts the connection and reports what it found, and a
+ * button that quietly installed software would be a different action wearing this one's label.
+ */
+async function reconnectDaemonForHost(
+  source: ProjectSource,
+  dataDir: string,
+  serverVersion: string,
+): Promise<{ version: string | null } | null> {
+  if (source.startsWith("remote:")) {
+    throw new Error(
+      "A paired device dials this daemon; Rennet cannot dial back to reconnect it. Reconnect from that device.",
+    );
+  }
+  const answer = await probeDaemonForHost(source, dataDir, serverVersion);
+  if (!answer && source.startsWith("wsl:")) {
+    throw new Error(
+      `No Rennet daemon answered in WSL distro "${source.slice("wsl:".length)}". Open a project on that distro to start one.`,
+    );
+  }
+  return answer;
+}
+
 export interface RennetServerOptions {
   /** The per-user data directory (Electron passes app.getPath("userData")); every store resolves under it. */
   readonly dataDir: string;
@@ -2237,6 +2267,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       listPairedDevices: () => pairingStore.listDevices(),
       // Ask ONE host's daemon whether it is running, for the host cards (C17, #485).
       probeDaemon: (source) => probeDaemonForHost(source, dataDir, serverVersion),
+      // The same handshake, on demand, behind Reconnect (C17 cluster 5, #533) — throwing the
+      // reason for a host kind this daemon cannot reach at all.
+      reconnectDaemon: (source) => reconnectDaemonForHost(source, dataDir, serverVersion),
       // The version a host's daemon would update TO: the one this daemon ships. That is a
       // real number, so `updateAvailable` is a real comparison rather than a fake flag.
       latestDaemonVersion: serverVersion,
