@@ -838,6 +838,23 @@ function ProjectStage({ onBack, onAdded }: { onBack(): void; onAdded(project: Pr
       <div className="rn-add-project-flow">
         <AddProjectFlow onAdded={onAdded} showAddEnvironment={false} embedded />
       </div>
+      {/* No `onContinue`, so no Continue button — deliberately, and NOT the bug that review
+       *  setup had. The shape is identical, which is exactly why this note exists: someone
+       *  will find it, recognise the gate one step back, and "fix" it the same way.
+       *
+       *  What made review setup a GATE: it refused the reviewer over a fact about their
+       *  machine they could only change OUTSIDE Rennet — install a harness, sign in with its
+       *  CLI, come back. Nothing on that screen could satisfy it, so an empty machine was
+       *  held at the door forever.
+       *
+       *  What makes this a FORM: it asks the reviewer to do the one thing the step is for,
+       *  and the picker that does it is right here, satisfiable in place, with no harness
+       *  condition of its own (`AddProjectFlow`'s `disabled={!selectedPath || busy}` is just
+       *  an empty form declining to submit nothing). Adding a project is the step.
+       *
+       *  So: if a step withholds progress over something the user cannot resolve on that
+       *  screen, that is a gate and Rule Zero kills it. If it withholds progress until they
+       *  perform the step's own action, that is a form. Do not collapse the two. */}
       <StepActions onBack={onBack} />
     </section>
   );
