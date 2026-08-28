@@ -123,7 +123,7 @@
   "c11": {
     "status": "done",
     "passes": true,
-    "note": "PR #528 landed; live execution audited 2026-08-28: exposure.commandMenu is false on every registered command (one derived literal, commands/index.ts) \u2014 queued as a deliberate per-row menu inventory, not a blanket flip. Keyboard carry (KEY_ACTIONS + settings.get invalidation) verified closed on eea4e398"
+    "note": "PR #528 landed; live execution audited 2026-08-28: exposure.commandMenu is false on every registered command (one derived literal, commands/index.ts) \u2014 queued as a deliberate per-row menu inventory, not a blanket flip. Keyboard carry (KEY_ACTIONS + settings.get invalidation) verified closed on eea4e398 | FOLLOW-UP BUILT 2026-08-28: the queued per-row menu inventory is done and pushed on feat/c11-command-menu-exposure @1cb3663e \u2014 1 exposed / 94 false, each row carrying a committed rationale (docs/developing/reference/command-menu-exposure.md) that diffs against the registry; rows now close-on-success/hold-on-failure instead of fire-and-forget. Implementer GATE_EXIT=0, control red-proven. OPUS REVIEW SEAT IN FLIGHT, then lands."
   },
   "c12": {
     "status": "done",
@@ -143,7 +143,7 @@
   "c15": {
     "status": "review",
     "passes": false,
-    "note": "Issue #541. Codex round-1: BLOCK, 11 findings \u2014 triaged 9 as-ruled + 2 right-sized (lane union yes; skew fix MINIMAL honest degradation, not negotiation ceremony). Worst: #1 boards drafted from the PRE-worker patchset (describe the old diff \u2014 core-claim lie); #2 fabricated lineage (carry-forward never fires in prod). Two serial fix sessions on the branch: A server-core (#1 #2 #4 #5 #6 #11, re-smoke after #1) IN FLIGHT; then B client/wire (#3 #7 #8 #9 #10). Exactly the bugs the audit would have caught later at higher cost. B10-c6 stays blocked on the create-server churn \u2014 correct. Base @22cac013."
+    "note": "Issue #541. Codex round-1 BLOCK, 11 findings (triaged 9 as-ruled + 2 right-sized). Session A (server-core: #1 pre-worker patchset, #2 fabricated lineage, #4 non-terminal client, #5 thrown worker, #6 record-before-generations, #11 coverage-binds-helper) was 5 commits deep + 1 uncommitted file when its session died. CONTINUATION IMPLEMENTER IN FLIGHT (Fournata 2026-08-28): the dirty file is #11's real fix (drives an uncovered hunk through runRound, empty-universe control) \u2014 commit it, positive-control it, FULL gate with GATE_EXIT, push. Session B (client/wire: #3 deletion-only delta, #7 dispatched-before-ack race, #8 lane-state union, #9 MINIMAL skew degradation, #10 rework count) dispatches after A pushes green. B10-c6 stays blocked on the create-server churn. Base @22cac013, worktree HEAD @2e1d48ef."
   },
   "c16": {
     "status": "landed",
@@ -166,8 +166,8 @@
     "note": "LANDED #559 @0053c25e (closes #552). Token deleted end to end (snapshot 80->79, both clients); verdict folded into publishCompositionId/assertCompositionFresh \u2014 flip-without-recompose refused, red-proven from committed baselines. Desktop verdict override made durable (was local-only; packet falsehood caught by implementer). Review FIX->CONFIRMED. Follow-ups #555 #556. Survivors untouched."
   },
   "c20": {
-    "status": "pending",
+    "status": "proposing",
     "passes": false,
-    "note": "NEW (Rai 2026-08-28, approved from live spike demo): corner-slot macOS chrome \u2014 leftmost pane owns the lights, wordmark + rail deleted, chat toggle on main view. Lands BEFORE C14; closes #558. Packet: openspec/changes/c20-corner-slot-chrome/"
+    "note": "NEW (Rai 2026-08-28, approved from live spike demo): corner-slot macOS chrome \u2014 leftmost pane owns the lights, wordmark + rail deleted, chat toggle on main view. Lands BEFORE C14; closes #558. Packet: openspec/changes/c20-corner-slot-chrome/ | PROPOSER IN FLIGHT (Fournata 2026-08-28): authoring proposal.md + tasks.md from the packet, porting the design (not the code) off spike/corner-slot-demo. Must ship in the pre-C14 auto-release Rai watches land on his own machine."
   }
 }
