@@ -157,7 +157,10 @@ The preview renders exactly this structure, because it is exactly what posts.
 ## Verdict and the approving review
 
 The orchestrator proposes the verdict from the reviewer's acts and asks in
-chat when those acts are ambiguous; the reviewer can always flip it. An
+chat when those acts are ambiguous; the reviewer can always flip it. A flip is
+a durable write on the ask log (`ask.setVerdictOverride`) that recomposes the
+preview, so the verdict on screen is the verdict that posts — there is no
+separate verdict argument riding along at post time. An
 approving review is a first-class flow, not an empty state: a drafted Approve
 whose body is grounded in what the reviewer actually walked, raised, and
 cleared. Publication keeps the accepted contract: an exact-payload preview
@@ -172,8 +175,11 @@ An empty outbound set posts nothing at all.
 The preview and the post are the same object. Before any egress the server
 reconstructs the canonical payload in `@rennet/core`, so the renderer cannot
 construct a different body after preview. A daemon-composed payload carries a
-`compositionId` bound to the review, the active patchset, the mode, and the
-payload itself — a stale preview cannot apply.
+`compositionId` bound to the review, the active patchset, the mode, the payload
+itself, and — for a review post — the verdict. A stale preview cannot apply, and
+neither can a verdict other than the one previewed: the event is the one
+outbound field the payload bytes do not capture, so it rides in the binding
+instead of behind a confirmation step.
 
 The post carries a deterministic idempotency marker. The GitHub adapter checks
 for that marker before creating anything, so a retry returns the review that

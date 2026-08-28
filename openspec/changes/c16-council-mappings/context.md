@@ -14,6 +14,27 @@ commands over the council tables that already exist in
 list, and the mappings dialog cell edit. Values carry the `{value, layer}`
 provenance contract; an unassigned role is honestly unassigned, never a guess.
 
+## Re-scope — 2026-08-28, Rai's per-scenario ruling
+
+Clusters 1–4 landed a **job-keyed** override slice: `routing.task[jobId]` held one
+model+effort pick, so an edit in any one column moved all three. Rai rejected that
+shape verbatim — *"one edit moves all three columns"* is not what the surface
+promises. **Routing overrides are PER-SCENARIO.**
+
+The shape is unreleased, so it changes **in place**; there is no migration and no
+compatibility read of the old shape.
+
+- Persisted slice: `routing.task[jobId]` is now
+  `{ dual?, claudeOnly?, codexOnly? }`, each cell a model+effort override.
+- `resolveReviewRoles` layers **only that scenario's own cell** over that
+  scenario's council-table default. The other two columns are untouched.
+- `setRoleAssignment(roleId, scenario, assignment | null)` writes or clears
+  exactly ONE `(job, scenario)` cell. `null` clears that cell only, so it falls
+  back to that scenario's council-table default; the sibling columns keep their
+  own overrides. Clearing a job's last cell drops the job entry; clearing the last
+  job drops the whole `routing` slice.
+- The catalogue, the command, and the dispatch skeleton from clusters 1–4 stand.
+
 ## Out of scope
 
 Host and tool detection (C17). Adding council job ids or changing routing —

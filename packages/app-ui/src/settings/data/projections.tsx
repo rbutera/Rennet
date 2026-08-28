@@ -74,11 +74,17 @@ export interface DetectedTool {
 
 export type RoleEffort = "low" | "medium" | "high" | "xhigh";
 
+/** Where a resolved cell came from: the council table stands, or a routing override won.
+ *  The surface derives "is this a default?" from this, never from a copied table. */
+export type RoleLayer = "default" | "override";
+
 /** One role's model + effort in one availability scenario; `null` means the role does
- *  not run in that scenario (the surface renders an em dash, never a fake assignment). */
+ *  not run in that scenario (the surface renders an em dash, never a fake assignment).
+ *  `layer` is the C16 provenance — omitted reads as the council default. */
 export interface RoleAssignment {
   readonly model: string;
   readonly effort: RoleEffort;
+  readonly layer?: RoleLayer;
 }
 
 /** A user-legible review role over the Model Council job catalogue (#460/#464). One
@@ -176,7 +182,9 @@ export interface SettingsProjection {
   updateHost(id: string): Promise<{ readonly reachable: boolean; readonly error?: string }>;
   /** Enable/disable one detected tool (source-control OR agent) on a host. */
   setToolEnabled(hostId: string, toolId: string, enabled: boolean): void;
-  /** Set a review role's assignment in one scenario (the mappings dialog cell edit). */
+  /** Set a review role's assignment in ONE scenario (the mappings dialog cell edit), or
+   *  RESET that one cell with `null` so it falls back to that scenario's council default.
+   *  Per-scenario by construction (Rai, 2026-08-28): the sibling columns never move. */
   setRoleAssignment(
     roleId: string,
     scenario: "dual" | "claudeOnly" | "codexOnly",

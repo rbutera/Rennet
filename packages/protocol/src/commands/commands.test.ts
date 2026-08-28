@@ -80,7 +80,6 @@ const ABSORBED_IDS = [
   "projects.list",
   "projects.remove",
   "publish.compose",
-  "publish.requestConsent",
   "publish.review",
   "publish.submitPr",
   "repository.choose",
@@ -115,6 +114,7 @@ const ABSORBED_IDS = [
   "settings.setCoachmarks",
   "settings.setKeybinding",
   "settings.setRepoVisibility",
+  "settings.setRoleAssignment",
 ] as const;
 
 // The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
@@ -183,6 +183,43 @@ describe("command registry invariants (#465)", () => {
     };
     expect(parseCommandOutput("patchset.readSpan", served)).toEqual(served);
     expect(() => parseCommandOutput("patchset.readSpan", { lines: "not-an-array" })).toThrow();
+  });
+
+  it("settings.setRoleAssignment validates its input (C16 write, #485)", () => {
+    // A real cell edit: role + scenario + a concrete model+effort pick.
+    const edit = {
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "opus-4.8", effort: "high" },
+    };
+    expect(parseCommandInput("settings.setRoleAssignment", edit)).toEqual(edit);
+    // `assignment: null` is the Reset-to-council-default path.
+    const reset = { roleId: "lens-workers", scenario: "claudeOnly", assignment: null };
+    expect(parseCommandInput("settings.setRoleAssignment", reset)).toEqual(reset);
+    // Model + effort only — no harness field (#89); an unknown scenario is rejected.
+    expect(() =>
+      parseCommandInput("settings.setRoleAssignment", { ...edit, scenario: "both" }),
+    ).toThrow();
+    expect(() =>
+      parseCommandInput("settings.setRoleAssignment", {
+        ...edit,
+        assignment: { model: "gpt-4o", effort: "high" },
+      }),
+    ).toThrow();
+    // Output echoes the re-resolved mappings for the optimistic adopt.
+    const served = {
+      reviewRoles: [
+        {
+          id: "lens-workers",
+          label: "Lens Drafters",
+          hint: "The heavy seat.",
+          dual: { value: { model: "opus-4.8", effort: "high" }, layer: "override" },
+          claudeOnly: { value: { model: "opus-4.8", effort: "high" }, layer: "default" },
+          codexOnly: { value: { model: "gpt-5.6-sol", effort: "high" }, layer: "default" },
+        },
+      ],
+    };
+    expect(parseCommandOutput("settings.setRoleAssignment", served)).toEqual(served);
   });
 
   it("every row's args/output are the parse seams' schemas", () => {

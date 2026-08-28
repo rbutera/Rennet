@@ -19,6 +19,7 @@ import {
   type ReviewEvent,
   ReviewService,
   type ReviewStorePort,
+  reviewRoleMappings,
 } from "@rennet/core";
 import type {
   ComposedHandoffBundle,
@@ -39,15 +40,12 @@ import {
   type ProjectProcessEvent,
   type ProjectProgressEvent,
   type ReviewAskStreamEvent,
+  type ReviewRoleMapping,
   reviewAskStreamEventSchema,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
 import { InFlightReviews } from "./in-flight-reviews";
-import {
-  createPublishConsentAuthority,
-  type PublishConsentAuthority,
-} from "./publish-consent-authority";
 
 const REPO = "/repo";
 
@@ -181,7 +179,6 @@ function harness(
   allowedRoots: Set<string>;
   startWatching: ReturnType<typeof vi.fn>;
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
-  publishConsent: PublishConsentAuthority;
   reviewAsk: {
     askOrchestrator: ReturnType<typeof vi.fn>;
     askCodex: ReturnType<typeof vi.fn>;
@@ -202,7 +199,6 @@ function harness(
   const allowedRoots = new Set<string>();
   const startWatching = vi.fn<(root: string) => void>();
   let dirty = false;
-  const publishConsent = createPublishConsentAuthority();
   // review.ask ports (issue #139) as recording spies, so a test can assert the
   // orchestrator is asked exactly once and Codex only in "both" mode — the whole
   // point of the issue is that negative guarantee on the REAL command path.
@@ -292,7 +288,6 @@ function harness(
       dirty = value;
     },
     publishPort,
-    publishConsent,
     ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
     ...(extra.acknowledgeAttention ? { acknowledgeAttention: extra.acknowledgeAttention } : {}),
     ...(extra.raiseAttention ? { raiseAttention: extra.raiseAttention } : {}),
@@ -381,7 +376,6 @@ function harness(
     allowedRoots,
     startWatching,
     publishPort,
-    publishConsent,
     reviewAsk,
     threadPersistence,
     flaggedReviewSpy,
@@ -1141,28 +1135,6 @@ function publishComments(): ReviewCommentInput[] {
   ];
 }
 
-// publishComments carries a request-change ⇒ the resolved verdict is REQUEST_CHANGES.
-// Consent binds the verdict now (issue #21), so a mint must declare the verdict the
-// post will carry; the tests default to this and override where they exercise a swap.
-const PUBLISH_VERDICT: ForgeReviewEvent = "REQUEST_CHANGES";
-
-async function requestPublishConsent(
-  dispatch: ReturnType<typeof createDispatch>,
-  reviewId: string,
-  target: typeof SANDBOX_TARGET,
-  payload: string,
-  verdict: ForgeReviewEvent = PUBLISH_VERDICT,
-): Promise<string> {
-  const out = (await dispatch("publish.requestConsent", {
-    commandId: randomUUID(),
-    reviewId,
-    target,
-    payload,
-    verdict,
-  })) as { authorization: string };
-  return out.authorization;
-}
-
 interface PublishResult {
   dryRun: boolean;
   request: { endpoint: string; method: string; body: unknown };
@@ -1306,73 +1278,17 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     }
   });
 
-  it("(a) refuses a REAL post with no consent token (posting stays explicitly confirmed)", async () => {
-    const port = fakePublishPort();
-    const { dispatch } = harness(port);
-    const review = await postableReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
-
-    await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments,
-        payload,
-        dryRun: false, // REAL egress
-      }),
-    ).rejects.toThrow(/not authorized/i);
-    expect(port.posts).toHaveLength(0); // nothing left the machine
-  });
-
-  it("(c) refuses a REAL post whose consent token was minted for a different payload", async () => {
-    const port = fakePublishPort();
-    const { dispatch } = harness(port);
-    const review = await postableReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
-
-    // A token bound to a DIFFERENT payload (a single-comment review).
-    const otherComments: ReviewCommentInput[] = [
-      { path: "src/a.ts", line: 2, side: "RIGHT", type: "comment", body: "x" },
-    ];
-    const wrongToken = await requestPublishConsent(
-      dispatch,
-      review.id,
-      SANDBOX_TARGET,
-      canonicalReviewPayload(otherComments),
-    );
-
-    await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments,
-        payload,
-        authorization: wrongToken,
-        dryRun: false,
-      }),
-    ).rejects.toThrow(/not authorized/i);
-    expect(port.posts).toHaveLength(0);
-  });
-
-  it("(f) refuses a REAL post whose consent token was minted for a different PR node id", async () => {
+  it("(f) refuses a REAL post whose target is a different PR node id", async () => {
     // The adapter POSTS by forgeRef (the node id) while findExistingReview READS by
-    // coordinates — independent renderer fields. A token bound to the coordinates but a
-    // DIFFERENT forgeRef must NOT authorise, or a post could land on a different PR than
-    // the one approved. Red-proof: dropping forgeRef from forgeTargetKey makes the two
-    // keys equal and this post would be authorised.
+    // coordinates — independent renderer fields. A post carrying the review's coordinates
+    // but a DIFFERENT forgeRef must NOT land, or it would reach a different PR than the
+    // one on screen. Red-proof: dropping forgeRef from forgeTargetKey makes the two keys
+    // equal and this post would go through.
     const port = fakePublishPort();
     const { dispatch } = harness(port);
     const review = await postableReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
-
-    // Token bound to SANDBOX_TARGET (its forgeRef). Same coordinates + head + payload,
-    // but a different node id at egress.
-    const token = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
     const differentNode = { ...SANDBOX_TARGET, forgeRef: "PR_kwFORGEDNODE" };
 
     await expect(
@@ -1382,24 +1298,20 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
         target: differentNode,
         comments,
         payload,
-        authorization: token,
         dryRun: false,
       }),
-      // Refused: a post to a node id other than the review's OWN pull request is caught
-      // by the target-binding gate (issue #21) — which runs before the token check — and,
-      // were that removed, the forgeRef in the consent key would still refuse it. Either
-      // way, NOTHING posts to a different PR than approved.
-    ).rejects.toThrow(/does not match|not authorized/i);
+      // Refused by the target-binding gate (issue #21): the review's stored postTarget is
+      // the authority, so NOTHING posts to a different PR than the review's own.
+    ).rejects.toThrow(/does not match/i);
     expect(port.posts).toHaveLength(0);
   });
 
-  it("(e) happy path: a matching single-use token authorizes exactly one post", async () => {
+  it("(e) happy path: the click posts exactly one review — no token, no confirmation step", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
     const review = await postableReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
-    const token = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
 
     const out = (await dispatch("publish.review", {
       commandId: randomUUID(),
@@ -1407,7 +1319,6 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       target: SANDBOX_TARGET,
       comments,
       payload,
-      authorization: token,
       dryRun: false,
     })) as PublishResult;
 
@@ -1417,20 +1328,6 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     // The wire event is COMMENT (asserted on the constructed request in the dry-run
     // test); a post carries no event field to check here.
     expect(port.posts[0]?.body).toContain(out.marker); // the idempotency marker is embedded
-
-    // The token is single-use: a replay of the same token is refused.
-    await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments,
-        payload,
-        authorization: token,
-        dryRun: false,
-      }),
-    ).rejects.toThrow(/not authorized/i);
-    expect(port.posts).toHaveLength(1); // still exactly one
   });
 
   it("(e2) the real post's request is byte-identical to the dry-run's", async () => {
@@ -1449,15 +1346,12 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       dryRun: true,
     })) as PublishResult;
 
-    // Posting stays explicitly confirmed: the real send consumes the single-use token.
-    const token = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
     const real = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
       target: SANDBOX_TARGET,
       comments,
       payload,
-      authorization: token,
       dryRun: false,
     })) as PublishResult;
 
@@ -1487,29 +1381,17 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(port.posts).toHaveLength(0);
   });
 
-  it("(g) a LOCAL capture (no postTarget) cannot mint consent OR post — there is no PR to post to", async () => {
-    // The most-permissive-fault the reviewers caught: a local capture could mint +
-    // consume consent and post for REAL to an arbitrary PR. It must not — a review with
-    // no `postTarget` owns no pull request, so neither the mint nor the post is allowed.
+  it("(g) a LOCAL capture (no postTarget) cannot post — there is no PR to post to", async () => {
+    // The most-permissive-fault the reviewers caught: a local capture could post for REAL
+    // to an arbitrary PR. It must not — a review with no `postTarget` owns no pull request.
     const port = fakePublishPort();
     const { dispatch } = harness(port);
     const local = await capturedReview(dispatch); // a working-tree capture — no postTarget
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
 
-    // The mint is refused: no token can be obtained for a review with no PR.
-    await expect(
-      dispatch("publish.requestConsent", {
-        commandId: randomUUID(),
-        reviewId: local.id,
-        target: SANDBOX_TARGET,
-        payload,
-        verdict: PUBLISH_VERDICT,
-      }),
-    ).rejects.toThrow(/no pull request/i);
-
-    // And a hand-crafted real post is refused structurally — before any token check —
-    // because the review owns no target. NOTHING leaves.
+    // A hand-crafted real post is refused structurally, because the review owns no
+    // target. NOTHING leaves.
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),
@@ -1517,7 +1399,6 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
         target: SANDBOX_TARGET,
         comments,
         payload,
-        authorization: "forged-token",
         dryRun: false,
       }),
     ).rejects.toThrow(/no pull request/i);
@@ -1537,18 +1418,8 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       headOid: "beefbeefbeef9999",
     };
 
-    // A token cannot even be minted for a PR other than the review's own.
-    await expect(
-      dispatch("publish.requestConsent", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: otherPr,
-        payload,
-        verdict: PUBLISH_VERDICT,
-      }),
-    ).rejects.toThrow(/does not match/i);
-
-    // And a hand-crafted real post to the wrong PR is refused before the token check.
+    // A hand-crafted real post to the wrong PR is refused: the review's stored postTarget
+    // is the authority, not the caller's input.
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),
@@ -1556,55 +1427,65 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
         target: otherPr,
         comments,
         payload,
-        authorization: "forged-token",
         dryRun: false,
       }),
     ).rejects.toThrow(/does not match/i);
     expect(port.posts).toHaveLength(0);
   });
 
-  it("(i) a verdict swapped in AFTER the token was minted voids it — the approved event is bound", async () => {
-    // The verdict is the one outbound field the payload bytes do not capture, so it is
-    // bound into the consent token too: a token minted while the paper showed
-    // REQUEST_CHANGES cannot be consumed to post an APPROVE the human never saw.
+  it("(i) the POSTED verdict must equal the PREVIEWED one — a swap lands on a stale binding", async () => {
+    // The one property the deleted consent token actually enforced (#435): a post whose
+    // verdict differs from the preview is a UI lie. It survives WITHOUT ceremony because
+    // the verdict rides in the existing compose binding — `publish.compose` hashes it in,
+    // `publish.review` recomputes the hash from the verdict it is about to post, and a
+    // mismatch is the SAME stale-composition refusal a stale payload gets. No token, no
+    // dialog, nothing to clear.
     const port = fakePublishPort();
     const { dispatch } = harness(port);
     const review = await postableReview(dispatch);
-    const comments = publishComments(); // derives REQUEST_CHANGES
-    const payload = canonicalReviewPayload(comments);
-    const token = await requestPublishConsent(
-      dispatch,
-      review.id,
-      SANDBOX_TARGET,
-      payload,
-      "REQUEST_CHANGES",
-    );
+    // A plain note ⇒ the composed verdict derives to a neutral COMMENT.
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: { id: "a1", anchor: "src/a.ts:2", type: "comment", body: "a note" },
+    });
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as {
+      comments: ReviewCommentInput[];
+      payload: string;
+      verdict: ForgeReviewEvent;
+      compositionId: string;
+    };
+    expect(composed.verdict).toBe("COMMENT");
 
-    // Posting with an APPROVE override — a different event than approved — is refused.
+    // The swap: post an APPROVE against the COMMENT preview, without recomposing. Refused,
+    // and NOTHING leaves the machine. (Red-proof: drop `verdict` from `publishCompositionId`
+    // and this APPROVE posts.)
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),
         reviewId: review.id,
         target: SANDBOX_TARGET,
-        comments,
-        payload,
+        comments: composed.comments,
+        payload: composed.payload,
         verdict: "APPROVE",
-        authorization: token,
+        compositionId: composed.compositionId,
         dryRun: false,
       }),
-    ).rejects.toThrow(/not authorized/i);
+    ).rejects.toThrow(/stale|another review/i);
     expect(port.posts).toHaveLength(0);
 
-    // The SAME token still authorises the exact verdict it was minted for (it was not
-    // consumed by the mismatched attempt).
+    // The previewed verdict posts, exactly once — the click is the whole authorization.
     const out = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
       target: SANDBOX_TARGET,
-      comments,
-      payload,
-      verdict: "REQUEST_CHANGES",
-      authorization: token,
+      comments: composed.comments,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      compositionId: composed.compositionId,
       dryRun: false,
     })) as PublishResult;
     expect(out.outcome).not.toBeNull();
@@ -1633,21 +1514,18 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
 
-    // Two signs → two tokens. The first post starts and hangs (its synchronous run adds
-    // the marker to the in-flight set before it awaits the gate).
-    const token1 = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
+    // The first post starts and hangs (its synchronous run adds the marker to the
+    // in-flight set before it awaits the gate).
     const first = dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
       target: SANDBOX_TARGET,
       comments,
       payload,
-      authorization: token1,
       dryRun: false,
     });
 
-    // A second sign mints a fresh token and tries to post the SAME content concurrently.
-    const token2 = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
+    // A second sign tries to post the SAME content concurrently.
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),
@@ -1655,7 +1533,6 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
         target: SANDBOX_TARGET,
         comments,
         payload,
-        authorization: token2,
         dryRun: false,
       }),
     ).rejects.toThrow(/already in progress/i);
@@ -1690,18 +1567,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
 
-    // The mint is refused — the review no longer owns a pull request.
-    await expect(
-      dispatch("publish.requestConsent", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        payload,
-        verdict: PUBLISH_VERDICT,
-      }),
-    ).rejects.toThrow(/no pull request/i);
-
-    // And a hand-crafted real post is refused structurally — nothing leaves.
+    // A hand-crafted real post is refused structurally — nothing leaves.
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),
@@ -1709,7 +1575,6 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
         target: SANDBOX_TARGET,
         comments,
         payload,
-        authorization: "forged-token",
         dryRun: false,
       }),
     ).rejects.toThrow(/no pull request/i);
@@ -1995,13 +1860,6 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(composed.destination).toContain("rennet-egress-sandbox#1");
 
     // The phone posts EXACTLY what compose returned — a real send lands one review.
-    const { authorization } = (await dispatch("publish.requestConsent", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      payload: composed.payload,
-      verdict: composed.verdict,
-    })) as { authorization: string };
     const out = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
@@ -2009,7 +1867,6 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       comments: composed.comments,
       payload: composed.payload,
       verdict: composed.verdict,
-      authorization,
       dryRun: false,
     })) as { dryRun: boolean; outcome: { url: string | null } | null };
     expect(out.dryRun).toBe(false);
@@ -2055,15 +1912,9 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(composed.payload).toBe(canonicalReviewPayload(composed.comments));
 
     // The phone posts EXACTLY the composed bytes + binding — the freshness mirror recomputes the
-    // expected payload from the SAME projection and accepts; a real send lands one review.
-    const { authorization } = (await dispatch("publish.requestConsent", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      payload: composed.payload,
-      verdict: composed.verdict,
-      compositionId: composed.compositionId,
-    })) as { authorization: string };
+    // expected payload AND verdict from the SAME projection and accepts; a real send lands one
+    // review. (The override rides in the binding, so posting the derived REQUEST_CHANGES instead
+    // of the overridden COMMENT would be refused.)
     const out = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
@@ -2072,7 +1923,6 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       payload: composed.payload,
       verdict: composed.verdict,
       compositionId: composed.compositionId,
-      authorization,
       dryRun: false,
     })) as { dryRun: boolean; outcome: { url: string | null } | null };
     expect(out.dryRun).toBe(false);
@@ -2090,36 +1940,33 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       commandId: randomUUID(),
       reviewId: review.id,
       mode: "review",
-    })) as { compositionId: string; payload: string; verdict: ForgeReviewEvent };
+    })) as {
+      compositionId: string;
+      payload: string;
+      verdict: ForgeReviewEvent;
+      comments: ReviewCommentInput[];
+    };
     expect(composed.compositionId).toBeTruthy();
-    // Fresh preview: a post carrying the binding is accepted (a token is minted).
-    const consent = (await dispatch("publish.requestConsent", {
+    // Fresh preview: a post carrying the binding is accepted (dry-run, so nothing leaves).
+    const fresh = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
       target: SANDBOX_TARGET,
+      comments: composed.comments,
       payload: composed.payload,
       verdict: composed.verdict,
       compositionId: composed.compositionId,
-    })) as { authorization: string };
-    expect(consent.authorization).toBeTruthy();
+      dryRun: true,
+    })) as PublishResult;
+    expect(fresh.dryRun).toBe(true);
     // An ask edit lands AFTER the preview (another client edited) — the phone still holds the old
-    // binding. The daemon recomputes it from the CURRENT durable projection and refuses.
+    // binding. The daemon recomputes it from the CURRENT durable projection and refuses
+    // (dry-run included, so the fault surfaces as a refusal not a plausible request).
     await dispatch("ask.edit", {
       sessionId: review.id,
       id: "a1",
       body: "actually, rename it to something else entirely",
     });
-    await expect(
-      dispatch("publish.requestConsent", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        payload: composed.payload,
-        verdict: composed.verdict,
-        compositionId: composed.compositionId,
-      }),
-    ).rejects.toThrow(/stale|another review/i);
-    // publish.review refuses the stale binding too (dry-run included).
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),
@@ -2381,7 +2228,6 @@ function frontDoorHarness(seed: {
     isRepositoryDirty: () => false,
     setRepositoryDirty: () => undefined,
     publishPort: fakePublishPort(),
-    publishConsent: createPublishConsentAuthority(),
     projects: {
       list: () => stored,
       remove: () => ({ projects: stored }),
@@ -3329,6 +3175,10 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       forgeHosts: vi.fn(async () => []),
       setHarnessEnabled: vi.fn(() => []),
       setForgeEnabled: vi.fn(() => []),
+      // C16 (#485): the council mappings ride the same dep. The stub resolves the
+      // real council DEFAULTS, so the route is proven against honest values.
+      reviewRoles: vi.fn(() => reviewRoleMappings()),
+      setRoleAssignment: vi.fn(() => reviewRoleMappings()),
     };
     const { dispatch } = harness(undefined, { settings });
 
@@ -3388,6 +3238,31 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     ).rejects.toThrow();
     // Still called exactly once — only the valid write above reached the dep.
     expect(settings.setCoachmarks).toHaveBeenCalledTimes(1);
+
+    // setRoleAssignment threads role + scenario + pick to the dep and returns the
+    // dep's OWN re-resolved mappings for the optimistic adopt (C16, #485).
+    const assigned = (await dispatch("settings.setRoleAssignment", {
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    })) as { reviewRoles: ReviewRoleMapping[] };
+    expect(settings.setRoleAssignment).toHaveBeenCalledWith({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    });
+    expect(assigned.reviewRoles).toEqual(reviewRoleMappings());
+
+    // A model outside the council set is REJECTED at the command boundary, so it
+    // never reaches the dep — no fabricated routing is ever persisted (#89).
+    await expect(
+      dispatch("settings.setRoleAssignment", {
+        roleId: "lens-workers",
+        scenario: "dual",
+        assignment: { model: "gpt-4o", effort: "high" },
+      }),
+    ).rejects.toThrow();
+    expect(settings.setRoleAssignment).toHaveBeenCalledTimes(1);
   });
 
   it("daemon.status routes to the settings composition's per-host detection (C17)", async () => {
@@ -3478,6 +3353,17 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(view.scheme).toBe("system");
     expect(view.appearanceMalformed).toBe(false);
     expect(view.projects).toEqual([]);
+    // HONEST-PRESENT (C16, #485): the council tables are static, so the review-role
+    // mappings are readable with no settings dep at all. The Review section renders
+    // the real defaults rather than a blank — all eight roles, every cell `default`.
+    const roles = (view as unknown as { reviewRoles: ReviewRoleMapping[] }).reviewRoles;
+    expect(roles).toEqual(reviewRoleMappings());
+    expect(roles).toHaveLength(8);
+    // The Flagged Second Seat does not run single-provider: an honest null, not a guess.
+    const secondSeat = roles.find((role) => role.id === "second-seat");
+    expect(secondSeat?.claudeOnly.value).toBeNull();
+    expect(secondSeat?.codexOnly.value).toBeNull();
+    expect(secondSeat?.dual.value).not.toBeNull();
 
     const guidance = (await dispatch("settings.guidance", {
       projectId: "p1",
@@ -3495,6 +3381,20 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(vis.status).toBe("unresolved");
     expect(vis.changed).toBe(false);
     expect(vis.gitignorePath).toBe("");
+
+    // A role write with no dep persists NOTHING, and says so: the response carries
+    // the council defaults (every cell `default`), never a fake success echoing the
+    // edit back as though it had been stored.
+    const assigned = (await dispatch("settings.setRoleAssignment", {
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    })) as { reviewRoles: ReviewRoleMapping[] };
+    expect(assigned.reviewRoles).toEqual(reviewRoleMappings());
+    expect(assigned.reviewRoles.find((role) => role.id === "lens-workers")?.dual).toEqual({
+      value: { model: "opus-4.8", effort: "high" },
+      layer: "default",
+    });
   });
 });
 

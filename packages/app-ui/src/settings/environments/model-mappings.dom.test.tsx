@@ -155,12 +155,39 @@ describe("MappingsDialog — the mode switch built into the headers", () => {
   });
 });
 
-describe("MappingsDialog — Reset to default flows through the seam", () => {
+describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () => {
+  // A cell whose LAYER says an override won. "Changed from default" is read off this
+  // provenance, never off a comparison with a copied table.
   const changed: readonly ReviewRole[] = REVIEW_ROLE_DEFAULTS.map((role) =>
-    role.id === "orchestrator" ? { ...role, dual: { model: "haiku", effort: "low" } } : role,
+    role.id === "orchestrator"
+      ? // `gpt-5.5` appears in no council default, so a sighting of it is this override.
+        { ...role, dual: { model: "gpt-5.5", effort: "low", layer: "override" as const } }
+      : role,
   );
 
-  it("default roles show no Reset; a changed role shows one", async () => {
+  it("only an overridden cell carries the provenance chip", async () => {
+    const defaults = mount(
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: REVIEW_ROLE_DEFAULTS }, [
+        "claude",
+        "codex",
+      ]),
+    );
+    await defaults.user.click(defaults.getByRole("button", { name: "Edit Mappings" }));
+    // Every cell reads the council table — no chip anywhere.
+    expect(body().queryByText("Overridden")).toBeNull();
+    cleanup();
+
+    const dirty = mount(
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: changed }, ["claude", "codex"]),
+    );
+    await dirty.user.click(dirty.getByRole("button", { name: "Edit Mappings" }));
+    // Exactly the one overridden cell is chipped, and its own value is shown.
+    expect(body().getAllByText("Overridden").length).toBe(1);
+    expect(body().getAllByText("gpt-5.5").length).toBe(1);
+    cleanup();
+  });
+
+  it("default roles show no Reset; a role with an override shows one", async () => {
     const defaults = mount(
       withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: REVIEW_ROLE_DEFAULTS }, [
         "claude",
@@ -179,17 +206,31 @@ describe("MappingsDialog — Reset to default flows through the seam", () => {
     cleanup();
   });
 
-  it("clicking Reset restores the default through setRoleAssignment", async () => {
+  it("Reset CLEARS the override with null, for the overridden column only", async () => {
+    const writes: {
+      roleId: string;
+      scenario: string;
+      assignment: RoleAssignment | null;
+    }[] = [];
     function Stateful() {
       const [roles, setRoles] = useState<readonly ReviewRole[]>(changed);
       const setRoleAssignment = (
         roleId: string,
         scenario: "dual" | "claudeOnly" | "codexOnly",
         assignment: RoleAssignment | null,
-      ) =>
+      ) => {
+        writes.push({ roleId, scenario, assignment });
+        // The backend answers with the re-resolved cell: a cleared override falls back
+        // to that scenario's council-table default, carrying `default` provenance.
+        const table = REVIEW_ROLE_DEFAULTS.find((r) => r.id === roleId)?.[scenario] ?? null;
         setRoles((prev) =>
-          prev.map((role) => (role.id === roleId ? { ...role, [scenario]: assignment } : role)),
+          prev.map((role) =>
+            role.id === roleId
+              ? { ...role, [scenario]: assignment === null ? table : assignment }
+              : role,
+          ),
         );
+      };
       return withReview(
         { agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: roles, setRoleAssignment },
         ["claude", "codex"],
@@ -197,10 +238,105 @@ describe("MappingsDialog — Reset to default flows through the seam", () => {
     }
     const { getByRole, user } = mount(<Stateful />);
     await user.click(getByRole("button", { name: "Edit Mappings" }));
-    expect(body().getAllByText("Reset to default").length).toBe(1);
     await user.click(body().getByRole("button", { name: "Reset to default" }));
-    // Back to the council default — the control is gone.
+    // ONE write, on the ONE overridden column, clearing rather than re-writing a copy
+    // of the default (per-scenario: `claudeOnly` / `codexOnly` were never touched).
+    expect(writes).toEqual([{ roleId: "orchestrator", scenario: "dual", assignment: null }]);
+    // Back to the council default — the chip and the control are both gone.
     expect(body().queryByText("Reset to default")).toBeNull();
+    expect(body().queryByText("Overridden")).toBeNull();
+    cleanup();
+  });
+
+  it("a cell edit writes model+effort for that ONE scenario, no layer and no sibling", async () => {
+    const writes: {
+      roleId: string;
+      scenario: string;
+      assignment: RoleAssignment | null;
+    }[] = [];
+    const { getByRole, user } = mount(
+      withReview(
+        {
+          agentsByHost: { h1: BOTH_AGENTS },
+          reviewRoles: REVIEW_ROLE_DEFAULTS,
+          setRoleAssignment: (roleId, scenario, assignment) => {
+            writes.push({ roleId, scenario, assignment });
+          },
+        },
+        ["claude"],
+      ),
+    );
+    await user.click(getByRole("button", { name: "Edit Mappings" }));
+    // Single = Claude-only, so the editable column is `claudeOnly`.
+    await user.click(body().getByRole("button", { name: "Orchestrator model" }));
+    await user.click(body().getByRole("option", { name: "haiku" }));
+    expect(writes).toEqual([
+      {
+        roleId: "orchestrator",
+        scenario: "claudeOnly",
+        // Provenance is the resolver's verdict, never an input (#89: no harness either).
+        assignment: { model: "haiku", effort: "high" },
+      },
+    ]);
+    cleanup();
+  });
+});
+
+describe("MappingsDialog — honest-present + honest-null controls (C16 positive controls)", () => {
+  // POSITIVE CONTROL (must be able to fail): honest-present is the SERVER's job — the
+  // dispatch handler resolves the static council tables even with no settings dep, so a
+  // served read always carries the eight roles. The dialog renders exactly what it was
+  // served, unchipped. If it ever fabricated a cell — or reverted to the deleted local
+  // table fallback, which had drifted six cells away from core — this goes red.
+  it("renders every served role unchipped, fabricating nothing", async () => {
+    const { getByRole, user } = mount(
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: REVIEW_ROLE_DEFAULTS }, [
+        "claude",
+        "codex",
+      ]),
+    );
+    await user.click(getByRole("button", { name: "Edit Mappings" }));
+    for (const role of REVIEW_ROLE_DEFAULTS) {
+      expect(body().getAllByText(role.label).length).toBeGreaterThan(0);
+    }
+    // Honest-present is not honest-fabricated: nothing is chipped as an override.
+    expect(body().queryByText("Overridden")).toBeNull();
+    cleanup();
+  });
+
+  // The other half of the same rule: with NOTHING served, the dialog shows nothing
+  // rather than reaching for a local table it cannot pin to core. Re-introducing any
+  // client-side default reddens this.
+  it("an empty reviewRoles renders no role rows, never a local-table guess", async () => {
+    const { getByRole, user } = mount(
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: [] }, ["claude", "codex"]),
+    );
+    await user.click(getByRole("button", { name: "Edit Mappings" }));
+    for (const role of REVIEW_ROLE_DEFAULTS) {
+      expect(body().queryByText(role.label)).toBeNull();
+    }
+    cleanup();
+  });
+
+  // POSITIVE CONTROL (must be able to fail): a `null` scenario cell renders an em dash.
+  // If the surface ever filled it from a sibling column or a table guess, this goes red.
+  it("a null scenario cell renders an em dash, never a model string", async () => {
+    // second-seat is null in claudeOnly/codexOnly; give it a DISTINCTIVE dual value so a
+    // leak from the dual column would be visible as that string.
+    const roles: readonly ReviewRole[] = REVIEW_ROLE_DEFAULTS.map((role) =>
+      role.id === "second-seat"
+        ? { ...role, dual: { model: "gpt-5.5", effort: "xhigh" as const } }
+        : role,
+    );
+    const { getByRole, user } = mount(
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: roles }, ["claude"]),
+    );
+    await user.click(getByRole("button", { name: "Edit Mappings" }));
+    // The Claude-only column is the only editable one; the second seat is an em dash.
+    expect(body().getAllByText("—").length).toBe(1);
+    // Its dual value never leaks into the single-provider column (dual is rendered too,
+    // locked — so exactly ONE occurrence, not two).
+    expect(body().getAllByText("gpt-5.5").length).toBe(1);
     cleanup();
   });
 });

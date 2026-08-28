@@ -130,14 +130,21 @@ export interface ComposedLineGroup {
 /**
  * The composed outbound review the lane PREVIEWS and POSTS — byte-exact with what
  * `publish.review` receives. `body` is the comments with no line (the review body stratum);
- * `lineGroups` are the line-anchored comments grouped by file path; `verdict` is the daemon's
- * derived proposal (still flippable at the control — the event is a separate post arg);
- * `arithmetic` is the `N request changes · M comments` tally over the composed comments.
+ * `lineGroups` are the line-anchored comments grouped by file path; `arithmetic` is the
+ * `N request changes · M comments` tally over the composed comments.
+ *
+ * `verdict` is the composed event — the daemon's derived proposal, or the durable override when
+ * one is set. It is the ONE verdict: the daemon folds it into the composition binding, so this is
+ * exactly what posts (a different event would be refused as a stale composition). `proposed` is
+ * the verdict the composed comments derive to on their own, so the control can say "overridden —
+ * proposed X" and offer the revert; flipping the verdict writes the durable override and
+ * recomposes, it never travels as a separate post argument.
  */
 export interface ReviewDraft {
   readonly body: readonly ReviewComment[];
   readonly lineGroups: readonly ComposedLineGroup[];
   readonly verdict: ProposedVerdict;
+  readonly proposed: ProposedVerdict;
   readonly arithmetic: { readonly requestChanges: number; readonly comments: number };
   readonly destination: string;
 }
@@ -167,10 +174,23 @@ export function composeReviewDraft(
     path,
     comments,
   }));
+  // The same derivation core runs (`deriveReviewEvent`) over the same set the daemon uses —
+  // BOTH strata, comments AND body notes: a request-change wins, else an approval, else a
+  // neutral comment. Mirrored here (app-ui cannot import core) so the control names what the
+  // composition actually proposes when the durable override differs. Deriving over the line
+  // comments alone would claim "overridden — proposed comment" for a pathless request-change
+  // ask, with a revert button that reverts to nothing — a lie about the reviewer's own verdict.
+  const outbound = [...composed.comments, ...(composed.bodyNotes ?? [])];
+  const proposed: ProposedVerdict = outbound.some((c) => c.type === "request-change")
+    ? "REQUEST_CHANGES"
+    : outbound.some((c) => c.type === "approve")
+      ? "APPROVE"
+      : "COMMENT";
   return {
     body,
     lineGroups,
     verdict: composed.verdict,
+    proposed,
     arithmetic: { requestChanges, comments: composed.comments.length - requestChanges },
     destination: composed.destination,
   };

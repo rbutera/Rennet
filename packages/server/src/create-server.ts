@@ -196,7 +196,6 @@ import {
 } from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
 import { buildProjectionContext } from "./projection";
-import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
@@ -1650,7 +1649,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       submission: input.submission,
     });
   };
-  const publishConsent = createPublishConsentAuthority();
   // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
   // (reload persisted threads, crash-recovered) and persistence (write a streaming
   // placeholder that recovers as interrupted if this process dies mid-answer).
@@ -1812,7 +1810,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     inFlightReviews,
     publishPort,
     submitPullRequest,
-    publishConsent,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
     // (fully capable, Bash included — Rai's call) with git checkpoints and returns the
     // turn diff. Reuses the SAME memoized `claude` discovery the review pipeline uses

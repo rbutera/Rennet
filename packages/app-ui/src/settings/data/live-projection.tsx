@@ -1,5 +1,12 @@
-import type { DaemonHostStatus, DetectedForge, ProjectSource } from "@rennet/protocol";
-import { type ReactNode, useMemo } from "react";
+import {
+  councilPickSchema,
+  type DaemonHostStatus,
+  type DetectedForge,
+  type ProjectSource,
+  type ReviewRoleCell,
+  type ReviewRoleMapping,
+} from "@rennet/protocol";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useBridge, useCommand, useMutation } from "../../data";
 import type { AgentToolId } from "../assets/agent-marks";
 import { type HostOS, osFromPlatform } from "../assets/os-glyphs";
@@ -7,6 +14,8 @@ import {
   type DaemonInfo,
   type DetectedTool,
   EMPTY_SETTINGS_PROJECTION,
+  type ReviewRole,
+  type RoleAssignment,
   type SettingsHost,
   type SettingsProjection,
   SettingsProjectionProvider,
@@ -15,7 +24,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE settings projection (C10 §10.1, the fold wiring). This seam is the one
 // place a projection read binds to a landed backend instead of resolving honest-empty.
-// After the B10 + B7 + C17 folds, THREE projection fields have a served backend:
+// After the B10 + B7 + C16 + C17 folds, FOUR projection fields have a served backend:
 //
 //   • hosts ← `settings.get.daemonHosts` (the enumeration + each host's label) joined
 //     by `source` with `daemon.status` (C17 cluster 2), which asks each host's daemon
@@ -64,12 +73,19 @@ import {
 //     and invalidates `daemon.status` the same way, so the new version on the card is the one
 //     the host answered with afterwards. A host with no update mechanism reports its reason.
 //
+//   • reviewRoles ← `settings.get.reviewRoles`, written by `settings.setRoleAssignment`
+//     (C16, #485). HONEST-PRESENT: the council tables are static, so the read carries
+//     all eight roles with `default` provenance even on a fresh install — the Review
+//     section is never a blank. An edit writes ONE (role, scenario) cell and the
+//     response's re-resolved mappings are adopted straight away (the resolver's own
+//     answer, never a hand-recomputed one); the `settings.get` read is invalidated so
+//     the reload settles on disk truth.
+//
 // Every OTHER field stays EMPTY on purpose — the backend does not exist even post-fold,
 // so honest-empty is the truthful answer, not a stub. Each named in the cluster-10 report:
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
 //     carries no per-host counts, so the Remove confirmation names none rather than a
 //     fabricated blast radius.
-//   – reviewRoles: no Model-Council / mappings command exists.
 //   – nameByProject / glyphByProject / worktreeByProject / trackerByProject: no served
 //     write command (the composition's `setTrackerValue` / `worktreeBaseDir` are unwired).
 //   – guidanceByProject: `settings.guidance` is a READ only; no guidance-WRITE command.
@@ -90,6 +106,24 @@ function agentLabel(id: string): string {
 const FORGE_ROW: Record<string, { readonly markId: string; readonly label: string }> = {
   github: { markId: "gh", label: "GitHub" },
 };
+
+/** One wire cell → the projection's assignment. `null` value stays null: the role does
+ *  not run in that scenario and the surface renders an em dash, never a guess. */
+function toAssignment(cell: ReviewRoleCell): RoleAssignment | null {
+  if (cell.value === null) return null;
+  return { model: cell.value.model, effort: cell.value.effort, layer: cell.layer };
+}
+
+function toReviewRole(mapping: ReviewRoleMapping): ReviewRole {
+  return {
+    id: mapping.id,
+    label: mapping.label,
+    hint: mapping.hint,
+    dual: toAssignment(mapping.dual),
+    claudeOnly: toAssignment(mapping.claudeOnly),
+    codexOnly: toAssignment(mapping.codexOnly),
+  };
+}
 
 /** The row's mark id back to the forge's WIRE id — the id the served ruling is keyed by,
  *  so a toggle writes the same name the detection and the store both use. */
@@ -145,8 +179,9 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   // host. An in-flight / rejected read yields no data, so every Agents section falls back
   // to its honest "not detected" line.
   const { data } = useCommand("harness.hosts", {});
-  // The host ENUMERATION + each host's label (the same walk `daemon.status` and
-  // `harness.hosts` make), joined below with the per-host daemon probe.
+  // ONE `settings.get`, two readers: the host ENUMERATION + each host's label (the same walk
+  // `daemon.status` and `harness.hosts` make, joined below with the per-host daemon probe),
+  // and the council mappings (C16) the Review section renders.
   const { data: settings } = useCommand("settings.get", {});
   const { data: status } = useCommand("daemon.status", {});
   // The forge CLIs on EACH enumerated host, probed server-side through that host's own deps.
@@ -172,6 +207,25 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   const { mutate: setForgeEnabled } = useMutation("forge.setEnabled", {
     invalidates: ["harness.hosts"],
   });
+
+  // The council mappings write (C16, #485). The read above is honest-present; the write
+  // returns the re-resolved mappings, which are adopted immediately so the cell settles
+  // without a round-trip, then invalidated so the next `settings.get` confirms it off disk.
+  const { mutate: writeRole } = useMutation("settings.setRoleAssignment", {
+    invalidates: ["settings.get"],
+  });
+  const [adopted, setAdopted] = useState<readonly ReviewRole[] | null>(null);
+
+  // The adoption covers exactly one gap — between a write's response and the read it
+  // invalidated coming back — and must not outlive it. `settings` is a cache snapshot,
+  // so its identity changes only when a fetch RESOLVES; that is disk answering, and the
+  // adoption is spent. Without this, `adopted ?? served` pins the surface to one write's
+  // answer forever and every later change from any other writer is invisible.
+  useEffect(() => {
+    // Guarding on the read itself is what makes `settings` a genuine dependency rather
+    // than a bare re-run trigger: only a LANDED read retires the adoption.
+    if (settings !== undefined) setAdopted(null);
+  }, [settings]);
 
   const projection = useMemo<SettingsProjection>(() => {
     const agentsByHost: Record<string, readonly DetectedTool[]> = {};
@@ -239,6 +293,15 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       }
     }
 
+    // The freshest truth wins, but only until disk answers. A write's response is the
+    // resolver's answer AFTER the write, so it outranks the `settings.get` read it just
+    // invalidated — the cell settles at once instead of blinking back to the pre-write
+    // value. `adopted` is then DROPPED the moment the invalidated read lands (the effect
+    // above), so the surface goes back to rendering served bytes and a later change from
+    // any other writer is not masked by a stale adoption. Nothing here recomputes a value
+    // the daemon did not return.
+    const served = settings?.reviewRoles?.map(toReviewRole);
+
     return {
       ...EMPTY_SETTINGS_PROJECTION,
       hosts,
@@ -269,6 +332,23 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
           // card that claims a version the host was never asked for.
           return { reachable: false, error: reason instanceof Error ? reason.message : undefined };
         }
+      },
+      reviewRoles: adopted ?? served ?? [],
+      setRoleAssignment: (roleId, scenario, assignment) => {
+        // Model + effort only — `layer` is provenance the resolver decides, not input
+        // (#89: the harness follows the model, and nothing here pins one). The
+        // projection's model is a plain string, so parse it against the council set at
+        // this boundary rather than casting a value the command would reject anyway.
+        const parsed =
+          assignment === null
+            ? null
+            : councilPickSchema.safeParse({ model: assignment.model, effort: assignment.effort });
+        if (parsed !== null && !parsed.success) return;
+        void writeRole({ roleId, scenario, assignment: parsed === null ? null : parsed.data })
+          .then((output) => setAdopted(output.reviewRoles.map(toReviewRole)))
+          // A refused write (a malformed config, Rule 75) leaves the cell where it was;
+          // the invalidated read is the honest answer, never a fabricated success.
+          .catch(() => undefined);
       },
       setToolEnabled: (hostId, toolId, enabled) => {
         // ONE signature, two served stores — the row's own host decides which. Fire-and-
@@ -301,6 +381,8 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     setForgeEnabled,
     reconnect,
     update,
+    adopted,
+    writeRole,
   ]);
 
   return <SettingsProjectionProvider value={projection}>{children}</SettingsProjectionProvider>;

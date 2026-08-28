@@ -16,6 +16,7 @@ import { useRennetStore } from "../../store";
 import { cleanup, fireEvent, mount, waitFor } from "../../test/dom";
 import { frontDoorHandlers } from "../../test/fixtures/front-door";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../../test/memory-bridge";
+import { SIDEBAR_PANEL_WIDTH } from "../constants";
 import {
   type SidebarSession,
   type SidebarSessionProjection,
@@ -99,12 +100,16 @@ function mountSidebar(opts: {
   sessions?: SessionMap;
   path?: string;
   extraHandlers?: MemoryBridgeHandlers;
+  platform?: string;
 }) {
   const history = memoryHistory(opts.path ?? "/");
-  const bridge = new MemoryBridge({
-    ...frontDoorHandlers(opts.projects ?? []),
-    ...opts.extraHandlers,
-  });
+  const bridge = new MemoryBridge(
+    {
+      ...frontDoorHandlers(opts.projects ?? []),
+      ...opts.extraHandlers,
+    },
+    { platform: opts.platform },
+  );
   const utils = mount(<Harness bridge={bridge} history={history} seed={opts.sessions ?? {}} />);
   return { ...utils, history, bridge };
 }
@@ -369,5 +374,74 @@ describe("sidebar tree (C03 §3)", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(history.history).not.toContain("/new-chat");
     expect(history.history.at(-1)).toBe("/s/s1");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// macOS traffic-light clearance. The desktop window is `titleBarStyle:
+// "hiddenInset"` on darwin, so the native close/minimise/zoom buttons paint OVER
+// the renderer's top-left — on top of the lockup, which made the wordmark
+// unreadable on a real packaged build. Both sidebar states must clear them, and
+// no other host may pay for it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The lockup's authored aspect ratio (`lockup.tsx`): width = height × this. */
+const LOCKUP_RATIO = 726.868 / 126;
+
+function headerLockup(header: Element): Element {
+  const svg = header.querySelector("svg");
+  if (!svg) throw new Error("sidebar header has no lockup");
+  return svg;
+}
+
+describe("macOS traffic-light clearance", () => {
+  it("insets the header, shrinks the lockup, and makes the strip the drag surface on darwin", () => {
+    const { getByTestId } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      platform: "darwin",
+    });
+    const header = getByTestId("sidebar-header");
+    expect(header.className).toContain("pl-[76px]");
+    expect(header.className).not.toContain("pl-3");
+    // With hiddenInset the strip IS the titlebar; the shared `navigation-titlebar`
+    // rule drags it and opts its buttons back out.
+    expect(header.className).toContain("navigation-titlebar");
+
+    const svg = headerLockup(header);
+    expect(svg.getAttribute("height")).toBe("14");
+    // Unclipped: the 76px reserved zone + the lockup's own rendered width + the
+    // 12px trailing pad + the 24px collapse toggle must all fit the 256px panel.
+    const width = Number(svg.getAttribute("width"));
+    expect(width).toBeCloseTo(14 * LOCKUP_RATIO, 3);
+    expect(76 + width + 12 + 24).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
+  });
+
+  it("clears the lights vertically on the collapsed rail, which is narrower than they are", async () => {
+    const { getByLabelText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      platform: "darwin",
+    });
+    fireEvent.click(getByLabelText("Collapse sidebar"));
+    const rail = await waitFor(() => {
+      const parent = getByLabelText("Expand sidebar").parentElement;
+      if (!parent) throw new Error("rail not mounted");
+      return parent;
+    });
+    expect(rail.className).toContain("pt-8");
+  });
+
+  it("leaves every non-darwin host un-inset, full-size and undraggable", () => {
+    for (const platform of ["win32", "linux", undefined]) {
+      const { getByTestId } = mountSidebar({
+        projects: [project("p1", "atlas")],
+        platform,
+      });
+      const header = getByTestId("sidebar-header");
+      expect(header.className).toContain("pl-3");
+      expect(header.className).not.toContain("pl-[76px]");
+      expect(header.className).not.toContain("navigation-titlebar");
+      expect(headerLockup(header).getAttribute("height")).toBe("16");
+      cleanup();
+    }
   });
 });

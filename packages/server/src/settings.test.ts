@@ -1,10 +1,12 @@
-import { escapePath } from "@rennet/core";
+import { escapePath, reviewRoleMappings } from "@rennet/core";
 import type {
   ClientSettings,
   DaemonSettings,
   DetectedForge,
   Project,
   ProjectVisibility,
+  ReviewRoleMapping,
+  ReviewRoleScenario,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
@@ -421,6 +423,171 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     expect(() =>
       createSettingsComposition(deps).setCoachmarks({ seen: ["fab"], skipAll: false }),
     ).toThrow(/malformed/i);
+  });
+});
+
+describe("createSettingsComposition — council review-role mappings (C16, #485)", () => {
+  // A STATEFUL fake client-settings store: a write must be re-readable, because the
+  // whole point of the override is that it survives a reload.
+  const statefulDeps = () => {
+    let stored: ClientSettings = { version: 1 };
+    const { deps } = makeDeps({
+      readGlobalState: () => ({ status: "ok", config: stored }),
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    return { deps, read: () => stored };
+  };
+
+  const cell = (roles: ReviewRoleMapping[], id: string, scenario: ReviewRoleScenario) =>
+    roles.find((role) => role.id === id)?.[scenario];
+
+  it("reads the council defaults with no override stored — honest-present, never empty", async () => {
+    const composition = createSettingsComposition(statefulDeps().deps);
+    const roles = composition.reviewRoles();
+    // The tables are static, so a fresh install still sees all eight roles.
+    expect(roles).toHaveLength(8);
+    expect(roles).toEqual(reviewRoleMappings());
+    // The Flagged Second Seat is a DUAL-only construct: honest-null single-provider.
+    expect(cell(roles, "second-seat", "dual")?.value).not.toBeNull();
+    expect(cell(roles, "second-seat", "claudeOnly")).toEqual({ value: null, layer: "default" });
+    expect(cell(roles, "second-seat", "codexOnly")).toEqual({ value: null, layer: "default" });
+    // The same mappings ride `settings.get` (the READ needs no second command).
+    expect((await composition.get()).reviewRoles).toEqual(roles);
+  });
+
+  it("setRoleAssignment persists an override, and null clears it back to the table default", () => {
+    const { deps, read } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const defaults = reviewRoleMappings();
+    // The council table's own answer for the cell we are about to move.
+    expect(cell(defaults, "lens-workers", "dual")).toEqual({
+      value: { model: "opus-4.8", effort: "high" },
+      layer: "default",
+    });
+
+    // WRITE → the returned re-resolution already carries the new model + provenance.
+    const written = composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    });
+    expect(cell(written, "lens-workers", "dual")).toEqual({
+      value: { model: "sonnet-5", effort: "medium" },
+      layer: "override",
+    });
+    // Persisted as model+effort ONLY under the backing job id, keyed by the EDITED
+    // COLUMN (#89: no harness; Rai 2026-08-28: per-scenario).
+    expect(read().routing?.task).toEqual({
+      "lens-draft": { dual: { model: "sonnet-5", effort: "medium" } },
+    });
+    // RE-READ (the reload): the override is durable, not a cosmetic echo.
+    expect(cell(composition.reviewRoles(), "lens-workers", "dual")).toEqual({
+      value: { model: "sonnet-5", effort: "medium" },
+      layer: "override",
+    });
+    // PER-SCENARIO: the sibling columns of the SAME role are untouched — they still
+    // read their own council-table defaults. (Under the old job-keyed shape this
+    // cell read sonnet-5/override, so this assertion is the guard against its return.)
+    expect(cell(written, "lens-workers", "codexOnly")).toEqual(
+      cell(defaults, "lens-workers", "codexOnly"),
+    );
+    expect(cell(written, "lens-workers", "claudeOnly")).toEqual(
+      cell(defaults, "lens-workers", "claudeOnly"),
+    );
+    // Untouched roles keep their table defaults — the write is not a broadcast.
+    expect(cell(written, "adjudication", "dual")).toEqual(cell(defaults, "adjudication", "dual"));
+
+    // RESET (`null`) clears THAT CELL, so it falls back to the EXACT table default
+    // — the flip that proves the override was real, not decorative.
+    const afterReset = composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: null,
+    });
+    expect(afterReset).toEqual(defaults);
+    // Clearing the last override drops the whole slice: byte-identical to never set.
+    expect(read().routing).toBeUndefined();
+  });
+
+  it("a reset clears ONE column and leaves the same role's other override standing", () => {
+    const { deps, read } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const defaults = reviewRoleMappings();
+
+    composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    });
+    const both = composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "codexOnly",
+      assignment: { model: "gpt-5.5", effort: "low" },
+    });
+    expect(cell(both, "lens-workers", "dual")?.value).toEqual({
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(cell(both, "lens-workers", "codexOnly")?.value).toEqual({
+      model: "gpt-5.5",
+      effort: "low",
+    });
+
+    // Reset only `codexOnly`: `dual` keeps its override, and the job entry survives.
+    const afterReset = composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "codexOnly",
+      assignment: null,
+    });
+    expect(cell(afterReset, "lens-workers", "codexOnly")).toEqual(
+      cell(defaults, "lens-workers", "codexOnly"),
+    );
+    expect(cell(afterReset, "lens-workers", "dual")).toEqual({
+      value: { model: "sonnet-5", effort: "medium" },
+      layer: "override",
+    });
+    expect(read().routing?.task).toEqual({
+      "lens-draft": { dual: { model: "sonnet-5", effort: "medium" } },
+    });
+  });
+
+  it("ignores an unknown job id sitting in the stored routing slice (no fabricated routing)", () => {
+    let stored: ClientSettings = {
+      version: 1,
+      routing: { task: { "not-a-council-job": { dual: { model: "haiku" } } } },
+    };
+    const { deps } = makeDeps({
+      readGlobalState: () => ({ status: "ok", config: stored }),
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    // A hand-edited config cannot route a job the review-role catalogue never names.
+    expect(createSettingsComposition(deps).reviewRoles()).toEqual(reviewRoleMappings());
+  });
+
+  it("REFUSES the write on a malformed config (Rule 75), and rejects an unknown role", () => {
+    const { deps } = makeDeps({
+      updateGlobal: () => {
+        throw new Error("refused: malformed global config");
+      },
+    });
+    const composition = createSettingsComposition(deps);
+    expect(() =>
+      composition.setRoleAssignment({
+        roleId: "lens-workers",
+        scenario: "dual",
+        assignment: { model: "sonnet-5", effort: "medium" },
+      }),
+    ).toThrow(/malformed/i);
+    // An unknown role never reaches the store at all — no fabricated job id.
+    expect(() =>
+      composition.setRoleAssignment({ roleId: "made-up", scenario: "dual", assignment: null }),
+    ).toThrow(/unknown review role/i);
   });
 });
 

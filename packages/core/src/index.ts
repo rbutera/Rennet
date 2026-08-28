@@ -50,6 +50,7 @@ export * from "./lineage-matcher";
 export * from "./lineage-matcher-fixtures";
 export * from "./locus";
 export * from "./model-council";
+export * from "./model-council-roles";
 export * from "./noise-generation";
 export * from "./novelty-ledger";
 export * from "./novelty-lifecycle";
