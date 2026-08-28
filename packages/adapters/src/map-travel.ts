@@ -52,25 +52,22 @@ export function readMapFromDir(mapDir: string): BuiltSnapshot | null {
     typeof manifest.shards !== "object" ||
     manifest.shards === null ||
     !Array.isArray(manifest.symbols) ||
-    !Array.isArray(manifest.references)
+    !Array.isArray(manifest.references) ||
+    !Array.isArray(manifest.imports)
   ) {
     return null;
   }
 
   // Every digest the manifest references: structural shards + per-file symbol shards
-  // + per-file reference shards (#200). Missing any of these is a shard the integrity
-  // gate would flag, so they MUST be enumerated here or a valid committed map would
-  // fail validation for want of reference-shard bytes.
+  // + per-file reference shards (#200) + per-file import shards. Missing any of these
+  // is a shard the integrity gate would flag, so they MUST be enumerated here or a
+  // valid committed map would fail validation for want of a shard family's bytes.
   const digests = new Set<string>();
   for (const ref of Object.values(manifest.shards)) {
     if (!ref || typeof (ref as { digest?: unknown }).digest !== "string") return null;
     digests.add((ref as { digest: string }).digest);
   }
-  for (const entry of manifest.symbols) {
-    if (!Array.isArray(entry) || typeof entry[1] !== "string") return null;
-    digests.add(entry[1]);
-  }
-  for (const entry of manifest.references) {
+  for (const entry of [...manifest.symbols, ...manifest.references, ...manifest.imports]) {
     if (!Array.isArray(entry) || typeof entry[1] !== "string") return null;
     digests.add(entry[1]);
   }
@@ -189,6 +186,7 @@ export function discoverCommittedMap(
       m.shards,
       m.symbols,
       m.references ?? [],
+      m.imports ?? [],
     ),
   };
   store.advance({ manifest: localManifest, shards: built.shards });

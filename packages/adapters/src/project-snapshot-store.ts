@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { Locus } from "@rennet/core";
 import type {
   BuiltSnapshot,
+  ImportShard,
   ProjectSnapshotManifest,
   ReferenceShard,
   SymbolShard,
@@ -443,6 +444,31 @@ export class ProjectSnapshotStore {
       try {
         const parsed = JSON.parse(bytes) as ReferenceShard;
         if (parsed && typeof parsed.blobOid === "string" && Array.isArray(parsed.references)) {
+          shards.push(parsed);
+        }
+      } catch {
+        // skip malformed
+      }
+    }
+    return shards;
+  }
+
+  /**
+   * The per-file IMPORT shards a stored manifest references, parsed back into
+   * {@link ImportShard}s for incremental-reuse planning. A shard that is missing or
+   * malformed is skipped (it will simply be re-extracted). The exact analogue of
+   * {@link loadSymbolShards}. `manifest.imports` is coerced to `[]` defensively so a
+   * manifest that somehow lacks it never throws here.
+   */
+  loadImportShards(manifest: ProjectSnapshotManifest): ImportShard[] {
+    const shards: ImportShard[] = [];
+    for (const [, digest] of manifest.imports ?? []) {
+      const bytes = this.loadShard(manifest.repoKey, digest);
+      if (bytes === undefined) continue;
+      if (sha256Hex(bytes) !== digest) continue;
+      try {
+        const parsed = JSON.parse(bytes) as ImportShard;
+        if (parsed && typeof parsed.blobOid === "string" && Array.isArray(parsed.imports)) {
           shards.push(parsed);
         }
       } catch {
