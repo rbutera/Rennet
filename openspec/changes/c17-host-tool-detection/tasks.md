@@ -119,6 +119,43 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
   empty). **Positive control:** a rejected `forge.detect` read leaves the Source Control section honestly
   empty rather than showing a stale/fake row. Cluster gate green. Commit.
 
+## A. Amendments (orchestrator-ruled 2026-08-28) — two gaps the cluster-4 fold left standing
+
+Both were disclosed honestly in `live-projection.tsx`'s gap notes rather than faked, so nothing on
+screen lies today. But both FAIL Rai's honest-present ruling — the ruling this packet exists under:
+*no host card shows an honest-empty state it is structurally incapable of filling*. A control that
+is present and inert, and a section that can never be filled for a host that really has the tool,
+are exactly that. Recorded here in the style of the 3.1 re-ruling; scope is unchanged otherwise.
+
+- [ ] A.1 **AMENDMENT A — the forge enable toggle has no served READ (implement WITH cluster 5).**
+  Cluster 3.2 landed a served per-host enable STORE, but it stores only `disabledHarnesses`, and
+  cluster 4.1 consequently hard-codes every Source Control row to `enabled: true` and drops the
+  forge branch of `setToolEnabled` on the floor. So the C10 forge toggle is **inert**: it flips,
+  writes nothing, and a reload silently restores it. Under the honest-present ruling that is worse
+  than an unserved section — the control claims a decision the product does not keep.
+  **Remedy, smallest honest shape (no new workstream):** carry the forge ruling on the SAME per-host
+  daemon-settings entry cluster 3 built (`hosts[source]`, beside `lastSeenVersion` /
+  `disabledHarnesses`) and serve it back on the SAME per-host read (`harness.hosts` entries gain the
+  host's ruled-out forge ids), with a `forge.setEnabled` write mirroring `harness.setEnabled`
+  exactly. Then wire the C10 toggle: `setToolEnabled` routes a source-control row to the forge
+  write, and `forgeRow` reads `enabled` from the served ruling instead of the `true` literal. The
+  daemon-settings + wire snapshots are already bumping on this branch, so this rides along.
+  **Positive control:** toggle a forge off on a host → re-read → it reads back disabled; a host with
+  no ruling reads enabled-by-default. Delete the now-false gap note in `live-projection.tsx`.
+- [ ] A.2 **AMENDMENT B — `sourceControlByHost` covers only the CONNECTED host (implement WITH
+  cluster 6, NOT this session).** `forge.detect` is single-host by construction (it answers for the
+  daemon it is dispatched to), so cluster 4.1 keys its rows to the `isLocal` section alone. Every
+  other card's Source Control section is therefore structurally unfillable: a WSL distro with its
+  own `gh` installed can never show it, and the card reads "Connect … to detect its tooling" about a
+  host that is already connected and already has the tool. Honest, and permanently wrong.
+  **Remedy:** a server-side `forge.hosts` mirroring `harness.hosts` exactly — walk the same
+  `daemonHostSections` enumeration, run per-host discovery through that host's OWN deps (local
+  directly; `wsl:<distro>` through the distro's discovery deps over `wsl.exe`; `remote:<deviceId>`
+  not at all), and return `{ source, asked, detected }` so a host that cannot be asked reads honest
+  absence rather than inheriting this machine's `gh`. The client then keys `sourceControlByHost` by
+  `source` for every asked host. `forge.detect` itself stays (the front door reads it).
+  The cluster-7 E2E will expect this. Cluster 6's session owns it.
+
 ## 5. Reconnect (#533) — wire the button to a real re-handshake
 
 - [ ] 5.1 A reconnect operation exposed to the settings surface: a command (or a supervisor call the seam
