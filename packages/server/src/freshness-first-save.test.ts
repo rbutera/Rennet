@@ -66,7 +66,10 @@ it("stales the review on the first save after a capture", { timeout: 120_000 }, 
   const dataDir = mkdtempSync(join(tmpdir(), "rennet-601-data-"));
   scratch.push(dataDir);
   const server = await createRennetServer({ dataDir, env: {} });
-  const ask = async (command: string, input: Record<string, unknown>) =>
+  const ask = async (
+    command: Parameters<typeof server.dispatch>[0],
+    input: Record<string, unknown>,
+  ) =>
     (await server.dispatch(command, { commandId: crypto.randomUUID(), ...input })) as {
       review: Review;
     };
