@@ -2051,6 +2051,15 @@ export const sidebarSessionSchema = z.object({
     .object({ branch: z.string().min(1), prNumber: z.number().int().positive().optional() })
     .optional(),
   /**
+   * The `owner/name` the session was minted for (`SessionModel.repository`, #580). It rides
+   * to the client because the claim alone cannot say WHICH repo it claimed: a workspace
+   * project holds several, so New Chat hiding on branch alone would hide repo-b's `main` for
+   * a session that claimed repo-a's. An identity, never a host path (R19) — `repositoryRoot`
+   * deliberately stays server-side. Absent for a session minted without one, which still
+   * hides its row exactly as before.
+   */
+  repository: z.string().min(1).optional(),
+  /**
    * The review this session holds (`SessionModel.reviewId`, 1:0..1 — referenced, never
    * absorbed). New Chat's row click captures the target's change and attaches it here, so
    * `/s/<sessionId>` resolves to the review workspace rather than the chat-only surface.

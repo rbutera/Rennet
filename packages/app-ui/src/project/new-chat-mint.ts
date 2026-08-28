@@ -1,4 +1,4 @@
-import { type Claim, claimMatchesTarget, newCommandId } from "@rennet/protocol";
+import { claimMatchesTarget, newCommandId } from "@rennet/protocol";
 import { useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
 import { useCommand, useMutation } from "../data";
@@ -64,26 +64,67 @@ export function targetOfRow(row: SmartRow): MintTarget {
 
 /** The live claims held IN this project — the rows New Chat must not offer again. Read off
  *  `session.list`, so archiving a session (which is the only release) puts its rows back on
- *  the next read rather than needing a second signal. */
-export function useClaimedTargets(projectId: string): readonly Claim[] {
+ *  the next read rather than needing a second signal. Each claim rides with the `owner/name`
+ *  its session was minted for (#580), which is what keeps the hide repo-precise below. */
+export function useClaimedTargets(projectId: string): readonly MintTarget[] {
   const { data } = useCommand("session.list", {});
   const sessions = data?.sessions;
   return useMemo(
     () =>
       (sessions ?? [])
         .filter((session) => session.projectId === projectId && session.archived !== true)
-        .flatMap((session) => (session.claim ? [session.claim] : [])),
+        .flatMap((session) =>
+          session.claim
+            ? [
+                {
+                  ...session.claim,
+                  ...(session.repository === undefined ? {} : { repository: session.repository }),
+                },
+              ]
+            : [],
+        ),
     [sessions, projectId],
   );
 }
 
-/** Claim-dedup on resolve: the rows that SURVIVE — the ones no live claim already owns. */
+/**
+ * The repository half of the match, under #580's silence rule: exclude ONLY on a positive
+ * contradiction. Either side absent is silence, not a mismatch — an older or unstamped
+ * session (one minted before the row carried a repository) must keep hiding its row, and a
+ * row with no repository must keep being hidden by the claim that owns it. Over-tightening
+ * here is the worse failure: it un-hides a row whose session already exists, and clicking it
+ * mints a SECOND session for one target — the exact collision the claim-dedup prevents.
+ */
+function repositoryAgrees(claimed: string | undefined, row: string | undefined): boolean {
+  return claimed === undefined || row === undefined || claimed === row;
+}
+
+/**
+ * Claim-dedup on resolve: the rows that SURVIVE — the ones no live claim already owns.
+ *
+ * The repository must agree as well as the branch (#580's mirror, #587). `claimMatchesTarget`
+ * decides on branch-or-PR-number alone, because that is all a Claim carries; a workspace
+ * project holds several repos, so claiming `main` in repo-a would otherwise hide repo-b's
+ * `main` row — a row the reviewer can no longer click, for a repository they never started a
+ * session in. Leaving that half unfixed is worse than fixing neither, since #580 made the
+ * ledger resolve correctly to a session whose row had vanished.
+ *
+ * The comparison lives HERE rather than inside `claimMatchesTarget` on purpose: the host's
+ * `claimingSession` already owns the server-side rule, and a second copy of it inside the
+ * shared protocol matcher is the drift #466 res. 11 warns about.
+ */
 export function hideClaimedRows(
   rows: readonly SmartRow[],
-  claims: readonly Claim[],
+  claimed: readonly MintTarget[],
 ): readonly SmartRow[] {
-  if (claims.length === 0) return rows;
-  return rows.filter((row) => !claims.some((claim) => claimMatchesTarget(claim, targetOfRow(row))));
+  if (claimed.length === 0) return rows;
+  return rows.filter((row) => {
+    const target = targetOfRow(row);
+    return !claimed.some(
+      (claim) =>
+        claimMatchesTarget(claim, target) && repositoryAgrees(claim.repository, target.repository),
+    );
+  });
 }
 
 export interface NewChatMint {
