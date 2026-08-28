@@ -156,7 +156,7 @@ describe("LiveSettingsProjectionProvider — agents wired live from harness.dete
     const dialog = () => within(document.body);
     await waitFor(() => expect(dialog().getAllByText("Orchestrator").length).toBeGreaterThan(0));
     // Claude only ⇒ the editable column is `claudeOnly`.
-    await user.click(dialog().getAllByRole("button", { name: "Orchestrator model" })[0]);
+    await user.click(dialog().getByRole("button", { name: "Orchestrator model" }));
     await user.click(dialog().getByRole("option", { name: "haiku" }));
 
     await waitFor(() => expect(writes).toHaveLength(1));

@@ -268,7 +268,7 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
     );
     await user.click(getByRole("button", { name: "Edit Mappings" }));
     // Single = Claude-only, so the editable column is `claudeOnly`.
-    await user.click(body().getAllByRole("button", { name: "Orchestrator model" })[0]);
+    await user.click(body().getByRole("button", { name: "Orchestrator model" }));
     await user.click(body().getByRole("option", { name: "haiku" }));
     expect(writes).toEqual([
       {
