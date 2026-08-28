@@ -80,6 +80,28 @@ export function normalizeOutputSchema(schema: unknown): Record<string, unknown> 
   return rest;
 }
 
+/**
+ * Map the model council's VERSIONED aliases to the exact full model id the installed
+ * `claude` binary accepts. The council deliberately pins a specific model version per
+ * role (`opus-4.8` for lens-draft, `sonnet-5` for the round-report/flagged seats), but
+ * `claude` 2.1.246 (above Rennet's tested range) rejects those short versioned aliases
+ * ("There's an issue with the selected model (opus-4.8). It may not exist or you may not
+ * have access to it.") while accepting the SDK's canonical full ids for the SAME version.
+ * So we translate to the full id — preserving the council's exact version intent, never a
+ * lossy strip to a bare alias (which would silently substitute whatever the binary's
+ * "opus" currently points at). First surfaced by C15's `runRound`, the first production run
+ * of any model-routed board seat; every full id here was confirmed live against the binary.
+ * Bare aliases (`opus`/`sonnet`/`haiku`) and already-full ids pass through untouched.
+ */
+const COUNCIL_MODEL_FULL_IDS: Readonly<Record<string, string>> = {
+  "opus-4.8": "claude-opus-4-8",
+  "sonnet-5": "claude-sonnet-5",
+};
+
+export function mapCouncilModel(model: string): string {
+  return COUNCIL_MODEL_FULL_IDS[model] ?? model;
+}
+
 export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   const sdkOptions: SdkOptions = {
     cwd: options.cwd,
@@ -93,7 +115,7 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
     sdkOptions.executableArgs = [...options.executableArgs];
   }
   if (options.abortController) sdkOptions.abortController = options.abortController;
-  if (options.model !== undefined) sdkOptions.model = options.model;
+  if (options.model !== undefined) sdkOptions.model = mapCouncilModel(options.model);
   if (options.allowedTools !== undefined) sdkOptions.allowedTools = [...options.allowedTools];
   if (options.disallowedTools !== undefined) {
     sdkOptions.disallowedTools = [...options.disallowedTools];
