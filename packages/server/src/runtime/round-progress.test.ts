@@ -12,7 +12,7 @@ import type {
   RoundEvent,
   SessionModel,
 } from "@rennet/protocol";
-import { parseDraft } from "@rennet/protocol";
+import { parseDraft, ROUND_NO_REGEN } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import {
@@ -292,6 +292,70 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     for (const lens of ["sequence", "decisions", "flagged", "noise"]) {
       expect(detailOf(lens)).toBe("carrying forward");
     }
+  });
+
+  // ── A round whose drafters failed (review finding 4) ───────────────────────
+  //
+  // A failed regeneration used to end on `composed` — the reveal control appearing over
+  // boards nobody wrote — and to file the PRE-MINTED (empty) report board id in the
+  // ledger as if the report seat had written it.
+  it("no seat resolves: terminal failed, and no report is recorded that was never written", async () => {
+    const events: RoundEvent[] = [];
+    const noSeats = createRoundsRuntime({
+      // Neither harness is installed, so every drafter fails to resolve a seat.
+      resolveClaudePort: async () => null,
+      resolveCodexExecutor: async () => null as CodexExecutor | null,
+      boardsRuntimeFor: () => ({
+        service: boards.service,
+        createRennetBoard: boards.createRennetBoard,
+      }),
+      readPrompt,
+    });
+    const outcome = await noSeats.runRound({
+      session: { ...session, id: "no-seat-session" } as SessionModel,
+      repoRoot: root,
+      previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-none" }),
+      onProgress: (event) => events.push(event),
+      ...collationFor(),
+    });
+
+    // Boards are pre-minted before the drafters run, so a real board id here would be an
+    // EMPTY board filed as the round's report.
+    expect(outcome.record.reportBoard).toBe(ROUND_NO_REGEN);
+    expect(outcome.boardGeneration.lensBoards).toEqual({});
+    // The round terminates as failed, never `composed` over a regeneration that is not there.
+    const terminal = events.at(-1);
+    expect(terminal?.type).toBe("failed");
+    expect(events.some((e) => e.type === "composed")).toBe(false);
+  });
+
+  it("one drafter fails: its lane SETTLES as failed while the rest compose", async () => {
+    const events: RoundEvent[] = [];
+    // `design` emits an unparseable board; the others draft cleanly.
+    await runtimeWith((lens) =>
+      lens === "design"
+        ? ({ elements: [{ id: "x", kind: "not-a-kind", data: {} }] } as unknown as DraftBoard)
+        : sectioned("fine"),
+    ).runRound({
+      session: { ...session, id: "one-failed-session" } as SessionModel,
+      repoRoot: root,
+      previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-partial" }),
+      onProgress: (event) => events.push(event),
+      ...collationFor(),
+    });
+
+    const settled = [...events].reverse().find((e) => e.type === "lens");
+    if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
+    const design = settled.lanes.find((lane) => lane.id === "design");
+    // A lane left queued/running after the round is over reads as "still working".
+    expect(design?.status).toBe("failed");
+    expect(design?.detail ?? "").not.toBe("");
+    // Boards did land, so the round still composed — the failure is one lane's, not the round's.
+    expect(events.at(-1)?.type).toBe("composed");
   });
 
   // ── The lineage the round ACTUALLY has (review finding 2) ──────────────────

@@ -123,6 +123,15 @@ function createRegenerationLanes(emit: (lanes: readonly LaneRow[]) => void) {
       set(lens, { status: "done", detail: carried ? "carrying forward" : "reworked" });
       emit(snapshot());
     },
+    /**
+     * A drafter produced no board. Its lane SETTLES as failed carrying the real reason —
+     * a lane left `queued` or `running` after the round is over reads as "still working",
+     * which is a lie the reviewer would wait on.
+     */
+    failed(lens: LensKind, reason: string): void {
+      set(lens, { status: "failed", detail: reason });
+      emit(snapshot());
+    },
   };
 }
 
@@ -161,6 +170,14 @@ export function withLensBoards(
     if (o.lens !== "report" && o.boardId !== undefined) lensBoards[o.lens] = o.boardId;
   }
   return { ...gen, lensBoards };
+}
+
+/** The drafters' own failure reasons, for the terminal event a board-less round emits. */
+function failureReasons(pipeline: LensPipelineResult): string {
+  const reasons = [pipeline.report, ...pipeline.boards]
+    .filter((outcome) => outcome !== undefined && outcome.boardId === undefined)
+    .map((outcome) => `${outcome.lens}: ${outcome.failure ?? "no board"}`);
+  return reasons.length > 0 ? reasons.join("; ") : "no drafter reported a reason";
 }
 
 // ── The round call ──
@@ -351,10 +368,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
    *  (session, generation) — it rebuilds the board ids + coverage/blemish metadata
    *  from the evidence on disk. The report board drafts FIRST, so any non-empty
    *  evidence includes it. */
-  function reconstructFromMeta(records: readonly BoardMeta[]): {
-    pipeline: LensPipelineResult;
-    reportBoardId: string;
-  } {
+  function reconstructFromMeta(records: readonly BoardMeta[]): LensPipelineResult {
     const outcomes: LensBoardOutcome[] = records.map((m) => ({
       lens: m.lens,
       boardId: m.boardId,
@@ -363,12 +377,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       immutability: m.immutability,
     }));
     const report = outcomes.find((o) => o.lens === "report");
-    const pipeline: LensPipelineResult = {
+    return {
       boards: outcomes.filter((o) => o.lens !== "report"),
       coverage: [],
       ...(report === undefined ? {} : { report }),
     };
-    return { pipeline, reportBoardId: report?.boardId ?? outcomes[0]?.boardId ?? "" };
   }
 
   /** Pre-mint the round's boards, resolve ports, and run the pipeline once. Lives
@@ -377,7 +390,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   async function draft(
     input: RoundInput,
     boardGeneration: Generation,
-  ): Promise<{ pipeline: LensPipelineResult; reportBoardId: string }> {
+  ): Promise<LensPipelineResult> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const boardIds = new Map<LintTarget, string>();
     for (const target of LINT_TARGETS) boardIds.set(target, await boards.createRennetBoard());
@@ -460,7 +473,14 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       ...(input.curationFeedback === undefined ? {} : { curationFeedback: input.curationFeedback }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-    return { pipeline, reportBoardId: boardIdFor("report") };
+    // A drafter that produced no board settles its lane as failed. Without this the lane
+    // sits at `queued`/`running` after the round is over — the surface reads "still
+    // working" forever, which is the same stall a silent crash leaves behind.
+    for (const outcome of pipeline.boards) {
+      if (outcome.boardId !== undefined || outcome.lens === "report") continue;
+      lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
+    }
+    return pipeline;
   }
 
   async function runOnce(input: RoundInput): Promise<RoundOutcome> {
@@ -491,16 +511,24 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // check is what survives a restart. (Absent read seam ⇒ guard-only, no restart proof.)
     const durableEvidence =
       deps.loadDraftedBoards?.(input.repoRoot, input.session.id, boardGeneration.id) ?? [];
-    const { pipeline, reportBoardId } =
+    const pipeline =
       durableEvidence.length > 0
         ? reconstructFromMeta(durableEvidence)
         : await guard.start(input.session.id, boardGeneration.id, () =>
             draft(input, boardGeneration),
           );
 
-    // The round-report seat's board, or the pre-minted report board id when the seat
-    // wrote nothing — always a valid id, so the `RoundRecord` is never unrepresentable.
-    const reportBoard = pipeline.report?.boardId ?? reportBoardId;
+    // The round-report seat's board, or the `ROUND_NO_REGEN` marker when the seat wrote
+    // nothing. Every board id is PRE-MINTED before the drafters run, so recording the
+    // pre-minted id here would file an empty board as the round's report — a ledger row
+    // pointing at a document nobody wrote. Honest absence is the protocol's own contract
+    // for this field ("`ROUND_NO_REGEN` when the round drafted no report board").
+    const reportBoard = pipeline.report?.boardId ?? ROUND_NO_REGEN;
+    // The boards this round actually WROTE (report included) — the difference between a
+    // regeneration and a round that only reports its own failures.
+    const drafted = [pipeline.report, ...pipeline.boards].filter(
+      (outcome) => outcome?.boardId !== undefined,
+    );
     // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
     // prior generation exists, it freezes and its id is the earlier generation the ledger's
     // switcher drills back to. Absent on a no-move round and on a first generation —
@@ -533,7 +561,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // The round composed (C15 3.1): the terminal event the run machine gates **View the
     // New Boards** on. Emitted with the generation the reveal lands on, so the control
     // appears at real composition — never as a disabled button waiting for a flag.
-    input.onProgress?.({ type: "composed", generation: liveSuccessor.id });
+    //
+    // A round where EVERY drafter failed composed nothing: there are no new boards to
+    // reveal, so it terminates on `failed` carrying the drafters' own reasons. Announcing
+    // "composed" over an empty generation would put a reveal control in front of a
+    // regeneration that does not exist.
+    if (drafted.length > 0) {
+      input.onProgress?.({ type: "composed", generation: liveSuccessor.id });
+    } else {
+      input.onProgress?.({
+        type: "failed",
+        reason: `The regeneration drafted no boards: ${failureReasons(pipeline)}`,
+      });
+    }
 
     return {
       record,
