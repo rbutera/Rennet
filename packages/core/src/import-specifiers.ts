@@ -36,10 +36,23 @@
  * newlines, and is bounded by two characters it may never cross: a QUOTE (so a
  * match can never skip over an intervening specifier — the specifier that ends
  * one statement stops the scan) and a SEMICOLON (so a preceding `export const x =
- * 1;` cannot reach forward into the next statement's `from` clause). The residual
- * false positive is bounded and benign: an unterminated `export …` before an
- * import can re-report THAT import's specifier, which is a duplicate of a
- * specifier genuinely present in the text, never an invented one.
+ * 1;` cannot reach forward into the next statement's `from` clause).
+ *
+ * That bound is the whole guarantee, and it is narrower than "every capture is a
+ * real import". What it proves: a match cannot SKIP PAST an intervening quoted
+ * specifier to pair with a later one. What it does NOT prove: that the quoted
+ * string it pairs with is an import at all. An unterminated `import`/`export`
+ * statement followed by any `from '…'` — most plausibly SQL inside a template
+ * literal, `` export const q = `select * from 'users'` `` — captures that string.
+ * The honest ceiling, in order of how bad it gets:
+ *  - the common case is a duplicate of a specifier already in the text (an
+ *    unterminated `export …` re-reporting the next import's specifier), which the
+ *    shard de-duplicates away;
+ *  - a BARE junk capture (`users`) matches no workspace scope and resolves to
+ *    nothing, so it contributes no edge and is invisible downstream;
+ *  - a contrived RELATIVE junk capture (`./users` in that same template literal,
+ *    next to a real `./users` file) WOULD mint a phantom edge. Nothing here rules
+ *    that out; only a parser would.
  */
 export const IMPORT_PATTERNS: readonly RegExp[] = [
   /\b(?:import|export)\b[^'";]*?\bfrom\s*['"]([^'"]+)['"]/g,
@@ -97,6 +110,27 @@ export function resolveCandidate(
     if (exists(candidate)) return candidate;
   }
   return null;
+}
+
+/**
+ * Whether probing `base` would reach the IMPORTING FILE ITSELF — i.e. whether the
+ * importer is one of the candidates {@link resolveCandidate} walks. Pure over the
+ * two paths; it consults no inventory.
+ *
+ * It exists for the multi-base workspace-alias probe. `resolveCandidate` collapses
+ * "the specifier names me" and "nothing matched" into the same `null`, which is
+ * fine for a single-base probe but wrong for a loop: `packages/p/index.ts`
+ * importing bare `@x/p` probes `packages/p` (self ⇒ null) and then FALLS THROUGH to
+ * `packages/p/src`, minting an edge to a sibling inside its own package for a
+ * specifier that named itself. Paired as `target === null && probeReachesImporter(…)`
+ * this separates the two cases exactly: if nothing resolved before the importer
+ * appeared among the candidates, the specifier is self-naming and the whole
+ * specifier must stop resolving.
+ */
+export function probeReachesImporter(base: string, importerPath: string): boolean {
+  for (const ext of RESOLVE_EXTS) if (base + ext === importerPath) return true;
+  for (const ext of INDEX_EXTS) if (`${base}/index${ext}` === importerPath) return true;
+  return false;
 }
 
 /**

@@ -590,6 +590,12 @@ const IMPORT_TREE: Record<string, string[]> = {
   // itself, so it must produce NO edge — never a phantom edge to `twin.tsx`.
   "packages/core/src/twin.ts": ["./twin"],
   "packages/core/src/twin.tsx": [],
+  // A package's own ROOT barrel naming its package by ALIAS. `@x/self` probes
+  // `packages/self` (which IS this file, via the index candidate) and must stop
+  // there — falling through to the `<root>/src` base would mint an edge to a
+  // sibling barrel inside the same package.
+  "packages/self/index.ts": ["@x/self"],
+  "packages/self/src/index.ts": [],
 };
 
 const importScopes: WorkspaceScope[] = [
@@ -612,6 +618,9 @@ const importScopes: WorkspaceScope[] = [
     private: true,
     tags: [],
   },
+  // No `sourceRoot`, so the `<root>/src` fallback is the second probed base — the
+  // one a self-naming alias must never fall through to.
+  { name: "@x/self", root: "packages/self", private: true, tags: [] },
 ];
 
 const importEntryPoints: EntryPoint[] = [{ scope: "@x/lib", main: "./src/lib.ts", bin: [] }];
@@ -774,6 +783,7 @@ describe("queryImportGraph — raw specifiers resolved into real file→file edg
     // root/sourceRoot + `index` probe alone cannot find it. Every package that names
     // a non-index entry is invisible to the graph without this.
     const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.graph.importsOf("packages/app/src/entrypoint-user.ts")).toEqual([
       "packages/lib/src/lib.ts",
@@ -783,6 +793,7 @@ describe("queryImportGraph — raw specifiers resolved into real file→file edg
     // the SAME tree resolves to nothing — so the edge above is the declaration's
     // doing, not an index probe that would have found it anyway.
     const without = queryImportGraph(importFixture({ omitEntryPoints: true }).snapshot);
+    expect(without.ok).toBe(true);
     if (!without.ok) return;
     expect(without.graph.importsOf("packages/app/src/entrypoint-user.ts")).toEqual([]);
   });
@@ -792,6 +803,7 @@ describe("queryImportGraph — raw specifiers resolved into real file→file edg
     // edge SOURCE. Leaving them out of the resolution candidates made it impossible
     // for one to be an extensionless edge TARGET — an asymmetry with no reason.
     const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.graph.importsOf("packages/core/src/native-user.ts")).toEqual([
       "packages/core/src/native.mts",
@@ -803,12 +815,25 @@ describe("queryImportGraph — raw specifiers resolved into real file→file edg
     // continuing down the extension list resolved it to `twin.tsx` — an edge between
     // two files that have nothing to do with each other.
     const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.graph.importsOf("packages/core/src/twin.ts")).toEqual([]);
     expect(result.graph.importersOf("packages/core/src/twin.tsx")).toEqual([]);
     expect(result.graph.edges.some((edge) => edge.from === "packages/core/src/twin.ts")).toBe(
       false,
     );
+  });
+
+  it("stops a self-naming WORKSPACE ALIAS instead of falling through to the next base", () => {
+    // `packages/self/index.ts` importing bare `@x/self` names ITSELF: the alias's
+    // first probed base is the package root, whose `index.ts` candidate is this very
+    // file. Continuing to the `<root>/src` base resolved it to the sibling barrel
+    // `packages/self/src/index.ts` — a phantom edge minted from a self-reference.
+    const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/self/index.ts")).toEqual([]);
+    expect(result.graph.importersOf("packages/self/src/index.ts")).toEqual([]);
   });
 });
 

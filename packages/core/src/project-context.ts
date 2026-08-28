@@ -48,7 +48,7 @@ import type {
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import type { FanInIndex } from "./delta";
-import { resolveCandidate, resolveRelative } from "./import-specifiers";
+import { probeReachesImporter, resolveCandidate, resolveRelative } from "./import-specifiers";
 
 /** Load a content-addressed shard's bytes by digest, or `undefined` if absent. */
 export type ShardLoader = (digest: string) => string | undefined;
@@ -1032,6 +1032,12 @@ function resolveSpecifier(
   for (const base of bases) {
     const target = resolveCandidate(base, importerPath, exists);
     if (target !== null) return { path: target, kind: "workspace" };
+    // A base that resolved to NOTHING because it named the importer itself ends the
+    // whole specifier, rather than falling through to the next base: `@x/p` written
+    // inside `packages/p/index.ts` names that very file, and continuing would resolve
+    // it to `packages/p/src/index.ts` — a phantom edge between two files that have
+    // nothing to do with each other, minted from a self-reference.
+    if (probeReachesImporter(base, importerPath)) return null;
   }
   return null;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   INDEX_EXTS,
   importSpecifiers,
+  probeReachesImporter,
   RESOLVE_EXTS,
   resolveCandidate,
   resolveRelative,
@@ -56,10 +57,11 @@ describe("importSpecifiers — the scan is over TEXT, not physical lines", () =>
     expect(scan(["export const x = 1;", "import { y } from './y';"].join("\n"))).toEqual(["./y"]);
   });
 
-  it("can never invent a specifier the text does not contain", () => {
-    // The `from`-clause pattern may not cross a quote, so a match can never skip over
-    // one statement's specifier into another's. This is what makes the newline-
-    // spanning scan safe: every capture is written verbatim in the source.
+  it("cannot skip past one statement's specifier to pair with a later one", () => {
+    // The `from`-clause pattern may not cross a quote, so a match stops at the first
+    // quoted string after it. That is the bound the newline-spanning scan rests on —
+    // NOT a guarantee that every capture is an import (see the module doc's ceiling:
+    // a `from '…'` inside a template literal after an unterminated export IS caught).
     const found = new Set(
       scan(
         [
@@ -72,6 +74,21 @@ describe("importSpecifiers — the scan is over TEXT, not physical lines", () =>
       ),
     );
     expect([...found].sort()).toEqual(["./first", "./second", "./third"]);
+  });
+
+  it("DOES capture a `from '…'` string that is not an import — the documented ceiling", () => {
+    // The honest limit of a regex scan, kept as a test so the module doc cannot drift
+    // back into claiming captures are always real imports. An unterminated `export`
+    // followed by SQL in a template literal pairs with the SQL's quoted table name.
+    expect(scan(["export const q = `", "  select * from 'users'", "`;"].join("\n"))).toEqual([
+      "users",
+    ]);
+    // Why it is mostly harmless: a bare capture like this names no workspace scope
+    // and no relative path, so `queryImportGraph` resolves it to nothing. A CONTRIVED
+    // relative one would mint a phantom edge; nothing here prevents that.
+    expect(scan(["export const q = `", "  select * from './users'", "`;"].join("\n"))).toEqual([
+      "./users",
+    ]);
   });
 
   it("a physical-line scan would have missed the split forms (the regression this fixes)", () => {
@@ -136,5 +153,24 @@ describe("resolveCandidate — the one probing loop both consumers share", () =>
 
   it("yields nothing when the inventory holds no candidate", () => {
     expect(resolveCandidate("x/nowhere", "x/a.ts", inventory("x/a.ts"))).toBeNull();
+  });
+});
+
+describe("probeReachesImporter — telling `named myself` apart from `found nothing`", () => {
+  it("is true when the importer is among the probe's plain-extension candidates", () => {
+    expect(probeReachesImporter("x/a", "x/a.ts")).toBe(true);
+    expect(probeReachesImporter("x/a", "x/a.mts")).toBe(true);
+  });
+
+  it("is true when the importer is the probe's directory-index candidate", () => {
+    // The workspace-alias case: base `packages/self`, importer `packages/self/index.ts`.
+    expect(probeReachesImporter("packages/self", "packages/self/index.ts")).toBe(true);
+  });
+
+  it("is false for an unrelated importer, so an ordinary miss still tries the next base", () => {
+    expect(probeReachesImporter("packages/self", "packages/other/index.ts")).toBe(false);
+    expect(probeReachesImporter("x/a", "x/b.ts")).toBe(false);
+    // A DEEPER path than any candidate: `<base>/src/index.ts` is not probed at all.
+    expect(probeReachesImporter("packages/self", "packages/self/src/index.ts")).toBe(false);
   });
 });

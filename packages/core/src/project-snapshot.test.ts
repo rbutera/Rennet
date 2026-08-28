@@ -698,10 +698,11 @@ describe("import extraction sees FORMATTER-SPLIT statements (the dominant real f
     expect(shardOf(text)).toEqual(["./y"]);
   });
 
-  it("cannot invent a specifier the text does not contain", () => {
-    // The `from`-clause pattern may not cross a quote, so a match can never skip past
-    // one statement's specifier into another's: every captured specifier is written
-    // in the source. This is the guard that makes the newline-spanning scan safe.
+  it("cannot skip past one statement's specifier to pair with a later one", () => {
+    // The `from`-clause pattern may not cross a quote, so a match stops at the first
+    // quoted string after it and cannot reach over an intervening specifier. That is
+    // the bound the newline-spanning scan rests on — not a promise that every capture
+    // is a real import (see `import-specifiers.ts` for the honest ceiling).
     const text = [
       "import { a } from './first';",
       "import {",
