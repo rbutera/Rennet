@@ -4,6 +4,32 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 **Session-start bearing:** confirm the reused surfaces are on main — `model-council.ts` exports `ASSIGNMENT_TABLES`/`JOB_CATALOGUE`/`resolveAssignment`/`scenarioFor`; `CouncilResolveContext.overrides.task` is the honoured override slot (grep `resolveAssignment` in `model-council.ts` — the task-override layer already exists); `projections.tsx` carries `reviewRoles: readonly ReviewRole[]` + `setRoleAssignment(roleId, scenario, assignment)`; `live-projection.tsx` still says *"reviewRoles: no Model-Council / mappings command exists"* (the note this change deletes); `model-mappings.tsx` renders the switch + dialog + Reset over the projection. Then confirm what does NOT yet exist: `grep -rn "resolveReviewRoles\|REVIEW_ROLE_CATALOGUE\|reviewRoleMappingSchema\|setRoleAssignment\b" packages/core/src packages/protocol/src packages/server/src` — **no core catalogue, no wire schema, no command** (only the app-ui projection method + its tests reference `setRoleAssignment`). C16 adds them.
 
+## 0. Re-scope — per-scenario routing overrides (Rai, 2026-08-28)
+
+> Rai ruled that routing overrides are **PER-SCENARIO**, rejecting the job-keyed
+> shape clusters 1–4 landed ("one edit moves all three columns"). `routing.task`
+> is keyed by **(jobId, scenario)**. The shape is unreleased — it changes IN
+> PLACE, no migration, no compatibility read. See `context.md` § Re-scope.
+>
+> This supersedes, in the tasks above: 2.1's `task?: Record<jobId, {model,effort}>`;
+> 1.2's `resolveReviewRoles(ctx: CouncilResolveContext)` (the context is now a
+> review-role context carrying the scenario-keyed slice; the inert `availability`
+> field is gone); and the "SCENARIO-INDEPENDENT BY CONSTRUCTION" note on
+> `SettingsPort.setRoleAssignment`, which was the job-keyed rationalisation.
+
+- [x] 0.1 Record the ruling in `context.md` + this file (this block).
+- [x] 0.2 Protocol: `clientSettingsSchema.routing.task` becomes
+      `Record<jobId, { dual?, claudeOnly?, codexOnly? }>` (`councilScenarioOverridesSchema`,
+      additive-optional). `CouncilOverrides.task` loosens to `Partial<Record<…>>` so a
+      single-job override needs no cast.
+- [x] 0.3 Core `resolveReviewRoles` layers only that scenario's own cell; server
+      `setRoleAssignment` writes/clears exactly ONE `(job, scenario)` cell (`null`
+      clears that cell only; an emptied job entry drops, an emptied slice drops).
+      Adapters/server tests re-encode per-scenario semantics.
+- [x] 0.4 **Positive control (must fail if job-keyed sneaks back):** set an override
+      in `codexOnly`, then assert `dual` and `claudeOnly` still read the council-table
+      default with unchanged values and `layer: "default"`.
+
 ## 1. Core — the review-role catalogue + all-scenario resolution (packet: "readable … over the council tables that already exist"; Reconciliation 3)
 
 - [x] 1.1 `packages/core/src/model-council.ts` (or a sibling `model-council-roles.ts` re-exported from the barrel): `REVIEW_ROLE_CATALOGUE` — the authoritative map of the eight user-legible roles (`orchestrator`, `map-workers`, `confirmation`, `lens-workers`, `second-seat`, `adjudication`, `post-process`, `utility`) each to its backing council **job id, reused from `JOB_CATALOGUE`** (e.g. lens-workers → `lens-draft`, post-process → `board-post-process`, map-workers → `partition-worker`, utility → a light-tier id, orchestrator → the review seat, adjudication → `adjudication`). The Flagged `second-seat` is the dual-only construct (`dual-seat.ts`), NOT a single-provider table job — model it so it resolves in `dual` and is honest-null in `claudeOnly`/`codexOnly` (Reconciliation 3). Each role carries its `label` + `hint` (the copy the surface shows). **No new job ids, no table-value change** (out of scope).
