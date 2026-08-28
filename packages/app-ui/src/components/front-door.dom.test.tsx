@@ -13,9 +13,20 @@ import type {
   ProjectProcessEvent,
   RennetBridge,
 } from "@rennet/protocol";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, mount, waitFor } from "../test/dom";
+import { BridgeProvider } from "../data";
+import { fireEvent, mount as mountDom, waitFor } from "../test/dom";
 import { FrontDoor } from "./front-door";
+
+/** The app root supplies a `BridgeProvider`; these mounts render FrontDoor, which reaches
+ *  the seam (its GitHub card reads `github.status` through `useCommand`). Wrapping here keeps every existing
+ *  call site as-is — the bridge each test already passes on the root element is the one
+ *  the provider carries. */
+function mount(ui: ReactElement): ReturnType<typeof mountDom> {
+  const { bridge } = ui.props as { bridge: RennetBridge };
+  return mountDom(<BridgeProvider bridge={bridge}>{ui}</BridgeProvider>);
+}
 
 const discovery: DiscoveryResult = {
   path: "/orbital",

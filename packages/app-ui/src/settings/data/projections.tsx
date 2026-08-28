@@ -109,6 +109,10 @@ export interface WorktreeSettings {
 /** A repo rule the review agents read, with the severity chip it carries (claim 669). */
 export type GuidanceSeverity = "high" | "medium" | "low";
 export interface GuidanceRule {
+  /** The catalogue's stable id, when the served rule carries one. Kept through an edit
+   *  so a retyped statement still addresses the SAME rule on disk (its rationale and
+   *  anti-pattern survive). Never rendered. */
+  readonly id?: string;
   readonly rule: string;
   readonly severity: GuidanceSeverity;
 }
@@ -160,6 +164,17 @@ export interface SettingsProjection {
    *  no UI lie). A stateful test/B10 projection sets it TRUE, so those editors are live
    *  and provable. (`setRepoVisibility` is NOT in this set — Repository is live-backed.) */
   readonly projectEditsPersist: boolean;
+  /**
+   * The SAME question, answered per project id — the honest one, because the capability
+   * is a property of the served row (this daemon, this repo), not of the surface. A
+   * project with an entry uses it; one with NO entry (its row has not arrived, or this
+   * projection has no rows at all) falls back to {@link SettingsProjection.projectEditsPersist}.
+   *
+   * The live projection fills this from the rows it can address and leaves the global
+   * flag false, so a project whose row it does not hold renders DISABLED rather than
+   * enabled over a write it has no repo path for.
+   */
+  readonly prefsBackedByProject: Readonly<Record<string, boolean>>;
   /**
    * Whether the project NAME field has a served write store. Separate from
    * {@link SettingsProjection.projectEditsPersist} because it is separately TRUE: the
@@ -226,6 +241,7 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   trackerByProject: {},
   guidanceByProject: {},
   projectEditsPersist: false,
+  prefsBackedByProject: {},
   nameEditsPersist: false,
   renameHost: () => undefined,
   removeHost: () => undefined,

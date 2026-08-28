@@ -319,7 +319,11 @@ export function projectCommandOutput(
     if (o.review && typeof o.review === "object")
       o.review = projectReview(o.review as Record<string, unknown>, ctx);
     if (o.project && typeof o.project === "object") {
-      o.project = ["settings.resetRepoValue", "settings.pinRepoValue"].includes(command)
+      o.project = [
+        "settings.resetRepoValue",
+        "settings.pinRepoValue",
+        "settings.setProjectValue",
+      ].includes(command)
         ? projectSettingsProject(o.project as Record<string, unknown>, ctx)
         : projectProject(o.project as Record<string, unknown>, ctx);
     }
@@ -382,6 +386,8 @@ export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]
   "settings.setRepoVisibility": ["repoPath"],
   "settings.resetRepoValue": ["repoPath"],
   "settings.pinRepoValue": ["repoPath"],
+  "settings.setProjectValue": ["repoPath"],
+  "settings.setGuidance": ["repoPath"],
 };
 
 /**

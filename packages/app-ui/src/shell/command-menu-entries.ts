@@ -131,9 +131,8 @@ export function actionEntries(): MenuEntry[] {
 /**
  * Registry commands (R4): the ONE `commands` table filtered by `exposure.commandMenu`,
  * each surviving row rendered with a label DERIVED from its id (`label`, which #465
- * initializes to the id). Today every row initializes `commandMenu: false`, so this
- * yields ZERO rows — the channel renders nothing, honestly (reconciliation 2). A flipped
- * row surfaces the instant B10 flips it.
+ * initializes to the id). ONE row is exposed today; which rows and why is
+ * `docs/developing/reference/command-menu-exposure.md`.
  */
 export function registryCommandEntries(
   registry: Readonly<Record<string, RegistryRowView>>,

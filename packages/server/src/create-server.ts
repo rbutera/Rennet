@@ -107,9 +107,12 @@ import {
   runRelatedContextRetrieval,
   SessionStore,
   SqliteReviewStore,
+  saveConventionCatalogue,
+  scoutSettingsOffers,
   snapshotStoreFor,
   TranscriptStore,
   validateGitHubToken,
+  withRepoPref,
   wslDiscoveryDeps,
   wslForgeDetectionDeps,
 } from "@rennet/adapters";
@@ -2614,6 +2617,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         );
         return { changed: preview.changed, gitignorePath: preview.gitignorePath };
       },
+      // The repo rung of the settings ladder (C18 group A): one pref written into the
+      // project's own `config.json`. `updateConfig` REFUSES a malformed file (Rule 75),
+      // so a corrupt config is never clobbered by an edit.
+      writeRepoValue: ({ repoKey, field, value }) => {
+        snapshotStore.updateConfig(repoKey, (current) => withRepoPref(current, field, value));
+      },
+      // The scout's DETECTED offers for the row's provenance — the SAME offers
+      // `resolveTrackerConfig` folds, so the chip names the layer retrieval used.
+      scoutOffers: (repoKey) => scoutSettingsOffers(snapshotStore, repoKey),
+      // The guidance WRITER beside the reader: the repo's own `.rennet/conventions.json`.
+      saveGuidance: (repoRoot, rules) => saveConventionCatalogue(repoRoot, rules),
       clearRepoValue: ({ repoKey, field }) => {
         // Drop a repo-scoped field so the value falls back down the ladder (Reset).
         // `updateConfig` refuses a malformed file (Rule 75), so nothing is clobbered.

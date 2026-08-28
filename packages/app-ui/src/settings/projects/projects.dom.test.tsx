@@ -8,7 +8,7 @@
 // local copy; "Runs on" is a displayed detected fact with no control; the tracker's
 // REST fields carry only the env-var NAME; the guidance editor's Escape closes the
 // editor without bubbling to the takeover.
-import type { Project, SettingsProject } from "@rennet/protocol";
+import type { Project, SettingsProject, SettingsProjectValueKey } from "@rennet/protocol";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
@@ -455,6 +455,211 @@ describe("ProjectsPage — live projection is honest about the unserved write st
     expect((await findByRole("button", { name: "git-visible" })).hasAttribute("disabled")).toBe(
       false,
     );
+    cleanup();
+  });
+});
+
+// ── The LIVE projection WITH the served per-project rung (C18 group A) ───────────
+// The same provider, over a daemon that serves `prefs`: the editors go live and each
+// edit dispatches the real repo-rung write for THIS project's repoPath. The unserved
+// case above is the other half of the pair — one daemon serves the rung, one does not,
+// and the surface tells the truth about which.
+const P1_PREFS: NonNullable<SettingsProject["prefs"]> = {
+  glyph: { value: "", layer: "builtin" },
+  worktreeRoot: { value: "", layer: "builtin" },
+  worktreePattern: { value: "{project}-{branch}", layer: "repo" },
+  tracker: {
+    kind: { value: "none", layer: "builtin" },
+    projectKey: { value: "", layer: "builtin" },
+    baseUrl: { value: "", layer: "builtin" },
+    tokenEnv: { value: "", layer: "builtin" },
+  },
+  guidance: [],
+};
+
+function mountServedPrefs() {
+  return mountServedPrefsWith(P1_PREFS);
+}
+
+function mountServedPrefsWith(prefs: NonNullable<SettingsProject["prefs"]>): {
+  writes: {
+    projectId: string;
+    repoPath: string;
+    key: SettingsProjectValueKey;
+    value: string | null;
+  }[];
+  guidanceWrites: {
+    repoPath: string;
+    rules: { id?: string; rule: string; severity: string }[];
+  }[];
+  view: ReturnType<typeof mount>;
+} {
+  const writes: {
+    projectId: string;
+    repoPath: string;
+    key: SettingsProjectValueKey;
+    value: string | null;
+  }[] = [];
+  const guidanceWrites: {
+    repoPath: string;
+    rules: { id?: string; rule: string; severity: string }[];
+  }[] = [];
+  const served = new MemoryBridge(
+    {
+      "projects.list": () => ({ projects: [...PROJECTS] }),
+      "settings.get": () => ({
+        scheme: "system",
+        schemeProvenance: {
+          layer: "builtin",
+          contributions: [{ layer: "builtin", value: "system", effective: true }],
+        },
+        appearanceMalformed: false,
+        projects: [{ ...P1_ROW, prefs }],
+      }),
+      "settings.setProjectValue": (input) => {
+        const write = input as (typeof writes)[number];
+        writes.push(write);
+        return { status: "applied" as const, key: write.key, project: null };
+      },
+      "settings.setGuidance": (input) => {
+        guidanceWrites.push(input as (typeof guidanceWrites)[number]);
+        return { status: "applied", guidance: { rules: [], reason: "empty", dropped: 0 } };
+      },
+    },
+    { platform: "darwin", version: "1.0.1" },
+  );
+  const history = memoryHistory("/settings/projects?project=p1");
+  return {
+    writes,
+    guidanceWrites,
+    view: mount(
+      <BridgeProvider bridge={served}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <LiveSettingsProjectionProvider>
+            <ProjectsPage />
+          </LiveSettingsProjectionProvider>
+        </Router>
+      </BridgeProvider>,
+    ),
+  };
+}
+
+describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
+  it("renders the RESOLVED prefs and enables their editors", async () => {
+    const { view } = mountServedPrefs();
+    const pattern = (await view.findByLabelText("Worktree naming pattern")) as HTMLInputElement;
+    // The served repo-rung value, not the client default.
+    expect(pattern.value).toBe("{project}-{branch}");
+    expect(pattern.hasAttribute("disabled")).toBe(false);
+    // An UNSET location resolves empty, so the client's own default shows.
+    expect(((await view.findByLabelText("Worktree location")) as HTMLInputElement).value).toBe(
+      "~/.rennet/worktrees",
+    );
+    // No gap notes: every editor on this page is backed now.
+    expect(document.querySelectorAll('[data-slot="unbacked-note"]').length).toBe(0);
+    cleanup();
+  });
+
+  it("a worktree-pattern edit writes the repo rung for THIS project's repoPath", async () => {
+    const { writes, view } = mountServedPrefs();
+    const pattern = await view.findByLabelText("Worktree naming pattern");
+    fireEvent.change(pattern, { target: { value: "{branch}" } });
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0]).toEqual({
+      projectId: "p1",
+      repoPath: P1_ROW.repoPath,
+      key: "worktreePattern",
+      value: "{branch}",
+    });
+    cleanup();
+  });
+
+  it("a tracker pick writes ONLY the kind — the endpoint fields that did not move are untouched", async () => {
+    const { writes, view } = mountServedPrefs();
+    const jira = await view.findByRole("button", { name: "jira" });
+    fireEvent.click(jira);
+    await waitFor(() => expect(writes.length).toBeGreaterThan(0));
+    expect(writes.filter((write) => write.key === "trackerKind")).toEqual([
+      { projectId: "p1", repoPath: P1_ROW.repoPath, key: "trackerKind", value: "jira" },
+    ]);
+    // Switching to a REST tracker seeds its conventional token env-var NAME — the token
+    // value itself never enters any store.
+    expect(writes.find((write) => write.key === "trackerTokenEnv")?.value).toBe("JIRA_API_TOKEN");
+    cleanup();
+  });
+
+  it("a project whose row is NOT served keeps its editors disabled while a sibling's are live", async () => {
+    // p2 has no settings row (never scanned, or its read has not arrived). The capability
+    // is per project, so p2 stays disabled — an enabled control there would sit over a
+    // write with no repoPath to address, which is the silent no-op this pair guards.
+    const history = memoryHistory("/settings/projects?project=p2");
+    const served = new MemoryBridge(
+      {
+        "projects.list": () => ({ projects: [...PROJECTS] }),
+        "settings.get": () => ({
+          scheme: "system",
+          schemeProvenance: {
+            layer: "builtin",
+            contributions: [{ layer: "builtin", value: "system", effective: true }],
+          },
+          appearanceMalformed: false,
+          projects: [{ ...P1_ROW, prefs: P1_PREFS }],
+        }),
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+    const { findByLabelText } = mount(
+      <BridgeProvider bridge={served}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <LiveSettingsProjectionProvider>
+            <ProjectsPage />
+          </LiveSettingsProjectionProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    expect((await findByLabelText("Worktree naming pattern")).hasAttribute("disabled")).toBe(true);
+    cleanup();
+
+    // …and the SAME served view leaves p1 — the project that has a row — editable.
+    const { view } = mountServedPrefs();
+    expect((await view.findByLabelText("Worktree naming pattern")).hasAttribute("disabled")).toBe(
+      false,
+    );
+    cleanup();
+  });
+
+  it("editing a served rule sends its ID back, so the catalogue can keep what it authored", async () => {
+    const { guidanceWrites, view } = mountServedPrefsWith({
+      ...P1_PREFS,
+      guidance: [
+        { id: "arch-boundary", rule: "file I/O lives only in adapters", severity: "high" },
+      ],
+    });
+    fireEvent.click(await view.findByRole("button", { name: "Edit" }));
+    fireEvent.change(await view.findByLabelText("Guidance rule text"), {
+      target: { value: "file I/O belongs in adapters only" },
+    });
+    fireEvent.click(await view.findByRole("button", { name: "Save" }));
+    await waitFor(() => expect(guidanceWrites.length).toBe(1));
+    expect(guidanceWrites[0]?.rules).toEqual([
+      { id: "arch-boundary", rule: "file I/O belongs in adapters only", severity: "high" },
+    ]);
+    cleanup();
+  });
+
+  it("a saved guidance rule writes the repo's catalogue", async () => {
+    const { guidanceWrites, view } = mountServedPrefs();
+    fireEvent.click(await view.findByRole("button", { name: "Add Rule" }));
+    fireEvent.change(await view.findByLabelText("Guidance rule text"), {
+      target: { value: "keep main releasable" },
+    });
+    fireEvent.click(await view.findByRole("button", { name: "Save" }));
+    await waitFor(() => expect(guidanceWrites.length).toBe(1));
+    expect(guidanceWrites[0]).toEqual({
+      projectId: "p1",
+      repoPath: P1_ROW.repoPath,
+      rules: [{ rule: "keep main releasable", severity: "medium" }],
+    });
     cleanup();
   });
 });

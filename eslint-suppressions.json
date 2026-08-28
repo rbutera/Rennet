@@ -19,11 +19,6 @@
       "count": 9
     }
   },
-  "packages/app-ui/src/components/github-connect.tsx": {
-    "rennet/no-direct-invoke": {
-      "count": 6
-    }
-  },
   "packages/app-ui/src/components/pr-worktree-status.tsx": {
     "rennet/no-direct-invoke": {
       "count": 1

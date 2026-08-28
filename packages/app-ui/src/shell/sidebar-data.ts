@@ -267,7 +267,11 @@ export function useActiveRoute(): ActiveRoute {
 /** The real `projects.remove` mutation — forgets a project, invalidating the tree.
  *  The working tree on disk is untouched (the command's own contract). */
 export function useRemoveProject(): (projectId: string) => Promise<void> {
-  const { mutate } = useMutation("projects.remove", { invalidates: ["projects.list"] });
+  // `settings.get` carries the removed project's settings row too, so it is staled with
+  // the tree — a forgotten project must not leave a row behind on the settings surface.
+  const { mutate } = useMutation("projects.remove", {
+    invalidates: ["projects.list", "settings.get"],
+  });
   return async (projectId: string) => {
     await mutate({ commandId: crypto.randomUUID(), projectId });
   };

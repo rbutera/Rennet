@@ -170,6 +170,10 @@ export default defineConfig({
                     link: "/developing/reference/codex-app-server/",
                   },
                   {
+                    label: "Command menu exposure",
+                    link: "/developing/reference/command-menu-exposure/",
+                  },
+                  {
                     label: "Streaming and durable state",
                     link: "/developing/reference/reactive-streams/",
                   },

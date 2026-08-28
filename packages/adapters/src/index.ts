@@ -122,6 +122,7 @@ export {
   type ConventionCatalogueLoad,
   type ConventionLoadReason,
   loadConventionCatalogue,
+  saveConventionCatalogue,
 } from "./convention-catalogue-reader";
 export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
 export { type DossierKey, DossierStore } from "./dossier-store";
@@ -460,7 +461,10 @@ export {
   type ProjectPaths,
   ProjectSnapshotStore,
   type ProjectVisibility,
+  REPO_PREF_FIELDS,
+  type RepoPrefField,
   snapshotStoreFor,
+  withRepoPref,
 } from "./project-snapshot-store";
 export {
   DOSSIER_TOTAL_MAX_CHARS,

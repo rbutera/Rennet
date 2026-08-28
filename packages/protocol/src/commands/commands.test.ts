@@ -32,7 +32,8 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // sidebar honest-empty projection was waiting on (session.list plus rename/setPinned/
 // archive, each persisted so it survives reload). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
-// with its registry row.
+// with its registry row — and with its row in docs/developing/reference/command-menu-exposure.md,
+// which carries a menu-exposure verdict for every command in this list.
 const ABSORBED_IDS = [
   "app.bootstrap",
   "ask.clearLineComment",
@@ -125,7 +126,9 @@ const ABSORBED_IDS = [
   "settings.resetRepoValue",
   "settings.setAppearance",
   "settings.setCoachmarks",
+  "settings.setGuidance",
   "settings.setKeybinding",
+  "settings.setProjectValue",
   "settings.setRepoVisibility",
   "settings.setRoleAssignment",
 ] as const;
@@ -152,10 +155,17 @@ const AGENT_INVENTORY = [
   "settings.setRepoVisibility",
 ] as const;
 
+// The ⌘K command-menu inventory (#477, C11 exposure pass). Mirrors MENU_EXPOSED in
+// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 95 commands
+// lives in `docs/developing/reference/command-menu-exposure.md`. The menu invokes with no
+// input and shows no result, so a row qualifies only if `{}` satisfies its schema, it is
+// an action rather than a UI-driven read, and its output is not the point.
+const MENU_INVENTORY = ["github.disconnect"] as const;
+
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(94);
+    expect(ABSORBED_IDS).toHaveLength(96);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
@@ -164,7 +174,7 @@ describe("command registry invariants (#465)", () => {
       expect(row.label, id).toBe(id);
       expect(row.locus, id).toBe("host");
       expect(row.exposure.ui, id).toBe(true);
-      expect(row.exposure.commandMenu, id).toBe(false);
+      expect(row.exposure.commandMenu, id).toBe(MENU_INVENTORY.includes(id as never));
       expect(row.exposure.agent, id).toBe(AGENT_INVENTORY.includes(id as never));
     }
   });
@@ -175,6 +185,22 @@ describe("command registry invariants (#465)", () => {
       .map(([id]) => id)
       .sort();
     expect(agentIds).toEqual([...AGENT_INVENTORY]);
+  });
+
+  it("command-menu exposure is exactly the menu inventory", () => {
+    const menuIds = Object.entries(commands)
+      .filter(([, row]) => row.exposure.commandMenu)
+      .map(([id]) => id)
+      .sort();
+    expect(menuIds).toEqual([...MENU_INVENTORY]);
+  });
+
+  // The structural rule behind the inventory: the menu invokes a row with NO input, so a
+  // menu-exposed command whose schema rejects `{}` would be a row that can only fail.
+  it("every menu-exposed row is invocable with no input", () => {
+    for (const id of MENU_INVENTORY) {
+      expect(commands[id].args.safeParse({}).success, id).toBe(true);
+    }
   });
 
   it("patchset.readSpan parses a CodeRef citation in and cited lines out (B3 cluster 6)", () => {

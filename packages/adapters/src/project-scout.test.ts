@@ -243,4 +243,114 @@ describe("resolveTrackerConfig — the ladder-resolved retrieval config (#461, B
       },
     });
   });
+
+  // The retrieval-REACHABILITY controls (C18 group A). Before the repo rung existed,
+  // a "per-project tracker" could only ever be the host's global answer — so these
+  // are the checks that fail if a per-project write stops reaching retrieval.
+  const globalLinear = {
+    version: 1,
+    tracker: {
+      kind: "linear",
+      projectKey: "ENG",
+      baseUrl: "https://api.linear.app",
+      tokenEnv: "LINEAR_TOKEN",
+    },
+  } as const;
+
+  it("a project's own repo rung outranks the global one — and moves ONLY that project", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    store.updateConfig("with-override", (current) => ({
+      ...current,
+      tracker: {
+        kind: "jira",
+        projectKey: "PAY",
+        baseUrl: "https://pay.atlassian.net",
+        tokenEnv: "PAY_JIRA_TOKEN",
+      },
+    }));
+    expect(resolveTrackerConfig(store, "with-override", globalLinear)).toEqual({
+      jira: {
+        baseUrl: "https://pay.atlassian.net",
+        tokenEnvVar: "PAY_JIRA_TOKEN",
+        projectPrefixes: ["PAY"],
+      },
+    });
+    // The sibling project, untouched, still resolves the host's global answer.
+    expect(resolveTrackerConfig(store, "sibling", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG"],
+      },
+    });
+  });
+
+  it("a repo kind NEVER inherits the lower rung's credentials — no JIRA call with a Linear token", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    // The exact repro: the project chose JIRA on its own rung; the host's global rung
+    // holds LINEAR endpoint config. Resolving key-by-key produced a `jira` endpoint
+    // carrying `api.linear.app` + `LINEAR_TOKEN` — a real cross-provider call.
+    store.updateConfig("mixed", (current) => ({ ...current, tracker: { kind: "jira" } }));
+    // Masked, so the endpoint is INCOMPLETE: no config beats wrong config. Retrieval
+    // proceeds and the missing keys surface as missing-config facts (never a gate).
+    expect(resolveTrackerConfig(store, "mixed", globalLinear)).toBeUndefined();
+
+    // Supplying the JIRA endpoint on the SAME rung as the kind resolves normally.
+    store.updateConfig("mixed", (current) => ({
+      ...current,
+      tracker: {
+        kind: "jira",
+        baseUrl: "https://pay.atlassian.net",
+        tokenEnv: "PAY_JIRA_TOKEN",
+      },
+    }));
+    expect(resolveTrackerConfig(store, "mixed", globalLinear)).toEqual({
+      jira: { baseUrl: "https://pay.atlassian.net", tokenEnvVar: "PAY_JIRA_TOKEN" },
+    });
+  });
+
+  it("an endpoint field ABOVE the kind's rung refines it — same provider, narrower answer", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    // The host set the kind AND its endpoint; the project only narrows the prefix.
+    store.updateConfig("refined", (current) => ({
+      ...current,
+      tracker: { projectKey: "ENG-PLATFORM" },
+    }));
+    expect(resolveTrackerConfig(store, "refined", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG-PLATFORM"],
+      },
+    });
+  });
+
+  it("an untouched install reads the global defaults — the repo rung offers nothing", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    expect(store.loadConfig("untouched")).toBeNull();
+    expect(resolveTrackerConfig(store, "untouched", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG"],
+      },
+    });
+  });
+
+  it("a malformed project config never leaks an override into retrieval", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    const paths = store.paths("broken");
+    mkdirSync(paths.projectDir, { recursive: true });
+    writeFileSync(paths.configPath, '{"version":1,"tracker":{"kind":7}}');
+    expect(store.loadConfigState("broken").status).toBe("malformed");
+    expect(resolveTrackerConfig(store, "broken", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG"],
+      },
+    });
+    // …and the malformed file REFUSES the next write rather than being overwritten.
+    expect(() => store.updateConfig("broken", (current) => current)).toThrow(/malformed/);
+  });
 });

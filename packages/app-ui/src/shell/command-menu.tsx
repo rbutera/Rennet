@@ -8,7 +8,7 @@ import {
   CommandList,
   CommandInput as CommandSearchInput,
 } from "@rennet/ui";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useInvoke } from "../data";
 import { sessionPath } from "../routes/url";
@@ -19,7 +19,6 @@ import {
   groupEntries,
   type MenuAction,
   type MenuEntry,
-  type RegistryRowView,
   SEARCH_GROUP_ORDER,
 } from "./command-menu-entries";
 import { useSidebarTree } from "./sidebar-data";
@@ -33,19 +32,12 @@ import { useSidebarTree } from "./sidebar-data";
 // and navigation runs through wouter (the spike's `next/navigation` dropped).
 //
 // `⌘P` opens search-first, `⌘K` command-first — one component, the mode reorders the
-// groups and swaps the input placeholder. Registry commands render nothing until B10
-// flips `exposure.commandMenu` (reconciliation 2); the reader + execution path are real
-// and proven against a fixture registry.
+// groups and swaps the input placeholder. Registry rows come from the live
+// `exposure.commandMenu` inventory — ONE exposed row today; which rows and why is
+// `docs/developing/reference/command-menu-exposure.md`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function CommandMenu({
-  /** The command registry to read registry-command entries from. Defaults to the real
-   *  `@rennet/protocol` table (zero `commandMenu:true` rows today); a test injects a
-   *  fixture registry to prove a flipped row surfaces + executes. */
-  registry = commands as unknown as Readonly<Record<string, RegistryRowView>>,
-}: {
-  readonly registry?: Readonly<Record<string, RegistryRowView>>;
-} = {}) {
+export function CommandMenu() {
   const open = useRennetStore((s) => s.ui.commandMenuOpen);
   const mode = useRennetStore((s) => s.ui.commandMenuMode);
   const setCommandMenuOpen = useRennetStore((s) => s.uiActions.setCommandMenuOpen);
@@ -53,17 +45,26 @@ export function CommandMenu({
   const openDialog = useRennetStore((s) => s.uiActions.openDialog);
   const [, navigate] = useLocation();
   const invoke = useInvoke();
+  /** The last registry-command dispatch that FAILED, shown in the dialog. A menu row that
+   *  cannot run says so — it never closes on a rejected invoke and calls that success. */
+  const [failure, setFailure] = useState<string | null>(null);
 
   // Sessions ride the SAME projection the sidebar tree reads (empty until B9); projects
-  // are real today. Registry entries come from the passed table.
+  // are real today. Registry entries come from the one `@rennet/protocol` table.
   const { hosts } = useSidebarTree();
-  const entries = useMemo(() => buildMenuEntries({ hosts, registry }), [hosts, registry]);
+  const entries = useMemo(() => buildMenuEntries({ hosts, registry: commands }), [hosts]);
   const groups = useMemo(
     () => groupEntries(entries, mode === "command" ? COMMAND_GROUP_ORDER : SEARCH_GROUP_ORDER),
     [entries, mode],
   );
 
+  // A dispatch failure belongs to the open session that produced it: once the menu is
+  // closed, drop it so the next ⌘K never opens onto a stale error (React's sanctioned
+  // "adjust state during render" pattern — no effect, no extra commit).
+  if (!open && failure !== null) setFailure(null);
+
   function execute(action: MenuAction): void {
+    setFailure(null);
     switch (action.kind) {
       case "open-session":
         setChatOpen(true);
@@ -75,12 +76,24 @@ export function CommandMenu({
       case "open-dialog":
         openDialog(action.dialog);
         break;
-      case "registry-command":
-        // Fire-and-forget dispatch (cluster 6). Zero live rows today; a fixture row's
-        // handler proves the path. B10 flips real flags + binds live dispatch with no
-        // further C11 change.
-        void invoke(action.command, {} as CommandInput<typeof action.command>);
-        break;
+      case "registry-command": {
+        // Live dispatch through the one seam. The registry's `exposure.commandMenu`
+        // inventory only carries rows whose schema accepts `{}` (see MENU_EXPOSED in
+        // `@rennet/protocol`), so the empty input is the row's real input, not a stub.
+        // A rejection re-opens the menu carrying the reason — never a silent success.
+        const command = action.command;
+        invoke(command, {} as CommandInput<typeof command>).then(
+          () => setCommandMenuOpen(false),
+          (reason: unknown) => {
+            setFailure(
+              `${command} failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+            );
+          },
+        );
+        // The menu stays open until the dispatch settles — it closes on success, and on
+        // failure it stays put carrying the reason. Returning here skips the close below.
+        return;
+      }
     }
     setCommandMenuOpen(false);
   }
@@ -96,6 +109,11 @@ export function CommandMenu({
         placeholder={mode === "command" ? "Run a command…" : "Search or run a command…"}
         aria-label={mode === "command" ? "Run a command" : "Search commands"}
       />
+      {failure ? (
+        <p role="alert" className="m-0 px-3 py-2 text-2xs text-destructive">
+          {failure}
+        </p>
+      ) : null}
       <CommandList>
         <CommandEmpty>No commands match your search.</CommandEmpty>
         {groups.map(([group, items]) => (

@@ -99,7 +99,13 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
 
   const choose = useMutation("repository.choose");
   const discover = useMutation("project.discover");
-  const addProject = useMutation("projects.add", { invalidates: ["projects.list"] });
+  // `settings.get` too: it carries the per-repo settings ROW for each project, and the
+  // Projects surface derives from that row whether this daemon serves the per-project
+  // rung. Without this, a freshly added project rendered its editors disabled against a
+  // daemon that can write them, until something else happened to stale the read.
+  const addProject = useMutation("projects.add", {
+    invalidates: ["projects.list", "settings.get"],
+  });
 
   // A per-mount guard: this body remounts on each open, so an add() that resolves AFTER the
   // user closed (and maybe reopened) the dialog must NOT run its post-await UI effects —

@@ -3170,6 +3170,15 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       ),
       setCoachmarks: vi.fn((input: CoachMarks) => input),
       setTrackerValue: vi.fn(() => ({})),
+      setProjectValue: vi.fn(async (input: { key: string }) => ({
+        status: "applied" as const,
+        key: input.key as "worktreePattern",
+        project: null,
+      })),
+      setGuidance: vi.fn(async () => ({
+        status: "applied" as const,
+        guidance: { rules: [], reason: "empty" as const, dropped: 0 },
+      })),
       daemonStatus: vi.fn(async () => []),
       reconnect: vi.fn(async () => ({ status: { source: "local" as const, reachable: false } })),
       update: vi.fn(async () => ({ status: { source: "local" as const, reachable: false } })),
@@ -3212,6 +3221,45 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(vis.status).toBe("applied");
     expect(vis.changed).toBe(true);
     expect(vis.gitignorePath).toContain(".gitignore");
+
+    // setProjectValue threads the repo-rung pref write through to the dep (C18 group A).
+    const pref = (await dispatch("settings.setProjectValue", {
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "worktreePattern",
+      value: "{project}-{branch}",
+    })) as { status: string; key: string };
+    expect(settings.setProjectValue).toHaveBeenCalledWith({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "worktreePattern",
+      value: "{project}-{branch}",
+    });
+    expect(pref.status).toBe("applied");
+    // A key the registry does not carry is REJECTED at the boundary — the dep never
+    // sees a pref that has no declaration to validate it.
+    await expect(
+      dispatch("settings.setProjectValue", {
+        projectId: "p1",
+        repoPath: "/orbital",
+        key: "not-a-pref",
+        value: "x",
+      }),
+    ).rejects.toThrow();
+    expect(settings.setProjectValue).toHaveBeenCalledTimes(1);
+
+    // setGuidance threads the rules through and returns what the FILE now holds.
+    const saved = (await dispatch("settings.setGuidance", {
+      projectId: "p1",
+      repoPath: "/orbital",
+      rules: [{ rule: "keep main releasable", severity: "high" }],
+    })) as { status: string };
+    expect(settings.setGuidance).toHaveBeenCalledWith({
+      projectId: "p1",
+      repoPath: "/orbital",
+      rules: [{ rule: "keep main releasable", severity: "high" }],
+    });
+    expect(saved.status).toBe("applied");
 
     // setKeybinding threads the payload to the dep and returns the stored map (#44).
     const kb = (await dispatch("settings.setKeybinding", {

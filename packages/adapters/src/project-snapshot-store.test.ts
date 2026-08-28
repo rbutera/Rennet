@@ -20,6 +20,7 @@ import {
   MANIFEST_RETENTION,
   ProjectSnapshotStore,
   snapshotStoreFor,
+  withRepoPref,
 } from "./project-snapshot-store";
 
 const scratch: string[] = [];
@@ -271,6 +272,28 @@ describe("ProjectSnapshotStore — config.json read/write (A.1)", () => {
     // bytes; the guard turns that into a loud throw instead. (Delete the guard in
     // updateConfig → this test reddens: the file is overwritten with a default.)
     expect(() => store.updateConfig("-k", (c) => ({ ...c, promoted: true }))).toThrow(/malformed/);
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  it("a WRONG-TYPED pref reads malformed, refuses the pref write, and leaves the bytes untouched", () => {
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-cfg6-"));
+    scratch.push(storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+    const configPath = store.paths("-k").configPath;
+    mkdirSync(join(configPath, ".."), { recursive: true });
+    // Well-formed JSON carrying an ILLEGAL pref value — the case a hand edit makes.
+    const before = '{"version":1,"glyph":7}';
+    writeFileSync(configPath, before);
+
+    // Read: malformed, so the number never reaches the settings resolver.
+    expect(store.loadConfigState("-k").status).toBe("malformed");
+    expect(store.loadConfig("-k")).toBeNull();
+    // Write, through the pref path the settings surface uses: REFUSED…
+    expect(() => store.updateConfig("-k", (c) => withRepoPref(c, "glyph", "boxes"))).toThrow(
+      /malformed/,
+    );
+    // …and the file is byte-identical. (Delete the `glyph` type check in
+    // `isValidProjectConfig` → this reddens: the config reads ok and is overwritten.)
     expect(readFileSync(configPath, "utf8")).toBe(before);
   });
 

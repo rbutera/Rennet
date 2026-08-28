@@ -1,6 +1,7 @@
-import type { GitHubAuthStatus, RennetBridge } from "@rennet/protocol";
+import type { GitHubAuthStatus } from "@rennet/protocol";
 import { Button, Input, toast } from "@rennet/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useCommand, useMutation } from "../data";
 import { messageFrom } from "../lib/message-from";
 import { GitHubIcon } from "./brand-mark";
 
@@ -34,9 +35,25 @@ interface DeviceFlow {
   verificationUri: string;
 }
 
+/** Every write here changes the stored account, so each one stales the status read.
+ *  Module-level so the mutation callbacks keep a stable identity across renders. */
+const STALES_STATUS = { invalidates: ["github.status"] } as const;
+
 /** Load + expose the account status, the device flow, and the paste side door. */
-export function useGitHubAccount(bridge: RennetBridge) {
-  const [status, setStatus] = useState<GitHubAuthStatus | null>(null);
+export function useGitHubAccount() {
+  // The account status is a SEAM read, not local state: ONE cache entry that every
+  // GitHub surface shares. So a disconnect from anywhere — the settings row here, or a
+  // ⌘K `github.disconnect` — stales it and every mounted surface re-reads, instead of
+  // one of them going on rendering an account that is gone.
+  const { data } = useCommand("github.status", {});
+  const status = data?.status ?? null;
+  const { mutate: startFlow } = useMutation("github.connectStart");
+  // The poll stales the status on every tick, which is the point: it IS the "has this
+  // account changed yet" question, and a sign-in completed out of band lands the same way.
+  const { mutate: pollFlow } = useMutation("github.connectPoll", STALES_STATUS);
+  const { mutate: cancelFlow } = useMutation("github.connectCancel");
+  const { mutate: runDisconnect } = useMutation("github.disconnect", STALES_STATUS);
+  const { mutate: storeToken } = useMutation("github.setToken", STALES_STATUS);
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [error, setError] = useState<string>();
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -50,45 +67,34 @@ export function useGitHubAccount(bridge: RennetBridge) {
     pollTimer.current = null;
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const { status: loaded } = await bridge.invoke("github.status", {});
-      if (alive.current) setStatus(loaded);
-    } catch {
-      if (alive.current) setStatus(null);
-    }
-  }, [bridge]);
-
   useEffect(() => {
     alive.current = true;
-    void refresh();
     return () => {
       alive.current = false;
       generation.current += 1;
       stopPolling();
     };
-  }, [refresh, stopPolling]);
+  }, [stopPolling]);
 
   const connect = useCallback(async () => {
     setError(undefined);
     const started = generation.current;
     try {
-      const flowStart = await bridge.invoke("github.connectStart", {});
+      const flowStart = await startFlow({});
       if (!alive.current || generation.current !== started) return;
       setFlow({ userCode: flowStart.userCode, verificationUri: flowStart.verificationUri });
       stopPolling();
       pollTimer.current = setInterval(() => {
-        void bridge
-          .invoke("github.connectPoll", {})
+        void pollFlow({})
           .then(({ poll }) => {
             if (!alive.current || generation.current !== started) return stopPolling();
             if (poll.phase === "pending") return;
             stopPolling();
             setFlow(null);
-            if (poll.phase === "connected") {
-              setStatus(poll.status);
-              announceConnected(poll.status);
-            } else if (poll.phase === "failed") setError(poll.message);
+            // The poll already staled the status read, so the connected account arrives
+            // through the seam; the returned status is only the toast's subject.
+            if (poll.phase === "connected") announceConnected(poll.status);
+            else if (poll.phase === "failed") setError(poll.message);
             // "idle" mid-flow means the daemon lost the flow (restart): the code
             // the user is holding is dead — say so, never just vanish the prompt.
             else setError("The sign-in was interrupted. Start again.");
@@ -100,49 +106,44 @@ export function useGitHubAccount(bridge: RennetBridge) {
     } catch (reason) {
       if (alive.current && generation.current === started) setError(messageFrom(reason));
     }
-  }, [bridge, stopPolling]);
+  }, [startFlow, pollFlow, stopPolling]);
 
   const cancel = useCallback(async () => {
     generation.current += 1;
     stopPolling();
     setFlow(null);
-    await bridge.invoke("github.connectCancel", {}).catch(() => undefined);
-  }, [bridge, stopPolling]);
+    await cancelFlow({}).catch(() => undefined);
+  }, [cancelFlow, stopPolling]);
 
   const disconnect = useCallback(async () => {
     setError(undefined);
     try {
-      await bridge.invoke("github.disconnect", {});
-      await refresh();
+      await runDisconnect({});
     } catch (reason) {
       setError(messageFrom(reason));
     }
-  }, [bridge, refresh]);
+  }, [runDisconnect]);
 
   const pasteToken = useCallback(
     async (token: string) => {
       setError(undefined);
       try {
-        const { status: next } = await bridge.invoke("github.setToken", { token });
+        // Accepted or rejected, this staled the status read — so the row always shows the
+        // REAL stored account. A connected user who mistypes a replacement sees the copy
+        // for the failed candidate, never their live account rendered as broken.
+        const { status: next } = await storeToken({ token });
         if (next.state === "connected") {
-          if (alive.current) {
-            setStatus(next);
-            announceConnected(next);
-          }
+          if (alive.current) announceConnected(next);
           return true;
         }
-        // A REJECTED paste is the candidate's failure, not the account's: surface
-        // the copy but re-read the real stored-account status, so a connected user
-        // who mistypes a replacement never sees their live account as broken.
         if (alive.current) setError(next.copy);
-        await refresh();
         return false;
       } catch (reason) {
         if (alive.current) setError(messageFrom(reason));
         return false;
       }
     },
-    [bridge, refresh],
+    [storeToken],
   );
 
   return { status, flow, error, connect, cancel, disconnect, pasteToken };
@@ -173,8 +174,8 @@ export function DeviceFlowPrompt({ flow, onCancel }: { flow: DeviceFlow; onCance
  * The first-run connect card (wireframe 01): skippable, never a wall. Renders
  * nothing when connected, dismissed on this machine, or status is unknown.
  */
-export function GitHubConnectCard({ bridge }: { bridge: RennetBridge }) {
-  const account = useGitHubAccount(bridge);
+export function GitHubConnectCard() {
+  const account = useGitHubAccount();
   const [dismissed, setDismissed] = useState(() => readDismissed());
 
   // "network" hides the card too: GitHub being unreachable says nothing about
@@ -227,8 +228,8 @@ export function GitHubConnectCard({ bridge }: { bridge: RennetBridge }) {
 }
 
 /** The settings account rows (wireframe 15): status as fact, connect, paste, disconnect. */
-export function GitHubAccountRows({ bridge }: { bridge: RennetBridge }) {
-  const account = useGitHubAccount(bridge);
+export function GitHubAccountRows() {
+  const account = useGitHubAccount();
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
 
