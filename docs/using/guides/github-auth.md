@@ -13,7 +13,7 @@ There is no Rennet backend in the path.
 You only need GitHub access to review pull requests or post a review. Reviewing
 your own local working tree needs no GitHub account.
 
-## The GitHub CLI is the front door
+## The GitHub CLI is the primary path
 
 When a command needs GitHub, Rennet asks the installed `gh` for its token
 (`gh auth token`) and uses it for that request. This piggybacks your own
@@ -49,8 +49,8 @@ request in the exchange goes from your machine to `github.com`.
 Know the fallback's limit: a device-flow token cannot see an organization's
 repositories unless that organization has authorized the Rennet OAuth app, which
 enterprise app policies commonly prevent. If an organization repo works in your
-terminal but not in Rennet, install `gh` — the front door exists precisely for
-this case.
+terminal but not in Rennet, install and authenticate `gh` so Rennet can use the
+same approved path.
 
 ## What the token can do
 

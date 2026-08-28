@@ -4,7 +4,7 @@ Rennet's own source is licensed under FSL-1.1-MIT (see [`LICENSE`](./LICENSE)).
 The production dependencies below ship under their own permissive licences,
 reproduced here to satisfy their attribution and notice requirements.
 
-Generated from the resolved production graph: 769 packages across 18 licence buckets. Regenerate with `pnpm notices`.
+Generated from the resolved production graph: 778 packages across 18 licence buckets. Regenerate with `pnpm notices`.
 
 ## (BSD-3-Clause OR GPL-2.0)
 
@@ -344,6 +344,8 @@ Generated from the resolved production graph: 769 packages across 18 licence buc
 - **@types/unist** 2.0.11, 3.0.3 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist
 - **@types/yargs** 17.0.35 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/yargs
 - **@types/yargs-parser** 21.0.3 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/yargs-parser
+- **@wboard/core** 0.1.0-alpha.2 — https://github.com/rbutera/whiteboard#readme
+- **@wboard/server** 0.1.0-alpha.2 — https://github.com/rbutera/whiteboard#readme
 - **@xmldom/xmldom** 0.8.13, 0.9.10 — https://github.com/xmldom/xmldom
 - **abort-controller** 3.0.0 — https://github.com/mysticatea/abort-controller#readme
 - **accepts** 1.3.8, 2.0.0 — https://github.com/jshttp/accepts#readme
@@ -484,6 +486,7 @@ Generated from the resolved production graph: 769 packages across 18 licence buc
 - **find-up** 4.1.0 — https://github.com/sindresorhus/find-up#readme
 - **flow-enums-runtime** 0.0.6 — https://github.com/facebook/flow#readme
 - **forwarded** 0.2.0 — https://github.com/jshttp/forwarded#readme
+- **framer-motion** 13.1.1 — https://github.com/motiondivision/motion#readme
 - **fresh** 0.5.2, 2.0.0 — https://github.com/jshttp/fresh#readme
 - **fsevents** 2.3.3 — https://github.com/fsevents/fsevents
 - **function-bind** 1.1.2 — https://github.com/Raynos/function-bind
@@ -612,7 +615,11 @@ Generated from the resolved production graph: 769 packages across 18 licence buc
 - **mime-db** 1.52.0, 1.54.0 — https://github.com/jshttp/mime-db#readme
 - **mime-types** 2.1.35, 3.0.2 — https://github.com/jshttp/mime-types#readme
 - **mimic-fn** 1.2.0 — https://github.com/sindresorhus/mimic-fn#readme
+- **mitt** 3.0.1 — https://github.com/developit/mitt
 - **mkdirp** 1.0.4 — https://github.com/isaacs/node-mkdirp#readme
+- **motion** 13.1.1 — https://github.com/motiondivision/motion#readme
+- **motion-dom** 13.1.1 — https://github.com/motiondivision/motion#readme
+- **motion-utils** 13.0.0 — https://github.com/motiondivision/motion#readme
 - **ms** 2.0.0, 2.1.3 — https://github.com/vercel/ms#readme
 - **multitars** 1.0.1 — https://github.com/expo/multitars#readme
 - **nanoid** 3.3.16 — https://github.com/ai/nanoid#readme
@@ -684,6 +691,7 @@ Generated from the resolved production graph: 769 packages across 18 licence buc
 - **regex** 6.1.0 — https://github.com/slevithan/regex#readme
 - **regex-recursion** 6.0.2 — https://github.com/slevithan/regex-recursion#readme
 - **regex-utilities** 2.3.0 — https://github.com/slevithan/regex-utilities#readme
+- **regexparam** 3.0.0 — https://github.com/lukeed/regexparam#readme
 - **regexpu-core** 6.4.0 — https://mths.be/regexpu
 - **regjsgen** 0.8.0 — https://github.com/bnjmnt4n/regjsgen
 - **remark-parse** 11.0.0 — https://remark.js.org
@@ -828,3 +836,4 @@ Generated from the resolved production graph: 769 packages across 18 licence buc
 - **big-integer** 1.6.52 — https://github.com/peterolson/BigInteger.js#readme
 - **fast-sha256** 1.3.0 — https://github.com/dchest/fast-sha256-js#readme
 - **stream-buffers** 2.2.0 — https://github.com/samcday/node-stream-buffer#readme
+- **wouter** 3.10.0 — https://github.com/molefrog/wouter#readme

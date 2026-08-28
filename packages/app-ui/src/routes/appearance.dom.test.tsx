@@ -67,7 +67,7 @@ describe("RennetRouterApp — app-wide appearance via the document root", () => 
     const { findByText } = mount(
       <RennetRouterApp bridge={schemeBridge("light")} history={history} />,
     );
-    await findByText("Start a review.");
+    await findByText("Add a project to begin.");
     await waitFor(() => expect(document.documentElement.getAttribute("data-scheme")).toBe("light"));
     act(() => history.navigate("/settings/appearance"));
     await waitFor(() => expect(document.querySelector('[data-screen="settings"]')).toBeTruthy());

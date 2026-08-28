@@ -15,6 +15,7 @@ const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
+const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
 const WS_PORT_ARG = "--rennet-ws-port=";
 const VERSION_ARG = "--rennet-version=";
 
@@ -78,6 +79,8 @@ export interface RennetPreload {
   onUpdateReady(listener: (info: UpdateReadyInfo) => void): () => void;
   /** The user confirmed the restart-into-update prompt; MAIN quits and installs. */
   applyUpdate(): void;
+  /** Open macOS System Settings at Privacy & Security → Full Disk Access. */
+  openFullDiskAccessSettings(): Promise<boolean>;
 }
 
 // The WS port is a boot-time constant injected via webPreferences.additionalArguments;
@@ -109,6 +112,8 @@ const preload: RennetPreload = {
     return () => ipcRenderer.removeListener(UPDATE_READY_CHANNEL, handler);
   },
   applyUpdate: () => ipcRenderer.send(UPDATE_APPLY_CHANNEL),
+  openFullDiskAccessSettings: () =>
+    ipcRenderer.invoke(OPEN_FULL_DISK_ACCESS_CHANNEL) as Promise<boolean>,
 };
 
 contextBridge.exposeInMainWorld("rennet", preload);

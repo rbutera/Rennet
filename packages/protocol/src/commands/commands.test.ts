@@ -120,6 +120,7 @@ const ABSORBED_IDS = [
   "session.rounds",
   "session.setPinned",
   "session.transcript",
+  "settings.completeWelcome",
   "settings.get",
   "settings.guidance",
   "settings.pinRepoValue",
@@ -128,9 +129,11 @@ const ABSORBED_IDS = [
   "settings.setCoachmarks",
   "settings.setGuidance",
   "settings.setKeybinding",
+  "settings.setLastProject",
   "settings.setProjectValue",
   "settings.setRepoVisibility",
   "settings.setRoleAssignment",
+  "settings.setThemePack",
 ] as const;
 
 // The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
@@ -165,7 +168,7 @@ const MENU_INVENTORY = ["github.disconnect"] as const;
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(96);
+    expect(ABSORBED_IDS).toHaveLength(99);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

@@ -9,8 +9,15 @@ selected repository's `.rennet/` directory.
 
 ## First run
 
-The empty Projects screen is the first-run flow. It lets you connect GitHub, add
-a project, and see which supported harnesses Rennet found.
+When a new client has no projects and no recorded welcome completion, Rennet
+opens a full-window welcome. Existing clients with no projects see the ordinary
+New Chat empty state instead; removing every project does not replay setup.
+
+The welcome introduces Rennet, applies color scheme and theme-pack changes as
+soon as they are selected, reports the tools detected on the active environment,
+and configures the review harnesses. It then embeds the same Add Project flow as
+the rest of the app. Adding a project unlocks the final action, which records the
+welcome as complete and opens New Chat for that project.
 
 Rennet discovers Claude and Codex executables by collecting candidate locations
 and running version probes. It does not depend on `which`. GUI applications often
@@ -24,21 +31,37 @@ The Claude adapter starts the user's installed `claude` through
 `codex app-server`. Each harness owns its authentication; Rennet does not ask for
 provider credentials.
 
-The Connect GitHub card signs in with Rennet's OAuth device flow, which needs no
-`gh` CLI. Settings also accepts a personal access token and disconnects the
-current account. Rennet stores the GitHub credential in an owner-only file under
-its data directory and validates it when a GitHub operation needs it. See
-[GitHub authentication](../../using/guides/github-auth.md) for the sign-in flow.
+The tools step reports `git`, GitHub CLI availability and authentication, and
+Claude Code and Codex detection. GitLab and Bitbucket are named as unsupported,
+not presented as detected integrations. The welcome never asks the user to
+connect GitHub. GitHub operations prefer the environment's authenticated `gh`
+CLI; see [GitHub authentication](../../using/guides/github-auth.md).
+
+The review-setup step requires at least one detected Claude Code or Codex
+harness. With both available it asks which harness should own the orchestrator
+and enables Dual Harness by default. These controls write the same per-host
+harness enablement and Model Council assignments exposed later in Settings.
+They are setup shortcuts, not a second configuration model.
+
+On macOS, the project step offers **Grant Full Disk Access**. The action opens
+**System Settings → Privacy & Security → Full Disk Access**; it cannot grant the
+setting itself. Access is optional and intended for protected or external
+project paths used by the in-app browser. Rennet does not scan unrelated files.
+
+The welcome and the contextual onboarding tour have independent state. The
+welcome configures the client once; coach marks teach controls later and remain
+skippable and replayable from Help.
 
 ```mermaid
 flowchart TD
-  open["Open Rennet"] --> harnesses["Discover Claude and Codex"]
-  harnesses --> probes["Run version and capability probes"]
-  open --> github["Connect GitHub or continue"]
-  open --> projects["Add a project"]
+  open["Open a new Rennet client"] --> appearance["Choose appearance"]
+  appearance --> tools["Inspect detected tools"]
+  tools --> harnesses["Choose orchestrator and review mode"]
+  harnesses --> projects["Add a project"]
   projects --> discover["Read repositories, branches, and worktrees"]
   discover --> confirm["Confirm editable defaults"]
   confirm --> process["Persist and process the project"]
+  process --> chat["Open New Chat"]
 ```
 
 ## Add a project or workspace
@@ -58,8 +81,11 @@ Global settings live in two machine-local files, split by who owns the value:
 | File | Holds | Setting | Values | Behavior |
 |---|---|---|---|---|
 | `~/.rennet/client-settings.json` | Viewer preferences, **outside** the config ladder | Appearance | system, dark, light | Applies the selected color scheme to the app. |
+| `~/.rennet/client-settings.json` | | Theme pack | affineur, github, one-dark-pro, dracula, catppuccin-mocha | Applies the selected application color pack and restores it across launches. |
 | `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
+| `~/.rennet/client-settings.json` | | Welcome | `{ completedAt: string }` | Prevents the first-run welcome from replaying after setup. Independent of coach marks and project count. |
 | `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** clears it. |
+| `~/.rennet/client-settings.json` | | Navigation | `{ lastProjectBySource: Record<string, string> }` | Remembers the last valid project per source so bare New Chat opens the real project picker directly. |
 | `~/.rennet/client-settings.json` | | Council routing | `routing.task[jobId][scenario]` to model and effort | Overrides one [Model Council](../concepts/model-council.md) job's assignment in one availability scenario. Written by the Environments Review section; absent until you change a mapping. |
 | `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
 
@@ -162,8 +188,9 @@ than inheriting this machine's answer. Its enable toggle is stored per host the
 same way. A forge whose binary is not on the host's `PATH` has no row at all,
 rather than a stale hit.
 When at least one agent is enabled, a Review section exposes Model Mappings — see
-[Model Mappings](#model-mappings) below. GitHub sign-in is not a source-control row here — it lives on the front door and the project detail
-(see [First run](#first-run)).
+[Model Mappings](#model-mappings) below. The source-control row reports the
+environment's `gh` state; the welcome does not contain a separate GitHub sign-in
+step.
 
 ### Model Mappings
 
@@ -370,7 +397,7 @@ available.
 
 ## Diagnose setup
 
-- Inspect the GitHub account, reconnect, or paste a token from the front door's Connect GitHub card (or a project's detail); it is not a Settings page.
+- Run `gh auth status` in the project environment when GitHub operations cannot authenticate.
 - Run `claude --version` or `codex --version` to check a user-installed harness.
 - Fix malformed global or repository config before changing its settings.
 - Check the chosen directory when discovery returns no repositories; Rennet does not search outside it.

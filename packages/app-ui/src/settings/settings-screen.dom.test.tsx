@@ -69,7 +69,7 @@ describe("SettingsScreen — the takeover shell", () => {
     const { findByText, getByTestId } = mount(
       <RennetRouterApp bridge={frontDoorBridge()} history={history} />,
     );
-    await findByText("Start a review.");
+    await findByText("Add a project to begin.");
     const dockBefore = getByTestId("chat-dock-slot");
 
     act(() => history.navigate("/settings/appearance"));
@@ -80,7 +80,7 @@ describe("SettingsScreen — the takeover shell", () => {
       const root = settingsNode();
       if (root) fireEvent.keyDown(root, { key: "Escape" });
     });
-    await findByText("Start a review.");
+    await findByText("Add a project to begin.");
     expect(settingsNode()).toBeNull();
 
     // The SAME dock node — the visit swapped only the outlet, never the dock slot.
@@ -93,12 +93,12 @@ describe("SettingsScreen — the takeover shell", () => {
     const { findByText, getByRole } = mount(
       <RennetRouterApp bridge={frontDoorBridge()} history={history} />,
     );
-    await findByText("Start a review.");
+    await findByText("Add a project to begin.");
     act(() => history.navigate("/settings/appearance"));
     await waitFor(() => expect(settingsNode()).toBeTruthy());
 
     fireEvent.click(getByRole("button", { name: "Back" }));
-    await findByText("Start a review.");
+    await findByText("Add a project to begin.");
     expect(settingsNode()).toBeNull();
     cleanup();
   });
@@ -266,7 +266,7 @@ describe("Agent enablement persists across leaving Settings (P1-2)", () => {
     );
     // Leave Settings entirely (the takeover unmounts), then reopen it.
     act(() => history.navigate("/new-chat"));
-    await first.findByText("Start a review.");
+    await first.findByText("No open branches or pull requests yet.");
     act(() => history.navigate("/settings/environments"));
     // The provider lives above the route switch, so the disabled choice survived.
     expect((await claudeToggle(first.findByRole)).getAttribute("aria-checked")).toBe("false");

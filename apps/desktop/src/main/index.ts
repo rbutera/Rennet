@@ -61,6 +61,7 @@ const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 // run on a headless Windows/WSL box is readable over SSH. Never carries a token.
 const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const WSL_CONNECT_LOG_FILE = "wsl-connect.log";
+const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
 const APP_ORIGIN = "app://rennet";
 // The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
 // process argv via `webPreferences.additionalArguments` (the boot-time-constant pattern
@@ -110,6 +111,21 @@ function registerListWslDistrosHandler(): void {
       const { stdout } = await execFileAsync(cmd, args, { encoding: "utf16le" });
       return stdout;
     });
+  });
+}
+
+function registerFullDiskAccessHandler(): void {
+  ipcMain.handle(OPEN_FULL_DISK_ACCESS_CHANNEL, async (event) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return false;
+    if (process.platform !== "darwin") return false;
+    try {
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+      );
+      return true;
+    } catch {
+      return false;
+    }
   });
 }
 
@@ -340,6 +356,7 @@ app.whenReady().then(async () => {
   });
   registerAppProtocol();
   registerListWslDistrosHandler();
+  registerFullDiskAccessHandler();
   registerDaemonForPathResolver(dataDir);
   await createWindow(wsPort);
   activeWsPort = wsPort;

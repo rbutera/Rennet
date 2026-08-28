@@ -10,6 +10,7 @@
     "@rennet/ui": "workspace:*",
     "@shikijs/langs": "4.4.3",
     "lucide-react": "1.31.0",
+    "motion": "13.1.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-error-boundary": "6.1.2",

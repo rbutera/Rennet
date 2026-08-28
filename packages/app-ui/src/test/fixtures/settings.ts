@@ -5,6 +5,7 @@ import type {
   SettingsGuidance,
   SettingsProject,
   SettingsView,
+  ThemePack,
 } from "@rennet/protocol";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../memory-bridge";
 
@@ -47,6 +48,9 @@ export interface SettingsFixtureSeed {
   readonly guidance?: Readonly<Record<string, SettingsGuidance>>;
   /** The persisted onboarding coach-mark slice (C13) the coach provider seeds from. */
   readonly coachmarks?: CoachMarks;
+  readonly themePack?: ThemePack;
+  readonly welcome?: SettingsView["welcome"];
+  readonly navigation?: SettingsView["navigation"];
 }
 
 const EMPTY_GUIDANCE: SettingsGuidance = { rules: [], reason: "absent", dropped: 0 };
@@ -64,6 +68,9 @@ export class SettingsStore {
   #projects: SettingsProject[];
   readonly #guidance: Record<string, SettingsGuidance>;
   #coachmarks: CoachMarks | undefined;
+  #themePack: ThemePack | undefined;
+  #welcome: SettingsView["welcome"];
+  #navigation: SettingsView["navigation"];
 
   constructor(seed: SettingsFixtureSeed = {}) {
     this.#scheme = seed.scheme ?? "system";
@@ -72,6 +79,9 @@ export class SettingsStore {
     this.#projects = [...(seed.projects ?? [])];
     this.#guidance = { ...(seed.guidance ?? {}) };
     this.#coachmarks = seed.coachmarks ? { ...seed.coachmarks } : undefined;
+    this.#themePack = seed.themePack;
+    this.#welcome = seed.welcome ?? { completedAt: "2026-08-28T00:00:00.000Z" };
+    this.#navigation = seed.navigation;
   }
 
   #view(): SettingsView {
@@ -87,6 +97,9 @@ export class SettingsStore {
       projects: this.#projects,
       keybindings: Object.keys(this.#keybindings).length > 0 ? { ...this.#keybindings } : undefined,
       coachmarks: this.#coachmarks ? { ...this.#coachmarks } : undefined,
+      themePack: this.#themePack,
+      welcome: this.#welcome,
+      navigation: this.#navigation,
     };
   }
 
@@ -98,6 +111,21 @@ export class SettingsStore {
         if (this.#appearanceMalformed) throw new Error("settings config malformed");
         this.#scheme = scheme ?? "system";
         return { scheme: this.#view().scheme, schemeProvenance: this.#view().schemeProvenance };
+      },
+      "settings.setThemePack": ({ themePack }) => {
+        this.#themePack = themePack;
+        return { themePack };
+      },
+      "settings.completeWelcome": () => {
+        const completedAt = "2026-08-28T12:00:00.000Z";
+        this.#welcome = { completedAt };
+        return { completedAt };
+      },
+      "settings.setLastProject": ({ source, projectId }) => {
+        this.#navigation = {
+          lastProjectBySource: { ...this.#navigation?.lastProjectBySource, [source]: projectId },
+        };
+        return { source, projectId };
       },
       "settings.setKeybinding": ({ id, keybinding }) => {
         if (keybinding === undefined) delete this.#keybindings[id];

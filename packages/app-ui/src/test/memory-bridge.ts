@@ -82,6 +82,7 @@ export class MemoryBridge implements RennetBridge {
   platform?: string;
   /** The host app version, settable per instance (mirrors {@link RennetBridge.version}). */
   version?: string;
+  openFullDiskAccessSettings?: () => Promise<boolean>;
 
   readonly #handlers: MemoryBridgeHandlers;
   readonly #progress = new KeyedEmitter<ProjectProcessEvent>();
@@ -93,11 +94,16 @@ export class MemoryBridge implements RennetBridge {
 
   constructor(
     handlers: MemoryBridgeHandlers = {},
-    options: { readonly platform?: string; readonly version?: string } = {},
+    options: {
+      readonly platform?: string;
+      readonly version?: string;
+      readonly openFullDiskAccessSettings?: () => Promise<boolean>;
+    } = {},
   ) {
     this.#handlers = handlers;
     this.platform = options.platform;
     this.version = options.version;
+    this.openFullDiskAccessSettings = options.openFullDiskAccessSettings;
   }
 
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>> {
