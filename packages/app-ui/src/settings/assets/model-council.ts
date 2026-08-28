@@ -92,17 +92,8 @@ export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
   },
 ];
 
-/** The default assignment for one role in one scenario, or `null` if it does not run. */
-export function defaultAssignment(roleId: string, scenario: "dual" | "claudeOnly" | "codexOnly") {
-  return REVIEW_ROLE_DEFAULTS.find((role) => role.id === roleId)?.[scenario] ?? null;
-}
-
-/** Whether a role's three scenarios all match the council default (drives "Reset to default"). */
-export function isRoleDefault(role: ReviewRole): boolean {
-  const fallback = REVIEW_ROLE_DEFAULTS.find((r) => r.id === role.id);
-  if (!fallback) return true;
-  return (["dual", "claudeOnly", "codexOnly"] as const).every(
-    (key) =>
-      role[key]?.model === fallback[key]?.model && role[key]?.effort === fallback[key]?.effort,
-  );
-}
+// `defaultAssignment` / `isRoleDefault` are GONE (C16, #485). Both compared a served
+// role against this copied table to answer "is this a default?"; the wire now carries
+// each cell's own `layer` provenance, so the surface reads the answer instead of
+// re-deriving it — and Reset clears the override (`null`) rather than writing a copy
+// of the table back.

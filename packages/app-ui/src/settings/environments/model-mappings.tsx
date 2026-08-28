@@ -19,14 +19,14 @@ import {
 import { Check, RotateCcw } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 import { Icon } from "../../components/icon";
-import {
-  CLAUDE_MODELS,
-  CODEX_MODELS,
-  defaultAssignment,
-  isRoleDefault,
-} from "../assets/model-council";
+import { CLAUDE_MODELS, CODEX_MODELS, REVIEW_ROLE_DEFAULTS } from "../assets/model-council";
 import { Row } from "../atoms";
-import { type RoleAssignment, type SettingsHost, useSettingsProjection } from "../data";
+import {
+  type ReviewRole,
+  type RoleAssignment,
+  type SettingsHost,
+  useSettingsProjection,
+} from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Review section + Model Mappings dialog (C10 §5.2–5.4, claims 614–625).
@@ -45,16 +45,27 @@ import { type RoleAssignment, type SettingsHost, useSettingsProjection } from ".
 //     clicked; Single auto-detects its provider, Claude first, and names it.
 //   • Each role names its model + effort; an editable cell opens a searchable
 //     picker; a role that does not run in a mode renders an em dash (never a fake
-//     assignment); a role changed from the council default gains "Reset to default".
+//     assignment); a cell whose PROVENANCE says an override won carries a chip, and
+//     a role with any override gains "Reset to default" (C16, #485).
 //
-// Every assignment edit flows through the `setRoleAssignment` projection seam
-// (MemoryBridge now; B10's council later) — never a local table copy, never
-// `bridge.invoke`. The mode is dialog-local view state (there is no persisted
-// review-mode command yet; the seam owns the assignments, not the chosen mode).
+// Every assignment edit flows through the `setRoleAssignment` projection seam — live
+// against `settings.setRoleAssignment` (C16), never a local table copy, never
+// `bridge.invoke`. Each edit and each Reset touches exactly ONE (role, scenario) cell;
+// Reset clears the override with `null` so the council table answers again. The mode is
+// dialog-local view state (there is no persisted review-mode command yet; the seam owns
+// the assignments, not the chosen mode).
 // ─────────────────────────────────────────────────────────────────────────────
 
 type HarnessMode = "dual" | "single";
 type Scenario = "dual" | "claudeOnly" | "codexOnly";
+
+const SCENARIOS = ["dual", "claudeOnly", "codexOnly"] as const;
+
+/** Which columns of a role carry an override. Read off the cell's own provenance
+ *  (C16) — never a comparison against a copied default table, which would drift. */
+function overriddenScenarios(role: ReviewRole): readonly Scenario[] {
+  return SCENARIOS.filter((key) => role[key]?.layer === "override");
+}
 
 /** The Review block on a host card. Returns null unless an agent was detected. */
 export function ReviewSettings({
@@ -107,7 +118,11 @@ function MappingsDialog({
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const projection = useSettingsProjection();
-  const roles = projection.reviewRoles;
+  // HONEST-PRESENT (C16, #485): the council's assignment tables are STATIC, so a read
+  // that carried no mappings (in flight, or a projection with no settings backend) still
+  // has a truthful answer — the council defaults. Falling back to them is not a stub: it
+  // is the same table the daemon resolves against, every cell `default` provenance.
+  const roles = projection.reviewRoles.length > 0 ? projection.reviewRoles : REVIEW_ROLE_DEFAULTS;
 
   const claudeOn = enabledIds.includes("claude");
   const codexOn = enabledIds.includes("codex");
@@ -124,12 +139,15 @@ function MappingsDialog({
   function setModel(roleId: string, key: Scenario, model: string) {
     const current = roles.find((r) => r.id === roleId)?.[key];
     if (!current) return;
-    projection.setRoleAssignment(roleId, key, { ...current, model });
+    // Model + effort only: `layer` is the resolver's verdict on the write, not an input.
+    projection.setRoleAssignment(roleId, key, { model, effort: current.effort });
   }
 
-  function resetRole(roleId: string) {
-    for (const key of ["dual", "claudeOnly", "codexOnly"] as const) {
-      projection.setRoleAssignment(roleId, key, defaultAssignment(roleId, key));
+  // Reset CLEARS the override (`null`) rather than writing a copy of the default back:
+  // the council table is the answer, and only the columns actually overridden move.
+  function resetRole(role: ReviewRole) {
+    for (const key of overriddenScenarios(role)) {
+      projection.setRoleAssignment(role.id, key, null);
     }
   }
 
@@ -143,102 +161,92 @@ function MappingsDialog({
             mode; changing a cell sets an override for that role — the harness follows the model.
           </DialogDescription>
         </DialogHeader>
-        {roles.length === 0 ? (
-          // Agents are detected live (harness.detect), but the Model Council's role → model
-          // catalogue has no served backend yet — so this is an honest gap, not an empty
-          // table pretending to be a mappings grid (named in the cluster-10 report §10.1).
-          <p className="py-2 text-xs text-ink-soft">
-            The review engine will supply each role&rsquo;s model here once its Model Council is
-            served.
-          </p>
-        ) : (
-          <div className="grid grid-cols-[1.4fr_1fr_1fr] items-center gap-x-3 gap-y-0 text-xs">
-            <span />
-            <DualUnavailableHint active={!both} missing={missingProvider}>
-              <ModeHeader
-                label="Dual Harness"
-                sub="one seat per provider"
-                selected={effective === "dual"}
-                available={both}
-                onSelect={() => setMode("dual")}
-              />
-            </DualUnavailableHint>
+        <div className="grid grid-cols-[1.4fr_1fr_1fr] items-center gap-x-3 gap-y-0 text-xs">
+          <span />
+          <DualUnavailableHint active={!both} missing={missingProvider}>
             <ModeHeader
-              label="Single Harness"
-              sub={both ? `falls to ${singleProvider}` : singleProvider}
-              selected={effective === "single"}
-              available
-              onSelect={() => setMode("single")}
+              label="Dual Harness"
+              sub="one seat per provider"
+              selected={effective === "dual"}
+              available={both}
+              onSelect={() => setMode("dual")}
             />
-            {roles.map((role) => {
-              const cells: {
-                readonly key: Scenario;
-                readonly editable: boolean;
-                readonly unavailable?: boolean;
-                readonly models: readonly string[];
-              }[] = [
-                {
-                  key: "dual",
-                  editable: both && effective === "dual",
-                  unavailable: !both,
-                  models: [...CLAUDE_MODELS, ...CODEX_MODELS],
-                },
-                {
-                  key: singleKey,
-                  editable: effective === "single",
-                  models: singleModels,
-                },
-              ];
-              return (
-                <Fragment key={role.id}>
-                  <span className="flex flex-col items-start border-t border-line py-2 pr-2">
-                    <span className="text-xs font-medium text-ink" title={role.hint}>
-                      {role.label}
-                    </span>
-                    {!isRoleDefault(role) && (
-                      <button
-                        type="button"
-                        onClick={() => resetRole(role.id)}
-                        className="flex items-center gap-1 text-2xs text-ink-soft transition-colors hover:text-ink"
-                      >
-                        <Icon icon={RotateCcw} className="size-2.5" />
-                        Reset to default
-                      </button>
-                    )}
+          </DualUnavailableHint>
+          <ModeHeader
+            label="Single Harness"
+            sub={both ? `falls to ${singleProvider}` : singleProvider}
+            selected={effective === "single"}
+            available
+            onSelect={() => setMode("single")}
+          />
+          {roles.map((role) => {
+            const cells: {
+              readonly key: Scenario;
+              readonly editable: boolean;
+              readonly unavailable?: boolean;
+              readonly models: readonly string[];
+            }[] = [
+              {
+                key: "dual",
+                editable: both && effective === "dual",
+                unavailable: !both,
+                models: [...CLAUDE_MODELS, ...CODEX_MODELS],
+              },
+              {
+                key: singleKey,
+                editable: effective === "single",
+                models: singleModels,
+              },
+            ];
+            return (
+              <Fragment key={role.id}>
+                <span className="flex flex-col items-start border-t border-line py-2 pr-2">
+                  <span className="text-xs font-medium text-ink" title={role.hint}>
+                    {role.label}
                   </span>
-                  {cells.map((cell) => {
-                    const assignment = role[cell.key];
-                    const body = assignment ? (
-                      <ModelCell
-                        assignment={assignment}
-                        editable={cell.editable}
-                        models={cell.models}
-                        label={`${role.label} model`}
-                        onChange={(model) => setModel(role.id, cell.key, model)}
-                      />
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    );
-                    return (
-                      <span
-                        key={cell.key}
-                        className={cn("border-t border-line py-2", !cell.editable && "opacity-40")}
-                      >
-                        {cell.unavailable ? (
-                          <DualUnavailableHint active missing={missingProvider}>
-                            {body}
-                          </DualUnavailableHint>
-                        ) : (
-                          body
-                        )}
-                      </span>
-                    );
-                  })}
-                </Fragment>
-              );
-            })}
-          </div>
-        )}
+                  {overriddenScenarios(role).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => resetRole(role)}
+                      className="flex items-center gap-1 text-2xs text-ink-soft transition-colors hover:text-ink"
+                    >
+                      <Icon icon={RotateCcw} className="size-2.5" />
+                      Reset to default
+                    </button>
+                  )}
+                </span>
+                {cells.map((cell) => {
+                  const assignment = role[cell.key];
+                  const body = assignment ? (
+                    <ModelCell
+                      assignment={assignment}
+                      editable={cell.editable}
+                      models={cell.models}
+                      label={`${role.label} model`}
+                      onChange={(model) => setModel(role.id, cell.key, model)}
+                    />
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  );
+                  return (
+                    <span
+                      key={cell.key}
+                      className={cn("border-t border-line py-2", !cell.editable && "opacity-40")}
+                    >
+                      {cell.unavailable ? (
+                        <DualUnavailableHint active missing={missingProvider}>
+                          {body}
+                        </DualUnavailableHint>
+                      ) : (
+                        body
+                      )}
+                    </span>
+                  );
+                })}
+              </Fragment>
+            );
+          })}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -325,9 +333,22 @@ function ModelCell({
 }) {
   const [open, setOpen] = useState(false);
 
+  // The provenance chip (C16, #485): a cell only carries it when a routing override
+  // actually won. An unchipped cell IS the council table — the chip is the whole
+  // "where did this value come from" answer, so it is never rendered speculatively.
   const display = (
     <>
-      <span>{assignment.model}</span>
+      <span className="flex items-center gap-1">
+        {assignment.model}
+        {assignment.layer === "override" && (
+          <span
+            title="Overridden — the council default was replaced for this scenario"
+            className="rounded-sm border border-line px-1 font-sans text-2xs text-ink-soft"
+          >
+            Overridden
+          </span>
+        )}
+      </span>
       <span className="text-2xs text-ink-faint">{assignment.effort}</span>
     </>
   );
