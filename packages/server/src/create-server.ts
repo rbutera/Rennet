@@ -24,7 +24,6 @@ import {
   BoardMetaStore,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
-  CodexAdapter,
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
@@ -34,7 +33,6 @@ import {
   createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
-  createCodexTurnTransport,
   createCodexUtilityAdapter,
   createCoverageTurn,
   createDaemonSettingsStore,
@@ -47,7 +45,6 @@ import {
   defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
-  defaultCodexTransportEffects,
   defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
   defaultForgeDetectionDeps,
@@ -55,7 +52,6 @@ import {
   defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
-  deriveCodexImplementedEvidence,
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
@@ -205,7 +201,12 @@ import { createProcessProject } from "./process-project";
 import { buildProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
-import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import {
+  CODEX_ASK_LABEL,
+  createLiveCodexAsk,
+  createLiveOrchestratorAsk,
+  createLiveReviewAskPorts,
+} from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
@@ -489,9 +490,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     readonly availability: CodexAvailability;
     readonly port: CodexUtilityPort | null;
     readonly executor: CodexExecutor | null;
-    readonly agenticPort:
-      | ((mcpServers: Readonly<Record<string, { readonly url: string }>>) => HarnessPort)
-      | null;
     /** The resolved absolute `codex` path (for the ask-AI executor), or null. */
     readonly binPath: string | null;
     /** The resolved codex version, stamped as harness provenance, or null. */
@@ -515,7 +513,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             availability: { available: false, version: null },
             port: null,
             executor: null,
-            agenticPort: null,
             binPath: null,
             version: null,
           };
@@ -535,7 +532,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             availability: { available: false, version: null },
             port: null,
             executor: null,
-            agenticPort: null,
             binPath: null,
             version: null,
           };
@@ -546,25 +542,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
           ...(locus.kind === "wsl" ? { locus } : {}),
         });
-        const transport = createCodexTurnTransport(
-          chosen.path,
-          defaultCodexTransportEffects,
-          locus,
-          chosen.runtimePath,
-        );
-        const capabilityEvidence = await deriveCodexImplementedEvidence(chosen.path);
         return {
           availability: { available: true, version: chosen.version },
           port: createCodexUtilityAdapter({ executor }),
           executor,
-          agenticPort: (mcpServers) =>
-            new CodexAdapter({
-              binaryPath: chosen.path,
-              transport,
-              version: chosen.version,
-              ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
-              mcpServers,
-            }),
           binPath: chosen.path,
           version: chosen.version,
         };
@@ -2441,7 +2422,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         line,
         locus: locusForRepo(review.repositoryRoot),
       }),
+    // review.ask — BOTH live legs (F1, #570). The orchestrator runs ONE capable
+    // `claude` turn at the review's repository root through the same
+    // `claudeHandoffRunPort` the write handoff uses (no second drain loop, no
+    // checkpoint bracket — an ask has no diff to measure), streaming its text
+    // deltas out through dispatch. No harness ⇒ an honest line naming `claude`.
     reviewAsk: createLiveReviewAskPorts({
+      askOrchestrator: createLiveOrchestratorAsk({
+        resolveRunPort: async (repoRoot) => {
+          const adapter = await claudeAdapterForRepo(repoRoot);
+          return adapter ? claudeHandoffRunPort(adapter) : null;
+        },
+      }),
       askCodex: async ({ review, question, abortController }) => {
         // The ask executor is bound to the RESOLVED absolute codex, same as the
         // pipeline seat (bead workspace-6qp15), and to the review's locus (#334) so a
