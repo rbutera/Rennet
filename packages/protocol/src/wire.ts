@@ -1693,6 +1693,9 @@ export const daemonSettingsSchema = z.object({
    *    host, so ruling Codex out on this machine leaves it running on a WSL distro. Nothing
    *    here claims a harness exists — an id disabled on a host with no such harness simply
    *    matches no detected row.
+   *  • `disabledForges` (amendment A) — the same decision for the host's forge CLIs, so the
+   *    Source Control row's toggle keeps what it was told instead of resetting on reload.
+   *    Same rules: a decision, host-scoped, and it claims nothing about what is installed.
    */
   hosts: z
     .record(
@@ -1700,6 +1703,7 @@ export const daemonSettingsSchema = z.object({
       z.object({
         lastSeenVersion: z.string().min(1).optional(),
         disabledHarnesses: z.array(z.string().min(1)).optional(),
+        disabledForges: z.array(z.string().min(1)).optional(),
       }),
     )
     .optional(),
@@ -1855,6 +1859,15 @@ export const harnessHostDetectionSchema = z.object({
   asked: z.boolean(),
   /** Exactly the harnesses observed ON that host. Empty when unasked, or genuinely none. */
   detected: z.array(hostHarnessSchema),
+  /**
+   * The forge CLI ids the viewer has RULED OUT on this host (amendment A) — the served READ
+   * that makes the Source Control row's toggle real. It rides this per-host entry because the
+   * ruling lives on the same daemon-settings record as `disabledHarnesses` and the surface
+   * already makes this one round trip; forge DETECTION is separate (`forge.detect`), so this
+   * is a decision list, never a claim that any of those CLIs are installed. Additive-optional:
+   * an engine that omits it has ruled nothing out, so every forge row reads enabled.
+   */
+  disabledForges: z.array(z.string().min(1)).optional(),
 });
 export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
 

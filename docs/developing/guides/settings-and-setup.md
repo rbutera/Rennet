@@ -125,14 +125,30 @@ previously-seen host, or "Not connected — daemon unreachable, version unknown"
 otherwise, never an invented current version. Reconnect appears only when a host
 is unreachable; Update Daemon only when a reachable host has an update.
 
+Reconnect performs a real re-handshake with that host's daemon. It reads
+"Connecting…" and is disabled for exactly as long as the attempt is in flight,
+then either the card turns reachable — because the refreshed status says the host
+answered, never because the button was pressed — or the card stays unreachable and
+shows the reason the handshake failed. Reconnect re-attempts the connection; it
+does not install or start software that was not already there.
+
 Each card carries a **Source Control** and an **Agents** section. Agents on This
 Machine are live: Rennet lists the coding harnesses it discovered (Claude, Codex)
 with their versions, and disabling one rules it out of reviews on that host
-without uninstalling anything. When at least one agent is enabled, a Review
-section exposes Model Mappings. Detection that is not yet wired renders an honest
-empty state rather than a fabricated row: remote-host agent detection, per-host
-source-control tool detection, and the served model-mapping council are not live
-yet, so those surfaces read empty until their backends land. GitHub sign-in is not
+without uninstalling anything. Agent detection runs per host: the daemon asks each
+paired machine the only way it can be asked, so a card shows that machine's own
+harnesses, and a host the daemon cannot interrogate reads its honest not-detected
+line rather than inheriting this machine's answers. The enable decision is stored
+per host, so ruling an agent out survives a reload and leaves it running elsewhere.
+
+Source Control lists the forge CLIs detected on the connected host — GitHub /
+`gh` only; GitLab and Bitbucket are planned, not built. Its enable toggle is
+stored per host the same way. A forge whose binary is not on the host's `PATH`
+has no row at all, rather than a stale hit. Per-host source-control detection
+(so a second machine can show its own `gh`) and the served model-mapping council
+are not live yet, so those surfaces read empty until their backends land.
+When at least one agent is enabled, a Review section exposes Model Mappings.
+GitHub sign-in is not
 a source-control row here — it lives on the front door and the project detail
 (see [First run](#first-run)).
 

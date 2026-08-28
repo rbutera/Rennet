@@ -11,5 +11,14 @@ export function forgeHandlers(rt: DispatchRuntime) {
       parseCommandInput(name, rawInput);
       return parseCommandOutput(name, { detected: await deps.detectForges() });
     },
+    "forge.setEnabled": async (rawInput) => {
+      const name = "forge.setEnabled" as const;
+      // The per-host forge ruling (amendment A). A plain settings write — no gate, no
+      // ceremony (Rule Zero). Absent settings dep ⇒ there is no store to write to, so this
+      // FAILS loudly rather than reporting a decision that went nowhere.
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.settings) throw new Error("forge.setEnabled: no settings store is wired");
+      return parseCommandOutput(name, { disabled: deps.settings.setForgeEnabled(input) });
+    },
   } satisfies Record<string, CommandHandler>;
 }

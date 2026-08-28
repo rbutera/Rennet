@@ -427,6 +427,20 @@ const definitions = {
     input: z.object({}),
     output: z.object({ detected: z.array(detectedForgeSchema) }),
   },
+  // Rule a forge CLI in or out ON ONE HOST (amendment A) — the served write behind the Source
+  // Control row's toggle, mirroring harness.setEnabled exactly and persisted on the same
+  // per-host daemon-settings entry, so the decision survives reload. Read back through
+  // `harness.hosts`'s `disabledForges`. It installs nothing and hides nothing: the row stays,
+  // with its toggle off.
+  "forge.setEnabled": {
+    input: z.object({
+      source: sourceSchema,
+      forgeId: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    /** The host's ruled-out forge ids after the write — the stored decision, verbatim. */
+    output: z.object({ disabled: z.array(z.string()) }),
+  },
   // Per-host daemon status (C17, #485): the daemon this is dispatched to reports, for EVERY
   // host the settings surface enumerates, whether that host's daemon answered, its running
   // version, the version it was last seen running, and whether an update is available. A host

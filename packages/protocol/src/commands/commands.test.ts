@@ -18,7 +18,9 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // (C17 cluster 3 — SERVER-side per-host agent detection, where a host that cannot be
 // asked reads honestly absent instead of inheriting the local machine's agents) and
 // harness.setEnabled (C17 cluster 3.2 — the served per-host enable store the toggle writes
-// through, so a ruled-out agent stays ruled out across reload). A
+// through, so a ruled-out agent stays ruled out across reload), plus forge.setEnabled (C17
+// amendment A — the same served store for the Source Control row's toggle, which until now
+// wrote nowhere and silently reset on reload). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row.
 const ABSORBED_IDS = [
@@ -42,6 +44,7 @@ const ABSORBED_IDS = [
   "flagged.adjudication",
   "flagged.review",
   "forge.detect",
+  "forge.setEnabled",
   "fs.listDir",
   "github.connectCancel",
   "github.connectPoll",
@@ -133,7 +136,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(84);
+    expect(ABSORBED_IDS).toHaveLength(85);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

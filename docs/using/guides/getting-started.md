@@ -306,7 +306,8 @@ pages:
   or a **Local** chip. Each card carries the source-control tooling detected
   there, the coding harnesses detected there, and the model mappings for the
   review roles. Rename inline; Reconnect appears only when a machine is
-  unreachable.
+  unreachable, and re-attempts the connection for real — it says "Connecting…"
+  while it tries, then either the card comes back or it tells you why it did not.
 - **Appearance** — light / dark / system, the interface theme pack, and a
   separate code theme that applies to every code surface including the diff.
 - **Keyboard Shortcuts** — every named command and its binding.

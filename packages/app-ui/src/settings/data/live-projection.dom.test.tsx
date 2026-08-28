@@ -476,3 +476,90 @@ describe("LiveSettingsProjectionProvider — Reconnect performs a real re-handsh
     cleanup();
   });
 });
+
+// ── C17 amendment A — the Source Control toggle writes and reads a real ruling ─
+// Until this landed the toggle flipped, wrote nothing, and a reload silently restored it.
+// Now it writes `forge.setEnabled` and reads the host's ruling back off `harness.hosts`.
+
+describe("LiveSettingsProjectionProvider — the forge toggle is served, not inert", () => {
+  /** A bridge whose forge ruling lives in the STORE, so the switch can only reflect what
+   *  the write persisted and the invalidated re-read returned. */
+  function ruledBridge(initial: readonly string[] = []) {
+    let disabledForges = [...initial];
+    return new MemoryBridge(
+      {
+        "settings.get": () => ({
+          scheme: "system" as const,
+          schemeProvenance: {
+            layer: "builtin" as const,
+            contributions: [{ layer: "builtin" as const, value: "system", effective: true }],
+          },
+          appearanceMalformed: false,
+          projects: [],
+          daemonHosts: [{ ...LOCAL_SECTION }],
+        }),
+        "daemon.status": () => ({
+          hosts: [{ source: "local" as const, reachable: true, version: "4.3.0" }],
+        }),
+        "harness.hosts": () => ({
+          hosts: [
+            {
+              source: "local" as const,
+              asked: true,
+              detected: [],
+              ...(disabledForges.length > 0 ? { disabledForges: [...disabledForges] } : {}),
+            },
+          ],
+        }),
+        "forge.detect": () => ({ detected: [{ ...GH_AVAILABLE }] }),
+        "forge.setEnabled": (input) => {
+          expect(input.source).toBe("local"); // scoped to the row's own host.
+          // The WIRE id, not the row's mark id — the same key detection and the store use.
+          expect(input.forgeId).toBe("github");
+          disabledForges = input.enabled
+            ? disabledForges.filter((id) => id !== input.forgeId)
+            : [...disabledForges, input.forgeId];
+          return { disabled: [...disabledForges] };
+        },
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+  }
+
+  it("POSITIVE CONTROL: ruling a forge out writes through and the RE-READ shows it off", async () => {
+    // Hard-code the row to `enabled: true` again (the pre-amendment state) and this fails:
+    // the switch would spring back on the re-read, exactly the silent reset it used to do.
+    const bridge = ruledBridge();
+    const { findByRole, user } = mountLive(bridge);
+    const toggle = await findByRole("switch", { name: "Use GitHub on This Machine" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await user.click(toggle);
+    await waitFor(() =>
+      expect(
+        within(document.body)
+          .getByRole("switch", { name: "Use GitHub on This Machine" })
+          .getAttribute("aria-checked"),
+      ).toBe("false"),
+    );
+    cleanup();
+  });
+
+  it("a host whose stored ruling has the forge off renders it off on first paint (survives reload)", async () => {
+    const { findByRole } = mountLive(ruledBridge(["github"]));
+    const toggle = await findByRole("switch", { name: "Use GitHub on This Machine" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    // Ruled out, NOT hidden: the CLI is really installed, so the row still reports it.
+    expect(within(card("local")).getByText("Available")).toBeTruthy();
+    cleanup();
+  });
+
+  it("a host with NO ruling reads enabled by default — never a fabricated decision", async () => {
+    const { findByRole } = mountLive(ruledBridge());
+    expect(
+      (await findByRole("switch", { name: "Use GitHub on This Machine" })).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
+    cleanup();
+  });
+});

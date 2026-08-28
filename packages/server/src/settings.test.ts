@@ -889,3 +889,92 @@ describe("harnessHosts + setHarnessEnabled — per-host agents (C17 cluster 3, #
     ).toThrow(/malformed/);
   });
 });
+
+describe("setForgeEnabled — the forge ruling the toggle was missing (C17 amendment A)", () => {
+  /** A composition over a MUTABLE daemon-settings store, detecting one agent on each host. */
+  function forgeDeps(stored?: DaemonSettings) {
+    let store: DaemonSettings = stored ?? { version: 1 };
+    const { deps } = makeDeps({
+      listProjects: () => [
+        project({ source: "local" }),
+        project({ id: "b", source: "wsl:Ubuntu" }),
+      ],
+      readDaemonSettings: () => store,
+      updateDaemon: (update) => {
+        store = update(store);
+        return store;
+      },
+      detectHarnessesOn: async () => [{ id: "claude", version: "2.1.0" }],
+    });
+    return { deps, read: () => store };
+  }
+
+  it("POSITIVE CONTROL: a forge ruled out on a host READS BACK disabled; an unruled host reads enabled", async () => {
+    // The whole gap amendment A closes: before the served read this toggle wrote nowhere and
+    // every re-read said enabled. Drop the store or the read and this fails.
+    const { deps, read } = forgeDeps();
+    const composition = createSettingsComposition(deps);
+
+    // No ruling yet ⇒ enabled by default, honestly, with no entry invented for it.
+    expect((await composition.harnessHosts())[0]?.disabledForges).toBeUndefined();
+
+    expect(
+      composition.setForgeEnabled({ source: "local", forgeId: "github", enabled: false }),
+    ).toEqual(["github"]);
+    expect(read().hosts).toEqual({ local: { disabledForges: ["github"] } });
+
+    // The RE-READ carries it — from the store, not from a session flag.
+    const hosts = await composition.harnessHosts();
+    expect(hosts[0]?.disabledForges).toEqual(["github"]);
+    // Scoped to the host: the other card's `gh` is untouched.
+    expect(hosts[1]?.disabledForges).toBeUndefined();
+
+    // Re-enabling drops the id rather than accumulating a tombstone.
+    expect(
+      composition.setForgeEnabled({ source: "local", forgeId: "github", enabled: true }),
+    ).toEqual([]);
+    expect((await composition.harnessHosts())[0]?.disabledForges).toBeUndefined();
+  });
+
+  it("the forge ruling and the agent ruling share an entry without clobbering each other", async () => {
+    const { deps, read } = forgeDeps();
+    const composition = createSettingsComposition(deps);
+    composition.setHarnessEnabled({ source: "local", harnessId: "claude", enabled: false });
+    composition.setForgeEnabled({ source: "local", forgeId: "github", enabled: false });
+
+    expect(read().hosts?.local).toEqual({
+      disabledHarnesses: ["claude"],
+      disabledForges: ["github"],
+    });
+    const [local] = await composition.harnessHosts();
+    expect(local?.detected[0]?.enabled).toBe(false);
+    expect(local?.disabledForges).toEqual(["github"]);
+  });
+
+  it("a host that could not be ASKED still carries its forge ruling — it is a decision, not a detection", async () => {
+    const { deps } = forgeDeps({ version: 1, hosts: { local: { disabledForges: ["github"] } } });
+    const composition = createSettingsComposition({ ...deps, detectHarnessesOn: async () => null });
+    const [local] = await composition.harnessHosts();
+    expect(local).toEqual({
+      source: "local",
+      asked: false,
+      detected: [],
+      disabledForges: ["github"],
+    });
+  });
+
+  it("a malformed daemon-settings REFUSES the forge decision rather than faking success", () => {
+    const { deps } = makeDeps({
+      updateDaemon: () => {
+        throw new Error("daemon-settings is malformed");
+      },
+    });
+    expect(() =>
+      createSettingsComposition(deps).setForgeEnabled({
+        source: "local",
+        forgeId: "github",
+        enabled: false,
+      }),
+    ).toThrow(/malformed/);
+  });
+});

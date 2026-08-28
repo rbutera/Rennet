@@ -195,6 +195,16 @@ export interface SettingsComposition {
     harnessId: string;
     enabled: boolean;
   }): string[];
+  /**
+   * Rule one forge CLI in or out ON ONE HOST (amendment A) — the same served store, the same
+   * per-host daemon-settings entry, for the Source Control row's toggle. Before this the row
+   * wrote nowhere: it flipped, persisted nothing, and a reload silently restored it, which is
+   * a control lying about a decision the product does not keep.
+   *
+   * Read back through `harnessHosts()`'s `disabledForges`. Returns the host's ruled-out forge
+   * ids after the write; a malformed daemon-settings refuses it (throws), as every write here does.
+   */
+  setForgeEnabled(input: { source: ProjectSource; forgeId: string; enabled: boolean }): string[];
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   /**
@@ -256,6 +266,16 @@ function withHostEntries(
     hosts[source] = { ...hosts[source], ...edit };
   }
   return { ...current, hosts };
+}
+
+/**
+ * A host's ruled-out id list after one toggle (C17 cluster 3.2 + amendment A) — the same
+ * decision arithmetic for agents and forge CLIs, so the two toggles cannot drift apart.
+ * Idempotent: ruling out something already ruled out changes nothing.
+ */
+function ruledOut(current: readonly string[] = [], id: string, enabled: boolean): string[] {
+  if (enabled) return current.filter((entry) => entry !== id);
+  return current.includes(id) ? [...current] : [...current, id];
 }
 
 /**
@@ -508,17 +528,24 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       const remembered = deps.readDaemonSettings().hosts ?? {};
       const hosts: HarnessHostDetection[] = [];
       for (const host of daemonHostSections(deps.listProjects())) {
+        // The forge ruling rides this per-host read (amendment A): it lives on the SAME
+        // daemon-settings entry, and serving it here means the toggle reads back what is
+        // stored without a second round trip. It is a decision list only — it says nothing
+        // about which forge CLIs exist (that is `forge.detect`).
+        const disabledForges = remembered[host.source]?.disabledForges ?? [];
+        const forgeRuling = disabledForges.length > 0 ? { disabledForges } : {};
         // A detection that REJECTS is a host that could not be asked, exactly like a dep
         // that resolves null — either way nothing was observed there, so nothing is claimed.
         const detected = await deps.detectHarnessesOn?.(host.source).catch(() => null);
         if (!detected) {
-          hosts.push({ source: host.source, asked: false, detected: [] });
+          hosts.push({ source: host.source, asked: false, detected: [], ...forgeRuling });
           continue;
         }
         const disabled = new Set(remembered[host.source]?.disabledHarnesses ?? []);
         hosts.push({
           source: host.source,
           asked: true,
+          ...forgeRuling,
           // A ruled-out agent is still DETECTED and still listed — the decision turns its
           // toggle off, it does not hide a binary that is really installed.
           detected: detected.map((harness) => ({ ...harness, enabled: !disabled.has(harness.id) })),
@@ -528,16 +555,30 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     },
 
     setHarnessEnabled: (input): string[] => {
-      const current = deps.readDaemonSettings().hosts?.[input.source]?.disabledHarnesses ?? [];
-      const disabled = input.enabled
-        ? current.filter((id) => id !== input.harnessId)
-        : current.includes(input.harnessId)
-          ? current
-          : [...current, input.harnessId];
+      const disabled = ruledOut(
+        deps.readDaemonSettings().hosts?.[input.source]?.disabledHarnesses,
+        input.harnessId,
+        input.enabled,
+      );
       // A malformed daemon-settings REFUSES the write (Rule 75) — `updateDaemon` throws and
       // the caller learns the decision did not persist, rather than being told it did.
       deps.updateDaemon((stored) =>
         withHostEntries(stored, { [input.source]: { disabledHarnesses: disabled } }),
+      );
+      return disabled;
+    },
+
+    setForgeEnabled: (input): string[] => {
+      // The same write, on the same entry, for the Source Control row (amendment A). The
+      // entry merge is what keeps the two rulings independent: ruling out `gh` must not
+      // un-rule-out an agent, and learning a daemon version must not clear either.
+      const disabled = ruledOut(
+        deps.readDaemonSettings().hosts?.[input.source]?.disabledForges,
+        input.forgeId,
+        input.enabled,
+      );
+      deps.updateDaemon((stored) =>
+        withHostEntries(stored, { [input.source]: { disabledForges: disabled } }),
       );
       return disabled;
     },

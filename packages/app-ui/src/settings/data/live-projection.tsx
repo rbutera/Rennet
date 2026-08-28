@@ -32,6 +32,8 @@ import {
 //     and no other; every other card's Source Control section stays honestly empty
 //     rather than inheriting this machine's answer. A `not-installed` forge is DROPPED,
 //     so a binary renamed out of PATH makes its row disappear instead of going stale.
+//     The row's enable toggle is served too (amendment A): it writes `forge.setEnabled` and
+//     reads the host's ruling back off `harness.hosts`, so ruling `gh` out survives a reload.
 //
 //   • agentsByHost ← `harness.hosts` (C17 cluster 3). The daemon runs the real discovery
 //     probes for EVERY host the settings surface enumerates — itself directly, a WSL distro
@@ -60,10 +62,9 @@ import {
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
 //     carries no per-host counts, so the Remove confirmation names none rather than a
 //     fabricated blast radius.
-//   – the Source Control row's enable toggle: `harness.setEnabled` stores a ruling per
-//     host + tool id, but nothing READS a forge ruling back, so flipping one could not
-//     survive a reload. The rows are detection-only until that read exists; the toggle
-//     is left where C10 put it rather than writing a decision nothing can honour.
+//   – sourceControlByHost on a NON-connected host: `forge.detect` answers for one daemon, so
+//     a WSL card cannot show its own `gh` yet (amendment B: a server-side `forge.hosts`
+//     mirroring `harness.hosts`). Until then those cards read honestly empty.
 //   – reviewRoles: no Model-Council / mappings command exists.
 //   – nameByProject / glyphByProject / worktreeByProject / trackerByProject: no served
 //     write command (the composition's `setTrackerValue` / `worktreeBaseDir` are unwired).
@@ -86,7 +87,13 @@ const FORGE_ROW: Record<string, { readonly markId: string; readonly label: strin
   github: { markId: "gh", label: "GitHub" },
 };
 
-function forgeRow(forge: DetectedForge): DetectedTool {
+/** The row's mark id back to the forge's WIRE id — the id the served ruling is keyed by,
+ *  so a toggle writes the same name the detection and the store both use. */
+const FORGE_WIRE_ID: Record<string, string> = Object.fromEntries(
+  Object.entries(FORGE_ROW).map(([wireId, row]) => [row.markId, wireId]),
+);
+
+function forgeRow(forge: DetectedForge, disabled: ReadonlySet<string>): DetectedTool {
   const row = FORGE_ROW[forge.id];
   return {
     id: row?.markId ?? forge.id,
@@ -95,9 +102,9 @@ function forgeRow(forge: DetectedForge): DetectedTool {
     version: forge.version ?? undefined,
     status: forge.status,
     detail: forge.detail,
-    // There is no served READ of a per-host forge ruling, so the row cannot claim to
-    // be ruled out; it reports the CLI's real detected state and nothing more.
-    enabled: true,
+    // The SERVED per-host ruling (amendment A) — a forge the viewer ruled out on this host
+    // reads off across reload, and one with no ruling reads enabled by default.
+    enabled: !disabled.has(forge.id),
   };
 }
 
@@ -144,6 +151,11 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   // says the host answered — the button can never paint itself green.
   const { mutate: reconnect } = useMutation("daemon.reconnect", {
     invalidates: ["daemon.status"],
+  });
+  // The Source Control row's toggle (amendment A) — the same served-write shape, invalidating
+  // the same per-host read the ruling is served on, so the switch shows what is STORED.
+  const { mutate: setForgeEnabled } = useMutation("forge.setEnabled", {
+    invalidates: ["harness.hosts"],
   });
 
   const projection = useMemo<SettingsProjection>(() => {
@@ -192,12 +204,19 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     const detectedForges = (forges?.detected ?? []).filter(
       (forge) => forge.status !== "not-installed",
     );
+    // The viewer's forge rulings for the connected host, served on that host's `harness.hosts`
+    // entry (amendment A). No entry ⇒ nothing ruled out ⇒ every row reads enabled.
+    const disabledForges = new Set(
+      data?.hosts.find((host) => host.source === connectedSource)?.disabledForges ?? [],
+    );
 
     return {
       ...EMPTY_SETTINGS_PROJECTION,
       hosts,
       sourceControlByHost:
-        detectedForges.length > 0 ? { [connectedSource]: detectedForges.map(forgeRow) } : {},
+        detectedForges.length > 0
+          ? { [connectedSource]: detectedForges.map((forge) => forgeRow(forge, disabledForges)) }
+          : {},
       agentsByHost,
       reconnectHost: async (hostId) => {
         try {
@@ -213,23 +232,26 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         }
       },
       setToolEnabled: (hostId, toolId, enabled) => {
-        // Only a DETECTED harness on that host has a served store behind it. A forge row's
-        // toggle has no read to restore it from, so nothing is written for one — better an
-        // inert control than a decision the next reload silently forgets.
-        if (!agentsByHost[hostId]?.some((tool) => tool.id === toolId)) return;
-        // Fire-and-refetch: the mutation invalidates `harness.hosts`, so the row re-reads
-        // the persisted decision. A rejected write leaves the switch where it was — it
-        // never shows an agent as ruled out when the store refused to remember it.
-        // Every host id in this projection came from a served `source`, so the cast
-        // narrows back to the shape the command's own schema re-validates on arrival.
-        void setEnabled({
-          source: hostId as ProjectSource,
-          harnessId: toolId,
-          enabled,
-        }).catch(() => undefined);
+        // ONE signature, two served stores — the row's own host decides which. Fire-and-
+        // refetch in both cases: the mutation invalidates `harness.hosts`, so the row re-reads
+        // the PERSISTED decision. A rejected write leaves the switch where it was — it never
+        // shows a tool as ruled out when the store refused to remember it.
+        // Every host id in this projection came from a served `source`, so the cast narrows
+        // back to the shape the command's own schema re-validates on arrival.
+        const source = hostId as ProjectSource;
+        if (agentsByHost[hostId]?.some((tool) => tool.id === toolId)) {
+          void setEnabled({ source, harnessId: toolId, enabled }).catch(() => undefined);
+          return;
+        }
+        // A Source Control row (amendment A): written under the forge's WIRE id, which is
+        // what the served ruling and the detection are both keyed by.
+        const forgeId = FORGE_WIRE_ID[toolId];
+        if (forgeId && hostId === connectedSource) {
+          void setForgeEnabled({ source, forgeId, enabled }).catch(() => undefined);
+        }
       },
     };
-  }, [data, settings, status, forges, bridge.platform, setEnabled, reconnect]);
+  }, [data, settings, status, forges, bridge.platform, setEnabled, setForgeEnabled, reconnect]);
 
   return <SettingsProjectionProvider value={projection}>{children}</SettingsProjectionProvider>;
 }

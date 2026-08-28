@@ -127,7 +127,7 @@ screen lies today. But both FAIL Rai's honest-present ruling — the ruling this
 is present and inert, and a section that can never be filled for a host that really has the tool,
 are exactly that. Recorded here in the style of the 3.1 re-ruling; scope is unchanged otherwise.
 
-- [ ] A.1 **AMENDMENT A — the forge enable toggle has no served READ (implement WITH cluster 5).**
+- [x] A.1 **AMENDMENT A — the forge enable toggle has no served READ (implement WITH cluster 5).**
   Cluster 3.2 landed a served per-host enable STORE, but it stores only `disabledHarnesses`, and
   cluster 4.1 consequently hard-codes every Source Control row to `enabled: true` and drops the
   forge branch of `setToolEnabled` on the floor. So the C10 forge toggle is **inert**: it flips,
@@ -158,16 +158,16 @@ are exactly that. Recorded here in the style of the 3.1 re-ruling; scope is unch
 
 ## 5. Reconnect (#533) — wire the button to a real re-handshake
 
-- [ ] 5.1 A reconnect operation exposed to the settings surface: a command (or a supervisor call the seam
+- [x] 5.1 A reconnect operation exposed to the settings surface: a command (or a supervisor call the seam
   resolves) that re-attempts the handshake to a host's daemon through the ConnectionSupervisor
   (`spawnDaemon`/`waitForHealthy`/`findHealthyDaemon` as appropriate for local vs remote), returning an
   honest reachable/failed result that refreshes that host's `DaemonInfo`.
-- [ ] 5.2 `packages/app-ui/src/settings/environments/host-card.tsx`: give the Reconnect button its `onClick`
+- [x] 5.2 `packages/app-ui/src/settings/environments/host-card.tsx`: give the Reconnect button its `onClick`
   — dispatch the reconnect, show "Connecting…" in-flight (disabled while pending), and on resolution either
   the card flips to reachable (success) or shows an honest failure state (still unreachable, an error line).
   No pretend animation (reconciliation 5). Thread the action through the projection seam, not `bridge.invoke`
   in the page.
-- [ ] 5.3 DOM test: clicking Reconnect on an unreachable host shows "Connecting…", then on a **failing**
+- [x] 5.3 DOM test: clicking Reconnect on an unreachable host shows "Connecting…", then on a **failing**
   reconnect the card stays unreachable with an honest error (the positive control — a reconnect that does not
   succeed must not read green); on a succeeding reconnect the card becomes reachable with its version. Cluster
   gate green. Commit.
