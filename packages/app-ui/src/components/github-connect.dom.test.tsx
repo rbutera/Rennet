@@ -6,6 +6,7 @@
 // journey, the paste side door validates before celebrating, disconnect forgets.
 import type { GitHubAuthStatus, GitHubConnectPoll, RennetBridge } from "@rennet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BridgeProvider } from "../data";
 import { fireEvent, mount, waitFor } from "../test/dom";
 import { GitHubAccountRows, GitHubConnectCard } from "./github-connect";
 
@@ -76,7 +77,11 @@ beforeEach(() => {
 describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
   it("renders the card when not connected, with Connect and Skip", async () => {
     const { bridge } = fakeBridge();
-    const { container } = mount(<GitHubConnectCard bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubConnectCard />
+      </BridgeProvider>,
+    );
     await waitFor(() => expect(container.querySelector(".github-card")).not.toBeNull());
     expect(container.querySelector(".github-card-title")?.textContent).toBe("Connect GitHub");
     expect(container.querySelector(".github-skip")?.textContent).toBe("Skip for now");
@@ -84,14 +89,22 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
 
   it("renders NOTHING when already connected — no nag", async () => {
     const { bridge, calls } = fakeBridge({ status: CONNECTED });
-    const { container } = mount(<GitHubConnectCard bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubConnectCard />
+      </BridgeProvider>,
+    );
     await waitFor(() => expect(calls.some((c) => c.name === "github.status")).toBe(true));
     expect(container.querySelector(".github-card")).toBeNull();
   });
 
   it("renders NOTHING when GitHub is unreachable — a connect cannot succeed offline", async () => {
     const { bridge, calls } = fakeBridge({ status: NETWORK });
-    const { container } = mount(<GitHubConnectCard bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubConnectCard />
+      </BridgeProvider>,
+    );
     await waitFor(() => expect(calls.some((c) => c.name === "github.status")).toBe(true));
     // Unreachable says nothing about whether an account is connected: no connect nag.
     expect(container.querySelector(".github-card")).toBeNull();
@@ -99,7 +112,11 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
 
   it("skip dismisses the card and REMEMBERS on this machine", async () => {
     const first = fakeBridge();
-    const mounted = mount(<GitHubConnectCard bridge={first.bridge} />);
+    const mounted = mount(
+      <BridgeProvider bridge={first.bridge}>
+        <GitHubConnectCard />
+      </BridgeProvider>,
+    );
     await waitFor(() => expect(mounted.container.querySelector(".github-skip")).not.toBeNull());
     const skip = mounted.container.querySelector(".github-skip");
     if (!skip) throw new Error("skip button missing");
@@ -108,7 +125,11 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
 
     // A remount (next launch) stays dismissed — the permanent home is Settings.
     const second = fakeBridge();
-    const remounted = mount(<GitHubConnectCard bridge={second.bridge} />);
+    const remounted = mount(
+      <BridgeProvider bridge={second.bridge}>
+        <GitHubConnectCard />
+      </BridgeProvider>,
+    );
     await waitFor(() => expect(second.calls.some((c) => c.name === "github.status")).toBe(true));
     expect(remounted.container.querySelector(".github-card")).toBeNull();
   });
@@ -118,7 +139,11 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
     const { bridge, calls } = fakeBridge({
       polls: [{ phase: "pending" }, { phase: "connected", status: CONNECTED }],
     });
-    const { container } = mount(<GitHubConnectCard bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubConnectCard />
+      </BridgeProvider>,
+    );
     await vi.waitFor(() => expect(container.querySelector(".github-btn")).not.toBeNull());
     const connect = container.querySelector(".github-btn");
     if (!connect) throw new Error("connect button missing");
@@ -140,7 +165,11 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
 describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
   it("shows the honest unreachable copy when GitHub is down — never a connect lie", async () => {
     const { bridge } = fakeBridge({ status: NETWORK });
-    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
     await waitFor(() =>
       expect(container.querySelector(".github-problem")?.textContent).toContain(
         "GitHub is unreachable right now",
@@ -150,7 +179,11 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
 
   it("shows connected-as fact and Disconnect; disconnect forgets and re-reads", async () => {
     const { bridge, calls } = fakeBridge({ status: CONNECTED });
-    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
     await waitFor(() =>
       expect(container.querySelector(".github-connected")?.textContent).toContain("@rbutera"),
     );
@@ -165,7 +198,11 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
 
   it("paste side door: a GOOD token stores and reads connected", async () => {
     const { bridge, calls } = fakeBridge({ status: NOT_CONNECTED });
-    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
     await waitFor(() => expect(container.querySelector(".github-token-input")).not.toBeNull());
     const input = container.querySelector(".github-token-input");
     if (!input) throw new Error("token input missing");
@@ -187,7 +224,11 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
       status: NOT_CONNECTED,
       setTokenStatus: { state: "token-invalid", copy: "The stored GitHub token was revoked." },
     });
-    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
     await waitFor(() => expect(container.querySelector(".github-token-input")).not.toBeNull());
     const input = container.querySelector(".github-token-input");
     if (!input) throw new Error("token input missing");
@@ -208,7 +249,11 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
       status: CONNECTED,
       setTokenStatus: { state: "token-invalid", copy: "That token was revoked." },
     });
-    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
     await waitFor(() =>
       expect(container.querySelector(".github-connected")?.textContent).toContain("@rbutera"),
     );
@@ -231,7 +276,11 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
     const { bridge } = fakeBridge({
       status: { state: "insufficient-scope", copy: "This token is missing `repo`.", scopes: [] },
     });
-    const { container } = mount(<GitHubAccountRows bridge={bridge} />);
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
     await waitFor(() =>
       expect(container.querySelector(".github-problem")?.textContent).toContain("missing"),
     );

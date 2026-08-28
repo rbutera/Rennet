@@ -3,10 +3,11 @@
 // The ⌘P/⌘K command menu (INVENTORY §9) over a MemoryBridge: it opens from the store,
 // fuzzy-filters, shows a group label beside each title, states an empty result, runs an
 // entry on select (closing + navigating), and defaults to a different view per mode.
-import type { Project } from "@rennet/protocol";
+import type { GitHubAuthStatus, Project } from "@rennet/protocol";
 import { commands } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
+import { GitHubAccountRows } from "../components/github-connect";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
@@ -170,6 +171,41 @@ describe("command menu (§9)", () => {
       for (const id of ["settings.get", "session.list", "board.read", "review.capture"]) {
         expect(screen.queryByText(id), id).toBeNull();
       }
+    });
+
+    it("a ⌘K disconnect stales the account read — the card re-reads, never lies connected", async () => {
+      // The whole point of exposing an ACTION in the menu: the surfaces that render what
+      // it changed must re-read. `useInvoke` invalidates the dispatched row's family, so
+      // the GitHub rows drop "connected · @rbutera" without a navigation or a reload.
+      let status: GitHubAuthStatus = { state: "connected", login: "rbutera", scopes: ["repo"] };
+      const history = memoryHistory("/");
+      const bridge = new MemoryBridge({
+        ...frontDoorHandlers([project("p1", "atlas")]),
+        "github.status": () => ({ status }),
+        "github.disconnect": () => {
+          status = { state: "not-connected", copy: "GitHub is not connected." };
+          return {};
+        },
+      });
+      useRennetStore.setState((s) => ({
+        ui: { ...s.ui, commandMenuOpen: true, commandMenuMode: "command" },
+      }));
+      const { container } = mount(
+        <BridgeProvider bridge={bridge}>
+          <Router hook={history.hook} searchHook={history.searchHook}>
+            <CommandMenu />
+            <GitHubAccountRows />
+          </Router>
+        </BridgeProvider>,
+      );
+
+      await waitFor(() =>
+        expect(container.querySelector(".github-connected")?.textContent).toContain("@rbutera"),
+      );
+      act(() => {
+        fireEvent.click(screen.getByText("github.disconnect"));
+      });
+      await waitFor(() => expect(container.querySelector(".github-connected")).toBeNull());
     });
 
     it("surfaces a failed dispatch instead of closing on it", async () => {

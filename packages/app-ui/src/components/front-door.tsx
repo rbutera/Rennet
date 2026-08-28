@@ -258,7 +258,6 @@ export function FrontDoor({
         <ProjectsList
           projects={projects}
           detected={detected}
-          bridge={bridge}
           onAdd={() =>
             setFlow({
               step: "type-path",
@@ -289,14 +288,12 @@ export function FrontDoor({
 function ProjectsList({
   projects,
   detected,
-  bridge,
   onAdd,
   onOpen,
   onRemove,
 }: {
   projects: Project[] | null;
   detected: DetectedHarness[] | null;
-  bridge: RennetBridge;
   onAdd(): void;
   onOpen(project: Project): void;
   onRemove(projectId: string): void;
@@ -415,7 +412,7 @@ function ProjectsList({
       )}
 
       <HarnessLine detected={detected} />
-      <GitHubConnectCard bridge={bridge} />
+      <GitHubConnectCard />
     </div>
   );
 }
