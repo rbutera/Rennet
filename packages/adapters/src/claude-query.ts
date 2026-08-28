@@ -76,10 +76,10 @@ const loadRealQuery: LoadClaudeQuery = async () => {
  */
 export function normalizeOutputSchema(schema: unknown): Record<string, unknown> {
   if (schema === null || typeof schema !== "object") return schema as Record<string, unknown>;
-  const copy = { ...(schema as Record<string, unknown>) };
-  delete copy.$schema;
-  delete copy.$id;
-  return copy;
+  const rest = { ...(schema as Record<string, unknown>) };
+  delete rest.$schema;
+  delete rest.$id;
+  return rest;
 }
 
 /**
