@@ -186,3 +186,137 @@ describe("LiveSettingsProjectionProvider — agents wired live from harness.dete
     cleanup();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C16 packet E2E (cluster 6, task 6.1) — the client half, driven not asserted. The
+// server half (`packages/server/src/c16-council-mappings-e2e.test.ts`) runs the
+// same sequence over the real dispatch + the real `client-settings.json`; this one
+// runs it through the REAL surfaces — `EnvironmentsPage` → `ReviewSettings` → the
+// Model Mappings dialog — over the REAL `settings.*` command names.
+//
+// The stand-in daemon holds ONE thing: a `(roleId, scenario) → pick` override map,
+// resolved against a defaults table on every read. That is the per-scenario contract
+// itself, so a client that wrote job-wide (or recomputed siblings locally) reddens
+// the sibling-column assertions below.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The council defaults the stand-in daemon resolves against — two roles is enough
+ *  to count text occurrences exactly, and `second-seat` carries the honest-nulls. */
+const E2E_DEFAULTS = {
+  "lens-workers": {
+    label: "Lens Drafters",
+    dual: { model: "opus-4.8", effort: "high" },
+    claudeOnly: { model: "opus-4.8", effort: "high" },
+    codexOnly: { model: "gpt-5.6-sol", effort: "high" },
+  },
+  "second-seat": {
+    label: "Flagged Second Seat",
+    dual: { model: "gpt-5.6-sol", effort: "high" },
+    // The role does not run under one provider — the em-dash cells.
+    claudeOnly: null,
+    codexOnly: null,
+  },
+} as const;
+
+/** A stand-in daemon: per-(role, scenario) overrides layered over the defaults. */
+function councilDaemon() {
+  const overrides = new Map<string, { model: string; effort: string }>();
+  const writes: unknown[] = [];
+  const resolve = (): ReviewRoleMapping[] =>
+    Object.entries(E2E_DEFAULTS).map(([id, def]) => {
+      const cell = (scenario: "dual" | "claudeOnly" | "codexOnly") => {
+        const override = overrides.get(`${id}:${scenario}`);
+        if (override) return { value: override, layer: "override" as const };
+        return { value: def[scenario], layer: "default" as const };
+      };
+      return {
+        id,
+        label: def.label,
+        hint: "",
+        dual: cell("dual"),
+        claudeOnly: cell("claudeOnly"),
+        codexOnly: cell("codexOnly"),
+      } as ReviewRoleMapping;
+    });
+  const bridge = () =>
+    new MemoryBridge(
+      {
+        "harness.detect": () => ({
+          detected: [
+            { id: "claude" as const, version: "2.1.0" },
+            { id: "codex" as const, version: "0.9.0" },
+          ],
+        }),
+        "settings.get": () => ({ ...VIEW, reviewRoles: resolve() }),
+        "settings.setRoleAssignment": (input) => {
+          writes.push(input);
+          const key = `${input.roleId}:${input.scenario}`;
+          // Writes or clears exactly ONE cell — siblings are never touched.
+          if (input.assignment === null) overrides.delete(key);
+          else overrides.set(key, input.assignment);
+          return { reviewRoles: resolve() };
+        },
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+  return { bridge, writes, overrides };
+}
+
+describe("C16 E2E — edit one scenario, reload, and only that column moved", () => {
+  it("drives the Review section end to end over the real settings commands", async () => {
+    const daemon = councilDaemon();
+
+    // ── STAGE. Mount the Environments page live and open the mappings dialog. ──
+    const first = mountLive(daemon.bridge());
+    await first.user.click(await first.findByRole("button", { name: "Edit Mappings" }));
+    const dialog = () => within(document.body);
+    await waitFor(() => expect(dialog().getAllByText("Lens Drafters").length).toBeGreaterThan(0));
+    // Both agents enabled ⇒ Dual is the live column; the visible pair is dual + claudeOnly.
+    // Both start at the council default, so `opus-4.8` appears TWICE and nothing is chipped.
+    expect(dialog().getAllByText("opus-4.8")).toHaveLength(2);
+    expect(dialog().queryByText("Overridden")).toBeNull();
+    // HONEST-UNASSIGNED: the Flagged Second Seat's single-provider cell is an em dash.
+    expect(dialog().getAllByText("—")).toHaveLength(1);
+
+    // ── EDIT. One cell, in the Dual column only. ──────────────────────────────
+    await first.user.click(dialog().getByRole("button", { name: "Lens Drafters model" }));
+    await first.user.click(dialog().getByRole("option", { name: "sonnet-5" }));
+    // The write fires ONCE, naming exactly the edited (role, scenario).
+    await waitFor(() => expect(daemon.writes).toHaveLength(1));
+    expect(daemon.writes[0]).toEqual({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "high" },
+    });
+    // The chip appears on that one cell; the sibling column still reads the default.
+    await waitFor(() => expect(dialog().getAllByText("Overridden")).toHaveLength(1));
+    expect(dialog().getAllByText("sonnet-5")).toHaveLength(1);
+    expect(dialog().getAllByText("opus-4.8")).toHaveLength(1);
+
+    // ── RELOAD. Unmount everything and mount a COLD page over the same daemon: ─
+    // a fresh bridge, a fresh command cache, a fresh `settings.get`. Only what the
+    // daemon persisted survives.
+    cleanup();
+    const reloaded = mountLive(daemon.bridge());
+    await reloaded.user.click(await reloaded.findByRole("button", { name: "Edit Mappings" }));
+    await waitFor(() => expect(dialog().getAllByText("Lens Drafters").length).toBeGreaterThan(0));
+    // The change PERSISTED, and it still carries its provenance chip.
+    expect(dialog().getAllByText("sonnet-5")).toHaveLength(1);
+    expect(dialog().getAllByText("Overridden")).toHaveLength(1);
+    // ── THE HEADLINE (per-scenario, Rai 2026-08-28). The sibling column never ──
+    // moved: it still renders the council default, unchipped. A job-keyed write
+    // would show `sonnet-5` twice and two chips — this is the assertion that reddens.
+    expect(dialog().getAllByText("opus-4.8")).toHaveLength(1);
+    expect(daemon.overrides.has("lens-workers:claudeOnly")).toBe(false);
+    expect(daemon.overrides.has("lens-workers:codexOnly")).toBe(false);
+    // …and the honest em dash survived the reload too.
+    expect(dialog().getAllByText("—")).toHaveLength(1);
+
+    // ── RESET. Clears the one overridden column, back to the council table. ───
+    await reloaded.user.click(dialog().getByRole("button", { name: /Reset to default/ }));
+    await waitFor(() => expect(dialog().queryByText("Overridden")).toBeNull());
+    expect(dialog().getAllByText("opus-4.8")).toHaveLength(2);
+    expect(daemon.overrides.size).toBe(0);
+    cleanup();
+  });
+});

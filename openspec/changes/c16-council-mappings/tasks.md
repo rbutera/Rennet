@@ -80,7 +80,50 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
 
 ## 6. Packet verification — E2E + positive controls + docs, full gate
 
-- [ ] 6.1 The packet E2E over the real command path (drives the UI, not asserted): stage the Review section → **change a role assignment in one scenario** → the write command fires once → **reload** (re-read `settings.get`) → the change persists with its **provenance chip** → a role with no assignment in a scenario renders **honestly unassigned** (em dash). Evidence shown.
-- [ ] 6.2 Positive controls that can fail (flip each once, see red, revert): (a) `REVIEW_ROLE_CATALOGUE` pointing at a job id absent from `JOB_CATALOGUE` fails the cluster-1 guard; (b) a scenario with no mapping renders no row / an em dash, not a fabricated default (cluster 5.4); (c) an override written then read shows the changed model and `layer` = override (cluster 3.3 / 4.2); (d) the command snapshot rejects an unrecorded command (cluster 2.3). Record the flip-to-red for each.
+- [x] 6.1 The packet E2E over the real command path (drives the UI, not asserted): stage the Review section → **change a role assignment in one scenario** → the write command fires once → **reload** (re-read `settings.get`) → the change persists with its **provenance chip** → a role with no assignment in a scenario renders **honestly unassigned** (em dash). Evidence shown.
+
+  > Landed as TWO halves, because the boundary check forbids one process holding
+  > both (`app-ui` may not import `server`; `server` may not import `app-ui`).
+  > Together they cover the whole path, and both run in `pnpm check`.
+  >
+  > - **Server half** — `packages/server/src/c16-council-mappings-e2e.test.ts`:
+  >   the REAL `settings.*` dispatch handlers (every payload crosses
+  >   `parseCommandInput`/`parseCommandOutput`), the REAL settings composition, the
+  >   REAL core resolver over the REAL council tables, and the REAL on-disk
+  >   `client-settings.json`. Reload = a brand-new store + composition + handler
+  >   table over the same directory, so the bytes on disk are the only survivor.
+  >   Proves: honest-present defaults (8 roles, every cell `default`), one write
+  >   per edit, persistence across reload with `layer: "override"`, the on-disk
+  >   slice is exactly `{ "lens-draft": { dual: … } }`, a second column overrides
+  >   independently, `null` clears one cell only, and clearing the last cell drops
+  >   the whole `routing` slice.
+  > - **Client half** — `packages/app-ui/src/settings/data/live-projection.dom.test.tsx`
+  >   (appended describe): the REAL `EnvironmentsPage` → `ReviewSettings` → Model
+  >   Mappings dialog over the REAL `settings.*` command names, driven with
+  >   user-event. Reload = unmount + a cold remount (fresh bridge, fresh command
+  >   cache, fresh `settings.get`). Proves: two default cells unchipped, the edit
+  >   fires ONE write naming `(lens-workers, dual)`, the chip appears on that cell
+  >   only, the override survives the cold reload with its chip, the sibling column
+  >   still reads the council default, `second-seat` renders an em dash before and
+  >   after, and Reset clears back to two unchipped defaults.
+- [x] 6.2 Positive controls that can fail (flip each once, see red, revert): (a) `REVIEW_ROLE_CATALOGUE` pointing at a job id absent from `JOB_CATALOGUE` fails the cluster-1 guard; (b) a scenario with no mapping renders no row / an em dash, not a fabricated default (cluster 5.4); (c) an override written then read shows the changed model and `layer` = override (cluster 3.3 / 4.2); (d) the command snapshot rejects an unrecorded command (cluster 2.3). Record the flip-to-red for each.
+
+  > **Flip-to-red record (2026-08-28, cluster 6).** Each flip applied, run, seen
+  > red, reverted (`git checkout --`). All five re-run after the cluster-5
+  > re-scope, so none is a stale pre-re-scope record.
+  >
+  > | # | Flip | Red |
+  > |---|---|---|
+  > | (a) | `REVIEW_ROLE_CATALOGUE` post-process → `"board-postprocess" as CouncilJobId` | 8 failures in `model-council-roles.test.ts`, headed by *points only at job ids that exist in JOB_CATALOGUE* — `post-process → board-postprocess: expected undefined to be defined` |
+  > | (b) | the dialog's `—` cell replaced with a literal `opus-4.8` | 3 failures: *a role that does not run in a mode renders an em dash*, *a null scenario cell renders an em dash*, and the new E2E |
+  > | (c) | `resolveTableCell` ignores its override cell (`const cell = undefined`) | 6 failures across core, `server/settings.test.ts`, and the E2E — e.g. `expected { model: 'opus-4.8' … } to deeply equal { model: 'sonnet-5', effort: 'medium' }` |
+  > | (c′) | `setRoleAssignment` resolves without persisting (`updateGlobal` → a pure read) | the E2E's write-count leg reddens: `expected +0 to be 1` |
+  > | (d) | `"settings.setRoleAssignment"` deleted from the recorded snapshot | *matches the recorded command snapshot* — `expected [ 'app.bootstrap', …(79) ] to deeply equal [ …(78) ]` |
+  >
+  > **The re-scope's own control** (per-scenario, the cluster-6 headline), flipped
+  > from both ends: server `setRoleAssignment` writing all three cells reddens
+  > `expect(after.claudeOnly).toEqual(before.claudeOnly)` in the server E2E; the
+  > dialog's `setModel` looping over `SCENARIOS` reddens the client E2E's
+  > one-write assertion (`expected [ …(3) ] to have a length of 1`).
 - [ ] 6.3 Docs (definition of done): update `docs/developing/concepts/model-council.md` (the role→model mappings are now readable + editable from the Environments Review section under the honest-present ruling; edits write `routing.task.*` model+effort overrides, harness derives from provider #89; the tables remain the defaults) and `docs/developing/guides/settings-and-setup.md` (the Review section walkthrough). Grep `docs/` (excl. `docs/dist`) for the "no dedicated council screen" / "reviewRoles honest-empty" claims this change makes wrong; update or record the grep as a no-op. **Confirm the out-of-scope guard in prose:** no new job ids, no table-value change, no availability-override persistence.
 - [ ] 6.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new packages**, additive-only protocol — lint, typecheck, test, build). Commit. Output the completion sigil `<promise>C16-COMPLETE</promise>` and flip C16's entry in `BUILD-STATUS.json` (left to MAIN per dispatch — state the intent in the report).
