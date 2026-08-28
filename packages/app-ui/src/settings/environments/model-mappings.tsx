@@ -19,7 +19,7 @@ import {
 import { Check, RotateCcw } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 import { Icon } from "../../components/icon";
-import { CLAUDE_MODELS, CODEX_MODELS, REVIEW_ROLE_DEFAULTS } from "../assets/model-council";
+import { CLAUDE_MODELS, CODEX_MODELS } from "../assets/model-council";
 import { Row } from "../atoms";
 import {
   type ReviewRole,
@@ -118,11 +118,13 @@ function MappingsDialog({
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const projection = useSettingsProjection();
-  // HONEST-PRESENT (C16, #485): the council's assignment tables are STATIC, so a read
-  // that carried no mappings (in flight, or a projection with no settings backend) still
-  // has a truthful answer — the council defaults. Falling back to them is not a stub: it
-  // is the same table the daemon resolves against, every cell `default` provenance.
-  const roles = projection.reviewRoles.length > 0 ? projection.reviewRoles : REVIEW_ROLE_DEFAULTS;
+  // HONEST-PRESENT AT THE SOURCE (C16, #485): the served value is the ONLY value. The
+  // dispatch handler resolves the council tables even with no settings dep, so a read
+  // always carries the eight roles — the client never needs a local table to fall back
+  // to, and must not have one. A client-side copy of the tables cannot be pinned to
+  // core, so it can only drift into rendering a confident wrong model (it had six such
+  // cells). An empty projection renders empty, which is honest about a read in flight.
+  const roles = projection.reviewRoles;
 
   const claudeOn = enabledIds.includes("claude");
   const codexOn = enabledIds.includes("codex");

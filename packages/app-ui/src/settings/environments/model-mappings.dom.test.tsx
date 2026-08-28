@@ -283,12 +283,17 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
 });
 
 describe("MappingsDialog — honest-present + honest-null controls (C16 positive controls)", () => {
-  // POSITIVE CONTROL (must be able to fail): the council tables are STATIC, so a
-  // projection carrying NO reviewRoles still renders the eight council defaults. If the
-  // dialog reverted to its old "no Model-Council is served" blank, this goes red.
-  it("an absent reviewRoles still renders the council defaults, not a blank", async () => {
+  // POSITIVE CONTROL (must be able to fail): honest-present is the SERVER's job — the
+  // dispatch handler resolves the static council tables even with no settings dep, so a
+  // served read always carries the eight roles. The dialog renders exactly what it was
+  // served, unchipped. If it ever fabricated a cell — or reverted to the deleted local
+  // table fallback, which had drifted six cells away from core — this goes red.
+  it("renders every served role unchipped, fabricating nothing", async () => {
     const { getByRole, user } = mount(
-      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: [] }, ["claude", "codex"]),
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: REVIEW_ROLE_DEFAULTS }, [
+        "claude",
+        "codex",
+      ]),
     );
     await user.click(getByRole("button", { name: "Edit Mappings" }));
     for (const role of REVIEW_ROLE_DEFAULTS) {
@@ -296,6 +301,20 @@ describe("MappingsDialog — honest-present + honest-null controls (C16 positive
     }
     // Honest-present is not honest-fabricated: nothing is chipped as an override.
     expect(body().queryByText("Overridden")).toBeNull();
+    cleanup();
+  });
+
+  // The other half of the same rule: with NOTHING served, the dialog shows nothing
+  // rather than reaching for a local table it cannot pin to core. Re-introducing any
+  // client-side default reddens this.
+  it("an empty reviewRoles renders no role rows, never a local-table guess", async () => {
+    const { getByRole, user } = mount(
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: [] }, ["claude", "codex"]),
+    );
+    await user.click(getByRole("button", { name: "Edit Mappings" }));
+    for (const role of REVIEW_ROLE_DEFAULTS) {
+      expect(body().queryByText(role.label)).toBeNull();
+    }
     cleanup();
   });
 
