@@ -4,7 +4,8 @@ import { commandIdFor } from "@rennet/protocol";
 // ─────────────────────────────────────────────────────────────────────────────
 // The command cache (C01 §2). react-query was evaluated against the dependency
 // standard and REJECTED: the need is three hooks over a keyed store (dedupe an
-// in-flight fetch, a stale flag on invalidate, per-key subscribers), and
+// in-flight fetch, a stale flag on invalidate, a stale flag when the last reader
+// leaves so a reopened surface re-reads, per-key subscribers), and
 // react-query's surface (refetch-on-focus, garbage collection, retries, devtools,
 // infinite queries) far exceeds that and would need configuring-off. The owned
 // engine below is ~120 lines, browser-safe, fully under our control, and — crucially
