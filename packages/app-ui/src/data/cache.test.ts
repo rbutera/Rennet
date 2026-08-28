@@ -170,6 +170,7 @@ describe("CommandCache — late reads never erase invalidation or streamed data"
     const key = commandKey("patchset.readSpan", {
       patchsetId: "ps-1",
       path: "one.ts",
+      side: "head",
       startLine: 10,
       endLine: 10,
     });

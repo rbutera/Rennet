@@ -39,7 +39,7 @@ describe("useSlugResolution never claims not-found it cannot support", () => {
       "session.list": () => ({ sessions: minted ? [MINTED] : [] }),
       "session.mint": () => {
         minted = true;
-        return { session: MINTED };
+        return { session: MINTED, reattached: false };
       },
       "review.load": () => {
         // A freshly minted session has no review — the daemon's typed missing signal.
