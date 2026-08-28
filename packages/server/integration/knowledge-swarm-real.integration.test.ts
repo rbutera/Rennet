@@ -68,6 +68,20 @@ import { createKnowledgeSwarmRuntime } from "../src/runtime/knowledge-swarm";
  * cross-cutting synthesis loses reach against a genuinely diverse set. Content
  * variety was deliberately not purchased (~17s per extra slice) because it is
  * not the property under test.
+ *
+ * MEASURED RESULT, 2026-08-28, against Rennet itself (200 partitions) on a
+ * quiet host, `PROOF_EXIT=0`, 3/3 tests passed, run duration 1341s:
+ *
+ *   minted   39 real statements from 6 real slices in 115s, scaled to 1900
+ *   CHUNKED   ok in 1210s — confirmed=1683 rejected=42 crossCutting=61,
+ *             producing a set of 1961 statements, no overflow
+ *   UNBOUNDED failed, reason verbatim: "Prompt is too long"
+ *   SURFACING outcome=snapshot-unavailable narrated on
+ *             `proactive:rehydration` as {note:"Knowledge pass has no fresh
+ *             snapshot", detail:"absent"} — the reason reaches the client
+ *
+ * The A/B is the proof: SAME 1900 statements, SAME live seat, one prompt dies
+ * and thirteen chunks do not.
  */
 
 const LIVE = process.env.RENNET_C22_PROOF === "1";
