@@ -2,7 +2,7 @@ import type { ReattachResult, ReviewAskStreamEvent, TurnStatus } from "@rennet/p
 import type { LucideIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { useRoute, useSearch } from "wouter";
-import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
+import { commandKey, readCommandId, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES, readSessionQuery } from "../routes/url";
@@ -431,9 +431,16 @@ export function useChatDock(): ChatDockModel {
   const { cache } = useBridgeContext();
 
   // A deterministic, stable commandId per review — `review.reattach` is idempotent, so no
-  // uuid churn is needed (unlike a progress-correlated command). A fresh review key remints it.
+  // uuid churn is needed (unlike a progress-correlated command). A fresh review key remints
+  // it. It must nonetheless be a UUID: the wire's `commandIdSchema` is `z.uuid()`, so the
+  // readable `reattach-${reviewId}` this used to send was rejected by the daemon and the
+  // dock's own read came back an error on the real app — the transcript was empty because
+  // it was never served, not because nothing was persisted.
   const reattachInput = useMemo(
-    () => ({ commandId: reviewId ? `reattach-${reviewId}` : "reattach", reviewId: reviewId ?? "" }),
+    () => ({
+      commandId: readCommandId(`review.reattach:${reviewId ?? ""}`),
+      reviewId: reviewId ?? "",
+    }),
     [reviewId],
   );
   const reattachKey = useMemo(() => commandKey("review.reattach", reattachInput), [reattachInput]);

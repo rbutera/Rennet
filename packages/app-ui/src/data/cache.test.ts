@@ -1,5 +1,6 @@
+import { commands } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { CommandCache, commandKey } from "./cache";
+import { CommandCache, commandKey, readCommandId } from "./cache";
 
 // Late-read regressions (C01 review finding 1). A fetch that started BEFORE a mutation
 // invalidated its key must not, on completion, erase that invalidation or clobber state
@@ -91,5 +92,18 @@ describe("CommandCache — late reads never erase invalidation or streamed data"
     expect(cache.getSnapshot(key).data).toBeUndefined();
     cache.invalidate("projects.list");
     expect(cache.getSnapshot(key).stale).toBe(false);
+  });
+
+  // The whole point of `readCommandId`: the wire rejects anything that is not a UUID, so a
+  // readable `load-${slug}` made every session route fail to load on the real app. This is
+  // the check that fails if a hand-written id ever comes back.
+  it("readCommandId is a wire-valid uuid, stable per key and distinct across keys", () => {
+    const first = readCommandId("review.load:abc");
+    expect(readCommandId("review.load:abc")).toBe(first);
+    expect(readCommandId("review.load:xyz")).not.toBe(first);
+    for (const id of [first, "load-abc"]) {
+      const parsed = commands["review.load"].args.safeParse({ commandId: id, reviewId: "abc" });
+      expect(parsed.success).toBe(id === first);
+    }
   });
 });

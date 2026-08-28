@@ -1,5 +1,5 @@
 import type { Review, SidebarSession } from "@rennet/protocol";
-import { useCommand } from "../data";
+import { readCommandId, useCommand } from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Slug resolution — what `/s/:slug` is looking at.
@@ -46,15 +46,17 @@ function isMissingReview(error: unknown): boolean {
 export function useSlugResolution(slug: string): SlugResolution {
   // A commandId DERIVED from the slug, not a fresh uuid: every reader of this slug
   // (the route screen and the chat dock's own reviewId resolution) then shares ONE
-  // cache key and ONE fetch, instead of racing two loads of the same review. Same
-  // shape as `chat-data.ts`'s `reattach-${reviewId}`.
+  // cache key and ONE fetch, instead of racing two loads of the same review. It goes
+  // through `readCommandId` because the wire requires a UUID — a readable `load-${slug}`
+  // is rejected by the daemon, which turned every session route into "Couldn't open this
+  // review" on the real app.
   // An empty slug means "not on a session route" — a caller may still have to run the
   // hooks (they cannot be conditional), so the reads are disabled rather than fired at
   // an id that cannot exist.
   const on = slug !== "";
   const review = useCommand(
     "review.load",
-    { commandId: `load-${slug}`, reviewId: slug },
+    { commandId: readCommandId(`review.load:${slug}`), reviewId: slug },
     { enabled: on },
   );
   const sessions = useCommand("session.list", {}, { enabled: on });

@@ -46,19 +46,19 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
 
 ## 1. Partial-message streaming — make `text.delta` actually arrive (Decision 4)
 
-- [ ] 1.1 `packages/core/src/harness.ts`: add `readonly streamPartialText?: boolean` to `SessionSpec`,
+- [x] 1.1 `packages/core/src/harness.ts`: add `readonly streamPartialText?: boolean` to `SessionSpec`,
   documented as "ask the harness to emit incremental text/thinking frames; absent ⇒ settled messages
   only". Opt-in by design so the pipeline's lens/utility/compose turns keep their exact current frame
   volume. No other core change.
-- [ ] 1.2 `packages/adapters/src/claude-adapter.ts`: add `readonly includePartialMessages?: boolean` to
+- [x] 1.2 `packages/adapters/src/claude-adapter.ts`: add `readonly includePartialMessages?: boolean` to
   `ClaudeQueryOptions`, and thread `spec.streamPartialText` into it in `#buildOptions` (the same
   `...(x === undefined ? {} : { x })` style the neighbouring fields use). Nothing else in the adapter
   changes — the `stream_event` → `text.delta` / `thinking.delta` mapping at `:430-455` is already
   correct.
-- [ ] 1.3 `packages/adapters/src/claude-query.ts`: in `toSdkOptions`, set
+- [x] 1.3 `packages/adapters/src/claude-query.ts`: in `toSdkOptions`, set
   `sdkOptions.includePartialMessages` when the option is present. One line, mirroring the `resume`
   passthrough directly above it.
-- [ ] 1.4 Tests in `claude-query.test.ts` + `claude-adapter.test.ts`: `toSdkOptions` omits the SDK
+- [x] 1.4 Tests in `claude-query.test.ts` + `claude-adapter.test.ts`: `toSdkOptions` omits the SDK
   option by default and sets it when asked; a session created with `streamPartialText: true` driven by
   a fake `queryFn` that yields a `content_block_delta` / `text_delta` `stream_event` frame emits a
   `text.delta` event carrying that text, in order, before `session.ended`. **Positive control (must
@@ -67,11 +67,11 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
 
 ## 2. `onDelta` on the run port + the live orchestrator ask (Decisions 1, 2, 3)
 
-- [ ] 2.1 `packages/core/src/handoff-loop.ts`: add `readonly onDelta?: (text: string) => void` to
+- [x] 2.1 `packages/core/src/handoff-loop.ts`: add `readonly onDelta?: (text: string) => void` to
   `HandoffRunInput`, documented as "each assistant text increment as it arrives; absent ⇒ no streaming
   (the write-handoff path passes none)". `runHandoffTurn` (the checkpoint bracket) is **not** changed
   and never passes it.
-- [ ] 2.2 `packages/adapters/src/handoff-run-live.ts`: in the drain loop, call `input.onDelta?.(event.text)`
+- [x] 2.2 `packages/adapters/src/handoff-run-live.ts`: in the drain loop, call `input.onDelta?.(event.text)`
   on `event.kind === "text.delta"`; and in `createSession`, set `streamPartialText: input.onDelta !== undefined`
   — a caller that supplies a delta sink is asking for deltas, so no second parameter is needed and
   cluster 1's option is consumed exactly where it is wanted. The write-handoff caller passes no
@@ -79,7 +79,7 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
   emitting two `text.delta` events then `session.ended` delivers both, in order, still returns the
   completed `finalText`, and — **positive control** — records `streamPartialText` on the spec only when
   `onDelta` was passed.
-- [ ] 2.3 `packages/server/src/review-ask-live.ts`: `buildOrchestratorAskPrompt(review, question, selection?)`
+- [x] 2.3 `packages/server/src/review-ask-live.ts`: `buildOrchestratorAskPrompt(review, question, selection?)`
   — a review-grounded prompt carrying the reviewer's question, the repository root, the active
   patchset's branch + base/head oids, and the raw diff bounded through the **existing**
   `truncateToBytes` (introduce `ORCHESTRATOR_ASK_DIFF_CEILING`; the orchestrator has real repository
@@ -87,7 +87,7 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
   number). The prompt instructs: answer the question concretely, read the repository when you need to,
   and do NOT commit or push (prompt instruction, not a withheld capability — Decision 3). Fold
   `selection.anchor` / `selection.excerpt` into the prompt when present.
-- [ ] 2.4 `packages/server/src/review-ask-live.ts`: `createLiveOrchestratorAsk(deps)` — the structural
+- [x] 2.4 `packages/server/src/review-ask-live.ts`: `createLiveOrchestratorAsk(deps)` — the structural
   sibling of `createLiveCodexAsk` in the same file. `deps.resolveRunPort(repoRoot): Promise<HandoffRunPort | null>`
   (injected so this stays hermetically testable with fakes — no Electron, no real `claude`). It builds
   the prompt, calls the port once with `{ cwd: review.repositoryRoot, prompt, onDelta?, signal? }`, and
@@ -99,7 +99,7 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
 
   It never throws — the router awaits it, and a throw would sink a "both" ask (the same contract
   `createLiveCodexAsk`'s catch already honours).
-- [ ] 2.5 Tests in `review-ask-live.test.ts` with a fake run port: completed returns the final text
+- [x] 2.5 Tests in `review-ask-live.test.ts` with a fake run port: completed returns the final text
   under `ORCHESTRATOR_ASK_LABEL`; deltas reach `onDelta` in arrival order; a failed outcome surfaces
   the port's real reason; a null port returns the no-harness line; the prompt contains the question and
   the diff and is byte-bounded by the ceiling. **Positive control:** assert the prompt contains a
@@ -109,26 +109,26 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
 
 ## 3. Bind it — delete the canned string (Decision 6, 7)
 
-- [ ] 3.1 `packages/server/src/review-ask-live.ts`: add `askOrchestrator?` to `LiveReviewAskDeps` (same
+- [x] 3.1 `packages/server/src/review-ask-live.ts`: add `askOrchestrator?` to `LiveReviewAskDeps` (same
   optional-dep shape `askCodex` uses) and replace the canned `askOrchestrator` body in
   `createLiveReviewAskPorts` with a delegation to it, passing through `onDelta` / `selection` /
   `abortController` with the same `...(x ? { x } : {})` conditional-spread style the file already uses.
   An absent dep returns the honest no-harness line — never the Board-rebuild sentence. **Delete the
   stale `canvasOps@2` / "gone with the Board rebuild (B2)" comments in this file's header and body;
   they are the camouflage the issue names.**
-- [ ] 3.2 `packages/server/src/create-server.ts`: in the `reviewAsk: createLiveReviewAskPorts({...})`
+- [x] 3.2 `packages/server/src/create-server.ts`: in the `reviewAsk: createLiveReviewAskPorts({...})`
   block (~`:2444`), add the `askOrchestrator` dep, built from `createLiveOrchestratorAsk` with
   `resolveRunPort: async (repoRoot) => { const adapter = await claudeAdapterForRepo(repoRoot); return adapter ? claudeHandoffRunPort(adapter) : null; }`.
   Streaming needs no extra wiring here: task 2.2 turns `streamPartialText` on whenever an `onDelta` is
   passed, and dispatch already passes one for a streaming ask. Update the block's comment to describe
   what it now does.
-- [ ] 3.3 `packages/server/src/create-server.ts`: **delete the dead `agenticPort`** — the field on
+- [x] 3.3 `packages/server/src/create-server.ts`: **delete the dead `agenticPort`** — the field on
   `CodexResolution` (`:492`), all three assignments (`:518`, `:538`, `:560`), and the now-unused
   `CodexAdapter` / `createCodexTurnTransport` / `deriveCodexImplementedEvidence` imports IF nothing else
   consumes them (check first; `transport` and `capabilityEvidence` exist only to build it). If any is
   still used, delete only the field. *This task is droppable if the create-server diff needs to shrink
   for a merge — it changes no behaviour.*
-- [ ] 3.4 `packages/server/src/review-ask-live.test.ts`: the existing "unavailable during the Board
+- [x] 3.4 `packages/server/src/review-ask-live.test.ts`: the existing "unavailable during the Board
   rebuild" assertion must be **deleted because it now fails**. Replace with: the composed ports
   delegate to the injected `askOrchestrator`; orchestrator-only mode never touches Codex (the router
   law, still proven); "both" returns two answers side by side, unmerged. **Positive control: run the
@@ -137,19 +137,19 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
 
 ## 4. The chat dock resolves the live review — `send()` stops being a no-op (Decision 5)
 
-- [ ] 4.1 `packages/app-ui/src/chat/chat-data.ts`: in `useChatDock()`, resolve `reviewId` as
+- [x] 4.1 `packages/app-ui/src/chat/chat-data.ts`: in `useChatDock()`, resolve `reviewId` as
   `projection.reviewId ?? <the route's session slug resolution>`, using `useSlugResolution` from
   `../routes/slug` against the `ROUTES.session` / `ROUTES.sessionRun` match (`useRoute` from `wouter`,
   the same pair `layout.tsx` already matches on). Off a session route ⇒ still `undefined` ⇒ the dock
   stays honestly empty; the context override keeps working so the existing dom tests are unchanged.
   **The edit stays inside `chat/` — do NOT touch `routes/layout.tsx` (merge surface).**
-- [ ] 4.2 Same file: delete the stale header claims. The "B9-GATED (stubbed) … Protocol carries no
+- [x] 4.2 Same file: delete the stale header claims. The "B9-GATED (stubbed) … Protocol carries no
   `session.transcript` read yet" block is **false** — `session.transcript` exists
   (`protocol/src/commands/index.ts:1364`) and is served (`create-server.ts` `transcriptRowsForReview`).
   Rewrite the header to describe what this file actually does now, and correct the
   `SessionTranscriptProjection.reviewId` doc comment ("cluster 7 resolves it from the real route") to
   say it is a test/host override over the live route resolution.
-- [ ] 4.3 A dom test mounting `<ChatDock/>` on a real session route with **NO**
+- [x] 4.3 A dom test mounting `<ChatDock/>` on a real session route with **NO**
   `SessionTranscriptProvider`, asserting typing + send invokes `review.ask` through `MemoryBridge` with
   the route's review id and the typed question (fixtures as `MemoryBridge` only — Track C standing
   law; no component calls `bridge.invoke`). **Positive control: this test must FAIL on `main` today** —
@@ -157,30 +157,30 @@ grep -n "agenticPort" packages/server/src/create-server.ts        # expect: 492/
 
 ## 5. Chat turns survive a reload
 
-- [ ] 5.1 `packages/app-ui/src/chat/chat-data.ts`: `send()` includes an `anchor` on the `review.ask`
+- [x] 5.1 `packages/app-ui/src/chat/chat-data.ts`: `send()` includes an `anchor` on the `review.ask`
   input — `{ kind: "fragment", label: <the question, bounded>, key: threadId }`, the shape
   `conversationAnchorSchema` already carries for "anchors to a message, not code" (no `path`). Without
   it `dispatch/review.ts:204` skips persistence entirely, so a real answer is lost on reload and
   `review.reattach` — the dock's own read — returns empty. No protocol change; no server change.
-- [ ] 5.2 Test: after a completed ask, `review.reattach` for that review returns the thread with the
+- [x] 5.2 Test: after a completed ask, `review.reattach` for that review returns the thread with the
   reviewer's message and the orchestrator's answer. **Positive control:** drop the anchor and the
   reattach comes back empty. Cluster gate green. Commit.
 
 ## 6. E2E, docs, full gate
 
-- [ ] 6.1 An end-to-end test in `packages/server` (sibling of `b11-exits-e2e.test.ts`) driving the real
+- [x] 6.1 An end-to-end test in `packages/server` (sibling of `b11-exits-e2e.test.ts`) driving the real
   `review.ask` dispatch path with a fake harness port: the reviewer's question streams `ask-delta`
   frames, settles with `ask-complete` carrying the final answer, persists, and — with the harness
   resolution returning null — settles with the honest unavailable answer instead. Assert the
   `ask-pending` attention raises and clears, and that a `review.interrupt` mid-turn yields exactly one
   terminal (`ask-interrupted`), so the existing machinery is proven still intact under a live port.
-- [ ] 6.2 **Live E2E, driving the real app** (BUILD-LOOP: UI changes are proven by driving the real
+- [x] 6.2 **Live E2E, driving the real app** (BUILD-LOOP: UI changes are proven by driving the real
   app). Open a review, type a real question in the chat dock, watch tokens stream in, and get a
   grounded answer that references the actual diff. Reload and confirm the exchange is still there.
   **Positive control:** relaunch the daemon with `RENNET_DISABLE_HARNESS=1` and confirm the dock
   reports an honest unavailable answer naming the missing harness — never a plausible-sounding answer,
   never a silent hang. Record the evidence in the commit message; never assert it.
-- [ ] 6.3 Docs in the same change (definition of done). `docs/using/guides/getting-started.md:161,172`
+- [x] 6.3 Docs in the same change (definition of done). `docs/using/guides/getting-started.md:161,172`
   and `docs/using/guides/context-map.md:9,47` already describe asking the orchestrator — they were
   *wrong* against the code and are now right, so verify each claim against the shipped behaviour.
   **Two sentences overstate even after this change** and must be corrected unless cluster 7 lands:

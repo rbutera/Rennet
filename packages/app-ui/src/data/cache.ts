@@ -33,6 +33,33 @@ export function commandKey<K extends CommandName>(name: K, input: CommandInput<K
   return `${name}${SEP}${stableStringify(input)}`;
 }
 
+/**
+ * One stable, protocol-valid `commandId` per read key.
+ *
+ * Two constraints meet here and a hand-written id satisfies neither. The wire's
+ * `commandIdSchema` is `z.uuid()`, so a readable id like `load-${slug}` is REJECTED by
+ * the daemon — that is exactly how every `/s/:slug` rendered "Couldn't open this review"
+ * and the chat dock read an empty transcript on the real app (found driving it, F1 6.2).
+ * And a read's cache key includes its whole input, so the id must be STABLE per key or a
+ * re-render remints the entry and two readers of one thing fetch twice.
+ *
+ * The map is module-level for that second reason: the session route screen and the chat
+ * dock derive the SAME id for the same review, so they share one entry — the property
+ * `slug.ts` and `chat-data.ts` both document. Same shape as the per-project run ids in
+ * `indexing-view.tsx` / `project-processing.tsx`, which needed a stable valid id first.
+ *
+ * ponytail: unbounded map keyed by review/session id; bound it if a client ever holds
+ * enough distinct reads for the retention to matter.
+ */
+const readCommandIds = new Map<string, string>();
+export function readCommandId(key: string): string {
+  const existing = readCommandIds.get(key);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  readCommandIds.set(key, created);
+  return created;
+}
+
 /** The immutable snapshot a reader sees for one key. `fetching` is the in-flight flag; a
  *  hook derives `pending` (no data or error yet) from `data`/`error`. */
 export interface QueryState<T> {
