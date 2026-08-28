@@ -43,6 +43,36 @@ function createDeferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 }
 
 describe("DirectoryBrowser", () => {
+  it("keeps what the user typed while the opening listing was still in flight", async () => {
+    // The opening load is asynchronous. Someone who opens the browser and starts typing
+    // immediately used to have their text replaced by the home directory when it landed —
+    // input accepted and then silently discarded. Found by an e2e drive that filled the
+    // path bar faster than the first listing resolved.
+    const opening = createDeferred<{ result: FsListDirResult }>();
+    const bridge = {
+      invoke: async (name: string) => (name === "fs.listDir" ? opening.promise : {}),
+    } as unknown as RennetBridge;
+    const { container } = mount(<DirectoryBrowser bridge={bridge} onPathChange={vi.fn()} />);
+
+    const bar = container.querySelector("input") as HTMLInputElement;
+    fireEvent.change(bar, { target: { value: "/home/rai/dev/rennet" } });
+    await act(async () => {
+      opening.resolve({ result: home });
+    });
+
+    expect(bar.value).toBe("/home/rai/dev/rennet");
+  });
+
+  it("still normalises the bar to the resolved path when the user has NOT typed", async () => {
+    // The other direction: without an edit, the load must still fill the bar, or the
+    // browser opens showing nothing and the fix above would have broken the common case.
+    const { bridge } = fakeBridge({ "": home });
+    const { container } = mount(<DirectoryBrowser bridge={bridge} onPathChange={vi.fn()} />);
+
+    await screen.findByText("dev");
+    expect((container.querySelector("input") as HTMLInputElement).value).toBe("/home/rai");
+  });
+
   it("lists the home dir on mount and descends on click", async () => {
     const onPathChange = vi.fn();
     const { bridge } = fakeBridge({
