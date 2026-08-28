@@ -142,7 +142,7 @@ are exactly that. Recorded here in the style of the 3.1 re-ruling; scope is unch
   daemon-settings + wire snapshots are already bumping on this branch, so this rides along.
   **Positive control:** toggle a forge off on a host → re-read → it reads back disabled; a host with
   no ruling reads enabled-by-default. Delete the now-false gap note in `live-projection.tsx`.
-- [ ] A.2 **AMENDMENT B — `sourceControlByHost` covers only the CONNECTED host (implement WITH
+- [x] A.2 **AMENDMENT B — `sourceControlByHost` covers only the CONNECTED host (implement WITH
   cluster 6, NOT this session).** `forge.detect` is single-host by construction (it answers for the
   daemon it is dispatched to), so cluster 4.1 keys its rows to the `isLocal` section alone. Every
   other card's Source Control section is therefore structurally unfillable: a WSL distro with its
@@ -155,6 +155,11 @@ are exactly that. Recorded here in the style of the 3.1 re-ruling; scope is unch
   absence rather than inheriting this machine's `gh`. The client then keys `sourceControlByHost` by
   `source` for every asked host. `forge.detect` itself stays (the front door reads it).
   The cluster-7 E2E will expect this. Cluster 6's session owns it.
+  **Landed:** `forge.hosts` + `SettingsComposition.forgeHosts()` over the same `daemonHostSections`
+  walk, `detectForgesOn` in create-server (local direct; `wsl:<distro>` through the new
+  `wslForgeDetectionDeps`, which runs `gh --version` / `gh auth status` INSIDE the distro;
+  `remote:` not at all), and the client keys `sourceControlByHost` by `source` for every asked
+  host. `forge.detect` untouched.
 
 ## 5. Reconnect (#533) — wire the button to a real re-handshake
 
@@ -174,35 +179,39 @@ are exactly that. Recorded here in the style of the 3.1 re-ruling; scope is unch
 
 ## 6. Update Daemon (#534) — wire the button to a real update
 
-- [ ] 6.1 A daemon self-update operation + the real update-available detection that gates the button (cluster
+- [x] 6.1 A daemon self-update operation + the real update-available detection that gates the button (cluster
   2.3 feeds `updateAvailable`). A command that triggers the daemon's update mechanism (or surfaces the real
   one) and returns an honest outcome. Where no update mechanism exists for a host, the button does not show
   (cluster 2.3 already withholds the flag) — never a dead "Updating…" that lies.
-- [ ] 6.2 `host-card.tsx`: give the Update Daemon button its `onClick` — dispatch the update, show "Updating
+- [x] 6.2 `host-card.tsx`: give the Update Daemon button its `onClick` — dispatch the update, show "Updating
   the daemon…" in-flight (disabled while pending), and on resolution show the honest outcome (updated to v…,
   or a failure line). Threaded through the projection seam.
-- [ ] 6.3 DOM test: with `updateAvailable` set, clicking Update Daemon shows "Updating the daemon…" then the
+- [x] 6.3 DOM test: with `updateAvailable` set, clicking Update Daemon shows "Updating the daemon…" then the
   honest outcome; **positive control:** a failing update shows a failure line, not a fake success; a host with
   no update mechanism shows no button at all. Cluster gate green. Commit.
+  **Mechanism note:** `ensureWslDaemon` IS the update for `wsl:<distro>` (deliver this daemon's
+  own bundle, restart the version-skew daemon); `spawnDaemon` passes that bundle as
+  `--host-bundle` so the daemon knows what to deliver. `local` / `remote:` have no mechanism and
+  say why — `update` never falls back to `probeDaemon`, which would read green on the OLD version.
 
 ## 7. Packet verification — E2E + positive controls + docs, full gate
 
-- [ ] 7.1 E2E against this machine (drive the real app / real daemon, evidence shown, not asserted):
+- [x] 7.1 E2E against this machine (drive the real app / real daemon, evidence shown, not asserted):
   detection finds the real `claude` CLI and the real `gh` forge CLI with their **true** versions; an
   unreachable host renders unreachable with its last-seen version rather than blank chrome; Reconnect and
   Update Daemon perform real operations with honest in-flight + outcome states.
-- [ ] 7.2 The packet positive control (must be able to fail): **rename a detected binary out of `PATH`** (e.g.
+- [x] 7.2 The packet positive control (must be able to fail): **rename a detected binary out of `PATH`** (e.g.
   `gh` or `claude`) and its row **honestly disappears** rather than reporting a stale hit; restore it and the
   row returns. Run it, see the row vanish, revert. Plus the per-cluster controls: forge `not-installed` on
   absent binary (1.4), unreachable-invents-no-version (2.4), per-host agent absence (3.3), rejected-read
   empty section (4.3), reconnect-failure-not-green (5.3), update-failure-not-green (6.3) — confirm each
   genuinely fails when its invariant is broken (flip once, see red, revert).
-- [ ] 7.3 Docs (definition of done): update `docs/developing/guides/settings-and-setup.md` (and any
+- [x] 7.3 Docs (definition of done): update `docs/developing/guides/settings-and-setup.md` (and any
   Environments / host-detection page — grep `docs/` excl. `docs/dist`) with the per-host detection model
   (host cards, source-control via the forge seam, agents + per-host toggle) and the live Reconnect / Update
   Daemon actions. State the **#484 planning boundary** where forges are named: GitHub / `gh` is the only forge
   built; GitLab / Bitbucket are planned, not shipped. Do not narrate the v4.2 removal history (reader-facing
   docs describe current Rennet).
-- [ ] 7.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new
+- [x] 7.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new
   packages**, not assume — lint, typecheck, test, build). Commit. Output the completion sigil
   `<promise>C17-COMPLETE</promise>`. **BUILD-STATUS.json is flipped by `main`, not this agent** (per dispatch).
