@@ -140,6 +140,50 @@ export const RoundRecordSchema = z.object({
 });
 export type RoundRecord = z.infer<typeof RoundRecordSchema>;
 
+// ── Live round progress (C15 3.1) — the folded-progress wire ─────────────────
+//
+// The run machine (`app-ui/src/rounds/round-machine.ts`) is a pure fold over these
+// events. They are DEFINED HERE, not in the client, because both ends speak them: the
+// server emits them as a round really runs (prep → worker → gate → commit → report →
+// lenses → composed), and the client folds them through `advance`. The machine's
+// `RoundEvent`/`LaneRow` types are re-exports of these — one definition, so the wire and
+// the reducer cannot drift.
+//
+// Each event carries the current SNAPSHOT of its group's rows (not a delta), so a
+// duplicate or re-ordered frame just re-states rows the fold already holds.
+
+/** A live progress row's status — the run route's queued / spinner / check, as data. */
+export const RowStatusSchema = z.enum(["queued", "running", "done", "failed"]);
+export type RowStatus = z.infer<typeof RowStatusSchema>;
+
+/** One streamed progress row (a prep step, a worker turn, a lens drafter). */
+export const LaneRowSchema = z.object({
+  id,
+  label: z.string(),
+  detail: z.string().optional(),
+  status: RowStatusSchema,
+});
+export type LaneRow = z.infer<typeof LaneRowSchema>;
+
+/**
+ * One folded round-progress event. The server emits these from REAL round progress —
+ * never a clock — and the client's `advance` walks the phases off them. `failed` is the
+ * terminal arm: a crashed worker or a broken regeneration emits it, so a stalled round
+ * surfaces as a failure rather than silence.
+ */
+export const RoundEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("dispatched") }),
+  z.object({ type: z.literal("prep"), rows: z.array(LaneRowSchema) }),
+  z.object({ type: z.literal("worker"), rows: z.array(LaneRowSchema) }),
+  z.object({ type: z.literal("gate") }),
+  z.object({ type: z.literal("committed") }),
+  z.object({ type: z.literal("report"), reportBoardId: id }),
+  z.object({ type: z.literal("lens"), lanes: z.array(LaneRowSchema) }),
+  z.object({ type: z.literal("composed"), generation: id }),
+  z.object({ type: z.literal("failed"), reason: z.string() }),
+]);
+export type RoundEvent = z.infer<typeof RoundEventSchema>;
+
 /**
  * The chat dock's header trail (C07) — the session's identity line. Honest-minimal:
  * the coding transcript lives in the harness, so this carries only the identity facts

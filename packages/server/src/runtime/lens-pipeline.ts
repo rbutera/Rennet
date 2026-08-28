@@ -10,6 +10,7 @@ import {
   type DeltaPacket,
   type HarnessPort,
   type HarnessTurnResult,
+  isCarriedForward,
   type LintContext,
   type LintHunk,
   type LintTarget,
@@ -440,6 +441,14 @@ export interface BoardArrivalEvent {
   readonly boardId: string;
   /** The frozen element count — a cheap "this board is ready" signal for the reveal. */
   readonly elementCount: number;
+  /**
+   * Did this board CARRY FORWARD — the regeneration changed none of its sections?
+   * (C15 3.3.) Read straight off the delta stamps `stampDeltas` just wrote via
+   * {@link isCarriedForward}, so the live progress channel's "carrying forward" lane
+   * label and the board's own section markers are the SAME signal and cannot disagree.
+   * Always `false` on a first generation (nothing to carry from).
+   */
+  readonly carried: boolean;
 }
 
 /**
@@ -739,6 +748,9 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         lens: o.lens,
         boardId: o.boardId,
         elementCount: o.board.elements.length,
+        // C15 3.3: the carried signal rides the arrival so the live lane label is the
+        // SAME `stampDeltas` fact the section markers render — not a re-derivation.
+        carried: isCarriedForward(deps.previous?.get(o.lens), o.board),
       });
     }
   }
@@ -811,7 +823,12 @@ async function runRoundReport(
   }
   // The report is the reviewer's greeting (R58) — it announces its arrival inline,
   // ahead of the lens boards, once its write is accepted and its metadata is durable.
-  deps.onBoardArrival?.({ lens: "report", boardId, elementCount: stamped.elements.length });
+  deps.onBoardArrival?.({
+    lens: "report",
+    boardId,
+    elementCount: stamped.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), stamped),
+  });
 
   return {
     lens: "report",

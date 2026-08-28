@@ -57,6 +57,7 @@ function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close
     onProgress: supervisor.onProgress.bind(supervisor),
     onProjectDetailProgress: supervisor.onProjectDetailProgress.bind(supervisor),
     onAskStream: supervisor.onAskStream.bind(supervisor),
+    onRoundProgress: supervisor.onRoundProgress.bind(supervisor),
     platform: preload.platform,
     version: preload.version,
     // App-binary update readiness rides every target like the platform residue — the

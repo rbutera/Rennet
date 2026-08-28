@@ -66,6 +66,7 @@ function createConnection(target: ConnectionTarget): Connection {
     onProgress: supervisor.onProgress.bind(supervisor),
     onProjectDetailProgress: supervisor.onProjectDetailProgress.bind(supervisor),
     onAskStream: supervisor.onAskStream.bind(supervisor),
+    onRoundProgress: supervisor.onRoundProgress.bind(supervisor),
     close: () => supervisor.close(),
   };
   return {

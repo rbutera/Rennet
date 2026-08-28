@@ -182,6 +182,29 @@ function sectionDelta(
  * never mutates the input. Non-section elements pass through untouched, so
  * verbatim carry on every other kind is automatic.
  */
+/**
+ * Did this lens CARRY FORWARD — i.e. did the regeneration change none of its sections?
+ * (C15 3.3, a hard constraint: the live progress channel's lens-level "carrying forward"
+ * lane label must derive from the SAME signal as the section markers, never a cheaper
+ * heuristic. A lane that read "carrying forward" over sections that actually changed
+ * would be a lie in the UI.)
+ *
+ * It reads the stamps {@link stampDeltas} WROTE, so it cannot diverge from them: carried
+ * iff a prior generation exists and no section on the stamped board carries a `new` or
+ * `reworked` delta. A first generation (`previous === undefined`) is never "carried" —
+ * there is nothing to carry from, and every section is stamped `new` anyway.
+ *
+ * ponytail: section REMOVAL is invisible to the stamps (they are keyed on the current
+ * board's sections), so a generation that only deleted a section reads carried. Fixing
+ * that means widening `stampDeltas` itself — do it there, once, if removals ever matter.
+ */
+export function isCarriedForward(previous: DraftBoard | undefined, stamped: DraftBoard): boolean {
+  if (previous === undefined) return false;
+  return !stamped.elements.some(
+    (el) => el.kind === "section" && (el.data as { delta?: unknown }).delta !== undefined,
+  );
+}
+
 export function stampDeltas(previous: DraftBoard | undefined, current: DraftBoard): DraftBoard {
   const elements: DraftElement[] = current.elements.map((el) => {
     if (el.kind !== "section") return el;

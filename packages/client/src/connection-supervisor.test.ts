@@ -4,6 +4,7 @@ import type {
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   ReviewAskStreamEvent,
+  RoundEvent,
 } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type WebSocket as NodeWebSocket, WebSocketServer } from "ws";
@@ -52,6 +53,13 @@ class FakeBridge implements SupervisedBridge {
   }
   onAskStream(reviewId: string, listener: (e: ReviewAskStreamEvent) => void): () => void {
     return add(this.askListeners, reviewId, listener);
+  }
+  readonly roundListeners = new Map<string, Set<(e: RoundEvent) => void>>();
+  onRoundProgress(reviewId: string, listener: (e: RoundEvent) => void): () => void {
+    return add(this.roundListeners, reviewId, listener);
+  }
+  emitRound(reviewId: string, event: RoundEvent): void {
+    for (const l of this.roundListeners.get(reviewId) ?? []) l(event);
   }
   onProgress(commandId: string, listener: (e: ProjectProcessEvent) => void): () => void {
     return add(this.progressListeners, commandId, listener);

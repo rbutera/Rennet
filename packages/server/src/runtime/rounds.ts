@@ -48,9 +48,11 @@ import {
   type ComposedHandoffBundle,
   type DraftBoard,
   type Generation,
+  type LaneRow,
   LENS_KINDS,
   type LensKind,
   ROUND_NO_REGEN,
+  type RoundEvent,
   type RoundRecord,
   type SessionModel,
 } from "@rennet/protocol";
@@ -67,6 +69,62 @@ import {
 
 /** The boards one round drafts: the five lenses plus the round-report seat. */
 const LINT_TARGETS: readonly LintTarget[] = [...LENS_KINDS, "report"];
+
+/** The regeneration block's lane label per lens — the reviewer's name for the drafter. */
+const LENS_LANE_LABEL: Record<LensKind, string> = {
+  design: "Design",
+  sequence: "Sequence",
+  decisions: "Decisions",
+  flagged: "Flagged",
+  noise: "Noise",
+};
+
+/**
+ * The per-lens regeneration lanes (C15 3.1/3.3) — the live block the round greeting
+ * renders beneath the report. Lanes are held as a SNAPSHOT and re-emitted whole on every
+ * change, matching the `lens` event's snapshot contract (a duplicate or re-ordered frame
+ * just re-states rows the client already folded).
+ *
+ * The pipeline drafts the lenses in `LENS_KINDS` order, one at a time, so "this lens
+ * finished" (its board meta persists) is also "the next lens started" — the sequence is
+ * read off the real run, never guessed from a clock.
+ */
+function createRegenerationLanes(emit: (lanes: readonly LaneRow[]) => void) {
+  const lanes = new Map<LensKind, LaneRow>(
+    LENS_KINDS.map((lens) => [lens, { id: lens, label: LENS_LANE_LABEL[lens], status: "queued" }]),
+  );
+  const snapshot = (): readonly LaneRow[] => [...lanes.values()];
+  const set = (lens: LensKind, patch: Partial<LaneRow>): void => {
+    const current = lanes.get(lens);
+    if (current !== undefined) lanes.set(lens, { ...current, ...patch });
+  };
+  return {
+    /** The first drafter is under way (the report gated the regeneration and landed). */
+    start(): void {
+      const first = LENS_KINDS[0];
+      if (first !== undefined) set(first, { status: "running" });
+      emit(snapshot());
+    },
+    /** A lens board's draft landed; the next lens in the pipeline's order is now running. */
+    drafted(lens: LensKind): void {
+      set(lens, { status: "done" });
+      const next = LENS_KINDS[LENS_KINDS.indexOf(lens) + 1];
+      if (next !== undefined && lanes.get(next)?.status === "queued")
+        set(next, { status: "running" });
+      emit(snapshot());
+    },
+    /**
+     * A lens board ARRIVED, carrying its delta verdict. **C15 3.3 (hard constraint):**
+     * `carried` is the pipeline's `isCarriedForward` read of the stamps `stampDeltas`
+     * wrote — the SAME signal the board's own section markers render. A lens whose
+     * sections changed therefore CANNOT read "carrying forward"; it reads "reworked".
+     */
+    arrived(lens: LensKind, carried: boolean): void {
+      set(lens, { status: "done", detail: carried ? "carrying forward" : "reworked" });
+      emit(snapshot());
+    },
+  };
+}
 
 /** B08's `BoardMeta` tagged with the durable idempotency linkage (B09 F1): the
  *  (session, patchset generation) that drafted the board. The composition root
@@ -133,6 +191,14 @@ export interface RoundInput {
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
+  /**
+   * The live round-progress sink (C15 3.1) — where this round's REAL regeneration
+   * progress goes: the round-report's arrival, each lens drafter starting and finishing,
+   * the carried/reworked verdict per lens, the minted generation, and a terminal failure.
+   * The caller (the composition root) owns the transport; this runtime owns only the
+   * mapping from pipeline callbacks to events. Absent ⇒ no live channel, same round.
+   */
+  readonly onProgress?: (event: RoundEvent) => void;
   readonly reviewDraftLintCtx?: RegisterLintContext;
   readonly curationFeedback?: string;
   readonly signal?: AbortSignal;
@@ -320,6 +386,35 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const composeTurn = deps.composeTurn?.(input.repoRoot);
     const persistBoardMeta = deps.persistBoardMeta;
 
+    // ── The live progress mapping (C15 3.1) ──
+    // Two pipeline callbacks carry the real regeneration timeline: `persistBoardMeta`
+    // fires as each board's draft lands (per-lens progress, in order), and
+    // `onBoardArrival` fires once the board is announced — the report inline and ahead
+    // of the lenses, the lenses together after cross-lens coverage, each carrying its
+    // delta verdict. Both are wrapped here so the round's own sink sees them without the
+    // pipeline learning about the wire.
+    const onProgress = input.onProgress;
+    const lanes =
+      onProgress === undefined
+        ? undefined
+        : createRegenerationLanes((rows) => onProgress({ type: "lens", lanes: [...rows] }));
+    const runtimeArrival = deps.onBoardArrival;
+    const onBoardArrival =
+      runtimeArrival === undefined && lanes === undefined
+        ? undefined
+        : (event: BoardArrivalEvent): void => {
+            runtimeArrival?.(event);
+            if (lanes === undefined || onProgress === undefined) return;
+            if (event.lens === "report") {
+              // The report is the greeting: it announces FIRST, and the reviewer reads it
+              // while the lens drafters below keep running (C1/C6 — the surface never locks).
+              onProgress({ type: "report", reportBoardId: event.boardId });
+              lanes.start();
+              return;
+            }
+            lanes.arrived(event.lens, event.carried);
+          };
+
     const pipeline = await runLensPipeline({
       claudePort,
       codexExecutor,
@@ -330,20 +425,24 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       readPrompt: deps.readPrompt,
       whiteboard: new WhiteboardClient(boards.service),
       boardIdFor,
-      ...(deps.onBoardArrival === undefined ? {} : { onBoardArrival: deps.onBoardArrival }),
-      ...(persistBoardMeta === undefined
+      ...(onBoardArrival === undefined ? {} : { onBoardArrival }),
+      ...(persistBoardMeta === undefined && lanes === undefined
         ? {}
         : {
             // Tag each board's meta with the (session, generation) that drafted it,
             // so the durable idempotency read can recognize this generation after a
             // restart (B09 F1). The pipeline's pure logic is untouched — this
-            // composition wrapper adds the linkage.
-            persistBoardMeta: (meta: BoardMeta) =>
-              persistBoardMeta(input.repoRoot, {
+            // composition wrapper adds the linkage, and (C15 3.1) marks the lens's
+            // lane done: a board's meta persists the moment its draft lands, which is
+            // the real per-lens progress the reveal block streams.
+            persistBoardMeta: (meta: BoardMeta) => {
+              if (meta.lens !== "report") lanes?.drafted(meta.lens);
+              return persistBoardMeta?.(input.repoRoot, {
                 ...meta,
                 session: input.session.id,
                 generation: boardGeneration.id,
-              }),
+              });
+            },
           }),
       ...(input.previous === undefined ? {} : { previous: input.previous }),
       ...(composeTurn === undefined ? {} : { composeTurn }),
@@ -414,6 +513,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const frozenPrevious = landed ? freezeGeneration(input.previousGeneration) : undefined;
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
 
+    // The round composed (C15 3.1): the terminal event the run machine gates **View the
+    // New Boards** on. Emitted with the generation the reveal lands on, so the control
+    // appears at real composition — never as a disabled button waiting for a flag.
+    input.onProgress?.({ type: "composed", generation: liveSuccessor.id });
+
     return {
       record,
       boardGeneration: liveSuccessor,
@@ -422,9 +526,25 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     };
   }
 
+  /** `runOnce`, with the round's live channel closed HONESTLY on a throw: a regeneration
+   *  that dies emits a terminal `failed` rather than leaving the run machine mid-phase
+   *  forever (a silent stall reads as "still working", which is a lie). The error still
+   *  propagates — the caller decides what a failed regeneration means. */
+  async function runOnceReported(input: RoundInput): Promise<RoundOutcome> {
+    try {
+      return await runOnce(input);
+    } catch (error) {
+      input.onProgress?.({
+        type: "failed",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
   return {
     runRound(input: RoundInput): Promise<RoundOutcome> {
-      return enqueue(input.session.id, () => runOnce(input));
+      return enqueue(input.session.id, () => runOnceReported(input));
     },
     dispatchRound(input: RoundDispatchInput): Promise<void> {
       return enqueue(input.session.id, async () => {

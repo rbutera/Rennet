@@ -14,7 +14,7 @@ import type {
   UiVerification,
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
-import type { AttentionEventFrame } from "./session";
+import type { AttentionEventFrame, RoundEvent } from "./session";
 
 const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
 
@@ -2381,6 +2381,15 @@ export interface RennetBridge {
    * channel omits it, and a subscriber degrades to the command's final resolved value.
    */
   onAskStream?(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /**
+   * Subscribe to a review's live ROUND progress (C15 3.1), keyed by `reviewId` — a slug
+   * IS a review id, so the run route subscribes with the id it already holds, and the
+   * subscription outlives any single `invoke` (a round runs long past the dispatch that
+   * started it). Each event is a folded snapshot the run machine's `advance` consumes.
+   * Optional: a bridge without a push channel omits it, and a subscriber degrades to the
+   * `session.roundEvents` read alone — the round still resolves, just not live.
+   */
+  onRoundProgress?(reviewId: string, listener: (event: RoundEvent) => void): () => void;
   /**
    * Subscribe to daemon attention events (#383): `raised` / `cleared` frames that keep a
    * client's needs-you set live. Daemon-wide (not keyed by review). Returns an unsubscribe.

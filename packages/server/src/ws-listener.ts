@@ -33,6 +33,7 @@ import type {
   ProjectProcessEvent,
   ProjectProgressEvent,
   ReviewAskStreamEvent,
+  RoundEvent,
   SessionFrame,
 } from "@rennet/protocol";
 import {
@@ -239,6 +240,14 @@ export interface WsListener {
    * variant; `pairing-only` is excluded. A reconnecting client rehydrates via `ask.read`.
    */
   broadcastAskProjection(sessionId: string, projection: AskProjection): void;
+  /**
+   * Fan one live round-progress event out, keyed by the review whose round is running
+   * (C15 3.1). Same per-class fan-out as the ask projection: `private` (loopback) sockets
+   * receive the raw event, `projected` sockets the blanket-scrubbed variant (a lane row's
+   * `label`/`detail` are free text), and `pairing-only` is excluded. A reconnecting client
+   * rehydrates via `session.roundEvents`.
+   */
+  broadcastRoundProgress(reviewId: string, event: RoundEvent): void;
   /**
    * Ask ONE connection a question and resolve with its answer (issue #380, wire only).
    * Rejects if the connection is unknown or drops before answering. A `serverRequestResolved`
@@ -815,6 +824,43 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     }
   };
 
+  // Live round progress (C15 3.1): fan one real progress event out per-class, exactly as
+  // the ask projection does. A lane row's `label`/`detail` are free text authored server-
+  // side, so the blanket root/home scrub is what a projected connection gets — no raw host
+  // path can ride a lane label to a remote device. `pairing-only` is excluded.
+  const broadcastRoundProgress = (reviewId: string, event: RoundEvent): void => {
+    const rawPayload = JSON.stringify({
+      type: "roundProgress",
+      reviewId,
+      event,
+    } satisfies SessionFrame);
+    let projectedPayload: string | null = null;
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      if (connection.connectionClass === "projected") {
+        if (projectedPayload === null) {
+          projectedPayload = JSON.stringify({
+            type: "roundProgress",
+            reviewId,
+            event: scrubProjectedValue(event, contextOf()) as RoundEvent,
+          } satisfies SessionFrame);
+        }
+        try {
+          connection.socket.send(projectedPayload);
+        } catch {
+          // One bad socket must not starve the rest of the fan-out.
+        }
+      } else if (connection.connectionClass === "private") {
+        try {
+          connection.socket.send(rawPayload);
+        } catch {
+          // Same isolation for the raw path.
+        }
+      }
+    }
+  };
+
   // Broadcast a review's ask-stream delta to every live authorized socket by `reviewId`
   // (issue #389 server half). This is the read-side twin of `broadcastProgress`, and it is
   // what lets a mid-turn reconnect keep the live stream flowing to the fresh socket.
@@ -1008,6 +1054,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     broadcastProgress,
     broadcastBoardEvent,
     broadcastAskProjection,
+    broadcastRoundProgress,
     askConnection,
     raiseAttention,
     acknowledgeAttention,
