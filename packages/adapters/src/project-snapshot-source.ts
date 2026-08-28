@@ -147,6 +147,41 @@ export async function listTree(
   return files;
 }
 
+/**
+ * Line counts for every TEXT file in the tree at `oid`, as `path → lines`.
+ *
+ * This is the inventory a citation resolves against when the citing seat read
+ * BEYOND the diff (W5): board lint needs "does `<path>` exist at the review
+ * commit, and does `<start>-<end>` fit inside it?" for the whole tree, not only
+ * the changed files. One `git grep -c` pass answers it for the whole repo in
+ * milliseconds (~80 ms over Rennet's 2.4k files) — every line matches the empty
+ * pattern, so the match count IS the line count.
+ *
+ * `-I` skips binaries (which have no lines to cite) and `-z` writes the count
+ * after a NUL so a path containing `:` still parses. Records are `<oid>:<path>\0<n>`.
+ * A tree with no text files at all makes `git grep` exit 1; that surfaces as a
+ * throw, and the caller degrades to the diff-derived inventory.
+ */
+export async function listTreeLineCounts(
+  root: string,
+  oid: string,
+  git: GitExec = execaGit,
+): Promise<Map<string, number>> {
+  const output = await git(root, ["grep", "-I", "-c", "-z", "-e", "", oid, "--"], { reject: true });
+  const counts = new Map<string, number>();
+  const prefix = `${oid}:`;
+  for (const record of output.split("\n")) {
+    const nul = record.indexOf("\0");
+    if (nul === -1) continue;
+    const qualified = record.slice(0, nul);
+    if (!qualified.startsWith(prefix)) continue;
+    const lines = Number.parseInt(record.slice(nul + 1), 10);
+    if (Number.isNaN(lines)) continue;
+    counts.set(qualified.slice(prefix.length), lines);
+  }
+  return counts;
+}
+
 /** Read a blob's UTF-8 text by its OID at the pinned tree. */
 export async function readBlobText(
   root: string,

@@ -109,19 +109,42 @@ function baseFileInventory(files: readonly PatchFile[]): Map<string, number> {
 }
 
 /**
+ * The FULL tree inventories at the review commit — `path → line count` for every
+ * text file at head, and the same at base. Read from git by the composition root
+ * ({@link BoardRegenerationDeps.fileInventory}); absent when git could not answer.
+ */
+export interface TreeInventories {
+  readonly head: ReadonlyMap<string, number>;
+  readonly base: ReadonlyMap<string, number>;
+}
+
+/**
  * Build the per-lens `lintContextFor` the round pipeline calls once per board. The
  * hunk list + file inventories + patchsetId are the SAME for every lens (a board
  * of any lens may cite or skip any patchset hunk — `ctx.hunks` gates skip
  * resolution and taught/skipped coherence, not a per-lens partition); only
  * `ctx.lens` varies. `scaffoldGlobs` is left to the lint default. Pure — returns a
  * `(lens) => LintContext` closure over the derived universe.
+ *
+ * W5 — grounding is the WHOLE TREE, not the diff. Drafters are free to read past
+ * the changed files, and a drafter that does so cites what it read. Grounding the
+ * `citation-resolves` rule on `patchset.files` alone made every such citation
+ * unresolvable, so the pipeline DELETED correct work with no signal to the seat
+ * that wrote it. `tree`, when the caller could read it, is the real inventory at
+ * the review commit and takes precedence: it carries a file's true line count,
+ * where the patch can only bound the extent its own hunks reach. The diff-derived
+ * maps stay underneath as the honest degrade when git could not answer, and they
+ * still cover a file the tree read skipped (a patch text git calls binary).
+ * Citations must still RESOLVE — this widens where they may point, never whether
+ * they must land.
  */
 export function buildLintContextFor(
   patchset: Patchset,
   hunks: readonly LintHunk[],
+  tree?: TreeInventories,
 ): (lens: LintTarget) => LintContext {
-  const files = new Map(headFileInventory(patchset.files));
-  const baseFiles = new Map(baseFileInventory(patchset.files));
+  const files = new Map([...headFileInventory(patchset.files), ...(tree?.head ?? [])]);
+  const baseFiles = new Map([...baseFileInventory(patchset.files), ...(tree?.base ?? [])]);
   return (lens: LintTarget): LintContext => ({
     lens,
     hunks,
@@ -152,6 +175,9 @@ export function assembleRoundCollation(input: {
   knowledge: KnowledgeSet;
   dossier: readonly DossierItem[];
   successorAccount?: SuccessorAccount;
+  /** The full head/base tree inventories citations resolve against (W5). Absent ⇒
+   *  the diff-derived inventories alone (the honest degrade). */
+  tree?: TreeInventories;
 }): RoundCollation {
   const deltaPacket = buildDeltaPacket(
     input.patchset,
@@ -160,7 +186,7 @@ export function assembleRoundCollation(input: {
     input.successorAccount,
   );
   const hunks = toLintHunks(deltaPacket.hunks, input.patchset.files);
-  const lintContextFor = buildLintContextFor(input.patchset, hunks);
+  const lintContextFor = buildLintContextFor(input.patchset, hunks, input.tree);
   return { deltaPacket, hunks, lintContextFor };
 }
 
@@ -230,6 +256,11 @@ export interface BoardRegenerationDeps {
   /** The REAL prior generation + its drafted boards, or `undefined` for a first generation
    *  ({@link readPriorGeneration} over the durable stores in production). */
   readonly priorGeneration: (generationId: string) => Promise<PriorGeneration | undefined>;
+  /** The FULL head/base tree inventories at the review commit, for citation grounding
+   *  (W5). A drafter is free to read past the diff, so lint must be able to resolve a
+   *  citation past the diff. Rejecting/throwing degrades to the diff-derived
+   *  inventories rather than failing the regeneration. */
+  readonly fileInventory?: (patchset: Patchset) => Promise<TreeInventories>;
   readonly runRound: (input: RoundInput) => Promise<unknown>;
   /** The live round-progress sink — the same channel the dispatch half emits on. */
   readonly emit: (event: RoundEvent) => void;
@@ -276,6 +307,10 @@ export async function runBoardRegeneration(
     // content-derived, so this is the honest test: a turn that committed no net change
     // re-reports against the existing generation instead of minting a hollow successor.
     const landed = successor.id !== input.priorPatchsetId;
+    // The whole-tree citation grounding (W5). Best-effort by design: a tree git
+    // could not read still drafts — on the diff-derived inventories, the behaviour
+    // before this change — rather than sinking the round over a lint input.
+    const tree = await deps.fileInventory?.(successor).catch(() => undefined);
     const collation = assembleRoundCollation({
       patchset: successor,
       knowledge: deps.knowledgeFor(successor),
@@ -283,6 +318,7 @@ export async function runBoardRegeneration(
       // honest — the drafters simply have no tracker items inlined this round.
       dossier: [],
       ...(review.successorAccount ? { successorAccount: review.successorAccount } : {}),
+      ...(tree === undefined ? {} : { tree }),
     });
     // The lineage this round ACTUALLY has. A prior generation counts only if it was really
     // minted and persisted; otherwise this is a first generation and says so — no

@@ -1,5 +1,6 @@
-import { buildHunkIndex, taughtHunkIds } from "@rennet/core";
+import { buildHunkIndex, lint, taughtHunkIds } from "@rennet/core";
 import type {
+  DraftBoard,
   DraftElement,
   KnowledgeSet,
   PatchFile,
@@ -140,6 +141,71 @@ describe("buildLintContextFor", () => {
     expect(noise.lens).toBe("noise");
     expect(noise.hunks).toBe(design.hunks);
     expect(noise.files).toBe(design.files);
+  });
+});
+
+// ── W5: grounding is the WHOLE TREE, not the diff ────────────────────────────
+// A drafter is free to read past the changed files. Grounding `citation-resolves`
+// on `patchset.files` alone made every off-diff citation "no such file at the
+// review commit", so the pipeline DELETED correct findings with no signal to the
+// seat that wrote them. These are the control: the same citation, the same lint,
+// the only difference being whether the real tree inventory was supplied.
+
+describe("buildLintContextFor — whole-tree citation grounding", () => {
+  const AUTHOR = { kind: "lens-agent" as const, id: "drafter" };
+
+  /** A one-element board citing `path:start-end` on the head side. */
+  const boardCiting = (path: string, start: number, end: number): DraftBoard =>
+    ({
+      elements: [
+        {
+          id: "c-off",
+          kind: "code_ref",
+          data: {
+            author: AUTHOR,
+            patchset_id: "ps-collation",
+            path,
+            side: "head",
+            start_line: start,
+            end_line: end,
+          },
+        } as unknown as DraftElement,
+      ],
+      skippedHunks: [],
+    }) as unknown as DraftBoard;
+
+  const unresolved = (board: DraftBoard, tree?: Parameters<typeof buildLintContextFor>[2]) =>
+    lint(board, buildLintContextFor(PS, toLintHunks(buildHunkIndex(PS), PS.files), tree)("design"))
+      .filter((v) => v.ruleId === "citation-resolves")
+      .map((v) => v.message);
+
+  it("keeps a citation into a file the change never touched", () => {
+    const board = boardCiting("src/untouched.ts", 120, 130);
+    // Diff-only grounding (what shipped before W5) calls the real file a ghost.
+    expect(unresolved(board)).toHaveLength(1);
+    // The tree at the review commit knows the file, so the finding survives.
+    const tree = { head: new Map([["src/untouched.ts", 400]]), base: new Map() };
+    expect(unresolved(board, tree)).toHaveLength(0);
+  });
+
+  it("still rejects a citation past the real end of an off-diff file", () => {
+    const tree = { head: new Map([["src/untouched.ts", 100]]), base: new Map() };
+    expect(unresolved(boardCiting("src/untouched.ts", 120, 130), tree)).toHaveLength(1);
+  });
+
+  it("still rejects a citation into a file that is not in the tree at all", () => {
+    const tree = { head: new Map([["src/untouched.ts", 400]]), base: new Map() };
+    expect(unresolved(boardCiting("src/ghost.ts", 1, 2), tree)).toHaveLength(1);
+  });
+
+  it("prefers the tree's true line count over the extent the patch happens to reach", () => {
+    // `src/a.ts`'s patch only reaches new line 4; the file is really 400 lines, and a
+    // citation at line 200 is legitimate.
+    const tree = { head: new Map([["src/a.ts", 400]]), base: new Map([["src/a.ts", 380]]) };
+    const ctx = buildLintContextFor(PS, toLintHunks(buildHunkIndex(PS), PS.files), tree)("design");
+    expect(ctx.files.get("src/a.ts")).toBe(400);
+    expect(ctx.baseFiles?.get("src/a.ts")).toBe(380);
+    expect(unresolved(boardCiting("src/a.ts", 200, 210), tree)).toHaveLength(0);
   });
 });
 

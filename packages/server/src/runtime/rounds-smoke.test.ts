@@ -165,6 +165,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
             ...(codexProbe.chosen.runtimePath === undefined
               ? {}
               : { runtimePath: codexProbe.chosen.runtimePath }),
+            repoRoot,
           })
         : null;
       console.log(

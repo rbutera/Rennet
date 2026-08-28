@@ -1,6 +1,6 @@
 import type { OfferedManifest, PatchsetRef } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { createCodexUtilityAdapter } from "./codex-exec";
+import { createCodexExecutor, createCodexUtilityAdapter } from "./codex-exec";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gated MANUAL real-turn proof (issue #66).
@@ -40,7 +40,10 @@ describe("CodexUtilityPort — real codex exec (gated)", () => {
   it.skipIf(!LIVE)(
     "drives a real gpt-5.6-luna call to a validator-admitted ordering document on the subscription",
     async () => {
-      const port = createCodexUtilityAdapter();
+      // The live proof runs inside this repo, which is the seat's cwd (W5).
+      const port = createCodexUtilityAdapter({
+        executor: createCodexExecutor(undefined, { repoRoot: process.cwd() }),
+      });
       const result = await port.complete({
         docType: "ordering",
         prompt: PROMPT,

@@ -50,6 +50,23 @@ async function drain(session: { events: AsyncIterable<HarnessEvent> }): Promise<
 }
 
 describe("toSdkOptions", () => {
+  // W5: a Claude seat had no way to reach canvasOps at all while the Codex leg of the
+  // same council-routed job could. This is the missing surface, and it is ADDITIVE.
+  it("translates mcpServers into the SDK's HTTP server config", () => {
+    const sdk = toSdkOptions(
+      baseOptions({ mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } } }),
+    ) as Record<string, unknown>;
+    expect(sdk.mcpServers).toEqual({
+      canvasops: { type: "http", url: "http://127.0.0.1:5000/mcp" },
+    });
+    // Never strict: the user's own configured servers stay reachable alongside ours.
+    expect("strictMcpConfig" in sdk).toBe(false);
+  });
+
+  it("omits mcpServers entirely when Rennet has none", () => {
+    expect("mcpServers" in (toSdkOptions(baseOptions()) as Record<string, unknown>)).toBe(false);
+  });
+
   it("translates outputSchema into the SDK json_schema outputFormat", () => {
     const schema = { type: "object", properties: { ok: { type: "boolean" } } };
     const sdk = toSdkOptions(baseOptions({ outputSchema: schema })) as Record<string, unknown>;

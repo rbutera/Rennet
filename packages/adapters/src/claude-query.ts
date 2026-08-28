@@ -133,6 +133,18 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
       append: options.appendSystemPrompt,
     };
   }
+  // W5: the adapter's `name → { url }` contract (shared with the Codex and OMP
+  // adapters) becomes the SDK's HTTP server config. `strictMcpConfig` is
+  // deliberately NOT set — Rennet adds canvasOps to whatever the user already
+  // configured, it never replaces their table.
+  if (options.mcpServers !== undefined) {
+    sdkOptions.mcpServers = Object.fromEntries(
+      Object.entries(options.mcpServers).map(([name, server]) => [
+        name,
+        { type: "http" as const, url: server.url },
+      ]),
+    );
+  }
   if (options.outputSchema !== undefined) {
     sdkOptions.outputFormat = {
       type: "json_schema",
@@ -174,6 +186,9 @@ export interface ClaudeHarnessDeps {
   readonly loadQuery?: LoadClaudeQuery;
   /** Base environment the spawned `claude` inherits (the SDK replaces the child env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Loopback canvasOps@2 (and future) MCP servers every session of this harness may
+   *  call (W5) — the Claude counterpart of `CodexAdapterConfig.mcpServers`. */
+  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   /** Host-local cwd for the Windows `wsl.exe` child; injectable for tests. */
   readonly hostTransportCwd?: string;
   /**
@@ -258,6 +273,7 @@ export async function createClaudeHarness(
     version: discovery.chosen.version,
     queryFn: createClaudeQueryFn(deps.loadQuery),
     ...(deps.env ? { env: deps.env } : {}),
+    ...(deps.mcpServers === undefined ? {} : { mcpServers: deps.mcpServers }),
   });
   return { adapter, discovery };
 }

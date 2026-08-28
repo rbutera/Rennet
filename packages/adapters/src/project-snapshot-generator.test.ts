@@ -6,7 +6,7 @@ import { isSnapshotFresh, serializeManifest, verifySnapshotIntegrity } from "@re
 import { PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
-import { matchesGlob, parseWorkspaceGlobs } from "./project-snapshot-source";
+import { listTreeLineCounts, matchesGlob, parseWorkspaceGlobs } from "./project-snapshot-source";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
 // win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
@@ -539,4 +539,44 @@ describe("ProjectSnapshotGenerator — real symbol/reference totals (not shard c
     expect(result.manifest.references.length).toBe(1);
     expect(result.referenceCount).toBeGreaterThan(1);
   }, 180000);
+});
+
+// -- listTreeLineCounts -- the whole-tree citation inventory (W5) -------------
+// Board lint resolves a drafter's citation against every text file at the review
+// commit, not only the changed ones, so this must answer for the WHOLE tree -- and
+// its line counts must be the file's real length, not the extent of any diff.
+
+describe("listTreeLineCounts", () => {
+  function repoWith(files: Record<string, string>): { root: string; oid: string } {
+    const root = mkdtempSync(join(tmpdir(), "rennet-linecounts-"));
+    scratch.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    for (const [path, content] of Object.entries(files)) write(root, path, content);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    return { root, oid: git(root, "rev-parse", "HEAD") };
+  }
+
+  it("counts every text file in the tree, and skips binaries", async () => {
+    const { root, oid } = repoWith({
+      "src/a.ts": "one\ntwo\nthree\n",
+      "src/deep/b.md": "# t\n\nbody\nmore\n",
+      "src/no-trailing.txt": "x\ny",
+      "assets/blob.bin": "\u0000\u0001binary\u0000",
+    });
+    const counts = await listTreeLineCounts(root, oid);
+    expect(counts.get("src/a.ts")).toBe(3);
+    expect(counts.get("src/deep/b.md")).toBe(4);
+    // A missing final newline still leaves two lines.
+    expect(counts.get("src/no-trailing.txt")).toBe(2);
+    // Binaries carry no citable lines, so they are absent rather than wrong.
+    expect(counts.has("assets/blob.bin")).toBe(false);
+  }, 30000);
+
+  it("parses a path containing a colon (the `-z` record separator earns its keep)", async () => {
+    const { root, oid } = repoWith({ "src/we:ird.ts": "a\nb\nc\nd\n" });
+    expect((await listTreeLineCounts(root, oid)).get("src/we:ird.ts")).toBe(4);
+  }, 30000);
 });

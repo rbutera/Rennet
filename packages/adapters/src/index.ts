@@ -443,6 +443,7 @@ export {
 export { ensureProjectSnapshotPin, projectSnapshotPinResolver } from "./project-snapshot-pin";
 export {
   listTree,
+  listTreeLineCounts,
   matchesGlob,
   parseWorkspaceGlobs,
   type ResolvedBase,

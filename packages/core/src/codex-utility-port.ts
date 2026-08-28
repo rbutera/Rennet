@@ -45,10 +45,11 @@ export interface CodexExecRequest {
    *  docType has no body schema in this slice. */
   readonly outputSchema?: unknown;
   /**
-   * The turn's working directory (locus-native). Absent ⇒ a plain temp dir — the
-   * classic no-repo utility call. A repo-rooted caller (the knowledge swarm's
-   * evidence-reading seats, #460) passes the checkout so the agent can read the
-   * files it is asked to reason about.
+   * The turn's working directory (locus-native). Absent ⇒ the executor's own repo
+   * root — Rennet reviews git repositories, so every utility seat starts inside the
+   * checkout it is reasoning about, and there is no no-repo utility call (W5).
+   * Present ⇒ a NARROWING override for a caller that means a specific other
+   * checkout (the knowledge swarm's evidence-reading seats, #460).
    */
   readonly cwd?: string;
   readonly signal?: AbortSignal;
