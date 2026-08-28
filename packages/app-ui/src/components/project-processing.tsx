@@ -1,8 +1,9 @@
-import type {
-  ProcessedRepoSummary,
-  Project,
-  ProjectProcessEvent,
-  RennetBridge,
+import {
+  commandIdFor,
+  type ProcessedRepoSummary,
+  type Project,
+  type ProjectProcessEvent,
+  type RennetBridge,
 } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { ArrowRight, Check, Sparkles, TriangleAlert } from "lucide-react";
@@ -11,14 +12,13 @@ import { Icon } from "./icon";
 import { ProgressFeed } from "./progress-feed";
 import { deriveProgressView } from "./progress-feed-fold";
 
-const processCommandIds = new Map<string, string>();
-
+/** One stable protocol-valid commandId per project, so a remount re-attaches to the
+ *  main-owned live run (leaving early never cancels it) instead of minting a fresh one.
+ *  DERIVED, not memoized (#588): a module-level map is per-module, so the two surfaces
+ *  that start this run each held their own and minted DIFFERENT ids for the same project.
+ *  `commandIdFor` is a pure hash of the key — one id, from every caller, with no state. */
 function processCommandId(projectId: string): string {
-  const existing = processCommandIds.get(projectId);
-  if (existing) return existing;
-  const created = crypto.randomUUID();
-  processCommandIds.set(projectId, created);
-  return created;
+  return commandIdFor(`project.process:${projectId}`);
 }
 
 /**

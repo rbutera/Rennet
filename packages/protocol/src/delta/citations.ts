@@ -114,12 +114,15 @@ export const DIFF_TRUNCATION_MARKER = "[diff truncated by Rennet]";
 
 /**
  * Where a patchset's content came from. `local` is the working-tree capture
- * (`GitCaptureAdapter`); `github-local` is a GitHub PR diffed from the on-disk
- * clone (full context, the angles can run); `github-rest` is the degraded REST
- * diff fallback used when the clone is not on disk or its SHAs are unfetchable.
+ * (`GitCaptureAdapter`); `local-branch` is a LOCAL BRANCH diffed as a pinned
+ * `merge-base...head` range (#587's New Chat row click) — it is a SNAPSHOT, so it
+ * shares nothing with the working tree and must stay off the freshness watcher, the
+ * same as a PR; `github-local` is a GitHub PR diffed from the on-disk clone (full
+ * context, the angles can run); `github-rest` is the degraded REST diff fallback used
+ * when the clone is not on disk or its SHAs are unfetchable.
  * Absent means `local` (additive: the existing local-capture identity is unchanged).
  */
-export type PatchsetSource = "local" | "github-local" | "github-rest";
+export type PatchsetSource = "local" | "local-branch" | "github-local" | "github-rest";
 
 /** Which surface a patchset's captured intent came from. */
 export type PatchsetIntentSurface = "github-pr" | "github-rest" | "working-tree";

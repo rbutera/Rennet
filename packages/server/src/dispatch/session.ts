@@ -82,6 +82,14 @@ export function sidebarSessionOf(session: SessionModel): SidebarSession {
     // either half of it while the claim holds. A no-target session carries none, so it hides
     // nothing; archive is still the only release, read off `archived`.
     ...(session.claim === undefined ? {} : { claim: session.claim }),
+    // Which repo the claim is IN (#580). `repositoryRoot` is a host path and stays here;
+    // this is the `owner/name` identity, and New Chat needs it to keep the row-hide
+    // repo-precise across a workspace project's several repositories.
+    ...(session.repository === undefined ? {} : { repository: session.repository }),
+    // The attached review (#587): the front door captures the clicked target's change and
+    // binds it here, so `/s/<sessionId>` resolves to the review workspace. Absent means
+    // nothing has been captured for this session — honestly, there is no diff.
+    ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
     createdAt: session.createdAt,
   };
 }
@@ -127,25 +135,30 @@ export function sessionHandlers(rt: DispatchRuntime) {
     },
     "session.mint": async (rawInput) => {
       const name = "session.mint" as const;
-      // The New Chat front door (C21). No store wired ⇒ `session: null`: nothing was
-      // minted, said in the same honest language the sibling writes use — never a
-      // fabricated row the client would then navigate into.
+      // The New Chat front door (C21, #587). Starting a session is ONE host-owned act —
+      // capture, mint, claim, attach — because the client cannot make that sequence
+      // atomic and cannot resolve which repo of a workspace the row named. No store
+      // wired ⇒ `session: null`: nothing was started, said in the same honest language
+      // the sibling writes use, never a fabricated row the client would navigate into.
       const input = parseCommandInput(name, rawInput);
-      const minted = rt.deps.sessions?.mint(
-        input.projectId,
-        input.branch === undefined
-          ? undefined
+      const started = await rt.deps.sessions?.start({
+        projectId: input.projectId,
+        commandId: input.commandId,
+        ...(input.branch === undefined
+          ? {}
           : {
-              branch: input.branch,
-              ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
-              // The row's `owner/name` (#580): a workspace's two `main` branches are two
-              // targets, not one. Absent ⇒ the pre-#580 mint, unchanged.
-              ...(input.repository === undefined ? {} : { repository: input.repository }),
-            },
-      );
+              target: {
+                branch: input.branch,
+                ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
+                // The row's `owner/name` (#580): a workspace's two `main` branches are two
+                // targets, not one — and it is what resolves the capture to the right repo.
+                ...(input.repository === undefined ? {} : { repository: input.repository }),
+              },
+            }),
+      });
       return parseCommandOutput(name, {
-        session: minted?.session ?? null,
-        reattached: minted?.reattached ?? false,
+        session: started?.session ?? null,
+        reattached: started?.reattached ?? false,
       });
     },
     "session.rename": async (rawInput) => {

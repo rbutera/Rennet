@@ -76,7 +76,7 @@ export const patchsetSchema = z.object({
   // from `degraded`/`degradationReason`. Absent ⇒ `local` (additive; identity
   // ignores it). Without these here, zod strips them and every PR review looks
   // like a local capture.
-  source: z.enum(["local", "github-local", "github-rest"]).optional(),
+  source: z.enum(["local", "local-branch", "github-local", "github-rest"]).optional(),
   degraded: z.boolean().optional(),
   degradationReason: z.string().optional(),
   // #144: the ProjectSnapshot the changeset was computed against, and #136: the
@@ -2050,6 +2050,22 @@ export const sidebarSessionSchema = z.object({
   claim: z
     .object({ branch: z.string().min(1), prNumber: z.number().int().positive().optional() })
     .optional(),
+  /**
+   * The `owner/name` the session was minted for (`SessionModel.repository`, #580). It rides
+   * to the client because the claim alone cannot say WHICH repo it claimed: a workspace
+   * project holds several, so New Chat hiding on branch alone would hide repo-b's `main` for
+   * a session that claimed repo-a's. An identity, never a host path (R19) — `repositoryRoot`
+   * deliberately stays server-side. Absent for a session minted without one, which still
+   * hides its row exactly as before.
+   */
+  repository: z.string().min(1).optional(),
+  /**
+   * The review this session holds (`SessionModel.reviewId`, 1:0..1 — referenced, never
+   * absorbed). New Chat's row click captures the target's change and attaches it here, so
+   * `/s/<sessionId>` resolves to the review workspace rather than the chat-only surface.
+   * Absent for a session nothing has been captured for yet — honestly, there is no diff.
+   */
+  reviewId: z.string().min(1).optional(),
   /** When the session was minted (epoch ms) — the client renders the relative line. */
   createdAt: z.number(),
 });
