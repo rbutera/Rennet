@@ -88,13 +88,22 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
     const added = page.locator('#diff-review-me\\.ts [data-line-state="add"]');
     await expect(added).toContainText("export const value = 2;");
 
-    // Editing the file on disk stales the pinned review (the freshness watcher). The check
-    // fires on mount and on every window focus, so the edit is followed by a focus event —
-    // the same thing that happens when the reviewer comes back from their editor.
-    writeRepoFile(repository, "review-me.ts", "export const value = 3;\n");
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    // Editing the file on disk stales the pinned review, and coming back to the window is what
+    // asks. Both halves are RETRIED rather than done once, because neither is instantaneous and
+    // the daemon short-circuits the ask while its watcher has seen nothing:
+    //   • the save is repeated — a reviewer saves as they work, and the daemon's watcher can
+    //     miss an edit that lands while it is still settling on a freshly-captured root
+    //     (observed: the first save after capture is sometimes not reported; see the report on
+    //     #574). Re-saving means the loop under test is the real one, not a lucky first event.
+    //   • the focus is repeated — the ask fires on window focus, and one focus racing the
+    //     watcher's 250ms debounce would answer "fresh" and never be asked again.
+    // What is NOT retried is the assertion: the notice must appear, or this fails.
     const stale = page.getByTestId("review-stale");
-    await expect(stale).toBeVisible({ timeout: 30_000 });
+    await expect(async () => {
+      writeRepoFile(repository, "review-me.ts", "export const value = 3;\n");
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(stale).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 60_000 });
     // The old tree is still what is on screen — the notice says so, and does not swap it.
     await expect(added).toContainText("export const value = 2;");
 

@@ -1,8 +1,26 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { get } from "node:http";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startWsListener, type WsListener, type WsListenerDeps } from "./ws-listener";
+
+/** GET `path` VERBATIM — `node:http` passes its `path` option through without the URL-spec
+ *  normalisation `fetch` applies, which is the only way to send dot segments to the daemon. */
+function rawGet(base: string, path: string): Promise<{ status: number; body: string }> {
+  const url = new URL(base);
+  return new Promise((resolveBody, reject) => {
+    const request = get({ host: url.hostname, port: url.port, path }, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => {
+        body += chunk;
+      });
+      res.on("end", () => resolveBody({ status: res.statusCode ?? 0, body }));
+    });
+    request.on("error", reject);
+  });
+}
 
 // The daemon serves the built browser UI (issue #381, design D2): the static handler slots
 // before the 404 when a `uiDist` is configured — `/` → index.html, nested assets by path,
@@ -65,9 +83,13 @@ describe("daemon static UI serving (#381)", () => {
 
   it("refuses a path-traversal escape with a 404", async () => {
     const base = await start(fixtureUi());
-    // Encoded so the client does not normalise it away before it reaches the daemon.
-    const res = await fetch(`${base}/%2e%2e/%2e%2e/etc/hosts`);
+    // `fetch` resolves `%2e%2e` away in the CLIENT (the URL spec's path normalisation), so a
+    // fetch of this address never reaches the daemon as an escape at all and proves nothing
+    // about the guard. Sent raw over `node:http`, whose `path` option is passed through
+    // verbatim, the daemon actually sees the dot segments — and refuses them.
+    const res = await rawGet(base, "/%2e%2e/%2e%2e/etc/hosts");
     expect(res.status).toBe(404);
+    expect(res.body).not.toContain("localhost");
   });
 
   it("refuses an in-root symlink that points outside uiDist", async () => {
@@ -88,6 +110,25 @@ describe("daemon static UI serving (#381)", () => {
     const base = await start(fixtureUi());
     const res = await fetch(`${base}/assets/missing.js`);
     expect(res.status).toBe(404);
+  });
+
+  it("serves the entry document for a client route, so a refresh is not a dead end", async () => {
+    // The router replaces `/` with `/new-chat` on boot, so a served tab is ALWAYS on a client
+    // route after the first paint. Without this the shell was a one-visit surface: refresh,
+    // bookmark, or a shared `/s/<slug>` link all answered "not found".
+    const base = await start(fixtureUi());
+    for (const route of ["/new-chat", "/s/abc123", "/settings/appearance"]) {
+      const res = await fetch(`${base}${route}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+      expect(await res.text()).toContain("<title>Rennet</title>");
+    }
+    // A missing FILE still 404s — handing an HTML document to a script tag is not a fallback.
+    expect((await fetch(`${base}/assets/missing.js`)).status).toBe(404);
+    // And the fallback is not a way back into the traversal guard: a dot-segmented request is
+    // not route-like, so it stays a 404 instead of quietly becoming a 200.
+    expect((await rawGet(base, "/%2e%2e/%2e%2e/new-chat")).status).toBe(404);
   });
 
   it("runs headless (404 at /) when no uiDist is configured", async () => {

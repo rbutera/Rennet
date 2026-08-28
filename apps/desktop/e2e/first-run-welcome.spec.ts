@@ -55,7 +55,7 @@ test("the first-run welcome is what a first run gets, and completing it is what 
     // and this environment's harnesses are switched off, so their rows say so. ──
     await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.getByText("Your tools, already connected.")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Git" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Git", exact: true })).toBeVisible();
 
     // ── Step 3 — Review setup. The model-free environment detects no harness, so the honest
     // install path is what shows: an installation guide and a re-check, both real. ──
@@ -78,6 +78,10 @@ test("the first-run welcome is what a first run gets, and completing it is what 
       .getByRole("navigation", { name: "Welcome progress" })
       .getByText("Appearance")
       .click();
+    // Step 1 replays its opening (the hero is the stage's entry, and the appearance card is
+    // revealed by the arrow), so the arrow — not the card — is what proves we landed.
+    await expect(page.getByRole("button", { name: "Continue to Rennet" })).toBeVisible();
+    await page.getByRole("button", { name: "Continue to Rennet" }).click();
     await expect(page.getByText("Choose your appearance")).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
 

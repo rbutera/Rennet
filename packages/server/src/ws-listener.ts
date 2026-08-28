@@ -167,6 +167,13 @@ const CONTENT_TYPES: Record<string, string> = {
  * traversal guard is the desktop app-protocol handler's, ported: resolve the request under
  * the root and refuse anything that escapes it. Returns true once it has written a response
  * (found or a 404), false when the caller should fall through (never — this always answers).
+ *
+ * A request for a CLIENT ROUTE (`/new-chat`, `/s/<slug>`, `/settings/appearance`, …) is served
+ * `index.html` so the app's router resolves it — the standard single-page fallback. Without it
+ * the browser shell was a one-visit surface: the router replaces `/` with `/new-chat` on boot,
+ * so a refresh, a bookmark, or a shared session link all answered "not found". A client route is
+ * an extension-less path; anything that looks like a file (`/assets/x.js`) still 404s honestly
+ * rather than being handed an HTML document a script tag cannot parse.
  */
 async function serveStatic(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
   const notFound = (): void => {
@@ -174,31 +181,48 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, root: stri
     res.end("not found");
   };
   const rawPath = decodeURIComponent(new URL(req.url ?? "/", "http://localhost").pathname);
+  // A client route: not the root, no file extension, and nothing dot-segmented in the RAW
+  // request line. The last clause is what keeps a refused traversal REFUSED: `new URL()`
+  // resolves `%2e%2e` away per the URL spec, so by the time we hold `rawPath` an escape
+  // attempt is indistinguishable from an ordinary miss — and answering it 200 with the app
+  // document would turn a 404 into a success for a request that was trying to get out.
+  const dotSegmented = /(^|[/\\])(\.\.?|%2e|%2E)/.test(req.url ?? "/");
+  const routeLike = rawPath !== "/" && extname(rawPath) === "" && !dotSegmented;
   const requested = rawPath === "/" ? "/index.html" : rawPath;
   const target = resolve(root, `.${normalize(requested)}`);
   if (target !== root && !target.startsWith(root + sep)) return notFound();
   let realRoot: string;
-  let realTarget: string;
   try {
     realRoot = realpathSync(root);
+  } catch {
+    return notFound();
+  }
+  // The entry document, reached either directly or as the client-route fallback. The traversal
+  // guard already ran against the RESOLVED request path, so falling back cannot smuggle one in.
+  const entry = resolve(realRoot, "index.html");
+  const fallback = async (): Promise<string | null> =>
+    routeLike && (await stat(entry).catch(() => null))?.isFile() ? entry : null;
+
+  let realTarget: string;
+  try {
     realTarget = realpathSync(target);
   } catch {
-    return notFound();
+    const entryPath = await fallback();
+    if (entryPath === null) return notFound();
+    realTarget = entryPath;
   }
   if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) return notFound();
-  let fileStat: Awaited<ReturnType<typeof stat>>;
-  try {
-    fileStat = await stat(realTarget);
-  } catch {
-    return notFound();
+  if (!(await stat(realTarget).catch(() => null))?.isFile()) {
+    const entryPath = await fallback();
+    if (entryPath === null) return notFound();
+    realTarget = entryPath;
   }
-  if (!fileStat.isFile()) return notFound();
   const contentType =
     CONTENT_TYPES[extname(realTarget).toLowerCase()] ?? "application/octet-stream";
   const headers: Record<string, string> = { "content-type": contentType };
   // The entry document must never be cached: a redeploy changes the hashed asset names it
   // points at, and a stale index.html would reference assets that no longer exist.
-  if (requested === "/index.html") headers["cache-control"] = "no-cache";
+  if (realTarget === entry) headers["cache-control"] = "no-cache";
   if (req.method === "HEAD") {
     res.writeHead(200, headers);
     res.end();
