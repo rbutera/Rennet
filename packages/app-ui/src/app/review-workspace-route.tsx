@@ -217,7 +217,11 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       {view === "handoff" ? (
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
-        <DiffViewContainer review={review} roundGeneration={query.round ?? undefined} />
+        <DiffViewContainer
+          review={review}
+          records={roundRecords}
+          round={query.round ?? undefined}
+        />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {view === "rounds" && roundsUnavailable !== undefined ? (

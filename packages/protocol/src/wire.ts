@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { CommandInput, CommandName, CommandOutput } from "./commands";
 import type { RenderedHunkOccurrence } from "./delta/citations";
-import { anchorSideSchema, anchorSpanSchema } from "./delta/citations";
+import { anchorSideSchema, anchorSpanSchema, patchFileSchema } from "./delta/citations";
 import type {
   CiSignal,
   CouncilEffort,
@@ -17,8 +17,6 @@ import type {
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import type { AttentionEventFrame, RoundEvent } from "./session";
-
-const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -56,17 +54,7 @@ export const patchsetSchema = z.object({
   id: z.string().min(1),
   createdAt: z.iso.datetime(),
   repository: repositoryProvenanceSchema,
-  files: z.array(
-    z.object({
-      path: z.string(),
-      previousPath: z.string().optional(),
-      status: fileChangeStatusSchema,
-      additions: z.number().int().nonnegative().nullable(),
-      deletions: z.number().int().nonnegative().nullable(),
-      binary: z.boolean(),
-      patch: z.string(),
-    }),
-  ),
+  files: z.array(patchFileSchema),
   rawDiff: z.string(),
   byteLength: z.number().int().nonnegative(),
   truncated: z.boolean(),

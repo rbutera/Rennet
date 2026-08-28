@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { AskLifecycleSchema, QuoteAnchorSchema } from "../board";
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
-import { codeRefSchema } from "../delta/citations";
+import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import { LENS_KINDS } from "../manifests";
 
 const id = z.string().min(1);
@@ -160,6 +160,15 @@ export const RoundRecordSchema = z.object({
   /** The round's working-tree diff, captured via GitCheckpointStore — present on a
    *  dispatch round, failed rounds included (their partial edits are on disk regardless). */
   diff: z.string().optional(),
+  /**
+   * The same diff split per file, for the ROUND DIFF surface (#571). DERIVED at the
+   * `session.rounds` read from {@link diff} through the one hardened unified-diff parser
+   * (`parseUnifiedDiffFiles`, `@rennet/adapters`) — never written by a round and never
+   * persisted, so the durable ledger keeps exactly one copy of the round's diff. Present
+   * iff `diff` is present and parses to at least one file; absent ⇒ the round captured no
+   * diff, and the ledger offers no Round-diff control at all.
+   */
+  diffFiles: z.array(patchFileSchema).optional(),
   /** The paths the round changed (structural, from the checkpoint's path list). */
   changedPaths: z.array(z.string()).optional(),
 });

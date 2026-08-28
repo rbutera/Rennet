@@ -1,8 +1,10 @@
 import { basename } from "node:path";
+import { parseUnifiedDiffFiles } from "@rennet/adapters";
 import {
   parseCommandInput,
   parseCommandOutput,
   type Review,
+  type RoundRecord,
   type SessionModel,
   type SessionTrail,
   type SidebarSession,
@@ -94,6 +96,28 @@ export function sidebarSessionOf(session: SessionModel): SidebarSession {
   };
 }
 
+/**
+ * A ledger record with its ROUND DIFF split per file (#571). `RoundRecord.diff` is the
+ * checkpoint-measured working-tree diff of the round's coding turn — the change the round
+ * actually made — and the durable store deliberately keeps it across the regeneration that
+ * supersedes the dispatch placeholder. So the round diff is derivable from what is already
+ * stored; nothing needs a per-round patchset projection.
+ *
+ * Split HERE, at the one read seam, through the SAME hardened parser the degraded REST
+ * changeset source uses (`parseUnifiedDiffFiles` — it owns the #310 in-hunk-header trap and
+ * the same-path type-change coalescing), so the round diff and a PR diff are parsed by one
+ * grammar. Derived on read and never persisted: the durable ledger keeps one copy.
+ *
+ * A round with no captured diff (a regeneration-only round) gets NO `diffFiles`, and a diff
+ * that parses to nothing gets none either — the ledger then offers no Round-diff control,
+ * rather than a control that lands on an empty surface.
+ */
+function withRoundDiffFiles(record: RoundRecord): RoundRecord {
+  if (record.diff === undefined || record.diff.trim().length === 0) return record;
+  const diffFiles = parseUnifiedDiffFiles(record.diff);
+  return diffFiles.length === 0 ? record : { ...record, diffFiles };
+}
+
 export function sessionHandlers(rt: DispatchRuntime) {
   return {
     "session.transcript": async (rawInput) => {
@@ -113,7 +137,7 @@ export function sessionHandlers(rt: DispatchRuntime) {
       const input = parseCommandInput(name, rawInput);
       rt.requireReviewById(input.reviewId); // reachability: unknown review is a genuine error
       const records = rt.deps.roundRecordsForReview?.(input.reviewId) ?? [];
-      return parseCommandOutput(name, { records: [...records] });
+      return parseCommandOutput(name, { records: records.map(withRoundDiffFiles) });
     },
     "session.roundEvents": async (rawInput) => {
       const name = "session.roundEvents" as const;

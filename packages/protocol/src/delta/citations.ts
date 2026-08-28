@@ -100,6 +100,23 @@ export interface PatchFile {
   patch: string;
 }
 
+export const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
+
+/**
+ * The wire shape of {@link PatchFile} — declared HERE, beside the interface, because two
+ * unrelated contracts carry it: a `Patchset`'s `files` (`wire.ts`) and a `RoundRecord`'s
+ * `diffFiles` (`session/model.ts`, the round diff). One schema, so the two cannot drift.
+ */
+export const patchFileSchema = z.object({
+  path: z.string(),
+  previousPath: z.string().optional(),
+  status: fileChangeStatusSchema,
+  additions: z.number().int().nonnegative().nullable(),
+  deletions: z.number().int().nonnegative().nullable(),
+  binary: z.boolean(),
+  patch: z.string(),
+});
+
 /**
  * The sentinel `visible()` (`@rennet/adapters`) appends when it truncates a diff
  * past its byte cap. A `PatchFile.patch` containing this marker is content-lossy:
