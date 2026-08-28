@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Real-repo-config ESLint boots slowly under cold-cache parallel load; the 5s
+// default flaked twice (2026-08-28) while passing standalone. Time, not logic.
+vi.setConfig({ testTimeout: 20_000 });
 
 // Kit-not-hand-rolled (autopsy S6), proved against the REAL repository config
 // (eslint.config.mjs) — never a copied selector, so this catches a flat-config

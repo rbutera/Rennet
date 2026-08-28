@@ -142,7 +142,7 @@
   "c15": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-3 BUILT (@50a34e31: live RoundEvent channel end-to-end; carry-forward lane derives from stampDeltas per Rai's hard constraint, control run red-then-green; adds session.roundEvents to protocol — joins the snapshot serialization set). Cluster 4 (UI: kicker verbatim, synthetic steps, retro ledger line, gen-1 drill-down) in flight now. Cluster 5's E2E board-read arrives via c18 — sequence c18 board slice before c15 c5. Review-seat note: naive post-process fake pattern sits in round-trigger.test.ts (latent, ordering-only)."
+    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal — C14 flags claim-vs-live, doesn't fudge). PARKED for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
   },
   "c16": {
     "status": "implementing",
@@ -152,7 +152,7 @@
   "c17": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1-3 done @d2c3f663 (forge.detect; daemon.status; harness.hosts + harness.setEnabled server-side per the 3.1 re-ruling, recorded in tasks.md; PLUS latent cluster-2 bug fixed — version-learn no longer replaces the whole host entry, withHostEntries merge + regression test). Cluster 4 (fold all three detections into live projection + environments page, honest-absence controls) in flight now. Then 5 Reconnect #533, 6 Update Daemon #534, 7 E2E. Snapshot serialization set with c15/c16/c18 at landing."
+    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1-3 done @d2c3f663 (forge.detect; daemon.status; harness.hosts + harness.setEnabled server-side per the 3.1 re-ruling, recorded in tasks.md; PLUS latent cluster-2 bug fixed — version-learn no longer replaces the whole host entry, withHostEntries merge + regression test). Cluster 4 done @a7d424df (three detections folded, honest-absence controls run red; Local chip keys on host.kind — root-cause find). TWO AMENDMENTS folded into remaining clusters (both honest-present failures if shipped inert): A forge-enable served read (cluster 5, in flight now with Reconnect #533), B server-side forge.hosts so a WSL card can show its own gh (cluster 6, before the E2E). Then 6 Update Daemon #534 + amendment B, 7 E2E. Snapshot serialization set with c15/c16/c18 at landing."
   },
   "c18": {
     "status": "pending",
