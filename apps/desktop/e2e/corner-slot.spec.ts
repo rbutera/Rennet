@@ -17,7 +17,7 @@ import { launchRennet, makeTempDir, seedReviewRepo } from "./harness";
 // round-trip — and the window DRAG itself is verified by hand (recorded in the C20
 // tasks record). A synthetic drag would prove nothing about the real window.
 //
-// KNOWN NOT-RUN (2026-08-28): this spec has never executed. Playwright's Electron
+// KNOWN NOT-RUN (2026-08-28), tracked as #569: this spec has never executed. Playwright's Electron
 // driver cannot launch the app on this toolchain at all — `Electron: bad option:
 // --remote-debugging-port=0` (Electron 43.2.0 vs @playwright/test 1.62.0), and an
 // UNTOUCHED spec on main fails identically, so it is not this change's doing. Treat

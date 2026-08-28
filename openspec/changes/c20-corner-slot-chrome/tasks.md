@@ -204,7 +204,8 @@ tell a deliberate re-ruling from an oversight. Annotate **in place**, never dele
 
 ## 8. Packet verification — macOS E2E, docs, full gate
 
-- [x] 8.1 E2E against the real app on macOS (`apps/desktop/e2e`, Playwright-on-Electron, evidence shown not
+- [ ] 8.1 **SPEC WRITTEN, NEVER EXECUTED — blocked by #569 (Playwright cannot launch Electron).** The
+  deliverable exists; the proof is owed. E2E against the real app on macOS (`apps/desktop/e2e`, Playwright-on-Electron, evidence shown not
   asserted): drive all three states — expanded sidebar, collapsed + chat open, collapsed + chat closed. In
   each: the OS traffic lights **never overlap an interactive control** (assert the toggle's and the nearest
   chip's bounding boxes clear the light zone), window **drag works from the corner strip**, and the chat
@@ -294,7 +295,9 @@ Verified unchanged — C20 does not contradict these, so they are NOT annotated:
   (`min-h-0 flex-1 overflow-y-auto`, the repo-wide idiom) takes it back as negative
   margin plus its own top and scroll padding. The visual result is a manual-proof item;
   see 8.1.
-- **8.1 could NOT be run — pre-existing harness breakage, not C20.** The geometry spec
+- **8.1 is UNCHECKED and stays unchecked: spec written, never executed — blocked by #569.** A checked
+  box would claim a verification that did not happen, which is the same "test that proves nothing"
+  pattern this build has spent the day killing. The geometry spec
   is written (`apps/desktop/e2e/corner-slot.spec.ts`: exactly one slot per state, the
   slot's controls clear the traffic-light zone, `-webkit-app-region: drag` on the strip
   with `no-drag` on its buttons, screenshots per state, sidebar round-trip). It cannot
@@ -305,11 +308,21 @@ Verified unchanged — C20 does not contradict these, so they are NOT annotated:
 
   CONTROL: an UNTOUCHED spec on `main` fails identically
   (`pnpm nx e2e rennet-desktop --args="--grep=hardened"` → same launch error), so this
-  is Electron 43.2.0 vs @playwright/test 1.62.0, not this change. Filing/fixing that is
-  its own work, not C20's. Consequences, stated plainly: the traffic-light geometry, the
-  real window DRAG, and 5.3's scroll-under are all UNPROVEN BY MACHINE here. The drag was
-  always going to be a manual-proof item per the packet's own risk note; the other two
-  now join it.
+  is Electron 43.2.0 vs @playwright/test 1.62.0, repo-wide and pre-existing, not this
+  change. Filed as **#569**; fixing it is its own work, not C20's.
+
+  **Consequences, stated so nothing here reads as machine-verified.** THREE claims are
+  UNPROVEN BY MACHINE and have no automated proof anywhere in this change:
+
+  1. the OS traffic lights never overlap an interactive control (bounding-box geometry),
+  2. window drag works from the corner strip in every state,
+  3. 5.3's clear-at-rest / slide-under-on-scroll.
+
+  Their proof path is **Rai's manual verification on real hardware**, once this ships in
+  the release he auto-updates to on latios. The drag was always a manual-proof item per
+  the packet's own risk note; #569 pulled the other two in with it. Until Rai looks at
+  it on a real window, all three are asserted by construction and by reading the CSS —
+  not demonstrated.
 - **8.2 `trafficLightPosition`: no change, measured-not-assumed is NOT claimed.** The
   default `hiddenInset` inset is what the corner slot's 76px reserve and 40px strip were
   measured against (#557's numbers, unchanged here), and nothing in the DOM suite
