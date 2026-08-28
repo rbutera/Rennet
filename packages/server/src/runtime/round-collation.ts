@@ -118,6 +118,18 @@ export interface TreeInventories {
   readonly base: ReadonlyMap<string, number>;
 }
 
+/** Union two line-count inventories, keeping the HIGHER count for a shared path. */
+function mergeByMax(
+  diff: ReadonlyMap<string, number>,
+  tree: ReadonlyMap<string, number> | undefined,
+): Map<string, number> {
+  const merged = new Map(diff);
+  for (const [path, lines] of tree ?? []) {
+    merged.set(path, Math.max(lines, merged.get(path) ?? 0));
+  }
+  return merged;
+}
+
 /**
  * Build the per-lens `lintContextFor` the round pipeline calls once per board. The
  * hunk list + file inventories + patchsetId are the SAME for every lens (a board
@@ -131,20 +143,27 @@ export interface TreeInventories {
  * `citation-resolves` rule on `patchset.files` alone made every such citation
  * unresolvable, so the pipeline DELETED correct work with no signal to the seat
  * that wrote it. `tree`, when the caller could read it, is the real inventory at
- * the review commit and takes precedence: it carries a file's true line count,
- * where the patch can only bound the extent its own hunks reach. The diff-derived
- * maps stay underneath as the honest degrade when git could not answer, and they
- * still cover a file the tree read skipped (a patch text git calls binary).
- * Citations must still RESOLVE — this widens where they may point, never whether
- * they must land.
+ * the review commit: it carries a file's true line count, where the patch can only
+ * bound the extent its own hunks reach. The diff-derived maps stay underneath as
+ * the honest degrade when git could not answer, and they still cover a file the
+ * tree read skipped (a patch text git calls binary). Citations must still
+ * RESOLVE — this widens where they may point, never whether they must land.
+ *
+ * The two are merged by MAX, never by override. For a file both know, the tree is
+ * usually the larger and the citation ceiling rises to the real end of the file.
+ * But a working-tree review's patch describes UNCOMMITTED content while the tree
+ * read is pinned to the commit, so the tree can be the SHORTER of the two — taking
+ * it would reject a citation inside the change's own hunk, which is the very thing
+ * that always resolved before. Max cannot regress: every citation lint accepts
+ * today is still accepted.
  */
 export function buildLintContextFor(
   patchset: Patchset,
   hunks: readonly LintHunk[],
   tree?: TreeInventories,
 ): (lens: LintTarget) => LintContext {
-  const files = new Map([...headFileInventory(patchset.files), ...(tree?.head ?? [])]);
-  const baseFiles = new Map([...baseFileInventory(patchset.files), ...(tree?.base ?? [])]);
+  const files = mergeByMax(headFileInventory(patchset.files), tree?.head);
+  const baseFiles = mergeByMax(baseFileInventory(patchset.files), tree?.base);
   return (lens: LintTarget): LintContext => ({
     lens,
     hunks,

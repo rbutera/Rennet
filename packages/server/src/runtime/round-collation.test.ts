@@ -198,6 +198,16 @@ describe("buildLintContextFor — whole-tree citation grounding", () => {
     expect(unresolved(boardCiting("src/ghost.ts", 1, 2), tree)).toHaveLength(1);
   });
 
+  it("never LOWERS a ceiling the diff already earned (working-tree reviews)", () => {
+    // A working-tree review's patch describes uncommitted content, so the tree read
+    // — pinned to the commit — can be SHORTER. Taking it would reject a citation
+    // inside the change's own hunk, which always resolved before W5.
+    const tree = { head: new Map([["src/a.ts", 2]]), base: new Map() };
+    const ctx = buildLintContextFor(PS, toLintHunks(buildHunkIndex(PS), PS.files), tree)("design");
+    expect(ctx.files.get("src/a.ts")).toBe(4);
+    expect(unresolved(boardCiting("src/a.ts", 3, 4), tree)).toHaveLength(0);
+  });
+
   it("prefers the tree's true line count over the extent the patch happens to reach", () => {
     // `src/a.ts`'s patch only reaches new line 4; the file is really 400 lines, and a
     // citation at line 200 is legitimate.
