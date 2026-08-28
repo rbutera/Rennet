@@ -18,14 +18,14 @@
 
 import type {
   CouncilAvailability,
+  CouncilHarnessDefault,
   CouncilJobId,
-  CouncilOverrides,
   CouncilPick,
-  CouncilResolveContext,
-  CouncilScenario,
+  CouncilScenarioOverrides,
   ResolutionSource,
   ReviewRoleCell,
   ReviewRoleMapping,
+  ReviewRoleScenario,
 } from "@rennet/protocol";
 import { DEFAULT_CODEX_SECOND_SEAT_EFFORT, DEFAULT_CODEX_SECOND_SEAT_MODEL } from "./dual-seat";
 import { JOB_CATALOGUE, resolveAssignment } from "./model-council";
@@ -143,26 +143,50 @@ export interface ResolvedReviewRole {
 
 const NULL_CELL: ResolvedRoleCell = { value: null, source: null };
 
-/** The synthetic availability that selects each scenario's assignment table. */
-const SCENARIO_AVAILABILITY: Readonly<Record<CouncilScenario, CouncilAvailability>> = {
-  both: { installed: ["claude-code", "codex"] },
-  "claude-only": { installed: ["claude-code"] },
-  "codex-only": { installed: ["codex"] },
-};
+/**
+ * The persisted `routing.task` slice: council job id → that job's PER-SCENARIO
+ * override cells. Rai's 2026-08-28 ruling — each column owns its own override, so
+ * an edit in one scenario cannot move the other two.
+ */
+export type ReviewRoleOverrides = Readonly<Record<string, CouncilScenarioOverrides>>;
 
 /**
- * Resolve one normal (table-backed) role for one scenario, layering the caller's
- * `overrides.task` over the scenario's table default. Reuses `resolveAssignment`
- * so the source is honest (`council-table` unless a task override wins).
+ * What `resolveReviewRoles` resolves against. NOT a `CouncilResolveContext`: the
+ * all-scenario walk supplies each scenario's own availability itself (see
+ * `SCENARIO_AVAILABILITY`), and its overrides are keyed by (job, scenario) rather
+ * than by job alone.
+ */
+export interface ReviewRoleResolveContext {
+  readonly overrides?: ReviewRoleOverrides;
+  readonly harnessDefault?: CouncilHarnessDefault;
+}
+
+/** The synthetic availability that selects each scenario's assignment table. */
+const SCENARIO_AVAILABILITY: Readonly<Record<ReviewRoleScenario, CouncilAvailability>> = {
+  dual: { installed: ["claude-code", "codex"] },
+  claudeOnly: { installed: ["claude-code"] },
+  codexOnly: { installed: ["codex"] },
+};
+
+/** Every column, in surface order — the walk and the write share this list. */
+export const REVIEW_ROLE_SCENARIOS = ["dual", "claudeOnly", "codexOnly"] as const;
+
+/**
+ * Resolve one normal (table-backed) role for one scenario, layering **only that
+ * scenario's own** override cell over that scenario's table default. Reuses
+ * `resolveAssignment` so the source is honest (`council-table` unless this
+ * column's own task override wins) — a sibling column's override is not passed
+ * in, so it cannot leak across.
  */
 function resolveTableCell(
   jobId: CouncilJobId,
-  scenario: CouncilScenario,
-  ctx: CouncilResolveContext,
+  scenario: ReviewRoleScenario,
+  ctx: ReviewRoleResolveContext,
 ): ResolvedRoleCell {
+  const cell = ctx.overrides?.[jobId]?.[scenario];
   const resolution = resolveAssignment(jobId, {
     availability: SCENARIO_AVAILABILITY[scenario],
-    ...(ctx.overrides === undefined ? {} : { overrides: ctx.overrides }),
+    ...(cell === undefined ? {} : { overrides: { task: { [jobId]: cell } } }),
     ...(ctx.harnessDefault === undefined ? {} : { harnessDefault: ctx.harnessDefault }),
   });
   if (resolution.kind !== "model") return NULL_CELL;
@@ -173,12 +197,15 @@ function resolveTableCell(
 }
 
 /**
- * The Flagged Second Seat in `both`: the Codex second-seat default
- * (`dual-seat.ts`), overridable by a `routing.task` entry on the flagged job.
- * Honest-null in every single-provider scenario.
+ * The Flagged Second Seat in `dual`: the Codex second-seat default
+ * (`dual-seat.ts`), overridable by that job's `dual` override cell. Honest-null in
+ * every single-provider scenario.
  */
-function resolveSecondSeatDual(ctx: CouncilResolveContext, jobId: CouncilJobId): ResolvedRoleCell {
-  const override = ctx.overrides?.task?.[jobId];
+function resolveSecondSeatDual(
+  ctx: ReviewRoleResolveContext,
+  jobId: CouncilJobId,
+): ResolvedRoleCell {
+  const override = ctx.overrides?.[jobId]?.dual;
   const overridden = override?.model !== undefined || override?.effort !== undefined;
   return {
     value: {
@@ -196,7 +223,7 @@ function resolveSecondSeatDual(ctx: CouncilResolveContext, jobId: CouncilJobId):
  * available), so the surface renders the eight roles even with no override set.
  * A role that does not run in a scenario resolves to a `null` cell, never a guess.
  */
-export function resolveReviewRoles(ctx: CouncilResolveContext): ResolvedReviewRole[] {
+export function resolveReviewRoles(ctx: ReviewRoleResolveContext): ResolvedReviewRole[] {
   return REVIEW_ROLE_CATALOGUE.map((role) => {
     const base = { id: role.id, label: role.label, hint: role.hint };
     if (role.dualOnly) {
@@ -209,9 +236,9 @@ export function resolveReviewRoles(ctx: CouncilResolveContext): ResolvedReviewRo
     }
     return {
       ...base,
-      dual: resolveTableCell(role.jobId, "both", ctx),
-      claudeOnly: resolveTableCell(role.jobId, "claude-only", ctx),
-      codexOnly: resolveTableCell(role.jobId, "codex-only", ctx),
+      dual: resolveTableCell(role.jobId, "dual", ctx),
+      claudeOnly: resolveTableCell(role.jobId, "claudeOnly", ctx),
+      codexOnly: resolveTableCell(role.jobId, "codexOnly", ctx),
     };
   });
 }
@@ -226,14 +253,6 @@ export function reviewRoleJobId(roleId: string): CouncilJobId | undefined {
 }
 
 /**
- * `resolveReviewRoles` resolves each scenario against that scenario's OWN
- * availability (see `SCENARIO_AVAILABILITY`), so the context's top-level
- * `availability` is inert here. Both-installed is the honest placeholder for a
- * required field the all-scenario walk never reads.
- */
-const INERT_AVAILABILITY: CouncilAvailability = { installed: ["claude-code", "codex"] };
-
-/**
  * Collapse a resolved cell's `ResolutionSource` to the two layers the surface
  * renders: a `task-override` won (`override`), or the council table stands
  * (`default`). An honest-null cell keeps `default` — nothing overrode a role
@@ -246,16 +265,12 @@ function toWireCell(cell: ResolvedRoleCell): ReviewRoleCell {
 /**
  * The wire view of the review-role mappings (C16, #485) — `resolveReviewRoles`
  * mapped onto `reviewRoleMappingSchema`, which is what `settings.get` carries and
- * `settings.setRoleAssignment` returns. `overrides` is the persisted
+ * `settings.setRoleAssignment` returns. `overrides` is the persisted per-scenario
  * `routing.task` slice; passing `undefined` yields the pure council defaults
  * (honest-present: the tables are static, so this is never empty).
  */
-export function reviewRoleMappings(overrides?: CouncilOverrides): ReviewRoleMapping[] {
-  const ctx: CouncilResolveContext = {
-    availability: INERT_AVAILABILITY,
-    ...(overrides === undefined ? {} : { overrides }),
-  };
-  return resolveReviewRoles(ctx).map((role) => ({
+export function reviewRoleMappings(overrides?: ReviewRoleOverrides): ReviewRoleMapping[] {
+  return resolveReviewRoles(overrides === undefined ? {} : { overrides }).map((role) => ({
     id: role.id,
     label: role.label,
     hint: role.hint,

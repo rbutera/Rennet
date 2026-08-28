@@ -144,16 +144,18 @@ describe("FileConfigStore (client settings)", () => {
     // Additive: an untouched install carries no slice at all.
     expect(store.read().routing).toBeUndefined();
 
+    // PER-SCENARIO (Rai, 2026-08-28): the cell is keyed by column, so an edit in
+    // `dual` persists as `dual` alone — the siblings stay absent on disk.
     const written = store.update((current) => ({
       ...current,
-      routing: { task: { "lens-draft": { model: "sonnet-5", effort: "medium" } } },
+      routing: { task: { "lens-draft": { dual: { model: "sonnet-5", effort: "medium" } } } },
     }));
     expect(written.routing?.task).toEqual({
-      "lens-draft": { model: "sonnet-5", effort: "medium" },
+      "lens-draft": { dual: { model: "sonnet-5", effort: "medium" } },
     });
     // A fresh store over the same path — the restart — still carries the override.
     expect(createClientSettingsStore(path).read().routing?.task).toEqual({
-      "lens-draft": { model: "sonnet-5", effort: "medium" },
+      "lens-draft": { dual: { model: "sonnet-5", effort: "medium" } },
     });
     // Clearing the last override drops the slice: byte-identical to never having set one.
     const cleared = store.update((current) => {
@@ -173,7 +175,7 @@ describe("FileConfigStore (client settings)", () => {
     expect(() =>
       store.update((current) => ({
         ...current,
-        routing: { task: { "lens-draft": { model: "haiku" } } },
+        routing: { task: { "lens-draft": { dual: { model: "haiku" } } } },
       })),
     ).toThrow(/malformed/);
     expect(readFileSync(path, "utf8")).toBe(malformed);

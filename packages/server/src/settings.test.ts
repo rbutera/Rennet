@@ -477,25 +477,30 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
       value: { model: "sonnet-5", effort: "medium" },
       layer: "override",
     });
-    // Persisted as model+effort ONLY under the backing job id (#89: no harness).
-    expect(read().routing?.task).toEqual({ "lens-draft": { model: "sonnet-5", effort: "medium" } });
+    // Persisted as model+effort ONLY under the backing job id, keyed by the EDITED
+    // COLUMN (#89: no harness; Rai 2026-08-28: per-scenario).
+    expect(read().routing?.task).toEqual({
+      "lens-draft": { dual: { model: "sonnet-5", effort: "medium" } },
+    });
     // RE-READ (the reload): the override is durable, not a cosmetic echo.
     expect(cell(composition.reviewRoles(), "lens-workers", "dual")).toEqual({
       value: { model: "sonnet-5", effort: "medium" },
       layer: "override",
     });
-    // Scenario-independent by construction: `routing.task` is the council's one
-    // honoured override slot and is not keyed by scenario, so every column that
-    // resolves through `lens-draft` moves — and the re-resolution SHOWS it.
-    expect(cell(written, "lens-workers", "codexOnly")).toEqual({
-      value: { model: "sonnet-5", effort: "medium" },
-      layer: "override",
-    });
+    // PER-SCENARIO: the sibling columns of the SAME role are untouched — they still
+    // read their own council-table defaults. (Under the old job-keyed shape this
+    // cell read sonnet-5/override, so this assertion is the guard against its return.)
+    expect(cell(written, "lens-workers", "codexOnly")).toEqual(
+      cell(defaults, "lens-workers", "codexOnly"),
+    );
+    expect(cell(written, "lens-workers", "claudeOnly")).toEqual(
+      cell(defaults, "lens-workers", "claudeOnly"),
+    );
     // Untouched roles keep their table defaults — the write is not a broadcast.
     expect(cell(written, "adjudication", "dual")).toEqual(cell(defaults, "adjudication", "dual"));
 
-    // RESET (`null`) clears the entry, so the cell falls back to the EXACT table
-    // default — the flip that proves the override was real, not decorative.
+    // RESET (`null`) clears THAT CELL, so it falls back to the EXACT table default
+    // — the flip that proves the override was real, not decorative.
     const afterReset = composition.setRoleAssignment({
       roleId: "lens-workers",
       scenario: "dual",
@@ -506,10 +511,52 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
     expect(read().routing).toBeUndefined();
   });
 
+  it("a reset clears ONE column and leaves the same role's other override standing", () => {
+    const { deps, read } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const defaults = reviewRoleMappings();
+
+    composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    });
+    const both = composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "codexOnly",
+      assignment: { model: "gpt-5.5", effort: "low" },
+    });
+    expect(cell(both, "lens-workers", "dual")?.value).toEqual({
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(cell(both, "lens-workers", "codexOnly")?.value).toEqual({
+      model: "gpt-5.5",
+      effort: "low",
+    });
+
+    // Reset only `codexOnly`: `dual` keeps its override, and the job entry survives.
+    const afterReset = composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "codexOnly",
+      assignment: null,
+    });
+    expect(cell(afterReset, "lens-workers", "codexOnly")).toEqual(
+      cell(defaults, "lens-workers", "codexOnly"),
+    );
+    expect(cell(afterReset, "lens-workers", "dual")).toEqual({
+      value: { model: "sonnet-5", effort: "medium" },
+      layer: "override",
+    });
+    expect(read().routing?.task).toEqual({
+      "lens-draft": { dual: { model: "sonnet-5", effort: "medium" } },
+    });
+  });
+
   it("ignores an unknown job id sitting in the stored routing slice (no fabricated routing)", () => {
     let stored: ClientSettings = {
       version: 1,
-      routing: { task: { "not-a-council-job": { model: "haiku" } } },
+      routing: { task: { "not-a-council-job": { dual: { model: "haiku" } } } },
     };
     const { deps } = makeDeps({
       readGlobalState: () => ({ status: "ok", config: stored }),

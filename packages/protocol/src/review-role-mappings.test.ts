@@ -77,17 +77,33 @@ describe("review-role mapping wire schemas (C16)", () => {
     expect(withRoles.reviewRoles).toHaveLength(1);
   });
 
-  it("clientSettings carries routing.task overrides, model+effort only (#89)", () => {
+  it("clientSettings carries PER-SCENARIO routing.task overrides, model+effort only (#89)", () => {
     const parsed = clientSettingsSchema.parse({
       version: 1,
-      routing: { task: { "lens-draft": { model: "opus-4.8", effort: "high" } } },
+      routing: { task: { "lens-draft": { codexOnly: { model: "gpt-5.5", effort: "low" } } } },
     });
-    expect(parsed.routing?.task?.["lens-draft"]).toEqual({ model: "opus-4.8", effort: "high" });
+    // Only the edited column carries a cell; the siblings stay absent (Rai, 2026-08-28).
+    expect(parsed.routing?.task?.["lens-draft"]).toEqual({
+      codexOnly: { model: "gpt-5.5", effort: "low" },
+    });
     // A harness field is not part of the override shape — it is stripped, never persisted.
     const stripped = clientSettingsSchema.parse({
       version: 1,
-      routing: { task: { "lens-draft": { model: "opus-4.8", effort: "high", harness: "codex" } } },
+      routing: {
+        task: { "lens-draft": { dual: { model: "opus-4.8", effort: "high", harness: "codex" } } },
+      },
     });
-    expect(stripped.routing?.task?.["lens-draft"]).toEqual({ model: "opus-4.8", effort: "high" });
+    expect(stripped.routing?.task?.["lens-draft"]?.dual).toEqual({
+      model: "opus-4.8",
+      effort: "high",
+    });
+    // The OLD job-keyed shape is no longer a routing override: a bare pick has no
+    // scenario key, so it parses to an empty cell set rather than a job-wide override.
+    expect(
+      clientSettingsSchema.parse({
+        version: 1,
+        routing: { task: { "lens-draft": { model: "haiku", effort: "low" } } },
+      }).routing?.task?.["lens-draft"],
+    ).toEqual({});
   });
 });

@@ -4,6 +4,7 @@ import {
   detectLocus,
   escapePath,
   REVIEW_ROLE_JOB_IDS,
+  type ReviewRoleOverrides,
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
@@ -14,10 +15,8 @@ import {
 import type {
   ClientSettings,
   CoachMarks,
-  CouncilJobId,
-  CouncilOverridePick,
-  CouncilOverrides,
   CouncilPick,
+  CouncilScenarioOverrides,
   DaemonHostSection,
   DaemonSettings,
   PairedDevice,
@@ -145,12 +144,10 @@ export interface SettingsComposition {
    * answer. Model + effort only — harness derives from the model's provider (#89).
    * A malformed config REFUSES the write (throws) exactly as `setKeybinding`.
    *
-   * SCENARIO-INDEPENDENT BY CONSTRUCTION: the council's honoured override slot is
-   * `routing.task[jobId]`, which is not keyed by scenario (there is exactly one
-   * live scenario at run time — whichever the availability probe finds). `scenario`
-   * names the cell the viewer edited; the write moves every column that resolves
-   * through that job, and the returned re-resolution SHOWS all of them moving
-   * rather than pretending the edit was column-local.
+   * PER-SCENARIO (Rai, 2026-08-28): the write touches exactly ONE `(job, scenario)`
+   * cell of `routing.task`. `null` clears that cell only, so it falls back to that
+   * scenario's council-table default while the sibling columns keep their own
+   * overrides — one edit never moves three columns.
    */
   setRoleAssignment(input: {
     roleId: string;
@@ -311,14 +308,14 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     return hosts;
   };
 
-  // The persisted `routing.task` slice as council overrides (C16, #485). Only job
-  // ids the review-role catalogue actually names are admitted: a stale or unknown
-  // key in `client-settings.json` is IGNORED rather than fed to the resolver, so a
+  // The persisted per-scenario `routing.task` slice (C16, #485). Only job ids the
+  // review-role catalogue actually names are admitted: a stale or unknown key in
+  // `client-settings.json` is IGNORED rather than fed to the resolver, so a
   // hand-edited config can never route a job the surface does not show.
-  const storedOverrides = (client: ClientSettings): CouncilOverrides | undefined => {
+  const storedOverrides = (client: ClientSettings): ReviewRoleOverrides | undefined => {
     const stored = client.routing?.task;
     if (!stored) return undefined;
-    const task: Partial<Record<CouncilJobId, CouncilOverridePick>> = {};
+    const task: Record<string, CouncilScenarioOverrides> = {};
     let any = false;
     for (const jobId of REVIEW_ROLE_JOB_IDS) {
       const entry = stored[jobId];
@@ -326,7 +323,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       task[jobId] = entry;
       any = true;
     }
-    return any ? { task: task as Readonly<Record<CouncilJobId, CouncilOverridePick>> } : undefined;
+    return any ? task : undefined;
   };
 
   const resolveReviewRoleView = (): ReviewRoleMapping[] =>
@@ -443,16 +440,25 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         throw new Error(`settings: unknown review role "${input.roleId}"`);
       }
       // `updateGlobal` REFUSES (throws) when the config is malformed, so an edit can
-      // never overwrite unparseable bytes (Rule 75). A pick SETS the override; `null`
-      // RESETS by dropping the entry, so the cell falls back to the council table.
-      // A plain write, first click, no confirmation (Rule Zero).
+      // never overwrite unparseable bytes (Rule 75). A pick SETS this ONE (job,
+      // scenario) cell; `null` RESETS by dropping that cell only, so it falls back to
+      // that scenario's council table while the sibling columns keep their own
+      // overrides. A plain write, first click, no confirmation (Rule Zero).
       const written = deps.updateGlobal((current) => {
         const task = { ...current.routing?.task };
-        if (input.assignment === null) delete task[jobId];
+        const cells: CouncilScenarioOverrides = { ...task[jobId] };
+        if (input.assignment === null) delete cells[input.scenario];
         // Model + effort ONLY — harness always derives from the model's provider (#89).
-        else task[jobId] = { model: input.assignment.model, effort: input.assignment.effort };
-        // Clearing the last override drops the whole slice, so an install that
-        // reset everything is byte-identical to one that never overrode anything.
+        else
+          cells[input.scenario] = {
+            model: input.assignment.model,
+            effort: input.assignment.effort,
+          };
+        // Clearing a job's last cell drops the job entry, and clearing the last job
+        // drops the whole slice — an install that reset everything is byte-identical
+        // to one that never overrode anything.
+        if (Object.keys(cells).length === 0) delete task[jobId];
+        else task[jobId] = cells;
         const next = { ...current };
         delete next.routing;
         return Object.keys(task).length === 0 ? next : { ...next, routing: { task } };

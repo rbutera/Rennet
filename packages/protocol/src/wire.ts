@@ -1703,6 +1703,20 @@ export const reviewRoleScenarioSchema = z.enum(["dual", "claudeOnly", "codexOnly
 export type ReviewRoleScenario = z.infer<typeof reviewRoleScenarioSchema>;
 
 /**
+ * One council job's routing overrides, keyed BY SCENARIO (Rai, 2026-08-28). Each
+ * column owns its own cell: an edit in `codexOnly` moves the Codex-only column and
+ * nothing else, and clearing it falls back to that scenario's council-table default
+ * while the sibling columns keep whatever they hold. Every cell is optional — a job
+ * with no override at all carries no entry.
+ */
+export const councilScenarioOverridesSchema = z.object({
+  dual: councilOverridePickSchema.optional(),
+  claudeOnly: councilOverridePickSchema.optional(),
+  codexOnly: councilOverridePickSchema.optional(),
+});
+export type CouncilScenarioOverrides = z.infer<typeof councilScenarioOverridesSchema>;
+
+/**
  * Client settings — viewer preferences, stored at `~/.rennet/client-settings.json`
  * (B10 #476). These are personal, app-side choices that live OUTSIDE the config
  * ladder: the appearance scheme the renderer consumes as `data-scheme`, and the
@@ -1721,12 +1735,14 @@ export const clientSettingsSchema = z.object({
   coachmarks: coachMarksSchema.optional(),
   /**
    * Model-council routing overrides (C16, #485). `task` keys by council job id →
-   * a model+effort override the resolver layers over the table default (#89: no
-   * harness field). Additive-optional: an untouched install omits it, and clearing
-   * the last override drops the slice. Written by `settings.setRoleAssignment`.
+   * that job's PER-SCENARIO override cells (Rai's 2026-08-28 ruling), each a
+   * model+effort pick the resolver layers over that scenario's table default
+   * (#89: no harness field). Additive-optional: an untouched install omits it,
+   * clearing a job's last cell drops the job entry, and clearing the last job
+   * drops the slice. Written by `settings.setRoleAssignment`, one cell per edit.
    */
   routing: z
-    .object({ task: z.record(z.string(), councilOverridePickSchema).optional() })
+    .object({ task: z.record(z.string(), councilScenarioOverridesSchema).optional() })
     .optional(),
 });
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
