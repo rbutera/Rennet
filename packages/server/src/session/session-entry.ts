@@ -15,6 +15,7 @@
 // claim; nothing is shared to serialize.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { type GitExec, repositoryIdentity } from "@rennet/adapters";
 import { bindTarget, type MintSessionDeps, mintSession } from "@rennet/core";
 import {
   type Claim,
@@ -188,6 +189,54 @@ export function resolveRoundSessionId(
     ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
   };
   return claimingSession(sessions, projectId, review.repositoryRoot, target)?.id ?? review.id;
+}
+
+/**
+ * The WRITE side of the same derivation — the session a round for this review dispatches
+ * ONTO. It lives here, beside {@link resolveRoundSessionId}, because the two must agree and
+ * they only agree if a reader can see both at once. Inline in the composition root the write
+ * side drifted twice, silently, and each drift emptied all four session-keyed reads
+ * (`session.rounds`, `session.transcript`, `board.read`, and the per-session round lock):
+ *
+ *   • It never passed the review id, so the review's HOLDER arm — the arm the read side takes
+ *     FIRST, and the only arm that can find the claim-less Current Checkout session (#587) —
+ *     was dead on the one path that mints. A round dispatched from Current Checkout recorded
+ *     under a freshly minted claim session while every read resolved the holder.
+ *   • It never named a repository, so in a workspace holding two repos that share a branch
+ *     name the two unstamped New Chat sessions were indistinguishable to it, the ambiguous
+ *     fallback was declined, and the click's session and the round's session were two rows.
+ *
+ * The `owner/name` is read HERE rather than taken from a caller, from the SAME
+ * `repositoryIdentity` that stamped the row the New Chat click carried — one git call per
+ * round, against the review's own root. Measured stable across a repo root, a linked worktree
+ * and a symlinked path, with and without an origin remote, so the two strings agree by
+ * construction rather than by hope. If they ever did diverge the cost is bounded to today's
+ * behaviour: a positive contradiction mints a fresh root-stamped session, which the read side
+ * then resolves exactly — a split, never a wrong ledger and never an empty one.
+ */
+export async function enterRoundSession(
+  entry: SessionEntry,
+  projectId: string,
+  review: Review,
+  git: GitExec,
+): Promise<EntryResult> {
+  const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
+  const branch = activePatchset?.repository.headRef;
+  // Detached HEAD: no branch, so no claim to dedupe on — the review id keys a REAL PERSISTED
+  // session (#573), and it is the same id the read side's no-branch fallback answers.
+  if (branch === undefined) {
+    return entry.enterDetached(projectId, review.id, review.repositoryRoot);
+  }
+  return entry.enter(
+    projectId,
+    {
+      branch,
+      ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
+      repository: await repositoryIdentity(git, review.repositoryRoot),
+    },
+    review.repositoryRoot,
+    review.id,
+  );
 }
 
 /** Mints and reattaches sessions from New-chat row clicks, and hides the rows a

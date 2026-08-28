@@ -224,7 +224,12 @@ import {
   type PersistedBoardMeta,
   type WorkerReturn,
 } from "./runtime/rounds";
-import { projectIdForRepoRoot, resolveRoundSessionId, SessionEntry } from "./session/session-entry";
+import {
+  enterRoundSession,
+  projectIdForRepoRoot,
+  resolveRoundSessionId,
+  SessionEntry,
+} from "./session/session-entry";
 import {
   createContextRebuiltEmit,
   createTranscriptCapture,
@@ -2134,26 +2139,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
     },
     dispatchRound: async ({ review, workOrder }) => {
-      const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
-      const branch = activePatchset?.repository.headRef;
-      // Both mints funnel through `SessionEntry` keyed on the PROJECT id (#580), so a session a
-      // round mints groups under the same sidebar row New Chat's mint does. The repo root rides
-      // along so a workspace's per-repo rounds stay in their own ledgers, and so the read side
-      // (`sessionIdForReview`) resolves this exact session back.
-      const projectId = projectIdOf(review.repositoryRoot);
-      const session =
-        branch !== undefined
-          ? sessionEntry.enter(
-              projectId,
-              {
-                branch,
-                ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
-              },
-              review.repositoryRoot,
-            ).session
-          : // Detached HEAD: no branch, so no claim to dedupe on — the review id keys a REAL
-            // PERSISTED session (#573), never the ad-hoc literal this used to build and drop.
-            sessionEntry.enterDetached(projectId, review.id, review.repositoryRoot).session;
+      // The WRITE half of the session identity, and it lives beside its READ half
+      // (`resolveRoundSessionId`, which `sessionIdForReview` calls) rather than here — the two
+      // have to agree, and inline in this file they twice did not. Both mints funnel through
+      // `SessionEntry` keyed on the PROJECT id (#580); the repo root, the review id and the
+      // repo's `owner/name` all ride along, so a workspace's per-repo rounds stay in their own
+      // ledgers and the read side resolves this exact session back.
+      const session = (
+        await enterRoundSession(
+          sessionEntry,
+          projectIdOf(review.repositoryRoot),
+          review,
+          gitForRepo(review.repositoryRoot),
+        )
+      ).session;
       // Captured from the worker run below so the C15 regeneration tail can run
       // `runRound` over what the worker produced WITHOUT re-running the worker: a
       // WorkerReturn carrying the commit range, plus a `patchsetId` (the post-turn HEAD)
