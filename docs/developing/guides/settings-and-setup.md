@@ -228,13 +228,27 @@ The Projects page also carries project **identity** (display name with the
 `org/repo` default, and a glyph), **worktree** location and naming pattern, and
 the issue tracker's fields — GitHub rides the host's `gh` CLI and exposes no
 further fields; JIRA and Linear expose a project key, a base URL, and the *name*
-of the environment variable holding the token (never the token itself). Of these,
-Review Context (map visibility) and the display NAME are wired to live commands
-today — the name writes through `project.rename`, which the sidebar's own rename
-also calls, and an emptied name restores the `org/repo` identity host-side. The
-glyph, worktree, issue-tracker, and guidance edits resolve through the settings
-seam but have no served write yet: those controls render DISABLED with a line
-naming the gap, rather than accepting edits that would vanish.
+of the environment variable holding the token (never the token itself). All of
+these are wired to live commands. The display name writes through
+`project.rename`, which the sidebar's own rename also calls, and an emptied name
+restores the `org/repo` identity host-side. The glyph, worktree pair, and
+issue-tracker fields write through `settings.setProjectValue`, which stores them
+on the **repository rung** — the project's own `config.json`, the same layer map
+visibility uses — so a per-project answer beats the host's global one, and an
+emptied field drops the entry and falls back down the ladder. Guidance rules
+write through `settings.setGuidance` into the repository's own
+`.rennet/conventions.json`, the file the review runners read.
+
+The per-project issue tracker reaches retrieval, not just the surface: the same
+repository rung is what related-context retrieval resolves through, so two
+projects on one machine can point at two different trackers. A rule the settings
+surface authors keeps its statement and severity; the rationale and anti-pattern
+already recorded for a rule survive an edit, and a newly authored rule takes its
+own statement as its reason (the catalogue reader requires one).
+
+A daemon that does not serve the per-project rung — an older version on a remote
+or WSL host — returns rows without it, and those editors render DISABLED with a
+line naming the gap rather than accepting edits that would vanish.
 
 Changing visibility never stages or commits files. Local visibility keeps the
 promoted map out of ordinary Git status through Rennet's entry in
@@ -257,7 +271,24 @@ precedence is:
 builtin < detected < global < repo
 ```
 
-Appearance uses `builtin < global`. Map visibility uses `builtin < repo`.
+Appearance uses `builtin < global`. Map visibility uses `builtin < repo`. The
+per-project preferences resolve through the layers that actually have a producer
+today: the glyph and the worktree naming pattern are `builtin < repo`, the
+worktree location is `builtin < detected < repo` (the project scout offers a
+detected location), and the issue-tracker keys are `builtin < detected < global <
+repo` — the tracker is the one section with a host-wide global rung, in
+`daemon-settings.json`.
+
+The tracker section resolves as a **unit**, not key by key. The layer that
+supplies the effective *kind* is the floor for that tracker's project key, base
+URL, and token environment variable: an endpoint offered lower down described a
+different provider, so it is masked and the field reads honestly absent. A
+project that picks JIRA on its own rung therefore never inherits the host's
+Linear URL and token — an incomplete endpoint surfaces as missing config and
+retrieval proceeds without it. An endpoint set at or above the kind's layer is a
+refinement of the same choice and still applies. The settings surface and
+retrieval share that one resolution, so a provenance chip cannot disagree with
+the endpoint a review actually calls.
 "Runs on" (execution locus) is a detected fact with no ladder layer to override.
 The UI renders the resolver's answer instead of recalculating precedence in React.
 

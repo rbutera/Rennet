@@ -109,6 +109,76 @@ export interface ProjectConfig {
    * detected offer. A plain editable setting, never a gate.
    */
   readonly locus?: Locus;
+  /**
+   * The project's REPO-RUNG settings answers (C18 group A) — the per-project layer
+   * of the settings ladder, above the host's global rung. Every field is optional
+   * and absent by default, so an untouched install carries none of them and every
+   * value resolves from `global`/`detected`/`builtin` exactly as before.
+   *
+   * `glyph` and the worktree pair are cosmetic/workflow prefs; `tracker` is the
+   * per-project override of the issue-tracker section, and it is the one that
+   * reaches RETRIEVAL: `resolveTrackerConfig` folds it over the global rung, so a
+   * project pointed at its own JIRA is actually queried there.
+   */
+  readonly glyph?: string;
+  readonly worktreeBaseDir?: string;
+  readonly worktreePattern?: string;
+  readonly tracker?: {
+    readonly kind?: string;
+    readonly projectKey?: string;
+    readonly baseUrl?: string;
+    readonly tokenEnv?: string;
+  };
+}
+
+/** The repo-rung pref fields a settings write may address, and where each lands in
+ *  {@link ProjectConfig}. The tracker keys nest; the rest are top-level. */
+export const REPO_PREF_FIELDS = [
+  "glyph",
+  "worktreeBaseDir",
+  "worktreePattern",
+  "trackerKind",
+  "trackerProjectKey",
+  "trackerBaseUrl",
+  "trackerTokenEnv",
+] as const;
+export type RepoPrefField = (typeof REPO_PREF_FIELDS)[number];
+
+/** The tracker sub-key a `tracker*` pref field writes, or undefined for a top-level one. */
+const TRACKER_SUBKEY: Partial<
+  Record<RepoPrefField, "kind" | "projectKey" | "baseUrl" | "tokenEnv">
+> = {
+  trackerKind: "kind",
+  trackerProjectKey: "projectKey",
+  trackerBaseUrl: "baseUrl",
+  trackerTokenEnv: "tokenEnv",
+};
+
+/**
+ * One repo-rung pref written into a project config — pure, so the settings write and
+ * this store's shape cannot drift. A `null` value RESETS: it drops the entry so the
+ * value falls back down the ladder, and clearing a tracker's last key drops the whole
+ * `tracker` object, leaving a config byte-identical to one that never overrode anything.
+ */
+export function withRepoPref(
+  config: ProjectConfig,
+  field: RepoPrefField,
+  value: string | null,
+): ProjectConfig {
+  const next: { -readonly [K in keyof ProjectConfig]: ProjectConfig[K] } = { ...config };
+  const subKey = TRACKER_SUBKEY[field];
+  if (subKey) {
+    const tracker: Record<string, string> = { ...config.tracker };
+    if (value === null) delete tracker[subKey];
+    else tracker[subKey] = value;
+    if (Object.keys(tracker).length === 0) delete next.tracker;
+    else next.tracker = tracker;
+    return next;
+  }
+  const topLevel = field as "glyph" | "worktreeBaseDir" | "worktreePattern";
+  if (value === null) delete next[topLevel];
+  else next[topLevel] = value;
+  return next;
 }
 
 /** True for a structurally valid {@link Locus} value. */
@@ -146,6 +216,19 @@ function isValidProjectConfig(value: unknown): value is ProjectConfig {
     return false;
   }
   if (record.locus !== undefined && !isValidLocus(record.locus)) return false;
+  // The repo-rung prefs (C18 group A) are validated on the SAME terms as the rest:
+  // present-but-wrong-typed is MALFORMED, so a hand-edited `glyph: 7` refuses the
+  // next write rather than leaking a number into the settings resolver.
+  for (const key of ["glyph", "worktreeBaseDir", "worktreePattern"] as const) {
+    if (record[key] !== undefined && typeof record[key] !== "string") return false;
+  }
+  if (record.tracker !== undefined) {
+    if (typeof record.tracker !== "object" || record.tracker === null) return false;
+    const tracker = record.tracker as Record<string, unknown>;
+    for (const key of ["kind", "projectKey", "baseUrl", "tokenEnv"] as const) {
+      if (tracker[key] !== undefined && typeof tracker[key] !== "string") return false;
+    }
+  }
   return true;
 }
 

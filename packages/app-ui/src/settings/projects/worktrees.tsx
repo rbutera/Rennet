@@ -34,7 +34,10 @@ const FIELD =
 export function WorktreeSection({ project }: { readonly project: SidebarProject }) {
   const projection = useSettingsProjection();
   // No served write store yet ⇒ disable the fields + disclose the gap (no no-op inputs).
-  const backed = projection.projectEditsPersist;
+  // Per PROJECT: the capability belongs to this project's served row, not to the
+  // surface — a project the daemon has no row for stays disabled even when a sibling
+  // project's editors are live.
+  const backed = projection.prefsBackedByProject[project.id] ?? projection.projectEditsPersist;
   const settings = projection.worktreeByProject[project.id];
   const root = settings?.root.value ?? DEFAULT_WORKTREE_ROOT;
   const pattern = settings?.pattern.value ?? DEFAULT_WORKTREE_PATTERN;
@@ -43,7 +46,7 @@ export function WorktreeSection({ project }: { readonly project: SidebarProject 
   const preview = `${root.replace(/\/+$/, "")}/${previewWorktreeName(pattern, name)}`;
 
   return (
-    <Section title="Worktrees" caption="~/.rennet/client-settings.json">
+    <Section title="Worktrees" caption="~/.rennet/projects/<repo>/config.json">
       <Row label="Location" hint="new worktrees for this project are created here" stacked>
         <input
           value={root}

@@ -39,7 +39,10 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
   const projection = useSettingsProjection();
   // No served write store yet ⇒ show the controls disabled + disclose the gap, never
   // an enabled field bound to the projection's no-op setter (which would eat input).
-  const backed = projection.projectEditsPersist;
+  // Per PROJECT: the capability belongs to this project's served row, not to the
+  // surface — a project the daemon has no row for stays disabled even when a sibling
+  // project's editors are live.
+  const backed = projection.prefsBackedByProject[project.id] ?? projection.projectEditsPersist;
   // The name writes through `project.rename` (C18) even where the glyph does not, so the
   // field is enabled on its own truth rather than on the unserved editors' flag.
   const nameBacked = projection.nameEditsPersist;
@@ -60,7 +63,7 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
   }
 
   return (
-    <Section title="Identity" caption="~/.rennet/projects.json · ~/.rennet/client-settings.json">
+    <Section title="Identity" caption="~/.rennet/projects.json · projects/<repo>/config.json">
       <Row label="Name" hint={`defaults to ${project.fallbackName}`}>
         {renamed ? (
           <button

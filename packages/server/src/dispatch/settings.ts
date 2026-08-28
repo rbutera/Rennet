@@ -128,6 +128,50 @@ export function settingsHandlers(rt: DispatchRuntime) {
         }),
       });
     },
+    "settings.setProjectValue": async (rawInput) => {
+      const name = "settings.setProjectValue" as const;
+      // The repo-rung per-project prefs (C18 group A): glyph, the worktree pair, and
+      // this project's issue-tracker override — the last of which RETRIEVAL resolves
+      // through, so the write reaches the review it configures. A `status` other than
+      // `applied` means NOTHING was written (an unresolved checkout, or a
+      // refused-because-malformed config, Rule 75). Absent dep ⇒ a typed `unresolved`
+      // no-op, mirroring `resetRepoValue`: no store, so nothing was persisted.
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.settings) {
+        return parseCommandOutput(name, { status: "unresolved", key: input.key, project: null });
+      }
+      return parseCommandOutput(
+        name,
+        await deps.settings.setProjectValue({
+          projectId: input.projectId,
+          repoPath: input.repoPath,
+          key: input.key,
+          value: input.value,
+        }),
+      );
+    },
+    "settings.setGuidance": async (rawInput) => {
+      const name = "settings.setGuidance" as const;
+      // The WRITE beside `settings.guidance`'s read: the repo's own
+      // `.rennet/conventions.json`, the file the lens runners read before every review.
+      // The output is the catalogue read BACK off the file. Absent dep ⇒ `unresolved`
+      // with the honest empty catalogue — nothing was stored, and it says so.
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.settings) {
+        return parseCommandOutput(name, {
+          status: "unresolved",
+          guidance: { rules: [], reason: "absent", dropped: 0 },
+        });
+      }
+      return parseCommandOutput(
+        name,
+        await deps.settings.setGuidance({
+          projectId: input.projectId,
+          repoPath: input.repoPath,
+          rules: input.rules,
+        }),
+      );
+    },
     "settings.setRepoVisibility": async (rawInput) => {
       const name = "settings.setRepoVisibility" as const;
       // Genuinely consumed: runs the real visibility switch (a repo `.gitignore`

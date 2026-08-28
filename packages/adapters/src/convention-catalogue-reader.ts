@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ConventionCatalogue, ConventionRule, FindingSeverity } from "@rennet/protocol";
 import { findingSeveritySchema } from "@rennet/protocol";
 
@@ -142,4 +142,73 @@ export function loadConventionCatalogue(projectRoot: string): ConventionCatalogu
       ? (parsed as { source: string }).source.trim()
       : path;
   return { catalogue: { rules, source }, dropped };
+}
+
+/** The file's top-level fields OTHER than `rules` — `source` and anything else an
+ *  author put there. Read raw so a write preserves the envelope it did not author;
+ *  a bare-array or unreadable file has no envelope to keep. */
+function readEnvelope(path: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const envelope = { ...(parsed as Record<string, unknown>) };
+    delete envelope.rules;
+    return envelope;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Write the per-project catalogue back to `<projectRoot>/.rennet/conventions.json`
+ * (C18 group A) — the WRITER beside the reader, so the Guidance section's edits are
+ * kept in the same file the lens runners read before every review. Atomic (temp file
+ * + rename), so a crash mid-write never leaves a half-catalogue the reader would
+ * degrade on. Throws when the file cannot be written; the caller reports that rather
+ * than claiming a save that did not happen.
+ *
+ * NOTHING the edit did not author is lost. A rule is addressed by its stable `id`
+ * where it has one, so RETYPING a rule's statement still keeps its rationale, its
+ * anti-pattern and its id (matching on the mutable text alone silently dropped all
+ * three); a rule with no id falls back to matching on its unchanged text. The file's
+ * top-level envelope — `source`, and any field an author added — is preserved too.
+ *
+ * The settings surface authors only a statement and a severity, and the reader
+ * REQUIRES a rationale (#180: a rule with none is dropped as malformed), so a NEWLY
+ * authored rule takes its own statement as its reason. Nothing is invented on the
+ * author's behalf.
+ */
+export function saveConventionCatalogue(
+  projectRoot: string,
+  rules: readonly {
+    readonly id?: string;
+    readonly convention: string;
+    readonly severity: FindingSeverity;
+  }[],
+): ConventionCatalogueLoad {
+  const path = join(projectRoot, CONVENTIONS_FILE);
+  const current = loadConventionCatalogue(projectRoot).catalogue?.rules ?? [];
+  const byId = new Map(current.filter((rule) => rule.id).map((rule) => [rule.id, rule]));
+  const byText = new Map(current.map((rule) => [rule.convention, rule]));
+  const next: ConventionRule[] = rules
+    .filter((rule) => isNonEmptyString(rule.convention))
+    .map((rule) => {
+      const convention = rule.convention.trim();
+      // Identity first, text only as the fallback for a rule that never had an id.
+      const kept = (rule.id ? byId.get(rule.id) : undefined) ?? byText.get(convention);
+      return {
+        ...((kept?.id ?? rule.id) ? { id: kept?.id ?? rule.id } : {}),
+        convention,
+        rationale: kept?.rationale ?? convention,
+        severity: rule.severity,
+        ...(kept?.antiPattern ? { antiPattern: kept.antiPattern } : {}),
+      };
+    });
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, `${JSON.stringify({ ...readEnvelope(path), rules: next }, null, 2)}\n`);
+  renameSync(tmp, path);
+  // Read back through the reader, so the caller renders what the FILE now holds —
+  // never the request echoed as if it had been stored.
+  return loadConventionCatalogue(projectRoot);
 }

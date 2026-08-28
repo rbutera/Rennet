@@ -67,6 +67,8 @@ import {
   reviewSchema,
   setRepoVisibilityOutcomeSchema,
   settingsGuidanceSchema,
+  settingsProjectValueKeySchema,
+  settingsProjectWriteOutcomeSchema,
   settingsRepoValueKeySchema,
   settingsRepoWriteOutcomeSchema,
   settingsViewSchema,
@@ -1068,6 +1070,54 @@ const definitions = {
       key: settingsRepoValueKeySchema,
     }),
     output: settingsRepoWriteOutcomeSchema,
+  },
+  // ── Settings: write one per-project preference (C18 group A) ───────────────
+  // The Projects surface's own edits — glyph, worktree location + naming, and the
+  // per-project issue-tracker override — written on the REPO rung (the project's own
+  // `config.json`, the same rung `visibility` uses), so a project's answer beats the
+  // host's global one and two projects on one machine can point at two trackers. The
+  // tracker keys are the ones that reach RETRIEVAL: `resolveTrackerConfig` folds this
+  // rung over the global answer, so a project pointed at its own JIRA is queried there.
+  // `value: null` RESETS (drops the repo entry so the value falls back down the
+  // ladder). A plain write, first click, no confirmation (Rule Zero); a malformed repo
+  // config REFUSES it (`status: "malformed"` — nothing written), exactly as the other
+  // repo-scoped writes. `applied` carries the freshly re-resolved row.
+  "settings.setProjectValue": {
+    input: z.object({
+      projectId: z.string().min(1),
+      repoPath: z.string().min(1),
+      key: settingsProjectValueKeySchema,
+      value: z.string().nullable(),
+    }),
+    output: settingsProjectWriteOutcomeSchema,
+  },
+  // ── Settings: write a repo's guidance catalogue (C18 group A) ──────────────
+  // The WRITE beside `settings.guidance`'s read: the Guidance section's rules, saved
+  // to that repo's `.rennet/conventions.json` — the same file the lens runners read
+  // before every review. Statement + severity is all the surface authors; an edited
+  // rule KEEPS the rationale and anti-pattern already on disk, and a newly authored
+  // one takes its own statement as its reason (the reader requires one, #180). The
+  // output is the catalogue read BACK off the file, so the surface renders what was
+  // stored, never the request echoed. `status: "unresolved"` ⇒ the project/checkout
+  // could not be resolved and NOTHING was written.
+  "settings.setGuidance": {
+    input: z.object({
+      projectId: z.string().min(1),
+      repoPath: z.string().min(1),
+      rules: z.array(
+        z.object({
+          /** The rule's stable id where it has one — an edit addresses the rule by
+           *  identity, so retyping the statement keeps its rationale and anti-pattern. */
+          id: z.string().min(1).optional(),
+          rule: z.string().min(1),
+          severity: z.enum(["high", "medium", "low"]),
+        }),
+      ),
+    }),
+    output: z.object({
+      status: z.enum(["applied", "unresolved"]),
+      guidance: settingsGuidanceSchema,
+    }),
   },
   // ── The review→agent handoff loop (issue #18, Contracts §2.1 destination B) ──
   // Batch the reviewer's open request-change/comment dispositions into a task bundle,

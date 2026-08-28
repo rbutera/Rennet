@@ -1854,6 +1854,41 @@ export const resolvedProvenanceSchema = z.object({
 });
 export type ResolvedProvenance = z.infer<typeof resolvedProvenanceSchema>;
 
+/** One resolved string setting: its effective value and the layer that supplied it.
+ *  An empty `value` at the `builtin` layer is the honest "nobody has set this". */
+const layeredStringSchema = z.object({ value: z.string(), layer: settingsLayerSchema });
+
+/**
+ * The per-project preferences the Projects surface reads and writes (C18 group A),
+ * each resolved off the settings ladder. `tracker` is the issue-tracker section
+ * (#461) at project scope — the one that reaches RETRIEVAL, since the same repo rung
+ * is what `resolveTrackerConfig` folds over the host's global answer. `guidance` is
+ * the repo's `.rennet/conventions.json` rules as the surface edits them: statement +
+ * severity (the authored rationale stays in the file and is never rewritten here).
+ */
+export const settingsProjectPrefsSchema = z.object({
+  glyph: layeredStringSchema,
+  worktreeRoot: layeredStringSchema,
+  worktreePattern: layeredStringSchema,
+  tracker: z.object({
+    kind: layeredStringSchema,
+    projectKey: layeredStringSchema,
+    baseUrl: layeredStringSchema,
+    tokenEnv: layeredStringSchema,
+  }),
+  guidance: z.array(
+    z.object({
+      /** The catalogue's stable author-facing id, when the rule has one. Carried so an
+       *  EDIT addresses the rule by identity — retyping its statement then keeps the
+       *  rationale and anti-pattern the author wrote. Never model-facing. */
+      id: z.string().min(1).optional(),
+      rule: z.string().min(1),
+      severity: findingSeveritySchema,
+    }),
+  ),
+});
+export type SettingsProjectPrefs = z.infer<typeof settingsProjectPrefsSchema>;
+
 /**
  * One repo row on the settings ladder — its real, resolved repo-scope config. A
  * single-repo project contributes ONE row; a workspace contributes one row PER
@@ -1890,6 +1925,16 @@ export const settingsProjectSchema = z
      * never overwrite bytes we could not parse (Rule 75). Absent config ⇒ `false`.
      */
     configMalformed: z.boolean(),
+    /**
+     * The per-project preferences the Projects surface edits (C18 group A), each
+     * RESOLVED off the settings ladder with the layer it came from — the same
+     * `builtin < detected < global < repo` law as visibility, so a project's own
+     * answer beats the host's and a `builtin` layer with an empty value means the
+     * project has simply never set one (the client then shows ITS default).
+     * Additive-optional: an engine that does not serve them omits the field, and
+     * the client keeps its honest empty state rather than inventing values.
+     */
+    prefs: settingsProjectPrefsSchema.optional(),
   })
   .transform((project) => {
     const value = project.locus.kind === "host" ? "host" : `WSL · ${project.locus.distro}`;
@@ -2157,6 +2202,37 @@ export const settingsRepoWriteOutcomeSchema = z.object({
   project: settingsProjectSchema.nullable(),
 });
 export type SettingsRepoWriteOutcome = z.infer<typeof settingsRepoWriteOutcomeSchema>;
+
+/**
+ * The per-project preference a `settings.setProjectValue` write addresses (C18 group
+ * A) — the repo-rung keys the Projects surface edits. `visibility` is NOT here: it
+ * runs the gitignore switch and keeps its own command. Each key maps to one
+ * `SETTINGS_REGISTRY` declaration, so the write validates on exactly the terms the
+ * resolver reads by.
+ */
+export const settingsProjectValueKeySchema = z.enum([
+  "glyph",
+  "worktreeRoot",
+  "worktreePattern",
+  "trackerKind",
+  "trackerProjectKey",
+  "trackerBaseUrl",
+  "trackerTokenEnv",
+]);
+export type SettingsProjectValueKey = z.infer<typeof settingsProjectValueKeySchema>;
+
+/**
+ * The outcome of a per-project preference write — the same three states, and the same
+ * honesty, as {@link settingsRepoWriteOutcomeSchema}: `applied` carries the FRESHLY
+ * re-resolved row (the resolver's own answer after the write), and any other status
+ * means NOTHING was written and `project` is null.
+ */
+export const settingsProjectWriteOutcomeSchema = z.object({
+  status: z.enum(["applied", "unresolved", "malformed"]),
+  key: settingsProjectValueKeySchema,
+  project: settingsProjectSchema.nullable(),
+});
+export type SettingsProjectWriteOutcome = z.infer<typeof settingsProjectWriteOutcomeSchema>;
 
 /** One convention rule shown in the per-repo guidance panel (never model-facing). */
 export const settingsConventionRuleSchema = z.object({

@@ -1,3 +1,4 @@
+import { withRepoPref } from "@rennet/adapters";
 import { escapePath, reviewRoleMappings } from "@rennet/core";
 import type {
   ClientSettings,
@@ -7,6 +8,7 @@ import type {
   ProjectVisibility,
   ReviewRoleMapping,
   ReviewRoleScenario,
+  SettingsProjectValueKey,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
@@ -73,6 +75,9 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
     clearRepoValue: ({ repoKey, field }) => {
       calls.clearRepoValue.push({ repoKey, field });
     },
+    // No backing store in this factory — the stateful one below proves persistence.
+    writeRepoValue: () => undefined,
+    saveGuidance: () => ({ dropped: 0, reason: "absent" }),
     ...overrides,
   };
   return { deps, calls };
@@ -84,21 +89,49 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
  * state the write left behind — the honest path reset/pin take (they re-resolve the
  * row from the live store after writing).
  */
+type FakeRepoConfig = {
+  version: number;
+  visibility?: ProjectVisibility;
+  promoted?: boolean;
+  glyph?: string;
+  worktreeBaseDir?: string;
+  worktreePattern?: string;
+  tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
+};
+
 function statefulDeps(
-  initial: { visibility?: ProjectVisibility; promoted?: boolean } = {},
+  initial: Partial<FakeRepoConfig> = {},
   opts: { malformed?: boolean; project?: Project } = {},
 ): {
   deps: SettingsCompositionDeps;
-  store: { visibility?: ProjectVisibility; promoted?: boolean };
+  store: FakeRepoConfig;
+  guidance: { rules: { convention: string; severity: "high" | "medium" | "low" }[] };
   calls: {
     applyVisibility: ProjectVisibility[];
     clearRepoValue: "visibility"[];
     saved: number;
   };
 } {
-  const store: { visibility?: ProjectVisibility; promoted?: boolean } = {
-    ...initial,
+  const store: FakeRepoConfig = { version: 1, ...initial };
+  // The repo's guidance catalogue, as the file would hold it across a reload.
+  const guidance: { rules: { convention: string; severity: "high" | "medium" | "low" }[] } = {
+    rules: [],
   };
+  const catalogueOf = () =>
+    guidance.rules.length === 0
+      ? { dropped: 0, reason: "empty" as const }
+      : {
+          dropped: 0,
+          catalogue: {
+            rules: guidance.rules.map((rule) => ({
+              convention: rule.convention,
+              // A rule authored on the surface takes its statement as its reason,
+              // exactly as the real writer does (the reader requires one, #180).
+              rationale: rule.convention,
+              severity: rule.severity,
+            })),
+          },
+        };
   const calls = {
     applyVisibility: [] as ProjectVisibility[],
     clearRepoValue: [] as "visibility"[],
@@ -117,7 +150,7 @@ function statefulDeps(
     listPairedDevices: () => [],
     gitTopLevel: async (workingPath) => workingPath,
     discoverWorkspaceRepos: async () => [],
-    loadGuidance: () => ({ dropped: 0, reason: "absent" }),
+    loadGuidance: catalogueOf,
     applyVisibility: async ({ repoRoot, target }) => {
       calls.applyVisibility.push(target);
       store.visibility = target;
@@ -129,8 +162,25 @@ function statefulDeps(
       delete store[field];
       calls.saved += 1;
     },
+    // The REAL repo-rung merge (`withRepoPref`) over a fake file, so this fake cannot
+    // drift from the shape the adapter actually writes. A malformed config REFUSES the
+    // write by throwing, exactly as `ProjectSnapshotStore.updateConfig` does (Rule 75).
+    writeRepoValue: ({ field, value }) => {
+      if (opts.malformed) throw new Error("refusing to overwrite a malformed project config");
+      const next = withRepoPref({ ...store }, field, value);
+      for (const key of ["glyph", "worktreeBaseDir", "worktreePattern", "tracker"] as const) {
+        delete store[key];
+      }
+      Object.assign(store, next);
+      calls.saved += 1;
+    },
+    saveGuidance: (_repoRoot, rules) => {
+      guidance.rules = rules.map((rule) => ({ ...rule }));
+      calls.saved += 1;
+      return catalogueOf();
+    },
   };
-  return { deps, store, calls };
+  return { deps, store, guidance, calls };
 }
 
 describe("createSettingsComposition — locus is a detected fact (#476)", () => {
@@ -1363,5 +1413,153 @@ describe("update — the real daemon update behind Update Daemon (C17 cluster 6,
       disabledHarnesses: ["codex"],
       lastSeenVersion: "0.2.0",
     });
+  });
+});
+
+describe("setProjectValue + setGuidance — the per-project repo rung (C18 group A)", () => {
+  const write = (key: SettingsProjectValueKey, value: string | null) => ({
+    projectId: "p1",
+    repoPath: "/orbital",
+    key,
+    value,
+  });
+
+  it("a worktree-pattern edit reads back after a RELOAD — a fresh composition over the same store", async () => {
+    const { deps, store } = statefulDeps();
+    const outcome = await createSettingsComposition(deps).setProjectValue(
+      write("worktreePattern", "{project}-{branch}"),
+    );
+    expect(outcome.status).toBe("applied");
+    // The value the write RESOLVED to, on the repo rung — not the request echoed back.
+    expect(outcome.project?.prefs?.worktreePattern).toEqual({
+      value: "{project}-{branch}",
+      layer: "repo",
+    });
+    expect(store.worktreePattern).toBe("{project}-{branch}");
+
+    // Reload: a brand-new composition over the same backing config.
+    const reloaded = (await createSettingsComposition(deps).get()).projects[0];
+    expect(reloaded?.prefs?.worktreePattern).toEqual({
+      value: "{project}-{branch}",
+      layer: "repo",
+    });
+  });
+
+  it("an untouched install resolves the global rung, and a project override beats it", async () => {
+    const globalRung = {
+      readDaemonSettings: () => ({
+        version: 1 as const,
+        tracker: {
+          kind: "linear" as const,
+          baseUrl: "https://api.linear.app",
+          tokenEnv: "LINEAR_TOKEN",
+        },
+      }),
+    };
+    const { deps: untouched } = statefulDeps();
+    const before = (await createSettingsComposition({ ...untouched, ...globalRung }).get())
+      .projects[0];
+    expect(before?.prefs?.tracker.kind).toEqual({ value: "linear", layer: "global" });
+
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({ ...deps, ...globalRung });
+    await composition.setProjectValue(write("trackerKind", "jira"));
+    const after = (await composition.get()).projects[0];
+    expect(after?.prefs?.tracker.kind).toEqual({ value: "jira", layer: "repo" });
+    // …and the host's LINEAR credentials do NOT follow the kind up the ladder. They
+    // described a different provider, so they are masked: the JIRA fields read honestly
+    // absent (missing config the surface asks for) rather than a Linear URL and token
+    // env var that a JIRA endpoint would be called with.
+    expect(after?.prefs?.tracker.tokenEnv).toEqual({ value: "", layer: "builtin" });
+    expect(after?.prefs?.tracker.baseUrl).toEqual({ value: "", layer: "builtin" });
+  });
+
+  it("an endpoint field set AT or ABOVE the kind's rung still applies (a refinement, not a mix)", async () => {
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({
+      ...deps,
+      readDaemonSettings: () => ({
+        version: 1 as const,
+        tracker: {
+          kind: "jira" as const,
+          baseUrl: "https://team.atlassian.net",
+          tokenEnv: "JIRA_API_TOKEN",
+        },
+      }),
+    });
+    // The project keeps the host's KIND and only narrows the prefix — same provider.
+    await composition.setProjectValue(write("trackerProjectKey", "PAY"));
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.tracker.kind).toEqual({ value: "jira", layer: "global" });
+    expect(row?.prefs?.tracker.projectKey).toEqual({ value: "PAY", layer: "repo" });
+    expect(row?.prefs?.tracker.baseUrl).toEqual({
+      value: "https://team.atlassian.net",
+      layer: "global",
+    });
+  });
+
+  it("a value the registry rejects never reaches the store", async () => {
+    const { deps, store } = statefulDeps();
+    await expect(
+      createSettingsComposition(deps).setProjectValue(write("trackerKind", "jra")),
+    ).rejects.toThrow();
+    expect(store.tracker).toBeUndefined();
+  });
+
+  it("an emptied value RESETS the rung: the entry is dropped and the value falls back", async () => {
+    const { deps, store } = statefulDeps({ glyph: "boxes" });
+    const outcome = await createSettingsComposition(deps).setProjectValue(write("glyph", ""));
+    expect(outcome.status).toBe("applied");
+    expect(store.glyph).toBeUndefined();
+    expect(outcome.project?.prefs?.glyph).toEqual({ value: "", layer: "builtin" });
+  });
+
+  it("a MALFORMED config refuses the write — nothing is written and the row says so", async () => {
+    const { deps, store } = statefulDeps({}, { malformed: true });
+    const outcome = await createSettingsComposition(deps).setProjectValue(
+      write("worktreePattern", "{branch}"),
+    );
+    expect(outcome.status).toBe("malformed");
+    expect(outcome.project).toBeNull();
+    expect(store.worktreePattern).toBeUndefined();
+  });
+
+  it("an unresolvable project writes nothing", async () => {
+    const { deps, store } = statefulDeps();
+    const outcome = await createSettingsComposition(deps).setProjectValue({
+      projectId: "p1",
+      repoPath: "/somewhere-else",
+      key: "glyph",
+      value: "boxes",
+    });
+    expect(outcome.status).toBe("unresolved");
+    expect(store.glyph).toBeUndefined();
+  });
+
+  it("guidance rules are written to the repo's catalogue and read back on the next get()", async () => {
+    const { deps, guidance } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const saved = await composition.setGuidance({
+      projectId: "p1",
+      repoPath: "/orbital",
+      rules: [{ rule: "keep main releasable", severity: "high" }],
+    });
+    expect(saved.status).toBe("applied");
+    expect(saved.guidance.rules[0]?.convention).toBe("keep main releasable");
+    expect(guidance.rules).toEqual([{ convention: "keep main releasable", severity: "high" }]);
+    // The row carries the same rules the panel edits — one source, read off the file.
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.guidance).toEqual([{ rule: "keep main releasable", severity: "high" }]);
+  });
+
+  it("an unresolvable project writes no guidance", async () => {
+    const { deps, guidance } = statefulDeps();
+    const outcome = await createSettingsComposition(deps).setGuidance({
+      projectId: "p1",
+      repoPath: "/somewhere-else",
+      rules: [{ rule: "x", severity: "low" }],
+    });
+    expect(outcome.status).toBe("unresolved");
+    expect(guidance.rules).toEqual([]);
   });
 });

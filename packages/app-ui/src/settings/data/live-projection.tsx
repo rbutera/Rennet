@@ -5,21 +5,29 @@ import {
   type ProjectSource,
   type ReviewRoleCell,
   type ReviewRoleMapping,
+  type SettingsProject,
 } from "@rennet/protocol";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useBridge, useCommand, useMutation } from "../../data";
 import type { AgentToolId } from "../assets/agent-marks";
 import { type HostOS, osFromPlatform } from "../assets/os-glyphs";
+import { PROJECT_ICON_NAMES, type ProjectIconName } from "../assets/project-icon";
+import { DEFAULT_WORKTREE_PATTERN, DEFAULT_WORKTREE_ROOT } from "../assets/worktree";
 import {
   type DaemonInfo,
   type DetectedTool,
   EMPTY_SETTINGS_PROJECTION,
+  type GuidanceRule,
+  type IssueTrackerSettings,
   type ReviewRole,
   type RoleAssignment,
   type SettingsHost,
   type SettingsProjection,
   SettingsProjectionProvider,
+  type TrackerKind,
+  type WorktreeSettings,
 } from "./projections";
+import type { Layered } from "./provenance";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE settings projection (C10 §10.1, the fold wiring). This seam is the one
@@ -86,11 +94,16 @@ import {
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
 //     carries no per-host counts, so the Remove confirmation names none rather than a
 //     fabricated blast radius.
-//   – glyphByProject / worktreeByProject / trackerByProject: no served write command (the
-//     composition's `setTrackerValue` / `worktreeBaseDir` are unwired). The project NAME is
-//     the exception — it writes through `project.rename` (C18) and reads back off
-//     `projects.list`, so `nameEditsPersist` is true while `projectEditsPersist` is not.
-//   – guidanceByProject: `settings.guidance` is a READ only; no guidance-WRITE command.
+//
+// The per-project PREFS are served now (C18 group A): glyphByProject / worktreeByProject /
+// trackerByProject / guidanceByProject read `settings.get`'s resolved `prefs`, and their
+// setters write `settings.setProjectValue` / `settings.setGuidance` on the repo rung — the
+// same rung `resolveTrackerConfig` folds, so a per-project tracker actually reaches
+// retrieval. Each write invalidates the read it changed, so the surface settles on what is
+// STORED rather than on an optimistic guess; a refused write (a malformed repo config,
+// Rule 75) leaves the control where the served read put it. The project NAME rides its own
+// command — `project.rename`, read back off `projects.list` — so `nameEditsPersist` and
+// `projectEditsPersist` are separate flags over two separate stores.
 //
 // This provider wraps the live Settings takeover. Tests that mount a page directly
 // supply their own projection, so the seam stays fully test-drivable; a test may still
@@ -146,6 +159,41 @@ function forgeRow(forge: DetectedForge, disabled: ReadonlySet<string>): Detected
     // reads off across reload, and one with no ruling reads enabled by default.
     enabled: !disabled.has(forge.id),
   };
+}
+
+/** The per-project pref keys this projection writes (C18 group A) — the wire's own key
+ *  vocabulary, minus the ones no control on these pages edits. */
+type ProjectPrefKey =
+  | "glyph"
+  | "worktreeRoot"
+  | "worktreePattern"
+  | "trackerKind"
+  | "trackerProjectKey"
+  | "trackerBaseUrl"
+  | "trackerTokenEnv";
+
+/** The tracker section's field → its pref key. */
+const TRACKER_PREF_KEY = {
+  projectKey: "trackerProjectKey",
+  baseUrl: "trackerBaseUrl",
+  tokenEnv: "trackerTokenEnv",
+} as const satisfies Record<string, ProjectPrefKey>;
+
+/** A resolved value, or the client's own default when the ladder resolved none. The
+ *  LAYER is the resolver's, never invented — an unset value still reads `builtin`. */
+function layeredOr(resolved: { value: string; layer: Layered<string>["layer"] }, fallback: string) {
+  return resolved.value === "" ? { value: fallback, layer: resolved.layer } : resolved;
+}
+
+/** A served glyph name the icon set actually has; anything else is ignored rather than
+ *  rendered as a missing glyph. */
+function isProjectIconName(value: string): value is ProjectIconName {
+  return (PROJECT_ICON_NAMES as readonly string[]).includes(value);
+}
+
+/** A served tracker kind, or `none` — the surface never shows a kind it cannot render. */
+function trackerKind(value: string): TrackerKind {
+  return value === "github" || value === "jira" || value === "linear" ? value : "none";
 }
 
 /** The host's platform, or the neutral `unknown` mark when it is genuinely not knowable. */
@@ -215,6 +263,16 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   // without a round-trip, then invalidated so the next `settings.get` confirms it off disk.
   const { mutate: writeRole } = useMutation("settings.setRoleAssignment", {
     invalidates: ["settings.get"],
+  });
+  // The per-project prefs (C18 group A). Both writes invalidate the read that carries
+  // the value, so the control follows the STORE, never the click: a write the daemon
+  // refused (an unresolved checkout, a malformed repo config) leaves the surface showing
+  // what is actually stored.
+  const { mutate: writeProjectValue } = useMutation("settings.setProjectValue", {
+    invalidates: ["settings.get"],
+  });
+  const { mutate: writeGuidance } = useMutation("settings.setGuidance", {
+    invalidates: ["settings.get", "settings.guidance"],
   });
   // The project NAME write (C18): `project.rename` persists to the projects store, and the
   // read is `projects.list` itself — the renamed `project.name` IS what the Identity field
@@ -311,11 +369,80 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     // the daemon did not return.
     const served = settings?.reviewRoles?.map(toReviewRole);
 
+    // The per-project prefs (C18 group A), keyed by project id off the served rows.
+    // ponytail: a project's FIRST repo row carries its prefs — the Projects pages are
+    // scoped to a project, not a repo, so a workspace's second repo is not separately
+    // editable here; per-repo pref editing needs a repo selector on those pages first.
+    const rowByProject = new Map<string, SettingsProject>();
+    for (const row of settings?.projects ?? []) {
+      if (!rowByProject.has(row.projectId)) rowByProject.set(row.projectId, row);
+    }
+    const glyphByProject: Record<string, ProjectIconName> = {};
+    const worktreeByProject: Record<string, WorktreeSettings> = {};
+    const trackerByProject: Record<string, IssueTrackerSettings> = {};
+    const guidanceByProject: Record<string, readonly GuidanceRule[]> = {};
+    for (const [projectId, row] of rowByProject) {
+      const prefs = row.prefs;
+      // A daemon that does not serve prefs claims nothing here — the pages keep their
+      // honest empty state rather than showing a value nobody resolved.
+      if (!prefs) continue;
+      if (isProjectIconName(prefs.glyph.value)) glyphByProject[projectId] = prefs.glyph.value;
+      worktreeByProject[projectId] = {
+        // An empty resolved value IS "nobody has set this", so the client's own default
+        // shows — carrying the layer the resolver reported, not a fabricated one.
+        root: layeredOr(prefs.worktreeRoot, DEFAULT_WORKTREE_ROOT),
+        pattern: layeredOr(prefs.worktreePattern, DEFAULT_WORKTREE_PATTERN),
+      };
+      const kind = trackerKind(prefs.tracker.kind.value);
+      const rest = kind === "jira" || kind === "linear";
+      trackerByProject[projectId] = {
+        kind: { value: kind, layer: prefs.tracker.kind.layer },
+        // GitHub rides the host's `gh` and none needs nothing — those kinds expose no
+        // endpoint fields at all, so the row is null rather than an empty input.
+        projectKey: rest ? prefs.tracker.projectKey : null,
+        baseUrl: rest ? prefs.tracker.baseUrl : null,
+        tokenEnv: rest ? prefs.tracker.tokenEnv : null,
+      };
+      guidanceByProject[projectId] = prefs.guidance.map((rule) => ({
+        ...(rule.id ? { id: rule.id } : {}),
+        rule: rule.rule,
+        severity: rule.severity,
+      }));
+    }
+
+    // One pref write, addressed by the project's own repo row. A project with no served
+    // row is not written to — there is nothing to address, and inventing a path would
+    // write into some other repo.
+    const writePref = (projectId: string, key: ProjectPrefKey, value: string | null): void => {
+      // `prefsBackedByProject` is derived from THIS map, so a project with no row here
+      // renders its editors disabled — there is no enabled control this guard can
+      // silently swallow a write from. It never invents a path into another repo.
+      const repoPath = rowByProject.get(projectId)?.repoPath;
+      if (!repoPath) return;
+      // A refused write (unresolved checkout, malformed repo config) leaves the control
+      // where the served read put it — the invalidated read is the honest answer.
+      void writeProjectValue({ projectId, repoPath, key, value }).catch(() => undefined);
+    };
+
     return {
       ...EMPTY_SETTINGS_PROJECTION,
-      // The name has a served write; the glyph / worktree / tracker / guidance editors
-      // still do not, so `projectEditsPersist` stays false and they stay disabled.
+      // Both stores are served now: the NAME through `project.rename` (the projects
+      // store), and the glyph / worktree / tracker / guidance editors through the repo
+      // rung (C18 group A). Two flags because they are two stores — a daemon that serves
+      // one and not the other still tells the truth about which controls persist.
       nameEditsPersist: true,
+      // Derived per PROJECT from the row this projection can actually address, never
+      // asserted for the surface as a whole. Two failures that fixes: a daemon still
+      // running an older version returns rows with no `prefs` (those editors must stay
+      // disabled), and a project whose row has not arrived has no `repoPath` to write to
+      // — the SAME map decides the capability and the write address, so an enabled
+      // control can never sit over a write with nowhere to go.
+      prefsBackedByProject: Object.fromEntries(
+        [...rowByProject].map(([projectId, row]) => [projectId, row.prefs !== undefined]),
+      ),
+      // The fallback for a project with no row at all: not backed, because nothing here
+      // can address it. It is never an assertion about the daemon's capability.
+      projectEditsPersist: false,
       setProjectName: (projectId, name) => {
         // A refused write leaves the field where it was — the invalidated `projects.list`
         // is the honest answer, never a fabricated rename.
@@ -324,6 +451,39 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       hosts,
       sourceControlByHost,
       agentsByHost,
+      glyphByProject,
+      worktreeByProject,
+      trackerByProject,
+      guidanceByProject,
+      setProjectGlyph: (projectId, icon) => writePref(projectId, "glyph", icon),
+      setWorktreeRoot: (projectId, root) => writePref(projectId, "worktreeRoot", root),
+      setWorktreePattern: (projectId, pattern) => writePref(projectId, "worktreePattern", pattern),
+      setTracker: (projectId, tracker) => {
+        // The surface hands back the whole section; only the CHANGED keys are written,
+        // so switching the kind does not rewrite three endpoint fields that did not move.
+        const current = trackerByProject[projectId];
+        if (tracker.kind.value !== current?.kind.value) {
+          writePref(projectId, "trackerKind", tracker.kind.value);
+        }
+        for (const field of ["projectKey", "baseUrl", "tokenEnv"] as const) {
+          const next = tracker[field]?.value ?? null;
+          if (next === (current?.[field]?.value ?? null)) continue;
+          writePref(projectId, TRACKER_PREF_KEY[field], next);
+        }
+      },
+      setGuidance: (projectId, rules) => {
+        const repoPath = rowByProject.get(projectId)?.repoPath;
+        if (!repoPath) return;
+        void writeGuidance({
+          projectId,
+          repoPath,
+          rules: rules.map((rule) => ({
+            ...(rule.id ? { id: rule.id } : {}),
+            rule: rule.rule,
+            severity: rule.severity,
+          })),
+        }).catch(() => undefined);
+      },
       reconnectHost: async (hostId) => {
         try {
           const outcome = await reconnect({ source: hostId as ProjectSource });
@@ -400,6 +560,8 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     update,
     adopted,
     writeRole,
+    writeProjectValue,
+    writeGuidance,
     renameProject,
   ]);
 

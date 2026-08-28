@@ -108,6 +108,7 @@ describe("settings registry + generic resolve (#28)", () => {
       "gateCommand",
       "locus",
       "logoPath",
+      "projectGlyph",
       "promoted",
       "scheme",
       "trackerBaseUrl",
@@ -116,6 +117,7 @@ describe("settings registry + generic resolve (#28)", () => {
       "trackerTokenEnv",
       "visibility",
       "worktreeBaseDir",
+      "worktreePattern",
     ]);
     for (const decl of Object.values(SETTINGS_REGISTRY)) {
       expect(decl.merge).toBe("replace");

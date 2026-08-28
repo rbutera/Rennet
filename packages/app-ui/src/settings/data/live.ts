@@ -52,3 +52,17 @@ export function useResetRepoValue(): MutationResult<"settings.resetRepoValue"> {
 export function usePinRepoValue(): MutationResult<"settings.pinRepoValue"> {
   return useMutation("settings.pinRepoValue", { invalidates: ["settings.get"] });
 }
+
+/** Write one per-project preference on the repo rung — glyph, worktree pair, tracker
+ *  (C18 group A). Stales `settings.get`, which carries the resolved prefs it changed. */
+export function useSetProjectValue(): MutationResult<"settings.setProjectValue"> {
+  return useMutation("settings.setProjectValue", { invalidates: ["settings.get"] });
+}
+
+/** Write a repo's guidance rules to its `.rennet/conventions.json`. Stales BOTH reads
+ *  that carry them: the per-repo `settings.guidance` panel and the row on `settings.get`. */
+export function useSetGuidance(): MutationResult<"settings.setGuidance"> {
+  return useMutation("settings.setGuidance", {
+    invalidates: ["settings.get", "settings.guidance"],
+  });
+}

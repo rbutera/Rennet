@@ -124,7 +124,9 @@ const ABSORBED_IDS = [
   "settings.resetRepoValue",
   "settings.setAppearance",
   "settings.setCoachmarks",
+  "settings.setGuidance",
   "settings.setKeybinding",
+  "settings.setProjectValue",
   "settings.setRepoVisibility",
   "settings.setRoleAssignment",
 ] as const;
@@ -154,7 +156,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(93);
+    expect(ABSORBED_IDS).toHaveLength(95);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
