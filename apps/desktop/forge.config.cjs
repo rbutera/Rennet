@@ -132,6 +132,17 @@ module.exports = {
       ["win32"],
     ),
   ],
+  publishers: [
+    {
+      name: "@electron-forge/publisher-github",
+      config: {
+        repository: { owner: "rbutera", name: "rennet" },
+        draft: true,
+        prerelease: false,
+        generateReleaseNotes: true,
+      },
+    },
+  ],
   hooks: {
     packageAfterExtract: async (_forgeConfig, buildPath, _electronVersion, platform) => {
       const electronPath =

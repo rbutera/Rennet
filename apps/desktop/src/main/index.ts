@@ -18,7 +18,7 @@ import {
   shell,
 } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
-import { startAutoUpdate } from "./auto-update";
+import { isAutoUpdateEligible, startAutoUpdateOnce } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
 import {
   ensureDaemon,
@@ -365,7 +365,9 @@ app.whenReady().then(async () => {
   // store and ONE apply path: the tray subscribes to the same store the renderer badge
   // rides, and its update line calls the same apply. Auto-update is packaged-only (dev/test
   // have no feed); the tray always exists.
-  const update = app.isPackaged ? startAutoUpdate(isTrustedAppUrl) : undefined;
+  const update = isAutoUpdateEligible(app.isPackaged)
+    ? startAutoUpdateOnce(isTrustedAppUrl)
+    : undefined;
   const tray = createTray({
     baseDir: __dirname,
     resourcesPath: process.resourcesPath,

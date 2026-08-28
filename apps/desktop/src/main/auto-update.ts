@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { app, autoUpdater, BrowserWindow, ipcMain } from "electron";
@@ -109,7 +109,7 @@ export function stagedNewerVersion(
  * was observed serving a stale "no update" for ~87 minutes after a publish,
  * lancelot 2026-08-19). darwin stays on update.electronjs.org: Squirrel.Mac
  * needs the JSON feed that service derives, and macOS auto-update is a silent
- * no-op until builds are Developer-ID-signed (issue #42) anyway. Either way the
+ * no-op until builds are Developer-ID-signed (issue #298) anyway. Either way the
  * egress is GitHub-or-Electron infrastructure only — no Rennet backend.
  */
 export function updateSourceFor(platform: NodeJS.Platform, repo: string): IUpdateSource {
@@ -128,6 +128,38 @@ export const STAGED_POLL_INTERVAL_MS = 5 * 60_000;
 /** The public repository updates come from. */
 export const UPDATE_REPO = "rbutera/rennet";
 
+export function hasDeveloperIdSignature(
+  platform: NodeJS.Platform = process.platform,
+  execPath: string = process.execPath,
+  verify: (appPath: string) => boolean = (appPath) => {
+    try {
+      execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], {
+        stdio: "ignore",
+      });
+      const result = spawnSync("/usr/bin/codesign", ["--display", "--verbose=4", appPath], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      return result.status === 0 && /Authority=Developer ID Application:/.test(result.stderr);
+    } catch {
+      return false;
+    }
+  },
+): boolean {
+  if (platform !== "darwin") return true;
+  const appPath = resolve(dirname(execPath), "../..");
+  return verify(appPath);
+}
+
+export function isAutoUpdateEligible(
+  isPackaged: boolean,
+  platform: NodeJS.Platform = process.platform,
+  execPath: string = process.execPath,
+  verify?: (appPath: string) => boolean,
+): boolean {
+  return isPackaged && hasDeveloperIdSignature(platform, execPath, verify);
+}
+
 // Wire the Electron-maintained update client. `notifyUser: false`
 // replaces the stock modal with the in-app badge flow: `update-downloaded` is
 // cached + pushed to the renderer (badge on the Rennet logo), and the renderer's
@@ -136,7 +168,7 @@ export const UPDATE_REPO = "rbutera/rennet";
 //
 // The whole thing is best-effort. On an unsigned / ad-hoc-signed macOS build
 // Squirrel.Mac's autoUpdater rejects with an error (code signing is mandatory
-// there, blocked on the Developer ID cert, issue #42). We catch the throw AND
+// there). We catch the throw AND
 // attach a quiet "error" listener so that degrades to a silent no-op instead of a
 // crash or a nag dialog: no download ever completes, so no badge ever shows.
 /** What `startAutoUpdate` hands back so the tray shares the SAME readiness + apply path. */
@@ -236,3 +268,15 @@ export function startAutoUpdate(
   }
   return { readiness, applyUpdate };
 }
+
+export function createAutoUpdateStarter(
+  start: typeof startAutoUpdate = startAutoUpdate,
+): typeof startAutoUpdate {
+  let handle: AutoUpdateHandle | undefined;
+  return (...args) => {
+    handle ??= start(...args);
+    return handle;
+  };
+}
+
+export const startAutoUpdateOnce = createAutoUpdateStarter();

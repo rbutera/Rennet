@@ -1,69 +1,34 @@
-# Release workflow — the future SIGNED release path, SKELETON.
-#
-# Status: the real installer story (code signing, notarization, .dmg/.zip makers,
-# electron-updater, THIRD-PARTY-NOTICES) is tracked in issue #42
-# ("Real installer: signed, notarized, auto-updating releases"), which is BLOCKED
-# on RAI-ONLY Apple Developer enrolment + a protected-environment setup. This file
-# scaffolds the intended shape (bead 132: `ci.yml` + protected-environment
-# `release.yml`, secrets only in the protected environment requiring Rai's approval,
-# `pull_request_target` banned, unsigned `--dir` package smoke) WITHOUT wiring any
-# external publish live.
-#
-# Tags are NOT created or built here anymore. `auto-release.yml` owns the live
-# UNSIGNED path: it creates the `vX.Y.Z` tag on each merge to main and publishes
-# the unsigned installers. This file stays manual-dispatch only so a `v*` tag push
-# never double-builds; when #42 lands it becomes the SIGNED release path (signing
-# + notarization in the protected `release` environment).
-#
-# What runs today (safe, no secrets):
-#   1. check  — the full gate, reused from ci.yml.
-#   2. build  — Vite build + unsigned electron-forge `package` + package smoke on
-#               macOS, uploaded as a private workflow ARTIFACT (not a public release).
-# What is stubbed (needs #42 + Rai):
-#   3. publish — creating a GitHub Release and attaching SIGNED, NOTARIZED installers.
-#               Triple-gated (manual dispatch + explicit `publish: true` input + the
-#               protected `release` environment's approval) and currently a no-op
-#               placeholder. Nothing here auto-publishes.
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
-      publish:
-        description: >-
-          Attempt the (currently stubbed) publish job. Requires the protected
-          `release` environment approval AND signing secrets that do not exist yet
-          (blocked on #42). Leave false to only build + smoke the unsigned app.
-        type: boolean
-        default: false
+      tag:
+        description: "Existing release tag (vX.Y.Z)"
+        type: string
+        required: true
 
-# Default to read-only. The publish job elevates to `contents: write` locally, and
-# only after passing the protected-environment approval gate.
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  # 1. Full gate, defined once in ci.yml.
-  check:
-    uses: ./.github/workflows/ci.yml
-
-  # 2. Build the app and smoke the UNSIGNED package on macOS. No secrets, no signing,
-  #    no publish. Mirrors bead 132's "unsigned --dir package smoke".
-  build:
-    name: build + unsigned package smoke (macOS)
-    needs: check
-    runs-on: macos-14 # arm64 — matches the electron-forge out dir Rennet-darwin-arm64
-    # Normal runs take well under 20 min; a hung macOS run bills at 10x.
-    timeout-minutes: 20
+  release:
+    name: signed macOS draft release
+    runs-on: macos-14
+    timeout-minutes: 75
+    environment: release
     permissions:
-      contents: read
+      contents: write
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -77,57 +42,117 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Renderer/main/preload bundles (cross-platform, part of `pnpm check`).
-      - name: Build desktop bundles
-        run: pnpm nx run rennet-desktop:build
+      - name: Verify release contract
+        run: pnpm release:check -- "${{ inputs.tag }}"
 
-      # Existing nx targets: `package` (electron-forge package -> ad-hoc-signed .app
-      # under apps/desktop/out/) then `package-smoke` (boots the packaged app).
-      # This is the closest-to-a-distributable that exists today; it is UNSIGNED and
-      # is NOT a real notarized installer (that is #42).
-      - name: Package (unsigned) + smoke
-        run: pnpm nx run rennet-desktop:package-smoke
+      - name: Run full gate
+        run: pnpm check
 
-      # Private to repo members, NOT a public release. Safe to keep on every build.
-      - name: Upload unsigned app artifact
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/rennet.p12"
+          keychain_path="$RUNNER_TEMP/rennet-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          echo "RELEASE_CERTIFICATE_PATH=$certificate_path" >> "$GITHUB_ENV"
+          echo "RELEASE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | openssl base64 -d -A -out "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path" >/dev/null
+          security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | tr -d '"')
+
+      - name: Make, sign, notarize, staple, and verify macOS artifacts
+        env:
+          APPLE_SIGNING_IDENTITY: "Developer ID Application: Cloakroom Ltd (${{ secrets.APPLE_TEAM_ID }})"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          rm -rf apps/desktop/out
+          pnpm nx run rennet-desktop:make
+          pnpm nx run rennet-desktop:package-smoke
+
+          version="$(node -p 'require("./apps/desktop/package.json").version')"
+          app="apps/desktop/out/Rennet-darwin-arm64/Rennet.app"
+          dmg="apps/desktop/out/make/Rennet-${version}-arm64.dmg"
+          zip="apps/desktop/out/make/zip/darwin/arm64/Rennet-darwin-arm64-${version}.zip"
+          test -f "$dmg"
+          test -f "$zip"
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl -a -vvv -t exec "$app"
+
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+          codesign --verify --strict --verbose=2 "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl -a -vvv -t open --context context:primary-signature "$dmg"
+
+          mount_point="$(mktemp -d)"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point"
+          codesign --verify --deep --strict --verbose=2 "$mount_point/Rennet.app"
+          xcrun stapler validate "$mount_point/Rennet.app"
+          spctl -a -vvv -t exec "$mount_point/Rennet.app"
+          hdiutil detach "$mount_point"
+          rmdir "$mount_point"
+
+          shasum -a 256 "$dmg" "$zip" > apps/desktop/out/make/SHA256SUMS
+
+      - name: Upload verified installers
         uses: actions/upload-artifact@v4
         with:
-          name: rennet-unsigned-darwin-arm64
-          path: apps/desktop/out/**
+          name: signed-macos-${{ inputs.tag }}
+          path: apps/desktop/out/make/**
           if-no-files-found: error
           retention-days: 14
 
-  # 3. Publish — EXTERNAL-FACING, STUBBED. Blocked on #42 + Rai's sign-off.
-  #    Triple gate:
-  #      a) manual dispatch only (this workflow no longer triggers on a `v*` tag —
-#         auto-release.yml owns tags — so nothing here can auto-reach this job),
-  #      b) explicit `publish: true` input,
-  #      c) the protected `release` environment (must be created in repo settings
-  #         with Rai as a required reviewer; signing/notarization secrets live there).
-  publish:
-    name: publish signed release (STUB — needs #42)
-    needs: build
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
-    runs-on: macos-14
-    # This environment gates on Rai's approval and holds the signing secrets.
-    # Until it exists in repo settings, this job cannot run — by design.
-    environment: release
-    permissions:
-      contents: write # only granted here, only after the environment approval
-    steps:
-      - name: Not implemented — see issue #42
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
         run: |
-          echo "::error title=Release publishing is not implemented::Blocked on #42."
-          echo "Before this job can publish a real release, #42 must land:"
-          echo "  - Apple Developer enrolment + protected-environment secrets (RAI-ONLY)"
-          echo "  - signing + notarization (notarytool via App Store Connect API key)"
-          echo "  - an nx 'make' target producing .dmg/.zip via the forge makers"
-          echo "  - THIRD-PARTY-NOTICES generation + TRADEMARK.md (beads 134/135)"
-          echo "  - build-input provenance lines in the release body (bead 132)"
-          echo ""
-          echo "Intended shape once unblocked (DO NOT enable without Rai's sign-off):"
-          echo "  1. reuse the unsigned artifact from the build job (or re-make signed)"
-          echo "  2. sign + notarize + staple the .app, build the DMG"
-          echo "  3. create a DRAFT GitHub release (gh release create --draft \\"
-          echo "       \"\${GITHUB_REF_NAME}\" ...) so a human publishes it explicitly"
-          exit 1
+          set -euo pipefail
+          version="${TAG#v}"
+          sha="$(git rev-parse HEAD)"
+          node_version="$(node --version)"
+          pnpm_version="$(pnpm --version)"
+          electron_version="$(node -p 'require("./apps/desktop/package.json").devDependencies.electron')"
+          {
+            printf 'Signed and notarized macOS release. Windows artifacts remain unsigned.\n\n'
+            printf -- '- Version: `%s`\n' "$version"
+            printf -- '- Commit: `%s`\n' "$sha"
+            printf -- '- Node: `%s`\n' "$node_version"
+            printf -- '- pnpm: `%s`\n' "$pnpm_version"
+            printf -- '- Electron: `%s`\n\n' "$electron_version"
+            printf 'SHA-256:\n```text\n'
+            cat apps/desktop/out/make/SHA256SUMS
+            printf '```\n'
+          } > release-notes.md
+
+          assets=(
+            "apps/desktop/out/make/Rennet-${version}-arm64.dmg"
+            "apps/desktop/out/make/zip/darwin/arm64/Rennet-darwin-arm64-${version}.zip"
+            "apps/desktop/out/make/SHA256SUMS"
+          )
+          for asset in "${assets[@]}"; do test -f "$asset"; done
+          gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file release-notes.md --generate-notes "${assets[@]}"
+
+      - name: Remove signing material
+        if: ${{ always() }}
+        run: |
+          if [ -n "${RELEASE_KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$RELEASE_KEYCHAIN_PATH" || true
+          fi
+          if [ -n "${RELEASE_CERTIFICATE_PATH:-}" ]; then
+            rm -f "$RELEASE_CERTIFICATE_PATH"
+          fi

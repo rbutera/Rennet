@@ -390,8 +390,9 @@ daemon, quitting says so, and an interrupted turn can be retried after the next
 start. Quitting a client connected to a remote daemon does not stop that remote
 process.
 
-Public signed macOS releases and macOS auto-update are tracked in
-[GitHub issue #298](https://github.com/rbutera/rennet/issues/298).
+Public macOS releases are signed with Developer ID and notarized by Apple. The
+packaged app checks the public GitHub-backed update feed every five minutes;
+development and ad hoc packages do not contact it.
 
 ## Next steps
 

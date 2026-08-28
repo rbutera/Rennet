@@ -3,6 +3,10 @@
   "version": "0.3.38",
   "private": true,
   "description": "A local-first code review harness",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rbutera/rennet.git"
+  },
   "license": "LicenseRef-FSL-1.1-MIT",
   "packageManager": "pnpm@10.32.1",
   "engines": {
@@ -89,6 +93,8 @@
     "notices": "node scripts/generate-notices.mjs",
     "rennet": "node packages/server/dist/rennet.cjs",
     "real-turn": "nx run rennet-adapters:real-turn",
+    "release:check": "node scripts/check-release.mjs",
+    "release:env": "scripts/with-release-env.sh",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -107,6 +113,7 @@
     "@nx/vite": "23.1.0",
     "@nx/vitest": "23.1.0",
     "@nx/workspace": "23.1.0",
+    "@octokit/core": "7.0.7",
     "@playwright/test": "1.62.1",
     "@types/node": "24.12.0",
     "@types/react": "19.2.14",

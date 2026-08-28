@@ -2,7 +2,7 @@
 
 Electron Forge builds Rennet for macOS and Windows. macOS builds produce a DMG and ZIP. Windows builds produce a Squirrel installer, update feed, and portable ZIP.
 
-The automatic release workflow publishes unsigned artifacts. The Forge configuration can also sign and notarize a macOS application when the required Apple credentials are present.
+Both release workflows produce Developer ID signed, notarized, and stapled macOS artifacts. Windows artifacts remain unsigned until issue #330.
 
 ## Prerequisites
 
@@ -38,20 +38,15 @@ Without Apple credentials, Forge applies an ad hoc signature. The application ru
 
 ### Developer ID builds
 
-Set these variables before running the same `make` target:
+Copy `.env.release.example` to the ignored `.env.release.local`, fill the four values, and run the same `make` target through the release-env helper:
 
 ```sh
-export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
-export APPLE_ID="<apple-id-email>"
-export APPLE_APP_SPECIFIC_PASSWORD="<app-specific-password>"
-export APPLE_TEAM_ID="<TEAMID>"
-
-pnpm nx run rennet-desktop:make
+pnpm release:env -- pnpm nx run rennet-desktop:make
 ```
 
 `APPLE_SIGNING_IDENTITY` selects Developer ID signing, hardened runtime, and `apps/desktop/entitlements.plist`. When all four variables are present, Forge also notarizes and staples `Rennet.app`. If only the identity is present, Forge signs the application but does not notarize it.
 
-Forge processes the application before MakerDMG wraps it. The DMG itself is not separately signed, notarized, or stapled.
+Forge processes the application before MakerDMG wraps it. The release workflows then sign, notarize, staple, and verify the final DMG as a separate distribution artifact.
 
 Create the application-specific password at [appleid.apple.com](https://appleid.apple.com). Confirm the Developer ID Application certificate is in the login keychain with:
 
@@ -61,12 +56,15 @@ security find-identity -v -p codesigning
 
 ### Verify a Developer ID build
 
-Mount the DMG and run the checks against `Rennet.app`:
+Verify the DMG and its mounted application:
 
 ```sh
 DMG=$(ls apps/desktop/out/make/*.dmg | head -1)
 MP=$(hdiutil attach "$DMG" -nobrowse -readonly | grep /Volumes | awk -F'\t' '{print $NF}')
 APP="$MP"/Rennet.app
+codesign --verify --strict --verbose=2 "$DMG"
+xcrun stapler validate "$DMG"
+spctl -a -vvv -t open --context context:primary-signature "$DMG"
 codesign --verify --deep --strict --verbose=2 "$APP"
 xcrun stapler validate "$APP"
 spctl -a -vvv -t exec "$APP"
@@ -74,6 +72,21 @@ hdiutil detach "$MP"
 ```
 
 For a valid notarized build, `codesign` reports `valid on disk`, `stapler` reports a valid ticket, and `spctl` reports `accepted` with `Notarized Developer ID` as the source. An ad hoc build passes the `codesign` check but fails the notarization and Gatekeeper checks.
+
+## Release sequence
+
+The root `package.json` version is authoritative. `apps/desktop/package.json` must match it. `pnpm release:check -- vX.Y.Z` rejects zero versions, malformed or mismatched tags, tags that do not point at `HEAD`, and dirty working trees.
+
+For a manual draft release:
+
+1. Run `node scripts/set-version.mjs X.Y.Z`, review the lockstep package-version changes, commit them, and create the annotated tag `vX.Y.Z` on that commit.
+2. Push the commit and tag. A tag by itself does not run `.github/workflows/release.yml` or publish a release.
+3. Dispatch **Release** with that tag. It runs the full gate, imports the certificate into a temporary keychain, builds, notarizes, staples, verifies, and creates a draft GitHub Release containing the DMG, updater ZIP, checksums, and build provenance.
+4. Inspect the draft assets and notes, then use GitHub's normal **Publish release** action. Drafts and prereleases are ignored by `update.electronjs.org`.
+
+`.github/workflows/auto-release.yml` remains the nightly and **ship now** path. It creates the version commit and tag, runs the same signed macOS build through the `release` environment, builds unsigned Windows artifacts, and publishes only after every build succeeds.
+
+Never replace an asset or reuse a version after publication. If signing, notarization, Gatekeeper verification, or update compatibility fails, leave the manual release as a draft and create a higher patch version after the fix. Keep the last known-good installer published. A future move away from `update.electronjs.org` can use the existing Squirrel-compatible static-feed support without changing the app's update interaction.
 
 ## Build on Windows
 
@@ -114,4 +127,4 @@ Rennet downloads an available update in the background. When the update is on di
 
 Windows reads Squirrel artifacts from the latest GitHub Release. It also checks for a newer staged `app-<version>` directory at startup and every five minutes, so a missed Electron event does not lose the ready state.
 
-macOS uses `update.electronjs.org`, which derives its feed from GitHub Releases. Squirrel.Mac requires a Developer ID signed application. Ad hoc builds record updater errors and continue without showing an update-ready state. Public Developer ID signed macOS releases are planned in [issue #298](https://github.com/rbutera/rennet/issues/298).
+macOS uses `update.electronjs.org`, which derives its feed from non-draft, non-prerelease GitHub Releases. The updater starts only in a packaged application with a verified Developer ID signature. Development, tests, and ad hoc packages never contact the feed.

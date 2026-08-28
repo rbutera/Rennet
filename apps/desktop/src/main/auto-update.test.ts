@@ -38,7 +38,9 @@ vi.mock("update-electron-app", () => ({
 }));
 
 import {
+  createAutoUpdateStarter,
   createUpdateReadiness,
+  isAutoUpdateEligible,
   startAutoUpdate,
   UPDATE_APPLY_CHANNEL,
   UPDATE_READY_CHANNEL,
@@ -101,6 +103,18 @@ describe("createUpdateReadiness", () => {
 });
 
 describe("startAutoUpdate wiring", () => {
+  it("initializes the update client exactly once", () => {
+    const start = vi.fn(() => ({
+      readiness: createUpdateReadiness(() => undefined),
+      applyUpdate: () => undefined,
+    }));
+    const startOnce = createAutoUpdateStarter(start);
+    const first = startOnce(isTrusted, quietLogger);
+    const second = startOnce(isTrusted, quietLogger);
+    expect(second).toBe(first);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
   it("configures the update client at the 5-minute minimum with the stock dialog off", () => {
     startAutoUpdate(isTrusted, quietLogger);
     expect(updateElectronApp).toHaveBeenCalledWith(
@@ -162,6 +176,29 @@ describe("startAutoUpdate wiring", () => {
     expect(() => startAutoUpdate(isTrusted, quietLogger)).not.toThrow();
     autoUpdaterMock.emit("error", new Error("still quiet"));
     expect(windowSends).toEqual([]);
+  });
+});
+
+describe("auto-update eligibility", () => {
+  it("never starts in an unpackaged application", () => {
+    expect(
+      isAutoUpdateEligible(false, "darwin", "/Rennet.app/Contents/MacOS/Rennet", vi.fn()),
+    ).toBe(false);
+  });
+
+  it("requires a Developer ID signature on macOS packages", () => {
+    const verify = vi.fn(() => false);
+    expect(isAutoUpdateEligible(true, "darwin", "/Rennet.app/Contents/MacOS/Rennet", verify)).toBe(
+      false,
+    );
+    expect(verify).toHaveBeenCalledWith("/Rennet.app");
+  });
+
+  it("allows a verified Developer ID package and preserves the Windows updater", () => {
+    expect(
+      isAutoUpdateEligible(true, "darwin", "/Rennet.app/Contents/MacOS/Rennet", () => true),
+    ).toBe(true);
+    expect(isAutoUpdateEligible(true, "win32", "C:\\Rennet.exe", () => false)).toBe(true);
   });
 });
 

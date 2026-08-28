@@ -11,7 +11,7 @@
 # Biome, tsc) and runs on Linux. It deliberately does NOT run:
 #   - `e2e`     (Playwright + Electron; needs a display, not part of `pnpm check`)
 #   - `package` / `package-smoke` (Electron packaging; macOS-only, lives in the
-#                 release workflow and issue #42's distribution slice)
+#                 signed release workflows and issue #298's distribution slice)
 #   - `audit`   (network-dependent; not part of the local gate)
 #
 # Security: read-only token, no secrets, `pull_request` (never `pull_request_target`).

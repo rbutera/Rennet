@@ -1,4 +1,4 @@
-# Auto-release workflow — the live, UNSIGNED release path.
+# Auto-release workflow — the live signed-macOS release path.
 #
 # Runs NIGHTLY (not per-merge): one release per day batching everything merged
 # since the last tag, and only when app source (apps/desktop, packages, or the
@@ -12,10 +12,8 @@
 # build on every app-source merge — six releases in one evening. Batching cuts
 # that to at most one per day; `workflow_dispatch` remains the "ship now" lever.
 #
-# This is deliberately the UNSIGNED path. Code signing + notarization is the
-# future SIGNED path in release.yml (issue #42, blocked on RAI-ONLY Apple
-# enrolment). This file owns tag creation now; release.yml no longer builds on a
-# `v*` tag push (it would double-build).
+# macOS artifacts use the same release-environment Developer ID credentials as
+# release.yml. Windows stays unsigned until issue #330 supplies its certificate.
 #
 # No release loop is possible: nothing here triggers on push, and the bump
 # commit carries `[skip ci]` so it triggers no other workflow either.
@@ -159,7 +157,8 @@ jobs:
   build-macos:
     needs: version
     runs-on: macos-14 # arm64 — matches Rennet-darwin-arm64
-    timeout-minutes: 20
+    timeout-minutes: 45
+    environment: release
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
@@ -178,11 +177,57 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Make installers (dmg + zip)
-        run: pnpm nx run rennet-desktop:make
+      - name: Verify release contract
+        run: pnpm release:check -- "${{ needs.version.outputs.tag }}"
 
-      - name: Smoke the packaged app
-        run: pnpm nx run rennet-desktop:package-smoke
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/rennet.p12"
+          keychain_path="$RUNNER_TEMP/rennet-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          echo "RELEASE_CERTIFICATE_PATH=$certificate_path" >> "$GITHUB_ENV"
+          echo "RELEASE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | openssl base64 -d -A -out "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path" >/dev/null
+          security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | tr -d '"')
+
+      - name: Make, sign, notarize, staple, and verify macOS artifacts
+        env:
+          APPLE_SIGNING_IDENTITY: "Developer ID Application: Cloakroom Ltd (${{ secrets.APPLE_TEAM_ID }})"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          rm -rf apps/desktop/out
+          pnpm nx run rennet-desktop:make
+          pnpm nx run rennet-desktop:package-smoke
+
+          version="${{ needs.version.outputs.version }}"
+          app="apps/desktop/out/Rennet-darwin-arm64/Rennet.app"
+          dmg="apps/desktop/out/make/Rennet-${version}-arm64.dmg"
+          zip="apps/desktop/out/make/zip/darwin/arm64/Rennet-darwin-arm64-${version}.zip"
+          test -f "$dmg"
+          test -f "$zip"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl -a -vvv -t exec "$app"
+
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+          codesign --verify --strict --verbose=2 "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl -a -vvv -t open --context context:primary-signature "$dmg"
+          shasum -a 256 "$dmg" "$zip" > apps/desktop/out/make/SHA256SUMS
 
       - name: Upload macOS installers
         uses: actions/upload-artifact@v4
@@ -191,6 +236,16 @@ jobs:
           path: apps/desktop/out/make/**
           if-no-files-found: error
           retention-days: 7
+
+      - name: Remove signing material
+        if: ${{ always() }}
+        run: |
+          if [ -n "${RELEASE_KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$RELEASE_KEYCHAIN_PATH" || true
+          fi
+          if [ -n "${RELEASE_CERTIFICATE_PATH:-}" ]; then
+            rm -f "$RELEASE_CERTIFICATE_PATH"
+          fi
 
   # 4. Build the Windows installers from the TAGGED commit. MakerSquirrel only
   #    runs on Windows, so this must be a native windows runner. Produces the
@@ -217,6 +272,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify release contract
+        run: pnpm release:check -- "${{ needs.version.outputs.tag }}"
+
       - name: Make installers (squirrel + zip)
         run: pnpm nx run rennet-desktop:make
 
@@ -238,6 +296,19 @@ jobs:
     permissions:
       contents: write # create the release
     steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
       - name: Download macOS installers
         uses: actions/download-artifact@v4
         with:
@@ -252,14 +323,21 @@ jobs:
 
       - name: Write release notes
         run: |
-          cat > notes.md <<'EOF'
-          > **Unsigned builds.** These installers are not yet code-signed or notarized.
-          >
-          > - **macOS:** right-click **Rennet.app** and choose **Open** the first time to get past Gatekeeper.
-          > - **Windows:** SmartScreen may warn on first launch — choose **More info → Run anyway**.
-          >
-          > Auto-updates are served from these release assets via update.electronjs.org.
-          EOF
+          set -euo pipefail
+          find dist -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256 > dist/SHA256SUMS
+          {
+            printf '> **macOS:** signed with Developer ID, notarized, and stapled.\n'
+            printf '> **Windows:** unsigned until issue #330; SmartScreen may warn on first launch.\n\n'
+            printf 'Auto-updates are served from these release assets via update.electronjs.org.\n\n'
+            printf -- '- Version: `%s`\n' "${{ needs.version.outputs.version }}"
+            printf -- '- Commit: `%s`\n' "${{ needs.version.outputs.sha }}"
+            printf -- '- Node: `%s`\n' "$(node --version)"
+            printf -- '- pnpm: `%s`\n' "$(pnpm --version)"
+            printf -- '- Electron: `%s`\n\n' "$(node -p 'require("./apps/desktop/package.json").devDependencies.electron')"
+            printf 'SHA-256:\n```text\n'
+            cat dist/SHA256SUMS
+            printf '```\n'
+          } > notes.md
 
       - name: Create release
         env:

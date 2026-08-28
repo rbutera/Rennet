@@ -30,6 +30,14 @@ type ForgeConfig = {
     osxNotarize?: { appleId: string; appleIdPassword: string; teamId: string };
   };
   makers: { platforms?: string[] | null }[];
+  publishers: Array<{
+    name: string;
+    config: {
+      repository: { owner: string; name: string };
+      draft: boolean;
+      prerelease: boolean;
+    };
+  }>;
 };
 
 function loadConfig(env: Partial<Record<(typeof APPLE_VARS)[number], string>>): ForgeConfig {
@@ -122,5 +130,19 @@ describe("forge.config.cjs signing", () => {
       appleIdPassword: "aaaa-bbbb-cccc-dddd",
       teamId: "ABCDE12345",
     });
+  });
+
+  it("publishes only draft releases to the public Rennet repository", () => {
+    const { publishers } = loadConfig({});
+    expect(publishers).toEqual([
+      expect.objectContaining({
+        name: "@electron-forge/publisher-github",
+        config: expect.objectContaining({
+          repository: { owner: "rbutera", name: "rennet" },
+          draft: true,
+          prerelease: false,
+        }),
+      }),
+    ]);
   });
 });
