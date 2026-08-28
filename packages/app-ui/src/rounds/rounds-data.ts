@@ -1,6 +1,9 @@
 import { type LensBoard, LensBoardSchema, type RoundRecord } from "@rennet/protocol";
-import { createContext, useContext } from "react";
-import { initialRoundState, type RoundState } from "./round-machine";
+import { createContext, useContext, useMemo } from "react";
+import { useRoute } from "wouter";
+import { useCommand, useCommandStream, useMutation } from "../data";
+import { ROUTES } from "../routes/url";
+import { advance, initialRoundState, type RoundState } from "./round-machine";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The rounds-data seam (C09 §1.2) — the SINGLE point every rounds surface resolves its
@@ -136,4 +139,82 @@ export function useReportBoard(reportBoardId: string): ReportBoardResolution {
  *  this and threads it to the handoff lanes. */
 export function useRoundDispatch(): ((slug: string) => void) | undefined {
   return useContext(RoundsSourceContext).dispatch;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The LIVE seam body (C15 3.2) — the swap C09 cluster 8 left a home for. The callers do
+// not change; only the source does. The three reads resolve against the daemon:
+//
+//   • `roundState` — the `session.roundEvents` catch-up read with the `roundProgress`
+//     push channel folded into the SAME cache entry (`useCommandStream`), then reduced
+//     through `advance`. The rows advance on REAL events — the fixture clock is gone
+//     from the app tree (the fixtures stay, for tests).
+//   • `roundRecords` — the `session.rounds` ledger read.
+//   • `dispatch` — the `round.dispatch` write, so the round exit actually kicks a round.
+//
+// `reportBoard` stays honestly absent: NO board-fetch command exists in the protocol
+// (`commands/index.ts` registers none — it is B4/B10's declared job, and `board-data.ts`
+// records the same gap for the lens boards). A source cannot invent a board it has no way
+// to read, so the report resolves `missing` rather than a fabricated greeting.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The session slug the current route is on, or `undefined` off a session route — the
+ *  review id the round reads key on (`routes/slug.ts`: a slug IS a review id). */
+function useCurrentSessionSlug(): string | undefined {
+  const [onRun, runParams] = useRoute(ROUTES.sessionRun);
+  const [onSession, sessionParams] = useRoute(ROUTES.session);
+  if (onRun) return runParams?.slug;
+  if (onSession) return sessionParams?.slug;
+  return undefined;
+}
+
+/**
+ * The live {@link RoundsSource} for whichever session the router is on. Bound once, above
+ * the route switch (`routes/app.tsx`), so the top bar and both session routes read ONE
+ * source — the provider does not move, only its value.
+ */
+export function useLiveRoundsSource(): RoundsSource {
+  const slug = useCurrentSessionSlug();
+  const enabled = slug !== undefined;
+  const reviewId = slug ?? "";
+  const eventsCommand = { name: "session.roundEvents" as const, input: { reviewId } };
+
+  const { data: eventsData } = useCommand(eventsCommand.name, eventsCommand.input, { enabled });
+  // The live push, folded into the read's own cache entry. A `dispatched` event STARTS a
+  // round, so it resets the log exactly as the server's hub does — a second dispatch must
+  // not replay the first round's composed state.
+  // ponytail: an event that lands between the catch-up read being issued and its response
+  // populating the entry is dropped (the response overwrites the entry). The events are
+  // snapshots and the machine is forward-only, so the visible cost is a momentarily stale
+  // row at mount; the fix is a seq-guarded merge like `chat-data`'s, worth it only if a
+  // dropped terminal event is ever actually observed.
+  useCommandStream({
+    channel: "roundProgress",
+    subscriptionKey: slug,
+    command: eventsCommand,
+    fold: (prev, event) => ({
+      events: event.type === "dispatched" ? [event] : [...(prev?.events ?? []), event],
+    }),
+  });
+
+  const { data: recordsData } = useCommand("session.rounds", { reviewId }, { enabled });
+  const { mutate } = useMutation("round.dispatch", {
+    invalidates: ["session.rounds", "session.roundEvents"],
+  });
+
+  const events = eventsData?.events;
+  const records = recordsData?.records;
+  return useMemo(() => {
+    // The machine IS the fold: the same reducer the daemon's events were designed for,
+    // over the same events a late-joining client catches up on. No wall clock anywhere.
+    const state = (events ?? []).reduce(advance, initialRoundState);
+    return {
+      roundState: (forSlug: string) => (forSlug === slug ? state : initialRoundState),
+      roundRecords: (forSlug: string) => (forSlug === slug ? (records ?? NO_RECORDS) : NO_RECORDS),
+      reportBoard: () => undefined,
+      dispatch: (forSlug: string) => {
+        void mutate({ reviewId: forSlug }).catch(() => undefined);
+      },
+    };
+  }, [events, records, slug, mutate]);
 }

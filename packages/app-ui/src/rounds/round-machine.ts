@@ -1,3 +1,4 @@
+import type { LaneRow, RoundEvent } from "@rennet/protocol";
 import { type Navigation, sessionPath } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,17 +18,11 @@ import { type Navigation, sessionPath } from "../routes/url";
 // to guard.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A live progress row's status — the spike's queued / spinner / check, as data. */
-export type RowStatus = "queued" | "running" | "done" | "failed";
-
-/** One streamed progress row (a prep step, a worker turn, a lens drafter). The route
- *  renders the rows the current phase carries; status is data, never a wall clock. */
-export interface LaneRow {
-  readonly id: string;
-  readonly label: string;
-  readonly detail?: string;
-  readonly status: RowStatus;
-}
+// The row/event vocabulary is the PROTOCOL's (C15 3.1): the daemon emits these events as a
+// round really runs and this reducer folds them, so one definition serves both ends and the
+// wire cannot drift from the machine. Re-exported here because every rounds surface reads
+// them through the machine.
+export type { LaneRow, RoundEvent, RowStatus } from "@rennet/protocol";
 
 /**
  * The run machine's state — a discriminated union carrying ONLY what each phase
@@ -70,22 +65,6 @@ export type RoundPhase = RoundState["phase"];
 
 /** The honest-absent starting state — no round, nothing to render. */
 export const initialRoundState: RoundState = { phase: "absent" };
-
-/**
- * A folded progress event — one `onProgress` payload from the rounds runtime (B9) or a
- * fixture tick. Each event carries the current SNAPSHOT of its group's rows (not a
- * delta), so a stream that re-sends the same group's rows just updates them in place.
- */
-export type RoundEvent =
-  | { readonly type: "dispatched" }
-  | { readonly type: "prep"; readonly rows: readonly LaneRow[] }
-  | { readonly type: "worker"; readonly rows: readonly LaneRow[] }
-  | { readonly type: "gate" }
-  | { readonly type: "committed" }
-  | { readonly type: "report"; readonly reportBoardId: string }
-  | { readonly type: "lens"; readonly lanes: readonly LaneRow[] }
-  | { readonly type: "composed"; readonly generation: string }
-  | { readonly type: "failed"; readonly reason: string };
 
 /**
  * The pure transition. Forward-only and tolerant: an event that does not apply to the

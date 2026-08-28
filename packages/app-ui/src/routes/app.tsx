@@ -7,7 +7,7 @@ import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
-import { ABSENT_ROUNDS_SOURCE, RoundsSourceProvider } from "../rounds/rounds-data";
+import { RoundsSourceProvider, useLiveRoundsSource } from "../rounds/rounds-data";
 import { RunRoute } from "../rounds/run-route";
 import {
   LiveSettingsProjectionProvider,
@@ -142,6 +142,16 @@ function SessionScreen({ slug }: { readonly slug: string }) {
  * (reads `settings.get` through the seam) and renders nothing — a pure synchronizer.
  * This restores what the deleted legacy shell owned, lost in the router cutover.
  */
+/**
+ * The LIVE rounds source for the session subtree (C15 3.2) — the cluster-8 swap. Must sit
+ * inside `<Router>`: the source resolves the current session slug off the route, so the
+ * live round it reads is the one the reviewer is looking at. Off a session route the
+ * source is honest-absent, exactly as the constant it replaces was.
+ */
+function LiveRoundsScope({ children }: { readonly children: React.ReactNode }) {
+  return <RoundsSourceProvider value={useLiveRoundsSource()}>{children}</RoundsSourceProvider>;
+}
+
 function AppearanceSync() {
   const { data } = useCommand("settings.get", {});
   const scheme = data?.scheme ?? "system";
@@ -189,11 +199,11 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
             <LiveSettingsProjectionProvider>
               {/* One rounds source for the whole session subtree (C09 cluster 7). The
                   top-bar's History pill and the run/workspace routes must read the SAME
-                  source, so the provider wraps the layout that owns both. Honest-absent
-                  today (no rounds runtime — Reconciliation 1): the pill stays hidden and
-                  `?view=rounds` falls back, unchanged behaviour. Cluster 8 swaps this one
-                  value for the live runtime; the provider stays put. */}
-              <RoundsSourceProvider value={ABSENT_ROUNDS_SOURCE}>
+                  source, so the provider wraps the layout that owns both. C15 3.2 swapped
+                  the honest-absent constant for the LIVE source: the run state folds real
+                  `roundProgress` events, the ledger reads `session.rounds`, and Dispatch
+                  runs `round.dispatch`. The provider did not move — only its value. */}
+              <LiveRoundsScope>
                 <AppLayout>
                   <Switch>
                     <Route path={ROUTES.home}>
@@ -229,7 +239,7 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
                     </Route>
                   </Switch>
                 </AppLayout>
-              </RoundsSourceProvider>
+              </LiveRoundsScope>
             </LiveSettingsProjectionProvider>
           </PriorSurfaceTracker>
         </Router>
