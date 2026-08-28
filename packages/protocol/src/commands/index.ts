@@ -1460,6 +1460,14 @@ const definitions = {
       branch: z.string().min(1).optional(),
       /** The claimed branch's PR number, when the row was a pull request. */
       prNumber: z.number().int().positive().optional(),
+      /**
+       * The row's `owner/name` repository identity (#580). A workspace project holds several
+       * repos, so a branch NAME is unique only within one of them — without this, two repos
+       * that both have `main` collapse into one session and a row click opens the other repo's
+       * chat. This is an identity, not a host path, so it crosses the wire (R19 untouched).
+       * Absent ⇒ no repository named, and the mint behaves exactly as it did before.
+       */
+      repository: z.string().min(1).optional(),
     }),
     output: z.object({
       session: sidebarSessionSchema.nullable(),

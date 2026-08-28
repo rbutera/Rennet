@@ -21,18 +21,32 @@ import type { SmartRow } from "./smart-list";
 // PR are one claimed thing" would drift into a row that mints a second session.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The target a New Chat row claims: a branch and, for a pull-request row, its number. */
+/** The target a New Chat row claims: a branch, for a pull-request row its number, and the
+ *  row's `owner/name` repository identity. */
 export interface MintTarget {
   readonly branch: string;
   readonly prNumber?: number;
+  /**
+   * The row's repository, as `owner/name` (#580). A workspace project holds several repos, so
+   * a branch NAME is unique only within one of them — the smart list already dedupes on the
+   * composite `(repository, branch)` for exactly that reason, and the view already shows a repo
+   * column when a workspace has more than one. Sending it means the mint discriminates the same
+   * way: without it, two repos that both have `main` mint ONE session and clicking one row hands
+   * the reviewer the other repo's chat. It is an identity, never a host path, so R19 is untouched.
+   * Optional: a row with no repository (there is none today) mints exactly as before.
+   */
+  readonly repository?: string;
 }
 
 /** The target a smart-list row resolves to. A PR row carries its number; a local branch
- *  row is the bare branch. */
+ *  row is the bare branch. Both halves of the composite `(repository, branch)` ride along. */
 export function targetOfRow(row: SmartRow): MintTarget {
-  return row.kind === "pr" && row.pr !== undefined
-    ? { branch: row.branch, prNumber: row.pr.number }
-    : { branch: row.branch };
+  const repository = row.kind === "pr" ? row.pr?.repository : row.local?.repository;
+  return {
+    branch: row.branch,
+    ...(row.kind === "pr" && row.pr !== undefined ? { prNumber: row.pr.number } : {}),
+    ...(repository === undefined || repository === "" ? {} : { repository }),
+  };
 }
 
 /** The live claims held IN this project — the rows New Chat must not offer again. Read off
@@ -93,6 +107,7 @@ export function useNewChatMint(projectId: string): NewChatMint {
         projectId,
         ...(target?.branch === undefined ? {} : { branch: target.branch }),
         ...(target?.prNumber === undefined ? {} : { prNumber: target.prNumber }),
+        ...(target?.repository === undefined ? {} : { repository: target.repository }),
       })
         .then(({ session }) => {
           if (session === null) return;

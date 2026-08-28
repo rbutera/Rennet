@@ -221,7 +221,7 @@ import {
   type PersistedBoardMeta,
   type WorkerReturn,
 } from "./runtime/rounds";
-import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
+import { projectIdForRepoRoot, resolveRoundSessionId, SessionEntry } from "./session/session-entry";
 import {
   createContextRebuiltEmit,
   createTranscriptCapture,
@@ -1828,6 +1828,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
   })();
   const sessionEntry = new SessionEntry(sessionStore);
+  // The ONE key both session mints converge on (#580): the `Project.id` the sidebar groups by,
+  // resolved from a review's repo root through the stored projects. `projectStore.list()` is read
+  // per call, not captured, so a project added after boot is covered at once.
+  const projectIdOf = (repoRoot: string): string =>
+    projectIdForRepoRoot(repoRoot, projectStore.list());
+  // The read side of that convergence, in ONE place so the four session-keyed durable reads
+  // (rounds ledger, transcript, board idempotency, and the per-session round lock the dispatch
+  // takes) cannot drift apart. Get this out of step with the mint below and `session.rounds`,
+  // `session.transcript` and `board.read` all go honest-empty at once.
+  const sessionIdForReview = (review: Review): string =>
+    resolveRoundSessionId(review, sessionStore.list(), projectIdOf(review.repositoryRoot));
   const roundsRuntime = createRoundsRuntime({
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
@@ -1912,8 +1923,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The round exit (B11 cluster 4): run the composed work-order as ONE coding-agent turn,
     // serialized per session behind any round already in flight for the review's target. The
     // session is SessionEntry's mint-or-reattach for that target (a stable id per target, so
-    // two dispatches of one review serialize together), keyed by the review's repo root; a
-    // detached HEAD (no branch to claim) falls back to a review-id session. A failure-isolated
+    // two dispatches of one review serialize together), keyed by the review's PROJECT id with
+    // its repo root stamped on (#580); a detached HEAD (no branch to claim) persists a
+    // review-id session through the same store (#573). A failure-isolated
     // post-commit kick (the swarm/scout precedent): the turn runs behind the command, and its
     // rejection never surfaces — `round.dispatch` already returned the composed work-order.
     // The rounds-ledger read for `session.rounds` (B9/B10-deferred seam): project the live
@@ -1923,7 +1935,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     roundRecordsForReview: (reviewId: string) => {
       const review = service.reviewById(reviewId);
       if (!review) return [];
-      return roundsRuntime.ledger(resolveRoundSessionId(review, sessionStore.list()));
+      return roundsRuntime.ledger(sessionIdForReview(review));
     },
     // The display-transcript read for `session.transcript` (issue-set B): the coding-turn rows
     // the turn loop captured and persisted for this review's session, resolved READ-ONLY via the
@@ -1934,7 +1946,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     transcriptRowsForReview: (reviewId: string) => {
       const review = service.reviewById(reviewId);
       if (!review) return [];
-      return transcriptStore.read(resolveRoundSessionId(review, sessionStore.list()));
+      return transcriptStore.read(sessionIdForReview(review));
     },
     // The live round-progress catch-up read (C15 3.1). Keyed by review id — the same id the
     // run route's slug carries — so a cold `/s/:slug/run` mount folds the round already in
@@ -1985,7 +1997,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     lensBoardForReview: async (reviewId: string, generation: string, lens: LensKind) => {
       const review = service.reviewById(reviewId);
       if (!review) return undefined;
-      const sessionId = resolveRoundSessionId(review, sessionStore.list());
+      const sessionId = sessionIdForReview(review);
       const meta = boardMetaStore
         .listForGeneration(sessionId, generation)
         .find((record) => record.lens === lens);
@@ -2001,18 +2013,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     dispatchRound: async ({ review, workOrder }) => {
       const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
       const branch = activePatchset?.repository.headRef;
+      // Both mints funnel through `SessionEntry` keyed on the PROJECT id (#580), so a session a
+      // round mints groups under the same sidebar row New Chat's mint does. The repo root rides
+      // along so a workspace's per-repo rounds stay in their own ledgers, and so the read side
+      // (`sessionIdForReview`) resolves this exact session back.
+      const projectId = projectIdOf(review.repositoryRoot);
       const session =
         branch !== undefined
-          ? sessionEntry.enter(review.repositoryRoot, {
-              branch,
-              ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
-            }).session
-          : {
-              id: review.id,
-              projectId: review.repositoryRoot,
-              threads: [],
-              createdAt: Date.now(),
-            };
+          ? sessionEntry.enter(
+              projectId,
+              {
+                branch,
+                ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
+              },
+              review.repositoryRoot,
+            ).session
+          : // Detached HEAD: no branch, so no claim to dedupe on — the review id keys a REAL
+            // PERSISTED session (#573), never the ad-hoc literal this used to build and drop.
+            sessionEntry.enterDetached(projectId, review.id, review.repositoryRoot).session;
       // Captured from the worker run below so the C15 regeneration tail can run
       // `runRound` over what the worker produced WITHOUT re-running the worker: a
       // WorkerReturn carrying the commit range, plus a `patchsetId` (the post-turn HEAD)
