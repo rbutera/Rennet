@@ -24,6 +24,8 @@ import type {
   DispositionType,
   FlaggedReview,
   HandoffBundle,
+  LensBoard,
+  LensKind,
   NoiseReview,
   OpenSpecChange,
   OpenSpecCoverage,
@@ -552,6 +554,18 @@ export interface DispatchDeps {
    * CLI stays the canonical conversation owner; this is an additive display read-model.
    */
   readonly transcriptRowsForReview?: (reviewId: string) => readonly SessionTranscriptRow[];
+  /**
+   * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board
+   * for one `(review, generation, lens)` triple, projected from the whiteboard event log the
+   * lens pipeline wrote plus its board-meta record. `undefined` is the honest MISSING answer —
+   * that lens drafted no board that generation. Absent seam ⇒ no boards runtime wired, so every
+   * pair reads missing; a board is never fabricated to fill the gap.
+   */
+  readonly lensBoardForReview?: (
+    reviewId: string,
+    generation: string,
+    lens: LensKind,
+  ) => Promise<LensBoard | undefined>;
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

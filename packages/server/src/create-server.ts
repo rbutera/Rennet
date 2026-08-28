@@ -157,6 +157,7 @@ import type {
   GitHubAuthStatus,
   GitHubConnectPoll,
   KnowledgeDispositionResult,
+  LensKind,
   NoiseReview,
   OpenSpecCoverage,
   Patchset,
@@ -202,6 +203,7 @@ import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from ".
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
+import { projectLensBoard } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
 import {
@@ -1842,6 +1844,29 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const review = service.reviewById(reviewId);
       if (!review) return [];
       return transcriptStore.read(resolveRoundSessionId(review, sessionStore.list()));
+    },
+    // The lens-board read for `board.read` (C05 cluster 8, C18): the board this review's
+    // session drafted for `(generation, lens)`, rebuilt from its two durable halves — the
+    // board-meta record (which board id, and the board-level coverage the element
+    // vocabulary cannot carry) and the whiteboard event log's projected element state.
+    // Session identity is the SAME read-only target-claim derivation the rounds/transcript
+    // reads use. No meta record ⇒ that lens drafted no board that generation ⇒ honest
+    // missing, never a fabricated board.
+    lensBoardForReview: async (reviewId: string, generation: string, lens: LensKind) => {
+      const review = service.reviewById(reviewId);
+      if (!review) return undefined;
+      const sessionId = resolveRoundSessionId(review, sessionStore.list());
+      const meta = boardMetaStore
+        .listForGeneration(sessionId, generation)
+        .find((record) => record.lens === lens);
+      if (!meta) return undefined;
+      const state = await boardsRuntimeFor(review.repositoryRoot).service.getState(meta.boardId);
+      return projectLensBoard([...state.values()], {
+        lens,
+        generation,
+        boardId: meta.boardId,
+        skippedHunks: meta.skippedHunks,
+      });
     },
     dispatchRound: async ({ review, workOrder }) => {
       const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);

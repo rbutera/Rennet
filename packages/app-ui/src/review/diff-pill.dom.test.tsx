@@ -66,7 +66,11 @@ const SESSIONS: Record<string, readonly SidebarSession[]> = {
 
 function mountApp() {
   const history = memoryHistory("/s/s2");
-  const bridge = new MemoryBridge(frontDoorHandlers([project("p1", "atlas")]));
+  // This review drafted no boards, so the board read answers honest-missing.
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers([project("p1", "atlas")]),
+    "board.read": () => ({ board: null }),
+  });
   const projection: SidebarSessionProjection = {
     sessionsByProject: SESSIONS,
     renameSession: () => undefined,
@@ -89,9 +93,9 @@ function mountApp() {
 
 describe("open the diff via the top-bar pill", () => {
   it("clicking Diff navigates to ?view=diff and renders the diff surface", async () => {
-    const { getByText, queryByText, user } = mountApp();
+    const { findByText, getByText, queryByText, user } = mountApp();
     // Board view first: the board document's empty state, no diff surface.
-    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
+    expect(await findByText(/no board for this generation yet/i)).toBeTruthy();
     expect(queryByText("1 files changed")).toBeNull();
     // Click the pill's Diff toggle.
     await user.click(getByText("Diff"));

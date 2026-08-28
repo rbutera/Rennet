@@ -3,9 +3,11 @@ import type { PatchFile, Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
+import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { mount } from "../test/dom";
+import { MemoryBridge } from "../test/memory-bridge";
 
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
 
@@ -39,10 +41,14 @@ function review(files: PatchFile[]): Review {
 
 function mountWorkspace(path: string, files: PatchFile[]) {
   const history = memoryHistory(path);
+  // This review drafted no boards, so `board.read` answers the honest missing board —
+  // the state the default view is expected to render.
   return mount(
-    <Router hook={history.hook} searchHook={history.searchHook}>
-      <ReviewWorkspace review={review(files)} />
-    </Router>,
+    <BridgeProvider bridge={new MemoryBridge({ "board.read": () => ({ board: null }) })}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <ReviewWorkspace review={review(files)} />
+      </Router>
+    </BridgeProvider>,
   );
 }
 
@@ -53,16 +59,16 @@ describe("ReviewWorkspace ?view mount (C6 task 4.3)", () => {
     expect(getByText("packages/core/src/a.ts")).toBeTruthy();
   });
 
-  it("mounts the board document on the default view, not the diff", () => {
-    const { getByText, queryByText } = mountWorkspace("/s/x", [FILE_A]);
-    // No BoardSource is wired in this mount, so the board's honest empty state shows.
-    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
+  it("mounts the board document on the default view, not the diff", async () => {
+    const { findByText, queryByText } = mountWorkspace("/s/x", [FILE_A]);
+    // This review drafted no boards, so the board's honest empty state shows.
+    expect(await findByText(/no board for this generation yet/i)).toBeTruthy();
     expect(queryByText("1 files changed")).toBeNull();
   });
 
-  it("a non-diff explicit view (map) falls back to the board document", () => {
-    const { getByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
-    expect(getByText(/no board for this generation yet/i)).toBeTruthy();
+  it("a non-diff explicit view (map) falls back to the board document", async () => {
+    const { findByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
+    expect(await findByText(/no board for this generation yet/i)).toBeTruthy();
   });
 
   it("an empty active patchset shows the honest one-line state, never a blank frame", () => {

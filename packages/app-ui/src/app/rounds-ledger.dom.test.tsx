@@ -11,14 +11,13 @@
 import type { Review, RoundRecord } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
-import { BoardSourceProvider } from "../board/board-data";
 import { BridgeProvider } from "../data";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, mount } from "../test/dom";
-import { fixtureBoardSource } from "../test/fixtures/boards";
+import { act, mount, waitFor } from "../test/dom";
+import { fixtureBoardRead } from "../test/fixtures/boards";
 import {
   completedRoundRecord,
   FIXTURE_REPORT_BOARDS,
@@ -42,17 +41,15 @@ afterEach(() => act(() => store().runActions.resetRun()));
 function renderWorkspace(path: string, source?: RoundsSource) {
   const history = memoryHistory(path);
   const r = mount(
-    <BridgeProvider bridge={new MemoryBridge({})}>
+    <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <BoardSourceProvider value={fixtureBoardSource}>
-          {source ? (
-            <RoundsSourceProvider value={source}>
-              <ReviewWorkspace review={review} />
-            </RoundsSourceProvider>
-          ) : (
+        {source ? (
+          <RoundsSourceProvider value={source}>
             <ReviewWorkspace review={review} />
-          )}
-        </BoardSourceProvider>
+          </RoundsSourceProvider>
+        ) : (
+          <ReviewWorkspace review={review} />
+        )}
       </Router>
     </BridgeProvider>,
   );
@@ -92,7 +89,7 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     expect(r.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
   });
 
-  it("opens the round's own generation; the switcher stays hidden (no persisted predecessor)", () => {
+  it("opens the round's own generation; the switcher stays hidden (no persisted predecessor)", async () => {
     // Finding 3: a PRODUCER-shaped `RoundRecord` carries one generation
     // (`boardGeneration === mintedPatchsetGeneration` for a landed round), and the frozen
     // predecessor is never persisted onto the record — so there is NO earlier generation id to
@@ -101,7 +98,10 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     // `RoundRecord` predecessor field (C09 ledger, F3) — asserting a gen1 tab here would claim
     // a reachability production cannot deliver.
     const { r } = renderWorkspace("/s/s-1?view=rounds", fixtureCompletedRoundsSource);
-    expect(r.container.querySelector('article[data-generation="gen2"]')).not.toBeNull();
+    // The lens boards arrive over `board.read`, so wait out the in-flight read.
+    await waitFor(() =>
+      expect(r.container.querySelector('article[data-generation="gen2"]')).not.toBeNull(),
+    );
     expect(r.container.querySelector('[data-kind="generation-switcher"]')).toBeNull();
   });
 
@@ -155,13 +155,11 @@ describe("the round-diff link resolves the SELECTED round, never silently the la
     };
     const history = memoryHistory("/s/s-1?view=rounds");
     const r = mount(
-      <BridgeProvider bridge={new MemoryBridge({})}>
+      <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
         <Router hook={history.hook} searchHook={history.searchHook}>
-          <BoardSourceProvider value={fixtureBoardSource}>
-            <RoundsSourceProvider value={twoRounds}>
-              <ReviewWorkspace review={reviewWithPatchset} />
-            </RoundsSourceProvider>
-          </BoardSourceProvider>
+          <RoundsSourceProvider value={twoRounds}>
+            <ReviewWorkspace review={reviewWithPatchset} />
+          </RoundsSourceProvider>
         </Router>
       </BridgeProvider>,
     );

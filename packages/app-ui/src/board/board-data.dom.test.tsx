@@ -1,19 +1,23 @@
 // @vitest-environment happy-dom
-import type { LensKind } from "@rennet/protocol";
+import type { LensBoard, LensKind } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { BridgeProvider } from "../data";
 import { mount } from "../test/dom";
-import { FIXTURE_BOARDS, fixtureBoardSource } from "../test/fixtures/boards";
-import { type BoardSource, BoardSourceProvider, useBoardData } from "./board-data";
+import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
+import { MemoryBridge } from "../test/memory-bridge";
+import { useBoardData } from "./board-data";
 
-// The board-fetch seam resolves fixture boards through a BoardSource on context (no
-// board command exists yet — Reconciliation 1), the same not-yet-a-command pattern
-// C3 used for its session projection. The fixtures live behind the import fence and
-// reach the seam only via the provider here — a surface never imports them.
+// The board-fetch seam resolves boards through the registered `board.read` command
+// (C18). The fixtures live behind the import fence and reach the seam only as a
+// MemoryBridge handler — a surface never imports them.
+
+const REVIEW = "rev-1";
 
 function BoardProbe({ generation, lens }: { generation: string; lens: LensKind }) {
-  const r = useBoardData(generation, lens);
+  const r = useBoardData(REVIEW, generation, lens);
   if (r.status === "invalid") return <span>invalid:{r.reason}</span>;
   if (r.status === "missing") return <span>missing</span>;
+  if (r.status === "pending") return <span>pending</span>;
   return (
     <span>
       board:{r.board.lens}/{r.board.sections[0]?.ref}/{r.board.elements.length}
@@ -21,60 +25,60 @@ function BoardProbe({ generation, lens }: { generation: string; lens: LensKind }
   );
 }
 
+/** Mount the probe over a bridge whose `board.read` answers with `served`. */
+function probe(
+  generation: string,
+  lens: LensKind,
+  served: (input: { generation: string; lens: LensKind }) => { board: LensBoard | null },
+) {
+  return mount(
+    <BridgeProvider bridge={new MemoryBridge({ "board.read": served })}>
+      <BoardProbe generation={generation} lens={lens} />
+    </BridgeProvider>,
+  );
+}
+
+/** A served answer the schema will reject — the client's own validation is the subject,
+ *  so the stub deliberately hands back a shape the wire type does not admit. */
+const serving = (board: unknown) => () => ({ board }) as { board: LensBoard | null };
+
 describe("board-data seam — the single board resolution point", () => {
-  it("resolves a fixture board for a (generation, lens) pair, validated against LensBoardSchema", () => {
-    const { getByText } = mount(
-      <BoardSourceProvider value={fixtureBoardSource}>
-        <BoardProbe generation="gen1" lens="design" />
-      </BoardSourceProvider>,
-    );
+  it("resolves a board for a (generation, lens) pair, validated against LensBoardSchema", async () => {
+    const { findByText } = probe("gen1", "design", fixtureBoardRead);
     // The design board's first section is `change`; its element pool is non-empty —
     // a shape that got past LensBoardSchema, not one the client invented.
-    expect(getByText(/^board:design\/change\/\d+$/)).toBeTruthy();
+    expect(await findByText(/^board:design\/change\/\d+$/)).toBeTruthy();
   });
 
-  it("rejects a shape that fails LensBoardSchema as invalid DATA, never a thrown render", () => {
-    const brokenSource: BoardSource = () => ({ lens: "design", nope: true });
+  it("rejects a shape that fails LensBoardSchema as invalid DATA, never a thrown render", async () => {
     // Mounting at all proves the rejection is data, not an exception escaping render.
-    const { getByText } = mount(
-      <BoardSourceProvider value={brokenSource}>
-        <BoardProbe generation="gen1" lens="design" />
-      </BoardSourceProvider>,
-    );
-    expect(getByText("invalid:shape")).toBeTruthy();
+    const { findByText } = probe("gen1", "design", serving({ lens: "design", nope: true }));
+    expect(await findByText("invalid:shape")).toBeTruthy();
   });
 
-  it("rejects a well-formed board whose LENS is not the one asked for (stale/cross-wired read)", () => {
-    // The source hands back the sequence board when design is requested — a shape that
+  it("rejects a well-formed board whose LENS is not the one asked for (stale/cross-wired read)", async () => {
+    // The host hands back the sequence board when design is requested — a shape that
     // passes LensBoardSchema but is NOT the design board. Pre-fix this rendered as the
     // wrong board; now it is invalid:identity, never silently shown or reported missing.
-    const wrongLens: BoardSource = () => FIXTURE_BOARDS.gen1?.sequence;
-    const { getByText } = mount(
-      <BoardSourceProvider value={wrongLens}>
-        <BoardProbe generation="gen1" lens="design" />
-      </BoardSourceProvider>,
-    );
-    expect(getByText("invalid:identity")).toBeTruthy();
+    const { findByText } = probe("gen1", "design", serving(FIXTURE_BOARDS.gen1?.sequence));
+    expect(await findByText("invalid:identity")).toBeTruthy();
   });
 
-  it("rejects a board stamped with a different GENERATION than requested (stale generation)", () => {
-    // Requesting gen1 but the source returns the gen0 design board (generation: "gen0").
-    const staleGen: BoardSource = () => FIXTURE_BOARDS.gen0?.design;
-    const { getByText } = mount(
-      <BoardSourceProvider value={staleGen}>
-        <BoardProbe generation="gen1" lens="design" />
-      </BoardSourceProvider>,
-    );
-    expect(getByText("invalid:identity")).toBeTruthy();
+  it("rejects a board stamped with a different GENERATION than requested (stale generation)", async () => {
+    // Requesting gen1 but the host returns the gen0 design board (generation: "gen0").
+    const { findByText } = probe("gen1", "design", serving(FIXTURE_BOARDS.gen0?.design));
+    expect(await findByText("invalid:identity")).toBeTruthy();
   });
 
-  it("rejects a board carrying an excluded host kind (round_outcome) as invalid data (finding 4)", () => {
+  it("rejects a board carrying an excluded host kind (round_outcome) as invalid data (finding 4)", async () => {
     // LensBoardSchema admits every host kind; the seam is where round_outcome/review_comment
     // are refused, so the spike's silent-hole defect cannot render as an empty board.
-    const withExcluded: BoardSource = () => {
-      const base = FIXTURE_BOARDS.gen1?.design;
-      if (!base) throw new Error("fixture missing");
-      return {
+    const base = FIXTURE_BOARDS.gen1?.design;
+    if (!base) throw new Error("fixture missing");
+    const { findByText } = probe(
+      "gen1",
+      "design",
+      serving({
         ...base,
         elements: [
           ...base.elements,
@@ -89,33 +93,30 @@ describe("board-data seam — the single board resolution point", () => {
             },
           },
         ],
-      };
-    };
-    const { getByText } = mount(
-      <BoardSourceProvider value={withExcluded}>
-        <BoardProbe generation="gen1" lens="design" />
-      </BoardSourceProvider>,
+      }),
     );
-    expect(getByText("invalid:excluded-kind")).toBeTruthy();
+    expect(await findByText("invalid:excluded-kind")).toBeTruthy();
   });
 
-  it("reports a lens with no board this generation as missing (absent-not-disabled)", () => {
-    const { getByText } = mount(
-      <BoardSourceProvider value={fixtureBoardSource}>
-        {/* gen2 carries only sequence + flagged — design is absent that generation. */}
-        <BoardProbe generation="gen2" lens="design" />
-      </BoardSourceProvider>,
-    );
-    expect(getByText("missing")).toBeTruthy();
+  it("surfaces a FAILED read as invalid:unreadable, never as 'no board yet'", async () => {
+    // The host could not serve this board. That is not absence — folding it into
+    // `missing` is the lie the seam exists to prevent.
+    const { findByText } = probe("gen1", "design", () => {
+      throw new Error("board store unreachable");
+    });
+    expect(await findByText("invalid:unreadable")).toBeTruthy();
   });
 
-  it("drills into a frozen generation's board through the same seam", () => {
-    const { getByText } = mount(
-      <BoardSourceProvider value={fixtureBoardSource}>
-        <BoardProbe generation="gen0" lens="design" />
-      </BoardSourceProvider>,
-    );
+  it("reports a lens with no board this generation as missing (absent-not-disabled)", async () => {
+    // gen2 carries only sequence + flagged — design is absent that generation, and the
+    // host says so with `board: null`.
+    const { findByText } = probe("gen2", "design", fixtureBoardRead);
+    expect(await findByText("missing")).toBeTruthy();
+  });
+
+  it("drills into a frozen generation's board through the same seam", async () => {
     // gen0 is the propose-time frozen Design board — resolved by passing its id.
-    expect(getByText(/^board:design\/change\/\d+$/)).toBeTruthy();
+    const { findByText } = probe("gen0", "design", fixtureBoardRead);
+    expect(await findByText(/^board:design\/change\/\d+$/)).toBeTruthy();
   });
 });

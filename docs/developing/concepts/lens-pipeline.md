@@ -130,6 +130,19 @@ As each board freezes and is persisted, the scheduler emits a **per-board
 arrival event** over the existing board-event broadcast. The rounds machinery
 consumes these to drive the progressive reveal; the pipeline only emits them.
 
+## Reading a board back
+
+A drafted board lands in two durable places: its elements in the whiteboard
+event log, and the board-level coverage the 13-kind element vocabulary cannot
+carry (`skippedHunks`, blemishes, omissions) in the board-meta store. The client
+reads it back through one command, `board.read`, keyed by review, generation, and
+lens. The handler resolves the review's session, finds that triple's board-meta
+record, projects the board's element state, and assembles the `LensBoard`: the
+element pool in creation order, and a fold line per top-level section whose
+per-kind counts are tallied from that section's own children. A pair the host
+drafted no board for answers `null` — the lens is honestly absent, and no board
+is ever assembled from another generation's elements.
+
 ## Related context in the delta
 
 The drafting scheduler seeds every seat with the inlined **DeltaPacket** — the

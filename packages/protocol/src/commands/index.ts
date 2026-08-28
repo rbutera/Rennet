@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LensBoardSchema, LensKindSchema } from "../board/lens-board";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
 import {
@@ -530,6 +531,21 @@ const definitions = {
       contextBefore: z.array(z.string()),
       contextAfter: z.array(z.string()),
     }),
+  },
+  "board.read": {
+    // The lens-board read (C05 cluster 8, registered in C18). `LensBoardSchema` froze
+    // in B3 with the command left to "B4/B10's business"; this is it. Serves the
+    // PERSISTED board for one `(reviewId, generation, lens)` triple, projected from the
+    // whiteboard event log the lens pipeline wrote (`runLensBoard` → `whiteboard.apply`)
+    // plus the board-meta record that carries its board-level coverage. `board: null` is
+    // the honest MISSING answer — that lens drafted no board that generation — and is
+    // never a fabricated or partially-invented board.
+    input: z.object({
+      reviewId: z.string().min(1),
+      generation: z.string().min(1),
+      lens: LensKindSchema,
+    }),
+    output: z.object({ board: LensBoardSchema.nullable() }),
   },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.

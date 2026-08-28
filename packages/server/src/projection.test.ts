@@ -577,6 +577,10 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // it touched. The projector R19-scrubs every path at capture time BEFORE persistence, so a
     // remote client already reads a repo-relative reference — no frame-boundary translation.
     "session.transcript.output.rows.body.path",
+    // The lens-board read (C18): a board's `code_ref` elements cite the CAPTURED patchset by
+    // repo-relative path (`codeRefSchema`'s own field, the same one `review.setDisposition`
+    // carries) — never a host-absolute path, so no remote projection translates it.
+    "board.read.output.board.elements.data.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",
