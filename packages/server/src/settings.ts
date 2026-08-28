@@ -471,7 +471,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       const learned: Record<string, { lastSeenVersion: string }> = {};
 
       for (const host of daemonHostSections(deps.listProjects())) {
-        const answer = await deps.probeDaemon?.(host.source).catch(() => null);
+        // No probe dep wired ⇒ no answer, which `hostStatus` reads as unreachable. Absence is
+        // never a reachable host: an unasked host must not inherit a version it never gave.
+        const answer = (await deps.probeDaemon?.(host.source).catch(() => null)) ?? null;
         const lastSeenVersion = remembered[host.source]?.lastSeenVersion;
         const status = hostStatus(host.source, answer, lastSeenVersion, latest);
         if (status.version && status.version !== lastSeenVersion) {

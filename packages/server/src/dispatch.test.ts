@@ -3323,8 +3323,10 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       setCoachmarks: vi.fn((input: CoachMarks) => input),
       setTrackerValue: vi.fn(() => ({})),
       daemonStatus: vi.fn(async () => []),
+      reconnect: vi.fn(async () => ({ status: { source: "local" as const, reachable: false } })),
       harnessHosts: vi.fn(async () => []),
       setHarnessEnabled: vi.fn(() => []),
+      setForgeEnabled: vi.fn(() => []),
     };
     const { dispatch } = harness(undefined, { settings });
 
