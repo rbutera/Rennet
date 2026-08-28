@@ -349,12 +349,13 @@ jobs:
           set -euo pipefail
           # NUL-delimited read keeps filenames with spaces (e.g. "Rennet-x Setup.exe") intact.
           #
-          # A release asset is addressed by BASENAME, so two files that share one is a
-          # 404 on the second upload and no release at all — which is exactly how v0.3.40
-          # died with both build legs green. The macOS job ships its own per-platform
-          # SHA256SUMS, and the notes step writes a combined dist/SHA256SUMS over the
-          # whole set, so "SHA256SUMS" existed twice under dist/. The per-platform copies
-          # are already folded into the combined file, so only the combined one ships.
+          # A release asset is addressed by BASENAME, so two files sharing one collide
+          # on the second upload. The macOS job ships its own per-platform SHA256SUMS,
+          # and the notes step writes a combined dist/SHA256SUMS over the whole set, so
+          # "SHA256SUMS" existed twice under dist/ — a collision waiting one upload past
+          # wherever v0.3.40's run actually died (its 404 hit the FIRST upload, 3s after
+          # create: a propagation race, handled below). The per-platform copies are
+          # already folded into the combined file, so only the combined one ships.
           assets=()
           while IFS= read -r -d '' f; do assets+=("$f"); done \
             < <(find dist -mindepth 2 -type f ! -name SHA256SUMS -print0 | sort -z)
@@ -370,13 +371,39 @@ jobs:
             echo "::error::no installer assets found to publish"; exit 1
           fi
           printf 'attaching: %s\n' "${assets[@]}"
-          # --notes (not --notes-file): gh documents only --notes as combinable
-          # with --generate-notes (prepended to the generated notes).
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "$(cat notes.md)" \
-            --generate-notes \
-            "${assets[@]}"
+          # Draft-first, upload-with-retry, undraft-last — not one-shot `gh release
+          # create <assets>`. v0.3.40's first failure mode was a propagation race:
+          # the first asset POST hit uploads.github.com 3s after the release was
+          # created and got a 404 (the record hadn't propagated), and gh deletes the
+          # release it just created when an upload fails, losing the publish to a
+          # transient. Splitting the phases makes each retryable and the whole job
+          # re-runnable from the stored artifacts without rebuilding; --clobber makes
+          # retried uploads idempotent. update.electronjs.org only sees the release
+          # once it leaves draft, so a failed attempt never half-ships.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # --notes (not --notes-file): gh documents only --notes as combinable
+            # with --generate-notes (prepended to the generated notes).
+            gh release create "$TAG" \
+              --draft \
+              --title "$TAG" \
+              --notes "$(cat notes.md)" \
+              --generate-notes
+          fi
+          for attempt in 1 2 3; do
+            if gh release upload "$TAG" --clobber "${assets[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::asset upload failed after 3 attempts"; exit 1
+            fi
+            echo "upload attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          uploaded="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+          if [ "$uploaded" -ne "${#assets[@]}" ]; then
+            echo "::error::expected ${#assets[@]} assets on $TAG, found $uploaded"; exit 1
+          fi
+          gh release edit "$TAG" --draft=false
 
   # 6. The tag is pushed by job 2, so from that moment on a version EXISTS whether
   #    or not anything shipped for it. Two runs in one day proved that gap: a
