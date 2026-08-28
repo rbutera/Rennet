@@ -209,12 +209,11 @@ import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { projectLensBoard } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
-import { assembleRoundCollation } from "./runtime/round-collation";
+import { runBoardRegeneration } from "./runtime/round-collation";
 import { RoundProgressHub } from "./runtime/round-progress";
 import {
   createRoundsRuntime,
   type DispatchRoundResult,
-  mintGeneration,
   type PersistedBoardMeta,
   type WorkerReturn,
 } from "./runtime/rounds";
@@ -2046,54 +2045,52 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // ── C15 1.5: the board REGENERATION tail — the rounds loop goes live ──
       // The worker already ran (above); now regenerate the lens boards over what it
       // produced. `runRound` runs its own `runWorkers` first, so we hand it a NO-OP
-      // that returns the captured `workerReturn` (never a second worker turn). Degrade
-      // HONESTLY: no active patchset ⇒ nothing to build a packet over, skip; no stored
-      // prior generation ⇒ a fresh first-generation is minted (cluster 2 adds durability);
-      // the whole tail is failure-isolated so a regeneration hiccup never breaks the
-      // landed round (the worker, its record, and PR ripening already committed above).
-      if (activePatchset !== undefined && workerReturn !== undefined) {
-        const captured = workerReturn;
-        try {
-          const repoKey = repoKeyForRoot(review.repositoryRoot);
-          const knowledge = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? {
-            schemaVersion: 1,
-            repoKey,
-            baseOid: activePatchset.repository.baseOid,
-            snapshotFingerprint: "",
-            generator: "round-regeneration",
-            statements: [],
-          };
-          const collation = assembleRoundCollation({
-            patchset: activePatchset,
-            knowledge,
-            // Dossier is the related-context tray (a separate producer); an empty dossier
-            // is honest — the drafters simply have no tracker items inlined this round.
-            dossier: [],
-            ...(review.successorAccount ? { successorAccount: review.successorAccount } : {}),
-          });
-          await roundsRuntime.runRound({
-            session,
-            repoRoot: review.repositoryRoot,
-            // The pre-round generation this round succeeds. No durable store yet (cluster 2),
-            // so mint it fresh from the active patchset — the honest first-generation prior.
-            previousGeneration: mintGeneration(`gen:${activePatchset.id}`, activePatchset.id),
-            asksDispatched: workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
-            runWorkers: async (): Promise<WorkerReturn> => captured,
+      // that returns the captured `workerReturn` (never a second worker turn). The tail is
+      // failure-isolated so a regeneration hiccup never unwinds the landed round (the
+      // worker, its record, and PR ripening already committed above) — but it always
+      // closes the live channel with a terminal event rather than stalling at `committing`.
+      if (workerReturn !== undefined) {
+        await runBoardRegeneration(
+          {
+            // The same `review.regenerate` the reviewer's own refresh runs — it activates
+            // the successor patchset over the worker's tree and stamps the REAL
+            // `successorAccount` for this round.
+            recapture: async () => {
+              await dispatch("review.regenerate", {
+                commandId: randomUUID(),
+                reviewId: review.id,
+                repoPath: review.repositoryRoot,
+              });
+            },
+            reviewNow: () => service.reviewById(review.id) ?? review,
+            knowledgeFor: (patchset) => {
+              const repoKey = repoKeyForRoot(review.repositoryRoot);
+              return (
+                new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? {
+                  schemaVersion: 1,
+                  repoKey,
+                  baseOid: patchset.repository.baseOid,
+                  snapshotFingerprint: "",
+                  generator: "round-regeneration",
+                  statements: [],
+                }
+              );
+            },
+            runRound: (input) => roundsRuntime.runRound(input),
             // The regeneration half of the live channel (C15 3.1): `runRound` emits the
             // round-report's arrival, each lens drafter starting and finishing with its
             // carried/reworked verdict, and the composed generation the reveal lands on.
-            onProgress: emit,
-            ...collation,
-          });
-        } catch {
-          // Regeneration is the honest continuation of a landed round; a failure here
-          // never unwinds the worker's committed work or the recorded dispatch. The run
-          // machine already received its terminal `failed` from `runRound`'s own reporter.
-        }
-      } else if (workerReturn !== undefined) {
-        // No active patchset ⇒ no packet to regenerate over. The round still LANDED, so the
-        // channel closes honestly with a terminal event rather than stalling at `committing`.
-        emit({ type: "failed", reason: "No active patchset to regenerate the boards over." });
+            emit,
+          },
+          {
+            session,
+            repoRoot: review.repositoryRoot,
+            // The PRE-worker patchset — what the boards described before this round.
+            priorPatchsetId: review.activePatchsetId,
+            asksDispatched: workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
+            worked: workerReturn,
+          },
+        );
       }
     },
     // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that

@@ -21,8 +21,12 @@ import type {
   KnowledgeSet,
   PatchFile,
   Patchset,
+  Review,
+  RoundEvent,
+  SessionModel,
   SuccessorAccount,
 } from "@rennet/protocol";
+import { mintGeneration, type RoundInput, type WorkerReturn } from "./rounds";
 
 /**
  * Map a patchset's `IndexedHunk`s (whose spans are `{ new: {start,lines}, old:
@@ -155,4 +159,92 @@ export function assembleRoundCollation(input: {
   const hunks = toLintHunks(deltaPacket.hunks, input.patchset.files);
   const lintContextFor = buildLintContextFor(input.patchset, hunks);
   return { deltaPacket, hunks, lintContextFor };
+}
+
+// ── The post-round regeneration (C15 1.5) — the ORDER is the honesty ─────────
+
+/**
+ * The seams the post-round board regeneration reads and writes. Each one is the REAL
+ * production seam (`review.regenerate`, the review store, `runRound`); this function owns
+ * only the ORDER they run in — which is exactly where the honesty lives.
+ */
+export interface BoardRegenerationDeps {
+  /** Re-capture the worker's tree as the successor patchset — the same `review.regenerate`
+   *  the reviewer's own refresh runs. Called only when the worker turn moved code. */
+  readonly recapture: () => Promise<void>;
+  /** The review as it stands NOW. Read AFTER {@link recapture}, never a pre-round closure. */
+  readonly reviewNow: () => Review;
+  /** The repo's knowledge set for the drafters' packet, over the patchset they will read. */
+  readonly knowledgeFor: (patchset: Patchset) => KnowledgeSet;
+  readonly runRound: (input: RoundInput) => Promise<unknown>;
+  /** The live round-progress sink — the same channel the dispatch half emits on. */
+  readonly emit: (event: RoundEvent) => void;
+}
+
+export interface BoardRegenerationInput {
+  readonly session: SessionModel;
+  readonly repoRoot: string;
+  /** The patchset the boards described BEFORE this round — the generation it succeeds. */
+  readonly priorPatchsetId: string;
+  readonly asksDispatched: readonly string[];
+  /** What the worker turn produced: its commit range, and a patchset id iff HEAD moved. */
+  readonly worked: WorkerReturn;
+}
+
+/**
+ * Regenerate the lens boards over what the round's worker actually produced.
+ *
+ * The load-bearing step is the FIRST one. The boards must describe the POST-rework tree:
+ * drafting over the pre-worker patchset would describe the diff this round just CHANGED,
+ * while the UI calls it the delta — the worst kind of lie, because it reads as a real
+ * answer. So the successor patchset is captured BEFORE the collation is assembled, through
+ * the same `review.regenerate` the reviewer's own refresh runs; that activation also stamps
+ * the REAL `successorAccount` for THIS round (what each ask did), which is the signal that
+ * makes the pipeline draft as a round at all.
+ *
+ * Failure-isolated but never silent: the worker's committed work and its recorded round
+ * already landed, so a regeneration hiccup does not unwind them — but the live channel
+ * always closes on a terminal event, because a run left mid-phase reads as "still working".
+ */
+export async function runBoardRegeneration(
+  deps: BoardRegenerationDeps,
+  input: BoardRegenerationInput,
+): Promise<void> {
+  try {
+    if (input.worked.patchsetId !== undefined) await deps.recapture();
+    const review = deps.reviewNow();
+    const successor = review.patchsets.find((p) => p.id === review.activePatchsetId);
+    if (successor === undefined) {
+      deps.emit({ type: "failed", reason: "No active patchset to regenerate the boards over." });
+      return;
+    }
+    // The code MOVED iff the re-captured patchset is a DIFFERENT one. Patchset ids are
+    // content-derived, so this is the honest test: a turn that committed no net change
+    // re-reports against the existing generation instead of minting a hollow successor.
+    const landed = successor.id !== input.priorPatchsetId;
+    const collation = assembleRoundCollation({
+      patchset: successor,
+      knowledge: deps.knowledgeFor(successor),
+      // Dossier is the related-context tray (a separate producer); an empty dossier is
+      // honest — the drafters simply have no tracker items inlined this round.
+      dossier: [],
+      ...(review.successorAccount ? { successorAccount: review.successorAccount } : {}),
+    });
+    await deps.runRound({
+      session: input.session,
+      repoRoot: input.repoRoot,
+      previousGeneration: mintGeneration(`gen:${input.priorPatchsetId}`, input.priorPatchsetId),
+      asksDispatched: [...input.asksDispatched],
+      // The successor PATCHSET id keys the minted generation (not the post-turn HEAD oid),
+      // so the generation the boards file under names the diff they actually read.
+      runWorkers: async (): Promise<WorkerReturn> => ({
+        commitRange: input.worked.commitRange,
+        ...(landed ? { patchsetId: successor.id } : {}),
+      }),
+      onProgress: deps.emit,
+      ...collation,
+    });
+  } catch (error) {
+    deps.emit({ type: "failed", reason: error instanceof Error ? error.message : String(error) });
+  }
 }

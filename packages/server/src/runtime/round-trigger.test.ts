@@ -5,15 +5,18 @@ import type { CodexExecutor, HarnessPort } from "@rennet/core";
 import type {
   DraftBoard,
   Generation,
+  KnowledgeSet,
   PatchFile,
   Patchset,
+  Review,
+  RoundEvent,
   SessionModel,
   SuccessorAccount,
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
-import { assembleRoundCollation } from "./round-collation";
-import { createRoundsRuntime, mintGeneration } from "./rounds";
+import { assembleRoundCollation, runBoardRegeneration } from "./round-collation";
+import { createRoundsRuntime, mintGeneration, type RoundInput } from "./rounds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // C15 task 1.5 — the runRound TRIGGER, integration-tested with FAKE ports (no live
@@ -190,5 +193,157 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     expect(outcome.boardGeneration.id).toBe("gen:ps-first");
     expect(outcome.frozenPrevious).toBeUndefined();
     expect(order).not.toContain("report"); // non-round ⇒ report does not gate
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The POST-REWORK diff (C15 1.5, review finding 1). The boards a round mints must
+// describe the tree the WORKER left, not the one it was handed. The trigger used to
+// source its patchset from the pre-worker closure, so every regenerated board
+// described the diff the round had just changed — while the UI called it the delta.
+// The seams below are fakes; the ORDER under test is the real one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PRE_LINE = "+  return `Hi ${name}`;";
+const POST_LINE = "+  return `Hello, ${name}!`;";
+
+/** A one-file patchset whose single added line is `added` — the content the drafters read. */
+function greetPatchset(id: string, added: string): Patchset {
+  return {
+    ...patchset(),
+    id,
+    files: [
+      {
+        path: "src/greet.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        binary: false,
+        patch: [
+          "@@ -1,3 +1,3 @@",
+          " export function greet(name: string): string {",
+          "-  return `Hey ${name}`;",
+          added,
+          " }",
+        ].join("\n"),
+      },
+    ],
+  };
+}
+
+const KNOWLEDGE: KnowledgeSet = {
+  schemaVersion: 1,
+  repoKey: "repo",
+  baseOid: "0".repeat(40),
+  snapshotFingerprint: "fp",
+  generator: "t",
+  statements: [],
+};
+
+describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", () => {
+  /** A review that starts on the pre-worker patchset; `recapture` activates the successor,
+   *  exactly as `review.regenerate` does after the worker's tree lands. */
+  function reviewHarness() {
+    const pre = greetPatchset("ps-pre", PRE_LINE);
+    const post = greetPatchset("ps-post", POST_LINE);
+    let review = {
+      id: "rev-1",
+      repositoryRoot: "/repo",
+      activePatchsetId: pre.id,
+      patchsets: [pre],
+      dispositions: [],
+      status: "current",
+    } as unknown as Review;
+    const seen: RoundInput[] = [];
+    const events: RoundEvent[] = [];
+    return {
+      seen,
+      events,
+      deps: {
+        recapture: async () => {
+          review = {
+            ...review,
+            patchsets: [pre, post],
+            activePatchsetId: post.id,
+            successorAccount: { asks: [], beyondAsks: [] },
+          } as unknown as Review;
+        },
+        reviewNow: () => review,
+        knowledgeFor: () => KNOWLEDGE,
+        runRound: async (input: RoundInput) => {
+          seen.push(input);
+          return undefined;
+        },
+        emit: (event: RoundEvent) => events.push(event),
+      },
+    };
+  }
+
+  it("hands the drafters the worker's OWN diff, and files it under the successor generation", async () => {
+    const { deps, seen } = reviewHarness();
+    await runBoardRegeneration(deps, {
+      session,
+      repoRoot: "/repo",
+      priorPatchsetId: "ps-pre",
+      asksDispatched: ["t-1"],
+      worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+    });
+
+    const input = seen[0];
+    if (input === undefined) throw new Error("runRound was never called");
+    // THE LIE THIS GUARDS: the packet the six drafters read must carry the POST-rework
+    // line. Sourced pre-worker, it carries the line the round just replaced.
+    const body = input.deltaPacket.hunks.hunks.flatMap((h) => h.body);
+    expect(body).toContain(POST_LINE);
+    expect(body).not.toContain(PRE_LINE);
+    expect(input.deltaPacket.patchset.id).toBe("ps-post");
+    // The lint universe the boards are checked against is the same successor patchset.
+    expect(input.lintContextFor("design").patchsetId).toBe("ps-post");
+    // The successor account stamped by that re-capture is what makes it a ROUND.
+    expect(input.deltaPacket.successorAccount).toBeDefined();
+    // The minted generation is keyed to the successor PATCHSET (not the HEAD oid), and it
+    // succeeds the generation the pre-worker patchset carried.
+    expect(await input.runWorkers()).toEqual({
+      commitRange: { from: "c0", to: "c1" },
+      patchsetId: "ps-post",
+    });
+    expect(input.previousGeneration?.id).toBe("gen:ps-pre");
+  });
+
+  it("a turn that moved nothing re-reports against the existing generation, no successor mint", async () => {
+    const { deps, seen } = reviewHarness();
+    await runBoardRegeneration(deps, {
+      session,
+      repoRoot: "/repo",
+      priorPatchsetId: "ps-pre",
+      asksDispatched: [],
+      // No patchsetId ⇒ HEAD never moved ⇒ no re-capture, so the review stays on ps-pre.
+      worked: { commitRange: { from: "c0", to: "c0" } },
+    });
+
+    const input = seen[0];
+    if (input === undefined) throw new Error("runRound was never called");
+    expect(input.deltaPacket.patchset.id).toBe("ps-pre");
+    expect(await input.runWorkers()).toEqual({ commitRange: { from: "c0", to: "c0" } });
+  });
+
+  it("closes the live channel on a terminal failed when the regeneration throws — never a stall", async () => {
+    const { deps, events } = reviewHarness();
+    await runBoardRegeneration(
+      {
+        ...deps,
+        recapture: async () => {
+          throw new Error("the re-capture died");
+        },
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: [],
+        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+      },
+    );
+    expect(events).toEqual([{ type: "failed", reason: "the re-capture died" }]);
   });
 });
