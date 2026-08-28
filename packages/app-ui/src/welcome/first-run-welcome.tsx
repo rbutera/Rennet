@@ -660,6 +660,13 @@ function ReviewSetupStage({
   }, [ids, orchestrator]);
 
   async function save(): Promise<void> {
+    // No harness on this machine is a fact to disclose, not a wall. There is nothing to
+    // enable and no orchestrator to assign, so carry the empty choice forward rather than
+    // inventing one — the Ready step and Settings both say plainly what is missing.
+    if (!ids.length) {
+      onContinue({ dual: false });
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
@@ -701,8 +708,9 @@ function ReviewSetupStage({
           </span>
           <h2>Rennet couldn’t detect Claude Code or Codex.</h2>
           <p>
-            Install one or both harnesses, sign in with its CLI, then check again. Rennet uses your
-            existing account.
+            Rennet can’t run review turns until one is installed. Install a harness, sign in with
+            its CLI, then check again — or continue now and set it up later in Settings →
+            Environments. Rennet uses your existing account.
           </p>
           <div>
             <a
@@ -784,11 +792,7 @@ function ReviewSetupStage({
           ) : null}
         </>
       )}
-      <StepActions
-        onBack={onBack}
-        onContinue={ids.length ? () => void save() : undefined}
-        busy={busy}
-      />
+      <StepActions onBack={onBack} onContinue={() => void save()} busy={busy} />
     </section>
   );
 }
@@ -840,7 +844,8 @@ function ProjectStage({ onBack, onAdded }: { onBack(): void; onAdded(project: Pr
 }
 
 interface ReviewChoice {
-  readonly orchestrator: AgentToolId;
+  /** Absent when no harness is installed here. Rennet says so; it does not invent one. */
+  readonly orchestrator?: AgentToolId;
   readonly dual: boolean;
 }
 
@@ -858,6 +863,16 @@ function ReadyStage({
   const remember = useMutation("settings.setLastProject", { invalidates: ["settings.get"] });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const orchestratorLabel = reviewChoice.orchestrator
+    ? reviewChoice.orchestrator === "codex"
+      ? "Codex"
+      : "Claude Code"
+    : "None installed";
+  const modeLabel = !reviewChoice.orchestrator
+    ? "No harness yet"
+    : reviewChoice.dual
+      ? "Dual Harness"
+      : "Single Harness";
   async function start(): Promise<void> {
     setBusy(true);
     setError(undefined);
@@ -891,13 +906,20 @@ function ReadyStage({
         </span>
         <span>
           <small>Orchestrator</small>
-          <strong>{reviewChoice.orchestrator === "codex" ? "Codex" : "Claude Code"}</strong>
+          <strong>{orchestratorLabel}</strong>
         </span>
         <span>
           <small>Mode</small>
-          <strong>{reviewChoice.dual ? "Dual Harness" : "Single Harness"}</strong>
+          <strong>{modeLabel}</strong>
         </span>
       </div>
+      {reviewChoice.orchestrator ? null : (
+        <aside className="rn-plain-note">
+          <TerminalSquare />
+          No coding harness is installed here, so Rennet can’t run review turns yet. Install Claude
+          Code or Codex, then enable it in Settings → Environments.
+        </aside>
+      )}
       {error ? (
         <p className="rn-inline-error" role="alert">
           Setup wasn’t completed: {error}
