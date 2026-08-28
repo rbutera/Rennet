@@ -17,6 +17,7 @@ import {
   type SnapshotReferenceExtractor,
   type SnapshotStructuralInputs,
   type SnapshotSymbolExtractor,
+  structuralFactFiles,
   structuralImportExtractor,
   structuralReferenceExtractor,
   structuralTsExtractor,
@@ -167,7 +168,14 @@ export class ProjectSnapshotGenerator {
     options: GenerateOptions = {},
   ): Promise<{
     inputs: SnapshotStructuralInputs;
+    /** Files the symbol/reference/import EXTRACTORS understand (TypeScript/JavaScript). */
     eligible: ReturnType<typeof eligibleSymbolFiles>;
+    /**
+     * Files a per-blob structural-facts (symbol) shard is emitted for — the wider set
+     * that carries the inventory-wide generated-banner bit. See
+     * {@link structuralFactFiles}.
+     */
+    structuralFacts: ReturnType<typeof structuralFactFiles>;
     /** The resolved top-level working directory, for OID-addressed blob reads. */
     root: string;
   }> {
@@ -214,7 +222,12 @@ export class ProjectSnapshotGenerator {
       ownership,
       conventions,
     };
-    return { inputs, eligible: eligibleSymbolFiles(files), root: base.root };
+    return {
+      inputs,
+      eligible: eligibleSymbolFiles(files),
+      structuralFacts: structuralFactFiles(files),
+      root: base.root,
+    };
   }
 
   /**
@@ -229,7 +242,7 @@ export class ProjectSnapshotGenerator {
     const referenceExtractorId = options.referenceExtractorId ?? DEFAULT_REFERENCE_EXTRACTOR_ID;
     const importExtractor = options.importExtractor ?? structuralImportExtractor;
     const importExtractorId = options.importExtractorId ?? DEFAULT_IMPORT_EXTRACTOR_ID;
-    const { inputs, eligible, root } = await this.gather(repoRoot, options);
+    const { inputs, eligible, structuralFacts, root } = await this.gather(repoRoot, options);
     const git = this.gitFor(repoRoot);
 
     const previousSymbolShards =
@@ -238,8 +251,12 @@ export class ProjectSnapshotGenerator {
       options.previousReferences ?? this.loadPreviousReferences(inputs.repoKey);
     const previousImportShards =
       options.previousImports ?? this.loadPreviousImports(inputs.repoKey);
+    // Symbol shards ride the WIDER set: they carry the generated-banner bit, which
+    // has to be inventory-wide to catch a generated `.py`. References and imports
+    // stay on the extractor's own languages — indexing every identifier in every
+    // markdown file would be noise, not coverage.
     const plan = planIncrementalSymbols(
-      eligible,
+      structuralFacts,
       indexSymbolShards(previousSymbolShards),
       extractorId,
     );

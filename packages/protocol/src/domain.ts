@@ -1588,8 +1588,13 @@ export interface InvocationBudget {
  * now records whether the blob opens with a generator's banner. The bump is what
  * forces re-derivation — a v3 snapshot at the SAME `baseOid` would otherwise pass
  * the freshness gate carrying shards that cannot answer the question.
+ * v5 widens WHICH blobs get a symbol shard: the family is now emitted for every
+ * path-eligible text blob, not only the ones the TypeScript/JavaScript extractor
+ * understands, so the banner check is inventory-wide. Same shard SHAPE, larger
+ * shard SET — and a v4 snapshot would answer "not generated" for a generated `.py`
+ * it simply never read, which is exactly the stale answer a bump exists to refuse.
  */
-export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 4;
+export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 5;
 
 /** How the pinned default-branch ref was resolved (most-authoritative first). */
 export type BaseRefResolution =
@@ -1729,10 +1734,17 @@ export interface SymbolShard {
    * verbatim for an unchanged blob. A separate family would duplicate the manifest
    * pointer array, the integrity gate and the incremental planner to carry one bit.
    *
-   * Honest scope: symbol shards exist only for files the symbol extractor is eligible
-   * for (TypeScript/JavaScript), so a generated `.py` or `.sql` with a banner and no
-   * path signal is NOT caught here. Path classification still covers it, and the safe
-   * direction is the one taken — a missed banner keeps a file in the map.
+   * Since v5 the shard family is emitted for every PATH-ELIGIBLE text blob, not only
+   * the ones the TypeScript/JavaScript extractor understands — so a generated `.py`,
+   * `.sql` or `.graphql` with a banner and no path signal IS caught. A blob outside
+   * the extractor's languages carries `symbols: []` and a real `generated` bit.
+   *
+   * Honest scope, what is left: a file the PATH rules already exclude (vendored, a
+   * lockfile, a `dist/` output, a binary extension) is not read for a banner, because
+   * content evidence cannot overturn a verdict the path has already made; and binary
+   * detection is an extension list, so an extensionless binary is read as text and
+   * reports no banner. Both directions are safe — a missed banner keeps a file in the
+   * map rather than dropping one that belongs there.
    */
   readonly generated: boolean;
 }

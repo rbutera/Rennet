@@ -496,7 +496,13 @@ export interface FileContext {
   readonly isSymlink: boolean;
   /** The workspace scope this file belongs to (the most specific scope root that contains it), or null. */
   readonly scope: string | null;
-  /** Whether the file bears extractable symbols (a symbol shard exists for its blob). */
+  /**
+   * Whether a symbol shard exists for this file's blob. Since schema v5 the family
+   * covers every path-eligible text blob, so this is true for a `.md` or `.json` too —
+   * with an empty `symbols` list, which is the honest answer for a file the extractor
+   * does not read. It is false for a blob no shard was emitted for: a binary asset, a
+   * lockfile, a vendored or `dist/` file that is not itself TypeScript/JavaScript.
+   */
   readonly hasSymbols: boolean;
   /** The extractor identity that produced `symbols`, or null when the file bears no symbols. */
   readonly extractor: string | null;
@@ -571,8 +577,9 @@ export type ProjectFileResult =
  *  - a path not in the tree at the base OID ⇒ `not-found`;
  *  - a symbol shard the manifest references but the loader cannot produce intact
  *    ⇒ `shard-unavailable` (never a silent "no symbols");
- *  - a file with no symbol shard (e.g. a `.json`/`.md`, or a symlink) ⇒ ok with
- *    `hasSymbols: false` and empty `symbols` — a legitimate, non-error answer.
+ *  - a file with no symbol shard at all (a binary asset, a lockfile, a vendored or
+ *    `dist/` file) ⇒ ok with `hasSymbols: false` and empty `symbols` — a legitimate,
+ *    non-error answer.
  */
 export function queryFileContext(snapshot: LoadedSnapshot, path: string): FileContextResult {
   if (!isSafeRepoRelativePath(path)) return { ok: false, reason: "invalid-path", path };
@@ -666,8 +673,9 @@ export type ProjectFileOverviewResult =
  *  - a path not in the tree at the base OID ⇒ `not-found`;
  *  - a referenced symbol shard the loader cannot produce intact ⇒
  *    `shard-unavailable` (never a silent "no symbols");
- *  - a file with no symbol shard (e.g. a `.json`/`.md`, or a symlink) ⇒ ok with
- *    `hasSymbols: false` and empty `symbols` — a legitimate, non-error answer.
+ *  - a file with no symbol shard at all (a binary asset, a lockfile, a vendored or
+ *    `dist/` file) ⇒ ok with `hasSymbols: false` and empty `symbols` — a legitimate,
+ *    non-error answer.
  */
 export function queryFileOverview(snapshot: LoadedSnapshot, path: string): FileOverviewResult {
   if (!isSafeRepoRelativePath(path)) return { ok: false, reason: "invalid-path", path };

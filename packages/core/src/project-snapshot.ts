@@ -48,7 +48,7 @@ import type {
   WorkspaceScope,
 } from "@rennet/protocol";
 import { canonicalize, PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
-import { hasGeneratedMarker } from "./file-classification";
+import { classifyMappingEligibility, hasGeneratedMarker } from "./file-classification";
 import { importSpecifiers, stripBlockComments } from "./import-specifiers";
 
 /** Content-address any value: its canonical bytes and their sha256. */
@@ -428,6 +428,40 @@ function extensionOf(path: string): string {
 /** The files eligible for symbol extraction (source files the extractor understands). */
 export function eligibleSymbolFiles(files: readonly SnapshotFileEntry[]): SnapshotFileEntry[] {
   return files.filter((file) => SYMBOL_EXTENSIONS.has(extensionOf(file.path)));
+}
+
+/**
+ * The files a per-blob STRUCTURAL-FACTS shard is emitted for — the `symbols` family,
+ * which carries two facts about a blob: what the symbol extractor found in it, and
+ * whether it opens with a generator's banner ({@link SymbolShard.generated}).
+ *
+ * It is the UNION of two sets, because the family answers two questions:
+ *  - every file the SYMBOL extractor understands (TypeScript/JavaScript), wherever it
+ *    lives — so `context.symbol` / `context.overview` keep exactly the coverage they
+ *    had, including inside a `dist/` or vendored tree;
+ *  - every file whose mapping eligibility is NOT already decided by its path, so the
+ *    banner check reaches a generated `.py`, `.sql` or `.graphql` that no path rule
+ *    catches. A file the path rules already exclude (vendored, a lockfile, a `dist/`
+ *    output, a binary extension) is skipped: content evidence cannot overturn a
+ *    verdict the path has already made, so reading it would buy nothing.
+ *
+ * A non-TS/JS file gets a shard with `symbols: []` and its real `generated` bit. That
+ * is the honest encoding — the extractor genuinely has nothing to say about a `.py` —
+ * and it keeps the whole classification in ONE per-blob family, with one manifest
+ * pointer array, one integrity walk and one incremental planner, rather than a fourth
+ * family duplicating all of it to carry a single bit.
+ *
+ * Residual ceiling: `isBinaryPath` is an extension list, so an extensionless or
+ * novel binary format still reads as text here. It costs one blob read and yields
+ * `symbols: []` plus a banner bit that is almost certainly `false`; no file content
+ * ever reaches the shard, so the cost is time, not correctness.
+ */
+export function structuralFactFiles(files: readonly SnapshotFileEntry[]): SnapshotFileEntry[] {
+  return files.filter(
+    (file) =>
+      SYMBOL_EXTENSIONS.has(extensionOf(file.path)) ||
+      classifyMappingEligibility(file.path) === null,
+  );
 }
 
 /** A per-blob shard family's incremental plan: what to carry, what to re-extract. */
