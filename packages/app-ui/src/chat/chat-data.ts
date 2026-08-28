@@ -1,8 +1,11 @@
 import type { ReattachResult, ReviewAskStreamEvent, TurnStatus } from "@rennet/protocol";
 import type { LucideIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import { useRoute, useSearch } from "wouter";
 import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
+import { reviewIdOf, useSlugResolution } from "../routes/slug";
+import { ROUTES, readSessionQuery } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The chat dock's SINGLE data-resolution point (C07, proposal reconciliation 3),
@@ -16,17 +19,15 @@ import { useBridgeContext } from "../data/bridge";
 //    (useCommandStream), reducing `ask-delta` (append, seq-guarded) / `ask-complete`
 //    (settle) / `ask-interrupted`. Tests drive this through `MemoryBridge.emitAskStream`.
 //
-//  • B9-GATED (stubbed): the full historical SESSION transcript — the orchestrator's
-//    coding turns (thought blocks, action steps, prose), the `compact_boundary` rows,
-//    the harness-reported context figure, and the session trail — is B9's projection
-//    (#466: the harness CLI owns transcript/compaction). Protocol carries no
-//    `session.transcript` read yet. Until B9 lands the LIVE client shows an honest
-//    EMPTY transcript (`EMPTY_TRANSCRIPT`, no invented turns, no fabricated number),
-//    and tests supply it through the `SessionTranscriptProjection` CONTEXT below —
-//    which also injects the `reviewId` the live half keys on (today the tests inject
-//    it; cluster 7 resolves it from the real route). When B9 lands, this context read
-//    becomes `useCommand("session.transcript")` and the context is deleted — THIS is
-//    the only file that changes.
+//  • The HISTORICAL session transcript — the orchestrator's coding turns (thought
+//    blocks, action steps, prose), the `compact_boundary` rows, the harness-reported
+//    context figure — is honestly EMPTY. `session.transcript` EXISTS in protocol and is
+//    served, but it answers empty by construction: the harness CLI owns the coding
+//    transcript (#466 res. 3), so Rennet has no server-side coding turns to return until
+//    a harness-transcript read port lands. That is absence, not a stub. The
+//    `SessionTranscriptProjection` context below is an OVERRIDE seam for hosts and tests
+//    that mount the dock outside a session route; the live dock resolves its review
+//    from the route (`useRouteReviewId`).
 //
 // No filesystem access; imports only `@rennet/protocol` types and `../data`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,9 +138,9 @@ export interface ContextWindow {
 // ── The B9 session-transcript projection (stub context — reconciliation 3) ────
 
 export interface SessionTranscriptProjection {
-  /** The live session's review id — the `review.reattach` read + `onAskStream` key. Absent
-   *  in the honest-empty live client (no session bound yet); tests inject it. Cluster 7
-   *  resolves it from the real route instead. */
+  /** A review-id OVERRIDE for a host or a test that mounts the dock outside a session
+   *  route. Absent in normal use: the dock resolves the live review from the route itself
+   *  (`useRouteReviewId`), so this is a deliberate injection point, not the live path. */
   readonly reviewId?: string;
   /** Historical session rows (coding turns + `compact_boundary` rows). Empty until B9. */
   readonly rows: readonly TranscriptRow[];
@@ -149,15 +150,18 @@ export interface SessionTranscriptProjection {
   readonly contextWindow?: ContextWindow;
 }
 
-/** The live client's projection: no session, no rows, no context figure (honest empty).
- *  Everything above works against this; only cluster 7 swaps it for the real read. */
+/** The default projection: no override, no rows, no context figure (honest empty). The
+ *  dock resolves its review from the route; the historical session rows and the context
+ *  figure stay absent until a harness-transcript read port exists. */
 export const EMPTY_TRANSCRIPT: SessionTranscriptProjection = {
   rows: [],
   trail: { title: "New review" },
 };
 
 const SessionTranscriptContext = createContext<SessionTranscriptProjection>(EMPTY_TRANSCRIPT);
-/** Wraps a mount to supply the session transcript + reviewId (tests until B9; deleted when B9 lands). */
+/** Wraps a mount to OVERRIDE the session transcript + review id (hosts and tests that mount
+ *  the dock outside a session route). The live app mounts the dock bare and resolves the
+ *  review from the route. */
 export const SessionTranscriptProvider = SessionTranscriptContext.Provider;
 export function useSessionTranscript(): SessionTranscriptProjection {
   return useContext(SessionTranscriptContext);
@@ -361,17 +365,57 @@ export interface ChatDockModel {
   readonly inFlight: boolean;
   /** Send the reviewer's question — fires `review.ask` and folds its stream (no staging: C8). */
   send(message: string): void;
+  /**
+   * The opening ask handed over on the mint (`/s/:slug?ask=…`, C21). New Chat's composer
+   * cannot send — the session does not exist until the click mints it — so the typed
+   * question rides the URL instead of being swallowed. The composer seeds itself from
+   * this so the reviewer lands looking at their own words, ready to send. Absent when the
+   * route carries no ask.
+   */
+  readonly draft?: string;
 }
 
 /**
- * Resolve the whole dock model. The session half comes from the projection context
- * (B9-stubbed); the live half is the real `review.reattach` read with the ask stream
- * folded into it. `send` fires `review.ask`; the daemon streams the reply back over
- * `onAskStream`, which the fold above grows into a streaming turn and settles.
+ * The review the dock is looking at, resolved from the ROUTE — the fix for a dock that
+ * accepted a question and did nothing with it.
+ *
+ * The dock is mounted once by the layout, outside the outlet, so it cannot be handed a
+ * review as a prop; it has to ask where it is. `/s/:slug` and `/s/:slug/run` are the two
+ * routes that name a session (the same pair the layout gates the dock's visibility on).
+ * Off both, there is no review and the dock is honestly empty.
+ *
+ * `useSlugResolution` — not the raw slug — is what answers, because the slug is a SESSION
+ * id and a session may have no review attached. Guessing `reviewId = slug` would point
+ * every read at a review that does not exist on a chat-only session and turn silence into
+ * a "Review not found" error. `reviewIdOf` returns a review id only when one really
+ * resolved. The read is shared: `useSlugResolution` keys `review.load` on a slug-derived
+ * commandId, so the route screen and this hook hit ONE cache entry, not two fetches.
+ */
+function useRouteReviewId(): string | undefined {
+  const [onSession, sessionParams] = useRoute(ROUTES.session);
+  const [, runParams] = useRoute(ROUTES.sessionRun);
+  const raw = (onSession ? sessionParams?.slug : runParams?.slug) ?? "";
+  const slug = raw === "" ? "" : decodeURIComponent(raw);
+  return reviewIdOf(useSlugResolution(slug));
+}
+
+/**
+ * Resolve the whole dock model. The review is resolved from the route (above); the live
+ * half is the real `review.reattach` read with the ask stream folded into it. `send`
+ * fires `review.ask`; the daemon streams the reply back over `onAskStream`, which the
+ * fold above grows into a streaming turn and settles.
  */
 export function useChatDock(): ChatDockModel {
   const projection = useSessionTranscript();
-  const reviewId = projection.reviewId;
+  // The LIVE review id comes from the route: `/s/:slug` resolves the slug to a review
+  // (or to a review-less chat-only session, which yields `undefined` — the dock then
+  // stays honestly empty rather than reading a review that does not exist). The context
+  // value stays an OVERRIDE so existing host/test mounts keep working unchanged.
+  const routeReviewId = useRouteReviewId();
+  const reviewId = projection.reviewId ?? routeReviewId;
+  // The mint's opening ask (`?ask=`), read through the same query grammar the rest of
+  // the session route uses — never re-parsed by hand here.
+  const draft = readSessionQuery(new URLSearchParams(useSearch())).ask;
   // chat-data is the dock's single data-resolution point (see this file's header). It folds
   // THREE things into the one `review.reattach` entry the transcript reads: live deltas
   // (useCommandStream, below), the reviewer's optimistic echo, and the buffered pre-settle
@@ -533,5 +577,6 @@ export function useChatDock(): ChatDockModel {
     contextWindow: projection.contextWindow,
     inFlight,
     send,
+    ...(draft === null || draft === "" ? {} : { draft }),
   };
 }

@@ -504,10 +504,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
   // Memoized PER LOCUS (add-windows-support / #334), like the Claude harness: the host
   // resolution is shared as before; a WSL-locus project discovers and runs the DISTRO's
-  // own `codex` (distro discovery deps, locus-wrapped executor + transport, distro-side
-  // scratch). The utility executor and agentic transport carry the locus so every spawn
-  // enters the distro through `locusCommand` — a WSL review is dual-harness rather than
-  // degrading to single-Claude.
+  // own `codex` (distro discovery deps, locus-wrapped executor, distro-side scratch).
+  // The utility executor carries the locus so every spawn enters the distro through
+  // `locusCommand` — a WSL review is dual-harness rather than degrading to
+  // single-Claude. (The agentic transport this once also built went with the dead
+  // `agenticPort`, F1: the orchestrator is Claude.)
   const codexResolutions = new Map<string, Promise<CodexResolution>>();
   function getCodexResolution(locus: Locus): Promise<CodexResolution> {
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";

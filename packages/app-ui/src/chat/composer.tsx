@@ -94,10 +94,14 @@ function ComposerBadgePill({
 export function Composer({
   onSend,
   inFlight = false,
+  draft,
 }: {
   readonly onSend: (message: string) => void;
   /** True while an orchestrator turn is streaming — the presence affordance follows this. */
   readonly inFlight?: boolean;
+  /** The opening ask handed over on the mint (`?ask=`). Seeded into the box once per
+   *  distinct value, so the reviewer lands looking at what they typed in New Chat. */
+  readonly draft?: string;
 }) {
   const codeComments = useRennetStore((s) => s.review.codeComments);
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
@@ -109,6 +113,16 @@ export function Composer({
   );
   const composingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Seed the box from the mint's opening ask. The dock is mounted ONCE by the layout and
+  // never unmounts on navigation, so this cannot be initial state — the ask arrives when
+  // the route changes, long after mount. Seeded once per distinct value: the reviewer can
+  // then clear or edit it freely without the URL pushing it back on the next render.
+  const seededRef = useRef<string | undefined>(undefined);
+  if (draft !== undefined && draft !== seededRef.current) {
+    seededRef.current = draft;
+    if (draft !== value) setValue(draft);
+  }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `value` is the intended re-measure trigger — the textarea auto-grows each time the text changes — not a body reference.
   useLayoutEffect(() => {

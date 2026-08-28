@@ -1,4 +1,4 @@
-import type { RennetBridge } from "@rennet/protocol";
+import type { RennetBridge, SidebarSession } from "@rennet/protocol";
 import { useEffect, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
@@ -122,8 +122,35 @@ function NewChatFrontDoor() {
   );
 }
 
-/** A session route (#480 `/s/:slug`) — resolves the slug through the seam (B9 swap in
- *  `useSlugResolution`) and renders the review workspace, or an honest not-found. */
+/**
+ * The chat-only session — a real, minted session with no review attached yet.
+ *
+ * This is what the front door opens onto: `session.mint` creates the session and claims
+ * its target, but nothing attaches a review, so there is no diff to show. The surface
+ * says exactly that. It does NOT pretend a review is on its way (no spinner, no
+ * "preparing…", no skeleton of a board that will not arrive) and it is NOT an error —
+ * the click genuinely worked. The chat dock is mounted by the layout OUTSIDE this
+ * outlet, so the reviewer can talk to the orchestrator here; this pane is the rest of
+ * the room.
+ */
+function ChatOnlySession({ session }: { readonly session: SidebarSession }) {
+  return (
+    <section
+      data-screen="chat-only-session"
+      className="grid h-full place-content-center justify-items-center gap-2 p-10 text-center"
+    >
+      <h1 className="font-display text-xl font-medium text-ink">{session.title}</h1>
+      <p className="max-w-[420px] font-serif text-ink-soft">
+        No review captured yet — there is no diff to show. Ask the orchestrator about
+        {session.claim ? ` ${session.claim.branch}` : " this project"} in the chat.
+      </p>
+    </section>
+  );
+}
+
+/** A session route (#480 `/s/:slug`). The slug is the durable session id (C21); it
+ *  resolves to the review workspace, an honest chat-only session when no review is
+ *  attached yet, or an honest not-found / load-error. */
 function SessionScreen({ slug }: { readonly slug: string }) {
   const resolution = useSlugResolution(slug);
   if (resolution.status === "pending") {
@@ -131,6 +158,7 @@ function SessionScreen({ slug }: { readonly slug: string }) {
   }
   if (resolution.status === "not-found") return <NotFound label={`session “${slug}”`} />;
   if (resolution.status === "error") return <LoadError slug={slug} error={resolution.error} />;
+  if (resolution.status === "session") return <ChatOnlySession session={resolution.session} />;
   return <ReviewWorkspace review={resolution.review} />;
 }
 
