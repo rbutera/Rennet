@@ -27,6 +27,8 @@ export function isIgnoredPath(path: string): boolean {
 export class RepoWatcher {
   private watcher: FSWatcher | null = null;
   private timer: NodeJS.Timeout | null = null;
+  /** The root the live watcher is on, so a repeat `start` for it is recognised as a no-op. */
+  private root: string | null = null;
 
   /**
    * Watch a repo root for changes. For a WSL-locus project the root is a
@@ -38,7 +40,17 @@ export class RepoWatcher {
    * from stat-storming the 9P bridge.
    */
   start(repositoryRoot: string, onPotentialChange: () => void, locus: Locus = HOST_LOCUS): void {
+    // Re-`start` on the root already being watched is a NO-OP, and that is a correctness fix,
+    // not an optimisation. Tearing the watcher down and re-walking the tree opens a window in
+    // which `ignoreInitial: true` means every edit that lands is never reported — a review that
+    // went stale and never says so, the exact failure freshness exists to prevent. `review.load`
+    // calls `startWatching` on every open, so any client that re-reads a review (the #576
+    // freshness ask does, on every window focus) would otherwise rebuild the chokidar tree on
+    // each alt-tab. Same root ⇒ keep the live watcher and its already-registered callback; the
+    // callers all pass the same "mark the repository dirty" effect, so there is nothing to swap.
+    if (this.watcher && this.root === repositoryRoot) return;
     void this.close();
+    this.root = repositoryRoot;
     // Polling for the WSL locus AND for any `\\wsl.localhost\…` / `\\wsl$\…` UNC root
     // regardless of the recorded locus: the 9P bridge both drops inotify events and
     // returns spurious lstat errors (EISDIR on plain files, observed live on the
@@ -70,5 +82,6 @@ export class RepoWatcher {
     this.timer = null;
     await this.watcher?.close();
     this.watcher = null;
+    this.root = null;
   }
 }

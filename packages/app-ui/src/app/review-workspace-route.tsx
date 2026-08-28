@@ -48,11 +48,28 @@ import { useRennetStore } from "../store";
 // Regenerate is a plain button running the same `review.regenerate` a round already runs.
 const LIVE_GENERATION = "live";
 
-/** What a freshness answer stales: the review the route renders, and the boards read off it. */
+/**
+ * What a freshness answer stales: the review the route renders, and the boards read off it.
+ *
+ * ⚠️ COUPLED to `routes/slug.ts`, which declares itself the single swap point for how a session
+ * resolves and says it moves off `review.load` when B9 lands. `review.load` here must name the
+ * read that feeds this route's `review` prop — the moment those two disagree, the notice below
+ * silently stops appearing, which is this issue (#576) all over again. `freshness.dom.test.tsx`
+ * mounts through `useSlugResolution` for exactly that reason: change the read, and it goes red.
+ */
 const STALED_BY_FRESHNESS = ["review.load", "board.read"] as const;
 
 /** Fire-and-forget: `useMutation` already holds the fault; this only settles the rejection. */
 const held = () => undefined;
+
+/**
+ * The provenance of the patchset on screen — `local` (a working-tree capture, watchable for
+ * freshness) vs a `github-*` PR snapshot pinned to the pull request's OIDs. Absent ⇒ `local`,
+ * the default `wire.ts` declares, which also keeps a partial test fixture on the honest path.
+ */
+function patchsetSource(review: Review): string {
+  return review.patchsets?.find((p) => p.id === review.activePatchsetId)?.source ?? "local";
+}
 
 export function ReviewWorkspace({ review }: { review: Review }) {
   const [, navigate] = useLocation();
@@ -114,6 +131,17 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const boardGeneration =
     roundState.phase === "composed" ? roundState.newGeneration : LIVE_GENERATION;
 
+  // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
+  // contract — a PR review is a snapshot taken against the pull request's pinned OIDs, "NOT wired
+  // into the working-tree freshness watcher (the renderer gates that off by patchset source)" —
+  // and `patchsetSource` is how the renderer is supposed to tell them apart (wire.ts). Asking
+  // anyway would capture THIS CLONE's tree, which can never match a `github-local`/`github-rest`
+  // patchset id, so the daemon commits `ReviewInvalidated`, the notice claims a change that never
+  // happened, and Regenerate replaces the reviewed PR diff with a local capture — a lie, a
+  // persisted write, and the destruction of the artifact under review. It is reachable, not
+  // theoretical: `repositoryDirty` is ONE global flag, so an edit in any watched repo arms it and
+  // the next PR review to mount collects the answer.
+  const fromWorkingTree = patchsetSource(review) === "local";
   // Ask whether this review went stale — on mount, and again on every window focus, which is
   // exactly when the reviewer comes back from editing their own tree. The daemon short-circuits
   // when its watcher saw nothing, so a focus is cheap. Both writes stale `review.load`, so the
@@ -127,6 +155,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     invalidates: STALED_BY_FRESHNESS,
   });
   useEffect(() => {
+    if (!fromWorkingTree) return;
     // A failed check leaves the last known status standing: the surface never CLAIMS fresh, it
     // only says stale when the daemon said so, so an unanswered check is silence, not a lie.
     const ask = () => {
@@ -135,10 +164,13 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     ask();
     window.addEventListener("focus", ask);
     return () => window.removeEventListener("focus", ask);
-  }, [checkFreshness, reviewId, repoPath]);
-  // The staleness expression mobile already computes (`apps/mobile/src/lib/projection.ts`),
-  // minus its reachability half — a desktop window IS its daemon connection.
-  const stale = review.status === "invalid";
+  }, [checkFreshness, reviewId, repoPath, fromWorkingTree]);
+  // The staleness expression mobile already computes — a COPY of
+  // `apps/mobile/src/lib/projection.ts`, not a shared helper, so the pointer home is the only
+  // thing keeping the two honest. Mobile's reachability half is dropped (a desktop window IS its
+  // daemon connection) and the working-tree gate is added, because a PR snapshot that somehow
+  // carries `invalid` must not be narrated as "the repository changed".
+  const stale = fromWorkingTree && review.status === "invalid";
 
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
