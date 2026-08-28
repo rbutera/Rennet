@@ -174,9 +174,11 @@ export function withLensBoards(
 
 /** The drafters' own failure reasons, for the terminal event a board-less round emits. */
 function failureReasons(pipeline: LensPipelineResult): string {
-  const reasons = [pipeline.report, ...pipeline.boards]
-    .filter((outcome) => outcome !== undefined && outcome.boardId === undefined)
-    .map((outcome) => `${outcome.lens}: ${outcome.failure ?? "no board"}`);
+  const reasons = [pipeline.report, ...pipeline.boards].flatMap((outcome) =>
+    outcome === undefined || outcome.boardId !== undefined
+      ? []
+      : [`${outcome.lens}: ${outcome.failure ?? "no board"}`],
+  );
   return reasons.length > 0 ? reasons.join("; ") : "no drafter reported a reason";
 }
 

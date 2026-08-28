@@ -256,9 +256,13 @@ something the preview did not describe.
    Boards* until the generation composes and *Regenerated the Boards* after.
    A settled lane reads **carrying forward** or **reworked**; see
    [Carry-forward is a verdict, not a skip](#carry-forward-is-a-verdict-not-a-skip)
-   for exactly what that claims. The surface never locks. When the new
+   for exactly what that claims. A drafter that produced no board settles its
+   lane as **failed** carrying the reason — a lane left running after the round
+   is over would read as "still working". The surface never locks. When the new
    generation composes, the way to it appears — a control that exists only
-   once it is ready, never a disabled button.
+   once it is ready, never a disabled button. A round where *every* drafter
+   failed composes nothing, so it ends on a terminal failure carrying the
+   drafters' reasons rather than offering a way to boards nobody wrote.
 6. Each round mints a **new generation** of lens boards, drafted delta-aware:
    unchanged sections carry forward, and the composition step stamps what it
    touched (`new` / `reworked`; absence = carried). The marks read as unread

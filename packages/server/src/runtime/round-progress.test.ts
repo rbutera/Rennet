@@ -372,7 +372,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     const lineageSession = { ...session, id: "lineage-session" } as SessionModel;
 
     // Every lens drafts "generation one" until `moved` names it — then that lens alone moves.
-    let moved: string | undefined;
+    let moved = "";
     const runtime = createRoundsRuntime({
       resolveClaudePort: async () =>
         fakeClaudePort((lens) => sectioned(lens === moved ? "generation two" : "generation one")),
