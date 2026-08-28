@@ -405,7 +405,14 @@ async function wslProbe(distro: string, argv: readonly string[]): Promise<string
  */
 export async function wslDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
   const locus: Locus = { kind: "wsl", distro };
-  const home = (await wslProbe(distro, ["bash", "-lc", 'printf %s "$HOME"'])) ?? "/root";
+  // A failed `$HOME` probe used to substitute `/root`, which is not a guess — it is the wrong
+  // user's home, and every curated-directory scan would then look for the distro's tools in
+  // root-owned installs. A distro that will not answer this cannot be entered at all, so this
+  // THROWS and the caller reports that host UNASKED rather than scanning a fabricated home.
+  const home = await wslProbe(distro, ["bash", "-lc", 'printf %s "$HOME"']);
+  if (home === null) {
+    throw new Error(`Could not resolve $HOME in WSL distro "${distro}" — it cannot be entered.`);
+  }
   return {
     platform: "linux",
     locus,

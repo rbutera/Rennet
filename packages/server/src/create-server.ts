@@ -179,6 +179,7 @@ import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { InFlightReviews } from "./in-flight-reviews";
+import { liveProbe, liveProbeMap } from "./live-detection";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
@@ -286,7 +287,12 @@ async function reconnectDaemonForHost(
 }
 
 export interface RennetServerOptions {
-  /** The per-user data directory (Electron passes app.getPath("userData")); every store resolves under it. */
+  /**
+   * The per-user data directory (Electron passes app.getPath("userData")). The SQLite store,
+   * the daemon claim and the log resolve under it — but NOT every store: the settings ladder
+   * (`client-settings.json`, `daemon-settings.json`, `devices.json`) lives under `$HOME/.rennet`
+   * by design, so a spawned daemon writes the real user's settings whatever `dataDir` says.
+   */
   readonly dataDir: string;
   /** Process environment for harness/CLI resolution and the RENNET_TEST_REPO short-circuit. Defaults to process.env. */
   readonly env?: NodeJS.ProcessEnv;
@@ -574,29 +580,41 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return (await getCodexResolution(locus)).executor;
   }
 
+  // The in-flight shares behind every detection read below (C17 review finding 2).
+  const shareHarnessDetection = liveProbe<DetectedHarness[]>();
+  const shareHarnessDetectionByHost = liveProbeMap<DetectedHarness[] | null>();
+  const shareForgeDetection = liveProbe<DetectedForge[]>();
+  const shareForgeDetectionByHost = liveProbeMap<DetectedForge[] | null>();
+
   // The ambient first-run detection line (issue #29): which harnesses are on the
   // machine. Read-only, no repository, no model call — it is DISCLOSURE, felt not
-  // ceremonial. Memoized like the harness/codex probes: the claude probe spawns the
-  // login shell, so it runs once on the first front-door mount, not at launch. A
-  // probe that finds nothing simply drops that harness; the line degrades to
-  // whatever was found (or nothing), never an error.
-  let harnessDetection: Promise<DetectedHarness[]> | null = null;
-  // gh is GONE from the detection line (v4.2): GitHub is an account (the device
-  // sign-in), not a CLI to detect. The line covers harnesses only.
+  // ceremonial. A probe that finds nothing simply drops that harness; the line degrades
+  // to whatever was found (or nothing), never an error.
+  //
+  // LIVE, not memoized (C17 review finding 2): the probes spawn a login shell, so concurrent
+  // readers share the RUNNING probe — but the answer is never kept past it. Installing or
+  // removing `claude` used to be invisible until the daemon restarted, which is a stale answer
+  // presented as a live detection. Codex is probed HERE rather than through
+  // `getCodexResolution`, whose cache holds a live adapter bound to a binary path: that cache
+  // is for EXECUTION, and borrowing it for disclosure is what pinned the codex row too.
+  //
+  // gh is GONE from this line (v4.2): GitHub is an account (the device sign-in), not a CLI to
+  // detect here. The line covers harnesses only; `forge.detect` covers the forge CLIs.
   function detectHarnesses(): Promise<DetectedHarness[]> {
-    harnessDetection ??= (async (): Promise<DetectedHarness[]> => {
+    return shareHarnessDetection(async (): Promise<DetectedHarness[]> => {
+      // `RENNET_DISABLE_HARNESS` disables the whole line, not just claude — the per-host path
+      // already reads it that way, and a flag named "disable harness" that still reported
+      // codex was disclosing something the operator had switched off.
+      if (env.RENNET_DISABLE_HARNESS === "1") return [];
       const [claude, codex] = await Promise.all([
-        env.RENNET_DISABLE_HARNESS === "1"
-          ? Promise.resolve(null)
-          : discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
-        getCodexAvailability().catch(() => null),
+        discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
+        discoverCodex(defaultCodexDiscoveryDeps(), {}).catch(() => null),
       ]);
       const detected: DetectedHarness[] = [];
       if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
-      if (codex?.available) detected.push({ id: "codex", version: codex.version ?? null });
+      if (codex?.chosen) detected.push({ id: "codex", version: codex.chosen.version ?? null });
       return detected;
-    })();
-    return harnessDetection;
+    });
   }
 
   // Per-host agent detection (C17 cluster 3, #485) — the server-side fan-out behind
@@ -612,42 +630,42 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   //  • `remote:<deviceId>` — a paired device DIALS this daemon; nothing here can dial back to
   //    run a probe on it. `null` — honestly unasked, never this machine's agents copied over.
   //
-  // Memoized per host like the local line: the probes spawn a login shell, and the settings
-  // surface re-reads this on every toggle.
-  const harnessDetectionByHost = new Map<string, Promise<DetectedHarness[] | null>>();
+  // Shared per host WHILE IN FLIGHT, never cached past it (C17 review finding 2): the probes
+  // spawn a login shell and the settings surface re-reads on every toggle, so concurrent
+  // readers join one probe — but an agent installed in a distro shows up on the next read.
   function detectHarnessesOn(source: ProjectSource): Promise<DetectedHarness[] | null> {
     if (source === "local") return detectHarnesses();
     if (!source.startsWith("wsl:")) return Promise.resolve(null);
     const distro = source.slice("wsl:".length);
-    let detection = harnessDetectionByHost.get(source);
-    if (!detection) {
-      detection = (async (): Promise<DetectedHarness[] | null> => {
-        if (env.RENNET_DISABLE_HARNESS === "1") return [];
-        const distroDeps = await wslDiscoveryDeps(distro);
-        const loginShellPath = await distroDeps.loginShellPath();
-        if (loginShellPath === null) return null; // the distro could not be entered.
-        const deps: DiscoveryDeps = { ...distroDeps, loginShellPath: async () => loginShellPath };
-        const [claude, codex] = await Promise.all([
-          discoverClaude(deps, CLAUDE_TESTED_RANGE).catch(() => null),
-          discoverCodex(deps, {}).catch(() => null),
-        ]);
-        const detected: DetectedHarness[] = [];
-        if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
-        if (codex?.chosen) detected.push({ id: "codex", version: codex.chosen.version ?? null });
-        return detected;
-      })();
-      harnessDetectionByHost.set(source, detection);
-    }
-    return detection;
+    return shareHarnessDetectionByHost(source, async (): Promise<DetectedHarness[] | null> => {
+      if (env.RENNET_DISABLE_HARNESS === "1") return [];
+      // A distro whose `$HOME` cannot be probed cannot be entered at all, and
+      // `wslDiscoveryDeps` now THROWS rather than substituting `/root` — so the host reads
+      // unasked instead of being scanned against a home that is not its own.
+      const distroDeps = await wslDiscoveryDeps(distro).catch(() => null);
+      if (!distroDeps) return null;
+      const loginShellPath = await distroDeps.loginShellPath();
+      if (loginShellPath === null) return null; // the distro could not be entered.
+      const deps: DiscoveryDeps = { ...distroDeps, loginShellPath: async () => loginShellPath };
+      const [claude, codex] = await Promise.all([
+        discoverClaude(deps, CLAUDE_TESTED_RANGE).catch(() => null),
+        discoverCodex(deps, {}).catch(() => null),
+      ]);
+      const detected: DetectedHarness[] = [];
+      if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
+      if (codex?.chosen) detected.push({ id: "codex", version: codex.chosen.version ?? null });
+      return detected;
+    });
   }
 
-  // Forge (source-control) CLI detection (C17, #483 gh rides again). Same disclosure
-  // model as detectHarnesses: read-only, memoized (the gh probes spawn the login shell),
-  // singleton registry — GitHub / `gh` only. Feeds `sourceControlByHost`.
-  let forgeDetection: Promise<DetectedForge[]> | null = null;
+  // Forge (source-control) CLI detection (C17, #483 gh rides again). Same disclosure model as
+  // detectHarnesses, including its liveness: shared while the probe runs, never cached past
+  // it, so installing `gh` — or signing in with it — shows up on the next read instead of
+  // after a restart. Singleton registry — GitHub / `gh` only. Feeds `sourceControlByHost`.
   function detectForges(): Promise<DetectedForge[]> {
-    forgeDetection ??= runForgeDetection(defaultForgeDetectionDeps()).catch(() => []);
-    return forgeDetection;
+    return shareForgeDetection(() =>
+      runForgeDetection(defaultForgeDetectionDeps()).catch(() => []),
+    );
   }
 
   // Per-host forge detection (C17 amendment B) — the exact mirror of `detectHarnessesOn`, so a
@@ -655,23 +673,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // section it is structurally incapable of filling. `local` is the memoized ambient answer;
   // `wsl:<distro>` runs the whole probe chain inside the distro (a distro `wsl.exe` cannot
   // enter reports UNASKED, never "no gh"); a paired `remote:` device dials US, so it cannot be
-  // probed at all. Memoized per host: the probes spawn a login shell.
-  const forgeDetectionByHost = new Map<string, Promise<DetectedForge[] | null>>();
+  // probed at all. Shared per host while in flight, never cached past it — the same liveness
+  // as the agent probe, for the same reason.
   function detectForgesOn(source: ProjectSource): Promise<DetectedForge[] | null> {
     if (source === "local") return detectForges();
     if (!source.startsWith("wsl:")) return Promise.resolve(null);
     const distro = source.slice("wsl:".length);
-    let detection = forgeDetectionByHost.get(source);
-    if (!detection) {
-      detection = (async (): Promise<DetectedForge[] | null> => {
-        const distroDeps = await wslForgeDetectionDeps(distro);
-        const loginShellPath = await distroDeps.loginShellPath();
-        if (loginShellPath === null) return null; // the distro could not be entered.
-        return runForgeDetection({ ...distroDeps, loginShellPath: async () => loginShellPath });
-      })().catch(() => null);
-      forgeDetectionByHost.set(source, detection);
-    }
-    return detection;
+    return shareForgeDetectionByHost(source, async (): Promise<DetectedForge[] | null> => {
+      // Same rule as the agent probe: an unprobeable `$HOME` throws, so the host reads
+      // unasked rather than being scanned against a fabricated home.
+      const distroDeps = await wslForgeDetectionDeps(distro);
+      const loginShellPath = await distroDeps.loginShellPath();
+      if (loginShellPath === null) return null; // the distro could not be entered.
+      return runForgeDetection({ ...distroDeps, loginShellPath: async () => loginShellPath });
+    }).catch(() => null);
   }
 
   /**
@@ -2336,9 +2351,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // The same handshake, on demand, behind Reconnect (C17 cluster 5, #533) — throwing the
       // reason for a host kind this daemon cannot reach at all.
       reconnectDaemon: (source) => reconnectDaemonForHost(source, dataDir, serverVersion),
-      // The version a host's daemon would update TO: the one this daemon ships. That is a
-      // real number, so `updateAvailable` is a real comparison rather than a fake flag.
-      latestDaemonVersion: serverVersion,
+      // The version a host's daemon would update TO — served ONLY for a host Rennet can
+      // actually update (review finding 5). A WSL distro can be updated when this daemon has a
+      // bundle to deliver; this machine's daemon ships with the app and a paired device
+      // updates itself, so neither gets an `updateAvailable` flag whose button could only fail.
+      latestDaemonVersionFor: (source) =>
+        source.startsWith("wsl:") && options.hostBundlePath ? serverVersion : undefined,
       // Ask ONE host which coding agents are installed on IT (C17 cluster 3, #485).
       detectHarnessesOn,
       // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own `gh`.

@@ -522,7 +522,11 @@ describe("daemonStatus — per-host daemon detection (C17 cluster 2, #485)", () 
         return stored;
       },
       ...(options.probe ? { probeDaemon: options.probe } : {}),
-      ...(options.latestDaemonVersion ? { latestDaemonVersion: options.latestDaemonVersion } : {}),
+      // The per-host dep (review finding 5): these tests exercise one host with a mechanism,
+      // so the helper serves the same version for whichever host is asked.
+      ...(options.latestDaemonVersion
+        ? { latestDaemonVersionFor: () => options.latestDaemonVersion }
+        : {}),
     });
     return { deps, read: () => stored };
   }
@@ -611,6 +615,58 @@ describe("daemonStatus — per-host daemon detection (C17 cluster 2, #485)", () 
     });
   });
 
+  it("POSITIVE CONTROL: a host with NO update mechanism is never told an update exists", async () => {
+    // Review finding 5: the flag was computed from one GLOBAL latest version, so a host Rennet
+    // cannot update still offered the button — and the button could only fail. Serve the
+    // version globally again and this fails.
+    const { deps } = statusDeps({
+      projects: [project({ id: "a", source: "local" }), project({ id: "b", source: "wsl:Ubuntu" })],
+      probe: async () => ({ version: "0.1.4" }),
+    });
+    const composition = createSettingsComposition({
+      ...deps,
+      // Only the WSL host has a mechanism (a bundle to deliver into the distro).
+      latestDaemonVersionFor: (source) => (source.startsWith("wsl:") ? "0.1.5" : undefined),
+    });
+    const statuses = await composition.daemonStatus();
+    expect(statuses.find((entry) => entry.source === "local")).not.toHaveProperty(
+      "updateAvailable",
+    );
+    expect(statuses.find((entry) => entry.source === "wsl:Ubuntu")).toMatchObject({
+      updateAvailable: true,
+    });
+  });
+
+  it("POSITIVE CONTROL: a version outside the comparable grammar yields NO flag", async () => {
+    // Review finding 6: `compareVersions` parses non-numeric segments as 0, so `0.1.5-rc.1`
+    // reads identical to `0.1.5` and `nightly` reads as `0` — hiding a real update or
+    // inventing one. Compare them anyway and both assertions below fail.
+    const prerelease = statusDeps({
+      probe: async () => ({ version: "0.1.5-rc.1" }),
+      latestDaemonVersion: "0.1.5",
+    });
+    expect((await createSettingsComposition(prerelease.deps).daemonStatus())[0]).not.toHaveProperty(
+      "updateAvailable",
+    );
+
+    const nightly = statusDeps({
+      probe: async () => ({ version: "nightly" }),
+      latestDaemonVersion: "0.1.5",
+    });
+    expect((await createSettingsComposition(nightly.deps).daemonStatus())[0]).not.toHaveProperty(
+      "updateAvailable",
+    );
+
+    // …and a plain numeric pair still compares, so the guard did not disable the feature.
+    const numeric = statusDeps({
+      probe: async () => ({ version: "0.1.4" }),
+      latestDaemonVersion: "0.1.5",
+    });
+    expect((await createSettingsComposition(numeric.deps).daemonStatus())[0]).toMatchObject({
+      updateAvailable: true,
+    });
+  });
+
   it("a probe that THROWS reads unreachable, never a fabricated version", async () => {
     const { deps } = statusDeps({
       stored: { version: 1, hosts: { local: { lastSeenVersion: "0.1.3" } } },
@@ -663,7 +719,11 @@ describe("reconnect — the on-demand re-handshake (C17 cluster 5, #533)", () =>
       },
       ...(options.reconnect ? { reconnectDaemon: options.reconnect } : {}),
       ...(options.probe ? { probeDaemon: options.probe } : {}),
-      ...(options.latestDaemonVersion ? { latestDaemonVersion: options.latestDaemonVersion } : {}),
+      // The per-host dep (review finding 5): these tests exercise one host with a mechanism,
+      // so the helper serves the same version for whichever host is asked.
+      ...(options.latestDaemonVersion
+        ? { latestDaemonVersionFor: () => options.latestDaemonVersion }
+        : {}),
     });
     return { deps, read: () => stored };
   }
@@ -1071,7 +1131,11 @@ describe("update — the real daemon update behind Update Daemon (C17 cluster 6,
       },
       ...(options.update ? { updateDaemonOn: options.update } : {}),
       ...(options.probe ? { probeDaemon: options.probe } : {}),
-      ...(options.latestDaemonVersion ? { latestDaemonVersion: options.latestDaemonVersion } : {}),
+      // The per-host dep (review finding 5): these tests exercise one host with a mechanism,
+      // so the helper serves the same version for whichever host is asked.
+      ...(options.latestDaemonVersion
+        ? { latestDaemonVersionFor: () => options.latestDaemonVersion }
+        : {}),
     });
     return { deps, read: () => stored };
   }

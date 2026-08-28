@@ -118,11 +118,13 @@ export interface SettingsCompositionDeps {
    */
   updateDaemonOn?(source: ProjectSource): Promise<{ version: string | null } | null>;
   /**
-   * The newest daemon version this client knows of — the version the app/server ships, which
-   * is what a host's daemon would be updated TO. Absent ⇒ `updateAvailable` is withheld
-   * entirely (no update mechanism to compare against ⇒ no flag, never a fake one).
+   * The version THIS host's daemon could be updated TO, or `undefined` when that host has no
+   * update mechanism at all. Per host, not global (review finding 5): a host Rennet cannot
+   * update must not be told an update is available, because the only thing the button could
+   * do there is fail. Absent dep ⇒ no host has a mechanism ⇒ `updateAvailable` is never
+   * served, which is the truthful answer for a composition that cannot update anything.
    */
-  readonly latestDaemonVersion?: string;
+  latestDaemonVersionFor?(source: ProjectSource): string | undefined;
   /** Persist a client-settings edit. MUST itself refuse a malformed file (throw). */
   updateGlobal(update: (current: ClientSettings) => ClientSettings): ClientSettings;
   /**
@@ -333,13 +335,29 @@ function hostStatus(
     return { source, reachable: false, ...(lastSeenVersion ? { lastSeenVersion } : {}) };
   }
   const version = answer.version ?? undefined;
+  // BOTH sides must be real AND comparable, or there is no flag at all.
+  const updateAvailable =
+    version !== undefined &&
+    latest !== undefined &&
+    NUMERIC_VERSION.test(version) &&
+    NUMERIC_VERSION.test(latest)
+      ? compareVersions(version, latest) < 0
+      : undefined;
   return {
     source,
     reachable: true,
     ...(version ? { version } : {}),
-    ...(version && latest ? { updateAvailable: compareVersions(version, latest) < 0 } : {}),
+    ...(updateAvailable === undefined ? {} : { updateAvailable }),
   };
 }
+
+/**
+ * The version grammar `compareVersions` can actually decide: dot-separated numbers, nothing
+ * else. It parses every other segment as 0, so `1.2.0-rc.1` reads identical to `1.2.0` and a
+ * `nightly` build compares as `0` — either hiding a real update or inventing one (review
+ * finding 6). Anything outside the grammar therefore yields NO flag rather than a guess.
+ */
+const NUMERIC_VERSION = /^\d+(\.\d+)*$/;
 
 /** The update attempt for a composition with NO update effect wired: it says so and changes
  *  nothing, so the card shows a failure line rather than a success it did not earn. */
@@ -492,7 +510,12 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
     }
-    const status = hostStatus(source, answer, lastSeenVersion, deps.latestDaemonVersion);
+    const status = hostStatus(
+      source,
+      answer,
+      lastSeenVersion,
+      deps.latestDaemonVersionFor?.(source),
+    );
     if (status.version && status.version !== lastSeenVersion) {
       try {
         deps.updateDaemon((current) =>
@@ -541,7 +564,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // really answered with are in here — there is no entry to read for a host that has
       // never answered, so a never-seen host reads blank rather than fabricated.
       const remembered = deps.readDaemonSettings().hosts ?? {};
-      const latest = deps.latestDaemonVersion;
+
       const statuses: DaemonHostStatus[] = [];
       // Versions learned THIS pass that differ from what is stored — persisted once at the
       // end so a steady-state poll of unchanged hosts costs no disk write.
@@ -552,7 +575,12 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         // never a reachable host: an unasked host must not inherit a version it never gave.
         const answer = (await deps.probeDaemon?.(host.source).catch(() => null)) ?? null;
         const lastSeenVersion = remembered[host.source]?.lastSeenVersion;
-        const status = hostStatus(host.source, answer, lastSeenVersion, latest);
+        const status = hostStatus(
+          host.source,
+          answer,
+          lastSeenVersion,
+          deps.latestDaemonVersionFor?.(host.source),
+        );
         if (status.version && status.version !== lastSeenVersion) {
           learned[host.source] = { lastSeenVersion: status.version };
         }
