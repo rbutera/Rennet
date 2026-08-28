@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SnapshotOverlay } from "@rennet/protocol";
@@ -65,6 +65,31 @@ describe("SnapshotOverlayStore — roundtrip + fail-safe", () => {
     expect(overlays.read(repoKey, "nope")).toBeNull();
     expect(overlays.loadShard(repoKey, "nope", "d")).toBeUndefined();
     expect(overlays.list(repoKey)).toEqual([]);
+  });
+
+  it("a v3-STAMPED overlay missing its import arrays degrades to absent, never a later throw", () => {
+    // The failure this guards: a truncated overlay that still carries
+    // `schemaVersion: 3` passes a shallow well-formedness check, then throws inside
+    // `applyShardDelta` when `mergeOverlay` iterates the array that is not there —
+    // turning "degrade to absent" into a crash on the read path.
+    const { overlays, repoKey } = stores();
+    const path = overlays.paths(repoKey, "oid1").overlayManifestPath;
+
+    for (const missing of ["importUpserts", "importTombstones"] as const) {
+      overlays.write(overlay(repoKey, "oid1"), new Map());
+      // Positive control: the intact overlay reads back.
+      expect(overlays.read(repoKey, "oid1")).not.toBeNull();
+
+      const { [missing]: dropped, ...truncated } = overlay(repoKey, "oid1");
+      void dropped;
+      writeFileSync(path, JSON.stringify(truncated));
+      expect(overlays.read(repoKey, "oid1")).toBeNull();
+
+      // Present but not an array is the same refusal.
+      writeFileSync(path, JSON.stringify({ ...overlay(repoKey, "oid1"), [missing]: "nope" }));
+      expect(overlays.read(repoKey, "oid1")).toBeNull();
+      overlays.remove(repoKey, "oid1");
+    }
   });
 
   it("remove deletes the overlay dir and its shards", () => {

@@ -335,3 +335,36 @@ describe("ProjectSnapshotStore — config.json read/write (A.1)", () => {
     expect(store.loadConfig("-k")).toBeNull();
   });
 });
+
+describe("ProjectSnapshotStore — a manifest missing a required shard FAMILY reads as absent", () => {
+  it("refuses a v3-stamped manifest with no `imports`, so it can never serve an empty graph", async () => {
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-fam-"));
+    scratch.push(storeDir);
+    const { root, oid } = initRepo("rennet-fam-repo-");
+    const { store, manifest } = await generateInto(storeDir, root, oid);
+    const manifestPath = store.paths(manifest.repoKey).manifestPath;
+
+    // The control: the manifest the generator wrote reads back fine.
+    expect(store.loadManifest(manifest.repoKey)).not.toBeNull();
+    expect(manifest.imports.length).toBeGreaterThan(0);
+
+    // Drop the whole `imports` family, keeping everything else byte-identical. This
+    // is a map written by an older schema, or a truncated write. It must read as "no
+    // snapshot" — NOT as a snapshot whose answer to "what imports this file?" is
+    // "nothing", which is what an absent-coerced-to-empty family claims.
+    const { imports, ...withoutImports } = manifest;
+    void imports;
+    writeFileSync(manifestPath, JSON.stringify(withoutImports));
+    expect(store.loadManifest(manifest.repoKey)).toBeNull();
+
+    // Same for a family that is present but not an array, and for a malformed pointer.
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, imports: "nope" }));
+    expect(store.loadManifest(manifest.repoKey)).toBeNull();
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, imports: [["blob", 7]] }));
+    expect(store.loadManifest(manifest.repoKey)).toBeNull();
+
+    // …and the positive control again: restore it and the read comes back.
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(store.loadManifest(manifest.repoKey)).not.toBeNull();
+  });
+});

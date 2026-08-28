@@ -324,12 +324,16 @@ export class ProjectSnapshotStore {
         typeof parsed.shards !== "object" ||
         parsed.shards === null ||
         !Array.isArray(parsed.symbols) ||
-        // v2: `references` is a required manifest field. A manifest lacking it (a v1
-        // snapshot on disk, or a malformed write) degrades to "no snapshot" HERE, so
-        // the freshness gate re-derives rather than serving without the reference
-        // dimension — and the downstream integrity/materialize never sees a
-        // reference-less v2 manifest from the store.
-        !Array.isArray(parsed.references)
+        // v2: `references` is a required manifest field, and v3: `imports` is too. A
+        // manifest lacking either (an older snapshot on disk, or a malformed write)
+        // degrades to "no snapshot" HERE, so the freshness gate re-derives rather
+        // than serving without that dimension — and the downstream
+        // integrity/materialize never sees a reference-less or import-less manifest
+        // from the store. Omitting the `imports` check would let a v3-stamped
+        // manifest through to materialize an EMPTY import graph, which reads as "this
+        // repo has no import edges" rather than "this map predates import edges".
+        !Array.isArray(parsed.references) ||
+        !Array.isArray(parsed.imports)
       ) {
         return null;
       }
@@ -350,13 +354,9 @@ export class ProjectSnapshotStore {
           return null;
         }
       }
-      for (const entry of parsed.symbols) {
-        if (!Array.isArray(entry) || entry.length < 2 || typeof entry[1] !== "string") {
-          return null;
-        }
-      }
-      // Same deep-validation for the reference-shard pointers (v2).
-      for (const entry of parsed.references) {
+      // Same deep-validation for every per-blob pointer family: symbols (v1),
+      // references (v2), imports (v3).
+      for (const entry of [...parsed.symbols, ...parsed.references, ...parsed.imports]) {
         if (!Array.isArray(entry) || entry.length < 2 || typeof entry[1] !== "string") {
           return null;
         }

@@ -136,6 +136,42 @@ describe("map-travel — discovery + validation (A.4)", () => {
     expect(otherStore.loadManifest("-k")).toBeNull();
   });
 
+  it("reports an OLDER-SCHEMA committed map as found-but-invalid, not as absent", async () => {
+    const { store, root, manifest } = await setup();
+    promoteMap(store, manifest.repoKey, root);
+
+    // Strip the `imports` family: a map promoted before the import shards existed.
+    // This build cannot read it, but the repo DOES carry a committed map — saying
+    // `found:false` would tell the operator there is nothing there to explain.
+    const manifestPath = join(committedMapDir(root), "manifest.json");
+    const committed = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const { imports, ...older } = committed;
+    void imports;
+    writeFileSync(manifestPath, JSON.stringify(older));
+
+    const otherStoreDir = mkdtempSync(join(tmpdir(), "rennet-travel-older-"));
+    scratch.push(otherStoreDir);
+    const otherStore = new ProjectSnapshotStore(otherStoreDir);
+    expect(discoverCommittedMap(otherStore, "-k", root)).toEqual({
+      found: true,
+      valid: false,
+      seeded: false,
+    });
+    expect(otherStore.loadManifest("-k")).toBeNull();
+  });
+
+  it("reports NO committed map as absent (the control for found:true above)", async () => {
+    const { root } = await setup();
+    const otherStoreDir = mkdtempSync(join(tmpdir(), "rennet-travel-none-"));
+    scratch.push(otherStoreDir);
+    const otherStore = new ProjectSnapshotStore(otherStoreDir);
+    expect(discoverCommittedMap(otherStore, "-k", root)).toEqual({
+      found: false,
+      valid: false,
+      seeded: false,
+    });
+  });
+
   it("does not clobber an existing local map (local wins, §1.4)", async () => {
     const { store, root, manifest } = await setup();
     promoteMap(store, manifest.repoKey, root);

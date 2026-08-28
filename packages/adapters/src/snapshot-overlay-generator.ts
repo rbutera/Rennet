@@ -202,12 +202,15 @@ export class SnapshotOverlayReader implements MergedSnapshotSource {
       };
     }
 
-    const merged = mergeOverlay(base, overlay);
     const load = (digest: string): string | undefined =>
       this.deps.overlayStore.loadShard(repoKey, nonDefaultBaseOid, digest) ??
       this.deps.store.loadShard(repoKey, digest);
 
+    // `mergeOverlay` is INSIDE the try: it iterates the overlay's shard-delta arrays,
+    // so an overlay that reached here malformed throws there, and a throw outside the
+    // catch escapes this "never a throw, degrade to a typed failure" boundary.
     try {
+      const merged = mergeOverlay(base, overlay);
       const integrity = verifySnapshotIntegrity(merged, load);
       if (!integrity.ok) {
         return {

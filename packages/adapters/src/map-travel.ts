@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { computeFingerprint, verifySnapshotIntegrity } from "@rennet/core";
+import { computeFingerprint, unfingerprinted, verifySnapshotIntegrity } from "@rennet/core";
 import type { BuiltSnapshot, ProjectSnapshotManifest } from "@rennet/protocol";
 import { canonicalize } from "@rennet/protocol";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
@@ -161,8 +161,17 @@ export function discoverCommittedMap(
   repoKey: string,
   repoRoot: string,
 ): DiscoverResult {
-  const built = readMapFromDir(committedMapDir(repoRoot));
-  if (!built) return { found: false, valid: false, seeded: false };
+  const mapDir = committedMapDir(repoRoot);
+  const built = readMapFromDir(mapDir);
+  if (!built) {
+    // `found` answers "does this repo carry a committed map?", which is a question
+    // about the FILE, not about whether this build can read it. A map written by an
+    // older schema (no `imports` family, say) is present and unusable — reporting it
+    // `found:false` would say the repo carries no map at all, which is a lie the
+    // operator cannot act on. Present-but-unreadable is `found:true, valid:false`,
+    // the same answer a corrupt one gets, and it is never seeded either way.
+    return { found: existsSync(join(mapDir, "manifest.json")), valid: false, seeded: false };
+  }
   if (!validateMap(built)) return { found: true, valid: false, seeded: false };
 
   // Don't clobber a local map the user already has (local wins, §1.4). Seed only
@@ -177,17 +186,10 @@ export function discoverCommittedMap(
   // EXACTLY what a clean local build of the same tree at this path would produce
   // (identical shards, same baseOid/baseRef, this repoKey). `store.advance` keys
   // on `manifest.repoKey`, so the re-keyed manifest lands under this checkout's dir.
-  const m = built.manifest;
+  const rekeyed = { ...unfingerprinted(built.manifest), repoKey };
   const localManifest: ProjectSnapshotManifest = {
-    ...m,
-    repoKey,
-    fingerprint: computeFingerprint(
-      { repoKey, baseRef: m.baseRef, baseRefResolution: m.baseRefResolution, baseOid: m.baseOid },
-      m.shards,
-      m.symbols,
-      m.references ?? [],
-      m.imports ?? [],
-    ),
+    ...rekeyed,
+    fingerprint: computeFingerprint(rekeyed),
   };
   store.advance({ manifest: localManifest, shards: built.shards });
   return { found: true, valid: true, seeded: true };
