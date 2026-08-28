@@ -341,6 +341,17 @@ export interface SessionSpec {
    * half-resume). The persisted shape is the frozen `HarnessCursor`.
    */
   readonly resume?: { readonly harnessSessionId: string };
+  /**
+   * Do not materialize this session in the harness's own on-disk history (#585).
+   * A one-shot utility turn — a swarm seat, a lens seat, a verification turn — is
+   * Rennet's internal work, not the user's; persisting it floods the user's
+   * `~/.claude/projects/` and `~/.codex/sessions/` and breaks their own
+   * `resume --last`. Absent ⇒ the harness's normal persistence (the user's own
+   * agentic session, which they must be able to resume, is their work and stays).
+   * Claude maps this to the SDK's `persistSession: false`; Codex maps it to
+   * `thread/start`'s `ephemeral`.
+   */
+  readonly ephemeral?: boolean;
 }
 
 export interface TurnInput {

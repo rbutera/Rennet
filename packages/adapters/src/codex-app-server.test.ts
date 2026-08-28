@@ -370,6 +370,18 @@ describe("runCodexTurn", () => {
     expect(terminal.finalMessage).toBe("mine");
   });
 
+  it("puts ephemeral on thread/start only when the caller asks for it (#585)", async () => {
+    // `ephemeral` keeps a one-shot utility thread out of ~/.codex/sessions/
+    // (app-server ThreadStartParams: "should not be materialized on disk").
+    const withFlag = scriptedConnection(happyHandler());
+    await drive(withFlag.conn, { ...PARAMS, ephemeral: true });
+    expect((withFlag.sent[2].params as Record<string, unknown>).ephemeral).toBe(true);
+    // The agentic transport passes nothing, so the user's own thread still persists.
+    const without = scriptedConnection(happyHandler());
+    await drive(without.conn, PARAMS);
+    expect("ephemeral" in (without.sent[2].params as Record<string, unknown>)).toBe(false);
+  });
+
   it("answers a server approval request with the method's schema-valid decision", async () => {
     const handler: Handler = (msg, reply) => {
       const { method, id } = msg;

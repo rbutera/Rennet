@@ -125,7 +125,11 @@ export function claudeDeltaDigestPort(port: HarnessPort, cwd: string): DeltaDige
   return async (prompt) => {
     let session: Awaited<ReturnType<HarnessPort["createSession"]>>;
     try {
-      session = await port.createSession({ cwd, outputSchema: DELTA_DIGEST_OUTPUT_SCHEMA });
+      session = await port.createSession({
+        cwd,
+        outputSchema: DELTA_DIGEST_OUTPUT_SCHEMA,
+        ephemeral: true,
+      });
     } catch (error) {
       return {
         status: "failed",
