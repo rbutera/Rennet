@@ -247,6 +247,26 @@ describe("captureRangePatchset", () => {
     expect(patchset.degraded).toBeUndefined();
   });
 
+  it("carries headRef, and a branch with no unique commits is an EMPTY patchset (#587)", async () => {
+    // New Chat's branch review takes `merge-base(primary, branch)...branch`. A branch
+    // already merged into (or identical to) its base has merge-base == head, so the range
+    // is empty — and that must READ as an honestly empty review, never as a failed click.
+    const { root, headOid } = repositoryWithRange();
+    const patchset = await captureRangePatchset(execaGit, {
+      root,
+      baseOid: headOid,
+      headOid,
+      baseRef: "main",
+      headRef: "feat/already-merged",
+      source: "local",
+    });
+    expect(patchset.files).toEqual([]);
+    expect(patchset.rawDiff).toBe("");
+    expect(patchset.source).toBe("local");
+    // The head's branch is provenance the round path's session lookup keys on.
+    expect(patchset.repository.headRef).toBe("feat/already-merged");
+  });
+
   it("uses three-dot base...head semantics (an advanced base leaks no base-only changes)", async () => {
     // A PR's diff is `git diff base...head` (three-dot): the change relative to the
     // MERGE-BASE, exactly what GitHub renders — NOT `base..head` (two-dot), which

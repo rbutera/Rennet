@@ -152,6 +152,17 @@ export interface DispatchDeps {
     retrospective: boolean,
   ): Promise<Review>;
   /**
+   * Capture a review of a BRANCH (#587) — the New Chat row click's engine. Resolves
+   * `head` and `git merge-base base head`, then takes the `base...head` range through the
+   * SAME `captureRangePatchset` the PR source uses, with `source: "local-branch"`. No
+   * checkout switch; the working tree is never touched, so the review is a snapshot like
+   * a PR's — and `local-branch` is what keeps the renderer's freshness/Regenerate path,
+   * which keys on the working-tree `local`, from overwriting the reviewed range.
+   * A branch with no unique commits yields an EMPTY patchset — an honestly empty review,
+   * never a failed click. Absent ⇒ `review.capture` with a `branch` is refused honestly.
+   */
+  captureBranch?(commandId: string, repoPath: string, head: string, base: string): Promise<Review>;
+  /**
    * The reviewed PR's worktree + setup status (historical-PR review), `null` when
    * the review has none (a working-tree capture, or checkout failed). Read-only.
    */
@@ -579,16 +590,30 @@ export interface DispatchDeps {
   readonly sessions?: {
     list(): readonly SidebarSession[];
     /**
-     * The New Chat front door (C21): mint a durable session and claim its target in ONE
-     * act. `target` absent mints a no-target session (claims nothing); present mints or
-     * REATTACHES to the session already claiming that branch/PR, so a second click on one
-     * target never produces a second session. `repository` is the row's `owner/name` (#580) —
-     * it keeps two repos of one workspace that share a branch name apart; absent ⇒ unchanged.
+     * The New Chat front door (C21, #587): start a session on a target — capture what
+     * changed, mint, claim, and attach the review — as ONE host-owned act.
+     *
+     * It is one act because the client cannot make it one. The renderer can issue mint,
+     * then capture, then attach, but it cannot make that sequence atomic: a capture that
+     * rejects after the mint leaves a claim standing over a review-less session, and the
+     * claim hides the row that would retry it. So the ORDER here is capture FIRST, mint
+     * second — a rejected capture has claimed nothing and the row stays clickable.
+     *
+     * The client also cannot resolve WHICH repo a row belongs to. `Project.openPath` is
+     * "the repo, or the FIRST included repo" (`wire.ts`), while the row list spans every
+     * included repo, so a workspace's second repo captured against its first — silently,
+     * under the right label. The row knows its `owner/name` and R19 keeps host paths off
+     * the wire, so the identity travels and the HOST resolves it to a root.
+     *
+     * `target` absent mints a no-target session over the project's own checkout (claims
+     * nothing, so the Current Checkout row never leaves the list); present mints or
+     * REATTACHES to the session already claiming that branch/PR.
      */
-    mint(
-      projectId: string,
-      target?: { branch: string; prNumber?: number; repository?: string },
-    ): { session: SidebarSession; reattached: boolean };
+    start(input: {
+      projectId: string;
+      commandId: string;
+      target?: { branch: string; prNumber?: number; repository?: string };
+    }): Promise<{ session: SidebarSession; reattached: boolean }>;
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
     setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;

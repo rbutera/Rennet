@@ -163,6 +163,7 @@
       "type": "string",
       "enum": [
         "local",
+        "local-branch",
         "github-local",
         "github-rest"
       ]

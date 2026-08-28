@@ -172,6 +172,14 @@ export function resolveRoundSessionId(
   sessions: readonly SessionModel[],
   projectId: string,
 ): string {
+  // A session that HOLDS this review IS its session (#587), exactly and with no heuristic.
+  // It has to come first because the front door now attaches a review to the CURRENT
+  // CHECKOUT session too, and that session claims nothing by design — so the claim matcher
+  // below can never find it, and its rounds would surface under a second sidebar row minted
+  // by the dispatch. `SessionEntry.enter` prefers the same holder, so the read and the write
+  // cannot drift apart.
+  const holder = sessions.find((s) => s.projectId === projectId && s.reviewId === review.id);
+  if (holder) return holder.id;
   const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
   const branch = activePatchset?.repository.headRef;
   if (branch === undefined) return review.id;
@@ -206,8 +214,25 @@ export class SessionEntry {
    *   • `target.repository`, the `owner/name` identity, known to the New Chat mint (it is on the
    *     row) and not derivable synchronously from a path on the dispatch side.
    */
-  enter(projectId: string, target: Target, repositoryRoot?: string): EntryResult {
-    const existing = claimingSession(this.store.list(), projectId, repositoryRoot, target);
+  enter(
+    projectId: string,
+    target: Target,
+    repositoryRoot?: string,
+    reviewId?: string,
+  ): EntryResult {
+    const sessions = this.store.list();
+    // The session already HOLDING this review wins outright (#587) — an exact identity, not
+    // a claim match. `resolveRoundSessionId` prefers the same one, so the mint and the read
+    // resolve to a single session rather than agreeing only by coincidence.
+    //
+    // Project-scoped like every other arm here. A review id is already unique, so the scope
+    // is not what makes this correct — it is what stops the identity arm being the ONE arm
+    // that could ever reach across projects, which is the asymmetry a reader would trip on.
+    const existing =
+      (reviewId === undefined
+        ? undefined
+        : sessions.find((s) => s.projectId === projectId && s.reviewId === reviewId)) ??
+      claimingSession(sessions, projectId, repositoryRoot, target);
     if (existing !== undefined) {
       const stamp: Partial<SessionModel> = {
         ...(repositoryRoot !== undefined && existing.repositoryRoot === undefined

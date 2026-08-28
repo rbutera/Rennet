@@ -25,6 +25,7 @@ import {
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
+  captureRangePatchset,
   claudeHandoffRunPort,
   cleanupWorktree,
   contextAskBackend,
@@ -94,6 +95,7 @@ import {
   refreshGitHubCredential,
   repoHasSubmodules,
   repoKeyOf,
+  repositoryIdentity,
   resolveForgeRemote,
   resolveGitHubAuth,
   resolveTrackerConfig,
@@ -162,6 +164,7 @@ import type {
   NoiseReview,
   OpenSpecCoverage,
   Patchset,
+  Project,
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
@@ -1165,6 +1168,73 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   /**
+   * Review a local BRANCH (#587) — the New Chat row click's engine. The reviewer clicks
+   * `feat/x`; we resolve its head OID and `git merge-base <base> <head>`, then take the
+   * `base...head` range through the SAME `captureRangePatchset` the PR source uses.
+   *
+   * Nothing is checked out and the working tree is never touched, so — exactly like a PR
+   * review — this is a SNAPSHOT of pinned OIDs. That is why the source is `local-branch`
+   * and not `local`: `local` means the working-tree capture, and the renderer keys its
+   * freshness watcher and Regenerate on exactly that. Calling a branch range `local` would
+   * hand Regenerate a licence to replace the reviewed range with a capture of this clone's
+   * tree — a lie and a destroyed artifact, the same trap `review.openPr` documents.
+   *
+   * `headRef` is carried into provenance, so the round path's read-only session lookup
+   * resolves this review onto the session that claimed the branch.
+   *
+   * A branch with no unique commits (already merged, or identical to base) has
+   * `merge-base == head`, so the range is empty and the review is honestly empty — never
+   * a failed click.
+   */
+  /**
+   * WHICH repo of a project a row's `owner/name` names (#587). A workspace maps MANY repo
+   * roots to ONE project identity and the mapping is not invertible, so `Project.openPath`
+   * — "the repo, or the FIRST included repo" — answers the wrong question for every row
+   * that is not the first repo's. The row carries an identity and never a path (R19), so
+   * the resolution has to happen here, where the included roots are known.
+   *
+   * `undefined` when nothing matches: a caller falls back to the project path, which is the
+   * pre-existing behaviour and correct for a single-repo project.
+   */
+  async function repoRootForIdentity(
+    project: Project | undefined,
+    identity: string,
+  ): Promise<string | undefined> {
+    if (!project) return undefined;
+    const roots = [
+      ...new Set([...(project.includedRepoPaths ?? []), project.openPath, project.path]),
+    ].filter((root) => root.length > 0);
+    for (const root of roots) {
+      if ((await repositoryIdentity(gitForRepo(root), root)) === identity) return root;
+    }
+    return undefined;
+  }
+
+  async function captureBranch(
+    commandId: string,
+    repoPath: string,
+    head: string,
+    base: string,
+  ): Promise<Review> {
+    const git = gitForRepo(repoPath);
+    const root = (await git(repoPath, ["rev-parse", "--show-toplevel"])).trim();
+    const headOid = (await git(root, ["rev-parse", "--verify", `${head}^{commit}`])).trim();
+    // The merge-base, not the base tip: a branch behind its base must show ITS commits,
+    // not the base's arriving backwards as deletions.
+    const baseOid = (await git(root, ["merge-base", base, headOid])).trim();
+    const patchset = await captureRangePatchset(git, {
+      root,
+      baseOid,
+      headOid,
+      baseRef: base,
+      headRef: head,
+      source: "local-branch",
+      projectSnapshotId: await ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
+    });
+    return service.createReviewFromPatchset(commandId, patchset);
+  }
+
+  /**
    * Source the per-project convention / anti-pattern catalogue (#180) for a review
    * from `<repositoryRoot>/.rennet/conventions.json`. Honest degradation: an absent,
    * unreadable, empty, or all-malformed file yields `undefined` and every lens runs
@@ -1958,19 +2028,72 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // pin, and an archive all survive reload; restore is un-archive.
     sessions: {
       list: () => sessionStore.list().map(sidebarSessionOf),
-      // The New Chat front door (C21): mint + claim in one act, through the SAME
-      // `SessionEntry` the round dispatch mints with, so a target claimed here and a target
-      // claimed by a round resolve to one session. No branch ⇒ the no-target mint (the
-      // "talk about the project" row): a fresh claimless session, so every visit is its own
-      // chat rather than reattaching to an unrelated one.
-      mint: (projectId, target) => {
+      // The New Chat front door (C21, #587): starting a session is ONE act — capture what
+      // changed on the clicked target, mint, claim, attach — and the HOST owns all of it.
+      //
+      // Two things the client structurally cannot do, which is why this is not a renderer
+      // sequence. It cannot make the steps atomic: a capture that rejects after the mint
+      // would leave a claim standing over a review-less session, and the claim hides the
+      // very row that would retry it. And it cannot resolve WHICH repo a row belongs to,
+      // because `LocalWork` carries an `owner/name` identity and no path (R19) while
+      // `Project.openPath` is "the repo, or the FIRST included repo".
+      //
+      // So: resolve the repo from the row's identity, capture, and only THEN mint. A
+      // rejected capture has claimed nothing and the row stays clickable.
+      start: async ({ projectId, commandId, target }) => {
+        const project = projectStore.list().find((entry) => entry.id === projectId);
+        // The repo this row named. Absent target (the Current Checkout row) is the project
+        // as a whole, which is exactly what `openPath` means; a target resolves through its
+        // identity, falling back to the project path when nothing matches (a single-repo
+        // project, or a row whose identity predates the field).
+        const projectRoot = project?.openPath || project?.path || "";
+        const root =
+          target?.repository === undefined
+            ? projectRoot
+            : ((await repoRootForIdentity(project, target.repository)) ?? projectRoot);
+        // Capture BEFORE the mint, so a rejection claims nothing.
+        const review = await (target === undefined
+          ? service.capture(commandId, root)
+          : target.prNumber === undefined
+            ? captureBranch(commandId, root, target.branch, project?.primaryBranch ?? "HEAD")
+            : openPullRequest(
+                commandId,
+                `${target.repository ?? ""}#${target.prNumber}`,
+                root,
+                false,
+              ));
+        allowedRoots.add(review.repositoryRoot);
         if (target === undefined) {
-          const session = mintSession(projectId);
-          sessionStore.save(session);
-          return { session: sidebarSessionOf(session), reattached: false };
+          // The working-tree capture is the one that IS watched for freshness — the branch
+          // and PR ranges are pinned snapshots and stay off the watcher deliberately.
+          repositoryDirty = false;
+          watcher.start(
+            review.repositoryRoot,
+            () => {
+              repositoryDirty = true;
+            },
+            locusForRepo(review.repositoryRoot),
+          );
         }
-        const entered = sessionEntry.enter(projectId, target);
-        return { session: sidebarSessionOf(entered.session), reattached: entered.reattached };
+        // The claim-less checkout session still stamps its repo root, so its rounds stay in
+        // that repo's ledger; `reviewId` (attached below) is what resolves them back to it.
+        const entered =
+          target === undefined
+            ? {
+                session: {
+                  ...mintSession(projectId),
+                  repositoryRoot: review.repositoryRoot,
+                },
+                reattached: false,
+              }
+            : sessionEntry.enter(projectId, target, review.repositoryRoot, review.id);
+        if (!entered.reattached) sessionStore.save(entered.session);
+        // Attach, and REPORT WHAT THE STORE HOLDS. `attachReview` keeps an existing review
+        // (a session attaches at most one), so a session already bound to another review
+        // comes back carrying THAT one and the client lands where the diff actually is —
+        // rather than being told this capture succeeded when nothing points at it.
+        const bound = sessionStore.attachReview(entered.session.id, review.id) ?? entered.session;
+        return { session: sidebarSessionOf(bound), reattached: entered.reattached };
       },
       rename: (sessionId, title) => {
         const session = sessionStore.rename(sessionId, title);
@@ -2257,6 +2380,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }),
     chooseRepository,
     openPullRequest,
+    captureBranch,
     startWatching: (root: string) =>
       watcher.start(
         root,

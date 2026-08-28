@@ -1456,6 +1456,12 @@ const definitions = {
   "session.mint": {
     input: z.object({
       projectId: z.string().min(1),
+      /**
+       * The id for the review this mint CAPTURES (#587). Starting a session is one act —
+       * mint, claim, capture, attach — so the command that starts it carries the capture's
+       * id, exactly as `review.capture` does.
+       */
+      commandId: commandIdSchema,
       /** The claimed branch. Absent mints a no-target session (claims nothing). */
       branch: z.string().min(1).optional(),
       /** The claimed branch's PR number, when the row was a pull request. */
