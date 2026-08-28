@@ -178,8 +178,16 @@ export interface RoundInput {
   readonly session: SessionModel;
   /** The PR worktree the drafters are rooted at, and ports/boards resolve against. */
   readonly repoRoot: string;
-  /** The live generation this round succeeds (frozen if the code moves). */
-  readonly previousGeneration: Generation;
+  /**
+   * The REAL prior generation this round succeeds — the one whose boards were actually
+   * drafted and persisted (frozen if the code moves). **Absent means absent:** a session
+   * that has never regenerated has no predecessor, so the round is a first generation —
+   * nothing freezes and the record carries no `frozenPredecessor`. Never synthesize one:
+   * a fabricated predecessor makes the ledger's drill-down point at a generation that
+   * never existed, and it makes carry-forward structurally impossible (every section
+   * stamps `new` against boards that were never drafted).
+   */
+  readonly previousGeneration?: Generation;
   /** Thread ids of the asks this round dispatched (pinned into the `RoundRecord`). */
   readonly asksDispatched: readonly string[];
   /** Run the dispatched work WATCHED LIVE — the injected worker turn (a coding-agent
@@ -464,9 +472,16 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // share the (session, generation) key — the second's draft dedups to the first's
     // boards (the in-memory guard, or the durable reconstruction below after a
     // restart). Intended: no code moved ⇒ no new generation ⇒ the same boards re-reported.
+    // Nothing landed and no prior generation ⇒ this is the session's FIRST generation over
+    // the patchset the drafters are reading; mint it from that patchset rather than from a
+    // predecessor that does not exist.
     const boardGeneration = landed
       ? mintGeneration(newGenerationId(worked.patchsetId as string), worked.patchsetId as string)
-      : input.previousGeneration;
+      : (input.previousGeneration ??
+        mintGeneration(
+          newGenerationId(input.deltaPacket.patchset.id),
+          input.deltaPacket.patchset.id,
+        ));
 
     // Durable idempotency across the crash boundary (F1): a fresh runtime after a
     // restart has an EMPTY in-memory guard, so the guard alone would re-draft (12
@@ -486,16 +501,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // The round-report seat's board, or the pre-minted report board id when the seat
     // wrote nothing — always a valid id, so the `RoundRecord` is never unrepresentable.
     const reportBoard = pipeline.report?.boardId ?? reportBoardId;
-    // The frozen predecessor id (C15 2.2, un-parks C09 F3): when the code moved, the prior
-    // generation freezes and its id is the earlier generation the ledger's switcher drills
-    // back to. Absent on a no-move round — honestly, there is no distinct predecessor.
+    // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
+    // prior generation exists, it freezes and its id is the earlier generation the ledger's
+    // switcher drills back to. Absent on a no-move round and on a first generation —
+    // honestly, there is no distinct predecessor to point at.
+    const predecessor = landed ? input.previousGeneration : undefined;
     const record: RoundRecord = {
       asksDispatched: [...input.asksDispatched],
       workerCommitRange: { from: worked.commitRange.from, to: worked.commitRange.to },
       ...(landed ? { mintedPatchsetGeneration: boardGeneration.id } : {}),
       boardGeneration: boardGeneration.id,
       reportBoard,
-      ...(landed ? { frozenPredecessor: input.previousGeneration.id } : {}),
+      ...(predecessor === undefined ? {} : { frozenPredecessor: predecessor.id }),
     };
     const records = ledger.get(input.session.id) ?? [];
     records.push(record);
@@ -510,7 +527,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // freezes iff the code moved.
     const liveSuccessor = withLensBoards(boardGeneration, pipeline);
     await deps.persistGeneration?.(liveSuccessor);
-    const frozenPrevious = landed ? freezeGeneration(input.previousGeneration) : undefined;
+    const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
 
     // The round composed (C15 3.1): the terminal event the run machine gates **View the

@@ -209,7 +209,7 @@ import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { projectLensBoard } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
-import { runBoardRegeneration } from "./runtime/round-collation";
+import { readPriorGeneration, runBoardRegeneration } from "./runtime/round-collation";
 import { RoundProgressHub } from "./runtime/round-progress";
 import {
   createRoundsRuntime,
@@ -2076,6 +2076,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 }
               );
             },
+            // The REAL prior generation, rebuilt from its two durable halves (the generation
+            // record + the board-meta rows' projected boards). Absent ⇒ this session has
+            // never regenerated, so the round is honestly a first generation.
+            priorGeneration: (generationId) =>
+              readPriorGeneration(
+                {
+                  loadGeneration: (id) => generationStore.load(id),
+                  listBoardMeta: (sessionId, generation) =>
+                    boardMetaStore.listForGeneration(sessionId, generation),
+                  boardElements: async (boardId) => [
+                    ...(
+                      await boardsRuntimeFor(review.repositoryRoot).service.getState(boardId)
+                    ).values(),
+                  ],
+                },
+                session.id,
+                generationId,
+              ),
             runRound: (input) => roundsRuntime.runRound(input),
             // The regeneration half of the live channel (C15 3.1): `runRound` emits the
             // round-report's arrival, each lens drafter starting and finishing with its

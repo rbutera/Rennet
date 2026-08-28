@@ -1,14 +1,27 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BoardMetaStore, GenerationStore } from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort, LintTarget } from "@rennet/core";
-import type { DraftBoard, PatchFile, Patchset, RoundEvent, SessionModel } from "@rennet/protocol";
+import type {
+  DraftBoard,
+  KnowledgeSet,
+  PatchFile,
+  Patchset,
+  Review,
+  RoundEvent,
+  SessionModel,
+} from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
-import { assembleRoundCollation } from "./round-collation";
+import {
+  assembleRoundCollation,
+  readPriorGeneration,
+  runBoardRegeneration,
+} from "./round-collation";
 import { RoundProgressHub } from "./round-progress";
-import { createRoundsRuntime, mintGeneration } from "./rounds";
+import { createRoundsRuntime, mintGeneration, type RoundOutcome } from "./rounds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // C15 cluster 3 — the LIVE round-progress channel, at its real seams.
@@ -53,6 +66,18 @@ function patchset(): Patchset {
     truncated: false,
   };
 }
+
+/** The same patchset under another id — one activation per round in the lineage test. */
+const patchsetAt = (id: string): Patchset => ({ ...patchset(), id });
+
+const KNOWLEDGE: KnowledgeSet = {
+  schemaVersion: 1,
+  repoKey: "repo",
+  baseOid: "0".repeat(40),
+  snapshotFingerprint: "fp",
+  generator: "t",
+  statements: [],
+};
 
 const author = { kind: "lens-agent", id: "seat" };
 
@@ -120,14 +145,7 @@ const session: SessionModel = {
 const collationFor = () =>
   assembleRoundCollation({
     patchset: patchset(),
-    knowledge: {
-      schemaVersion: 1,
-      repoKey: "repo",
-      baseOid: "0".repeat(40),
-      snapshotFingerprint: "fp",
-      generator: "t",
-      statements: [],
-    },
+    knowledge: KNOWLEDGE,
     dossier: [],
     // A successor account makes this a ROUND: the report drafts first and the delta
     // stamps run against `previous`.
@@ -271,6 +289,114 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     expect(detailOf("design")).toBe("reworked");
     expect(detailOf("design")).not.toBe("carrying forward");
     // The untouched lenses carried — the same signal their section markers render.
+    for (const lens of ["sequence", "decisions", "flagged", "noise"]) {
+      expect(detailOf(lens)).toBe("carrying forward");
+    }
+  });
+
+  // ── The lineage the round ACTUALLY has (review finding 2) ──────────────────
+  //
+  // Above, `previous` is handed in by the test. In production it was handed in by NOBODY:
+  // the trigger minted a synthetic predecessor and supplied no prior boards, so every
+  // section stamped `new` and no lane could EVER read "carrying forward" — as dishonest as
+  // a lane that lies that it did. This drives TWO real rounds through the real trigger over
+  // the real durable stores, so the second round's comparison set is the first round's
+  // actual boards.
+  it("a second round carries forward against the FIRST round's real boards", async () => {
+    const genStore = new GenerationStore(mkdtempSync(join(tmpdir(), "c15-gen-")));
+    const metaStore = new BoardMetaStore(mkdtempSync(join(tmpdir(), "c15-meta-")));
+    const lineageSession = { ...session, id: "lineage-session" } as SessionModel;
+
+    // Every lens drafts "generation one" until `moved` names it — then that lens alone moves.
+    let moved: string | undefined;
+    const runtime = createRoundsRuntime({
+      resolveClaudePort: async () =>
+        fakeClaudePort((lens) => sectioned(lens === moved ? "generation two" : "generation one")),
+      resolveCodexExecutor: async () => null as CodexExecutor | null,
+      boardsRuntimeFor: () => ({
+        service: boards.service,
+        createRennetBoard: boards.createRennetBoard,
+      }),
+      readPrompt,
+      persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+      persistGeneration: (gen) => genStore.save(gen),
+      loadGeneration: (id) => genStore.load(id),
+    });
+
+    // A review that walks ps-1 → ps-2 → ps-3, one activation per round.
+    const made = [patchsetAt("ps-1"), patchsetAt("ps-2"), patchsetAt("ps-3")];
+    let activeIndex = 0;
+    const events: RoundEvent[] = [];
+    const outcomes: RoundOutcome[] = [];
+    const round = (priorPatchsetId: string) =>
+      runBoardRegeneration(
+        {
+          recapture: async () => {
+            activeIndex += 1;
+          },
+          reviewNow: () =>
+            ({
+              id: "rev-lineage",
+              repositoryRoot: root,
+              activePatchsetId: made[activeIndex]?.id,
+              patchsets: made.slice(0, activeIndex + 1),
+              dispositions: [],
+              status: "current",
+              successorAccount: { asks: [], beyondAsks: [] },
+            }) as unknown as Review,
+          knowledgeFor: () => KNOWLEDGE,
+          priorGeneration: (id) =>
+            readPriorGeneration(
+              {
+                loadGeneration: (genId) => genStore.load(genId),
+                listBoardMeta: (sessionId, generation) =>
+                  metaStore.listForGeneration(sessionId, generation),
+                boardElements: async (boardId) => [
+                  ...(await boards.service.getState(boardId)).values(),
+                ],
+              },
+              lineageSession.id,
+              id,
+            ),
+          runRound: async (input) => {
+            const outcome = await runtime.runRound(input);
+            outcomes.push(outcome);
+            return outcome;
+          },
+          emit: (event) => events.push(event),
+        },
+        {
+          session: lineageSession,
+          repoRoot: root,
+          priorPatchsetId,
+          asksDispatched: [],
+          worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        },
+      );
+
+    // Round one: no generation has ever been minted for this session, so it is honestly a
+    // FIRST generation — no predecessor is invented for the ledger to drill into.
+    await round("ps-1");
+    expect(outcomes[0]?.record.frozenPredecessor).toBeUndefined();
+    expect(outcomes[0]?.frozenPrevious).toBeUndefined();
+    expect(outcomes[0]?.boardGeneration.id).toBe("gen:ps-2");
+
+    // Round two: only `design` re-drafts differently.
+    moved = "design";
+    events.length = 0;
+    await round("ps-2");
+
+    // The predecessor is the generation round one really minted — not a synthesized id.
+    expect(outcomes[1]?.record.frozenPredecessor).toBe("gen:ps-2");
+    expect(outcomes[1]?.frozenPrevious?.status).toBe("frozen");
+
+    const settled = [...events].reverse().find((e) => e.type === "lens");
+    if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
+    const detailOf = (id: string): string | undefined =>
+      settled.lanes.find((lane) => lane.id === id)?.detail;
+    // THE HONESTY THIS PROVES: carry-forward genuinely OCCURS in the production shape. The
+    // untouched lenses compare against round one's real boards and carry; design reworked.
+    expect(detailOf("design")).toBe("reworked");
     for (const lens of ["sequence", "decisions", "flagged", "noise"]) {
       expect(detailOf(lens)).toBe("carrying forward");
     }

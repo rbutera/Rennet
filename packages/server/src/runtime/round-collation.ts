@@ -16,17 +16,20 @@ import {
   type LintHunk,
   type LintTarget,
 } from "@rennet/core";
-import type {
-  DossierItem,
-  KnowledgeSet,
-  PatchFile,
-  Patchset,
-  Review,
-  RoundEvent,
-  SessionModel,
-  SuccessorAccount,
+import {
+  type DossierItem,
+  type DraftBoard,
+  type Generation,
+  type KnowledgeSet,
+  type PatchFile,
+  type Patchset,
+  parseDraft,
+  type Review,
+  type RoundEvent,
+  type SessionModel,
+  type SuccessorAccount,
 } from "@rennet/protocol";
-import { mintGeneration, type RoundInput, type WorkerReturn } from "./rounds";
+import type { RoundInput, WorkerReturn } from "./rounds";
 
 /**
  * Map a patchset's `IndexedHunk`s (whose spans are `{ new: {start,lines}, old:
@@ -161,6 +164,54 @@ export function assembleRoundCollation(input: {
   return { deltaPacket, hunks, lintContextFor };
 }
 
+// ── The prior generation (C15 2.1/3.3) — the lineage a round actually has ────
+
+/** A prior generation and the boards it really drafted — the delta stamps' comparison set. */
+export interface PriorGeneration {
+  readonly generation: Generation;
+  readonly boards: ReadonlyMap<LintTarget, DraftBoard>;
+}
+
+/** The durable halves a prior generation is rebuilt from: the generation record, the
+ *  board-meta rows for its (session, generation), and each board's projected elements. */
+export interface PriorGenerationReaders {
+  readonly loadGeneration: (id: string) => Generation | undefined;
+  readonly listBoardMeta: (
+    sessionId: string,
+    generation: string,
+  ) => readonly { readonly lens: LintTarget; readonly boardId: string }[];
+  readonly boardElements: (boardId: string) => Promise<readonly unknown[]>;
+}
+
+/**
+ * Read the REAL prior generation for a session — the record plus the boards it drafted,
+ * rebuilt from the whiteboard's projected element state.
+ *
+ * This is what makes carry-forward possible at all. `stampDeltas` compares each section's
+ * subtree signature against the SAME section on the previous generation's board; with no
+ * previous board every section stamps `new`, so a lane can never honestly say "carrying
+ * forward" — which is its own dishonesty, the mirror of a lane that lies that it did.
+ *
+ * Honest absence throughout: a generation that was never minted returns `undefined` (a
+ * first generation, no lineage to claim), and a persisted board whose elements no longer
+ * parse as a draft is SKIPPED rather than half-read — its lens then stamps `new`, because
+ * nothing here can prove it carried.
+ */
+export async function readPriorGeneration(
+  readers: PriorGenerationReaders,
+  sessionId: string,
+  generationId: string,
+): Promise<PriorGeneration | undefined> {
+  const generation = readers.loadGeneration(generationId);
+  if (generation === undefined) return undefined;
+  const boards = new Map<LintTarget, DraftBoard>();
+  for (const meta of readers.listBoardMeta(sessionId, generationId)) {
+    const parsed = parseDraft({ elements: await readers.boardElements(meta.boardId) });
+    if (parsed.ok) boards.set(meta.lens, parsed.value);
+  }
+  return { generation, boards };
+}
+
 // ── The post-round regeneration (C15 1.5) — the ORDER is the honesty ─────────
 
 /**
@@ -176,6 +227,9 @@ export interface BoardRegenerationDeps {
   readonly reviewNow: () => Review;
   /** The repo's knowledge set for the drafters' packet, over the patchset they will read. */
   readonly knowledgeFor: (patchset: Patchset) => KnowledgeSet;
+  /** The REAL prior generation + its drafted boards, or `undefined` for a first generation
+   *  ({@link readPriorGeneration} over the durable stores in production). */
+  readonly priorGeneration: (generationId: string) => Promise<PriorGeneration | undefined>;
   readonly runRound: (input: RoundInput) => Promise<unknown>;
   /** The live round-progress sink — the same channel the dispatch half emits on. */
   readonly emit: (event: RoundEvent) => void;
@@ -230,10 +284,16 @@ export async function runBoardRegeneration(
       dossier: [],
       ...(review.successorAccount ? { successorAccount: review.successorAccount } : {}),
     });
+    // The lineage this round ACTUALLY has. A prior generation counts only if it was really
+    // minted and persisted; otherwise this is a first generation and says so — no
+    // synthesized predecessor for the ledger to drill into, and no phantom comparison set.
+    const prior = await deps.priorGeneration(`gen:${input.priorPatchsetId}`);
     await deps.runRound({
       session: input.session,
       repoRoot: input.repoRoot,
-      previousGeneration: mintGeneration(`gen:${input.priorPatchsetId}`, input.priorPatchsetId),
+      ...(prior === undefined
+        ? {}
+        : { previousGeneration: prior.generation, previous: prior.boards }),
       asksDispatched: [...input.asksDispatched],
       // The successor PATCHSET id keys the minted generation (not the post-turn HEAD oid),
       // so the generation the boards file under names the diff they actually read.

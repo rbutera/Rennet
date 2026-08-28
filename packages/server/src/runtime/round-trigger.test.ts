@@ -270,6 +270,8 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         },
         reviewNow: () => review,
         knowledgeFor: () => KNOWLEDGE,
+        // No generation has ever been minted for this session — an honest first generation.
+        priorGeneration: async () => undefined,
         runRound: async (input: RoundInput) => {
           seen.push(input);
           return undefined;
@@ -307,7 +309,9 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
       commitRange: { from: "c0", to: "c1" },
       patchsetId: "ps-post",
     });
-    expect(input.previousGeneration?.id).toBe("gen:ps-pre");
+    // No prior generation was ever minted for this session, so the round is a first
+    // generation — it does not claim a predecessor it does not have.
+    expect(input.previousGeneration).toBeUndefined();
   });
 
   it("a turn that moved nothing re-reports against the existing generation, no successor mint", async () => {
