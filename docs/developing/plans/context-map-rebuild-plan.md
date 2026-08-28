@@ -194,6 +194,16 @@ had for 52. Any ramp test measures RSS per lane and swap pressure alongside
 throughput — the machine, not the provider, is the ceiling. The concurrency
 default becomes a named, tested policy rather than an unrevisited 4.
 
+**W2 measured it, and the "~50 batches" premise is wrong.** On Rennet at the
+end of W2: 2,420 files, 179 excluded by policy, 2,241 eligible, 3,506 resolved
+import edges — and **201 slices**, not 52. Only 52 are module batches (1,152
+connected files, median 27); the other 149 are directory-fallback slices holding
+the 1,089 edge-less files at a mean of 7.3 each. At 201 turns the arithmetic
+above lands near twenty minutes, roughly four times the bar. Batching itself is
+65 ms and the clean deterministic build is ~35 s, so the cost is entirely in
+turns. W3 owns the reduction: coalescing the fallback tail, and letting the
+scoping seat decide which of those 1,089 files deserve a turn at all.
+
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and
 swarm turns carry `SessionSpec.ephemeral`, which maps to the Claude Agent

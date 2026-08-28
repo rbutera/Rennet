@@ -108,10 +108,24 @@ tree holds; only the batcher acts on the verdict, so a reader who asks why
 Four of the five reasons are pure functions of the path. The banner check needs
 the file's bytes, so it rides `SymbolShard.generated`, derived where the snapshot
 generator already reads each blob once — an unchanged blob reuses the answer for
-free, exactly like its symbols. Symbol shards exist only for TypeScript and
-JavaScript, so a generated file in another language is caught by its path or not
-at all, which keeps a real file in the map rather than dropping one that belongs
-there.
+free, exactly like its symbols.
+
+That shard family is emitted for every *path-eligible* text blob, not only the
+ones the TypeScript/JavaScript extractor understands, so a generated `.py`,
+`.sql`, or `.graphql` with a banner and no path signal is caught. A blob outside
+the extractor's languages carries an empty symbol list and a real banner bit,
+which keeps the whole classification in one per-blob family — one manifest
+pointer array, one integrity walk, one incremental planner — instead of a fourth
+family carrying a single bit.
+
+What remains outside the check: a file the path rules already exclude is never
+read for a banner, because content cannot overturn a verdict the path has already
+made; and binary detection is an extension list, so an extensionless binary is
+read as text and reports no banner. Both directions are safe — a missed banner
+keeps a file in the map rather than dropping one that belongs there. The cost is
+blob reads: a clean full build now reads every path-eligible file rather than
+only the source files, which is why the clean build of Rennet below takes tens of
+seconds. An incremental build reads only the changed closure.
 
 ## Module batching
 
@@ -124,15 +138,41 @@ tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
    communities under 3 files pool with their scope's other leftovers, up to 25 per
    pooled batch. Pooling stays inside a workspace scope where the scope has enough
    leftovers to fill a batch — a small coherent batch reads better than a large
-   incoherent one.
+   incoherent one. Pooling buckets each member individually by its own scope root,
+   so a tiny community that straddles two packages contributes to each package's
+   pool rather than landing wholly in the first member's.
 2. **The directory fallback.** Files with no import edge — documentation, config,
    assets, an unreferenced leaf — keep the original scope-and-subtree partitioner.
    So does the entire eligible inventory when the import or symbol shards cannot be
    read: worse partitions, never a refusal to map.
 
-Measured on Rennet itself: 2,425 files, 174 excluded by policy, 3,518 resolved
-import edges, 52 module batches covering the 1,151 connected files with a median
-of 26 files each, in well under a second.
+### Measured on Rennet itself
+
+2,420 files, 179 excluded by policy (166 binary, 5 lockfiles, 7 by banner, 1 by
+path), 2,241 eligible, 3,506 resolved import edges.
+
+Those eligible files come out as **201 slices**, not 52:
+
+| Tier | Slices | Files | Size |
+|---|---|---|---|
+| Module batches | 52 | 1,152 | median 27, mean 22.2 |
+| Directory fallback | 149 | 1,089 | median 5, mean 7.3, largest 113 |
+
+Batching itself takes about 65 ms; the clean full snapshot build that feeds it
+takes roughly 35 seconds, dominated by one blob read per path-eligible file.
+
+The tail is the headline, not the 52. Two thirds of the slices are
+directory-fallback slices averaging seven files each — files with no resolved
+import edge, which on this repo is mostly documentation, fixtures, and config.
+Every one of them still costs a worker turn, so the plan's speed arithmetic —
+*"at ~50 batches, 78 s/turn clears the five-minute bar at concurrency ~13"* — is
+computed against a batch count that does not exist. At 201 turns the same
+arithmetic lands near twenty minutes, four times over the bar.
+
+Cutting that tail is W3's job, not a property of the batching described here: the
+fallback slices need coalescing, and the scoping seat needs to decide which of
+those 1,089 files deserve a turn at all. Until that lands, the honest statement of
+this design's cost is 201 turns.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
