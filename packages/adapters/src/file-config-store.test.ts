@@ -135,6 +135,49 @@ describe("FileConfigStore (client settings)", () => {
     // The malformed file is still exactly as it was — nothing was written over it.
     expect(readFileSync(path, "utf8")).toBe(malformed);
   });
+
+  it("persists the council routing.task overrides and reads them back (C16 reload survival, #485)", () => {
+    // The review-role edits from the Environments → Review section live in the SAME
+    // viewer-scoped file as appearance/keybindings — nothing repo-materially written.
+    const path = tmpConfigPath();
+    const store = createClientSettingsStore(path);
+    // Additive: an untouched install carries no slice at all.
+    expect(store.read().routing).toBeUndefined();
+
+    const written = store.update((current) => ({
+      ...current,
+      routing: { task: { "lens-draft": { model: "sonnet-5", effort: "medium" } } },
+    }));
+    expect(written.routing?.task).toEqual({
+      "lens-draft": { model: "sonnet-5", effort: "medium" },
+    });
+    // A fresh store over the same path — the restart — still carries the override.
+    expect(createClientSettingsStore(path).read().routing?.task).toEqual({
+      "lens-draft": { model: "sonnet-5", effort: "medium" },
+    });
+    // Clearing the last override drops the slice: byte-identical to never having set one.
+    const cleared = store.update((current) => {
+      const next = { ...current };
+      delete next.routing;
+      return next;
+    });
+    expect(cleared.routing).toBeUndefined();
+    expect(createClientSettingsStore(path).read()).toEqual({ version: CLIENT_SETTINGS_VERSION });
+  });
+
+  it("REFUSES a routing override write on a malformed config, leaving the bytes untouched (Rule 75)", () => {
+    const path = tmpConfigPath();
+    const malformed = '{ "version": 1, "routing": { "task": ';
+    writeFileSync(path, malformed);
+    const store = createClientSettingsStore(path);
+    expect(() =>
+      store.update((current) => ({
+        ...current,
+        routing: { task: { "lens-draft": { model: "haiku" } } },
+      })),
+    ).toThrow(/malformed/);
+    expect(readFileSync(path, "utf8")).toBe(malformed);
+  });
 });
 
 describe("FileConfigStore (daemon settings)", () => {
