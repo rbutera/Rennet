@@ -19,18 +19,16 @@ import { advance, initialRoundState, mergeRoundEvents, type RoundState } from ".
 // on context, and the report board is parsed against `LensBoardSchema` before any
 // surface renders it.
 //
-// NO rounds runtime exists in the protocol/core/adapters/server yet (Reconciliation 1):
-// no round-dispatch command, no round-state read, no round-progress channel is
-// registered. So today the source is honest-absent by default — no dispatchable round,
-// an empty ledger, no report — which is the TRUTH of a build with no live rounds. Tests
-// and dev hand a fixture {@link RoundsSource} to {@link RoundsSourceProvider}; the
-// fixtures live behind the import fence (`test/fixtures/rounds/`), never imported by a
-// surface.
+// The rounds runtime IS registered and bound (`round.dispatch`, `session.roundEvents`,
+// `session.rounds`, the `roundProgress` channel), and {@link useLiveRoundsSource} below is
+// what the app tree binds — see the LIVE SEAM BODY section. The CONTEXT DEFAULT stays
+// honest-absent ({@link ABSENT_ROUNDS_SOURCE}: no dispatchable round, an empty ledger, no
+// report) so a subtree mounted without a rounds scope says so rather than pretending. Tests
+// and dev hand a fixture {@link RoundsSource} to {@link RoundsSourceProvider}; the fixtures
+// live behind the import fence (`test/fixtures/rounds/`), never imported by a surface.
 //
-// When B9 registers + binds the rounds runtime, this seam's BODIES swap (cluster 8):
-// `roundState` folds a `useCommandStream` round-progress channel through `advance`,
-// `roundRecords`/`reportBoard` become `useCommand` reads, and `dispatch` resolves the
-// real round-dispatch command — the callers do not change, only the source.
+// `reportBoard` is the one read still honestly absent everywhere: no board-fetch command
+// exists in the protocol to resolve it (see the LIVE SEAM BODY note).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A shared frozen empty ledger — a STABLE reference, so the honest-absent source does
@@ -44,8 +42,9 @@ const NO_EVENTS: readonly RoundEvent[] = Object.freeze([]);
  * The three reads (plus dispatch) every rounds surface resolves through. `reportBoard`
  * returns `unknown` on purpose: the seam OWNS validation, so a source hands back
  * whatever it has and {@link useReportBoard} is the one place report shape is proven.
- * `dispatch` is absent over the honest-absent source (no live runtime) ⇒ C8's Dispatch
- * button stays disabled; cluster 4 threads it through the workspace.
+ * `dispatch` is present on the LIVE source (unconditionally — {@link useLiveRoundsSource})
+ * and absent on the honest-absent default, so the Dispatch button is live wherever the app
+ * tree is mounted and inert only in a tree carrying no rounds scope.
  */
 export interface RoundsSource {
   /** The live round machine state for a session (honest-absent by default). */
@@ -80,11 +79,10 @@ export interface RoundsSource {
   readonly roundsUnavailable?: (slug: string) => string | undefined;
 }
 
-/** The honest-absent default: no live round, an empty ledger, no report, no dispatch.
- *  Also the value the app tree binds today (`routes/app.tsx`) — an explicit provider node
- *  so the top-bar + routes read ONE source, and cluster 8 swaps this for the live runtime
- *  at the same seam without moving the provider. Wrapping with it changes no behavior now
- *  (it is the context default); it exists to give the live swap a home. */
+/** The honest-absent default: no live round, an empty ledger, no report, no dispatch. The
+ *  CONTEXT default only — the app tree binds {@link useLiveRoundsSource} through
+ *  `routes/app.tsx`'s `LiveRoundsScope`, so a surface that reaches THIS value is one mounted
+ *  outside that scope (a unit mount), and it renders its round exits inert accordingly. */
 export const ABSENT_ROUNDS_SOURCE: RoundsSource = {
   roundState: () => initialRoundState,
   roundRecords: () => NO_RECORDS,
@@ -177,9 +175,9 @@ export function useReportBoard(reportBoardId: string): ReportBoardResolution {
   );
 }
 
-/** The dispatch capability for the current source, or `undefined` when no live runtime
- *  is bound (⇒ C8's Dispatch button stays disabled — the truth today). Cluster 4 reads
- *  this and threads it to the handoff lanes. */
+/** The dispatch capability for the current source — present under the app tree's
+ *  `LiveRoundsScope`, `undefined` under the honest-absent default (⇒ the Dispatch button
+ *  stays inert). `HandoffMount` reads this and threads it to the handoff lanes. */
 export function useRoundDispatch(): ((slug: string) => void) | undefined {
   return useContext(RoundsSourceContext).dispatch;
 }

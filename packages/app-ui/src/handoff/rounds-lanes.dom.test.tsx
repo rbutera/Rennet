@@ -122,10 +122,13 @@ describe("RoundsLanes", () => {
     expect(r.getByText("github.com/rbutera/rennet/pull/438")).toBeTruthy();
   });
 
-  it("through the real route (HandoffMount wires no onDispatch) Dispatch Round renders disabled", () => {
-    // The production path: ReviewWorkspace → HandoffMount mounts the own-branch rounds lane and
-    // passes NO onDispatch (C9's job). Even with an ask staged, the button must render disabled —
-    // proving the fix holds where it ships, not only in a direct unit mount.
+  it("with NO rounds source in the tree the workspace degrades honestly (Dispatch Round disabled)", () => {
+    // NOT the production path — this mount deliberately omits `<LiveRoundsScope>`, which the app
+    // tree DOES supply (`routes/app.tsx`), so `useRoundDispatch()` falls back to the context
+    // default `ABSENT_ROUNDS_SOURCE` and `HandoffMount` threads no `onDispatch`. What it proves is
+    // the honest-absent half all the way through `ReviewWorkspace`: with no source to dispatch
+    // through, the button is inert rather than a dead click that lies. The SHIPPING half — the
+    // live scope wires dispatch and the button goes live — is `app/dispatch-wiring.dom.test.tsx`.
     stage("src/a.ts:5", "guard the boundary", "request-change"); // first mount does not reset (id stable)
     const ownBranch = { id: "ob-1", activePatchsetId: "ps-1" } as unknown as Review;
     const history = memoryHistory("/s/x?view=handoff");

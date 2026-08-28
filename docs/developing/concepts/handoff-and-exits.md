@@ -125,6 +125,14 @@ lanes depend on the entry mode:
   nothing explains the flip.
 - **Retrospective** — no exits.
 
+When the daemon **refuses to compose** an exit — a comment carrying a path that
+would post outside the repository, a detached HEAD with no branch to open a pull
+request from — the lane states that reason where the exit would have been and
+carries on. There is nothing to dismiss and nothing to retry past: a refusal is a
+fact about this review, not a step in a ceremony. What it replaces is worse than
+the refusal itself, which is a Post Review that renders dead with no account of
+why, or a Changes surface that simply never becomes the pull request.
+
 ## Living drafts
 
 The orchestrator continuously redrafts every outbound document — the review

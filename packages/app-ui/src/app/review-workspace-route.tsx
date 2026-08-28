@@ -336,9 +336,11 @@ function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
 //
 // Dispatch wiring (C09 cluster 4): `onDispatch` closes C8's seam — reset the run slice at the
 // dispatch act (NOT on the run route's cold reattach), fire the rounds seam's `dispatch(slug)`,
-// then take over the live run route. Over the honest-absent source `dispatch` is undefined ⇒
-// `onDispatch` stays undefined ⇒ C8's Dispatch button stays disabled (the truth today, no fake
-// enablement). No dead click that lies.
+// then take over the live run route. The app tree supplies the LIVE source (`routes/app.tsx`'s
+// `LiveRoundsScope`, C15 3.2), whose `dispatch` is unconditional — so on the shipping path
+// `onDispatch` IS wired and the button goes live the moment an ask stages. `dispatch` is absent
+// only under the honest-absent default (a tree with no rounds scope, i.e. unit mounts), and there
+// the button stays disabled rather than offering a dead click that lies.
 function HandoffMount({
   review,
   slug,
@@ -368,6 +370,7 @@ function HandoffMount({
       onDispatch={onDispatch}
       onOpenPr={exits.onOpenPr}
       onRevise={exits.onRevise}
+      unavailable={exits.unavailable}
     />
   );
 }
