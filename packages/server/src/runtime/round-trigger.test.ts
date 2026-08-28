@@ -194,6 +194,50 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     expect(outcome.frozenPrevious).toBeUndefined();
     expect(order).not.toContain("report"); // non-round ⇒ report does not gate
   });
+
+  // ── Coverage, through the REAL path (review finding 11) ───────────────────
+  //
+  // The flip-to-red control for coverage used to call `assertCoverage` on the side, which
+  // only ever proved the helper works. This drives an uncovered hunk through `runRound`
+  // itself: the drafters answer prose-only boards that teach nothing, so the round's own
+  // coverage verdict must name the patchset's hunk. A pipeline that stopped asserting
+  // coverage — the failure that matters — would pass the old control and fail this one.
+  it("a hunk no board teaches comes back as the round's own coverage violation", async () => {
+    const collation = assembleRoundCollation({
+      patchset: patchset(),
+      knowledge: KNOWLEDGE,
+      dossier: [],
+      successorAccount: { asks: [], beyondAsks: [] },
+    });
+    // The collation bridge really derived a hunk from the patchset — otherwise the
+    // assertion below would pass over an empty universe.
+    expect(collation.hunks).toHaveLength(1);
+    const hunkId = collation.hunks[0]?.id;
+
+    const outcome = await runtimeWith([]).runRound({
+      session: { ...session, id: "coverage-session" } as SessionModel,
+      repoRoot: root,
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-cov" }),
+      ...collation,
+    });
+
+    expect(outcome.pipeline.coverage.map((v) => v.ruleId)).toContain("every-hunk-covered");
+    expect(outcome.pipeline.coverage.map((v) => v.elementRef)).toContain(`/hunks/${hunkId}`);
+
+    // The same round over an EMPTY hunk universe reports nothing — the verdict tracks the
+    // real patchset rather than being a constant the assertion above could not tell apart.
+    const empty = await runtimeWith([]).runRound({
+      session: { ...session, id: "coverage-empty-session" } as SessionModel,
+      repoRoot: root,
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-cov-2" }),
+      ...collation,
+      hunks: [],
+      lintContextFor: (lens) => ({ ...collation.lintContextFor(lens), hunks: [] }),
+    });
+    expect(empty.pipeline.coverage).toEqual([]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
