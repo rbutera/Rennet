@@ -663,3 +663,152 @@ describe("setTrackerValue — the global-rung tracker write (#461, B7)", () => {
     );
   });
 });
+
+describe("harnessHosts + setHarnessEnabled — per-host agents (C17 cluster 3, #485)", () => {
+  /** A composition over a MUTABLE daemon-settings store plus a per-host detection stub. */
+  function agentDeps(options: {
+    projects?: Project[];
+    detect?: SettingsCompositionDeps["detectHarnessesOn"];
+    stored?: DaemonSettings;
+  }) {
+    let stored: DaemonSettings = options.stored ?? { version: 1 };
+    const { deps } = makeDeps({
+      listProjects: () =>
+        options.projects ?? [
+          project({ source: "local" }),
+          project({ id: "b", source: "wsl:Ubuntu" }),
+        ],
+      readDaemonSettings: () => stored,
+      updateDaemon: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+      ...(options.detect ? { detectHarnessesOn: options.detect } : {}),
+    });
+    return { deps, read: () => stored };
+  }
+
+  /** Each host reports its OWN harnesses; the local machine has both, the distro only codex. */
+  const perHost: SettingsCompositionDeps["detectHarnessesOn"] = async (source) =>
+    source === "local"
+      ? [
+          { id: "claude", version: "2.1.0" },
+          { id: "codex", version: "0.9.0" },
+        ]
+      : [{ id: "codex", version: "0.8.0" }];
+
+  it("two hosts each report THEIR OWN harnesses — never the local set copied across", async () => {
+    const { deps } = agentDeps({ detect: perHost });
+    const hosts = await createSettingsComposition(deps).harnessHosts();
+
+    expect(hosts.map((host) => host.source)).toEqual(["local", "wsl:Ubuntu"]);
+    expect(hosts[0]).toEqual({
+      source: "local",
+      asked: true,
+      detected: [
+        { id: "claude", version: "2.1.0", enabled: true },
+        { id: "codex", version: "0.9.0", enabled: true },
+      ],
+    });
+    // POSITIVE CONTROL (the no-fabrication law at unit scale): `claude` is absent from the
+    // distro's answer, so the distro has NO claude row and its codex carries the DISTRO's
+    // version. Copy the local set across — the bug this guards — and both assertions fail.
+    expect(hosts[1]?.detected).toEqual([{ id: "codex", version: "0.8.0", enabled: true }]);
+    expect(hosts[1]?.detected.some((harness) => harness.id === "claude")).toBe(false);
+  });
+
+  it("reports on EVERY host settings.get enumerates — one entry per card", async () => {
+    const { deps } = agentDeps({ detect: perHost });
+    const composition = createSettingsComposition(deps);
+    const cards = (await composition.get()).daemonHosts ?? [];
+    const hosts = await composition.harnessHosts();
+    expect(hosts.map((host) => host.source)).toEqual(cards.map((card) => card.source));
+  });
+
+  it("a host that CANNOT be asked reads honestly absent, not 'no agents installed'", async () => {
+    const { deps } = agentDeps({
+      // null = unaskable (a paired device that dials US); a throw is the same nothing.
+      detect: async (source) => {
+        if (source === "local") return [{ id: "claude", version: "2.1.0" }];
+        throw new Error("wsl.exe is not installed");
+      },
+    });
+    const hosts = await createSettingsComposition(deps).harnessHosts();
+    expect(hosts[1]).toEqual({ source: "wsl:Ubuntu", asked: false, detected: [] });
+    // The distinction the flag exists for: asked-with-nothing is a REAL claim, and this is not it.
+    expect(hosts[1]?.asked).toBe(false);
+  });
+
+  it("a host with NO detection dep at all is unasked — never given this machine's agents", async () => {
+    const { deps } = agentDeps({});
+    expect(await createSettingsComposition(deps).harnessHosts()).toEqual([
+      { source: "local", asked: false, detected: [] },
+      { source: "wsl:Ubuntu", asked: false, detected: [] },
+    ]);
+  });
+
+  it("toggling an agent off on ONE host persists and leaves the other host untouched", async () => {
+    const { deps, read } = agentDeps({ detect: perHost });
+    const composition = createSettingsComposition(deps);
+
+    expect(
+      composition.setHarnessEnabled({ source: "local", harnessId: "codex", enabled: false }),
+    ).toEqual(["codex"]);
+    expect(read().hosts).toEqual({ local: { disabledHarnesses: ["codex"] } });
+
+    // A RE-READ reflects it: the decision came back from the store, not from a session set.
+    const hosts = await composition.harnessHosts();
+    expect(hosts[0]?.detected).toEqual([
+      { id: "claude", version: "2.1.0", enabled: true },
+      // Still DETECTED and still listed — ruled out of reviews, not uninstalled or hidden.
+      { id: "codex", version: "0.9.0", enabled: false },
+    ]);
+    // The other host's codex is untouched — the decision is scoped to the host.
+    expect(hosts[1]?.detected).toEqual([{ id: "codex", version: "0.8.0", enabled: true }]);
+
+    // Re-enabling drops the id rather than accumulating a tombstone.
+    expect(
+      composition.setHarnessEnabled({ source: "local", harnessId: "codex", enabled: true }),
+    ).toEqual([]);
+    expect((await composition.harnessHosts())[0]?.detected.every((h) => h.enabled)).toBe(true);
+  });
+
+  it("a status poll that learns a version does NOT un-rule-out an agent on that host", async () => {
+    const { deps, read } = agentDeps({ detect: perHost });
+    const composition = createSettingsComposition(deps);
+    composition.setHarnessEnabled({ source: "local", harnessId: "claude", enabled: false });
+
+    // The two facts share one host entry, written by two different paths. Replace the entry
+    // instead of merging it — the bug this guards — and the decision silently vanishes.
+    await createSettingsComposition({
+      ...deps,
+      probeDaemon: async () => ({ version: "0.1.5" }),
+    }).daemonStatus();
+
+    expect(read().hosts?.local).toEqual({
+      disabledHarnesses: ["claude"],
+      lastSeenVersion: "0.1.5",
+    });
+    expect((await composition.harnessHosts())[0]?.detected[0]).toEqual({
+      id: "claude",
+      version: "2.1.0",
+      enabled: false,
+    });
+  });
+
+  it("a malformed daemon-settings REFUSES the decision rather than reporting a false success", () => {
+    const { deps } = makeDeps({
+      detectHarnessesOn: async () => [{ id: "claude", version: "2.1.0" }],
+      updateDaemon: () => {
+        throw new Error("daemon-settings is malformed");
+      },
+    });
+    expect(() =>
+      createSettingsComposition(deps).setHarnessEnabled({
+        source: "local",
+        harnessId: "claude",
+        enabled: false,
+      }),
+    ).toThrow(/malformed/);
+  });
+});

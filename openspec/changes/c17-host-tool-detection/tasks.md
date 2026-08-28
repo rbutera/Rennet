@@ -78,7 +78,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
 
 ## 3. Per-host agents + a served enable toggle (Objective: `agentsByHost` per host, per-host enable toggle)
 
-- [ ] 3.1 **RULING AMENDMENT (orchestrator-settled 2026-08-28).** As originally written this task assumed the
+- [x] 3.1 **RULING AMENDMENT (orchestrator-settled 2026-08-28).** As originally written this task assumed the
   CLIENT fans harness detection out over one daemon connection per host. That premise is wrong: the client's
   `ConnectionSupervisor` connects to exactly ONE daemon (`ensureDaemonForProject` picks the locus daemon), by
   design — there is no second connection to dispatch to. **Re-ruled: per-host harness detection is
@@ -90,12 +90,12 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
   **honest absence** (`asked: false`, no rows) — never the local set copied everywhere. No engine change —
   `harness-discovery.ts` already runs per-locus; this is the per-host routing + keying. `harness.detect`
   itself is untouched (the front door and mobile still read it).
-- [ ] 3.2 A served per-host enable store for `setToolEnabled` (closes the named gap): persist a host+tool
+- [x] 3.2 A served per-host enable store for `setToolEnabled` (closes the named gap): persist a host+tool
   enable/disable decision the way per-host facts persist (daemon-settings rung / a small settings key), so a
   ruled-out agent stays ruled out across reload — replacing the session-only `useState` set in
   `live-projection.tsx`. Add the read/write command(s) if none fits; keep the `setToolEnabled(hostId, toolId,
   enabled)` signature unchanged (reconciliation 3).
-- [ ] 3.3 Tests: two hosts each report their own detected harnesses (not the local set copied everywhere);
+- [x] 3.3 Tests: two hosts each report their own detected harnesses (not the local set copied everywhere);
   toggling an agent off on one host persists (a re-read reflects it) and does not affect the other host.
   **Positive control:** with a harness binary absent from a host's injected PATH that agent row is **absent**
   for that host, never a stale hit. Cluster gate green. Commit.
