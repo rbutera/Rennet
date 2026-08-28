@@ -57,6 +57,29 @@ const loadRealQuery: LoadClaudeQuery = async () => {
  * translating here means the SDK's version-specific shape lives in exactly one
  * place and the adapter's hermetic tests never have to know about it.
  */
+/**
+ * Normalize a raw `outputSchema` into the shape the installed `claude` binary's
+ * `--json-schema` (ajv) validator accepts. Zod v4's `z.toJSONSchema` stamps a
+ * top-level `$schema` naming the draft-2020-12 meta-schema; the CLI's ajv has no
+ * 2020-12 meta-schema registered and rejects the WHOLE schema (`claude` exits 1:
+ * "not a valid JSON Schema: no schema with key or ref .../draft/2020-12/schema")
+ * BEFORE the turn runs. Dropping the top-level meta declaration (`$schema`/`$id`)
+ * lets ajv validate under its default dialect — proven live to still ACCEPT the
+ * schema AND emit structured output. Every constraint in the schema BODY (fields,
+ * `required`, `enum`, `const`, nested `$ref`) is untouched, so no caller's contract
+ * weakens. This is the one choke point all five `outputSchema` callers route through
+ * (boards, delta-digest, draft-pr-body, handoff-compose, refine-comment); first
+ * surfaced by C15's `runRound` — the first production run of any of them — against
+ * claude 2.1.246 (above Rennet's tested range; a general version-robustness pass on
+ * adapter args is a noted follow-up). Shallow by design: only the top-level meta keys
+ * are removed, so internal `$ref`/`$defs` references keep resolving.
+ */
+export function normalizeOutputSchema(schema: unknown): Record<string, unknown> {
+  if (schema === null || typeof schema !== "object") return schema as Record<string, unknown>;
+  const { $schema: _schema, $id: _id, ...rest } = schema as Record<string, unknown>;
+  return rest;
+}
+
 export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   const sdkOptions: SdkOptions = {
     cwd: options.cwd,
@@ -89,7 +112,7 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   if (options.outputSchema !== undefined) {
     sdkOptions.outputFormat = {
       type: "json_schema",
-      schema: options.outputSchema as Record<string, unknown>,
+      schema: normalizeOutputSchema(options.outputSchema),
     };
   }
   // Cursor-resume (B09): the adapter's `resume` (a harness session id) is the
