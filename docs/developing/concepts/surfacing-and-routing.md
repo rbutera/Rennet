@@ -163,7 +163,7 @@ id and carries the id's argument schema, output schema, label, and an `exposure`
 record. All three consumers read it: the dispatch map, the `app_*` agent
 projection, and the ⌘K command menu, which filters the table by
 `exposure.commandMenu` and runs the surviving rows live through the client's data
-seam. That flag is decided command by command — the row-by-row walk of all 95 is
+seam. That flag is decided command by command — the row-by-row walk of all 97 is
 [command menu exposure](../reference/command-menu-exposure.md). The menu's
 navigation entries (sessions, projects, settings pages, dialog actions) come from
 the same projections the sidebar reads, not from the registry.

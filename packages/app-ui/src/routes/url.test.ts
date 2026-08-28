@@ -48,19 +48,28 @@ describe("url grammar", () => {
   });
 
   it("readSessionQuery applies fallbacks across the whole grammar", () => {
-    const search = new URLSearchParams("view=bogus&lens=noise&file=x.ts&round=gen2");
+    const search = new URLSearchParams("view=bogus&lens=noise&file=x.ts&round=gen2&ask=why%3F");
     expect(readSessionQuery(search)).toEqual({
       view: DEFAULT_VIEW,
       lens: "noise",
       file: "x.ts",
       round: "gen2", // the round-diff identity (finding 2) round-trips through the grammar
+      ask: "why?", // the New Chat mint's opening ask (C21) survives the hand-off
     });
     expect(readSessionQuery(new URLSearchParams())).toEqual({
       view: DEFAULT_VIEW,
       lens: DEFAULT_LENS,
       file: null,
       round: null,
+      ask: null,
     });
+  });
+
+  it("sessionPath carries the mint's opening ask, and omits it when nothing was typed", () => {
+    expect(sessionPath("abc", { ask: "Why is this diff so large?" })).toBe(
+      "/s/abc?ask=Why+is+this+diff+so+large%3F",
+    );
+    expect(sessionPath("abc")).toBe("/s/abc");
   });
 
   describe("navigation intents — replace vs push", () => {

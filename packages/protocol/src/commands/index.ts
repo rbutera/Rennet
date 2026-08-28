@@ -1388,6 +1388,33 @@ const definitions = {
     input: z.object({}),
     output: z.object({ sessions: z.array(sidebarSessionSchema) }),
   },
+  // ── Session minting: the New Chat front door (C21, C12 cluster 7) ───────────
+  // "Start a review" is the product's front door and it had NO server path: C12 built the
+  // target picker behind a `session.*` gate that B9 later cleared, and nothing came back —
+  // a row click selected and did nothing. This is that path. One act (#466 res. 11): mint
+  // a durable session AND claim the target, so the row disappears from New Chat while the
+  // claim holds and archive is the only release.
+  //
+  // `branch` absent ⇒ a NO-TARGET mint (the "Current Checkout · talk about the project"
+  // row): a fresh session with no claim, which claims nothing and hides nothing. `branch`
+  // present ⇒ mint-or-REATTACH: a second click on an already-claimed target returns the
+  // session that owns it (`reattached: true`), never a second session for one target.
+  // `session: null` is the honest no-store answer — nothing was minted — matching the
+  // language the sibling writes already speak.
+  "session.mint": {
+    input: z.object({
+      projectId: z.string().min(1),
+      /** The claimed branch. Absent mints a no-target session (claims nothing). */
+      branch: z.string().min(1).optional(),
+      /** The claimed branch's PR number, when the row was a pull request. */
+      prNumber: z.number().int().positive().optional(),
+    }),
+    output: z.object({
+      session: sidebarSessionSchema.nullable(),
+      /** True when an existing live claim owned the target and this reattached to it. */
+      reattached: z.boolean(),
+    }),
+  },
   "session.rename": {
     // An emptied title is not stored empty: it CLEARS the reviewer's title, so the row
     // falls back to the claimed branch (the same restore-the-default rule as a project).
@@ -1468,7 +1495,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 95 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 97 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *
@@ -1477,7 +1504,7 @@ const AGENT_EXPOSED = new Set<string>([
  * has no result surface. So a row earns `true` only when all four hold:
  *
  * 1. Its input schema is satisfied by `{}` — nothing required the menu cannot supply
- *    (18 of 95 pass; the rest need a review/session/project/span id or a host path).
+ *    (18 of 97 pass; the rest need a review/session/project/span id or a host path).
  * 2. It is an ACTION, not a read the UI already drives for itself (`settings.get`,
  *    `session.list`, `board.read`, `harness.hosts`, `daemon.status`, … all stay false:
  *    running them from the menu changes nothing a reader would see).
