@@ -14,7 +14,9 @@ import type {
   DaemonHostSection,
   DaemonHostStatus,
   DaemonSettings,
+  DetectedForge,
   DetectedHarness,
+  ForgeHostDetection,
   HarnessHostDetection,
   PairedDevice,
   Project,
@@ -98,6 +100,24 @@ export interface SettingsCompositionDeps {
    */
   detectHarnessesOn?(source: ProjectSource): Promise<DetectedHarness[] | null>;
   /**
+   * Ask ONE host which forge (source-control) CLIs are installed ON IT (C17 amendment B) —
+   * the exact mirror of `detectHarnessesOn`, and the same honesty: `null` when that host
+   * CANNOT BE ASKED from here, so its Source Control section reads honestly absent instead of
+   * inheriting this machine's `gh`. An empty ARRAY is the different, real claim: asked, none.
+   */
+  detectForgesOn?(source: ProjectSource): Promise<DetectedForge[] | null>;
+  /**
+   * UPDATE one host's daemon (C17 cluster 6, #534) — the effect behind the Update Daemon
+   * button. Same contract as `reconnectDaemon`: it resolves the host's post-update answer
+   * (`null` ⇒ it did not come back), and it MAY THROW, with the message shown to the viewer
+   * as the reason the update failed.
+   *
+   * Absent dep ⇒ this composition has NO update mechanism at all, and every update attempt
+   * says so rather than falling back to a probe that would report a fake success. It never
+   * falls back to `probeDaemon`: an update that quietly did nothing must not read green.
+   */
+  updateDaemonOn?(source: ProjectSource): Promise<{ version: string | null } | null>;
+  /**
    * The newest daemon version this client knows of — the version the app/server ships, which
    * is what a host's daemon would be updated TO. Absent ⇒ `updateAvailable` is withheld
    * entirely (no update mechanism to compare against ⇒ no flag, never a fake one).
@@ -170,6 +190,14 @@ export interface SettingsComposition {
    */
   reconnect(source: ProjectSource): Promise<{ status: DaemonHostStatus; error?: string }>;
   /**
+   * UPDATE one host's daemon (C17 cluster 6, #534) — the operation the host card's Update
+   * Daemon button performs, offered only where `daemonStatus` reported a real `updateAvailable`.
+   * Reports the same outcome shape as `reconnect`, for the same reason: the card must follow
+   * the host's post-update STATUS, never the click. A host with no update mechanism returns its
+   * unchanged status plus the reason — never a "success" for an update that did not happen.
+   */
+  update(source: ProjectSource): Promise<{ status: DaemonHostStatus; error?: string }>;
+  /**
    * The coding agents detected ON EACH HOST (C17 cluster 3, #485), for exactly the hosts
    * `get().daemonHosts` enumerates — the same enumeration `daemonStatus` walks, so a card can
    * never show agents belonging to another machine. Detection happens HERE, server-side: the
@@ -179,6 +207,16 @@ export interface SettingsComposition {
    * honest absence, not "no agents installed" — and never the local set copied across.
    */
   harnessHosts(): Promise<HarnessHostDetection[]>;
+  /**
+   * The forge (source-control) CLIs detected ON EACH HOST (C17 amendment B), over the SAME host
+   * enumeration `harnessHosts` walks. `forge.detect` answers for one daemon, so keying its rows
+   * to every card would put this machine's `gh` on a distro it was never observed on — and
+   * keying it to the connected host alone left every other card structurally unfillable, saying
+   * "Connect … to detect its tooling" about a host already connected with the tool installed.
+   *
+   * A host this daemon cannot interrogate reads `asked: false` with no rows: honest absence.
+   */
+  forgeHosts(): Promise<ForgeHostDetection[]>;
   /**
    * Rule one agent in or out of reviews ON ONE HOST (C17 cluster 3.2) — the served store the
    * per-host enable toggle writes through, so a ruled-out agent stays ruled out across reload
@@ -301,6 +339,12 @@ function hostStatus(
     ...(version ? { version } : {}),
     ...(version && latest ? { updateAvailable: compareVersions(version, latest) < 0 } : {}),
   };
+}
+
+/** The update attempt for a composition with NO update effect wired: it says so and changes
+ *  nothing, so the card shows a failure line rather than a success it did not earn. */
+function noUpdateMechanism(): Promise<{ version: string | null } | null> {
+  return Promise.reject(new Error("Rennet has no way to update this host's daemon."));
 }
 
 export function createSettingsComposition(deps: SettingsCompositionDeps): SettingsComposition {
@@ -428,6 +472,39 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     return hosts;
   };
 
+  /**
+   * Run ONE on-demand per-host operation (Reconnect, cluster 5; Update Daemon, cluster 6) and
+   * report its OUTCOME rather than a state change. Both operations share this body because
+   * both must obey the same rule: the card follows what the host answered AFTERWARDS, never
+   * the click. A thrown reason is surfaced verbatim — a generic "failed" tells the viewer
+   * nothing about which thing to go fix — and a host that answered is remembered as last-seen,
+   * merged into its entry so the viewer's per-host decisions survive.
+   */
+  const attemptOn = async (
+    source: ProjectSource,
+    attempt: ((source: ProjectSource) => Promise<{ version: string | null } | null>) | undefined,
+  ): Promise<{ status: DaemonHostStatus; error?: string }> => {
+    const lastSeenVersion = deps.readDaemonSettings().hosts?.[source]?.lastSeenVersion;
+    let answer: { version: string | null } | null = null;
+    let error: string | undefined;
+    try {
+      answer = (await attempt?.(source)) ?? null;
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : String(reason);
+    }
+    const status = hostStatus(source, answer, lastSeenVersion, deps.latestDaemonVersion);
+    if (status.version && status.version !== lastSeenVersion) {
+      try {
+        deps.updateDaemon((current) =>
+          withHostEntries(current, { [source]: { lastSeenVersion: status.version as string } }),
+        );
+      } catch {
+        // A malformed daemon-settings refuses the write; the live outcome still returns.
+      }
+    }
+    return { status, ...(error ? { error } : {}) };
+  };
+
   return {
     get: async (): Promise<SettingsView> => {
       const schemeState = deps.readGlobalState();
@@ -496,32 +573,26 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return statuses;
     },
 
-    reconnect: async (source): Promise<{ status: DaemonHostStatus; error?: string }> => {
-      const lastSeenVersion = deps.readDaemonSettings().hosts?.[source]?.lastSeenVersion;
-      const attempt = deps.reconnectDaemon ?? deps.probeDaemon;
-      let answer: { version: string | null } | null = null;
-      let error: string | undefined;
-      try {
-        answer = (await attempt?.(source)) ?? null;
-      } catch (reason) {
-        // The handshake's OWN reason (no Node in the distro, a device that dials us and cannot
-        // be dialled back, a dead port) — shown verbatim, because a generic "failed" tells the
-        // viewer nothing about which thing to go fix.
-        error = reason instanceof Error ? reason.message : String(reason);
+    reconnect: (source) => attemptOn(source, deps.reconnectDaemon ?? deps.probeDaemon),
+
+    update: (source) =>
+      // No fallback to a probe: an update with no mechanism must report that it did nothing,
+      // and a probe would answer "reachable" for a host still running the OLD version.
+      attemptOn(source, deps.updateDaemonOn ?? noUpdateMechanism),
+
+    forgeHosts: async (): Promise<ForgeHostDetection[]> => {
+      const hosts: ForgeHostDetection[] = [];
+      for (const host of daemonHostSections(deps.listProjects())) {
+        // A detection that REJECTS is a host that could not be asked, exactly like a dep that
+        // resolves null — either way nothing was observed there, so nothing is claimed.
+        const detected = await deps.detectForgesOn?.(host.source).catch(() => null);
+        hosts.push(
+          detected
+            ? { source: host.source, asked: true, detected }
+            : { source: host.source, asked: false, detected: [] },
+        );
       }
-      const status = hostStatus(source, answer, lastSeenVersion, deps.latestDaemonVersion);
-      if (status.version && status.version !== lastSeenVersion) {
-        try {
-          // Same merge as the poll: a reconnect that succeeded is a real sighting, so it is
-          // remembered — and it must not clobber the agent decisions on that host's entry.
-          deps.updateDaemon((current) =>
-            withHostEntries(current, { [source]: { lastSeenVersion: status.version as string } }),
-          );
-        } catch {
-          // A malformed daemon-settings refuses the write; the live outcome still returns.
-        }
-      }
-      return { status, ...(error ? { error } : {}) };
+      return hosts;
     },
 
     harnessHosts: async (): Promise<HarnessHostDetection[]> => {

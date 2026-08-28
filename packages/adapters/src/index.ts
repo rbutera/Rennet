@@ -177,6 +177,7 @@ export {
   type ForgeSpec,
   type ForgeStatus,
   githubForge,
+  wslForgeDetectionDeps,
 } from "./forge-discovery";
 export {
   defaultFsListDirDeps,

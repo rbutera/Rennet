@@ -3324,7 +3324,9 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       setTrackerValue: vi.fn(() => ({})),
       daemonStatus: vi.fn(async () => []),
       reconnect: vi.fn(async () => ({ status: { source: "local" as const, reachable: false } })),
+      update: vi.fn(async () => ({ status: { source: "local" as const, reachable: false } })),
       harnessHosts: vi.fn(async () => []),
+      forgeHosts: vi.fn(async () => []),
       setHarnessEnabled: vi.fn(() => []),
       setForgeEnabled: vi.fn(() => []),
     };

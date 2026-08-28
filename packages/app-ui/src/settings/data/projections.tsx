@@ -166,6 +166,14 @@ export interface SettingsProjection {
    * `{ reachable: false }`, so the button reports a failure instead of pretending to connect.
    */
   reconnectHost(id: string): Promise<{ readonly reachable: boolean; readonly error?: string }>;
+  /**
+   * UPDATE a host's daemon (C17 cluster 6, #534) — what Update Daemon does, offered only where
+   * the host reported a real `updateAvailable`. Resolves the honest OUTCOME: `reachable` is
+   * whether the host's daemon answered after the attempt, and `error` carries the reason when
+   * the update did not happen. A projection with no served backend resolves `{ reachable:
+   * false }`, so the button reports a failure instead of claiming an update it never performed.
+   */
+  updateHost(id: string): Promise<{ readonly reachable: boolean; readonly error?: string }>;
   /** Enable/disable one detected tool (source-control OR agent) on a host. */
   setToolEnabled(hostId: string, toolId: string, enabled: boolean): void;
   /** Set a review role's assignment in one scenario (the mappings dialog cell edit). */
@@ -206,6 +214,8 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   removeHost: () => undefined,
   // No backend to hand a handshake to, so the honest outcome is a failed reconnect.
   reconnectHost: async () => ({ reachable: false }),
+  // No backend to hand an update to, so the honest outcome is an update that did not happen.
+  updateHost: async () => ({ reachable: false }),
   setToolEnabled: () => undefined,
   setRoleAssignment: () => undefined,
   setProjectName: () => undefined,

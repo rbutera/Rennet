@@ -25,6 +25,7 @@ import {
   discoveryResultSchema,
   dispositionTypeSchema,
   flaggedReviewSchema,
+  forgeHostDetectionSchema,
   forgeRequestSchema,
   forgeReviewEventSchema,
   fsListDirResultSchema,
@@ -427,6 +428,16 @@ const definitions = {
     input: z.object({}),
     output: z.object({ detected: z.array(detectedForgeSchema) }),
   },
+  // Per-host forge detection (C17 amendment B), the exact mirror of `harness.hosts`: the daemon
+  // this is dispatched to walks the SAME host enumeration and runs forge discovery through each
+  // host's OWN deps — itself directly, a WSL distro through `wsl.exe`, a paired remote device not
+  // at all. Each entry carries `asked`, so a host that cannot be interrogated reads honestly
+  // absent rather than inheriting this machine's `gh`. `forge.detect` stays for the single-host
+  // read; this is what the settings surface's Source Control sections are keyed by.
+  "forge.hosts": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(forgeHostDetectionSchema) }),
+  },
   // Rule a forge CLI in or out ON ONE HOST (amendment A) — the served write behind the Source
   // Control row's toggle, mirroring harness.setEnabled exactly and persisted on the same
   // per-host daemon-settings entry, so the decision survives reload. Read back through
@@ -461,6 +472,21 @@ const definitions = {
       /** That host's status AFTER the attempt — the same shape `daemon.status` returns. */
       status: daemonHostStatusSchema,
       /** Why the handshake failed, when it did. Absent on success. Never a generic filler. */
+      error: z.string().optional(),
+    }),
+  },
+  // UPDATE one host's daemon (C17 cluster 6, #534) — the operation behind the host card's
+  // Update Daemon button, which shows only when `daemon.status` reported a real
+  // `updateAvailable`. The only host kind with an update mechanism today is `wsl:<distro>`:
+  // the current server bundle is delivered into the distro and the old daemon restarted on it.
+  // A host with no mechanism (this machine's daemon ships with the app; a paired device
+  // updates itself) says so in `error` and changes nothing — never a dead "Updating…".
+  "daemon.update": {
+    input: z.object({ source: sourceSchema }),
+    output: z.object({
+      /** That host's status AFTER the attempt — the same shape `daemon.status` returns. */
+      status: daemonHostStatusSchema,
+      /** Why the update failed, when it did. Absent on success. Never a generic filler. */
       error: z.string().optional(),
     }),
   },

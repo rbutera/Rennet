@@ -2,7 +2,9 @@ import { constants } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { posix as posixPath, win32 as win32Path } from "node:path";
+import { locusCommand } from "@rennet/core";
 import { execa } from "execa";
+import { wslDiscoveryDeps } from "./harness-discovery";
 
 /**
  * Forge (source-control) CLI detection — the `gh` engine, mirroring `harness-discovery.ts`.
@@ -201,6 +203,33 @@ export function detectForges(
   registry: readonly ForgeSpec[] = FORGE_REGISTRY,
 ): Promise<DetectedForge[]> {
   return Promise.all(registry.map((spec) => detectForge(spec, deps)));
+}
+
+/**
+ * Forge-detection effects for a WSL DISTRO (C17 amendment B) — the distro's own PATH, its own
+ * filesystem, its own `gh`. Reuses `wslDiscoveryDeps` verbatim (identical harvest/list/probe
+ * contract) and adds the one effect forge detection needs beyond harness discovery: `gh auth
+ * status`, run INSIDE the distro. So a WSL host card shows the distro's `gh` and its real auth
+ * state, never the Windows host's.
+ */
+export async function wslForgeDetectionDeps(distro: string): Promise<ForgeDetectionDeps> {
+  const discovery = await wslDiscoveryDeps(distro);
+  return {
+    ...discovery,
+    async probeAuth(path: string): Promise<boolean> {
+      const command = locusCommand({ kind: "wsl", distro }, path, ["auth", "status"]);
+      try {
+        const result = await execa(command.file, [...command.args], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+        });
+        return result.exitCode === 0;
+      } catch {
+        return false;
+      }
+    },
+  };
 }
 
 /** The default effects: real login shell, filesystem, and process execution. Mirrors

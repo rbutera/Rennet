@@ -25,14 +25,15 @@ import {
 //     invents no version. A remote host's platform is never reported to us, so its
 //     glyph is the neutral `unknown` mark rather than a guessed penguin.
 //
-//   • sourceControlByHost ← `forge.detect` (C17 cluster 1), the forge CLIs present on
-//     the host whose daemon answered — GitHub / `gh` only, the #484 boundary (GitLab
-//     and Bitbucket are planned, not built). `forge.detect` runs on the ONE daemon this
-//     client is connected to, so it describes exactly that host (the `isLocal` section)
-//     and no other; every other card's Source Control section stays honestly empty
-//     rather than inheriting this machine's answer. A `not-installed` forge is DROPPED,
-//     so a binary renamed out of PATH makes its row disappear instead of going stale.
-//     The row's enable toggle is served too (amendment A): it writes `forge.setEnabled` and
+//   • sourceControlByHost ← `forge.hosts` (C17 amendment B), the forge CLIs present on EACH
+//     host the settings surface enumerates — GitHub / `gh` only, the #484 boundary (GitLab
+//     and Bitbucket are planned, not built). Like `harness.hosts` the fan-out is SERVER-side:
+//     the daemon probes each host through that host's own deps (a WSL distro's `gh` over
+//     `wsl.exe`), so a distro card shows ITS `gh` rather than inheriting this machine's. A host
+//     that could not be asked comes back `asked: false` and is dropped here, so its card reads
+//     the honest "Connect … to detect its tooling" line. A `not-installed` forge is DROPPED
+//     too, so a binary renamed out of PATH makes its row disappear instead of going stale.
+//     The row's enable toggle is served (amendment A): it writes `forge.setEnabled` and
 //     reads the host's ruling back off `harness.hosts`, so ruling `gh` out survives a reload.
 //
 //   • agentsByHost ← `harness.hosts` (C17 cluster 3). The daemon runs the real discovery
@@ -57,14 +58,16 @@ import {
 //     status says the host answered — a failed attempt keeps the card unreachable and shows
 //     the handshake's own reason.
 //
+//   • updateHost ← `daemon.update` (C17 cluster 6, #534). The Update Daemon button — shown only
+//     where the status carried a real `updateAvailable` — dispatches the real per-host update
+//     and invalidates `daemon.status` the same way, so the new version on the card is the one
+//     the host answered with afterwards. A host with no update mechanism reports its reason.
+//
 // Every OTHER field stays EMPTY on purpose — the backend does not exist even post-fold,
 // so honest-empty is the truthful answer, not a stub. Each named in the cluster-10 report:
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
 //     carries no per-host counts, so the Remove confirmation names none rather than a
 //     fabricated blast radius.
-//   – sourceControlByHost on a NON-connected host: `forge.detect` answers for one daemon, so
-//     a WSL card cannot show its own `gh` yet (amendment B: a server-side `forge.hosts`
-//     mirroring `harness.hosts`). Until then those cards read honestly empty.
 //   – reviewRoles: no Model-Council / mappings command exists.
 //   – nameByProject / glyphByProject / worktreeByProject / trackerByProject: no served
 //     write command (the composition's `setTrackerValue` / `worktreeBaseDir` are unwired).
@@ -139,8 +142,8 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   // `harness.hosts` make), joined below with the per-host daemon probe.
   const { data: settings } = useCommand("settings.get", {});
   const { data: status } = useCommand("daemon.status", {});
-  // The forge CLIs on the host whose daemon answers this client's ONE connection.
-  const { data: forges } = useCommand("forge.detect", {});
+  // The forge CLIs on EACH enumerated host, probed server-side through that host's own deps.
+  const { data: forges } = useCommand("forge.hosts", {});
   // The toggle is a served WRITE: it persists, then invalidates the detection read so the
   // switch reflects what is actually STORED rather than an optimistic local guess.
   const { mutate: setEnabled } = useMutation("harness.setEnabled", {
@@ -150,6 +153,11 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   // invalidates `daemon.status`, so a card only turns reachable when the REFRESHED status
   // says the host answered — the button can never paint itself green.
   const { mutate: reconnect } = useMutation("daemon.reconnect", {
+    invalidates: ["daemon.status"],
+  });
+  // Update Daemon (C17 cluster 6, #534) — the same served-operation shape: the refreshed status
+  // is what moves the card, so the button can never paint a version the host did not report.
+  const { mutate: update } = useMutation("daemon.update", {
     invalidates: ["daemon.status"],
   });
   // The Source Control row's toggle (amendment A) — the same served-write shape, invalidating
@@ -195,28 +203,29 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       daemon: daemonInfo(statusBySource.get(section.source)),
     }));
 
-    // `forge.detect` answers for the ONE daemon this client is connected to — the
-    // `isLocal` section. Keying it anywhere else would copy this host's tooling onto a
-    // machine it was never observed on; every other card stays honestly empty.
-    const connectedSource = sections.find((section) => section.isLocal)?.source ?? "local";
-    // A forge whose binary is absent is DROPPED, not rendered Not Installed: renaming
-    // `gh` out of PATH makes the row disappear rather than report a stale hit.
-    const detectedForges = (forges?.detected ?? []).filter(
-      (forge) => forge.status !== "not-installed",
-    );
-    // The viewer's forge rulings for the connected host, served on that host's `harness.hosts`
-    // entry (amendment A). No entry ⇒ nothing ruled out ⇒ every row reads enabled.
-    const disabledForges = new Set(
-      data?.hosts.find((host) => host.source === connectedSource)?.disabledForges ?? [],
-    );
+    // Each host's OWN forge CLIs (amendment B). A host that could not be asked claims NOTHING —
+    // no key, so the card reads its honest "Connect … to detect its tooling" line rather than
+    // inheriting the machine this client is connected to. A forge whose binary is absent is
+    // DROPPED, not rendered Not Installed: renaming `gh` out of PATH makes the row disappear
+    // rather than report a stale hit.
+    const sourceControlByHost: Record<string, readonly DetectedTool[]> = {};
+    for (const host of forges?.hosts ?? []) {
+      if (!host.asked) continue;
+      // The viewer's forge rulings for THIS host, served on its `harness.hosts` entry
+      // (amendment A). No entry ⇒ nothing ruled out ⇒ every row reads enabled.
+      const disabled = new Set(
+        data?.hosts.find((entry) => entry.source === host.source)?.disabledForges ?? [],
+      );
+      const rows = host.detected
+        .filter((forge) => forge.status !== "not-installed")
+        .map((forge) => forgeRow(forge, disabled));
+      if (rows.length > 0) sourceControlByHost[host.source] = rows;
+    }
 
     return {
       ...EMPTY_SETTINGS_PROJECTION,
       hosts,
-      sourceControlByHost:
-        detectedForges.length > 0
-          ? { [connectedSource]: detectedForges.map((forge) => forgeRow(forge, disabledForges)) }
-          : {},
+      sourceControlByHost,
       agentsByHost,
       reconnectHost: async (hostId) => {
         try {
@@ -228,6 +237,19 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         } catch (reason) {
           // A rejected dispatch IS a failed reconnect — reported as one, with whatever the
           // failure said, rather than swallowed into a card that keeps looking hopeful.
+          return { reachable: false, error: reason instanceof Error ? reason.message : undefined };
+        }
+      },
+      updateHost: async (hostId) => {
+        try {
+          const outcome = await update({ source: hostId as ProjectSource });
+          return {
+            reachable: outcome.status.reachable,
+            ...(outcome.error ? { error: outcome.error } : {}),
+          };
+        } catch (reason) {
+          // A rejected dispatch IS a failed update — reported as one, never swallowed into a
+          // card that claims a version the host was never asked for.
           return { reachable: false, error: reason instanceof Error ? reason.message : undefined };
         }
       },
@@ -244,14 +266,25 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
           return;
         }
         // A Source Control row (amendment A): written under the forge's WIRE id, which is
-        // what the served ruling and the detection are both keyed by.
+        // what the served ruling and the detection are both keyed by. Scoped to the row's own
+        // host — every card's rows are now real (amendment B), so every card's toggle writes.
         const forgeId = FORGE_WIRE_ID[toolId];
-        if (forgeId && hostId === connectedSource) {
+        if (forgeId && sourceControlByHost[hostId]?.some((tool) => tool.id === toolId)) {
           void setForgeEnabled({ source, forgeId, enabled }).catch(() => undefined);
         }
       },
     };
-  }, [data, settings, status, forges, bridge.platform, setEnabled, setForgeEnabled, reconnect]);
+  }, [
+    data,
+    settings,
+    status,
+    forges,
+    bridge.platform,
+    setEnabled,
+    setForgeEnabled,
+    reconnect,
+    update,
+  ]);
 
   return <SettingsProjectionProvider value={projection}>{children}</SettingsProjectionProvider>;
 }

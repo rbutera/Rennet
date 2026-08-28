@@ -76,6 +76,12 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
   // here on this component's word.
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
+  // The update attempt's own state (C17 cluster 6, #534), the same honesty as reconnect: a REAL
+  // in-flight flag on the dispatched operation, and a failure line when it did not happen. A
+  // success announces nothing here — the refreshed daemon status carries the new version, and
+  // the button disappears because the host no longer reports an update.
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Take focus + select the moment the rename field opens (the a11y-safe autofocus).
@@ -108,6 +114,19 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
     // reports the failure — silence would read as success.
     if (!outcome.reachable) {
       setReconnectError(outcome.error ?? "Could not reach this host's daemon.");
+    }
+  }
+
+  async function updateDaemon() {
+    setUpdating(true);
+    setUpdateError(null);
+    const outcome = await projection.updateHost(host.id);
+    setUpdating(false);
+    // Only a FAILED update says anything: a success is proved by the host's refreshed daemon
+    // line. An update that failed without a reason still reports the failure — silence would
+    // read as success.
+    if (!outcome.reachable) {
+      setUpdateError(outcome.error ?? "Could not update this host's daemon.");
     }
   }
 
@@ -178,15 +197,16 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
             reading "Connecting…" for exactly as long as the operation is in flight, then
             either the card flips reachable (the refreshed status says so) or the failure
             line below names why. No pretend animation, no optimistic green. Update Daemon
-            is still button-only pending cluster 6. */}
+            (cluster 6, #534) is the same shape: it shows only where the host reported a REAL
+            update, and its success is the refreshed version, not this button's word. */}
         {!host.daemon.reachable ? (
           <Button variant="outline" size="xs" disabled={reconnecting} onClick={reconnect}>
             {reconnecting ? "Connecting…" : "Reconnect"}
           </Button>
         ) : null}
         {host.daemon.reachable && host.daemon.updateAvailable ? (
-          <Button variant="outline" size="xs">
-            Update Daemon
+          <Button variant="outline" size="xs" disabled={updating} onClick={updateDaemon}>
+            {updating ? "Updating the daemon…" : "Update Daemon"}
           </Button>
         ) : null}
       </div>
@@ -195,6 +215,9 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
       {reconnectError && !host.daemon.reachable ? (
         <span className="text-xs text-destructive">{reconnectError}</span>
       ) : null}
+      {/* The failed update's reason. It stays until the next attempt: unlike a reconnect there
+          is no "came back" state that explains itself. */}
+      {updateError ? <span className="text-xs text-destructive">{updateError}</span> : null}
 
       <SourceControlSection host={host} />
 

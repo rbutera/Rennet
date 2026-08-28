@@ -1871,6 +1871,27 @@ export const harnessHostDetectionSchema = z.object({
 });
 export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
 
+/**
+ * One host's detected forge (source-control) CLIs (C17 amendment B) — the wire shape
+ * `forge.hosts` returns, the exact mirror of `harness.hosts` for the Source Control section.
+ * `forge.detect` answers for ONE daemon, so keying its rows anywhere else would copy this
+ * machine's `gh` onto a host it was never observed on; this read asks each host the only way
+ * it CAN be asked, so a WSL distro with its own `gh` shows its own.
+ *
+ * `asked` carries the same honesty as the harness read: a host this daemon cannot interrogate
+ * reads `asked: false` with NO rows — an honest absence, distinct from `asked: true` with no
+ * rows ("that host has no forge CLI installed").
+ */
+export const forgeHostDetectionSchema = z.object({
+  /** The host these forge CLIs were detected on — the `source` key `daemonHosts` enumerates. */
+  source: sourceSchema,
+  /** This daemon could interrogate that host. `false` ⇒ the empty row list claims NOTHING. */
+  asked: z.boolean(),
+  /** Exactly the forge CLIs observed ON that host. Empty when unasked, or genuinely none. */
+  detected: z.array(detectedForgeSchema),
+});
+export type ForgeHostDetection = z.infer<typeof forgeHostDetectionSchema>;
+
 /** The whole settings view: the global layer plus every repo's repo layer. */
 export const settingsViewSchema = z.object({
   /** The resolved effective scheme (builtin `system`, overridden by global). */

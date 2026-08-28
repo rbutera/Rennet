@@ -23,5 +23,14 @@ export function daemonHandlers(rt: DispatchRuntime) {
       if (!deps.settings) throw new Error("daemon.reconnect: no settings composition is wired");
       return parseCommandOutput(name, await deps.settings.reconnect(input.source));
     },
+    "daemon.update": async (rawInput) => {
+      const name = "daemon.update" as const;
+      // The daemon self-update behind Update Daemon (C17 cluster 6, #534). The viewer pressed
+      // the button, so it runs — no gate, no confirmation (Rule Zero). Absent settings dep ⇒
+      // nothing here can perform an update, and saying so is the honest outcome.
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.settings) throw new Error("daemon.update: no settings composition is wired");
+      return parseCommandOutput(name, await deps.settings.update(input.source));
+    },
   } satisfies Record<string, CommandHandler>;
 }

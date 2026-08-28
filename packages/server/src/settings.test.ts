@@ -1,5 +1,11 @@
 import { escapePath } from "@rennet/core";
-import type { ClientSettings, DaemonSettings, Project, ProjectVisibility } from "@rennet/protocol";
+import type {
+  ClientSettings,
+  DaemonSettings,
+  DetectedForge,
+  Project,
+  ProjectVisibility,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
 
@@ -976,5 +982,154 @@ describe("setForgeEnabled — the forge ruling the toggle was missing (C17 amend
         enabled: false,
       }),
     ).toThrow(/malformed/);
+  });
+});
+
+describe("forgeHosts — per-host forge CLIs (C17 amendment B)", () => {
+  /** A composition over two hosts plus a swappable per-host forge detection stub. */
+  function hostsDeps(detect?: SettingsCompositionDeps["detectForgesOn"]) {
+    const { deps } = makeDeps({
+      listProjects: () => [
+        project({ source: "local" }),
+        project({ id: "b", source: "wsl:Ubuntu" }),
+      ],
+      ...(detect ? { detectForgesOn: detect } : {}),
+    });
+    return deps;
+  }
+
+  const gh = (version: string): DetectedForge => ({
+    id: "github",
+    version,
+    status: "available",
+    detail: "Authenticated with GitHub through the `gh` CLI.",
+  });
+
+  it("each host reports ITS OWN gh — the distro's version, never this machine's", async () => {
+    // The gap amendment B closes: keyed to the connected host alone, the distro card could
+    // never show a `gh` it really has. Copy the local answer across and this fails too.
+    const hosts = await createSettingsComposition(
+      hostsDeps(async (source) => [gh(source === "local" ? "2.76.0" : "2.40.0")]),
+    ).forgeHosts();
+    expect(hosts).toEqual([
+      { source: "local", asked: true, detected: [gh("2.76.0")] },
+      { source: "wsl:Ubuntu", asked: true, detected: [gh("2.40.0")] },
+    ]);
+  });
+
+  it("reports on EVERY host settings.get enumerates — one entry per card", async () => {
+    const composition = createSettingsComposition(hostsDeps(async () => [gh("2.76.0")]));
+    const cards = (await composition.get()).daemonHosts ?? [];
+    expect((await composition.forgeHosts()).map((host) => host.source)).toEqual(
+      cards.map((card) => card.source),
+    );
+  });
+
+  it("POSITIVE CONTROL: a host that cannot be asked reads honestly absent, never a borrowed gh", async () => {
+    const hosts = await createSettingsComposition(
+      hostsDeps(async (source) => (source === "local" ? [gh("2.76.0")] : null)),
+    ).forgeHosts();
+    expect(hosts[1]).toEqual({ source: "wsl:Ubuntu", asked: false, detected: [] });
+    // Bind the unasked host to the local answer — the exact bug — and this fails.
+    expect(hosts[1]?.detected).toHaveLength(0);
+  });
+
+  it("a detection that THROWS is unasked, and a host asked with nothing found says so", async () => {
+    const rejected = await createSettingsComposition(
+      hostsDeps(async () => {
+        throw new Error("gh probe blew up");
+      }),
+    ).forgeHosts();
+    expect(rejected.every((host) => host.asked === false)).toBe(true);
+
+    // Asked-and-empty is the DIFFERENT, real claim: that host has no forge CLI installed.
+    const empty = await createSettingsComposition(hostsDeps(async () => [])).forgeHosts();
+    expect(empty[0]).toEqual({ source: "local", asked: true, detected: [] });
+  });
+
+  it("no detection dep at all ⇒ every host unasked (nothing to ask, nothing invented)", async () => {
+    const hosts = await createSettingsComposition(hostsDeps()).forgeHosts();
+    expect(hosts.every((host) => host.asked === false && host.detected.length === 0)).toBe(true);
+  });
+});
+
+describe("update — the real daemon update behind Update Daemon (C17 cluster 6, #534)", () => {
+  /** A composition over a mutable daemon-settings store plus a swappable update effect. */
+  function updateDeps(options: {
+    update?: SettingsCompositionDeps["updateDaemonOn"];
+    probe?: SettingsCompositionDeps["probeDaemon"];
+    stored?: DaemonSettings;
+    latestDaemonVersion?: string;
+  }) {
+    let stored: DaemonSettings = options.stored ?? { version: 1 };
+    const { deps } = makeDeps({
+      listProjects: () => [project({ id: "b", source: "wsl:Ubuntu" })],
+      readDaemonSettings: () => stored,
+      updateDaemon: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+      ...(options.update ? { updateDaemonOn: options.update } : {}),
+      ...(options.probe ? { probeDaemon: options.probe } : {}),
+      ...(options.latestDaemonVersion ? { latestDaemonVersion: options.latestDaemonVersion } : {}),
+    });
+    return { deps, read: () => stored };
+  }
+
+  it("a successful update reports the NEW version the host answered with, and remembers it", async () => {
+    const { deps, read } = updateDeps({
+      stored: { version: 1, hosts: { "wsl:Ubuntu": { lastSeenVersion: "0.1.3" } } },
+      update: async () => ({ version: "0.2.0" }),
+      latestDaemonVersion: "0.2.0",
+    });
+    expect(await createSettingsComposition(deps).update("wsl:Ubuntu")).toEqual({
+      status: {
+        source: "wsl:Ubuntu",
+        reachable: true,
+        version: "0.2.0",
+        // Now current, so the button stops offering an update — a real comparison, not a flag.
+        updateAvailable: false,
+      },
+    });
+    expect(read().hosts?.["wsl:Ubuntu"]?.lastSeenVersion).toBe("0.2.0");
+  });
+
+  it("POSITIVE CONTROL: a FAILING update carries the reason and invents no new version", async () => {
+    // Report success from anything but the host's own post-update answer and this fails.
+    const { deps, read } = updateDeps({
+      stored: { version: 1, hosts: { "wsl:Ubuntu": { lastSeenVersion: "0.1.3" } } },
+      update: async () => {
+        throw new Error('No Node runtime in WSL distro "Ubuntu".');
+      },
+    });
+    const outcome = await createSettingsComposition(deps).update("wsl:Ubuntu");
+    expect(outcome.status.reachable).toBe(false);
+    expect(outcome.error).toBe('No Node runtime in WSL distro "Ubuntu".');
+    expect(outcome.status).not.toHaveProperty("version");
+    expect(outcome.status.lastSeenVersion).toBe("0.1.3");
+    // Nothing was learned, so nothing was remembered — the store still holds the old sighting.
+    expect(read().hosts?.["wsl:Ubuntu"]?.lastSeenVersion).toBe("0.1.3");
+  });
+
+  it("with NO update mechanism it says so — and never falls back to a probe that reads green", async () => {
+    // The trap this guards: reusing `probeDaemon` here would report the host reachable on its
+    // OLD version and the card would read as though the update had happened.
+    const { deps } = updateDeps({ probe: async () => ({ version: "0.1.3" }) });
+    const outcome = await createSettingsComposition(deps).update("wsl:Ubuntu");
+    expect(outcome.status.reachable).toBe(false);
+    expect(outcome.error).toBe("Rennet has no way to update this host's daemon.");
+    expect(outcome.status).not.toHaveProperty("version");
+  });
+
+  it("ruled-out agents on the host survive an update that learns a new version", async () => {
+    const { deps, read } = updateDeps({
+      stored: { version: 1, hosts: { "wsl:Ubuntu": { disabledHarnesses: ["codex"] } } },
+      update: async () => ({ version: "0.2.0" }),
+    });
+    await createSettingsComposition(deps).update("wsl:Ubuntu");
+    expect(read().hosts?.["wsl:Ubuntu"]).toEqual({
+      disabledHarnesses: ["codex"],
+      lastSeenVersion: "0.2.0",
+    });
   });
 });

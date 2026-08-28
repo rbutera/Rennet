@@ -11,6 +11,7 @@ import type {
   DaemonHostSection,
   DaemonHostStatus,
   DetectedForge,
+  ForgeHostDetection,
   HarnessHostDetection,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -177,16 +178,23 @@ const GH_AVAILABLE: DetectedForge = {
   detail: "Authenticated with GitHub through the `gh` CLI.",
 };
 
-/** A bridge serving the four reads the live projection folds. `forges: "reject"` makes
- *  `forge.detect` fail, so the Source Control section's honest fallback is provable.
- *  `reconnect` is the served re-handshake: it may mutate `status` (a host that comes back)
- *  or refuse, and the card must follow the STATUS, never the click. */
+/** One host, asked, with exactly these forge CLIs — the common `forge.hosts` fixture. */
+function forgeHost(source: string, detected: readonly DetectedForge[]): ForgeHostDetection {
+  return { source: source as "local", asked: true, detected: [...detected] };
+}
+
+/** A bridge serving the reads the live projection folds. `forges: "reject"` makes
+ *  `forge.hosts` fail, so the Source Control section's honest fallback is provable.
+ *  `reconnect` / `update` are the served operations: each may mutate `status` (a host that
+ *  comes back, a daemon on its new version) or refuse, and the card must follow the STATUS,
+ *  never the click. */
 function foldBridge(options: {
   readonly sections: readonly DaemonHostSection[];
   readonly status?: readonly DaemonHostStatus[];
   readonly agents?: readonly HarnessHostDetection[];
-  readonly forges?: readonly DetectedForge[] | "reject";
+  readonly forges?: readonly ForgeHostDetection[] | "reject";
   readonly reconnect?: (source: string) => Promise<{ status: DaemonHostStatus; error?: string }>;
+  readonly update?: (source: string) => Promise<{ status: DaemonHostStatus; error?: string }>;
 }) {
   let status = options.status ?? [];
   return new MemoryBridge(
@@ -211,9 +219,17 @@ function foldBridge(options: {
       }),
       "daemon.status": () => ({ hosts: status.map((host) => ({ ...host })) }),
       "harness.hosts": () => ({ hosts: (options.agents ?? []).map((host) => ({ ...host })) }),
-      "forge.detect": () => {
+      "forge.hosts": () => {
         if (options.forges === "reject") throw new Error("gh probe failed");
-        return { detected: (options.forges ?? []).map((forge) => ({ ...forge })) };
+        return { hosts: (options.forges ?? []).map((host) => ({ ...host })) };
+      },
+      "daemon.update": async (input) => {
+        if (!options.update) throw new Error("no update handler wired");
+        const outcome = await options.update(input.source);
+        // The served operation IS the source of truth: the refreshed `daemon.status` read
+        // carries whatever it decided this host's status now is.
+        status = status.map((host) => (host.source === input.source ? outcome.status : host));
+        return outcome;
       },
     },
     { platform: "darwin", version: "1.0.1" },
@@ -233,7 +249,7 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
         sections: [LOCAL_SECTION],
         status: [{ source: "local", reachable: true, version: "4.3.0" }],
         agents: [localHost([{ id: "claude", version: "2.1.0" }])],
-        forges: [GH_AVAILABLE],
+        forges: [forgeHost("local", [GH_AVAILABLE])],
       }),
     );
     // The daemon line is the PROBED version (4.3.0), not the bridge's app version (1.0.1).
@@ -264,7 +280,7 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
             detected: [{ id: "codex", version: "0.9.0", enabled: true }],
           },
         ],
-        forges: [GH_AVAILABLE],
+        forges: [forgeHost("local", [GH_AVAILABLE])],
       }),
     );
     expect(await findByText("Rennet daemon v4.2.0")).toBeTruthy();
@@ -275,8 +291,8 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
     expect(local.queryByText("0.9.0")).toBeNull();
     expect(wsl.getByText("0.9.0")).toBeTruthy();
     expect(wsl.queryByText("2.1.0")).toBeNull();
-    // `forge.detect` answered for the CONNECTED daemon only, so the WSL card's Source
-    // Control is honestly empty rather than showing this machine's `gh`.
+    // The WSL host reported `asked: false`, so its Source Control is honestly empty rather
+    // than showing this machine's `gh`.
     expect(wsl.getByText("Connect WSL · Ubuntu to detect its tooling.")).toBeTruthy();
     expect(wsl.queryByText("2.76.0")).toBeNull();
     // And a host Rennet has no dial address for never claims to be the local machine.
@@ -294,7 +310,7 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
           { source: "wsl:Ubuntu", reachable: false, lastSeenVersion: "4.1.0" },
         ],
         agents: [localHost([{ id: "claude", version: "2.1.0" }])],
-        forges: [GH_AVAILABLE],
+        forges: [forgeHost("local", [GH_AVAILABLE])],
       }),
     );
     expect(await findByText("Not connected — last seen running Rennet daemon v4.1.0")).toBeTruthy();
@@ -366,17 +382,158 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
         status: [{ source: "local", reachable: true, version: "4.3.0" }],
         agents: [localHost([{ id: "claude", version: "2.1.0" }])],
         forges: [
-          {
-            id: "github",
-            version: null,
-            status: "not-installed",
-            detail: "The `gh` CLI was not found on this host.",
-          },
+          forgeHost("local", [
+            {
+              id: "github",
+              version: null,
+              status: "not-installed",
+              detail: "The `gh` CLI was not found on this host.",
+            },
+          ]),
         ],
       }),
     );
     expect(await findByText("Connect This Machine to detect its tooling.")).toBeTruthy();
     expect(queryByText("GitHub")).toBeNull();
+    cleanup();
+  });
+});
+
+// ── C17 amendment B — every host's Source Control section is fillable ─────────
+// `forge.detect` answers for ONE daemon, so keying its rows to the connected host left every
+// other card structurally unfillable: a distro with its own `gh` could never show it. The
+// per-host `forge.hosts` read fixes that without letting a card borrow another's tooling.
+
+describe("LiveSettingsProjectionProvider — per-host forge detection", () => {
+  it("a WSL card shows ITS OWN gh, with the distro's version — not this machine's", async () => {
+    // POSITIVE CONTROL for amendment B: key the rows to the connected host again and the WSL
+    // card falls back to "Connect … to detect its tooling" about a host that HAS the CLI.
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: true, version: "4.3.0" },
+        ],
+        forges: [
+          forgeHost("local", [GH_AVAILABLE]),
+          forgeHost("wsl:Ubuntu", [{ ...GH_AVAILABLE, version: "2.40.0" }]),
+        ],
+      }),
+    );
+    await findByText("2.40.0");
+    const wsl = within(card("wsl:Ubuntu"));
+    const local = within(card("local"));
+    // Each card carries its own version and neither borrows the other's.
+    expect(wsl.getByText("GitHub")).toBeTruthy();
+    expect(wsl.queryByText("2.76.0")).toBeNull();
+    expect(local.getByText("2.76.0")).toBeTruthy();
+    expect(local.queryByText("2.40.0")).toBeNull();
+    cleanup();
+  });
+
+  it("a host that could NOT be asked keeps its honest line — never the other host's gh", async () => {
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [{ source: "local", reachable: true, version: "4.3.0" }],
+        forges: [
+          forgeHost("local", [GH_AVAILABLE]),
+          { source: "wsl:Ubuntu", asked: false, detected: [] },
+        ],
+      }),
+    );
+    expect(await findByText("Connect WSL · Ubuntu to detect its tooling.")).toBeTruthy();
+    expect(within(card("wsl:Ubuntu")).queryByText("2.76.0")).toBeNull();
+    cleanup();
+  });
+});
+
+// ── C17 cluster 6 — Update Daemon (#534) performs a real update ───────────────
+// The button shows only where the status reported a REAL `updateAvailable`, dispatches
+// `daemon.update`, and shows the honest outcome: the refreshed version on success, the
+// mechanism's own reason on failure. It never paints a success it did not earn.
+
+describe("LiveSettingsProjectionProvider — Update Daemon is a real operation", () => {
+  const OUTDATED: readonly DaemonHostStatus[] = [
+    { source: "local", reachable: true, version: "4.3.0" },
+    { source: "wsl:Ubuntu", reachable: true, version: "4.1.0", updateAvailable: true },
+  ];
+
+  it("POSITIVE CONTROL: a FAILING update shows Updating the daemon…, then the reason — never a fake success", async () => {
+    const gate = deferred<{ status: DaemonHostStatus; error?: string }>();
+    const { findByRole, findByText, queryByRole } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: OUTDATED,
+        update: () => gate.promise,
+      }),
+    );
+    const button = await findByRole("button", { name: "Update Daemon" });
+    button.click();
+
+    const pending = await findByRole("button", { name: "Updating the daemon…" });
+    expect(pending.hasAttribute("disabled")).toBe(true);
+    expect(queryByRole("button", { name: "Update Daemon" })).toBeNull();
+
+    gate.resolve({
+      status: { source: "wsl:Ubuntu", reachable: false, lastSeenVersion: "4.1.0" },
+      error: 'No Node runtime in WSL distro "Ubuntu".',
+    });
+
+    expect(await findByText('No Node runtime in WSL distro "Ubuntu".')).toBeTruthy();
+    const wsl = within(card("wsl:Ubuntu"));
+    // No new version was invented by the attempt — the card still reads the old sighting.
+    expect(wsl.getByText("Not connected — last seen running Rennet daemon v4.1.0")).toBeTruthy();
+    expect(wsl.queryByText("Rennet daemon v4.3.0")).toBeNull();
+    cleanup();
+  });
+
+  it("a SUCCEEDING update shows the host's new version and stops offering the update", async () => {
+    const { findByRole, findByText, queryByRole } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: OUTDATED,
+        update: async (source) => ({
+          status: { source: source as "wsl:Ubuntu", reachable: true, version: "4.3.0" },
+        }),
+      }),
+    );
+    (await findByRole("button", { name: "Update Daemon" })).click();
+    // The version the host answered with AFTER the update, read off the refreshed status.
+    expect(await findByText("Rennet daemon v4.3.0")).toBeTruthy();
+    await waitFor(() => expect(queryByRole("button", { name: "Update Daemon" })).toBeNull());
+    cleanup();
+  });
+
+  it("a host with no update available shows no button at all", async () => {
+    const { findByText, queryByRole } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        // Both current: `updateAvailable` was withheld, so there is nothing to offer.
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: true, version: "4.2.9", updateAvailable: false },
+        ],
+      }),
+    );
+    await findByText("Rennet daemon v4.2.9");
+    expect(queryByRole("button", { name: "Update Daemon" })).toBeNull();
+    cleanup();
+  });
+
+  it("a REJECTED dispatch is reported as a failed update, never a hopeful card", async () => {
+    const { findByRole, findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: OUTDATED,
+        update: async () => {
+          throw new Error("Rennet has no way to update this host's daemon.");
+        },
+      }),
+    );
+    (await findByRole("button", { name: "Update Daemon" })).click();
+    expect(await findByText("Rennet has no way to update this host's daemon.")).toBeTruthy();
     cleanup();
   });
 });
@@ -511,7 +668,9 @@ describe("LiveSettingsProjectionProvider — the forge toggle is served, not ine
             },
           ],
         }),
-        "forge.detect": () => ({ detected: [{ ...GH_AVAILABLE }] }),
+        "forge.hosts": () => ({
+          hosts: [{ source: "local" as const, asked: true, detected: [{ ...GH_AVAILABLE }] }],
+        }),
         "forge.setEnabled": (input) => {
           expect(input.source).toBe("local"); // scoped to the row's own host.
           // The WIRE id, not the row's mark id — the same key detection and the store use.

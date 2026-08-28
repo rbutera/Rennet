@@ -20,7 +20,11 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // harness.setEnabled (C17 cluster 3.2 — the served per-host enable store the toggle writes
 // through, so a ruled-out agent stays ruled out across reload), plus forge.setEnabled (C17
 // amendment A — the same served store for the Source Control row's toggle, which until now
-// wrote nowhere and silently reset on reload). A
+// wrote nowhere and silently reset on reload), plus forge.hosts (C17 amendment B — the
+// per-host mirror of harness.hosts, so a WSL card shows ITS own `gh` instead of a section
+// it is structurally incapable of filling) and daemon.update (C17 cluster 6 — the real
+// per-host daemon update behind the Update Daemon button, honest when there is no
+// mechanism for that host). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row.
 const ABSORBED_IDS = [
@@ -40,10 +44,12 @@ const ABSORBED_IDS = [
   "attention.acknowledge",
   "daemon.reconnect",
   "daemon.status",
+  "daemon.update",
   "device.registerPush",
   "flagged.adjudication",
   "flagged.review",
   "forge.detect",
+  "forge.hosts",
   "forge.setEnabled",
   "fs.listDir",
   "github.connectCancel",
@@ -136,7 +142,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(85);
+    expect(ABSORBED_IDS).toHaveLength(87);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

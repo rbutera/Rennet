@@ -109,6 +109,7 @@ import {
   TranscriptStore,
   validateGitHubToken,
   wslDiscoveryDeps,
+  wslForgeDetectionDeps,
 } from "@rennet/adapters";
 import {
   attachRiskCrossCheck,
@@ -214,7 +215,7 @@ import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
-import { probeWslDaemon } from "./wsl-supervisor";
+import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
 
 /**
  * Ask ONE host's daemon whether it is running and on which version — the read behind the
@@ -306,6 +307,13 @@ export interface RennetServerOptions {
    * the daemon runs headless. Passed straight to the WS listener's static handler.
    */
   readonly uiDist?: string;
+  /**
+   * This daemon's own server bundle on the host filesystem — the artifact a WSL daemon UPDATE
+   * delivers into the distro (C17 cluster 6, #534). `spawnDaemon` passes the entry it launched,
+   * which IS that bundle. Absent ⇒ this process cannot deliver one (a daemon started some other
+   * way), so a WSL update reports that plainly instead of shipping the wrong file.
+   */
+  readonly hostBundlePath?: string;
 }
 
 export interface RennetServer {
@@ -640,6 +648,64 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   function detectForges(): Promise<DetectedForge[]> {
     forgeDetection ??= runForgeDetection(defaultForgeDetectionDeps()).catch(() => []);
     return forgeDetection;
+  }
+
+  // Per-host forge detection (C17 amendment B) — the exact mirror of `detectHarnessesOn`, so a
+  // WSL card shows the DISTRO's own `gh` (and its own auth state) instead of a Source Control
+  // section it is structurally incapable of filling. `local` is the memoized ambient answer;
+  // `wsl:<distro>` runs the whole probe chain inside the distro (a distro `wsl.exe` cannot
+  // enter reports UNASKED, never "no gh"); a paired `remote:` device dials US, so it cannot be
+  // probed at all. Memoized per host: the probes spawn a login shell.
+  const forgeDetectionByHost = new Map<string, Promise<DetectedForge[] | null>>();
+  function detectForgesOn(source: ProjectSource): Promise<DetectedForge[] | null> {
+    if (source === "local") return detectForges();
+    if (!source.startsWith("wsl:")) return Promise.resolve(null);
+    const distro = source.slice("wsl:".length);
+    let detection = forgeDetectionByHost.get(source);
+    if (!detection) {
+      detection = (async (): Promise<DetectedForge[] | null> => {
+        const distroDeps = await wslForgeDetectionDeps(distro);
+        const loginShellPath = await distroDeps.loginShellPath();
+        if (loginShellPath === null) return null; // the distro could not be entered.
+        return runForgeDetection({ ...distroDeps, loginShellPath: async () => loginShellPath });
+      })().catch(() => null);
+      forgeDetectionByHost.set(source, detection);
+    }
+    return detection;
+  }
+
+  /**
+   * UPDATE one host's daemon (C17 cluster 6, #534) — the effect behind Update Daemon, offered
+   * only where `daemon.status` reported a real `updateAvailable`. Exactly one host kind has an
+   * update mechanism, and the others say why rather than pretending:
+   *
+   *  • `wsl:<distro>` — `ensureWslDaemon` IS the mechanism: it delivers THIS shell's server
+   *    bundle into the distro and, for a version-skew daemon, stops the old one by the pid its
+   *    identity carries before spawning the current bundle. The identity it returns names the
+   *    version now running, so the card reads an observed number, never an assumed one.
+   *  • `local` — this daemon ships with the Rennet app; updating it means updating the app.
+   *  • `remote:<deviceId>` — that device runs its own Rennet and updates itself.
+   */
+  async function updateDaemonForHost(source: ProjectSource): Promise<{ version: string | null }> {
+    if (source === "local") {
+      throw new Error(
+        "This machine's daemon ships with the Rennet app — update Rennet to update it.",
+      );
+    }
+    if (!source.startsWith("wsl:")) {
+      throw new Error("A paired device runs its own Rennet; update it from that device.");
+    }
+    if (!options.hostBundlePath) {
+      throw new Error(
+        "This Rennet daemon has no server bundle to deliver, so it cannot update a WSL daemon.",
+      );
+    }
+    const handle = await ensureWslDaemon(source.slice("wsl:".length), {
+      serverVersion,
+      hostBundlePath: options.hostBundlePath,
+      run: createWslRunner(),
+    });
+    return { version: handle.identity.version };
   }
 
   // ── The GitHub egress composition (issue #21, v4.2 device flow) ──────────────
@@ -2275,6 +2341,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       latestDaemonVersion: serverVersion,
       // Ask ONE host which coding agents are installed on IT (C17 cluster 3, #485).
       detectHarnessesOn,
+      // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own `gh`.
+      detectForgesOn,
+      // The real per-host daemon update behind Update Daemon (C17 cluster 6, #534). A host
+      // kind with no mechanism throws its reason, so the card never reads a fake success.
+      updateDaemonOn: updateDaemonForHost,
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {

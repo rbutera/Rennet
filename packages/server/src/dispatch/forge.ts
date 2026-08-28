@@ -11,6 +11,15 @@ export function forgeHandlers(rt: DispatchRuntime) {
       parseCommandInput(name, rawInput);
       return parseCommandOutput(name, { detected: await deps.detectForges() });
     },
+    "forge.hosts": async (rawInput) => {
+      const name = "forge.hosts" as const;
+      // Per-host forge detection (C17 amendment B), the mirror of `harness.hosts`. Read-only,
+      // no repository, no model call — DISCLOSURE. Absent settings dep ⇒ no host enumeration
+      // exists, so the honest answer is NO hosts (never a fabricated one).
+      parseCommandInput(name, rawInput);
+      if (!deps.settings) return parseCommandOutput(name, { hosts: [] });
+      return parseCommandOutput(name, { hosts: await deps.settings.forgeHosts() });
+    },
     "forge.setEnabled": async (rawInput) => {
       const name = "forge.setEnabled" as const;
       // The per-host forge ruling (amendment A). A plain settings write — no gate, no
