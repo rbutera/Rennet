@@ -26,25 +26,35 @@ import type { SmartRow } from "./smart-list";
 //
 //   • the checkout row → `review.capture` over the working tree (unchanged behaviour);
 //   • a local branch row → `review.capture` with a `base...head` range against the primary
-//     branch's merge-base — no checkout switch, nothing rewritten on disk;
+//     branch's merge-base — no checkout switch, nothing rewritten on disk, and a
+//     `local-branch` snapshot rather than a working-tree capture;
 //   • a pull-request row → `review.openPr` against `owner/name#number`.
 //
 // Without this a click minted a session bound to a branch with no change behind it, and the
 // front door opened onto a chat with nothing to review.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The target a New Chat row claims: a branch and, for a pull-request row, its number. */
+/** The target a New Chat row claims: a branch, for a pull-request row its number, and the
+ *  `owner/name` the row belongs to. */
 export interface MintTarget {
   readonly branch: string;
   readonly prNumber?: number;
+  /** The row's repo identity. A workspace holds several repos, so a branch NAME is unique
+   *  only within one — without this, two repos each with a `main` cross-attach and a click
+   *  opens the OTHER repo's session. An identity, never a host path (R19). */
+  readonly repository?: string;
 }
 
 /** The target a smart-list row resolves to. A PR row carries its number; a local branch
- *  row is the bare branch. */
+ *  row is the bare branch. Both carry the `owner/name` the row already knows — the same
+ *  fact the view's repo column disambiguates on. */
 export function targetOfRow(row: SmartRow): MintTarget {
-  return row.kind === "pr" && row.pr !== undefined
-    ? { branch: row.branch, prNumber: row.pr.number }
-    : { branch: row.branch };
+  const repository = row.kind === "pr" ? row.pr?.repository : row.local?.repository;
+  return {
+    branch: row.branch,
+    ...(row.kind === "pr" && row.pr !== undefined ? { prNumber: row.pr.number } : {}),
+    ...(repository ? { repository } : {}),
+  };
 }
 
 /** The live claims held IN this project — the rows New Chat must not offer again. Read off
@@ -118,6 +128,7 @@ export function useNewChatMint(projectId: string): NewChatMint {
         projectId,
         ...(target?.branch === undefined ? {} : { branch: target.branch }),
         ...(target?.prNumber === undefined ? {} : { prNumber: target.prNumber }),
+        ...(target?.repository === undefined ? {} : { repository: target.repository }),
       })
         .then(async ({ session }) => {
           if (session === null) return;

@@ -22,10 +22,10 @@ import {
   AskLogStore,
   applyVisibilitySwitch,
   BoardMetaStore,
-  captureRangePatchset,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
+  captureRangePatchset,
   claudeHandoffRunPort,
   cleanupWorktree,
   contextAskBackend,
@@ -1162,13 +1162,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   /**
    * Review a local BRANCH (#587) — the New Chat row click's engine. The reviewer clicks
    * `feat/x`; we resolve its head OID and `git merge-base <base> <head>`, then take the
-   * `base...head` range through the SAME `captureRangePatchset` the PR source uses, with
-   * `source: "local"`.
+   * `base...head` range through the SAME `captureRangePatchset` the PR source uses.
    *
    * Nothing is checked out and the working tree is never touched, so — exactly like a PR
-   * review — this is a snapshot and stays off the freshness watcher. `headRef` is carried
-   * into provenance, so the round path's read-only session lookup resolves this review
-   * onto the session that claimed the branch.
+   * review — this is a SNAPSHOT of pinned OIDs. That is why the source is `local-branch`
+   * and not `local`: `local` means the working-tree capture, and the renderer keys its
+   * freshness watcher and Regenerate on exactly that. Calling a branch range `local` would
+   * hand Regenerate a licence to replace the reviewed range with a capture of this clone's
+   * tree — a lie and a destroyed artifact, the same trap `review.openPr` documents.
+   *
+   * `headRef` is carried into provenance, so the round path's read-only session lookup
+   * resolves this review onto the session that claimed the branch.
    *
    * A branch with no unique commits (already merged, or identical to base) has
    * `merge-base == head`, so the range is empty and the review is honestly empty — never
@@ -1192,7 +1196,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       headOid,
       baseRef: base,
       headRef: head,
-      source: "local",
+      source: "local-branch",
       projectSnapshotId: await ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
     });
     return service.createReviewFromPatchset(commandId, patchset);

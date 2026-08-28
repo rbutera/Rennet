@@ -38,8 +38,9 @@ export function reviewHandlers(rt: DispatchRuntime) {
       assertAllowedRepository(input.repoPath);
       // Two sources, one command (#587). `branch` present ⇒ a pinned `base...head` range
       // capture of a branch the reviewer clicked in New Chat — nothing is checked out and
-      // the working tree is untouched, so (like a PR review) it is a snapshot and is NOT
-      // wired into the freshness watcher. Absent ⇒ today's working-tree capture, unchanged.
+      // the working tree is untouched, so (like a PR review) it is a `local-branch`
+      // snapshot: no `startWatching`, no dirty reset, and the renderer's freshness/
+      // Regenerate path leaves it alone. Absent ⇒ today's working-tree capture, unchanged.
       if (input.branch !== undefined) {
         if (!deps.captureBranch) {
           throw new Error("This host cannot review a branch: no branch-capture engine is wired.");

@@ -76,7 +76,7 @@ export const patchsetSchema = z.object({
   // from `degraded`/`degradationReason`. Absent ⇒ `local` (additive; identity
   // ignores it). Without these here, zod strips them and every PR review looks
   // like a local capture.
-  source: z.enum(["local", "github-local", "github-rest"]).optional(),
+  source: z.enum(["local", "local-branch", "github-local", "github-rest"]).optional(),
   degraded: z.boolean().optional(),
   degradationReason: z.string().optional(),
   // #144: the ProjectSnapshot the changeset was computed against, and #136: the

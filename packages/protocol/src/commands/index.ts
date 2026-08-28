@@ -139,9 +139,9 @@ const definitions = {
       reviewId: z.string().optional(),
       /**
        * Review a BRANCH rather than the working tree (#587): a `base...head` range
-       * capture over the pinned OIDs, `source: "local"` — the same engine the PR path
-       * uses, with no checkout switch and nothing rewritten on disk. It is therefore a
-       * snapshot, and stays off the working-tree freshness watcher exactly as a PR
+       * capture over the pinned OIDs, `source: "local-branch"` — the same engine the PR
+       * path uses, with no checkout switch and nothing rewritten on disk. It is therefore
+       * a snapshot, and stays off the working-tree freshness watcher exactly as a PR
        * review does.
        *
        * ABSENT keeps today's working-tree capture byte for byte. Head and base travel
@@ -150,9 +150,7 @@ const definitions = {
        * branch; the host takes `git merge-base base head`, so a branch with no unique
        * commits captures an EMPTY patchset and shows as an honestly empty review.
        */
-      branch: z
-        .object({ head: z.string().min(1), base: z.string().min(1) })
-        .optional(),
+      branch: z.object({ head: z.string().min(1), base: z.string().min(1) }).optional(),
       /**
        * Attach the created review to this durable session (`SessionModel.reviewId`), so
        * the New Chat row click that minted the session lands on its review. Absent ⇒ the
@@ -1484,6 +1482,14 @@ const definitions = {
       branch: z.string().min(1).optional(),
       /** The claimed branch's PR number, when the row was a pull request. */
       prNumber: z.number().int().positive().optional(),
+      /**
+       * The `owner/name` of the repo the clicked row belongs to. A workspace holds several
+       * repos, so a branch NAME is unique only within one of them — two repos each with a
+       * `main` would otherwise cross-attach, and clicking one would open the other's
+       * session. An identity, never a host path (R19). Absent keeps today's branch-only
+       * matching; the host-side tiebreak that consumes it lands with Wave B.
+       */
+      repository: z.string().min(1).optional(),
     }),
     output: z.object({
       session: sidebarSessionSchema.nullable(),
