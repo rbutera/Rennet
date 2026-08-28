@@ -68,9 +68,13 @@ test("the first-run welcome is what a first run gets, and completing it is what 
     // first run on a machine without Claude Code or Codex cannot finish the welcome, cannot add
     // a project, and cannot reach the app — by hand or from a test. It is why the rest of the
     // suite settles the welcome through `settings.completeWelcome` instead of driving it: the
-    // steps beyond this one are unreachable in a deterministic, model-free run. Pinned as a
-    // fact of the shipped surface, not endorsed. (`first-run-welcome.dom.test.tsx` asserts the
-    // same absence at unit level, where it reads as a feature.)
+    // steps beyond this one are unreachable in a deterministic, model-free run.
+    //
+    // PINNED AS A FACT, NOT ENDORSED — ruled a Rule Zero violation and a release blocker, and
+    // being fixed in its own lane. When that lands, this assertion INVERTS: a Continue appears
+    // and the wizard becomes drivable to completion, so grep this marker and rewrite the block
+    // rather than deleting it. (`first-run-welcome.dom.test.tsx` asserts the same absence at
+    // unit level, under a title that reads as a feature — which is why it shipped.)
     await expect(page.getByRole("button", { name: /^Continue$/ })).toHaveCount(0);
 
     // The step chips are real navigation, not decoration: a completed step is revisitable and

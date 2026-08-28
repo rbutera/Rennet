@@ -2,7 +2,14 @@ import { mkdirSync, rmSync } from "node:fs";
 import { basename } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
-import { git, initRepo, launchRennet, makeTempDir, writeRepoFile } from "./harness";
+import {
+  completeWelcome,
+  git,
+  initRepo,
+  launchRennet,
+  makeTempDir,
+  writeRepoFile,
+} from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #587 — clicking a row in New Chat STARTS THE REVIEW, driven on the real app.
@@ -27,10 +34,6 @@ import { git, initRepo, launchRennet, makeTempDir, writeRepoFile } from "./harne
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Daemon {
-  /** Mark the first-run welcome done. This spec is about the NEW CHAT front door; the
-   *  welcome wizard in front of it is another surface's subject, so it is settled through
-   *  the app's own command rather than re-driven here. */
-  completeWelcome: () => Promise<void>;
   sessions: () => Promise<
     { id: string; title: string; reviewId?: string; claim?: { branch: string } }[]
   >;
@@ -46,9 +49,6 @@ async function daemonOf(page: Page): Promise<Daemon> {
   );
   const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
   return {
-    completeWelcome: async () => {
-      await bridge.invoke("settings.completeWelcome", {});
-    },
     sessions: async () => (await bridge.invoke("session.list", {})).sessions,
     review: async (id) => {
       const { review } = await bridge.invoke("review.load", {
@@ -149,8 +149,7 @@ test("#587: every New Chat row kind starts a real review of that target", async 
   try {
     const page = await application.firstWindow();
     daemon = await daemonOf(page);
-    await daemon.completeWelcome();
-    await page.reload();
+    await completeWelcome(page);
     await addProjectAndOpenNewChat(page, repository);
 
     // ── ROW KIND 1: a local branch with its own commits ───────────────────────
@@ -231,7 +230,7 @@ test("#587: in a two-repo workspace, the click captures the repo the ROW named",
   try {
     const page = await application.firstWindow();
     daemon = await daemonOf(page);
-    await daemon.completeWelcome();
+    await completeWelcome(page);
     await addProjectAndOpenNewChat(page, repository);
 
     // Both repos have `shared/feature`, so the list shows two rows and the repo column
