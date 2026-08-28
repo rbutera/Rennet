@@ -125,5 +125,33 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
   > `expect(after.claudeOnly).toEqual(before.claudeOnly)` in the server E2E; the
   > dialog's `setModel` looping over `SCENARIOS` reddens the client E2E's
   > one-write assertion (`expected [ …(3) ] to have a length of 1`).
-- [ ] 6.3 Docs (definition of done): update `docs/developing/concepts/model-council.md` (the role→model mappings are now readable + editable from the Environments Review section under the honest-present ruling; edits write `routing.task.*` model+effort overrides, harness derives from provider #89; the tables remain the defaults) and `docs/developing/guides/settings-and-setup.md` (the Review section walkthrough). Grep `docs/` (excl. `docs/dist`) for the "no dedicated council screen" / "reviewRoles honest-empty" claims this change makes wrong; update or record the grep as a no-op. **Confirm the out-of-scope guard in prose:** no new job ids, no table-value change, no availability-override persistence.
+- [x] 6.3 Docs (definition of done): update `docs/developing/concepts/model-council.md` (the role→model mappings are now readable + editable from the Environments Review section under the honest-present ruling; edits write `routing.task.*` model+effort overrides, harness derives from provider #89; the tables remain the defaults) and `docs/developing/guides/settings-and-setup.md` (the Review section walkthrough). Grep `docs/` (excl. `docs/dist`) for the "no dedicated council screen" / "reviewRoles honest-empty" claims this change makes wrong; update or record the grep as a no-op. **Confirm the out-of-scope guard in prose:** no new job ids, no table-value change, no availability-override persistence.
+
+  > **What landed (2026-08-28).** `model-council.md` gains a *Review roles in
+  > Settings* section — the eight-role → job-id table (verified against
+  > `REVIEW_ROLE_CATALOGUE`, no new ids), the honest-present read, the em-dash
+  > null cell, the `{value, layer}` provenance, an *Editing a mapping* subsection
+  > carrying the per-scenario ruling verbatim (Rai, 2026-08-28 — editing one
+  > scenario never moves a sibling), model+effort only with the harness derived
+  > from the provider (#89), and the out-of-scope guard in prose. The old
+  > *"no dedicated council diagnostics screen"* sentence is narrowed to traces
+  > (still true) and now points at the new section.
+  > `settings-and-setup.md` gains the `routing.task[jobId][scenario]`
+  > client-settings row, a *Model Mappings* walkthrough (two rendered columns —
+  > Dual Harness and a provider-resolving Single Harness — honest-present values,
+  > the three write properties, the Overridden chip, Reset-drops-the-layer, the
+  > slice's appear/disappear lifecycle, malformed-config refusal), and the same
+  > out-of-scope guard. Its stale *"the served model-mapping council … not live
+  > yet"* clause is deleted; remote-host agent + per-host source-control detection
+  > stay listed as honest-empty (still true — C17).
+  >
+  > **Grep record — effectively a no-op.** `grep -rn -iE "no dedicated
+  > council|honest-empty|council screen|model-mapping council|served
+  > model|reviewRoles|model mapping|edit mappings|review section|role
+  > assignment|routing\.task" docs/` (excluding `docs/dist`) returned NO stale
+  > claim outside the two files this task edits. The one third-party hit,
+  > `docs/using/guides/getting-started.md:307` ("the model mappings for the review
+  > roles" on the Environments card), was already true and is now truer; left
+  > unchanged.
+
 - [ ] 6.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new packages**, additive-only protocol — lint, typecheck, test, build). Commit. Output the completion sigil `<promise>C16-COMPLETE</promise>` and flip C16's entry in `BUILD-STATUS.json` (left to MAIN per dispatch — state the intent in the report).
