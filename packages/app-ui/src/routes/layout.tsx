@@ -149,7 +149,13 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
                 owner === "floating" ? (isSessionRoute ? "scroll" : "pad") : "off"
               }
               className={cn(
-                "relative min-h-0 flex-1",
+                // A flex COLUMN, not a block. Surfaces in here declare `min-h-0 flex-1
+                // overflow-y-auto` for their own scrolling (the repo-wide primary-scroller
+                // idiom), and `flex-1` is inert unless this parent is a flex container — a
+                // scroller that renders but cannot scroll. Every other child either uses
+                // `h-full` (identical under both) or `min-h-screen` (overflows identically
+                // under both), so this is neutral for them and load-bearing for the rest.
+                "relative flex min-h-0 flex-1 flex-col",
                 owner === "floating" &&
                   (isSessionRoute ? "rennet-floating-chrome-scroll" : "rennet-floating-chrome"),
               )}

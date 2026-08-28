@@ -13,12 +13,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider } from "../data";
+import { RoundsSourceProvider } from "../rounds/rounds-data";
+import { RunRoute } from "../rounds/run-route";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
+import { AppLayout } from "../routes/layout";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
 import { frontDoorBridge } from "../test/fixtures/front-door";
+import { createTimelineRoundsSource } from "../test/fixtures/rounds";
 import { MemoryBridge } from "../test/memory-bridge";
 
 afterEach(() => {
@@ -131,6 +135,49 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
   // only "the class is applied" proved a class that did nothing. These assert the
   // scroller exists, holds the board, and is the element the rule reaches.
   // ───────────────────────────────────────────────────────────────────────────
+  // The outlet region must be a flex COLUMN. Every surface in here declares its own
+  // scrolling with `min-h-0 flex-1 overflow-y-auto`, and `flex-1` is inert under a block
+  // parent — the scroller renders and cannot scroll. That one missing `flex flex-col` is
+  // the structural cause behind BOTH dead surfaces (the review board, and `/s/:slug/run`),
+  // and C20 makes it worse where it is unfixed: the state-3 rule matches a dead scroller
+  // and pads it. Asserted here so a revert to a block region reddens immediately.
+  it("makes the outlet region a flex column, so a pane's own scroller can work", () => {
+    const { container } = mountFrame(STATE_1, "/s/review-1");
+    const region = container.ownerDocument.querySelector("[data-floating-chrome]");
+    if (!region) throw new Error("no outlet content region");
+    expect(region.className).toContain("flex-col");
+    expect(region.className).toMatch(/(^|\s)flex(\s|$)/);
+  });
+
+  it("gives the live run route a scroller that is actually height-constrained", async () => {
+    // `/s/:slug/run`'s success branch IS a `min-h-0 flex-1 overflow-y-auto` section rendered
+    // straight into the region. Under the old block region its `flex-1` did nothing, so a
+    // long run could not scroll. The proof is the pair: the section is a DIRECT flex child
+    // of a flex-column region — the class alone never meant anything.
+    const rounds = createTimelineRoundsSource({ startTick: 1 });
+    const history = memoryHistory("/s/review-1/run");
+    const { container, findByTestId } = mount(
+      <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <RoundsSourceProvider value={rounds.source}>
+            <AppLayout>
+              <RunRoute slug="review-1" />
+            </AppLayout>
+          </RoundsSourceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    await findByTestId("chat-dock-slot");
+    const region = container.querySelector("[data-floating-chrome]");
+    if (!region) throw new Error("no outlet content region");
+    const run = region.querySelector('[data-screen="session-run"]');
+    if (!run) throw new Error("the run route did not render its live surface");
+    expect(run.className).toContain("overflow-y-auto");
+    // The two halves that make it real: the scroller is a flex child, of a flex column.
+    expect(run.parentElement).toBe(region);
+    expect(region.className).toContain("flex-col");
+  });
+
   it("marks a SESSION surface for the scroll treatment, not the plain pad", () => {
     const { container } = mountFrame(STATE_3, "/s/review-1");
     const region = container.ownerDocument.querySelector("[data-floating-chrome]");
