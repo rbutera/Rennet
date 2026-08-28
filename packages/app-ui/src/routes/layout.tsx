@@ -138,7 +138,20 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
           {/* The outlet — the ONLY part navigation swaps — under the session top-bar. */}
           <main data-region="outlet" className="rennet-outlet flex min-w-0 flex-1 flex-col">
             {isSessionRoute ? <TopBar /> : null}
-            <div className="min-h-0 flex-1">{children}</div>
+            {/* State 3 (C20): with no pane to its left the main view runs full-bleed
+              under the floating chip layer. `rennet-floating-chrome` (index.css) holds
+              the clearance the chips need at rest and hands it to the pane's primary
+              scroller as scroll padding, so prose passes UNDER the chips instead of
+              stopping at a dead band. */}
+            <div
+              data-floating-chrome={owner === "floating"}
+              className={cn(
+                "relative min-h-0 flex-1",
+                owner === "floating" && "rennet-floating-chrome",
+              )}
+            >
+              {children}
+            </div>
           </main>
 
           {/* The corner slot's floating mount (C20 state 3): with the sidebar

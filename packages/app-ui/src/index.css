@@ -30,6 +30,10 @@
 @layer base {
   :root {
     color-scheme: light;
+    /* The vertical room C20's floating chip layer needs over a full-bleed main view
+     * (an 11-unit / 44px chip row). Named once so the clearance and the scroller's
+     * give-back can never drift apart. */
+    --rn-floating-chrome-clearance: 2.75rem;
   }
   [data-scheme="dark"] {
     color-scheme: dark;
@@ -115,6 +119,28 @@
   .navigation-titlebar input,
   .navigation-titlebar code {
     -webkit-app-region: no-drag;
+  }
+}
+
+/* C20 state 3 — the main view goes full-bleed under the floating chip layer.
+ * Content CLEARS the chips at rest and SLIDES UNDER them on scroll: the region
+ * takes the clearance as top padding, and the pane's primary scrolling view takes
+ * it back as negative margin then re-applies it as its own top padding + scroll
+ * padding. That is the demo's tested compromise — hard full-bleed clipped headings,
+ * and hard clearance left a dead band the prose never passed through.
+ *
+ * The descendant selector names the repo-wide idiom for a pane's PRIMARY scroller
+ * (`min-h-0 flex-1 overflow-y-auto`); secondary scrollers (a diff view's fixed-width
+ * aside, the composer's textarea, a bounded list) do not carry all three and are
+ * correctly left alone. */
+@layer components {
+  .rennet-floating-chrome {
+    padding-top: var(--rn-floating-chrome-clearance);
+  }
+  .rennet-floating-chrome .min-h-0.flex-1.overflow-y-auto {
+    margin-top: calc(var(--rn-floating-chrome-clearance) * -1);
+    padding-top: var(--rn-floating-chrome-clearance);
+    scroll-padding-top: var(--rn-floating-chrome-clearance);
   }
 }
 
