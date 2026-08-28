@@ -174,6 +174,73 @@ registry with `assertNever`; fixtures only as `MemoryBridge`.
 | C13 | onboarding | coach marks per R55, refs not selectors, client-settings persistence (§11) |
 | C14 | conformance-sweep | §14 residue, inventory audit: every `[ws:*]` line verified in the running client, generated issues closed |
 
+### Tail workstreams (added mid-build, 2026-08-28)
+
+Added under the **honest-present ruling** (Rai): a surface must be structurally
+*capable* of showing the data it advertises — honest-empty is correct only where
+data genuinely does not exist yet; a surface incapable of ever filling is a bug.
+Capability, not content: never fabricate rows.
+
+| # | Change | Origin | Tracking |
+|---|--------|--------|----------|
+| C15 | board-regen | Per-round board regeneration (collation bridge, generation mint/freeze, live `RoundEvent` channel, regeneration UI). Forced, not chosen: nine §7 claims are unverifiable without live regeneration. | [#541](https://github.com/rbutera/rennet/issues/541) |
+| C16 | council-mappings | Model-Council role→model assignments readable + editable, **per-scenario** (dual / claudeOnly / codexOnly — Rai rejected the job-keyed shape mid-build; store re-keyed in place). | [#542](https://github.com/rbutera/rennet/issues/542) |
+| C17 | host-tool-detection | The detection engine behind Environments: per-host daemon status, forge + harness detection with served enable stores, Reconnect (#533) / Update Daemon (#534) wired real. #484 informs the forge seam, not absorbed. | [#543](https://github.com/rbutera/rennet/issues/543) |
+| C18 | wiring-commands | The missing-commands bundle the wiring-ledger audit exposed: board/lensBoard read, `session.list`/rename/pin/archive, `project.rename`, the five group-A project-pref writes. One merge surface; gates C15's finale and most client swaps. | [#551](https://github.com/rbutera/rennet/issues/551) |
+| C19 | direct-post | Executes Rai's delete ruling on `publish.requestConsent` (~11 files incl. mobile), folding the verdict into the byte-exact `publishCompositionId` check so preview→post consistency survives with zero ceremony. | [#552](https://github.com/rbutera/rennet/issues/552) |
+
+## Build state (as of 2026-08-28)
+
+**31 of 37 landed.** Track A complete (npm alpha shipped, `@wboard/*`). Track B
+complete — B01–B11 all on `main`, including the durable-asks backend (#537) and
+the session/rounds runtime (#531). Track C: C1–C13 landed; the tail
+(C15–C19 + C14) remains. Live tracking: `BUILD-STATUS.json` at the repo root
+(statuses beyond pending/done: proposing / implementing / review) and the
+per-workstream issues above.
+
+Landed mid-build and worth knowing:
+
+- **The drafting pipeline is prod-proven.** C15's first task was a smoke-run of
+  `runRound` against a real patchset — the six model drafters executed end to
+  end (19.8s, generation minted, prior frozen). Two harness-compat fixes made it
+  possible and are on `main`: strip the Zod-v4 `$schema` dialect at the
+  adapter choke point (#544) and map council model aliases to the binary's full
+  ids (#546). Two systematic drafting-quality follow-ups are tracked (#548
+  sequence-lens bad-ref, #549 noise-seat no-board) — honest failures, not
+  blockers.
+- **C14 is gated, not just last.** Its packet (step 0) requires the live-wiring
+  ledger closed before the sweep starts — a missing swap stops the audit rather
+  than becoming a finding. Step 0b carries the defects and rulings that must
+  resolve first.
+- **Client↔daemon ask-sync** (client never writes `ask.stage`/`ask.edit` to the
+  durable log) is a recorded ledger item, scheduled with the client swaps.
+
+### Remaining roadmap (dependency order)
+
+1. **C16** cluster 6 (E2E + docs) → review → land.
+2. **C17** clusters 5–7 (+ the forge-read amendments: `forge.hosts` mirroring
+   `harness.hosts`, served forge enable read) → review → land.
+   C16/C17/C18 bump the protocol snapshot — landings serialize.
+3. **C18** (board-read slice first — it unblocks C15's finale and the C05 swap).
+4. **C15** cluster 5 (E2E over the live pipeline) → land. **C19** + **B10
+   cluster 6** (instantiate `SessionTurnLoop` in create-server — lights up the
+   C07 transcript capture) in parallel.
+5. Client swaps as their commands land: C07 `chat-data.ts`, C05 board source,
+   C12 rename seam, sidebar session seam, group-A prefs, C11 command-menu
+   exposure inventory, ask-sync.
+6. **C14** — alone, strictly last: ledger closure confirmed, then all 712
+   claims driven against the running client, plus the end-of-build A/B visual
+   pass (fidelity ruling: ~90% look-and-feel, styling divergences are inputs
+   not defects).
+
+Build-infra lessons discovered by this build (now law in `CLAUDE.md`): the Nx
+cache and task-history DB are **shared across worktrees** (isolate with
+`NX_CACHE_DIRECTORY` + `NX_DAEMON=false`, recipe control-proven); `git stash` is
+**forbidden** with concurrent worktrees (`refs/stash` is one shared ref — a pop
+raced foreign content into an agent's tree on 2026-08-28); a focused
+`typecheck`-alone gate is insufficient (one cache divergence vs `build`
+sighted) — the gate is full `pnpm check`.
+
 ## Standing reconciliations
 
 Carried into the packets so they cannot be lost:

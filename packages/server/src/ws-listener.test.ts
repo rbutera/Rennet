@@ -5,6 +5,10 @@ import { WebSocket } from "ws";
 import type { ExpoPushMessage } from "./expo-push";
 import { startWsListener, type WsListener, type WsListenerDeps } from "./ws-listener";
 
+// Real socket setup/teardown runs slow under cold-cache parallel load; the 5s
+// default flaked (2026-08-28) while passing standalone. Time, not logic.
+vi.setConfig({ testTimeout: 20_000 });
+
 describe("WS listener command lifetime", () => {
   const listeners: WsListener[] = [];
   afterEach(async () => {
