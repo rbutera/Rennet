@@ -1,16 +1,22 @@
 import { basename } from "node:path";
-import { type ConventionCatalogueLoad, compareVersions } from "@rennet/adapters";
+import {
+  type ConventionCatalogueLoad,
+  compareVersions,
+  type RepoPrefField,
+} from "@rennet/adapters";
 import {
   detectLocus,
   escapePath,
   REVIEW_ROLE_JOB_IDS,
   type ReviewRoleOverrides,
+  resolve,
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
   reviewRoleJobId,
   reviewRoleMappings,
   SETTINGS_REGISTRY,
+  type TrackerKind,
 } from "@rennet/core";
 import type {
   ClientSettings,
@@ -32,7 +38,11 @@ import type {
   ReviewRoleScenario,
   SetRepoVisibilityOutcome,
   SettingsGuidance,
+  SettingsLayer,
   SettingsProject,
+  SettingsProjectPrefs,
+  SettingsProjectValueKey,
+  SettingsProjectWriteOutcome,
   SettingsRepoValueKey,
   SettingsRepoWriteOutcome,
   SettingsView,
@@ -61,8 +71,47 @@ export interface SettingsCompositionDeps {
         status: "ok";
         // A stale `locus` may still sit in an old config; it is ignored — execution
         // locus is a detected fact now (#476), read straight off the repo path.
-        config: { visibility?: ProjectVisibility; promoted?: boolean };
+        // The pref fields are the REPO RUNG of the settings ladder (C18 group A):
+        // absent on an untouched install, so every pref falls back down the ladder.
+        config: {
+          visibility?: ProjectVisibility;
+          promoted?: boolean;
+          glyph?: string;
+          worktreeBaseDir?: string;
+          worktreePattern?: string;
+          tracker?: {
+            kind?: string;
+            projectKey?: string;
+            baseUrl?: string;
+            tokenEnv?: string;
+          };
+        };
       };
+  /**
+   * Write ONE per-project preference on the repo rung (C18 group A) — the project's
+   * own `config.json`, the same rung `visibility` uses. `null` RESETS (drops the
+   * entry so the value falls back down the ladder). MUST itself refuse a malformed
+   * config (throw), exactly as `updateGlobal`/`updateDaemon` do for their files.
+   */
+  writeRepoValue(input: { repoKey: string; field: RepoPrefField; value: string | null }): void;
+  /**
+   * The scout's DETECTED-layer offers for one repo, if any were ever recorded. Read
+   * here so a row's provenance chip states the same layer RETRIEVAL resolves through
+   * (`resolveTrackerConfig` folds the same offers) — a surface that showed `global`
+   * for a value retrieval took from `detected` would be a lie about its own ladder.
+   * Absent dep ⇒ no detected offers, which is the honest answer for a composition
+   * with no scout wired.
+   */
+  scoutOffers?(repoKey: string): Readonly<Record<string, string | undefined>>;
+  /**
+   * Write a repo's guidance catalogue to its `.rennet/conventions.json` (C18 group A)
+   * — the WRITER beside `loadGuidance`. Returns the catalogue read BACK off the file,
+   * so the surface renders what was stored. Throws when the file cannot be written.
+   */
+  saveGuidance(
+    repoRoot: string,
+    rules: readonly { convention: string; severity: "high" | "medium" | "low" }[],
+  ): ConventionCatalogueLoad;
   /** The viewer's client-settings state (appearance, keybindings). */
   readGlobalState(): { status: "absent" | "ok" | "malformed"; config: ClientSettings };
   /**
@@ -304,6 +353,36 @@ export interface SettingsComposition {
     key: "kind" | "projectKey" | "baseUrl" | "tokenEnv";
     value: string | null;
   }): NonNullable<DaemonSettings["tracker"]>;
+  /**
+   * Write ONE per-project preference on the REPO rung (C18 group A) — glyph, the
+   * worktree pair, or this project's issue-tracker override. `value: null` resets
+   * (the entry is dropped and the value falls back down the ladder). Values validate
+   * through the same `SETTINGS_REGISTRY` declarations the resolver reads, so a write
+   * and a read cannot disagree on what a legal value is; a malformed repo config
+   * REFUSES the write (`status: "malformed"`, nothing written) exactly as the other
+   * repo-scoped writes do. `applied` carries the freshly re-resolved row.
+   *
+   * The tracker keys are the ones with teeth: the same repo rung is what
+   * `resolveTrackerConfig` folds over the host's global answer, so this write reaches
+   * retrieval instead of decorating a surface.
+   */
+  setProjectValue(input: {
+    projectId: string;
+    repoPath: string;
+    key: SettingsProjectValueKey;
+    value: string | null;
+  }): Promise<SettingsProjectWriteOutcome>;
+  /**
+   * Write a repo's guidance rules to its `.rennet/conventions.json` — the WRITE beside
+   * `guidance`'s read, and the same file the lens runners read before every review.
+   * Returns the catalogue read BACK off the file, so the surface renders what was
+   * stored rather than the request echoed. `unresolved` ⇒ nothing was written.
+   */
+  setGuidance(input: {
+    projectId: string;
+    repoPath: string;
+    rules: readonly { rule: string; severity: "high" | "medium" | "low" }[];
+  }): Promise<{ status: "applied" | "unresolved"; guidance: SettingsGuidance }>;
   setRepoVisibility(input: {
     projectId: string;
     repoPath: string;
@@ -391,6 +470,61 @@ function hostStatus(
  */
 const NUMERIC_VERSION = /^\d+(\.\d+)*$/;
 
+/**
+ * Each per-project preference key → the registry declaration that validates it and the
+ * repo-config field it is stored in (C18 group A). ONE table, so the write's validator,
+ * the read's resolver, and the stored shape can never drift apart.
+ */
+const PROJECT_PREF: Record<
+  SettingsProjectValueKey,
+  { readonly field: RepoPrefField; readonly validate: (value: string) => string }
+> = {
+  glyph: { field: "glyph", validate: SETTINGS_REGISTRY.projectGlyph.validate },
+  worktreeRoot: { field: "worktreeBaseDir", validate: SETTINGS_REGISTRY.worktreeBaseDir.validate },
+  worktreePattern: {
+    field: "worktreePattern",
+    validate: SETTINGS_REGISTRY.worktreePattern.validate,
+  },
+  // The tracker vocabulary is enforced by the SAME validator retrieval resolves through,
+  // so `kind: "jra"` is refused at the write instead of resolving to nothing later.
+  trackerKind: { field: "trackerKind", validate: SETTINGS_REGISTRY.trackerKind.validate },
+  trackerProjectKey: {
+    field: "trackerProjectKey",
+    validate: SETTINGS_REGISTRY.trackerProjectKey.validate,
+  },
+  trackerBaseUrl: { field: "trackerBaseUrl", validate: SETTINGS_REGISTRY.trackerBaseUrl.validate },
+  trackerTokenEnv: {
+    field: "trackerTokenEnv",
+    validate: SETTINGS_REGISTRY.trackerTokenEnv.validate,
+  },
+};
+
+/** One catalogue load → the surface's guidance view. ONE mapping for the read and the
+ *  write, so the panel after a save shows exactly what the next read would show. */
+function guidanceView(load: ConventionCatalogueLoad): SettingsGuidance {
+  if (!load.catalogue) {
+    return { rules: [], reason: load.reason ?? "absent", dropped: load.dropped };
+  }
+  return {
+    rules: load.catalogue.rules.map((rule) => ({
+      convention: rule.convention,
+      rationale: rule.rationale,
+      severity: rule.severity,
+      ...(rule.antiPattern ? { antiPattern: rule.antiPattern } : {}),
+    })),
+    reason: null,
+    dropped: load.dropped,
+  };
+}
+
+/** A STORED tracker kind as a ladder offer: only the real vocabulary is offered, so a
+ *  hand-edited `kind: "jra"` is ignored rather than thrown into resolution. */
+function trackerKindOffer(value: string | undefined): TrackerKind | undefined {
+  return value === "none" || value === "github" || value === "jira" || value === "linear"
+    ? value
+    : undefined;
+}
+
 /** The update attempt for a composition with NO update effect wired: it says so and changes
  *  nothing, so the card shows a failure line rather than a success it did not earn. */
 function noUpdateMechanism(): Promise<{ version: string | null } | null> {
@@ -443,6 +577,84 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
   // post-write re-resolution renders exactly what the engine now resolves (never a
   // hand-recomputed account that could disagree). A malformed config never leaks
   // its unparseable values: the row shows builtin/detected defaults and refuses edits.
+  // A trimmed, non-empty offer, or `undefined` — an empty stored string is NOT an
+  // offer (it is what "unset" looks like), so it must not out-rank a lower layer.
+  const offer = (value: string | undefined): string | undefined =>
+    value === undefined || value.trim() === "" ? undefined : value.trim();
+
+  /**
+   * One repo's per-project prefs, resolved off the ladder (C18 group A). The offers are
+   * exactly the ones the ENGINE resolves through elsewhere: the scout's detected facts
+   * (the same ones `resolveTrackerConfig` folds), the host's global rung in
+   * daemon-settings, and the project's own repo rung — so the chip on the surface names
+   * the layer retrieval really used. Guidance rides along from the repo's own catalogue.
+   */
+  const resolvePrefs = (
+    target: RepoTarget,
+    config: {
+      glyph?: string;
+      worktreeBaseDir?: string;
+      worktreePattern?: string;
+      tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
+    } | null,
+  ): SettingsProjectPrefs => {
+    const detected = deps.scoutOffers?.(target.repoKey) ?? {};
+    const globalTracker = deps.readDaemonSettings().tracker ?? {};
+    const repoTracker = config?.tracker ?? {};
+    const layered = <T extends string>(resolved: { value: T; layer: SettingsLayer }) => ({
+      value: resolved.value as string,
+      layer: resolved.layer,
+    });
+    const guidance = deps.loadGuidance(target.repoRoot);
+    return {
+      glyph: layered(resolve(SETTINGS_REGISTRY.projectGlyph, { repo: offer(config?.glyph) })),
+      worktreeRoot: layered(
+        resolve(SETTINGS_REGISTRY.worktreeBaseDir, {
+          detected: offer(detected.worktreeBaseDir),
+          repo: offer(config?.worktreeBaseDir),
+        }),
+      ),
+      worktreePattern: layered(
+        resolve(SETTINGS_REGISTRY.worktreePattern, { repo: offer(config?.worktreePattern) }),
+      ),
+      tracker: {
+        kind: layered(
+          resolve(SETTINGS_REGISTRY.trackerKind, {
+            detected: trackerKindOffer(detected.trackerKind),
+            global: trackerKindOffer(globalTracker.kind),
+            repo: trackerKindOffer(repoTracker.kind),
+          }),
+        ),
+        projectKey: layered(
+          resolve(SETTINGS_REGISTRY.trackerProjectKey, {
+            detected: offer(detected.trackerProjectKey),
+            global: offer(globalTracker.projectKey),
+            repo: offer(repoTracker.projectKey),
+          }),
+        ),
+        baseUrl: layered(
+          resolve(SETTINGS_REGISTRY.trackerBaseUrl, {
+            global: offer(globalTracker.baseUrl),
+            repo: offer(repoTracker.baseUrl),
+          }),
+        ),
+        tokenEnv: layered(
+          resolve(SETTINGS_REGISTRY.trackerTokenEnv, {
+            global: offer(globalTracker.tokenEnv),
+            repo: offer(repoTracker.tokenEnv),
+          }),
+        ),
+      },
+      // The rules as the surface edits them (statement + severity). The authored
+      // rationale and anti-pattern stay in the file — read by the review runners,
+      // never rewritten from here.
+      guidance: (guidance.catalogue?.rules ?? []).map((rule) => ({
+        rule: rule.convention,
+        severity: rule.severity,
+      })),
+    };
+  };
+
   const resolveRow = (
     project: Project,
     target: RepoTarget,
@@ -471,6 +683,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         contributions: [{ layer: "detected", value: locusValue, effective: true }],
       },
       configMalformed,
+      // A malformed config contributes NO repo offers (`config` is null), so the row
+      // shows the lower layers' answers and its edits are refused — the same rule the
+      // rest of the row already follows.
+      prefs: resolvePrefs(target, config),
     };
   };
 
@@ -750,20 +966,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         ? (await targetsFor(project)).find((entry) => entry.repoPath === repoPath)
         : undefined;
       if (!target) return { rules: [], reason: "absent", dropped: 0 };
-      const load = deps.loadGuidance(target.repoRoot);
-      if (!load.catalogue) {
-        return { rules: [], reason: load.reason ?? "absent", dropped: load.dropped };
-      }
-      return {
-        rules: load.catalogue.rules.map((rule) => ({
-          convention: rule.convention,
-          rationale: rule.rationale,
-          severity: rule.severity,
-          ...(rule.antiPattern ? { antiPattern: rule.antiPattern } : {}),
-        })),
-        reason: null,
-        dropped: load.dropped,
-      };
+      return guidanceView(deps.loadGuidance(target.repoRoot));
     },
 
     setAppearance: (scheme: SettingsView["scheme"] | null): SettingsView["scheme"] => {
@@ -866,6 +1069,44 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         return { ...current, tracker };
       });
       return written.tracker ?? {};
+    },
+
+    setProjectValue: async (input): Promise<SettingsProjectWriteOutcome> => {
+      const live = await liveTarget(input.projectId, input.repoPath);
+      if (!live) return { status: "unresolved", key: input.key, project: null };
+      // Refuse BEFORE any write (Rule 75). The adapter guards this too; refusing here
+      // keeps the surface honest without a thrown error the row cannot explain.
+      if (deps.loadConfigState(live.target.repoKey).status === "malformed") {
+        return { status: "malformed", key: input.key, project: null };
+      }
+      const pref = PROJECT_PREF[input.key];
+      // Validate through the registry declaration the RESOLVER reads by, so the write
+      // and the read cannot disagree about what a legal value is. A blank value is a
+      // RESET — the entry is dropped so the value falls back down the ladder.
+      const validated = input.value === null ? null : pref.validate(input.value);
+      deps.writeRepoValue({
+        repoKey: live.target.repoKey,
+        field: pref.field,
+        value: validated === "" ? null : validated,
+      });
+      // Re-resolve from the live store: the surface adopts the resolver's own answer.
+      return {
+        status: "applied",
+        key: input.key,
+        project: resolveRow(live.project, live.target, live.multiRepo),
+      };
+    },
+
+    setGuidance: async (input) => {
+      const live = await liveTarget(input.projectId, input.repoPath);
+      if (!live) {
+        return { status: "unresolved", guidance: { rules: [], reason: "absent", dropped: 0 } };
+      }
+      const written = deps.saveGuidance(
+        live.target.repoRoot,
+        input.rules.map((rule) => ({ convention: rule.rule, severity: rule.severity })),
+      );
+      return { status: "applied", guidance: guidanceView(written) };
     },
 
     setRepoVisibility: async (input: {

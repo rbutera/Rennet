@@ -500,6 +500,9 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "settings.resetRepoValue.output.project.repoPath",
     "settings.pinRepoValue.input.repoPath",
     "settings.pinRepoValue.output.project.repoPath",
+    "settings.setProjectValue.input.repoPath",
+    "settings.setProjectValue.output.project.repoPath",
+    "settings.setGuidance.input.repoPath",
     "progressEvent.summary.path",
     "progressEvent.repos.path",
     // The reviewed PR's worktree lives under MAIN's data dir — a host path the

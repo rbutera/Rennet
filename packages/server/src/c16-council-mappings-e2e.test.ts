@@ -49,6 +49,8 @@ function boot(dir: string) {
     loadGuidance: () => ({ reason: "absent", dropped: 0 }),
     applyVisibility: async () => ({ changed: false, gitignorePath: "" }),
     clearRepoValue: () => undefined,
+    writeRepoValue: () => undefined,
+    saveGuidance: () => ({ reason: "absent", dropped: 0 }),
   });
   const handlers = settingsHandlers(createDispatchRuntime({ settings } as unknown as DispatchDeps));
   return {
