@@ -77,16 +77,15 @@ For a valid notarized build, `codesign` reports `valid on disk`, `stapler` repor
 
 The root `package.json` version is authoritative. `apps/desktop/package.json` must match it. `pnpm release:check -- vX.Y.Z` rejects zero versions, malformed or mismatched tags, tags that do not point at `HEAD`, and dirty working trees.
 
-For a manual draft release:
+For a manual release:
 
 1. Run `node scripts/set-version.mjs X.Y.Z`, review the lockstep package-version changes, commit them, and create the annotated tag `vX.Y.Z` on that commit.
 2. Push the commit and tag. A tag by itself does not run `.github/workflows/release.yml` or publish a release.
-3. Dispatch **Release** with that tag. It runs the full gate, imports the certificate into a temporary keychain, builds, notarizes, staples, verifies, and creates a draft GitHub Release containing the DMG, updater ZIP, checksums, and build provenance.
-4. Inspect the draft assets and notes, then use GitHub's normal **Publish release** action. Drafts and prereleases are ignored by `update.electronjs.org`.
+3. Dispatch **Release** with that tag. It runs the full gate, imports the certificate into a temporary keychain, builds, notarizes, staples, verifies, and publishes a GitHub Release containing the DMG, updater ZIP, checksums, and build provenance. The release becomes visible, and therefore available to `update.electronjs.org`, only after every preceding step passes.
 
 `.github/workflows/auto-release.yml` remains the nightly and **ship now** path. It creates the version commit and tag, runs the same signed macOS build through the `release` environment, builds unsigned Windows artifacts, and publishes only after every build succeeds.
 
-Never replace an asset or reuse a version after publication. If signing, notarization, Gatekeeper verification, or update compatibility fails, leave the manual release as a draft and create a higher patch version after the fix. Keep the last known-good installer published. A future move away from `update.electronjs.org` can use the existing Squirrel-compatible static-feed support without changing the app's update interaction.
+Never replace an asset or reuse a version after publication. If signing, notarization, Gatekeeper verification, or update compatibility fails, fix it and create a higher patch version. Keep the last known-good installer published. A future move away from `update.electronjs.org` can use the existing Squirrel-compatible static-feed support without changing the app's update interaction.
 
 ## Build on Windows
 

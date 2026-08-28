@@ -137,7 +137,7 @@ module.exports = {
       name: "@electron-forge/publisher-github",
       config: {
         repository: { owner: "rbutera", name: "rennet" },
-        draft: true,
+        draft: false,
         prerelease: false,
         generateReleaseNotes: true,
       },

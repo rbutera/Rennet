@@ -46,8 +46,10 @@ describe("release workflow boundaries", () => {
     expect(autoReleaseWorkflow).not.toMatch(/^permissions:\n {2}contents: write/m);
   });
 
-  it("creates a draft in the manual path and preserves the signed automatic path", () => {
-    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --draft');
+  it("publishes both manual and automatic releases", () => {
+    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --title');
+    expect(releaseWorkflow).not.toContain("--draft");
     expect(autoReleaseWorkflow).toContain('gh release create "$TAG"');
+    expect(autoReleaseWorkflow).not.toContain("--draft");
   });
 });

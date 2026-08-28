@@ -132,14 +132,14 @@ describe("forge.config.cjs signing", () => {
     });
   });
 
-  it("publishes only draft releases to the public Rennet repository", () => {
+  it("publishes public releases to the Rennet repository", () => {
     const { publishers } = loadConfig({});
     expect(publishers).toEqual([
       expect.objectContaining({
         name: "@electron-forge/publisher-github",
         config: expect.objectContaining({
           repository: { owner: "rbutera", name: "rennet" },
-          draft: true,
+          draft: false,
           prerelease: false,
         }),
       }),

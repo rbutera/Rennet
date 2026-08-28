@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    name: signed macOS draft release
+    name: signed macOS release
     runs-on: macos-14
     timeout-minutes: 75
     environment: release
@@ -115,7 +115,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Create draft GitHub release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -145,7 +145,7 @@ jobs:
             "apps/desktop/out/make/SHA256SUMS"
           )
           for asset in "${assets[@]}"; do test -f "$asset"; done
-          gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file release-notes.md --generate-notes "${assets[@]}"
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-notes.md --generate-notes "${assets[@]}"
 
       - name: Remove signing material
         if: ${{ always() }}
