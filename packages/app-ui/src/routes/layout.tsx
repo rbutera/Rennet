@@ -11,8 +11,8 @@ import {
   MIN_CHAT_WIDTH,
   MIN_SURFACE_WIDTH,
   SIDEBAR_PANEL_WIDTH,
-  SIDEBAR_RAIL_WIDTH,
 } from "../shell/constants";
+import { CornerSlot, cornerSlotOwner } from "../shell/corner-slot";
 import { KeyOwner } from "../shell/key-owner";
 import { Sidebar } from "../shell/sidebar/sidebar";
 import { TopBar } from "../shell/top-bar";
@@ -47,6 +47,9 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
   const [onRun] = useRoute(ROUTES.sessionRun);
   const isSessionRoute = onSession || onRun;
   const dockOpen = chatOpen && isSessionRoute;
+  // Which pane owns the corner slot — the ONE authority, so exactly one of the three
+  // call sites renders it (`shell/corner-slot.tsx`).
+  const owner = cornerSlotOwner({ sidebarOpen, dockOpen });
 
   // Suppress the width transition for the LIFETIME of a drag (it would lag the pointer),
   // keyed on the pointer being DOWN — set on pointer-down, cleared on up/cancel/lost-
@@ -64,7 +67,8 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  const sidebarWidth = sidebarOpen ? SIDEBAR_PANEL_WIDTH : SIDEBAR_RAIL_WIDTH;
+  // Collapsed contributes zero width — C20 deleted the 48px rail.
+  const sidebarWidth = sidebarOpen ? SIDEBAR_PANEL_WIDTH : 0;
   const maxChatWidth = Math.max(MIN_CHAT_WIDTH, viewportWidth - sidebarWidth - MIN_SURFACE_WIDTH);
   // The STORED width can outlive the room for it: a narrower viewport or an expanding
   // sidebar shrinks the maximum below what was saved, which would render the dock over
@@ -85,7 +89,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
       <CoachDataProvider>
         <div className="rennet-layout fixed inset-0 flex overflow-hidden bg-canvas text-ink">
           {/* The ⌘P/⌘K command menu — mounted once, outside the outlet, so the sidebar
-            Search row + rail button (C3) drive this single controlled instance. */}
+            Search row (C3) drives this single controlled instance. */}
           <CommandMenu />
 
           {/* Sidebar region — the host/project/session tree is a projection (C3). */}
@@ -107,7 +111,12 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
           >
             {/* C7 fills the dock's internals; the slot's lifetime IS the transcript-identity
               guarantee — the dock mounts once here and never unmounts on navigation. */}
-            <ChatDock />
+            {/* State 2 (C20): with the sidebar collapsed and the dock OPEN, the chat is
+              the leftmost pane and owns the corner slot — inline in its existing header
+              row. Gated on ownership, never on the dock existing: this slot stays
+              MOUNTED at width 0 + `inert` when closed, and an ungated mount here would
+              be an invisible second corner slot that steals the window's drag region. */}
+            <ChatDock corner={owner === "chat" ? <CornerSlot owner="chat" /> : null} />
           </div>
 
           {/* The divider — only on a session route with the chat open. */}
@@ -129,8 +138,39 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
           {/* The outlet — the ONLY part navigation swaps — under the session top-bar. */}
           <main data-region="outlet" className="rennet-outlet flex min-w-0 flex-1 flex-col">
             {isSessionRoute ? <TopBar /> : null}
-            <div className="min-h-0 flex-1">{children}</div>
+            {/* State 3 (C20): with no pane to its left the main view runs full-bleed
+              under the floating chip layer, and the two surface families need different
+              treatment (index.css). A SESSION surface hands the clearance to its primary
+              scroller, so prose clears the chips at rest and passes under them on scroll.
+              A TAKEOVER surface has its own in-flow header and must not scroll content
+              through it, so it takes the clearance as plain padding and nothing else. */}
+            <div
+              data-floating-chrome={
+                owner === "floating" ? (isSessionRoute ? "scroll" : "pad") : "off"
+              }
+              className={cn(
+                // A flex COLUMN, not a block. Surfaces in here declare `min-h-0 flex-1
+                // overflow-y-auto` for their own scrolling (the repo-wide primary-scroller
+                // idiom), and `flex-1` is inert unless this parent is a flex container — a
+                // scroller that renders but cannot scroll. Every other child either uses
+                // `h-full` (identical under both) or `min-h-screen` (overflows identically
+                // under both), so this is neutral for them and load-bearing for the rest.
+                "relative flex min-h-0 flex-1 flex-col",
+                owner === "floating" &&
+                  (isSessionRoute ? "rennet-floating-chrome-scroll" : "rennet-floating-chrome"),
+              )}
+            >
+              {children}
+            </div>
           </main>
+
+          {/* The corner slot's floating mount (C20 state 3): with the sidebar
+            collapsed and no chat dock open there is no pane header left to host the
+            traffic-light inset and the sidebar toggle, so the slot floats over the
+            main view. It belongs to the LAYOUT, not `TopBar`, because every takeover
+            route (settings, new chat, archived, map, indexing) has no top bar at all
+            and would otherwise have no corner slot and no drag region. */}
+          {owner === "floating" ? <CornerSlot owner="floating" /> : null}
 
           {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
             its own visibility to `ui.openDialogs` and portals over the frame. Inside the

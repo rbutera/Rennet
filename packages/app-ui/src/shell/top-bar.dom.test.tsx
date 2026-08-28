@@ -10,15 +10,20 @@ import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
+import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
-import { cleanup, fireEvent, mount, waitFor } from "../test/dom";
-import { frontDoorHandlers } from "../test/fixtures/front-door";
+import { useRennetStore } from "../store";
+import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
+import { frontDoorBridge, frontDoorHandlers } from "../test/fixtures/front-door";
 import { fixtureCompletedRoundsSource } from "../test/fixtures/rounds";
 import { type SessionSeed, sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge } from "../test/memory-bridge";
 import { TopBar } from "./top-bar";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useRennetStore.setState((s) => ({ ui: { ...s.ui, chatOpen: false, sidebarOpen: true } }));
+});
 
 function project(id: string, name: string): Project {
   return {
@@ -111,5 +116,59 @@ describe("session top-bar (C03 §4)", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Your PR");
     expect(text).toContain("needs you");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The app's ONE chat open/close control (C20 §4). It lives on the rightmost pane's
+// top-left, is present in both directions, and replaces today's split pair (the bar's
+// "Expand chat" plus the chat header's "Collapse chat"). Driven through the real
+// frame, because the proof is that the dock actually opens and shuts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function mountFrame(sidebarOpen: boolean) {
+  act(() => {
+    useRennetStore.getState().uiActions.setSidebarOpen(sidebarOpen);
+    useRennetStore.getState().uiActions.setChatOpen(true);
+  });
+  return mount(
+    <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
+  );
+}
+
+describe("the one chat toggle (C20 §4)", () => {
+  for (const [name, sidebarOpen] of [
+    ["state 1 (sidebar open)", true],
+    ["state 2 (sidebar collapsed)", false],
+  ] as const) {
+    it(`round-trips the dock from the main view in ${name}`, async () => {
+      const { getByLabelText, getByTestId } = mountFrame(sidebarOpen);
+      const dock = getByTestId("chat-dock-slot");
+      await waitFor(() => expect(dock.getAttribute("data-open")).toBe("true"));
+
+      // Open → closed.
+      const close = getByLabelText("Close chat");
+      expect(close.getAttribute("aria-pressed")).toBe("true");
+      fireEvent.click(close);
+      await waitFor(() => expect(dock.getAttribute("data-open")).toBe("false"));
+
+      // ...and the SAME control, now labelled the other way, opens it again.
+      const open = getByLabelText("Open chat");
+      expect(open.getAttribute("aria-pressed")).toBe("false");
+      fireEvent.click(open);
+      await waitFor(() => expect(dock.getAttribute("data-open")).toBe("true"));
+      cleanup();
+    });
+  }
+
+  it("leaves no collapse-chat control anywhere in the mounted tree", async () => {
+    const { getByTestId, queryByLabelText } = mountFrame(false);
+    await waitFor(() =>
+      expect(getByTestId("chat-dock-slot").getAttribute("data-open")).toBe("true"),
+    );
+    expect(queryByLabelText("Collapse chat")).toBeNull();
+    expect(queryByLabelText("Expand chat")).toBeNull();
+    // Exactly one chat toggle exists, not a pair.
+    expect(document.querySelectorAll('[aria-label="Close chat"]').length).toBe(1);
   });
 });

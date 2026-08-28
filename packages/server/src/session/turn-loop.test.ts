@@ -395,7 +395,7 @@ describe("SessionTurnLoop: compaction surfaced honestly (task 3.1)", () => {
       }),
       store,
       buildSpec: spec,
-      emit: (r) => rows.push(r),
+      emit: (_sessionId, r) => rows.push(r),
     });
 
     const { outcome } = await loop.runTurn("s1", "hi");
@@ -418,7 +418,7 @@ describe("SessionTurnLoop: compaction surfaced honestly (task 3.1)", () => {
       }),
       store,
       buildSpec: spec,
-      emit: (r) => rows.push(r),
+      emit: (_sessionId, r) => rows.push(r),
     });
 
     await loop.runTurn("s1", "hi");
@@ -467,7 +467,7 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
       }),
       store,
       buildSpec: spec,
-      emit: (r) => rows.push(r),
+      emit: (_sessionId, r) => rows.push(r),
     });
 
     const { session: after, outcome, contextRebuilt } = await loop.runTurn("s1", "hi");
@@ -511,7 +511,7 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
       port: fakePort(() => undefined, { outcome: () => overloaded }),
       store,
       buildSpec: spec,
-      emit: (r) => rows.push(r),
+      emit: (_sessionId, r) => rows.push(r),
     });
 
     const { outcome, contextRebuilt } = await loop.runTurn("s1", "hi");
@@ -542,7 +542,7 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
       port: fakePort(() => undefined, { outcome: () => modelNotFound }),
       store,
       buildSpec: spec,
-      emit: (r) => rows.push(r),
+      emit: (_sessionId, r) => rows.push(r),
     });
 
     const { outcome, contextRebuilt } = await loop.runTurn("s1", "hi");

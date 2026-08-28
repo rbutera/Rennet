@@ -72,13 +72,13 @@ describe("frame chat-width clamp (400px surface minimum + ARIA range)", () => {
     expect(handle.getAttribute("aria-valuemax")).toBe("368");
   });
 
-  it("re-clamps when the rail expands to the panel and steals the dock's room", async () => {
+  it("re-clamps when the collapsed sidebar expands and steals the dock's room", async () => {
     act(() => {
       useRennetStore.getState().uiActions.setChatOpen(true);
       useRennetStore.getState().uiActions.setChatWidth(500);
-      useRennetStore.getState().uiActions.setSidebarOpen(false); // rail: 48px
+      useRennetStore.getState().uiActions.setSidebarOpen(false); // collapsed: 0px (C20)
     });
-    setViewport(1024); // rail 48 + surface 400 leaves 576 — 500 fits
+    setViewport(1024); // collapsed 0 + surface 400 leaves 624 — 500 fits
     const { getByTestId } = mount(
       <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
     );
@@ -106,5 +106,32 @@ describe("frame width-transition suppression (drag lifetime, not a settle timer)
     // Pointer up ends it immediately — no 200ms timer straggling behind.
     fireEvent.pointerUp(handle, { pointerId: 1 });
     expect(dock.className).toContain("transition-[width]");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The corner slot's focus hand-off (C20 §2.4). Collapsing the sidebar unmounts the
+// toggle that was focused; the slot's counterpart toggle now lives OUTSIDE the
+// `<aside>` (the floating pill, or the chat header), so the sidebar's refocus effect
+// must search the document, not its own subtree. Scoped to the aside, a keyboard
+// collapse strands focus on <body>.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("corner-slot focus hand-off across a collapse (C20)", () => {
+  it("lands focus on the slot's Expand toggle, not <body>, and back again on expand", async () => {
+    const { getByLabelText } = mount(
+      <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
+    );
+    const collapse = getByLabelText("Collapse sidebar");
+    collapse.focus();
+    expect(document.activeElement).toBe(collapse);
+    fireEvent.click(collapse);
+    const expand = await waitFor(() => getByLabelText("Expand sidebar"));
+    expect(document.activeElement).toBe(expand);
+    expect(document.activeElement).not.toBe(document.body);
+    // ...and back: expanding returns focus to the sidebar header's Collapse toggle.
+    fireEvent.click(expand);
+    const collapseAgain = await waitFor(() => getByLabelText("Collapse sidebar"));
+    expect(document.activeElement).toBe(collapseAgain);
   });
 });
