@@ -128,7 +128,9 @@ function StatefulProjects({
     worktreeByProject: worktrees,
     trackerByProject: trackers,
     guidanceByProject: guidance,
-    setProjectName: (id, name) => setNames((prev) => ({ ...prev, [id]: name })),
+    // A seeded setter WINS, so a test can count the writes the field actually makes.
+    setProjectName:
+      seed?.setProjectName ?? ((id, name) => setNames((prev) => ({ ...prev, [id]: name }))),
     setProjectGlyph: (id, icon) => setGlyphs((prev) => ({ ...prev, [id]: icon })),
     setWorktreeRoot: (id, root) =>
       setWorktrees((prev) => ({
@@ -195,7 +197,9 @@ describe("ProjectsPage — dual-source settings", () => {
     const input = (await findByLabelText("Project name")) as HTMLInputElement;
     // Unrenamed ⇒ no Reset yet (the listed name is the org/repo default).
     expect(queryByRole("button", { name: "Reset" })).toBeNull();
+    // The draft commits on blur, so the write lands once when the field is left.
     fireEvent.change(input, { target: { value: "Checkout Service" } });
+    fireEvent.blur(input);
     expect(getByTestId("probe-name").textContent).toBe("Checkout Service");
     // Renamed ⇒ a Reset appears, restoring the org/repo fallback (checkout).
     await user.click(getByRole("button", { name: "Reset" }));
@@ -205,6 +209,39 @@ describe("ProjectsPage — dual-source settings", () => {
     fireEvent.change(input, { target: { value: "  " } });
     fireEvent.blur(input);
     expect(getByTestId("probe-name").textContent).toBe("checkout");
+    cleanup();
+  });
+
+  it("identity: the name field WRITES ONCE on commit, not once per keystroke", async () => {
+    // `project.rename` is a disk write. A per-keystroke write would fire one for every
+    // character (and, on a controlled input, drop characters when the round trip lags),
+    // so the field holds a local draft and commits on blur/Enter — the same shape the
+    // sidebar's own rename uses.
+    const calls: string[] = [];
+    const { findByLabelText, user } = mount(
+      <StatefulProjects seed={{ setProjectName: (_id, name) => calls.push(name) }} />,
+    );
+    const input = (await findByLabelText("Project name")) as HTMLInputElement;
+    await user.click(input);
+    await user.keyboard("Pay");
+    // Typing alone commits NOTHING — the draft is local until the field is left.
+    expect(calls).toEqual([]);
+    // The field still shows every keystroke (a draft, not a swallowed edit).
+    expect(input.value).toContain("Pay");
+    fireEvent.blur(input);
+    expect(calls).toHaveLength(1);
+    cleanup();
+  });
+
+  it("identity: Enter commits the name once, without waiting for a blur", async () => {
+    const calls: string[] = [];
+    const { findByLabelText, user } = mount(
+      <StatefulProjects seed={{ setProjectName: (_id, name) => calls.push(name) }} />,
+    );
+    const input = (await findByLabelText("Project name")) as HTMLInputElement;
+    await user.click(input);
+    await user.keyboard("Payments{Enter}");
+    expect(calls).toEqual(["checkoutPayments"]);
     cleanup();
   });
 

@@ -38,6 +38,16 @@ const board: DraftBoard = {
     },
     { id: "p1", kind: "prose", data: { author, markdown: "nested prose" } },
     {
+      id: "risks",
+      kind: "section",
+      data: { author, title: "Risks", gist: "One open finding.", children: ["f1"] },
+    },
+    {
+      id: "f1",
+      kind: "finding",
+      data: { author, severity: "high", concern: "c", code: [], concurrence: [], status: "open" },
+    },
+    {
       id: "d1",
       kind: "decision",
       data: { author, statement: "s", why: "w", evidence: ["c1"], alternatives: [] },
@@ -88,9 +98,11 @@ describe("projectLensBoard — the persisted board, read back", () => {
       "c1",
       "change",
       "d1",
+      "f1",
       "nested",
       "p1",
       "r1",
+      "risks",
     ]);
     // Board-level coverage cannot ride the element log, so it comes from the meta record.
     expect(read.skippedHunks).toEqual([{ hunk: "h9", reason: "sequence's lane" }]);
@@ -100,7 +112,9 @@ describe("projectLensBoard — the persisted board, read back", () => {
     const read = await roundTrip();
     // `nested` is a child of `change`, so it is part of that section's tree, not a
     // second fold line — a projection that listed it would invent a top-level section.
-    expect(read.sections.map((s) => s.ref)).toEqual(["change"]);
+    // The remaining two are the board's READING ORDER, which the projection must preserve
+    // across the write/read round trip: `change` was authored before `risks`, so it leads.
+    expect(read.sections.map((s) => s.ref)).toEqual(["change", "risks"]);
     const [change] = read.sections;
     expect(change?.counts).toEqual({ decision: 1, requirement: 1, section: 1 });
     expect(change?.gist).toBe("Two decisions, one requirement.");

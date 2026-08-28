@@ -1,6 +1,6 @@
 import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { RotateCcw } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import { type KeyboardEvent, useState } from "react";
 import { Icon } from "../../components/icon";
 import type { SidebarProject } from "../../shell/sidebar-data";
 import {
@@ -16,9 +16,12 @@ import { UnbackedNote } from "./unbacked-note";
 // ─────────────────────────────────────────────────────────────────────────────
 // The Projects → Identity section (C10 §8.2, claims 649–652). The display name
 // (the `org/repo` default as placeholder, a Reset when renamed, the default restored
-// on an emptied blur) and the glyph grid that applies live to the sidebar row. Both
-// ride the settings projection (`nameByProject` / `glyphByProject` + their setters),
-// so an edit is provable now and the sidebar reads the same one state at B10.
+// on an emptied commit) and the glyph grid.
+//
+// The two rows persist to DIFFERENT stores, which is why the caption names both: the
+// NAME writes through `project.rename` into the projects store (`projects.json`) — the
+// same write the sidebar's rename calls — while the glyph is a client-settings fact with
+// no served write yet, so it stays disabled and says so.
 //
 // The glyph grid is the kit's single-select `ToggleGroup` (autopsy S6 forbids the
 // spike's hand-rolled `role="radiogroup"`), restyled to square icon cells.
@@ -43,14 +46,29 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
   const name = projection.nameByProject[project.id] ?? project.name;
   const glyph = projection.glyphByProject[project.id] ?? DEFAULT_PROJECT_ICON;
   const renamed = nameBacked && name !== project.fallbackName;
+  // The field holds a LOCAL draft and commits on blur/Enter — the same shape the sidebar's
+  // session rename uses. `setProjectName` is a served write (`project.rename` persists to
+  // the projects store), so a per-keystroke binding would write once per character and, on
+  // a controlled input, drop characters whenever the round trip lagged the typing.
+  const [draft, setDraft] = useState<string | null>(null);
+
+  function commitName() {
+    if (draft === null) return;
+    // An emptied name never persists — it falls back to the org/repo default (R67).
+    projection.setProjectName(project.id, draft.trim() || project.fallbackName);
+    setDraft(null);
+  }
 
   return (
-    <Section title="Identity" caption="~/.rennet/client-settings.json">
+    <Section title="Identity" caption="~/.rennet/projects.json · ~/.rennet/client-settings.json">
       <Row label="Name" hint={`defaults to ${project.fallbackName}`}>
         {renamed ? (
           <button
             type="button"
-            onClick={() => projection.setProjectName(project.id, project.fallbackName)}
+            onClick={() => {
+              setDraft(null);
+              projection.setProjectName(project.id, project.fallbackName);
+            }}
             className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-raised hover:text-ink"
           >
             <Icon icon={RotateCcw} className="size-3" />
@@ -58,14 +76,13 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
           </button>
         ) : null}
         <input
-          value={name}
-          onChange={(event) => projection.setProjectName(project.id, event.target.value)}
-          onBlur={(event) => {
-            // An emptied name never persists — it falls back to the org/repo default.
-            if (!event.target.value.trim())
-              projection.setProjectName(project.id, project.fallbackName);
+          value={draft ?? name}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commitName}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitName();
+            stopEscape(event);
           }}
-          onKeyDown={stopEscape}
           disabled={!nameBacked}
           aria-label="Project name"
           placeholder={project.fallbackName}

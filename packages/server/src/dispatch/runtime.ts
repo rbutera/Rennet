@@ -562,13 +562,6 @@ export interface DispatchDeps {
    */
   readonly transcriptRowsForReview?: (reviewId: string) => readonly SessionTranscriptRow[];
   /**
-   * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board
-   * for one `(review, generation, lens)` triple, projected from the whiteboard event log the
-   * lens pipeline wrote plus its board-meta record. `undefined` is the honest MISSING answer —
-   * that lens drafted no board that generation. Absent seam ⇒ no boards runtime wired, so every
-   * pair reads missing; a board is never fabricated to fill the gap.
-   */
-  /**
    * The sidebar's sessions (C03 cluster 2, bound in C18) — the durable session store's
    * rows and their persisted writes. Absent ⇒ no session store wired, so `session.list`
    * answers an honest empty sidebar and each write reports that it found no session
@@ -580,6 +573,13 @@ export interface DispatchDeps {
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
     setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;
   };
+  /**
+   * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board
+   * for one `(review, generation, lens)` triple, projected from the whiteboard event log the
+   * lens pipeline wrote plus its board-meta record. `undefined` is the honest MISSING answer —
+   * that lens drafted no board that generation. Absent seam ⇒ no boards runtime wired, so every
+   * pair reads missing; a board is never fabricated to fill the gap.
+   */
   readonly lensBoardForReview?: (
     reviewId: string,
     generation: string,
