@@ -109,7 +109,16 @@ export function projectIdForRepoRoot(repoRoot: string, projects: readonly Projec
  *   • session carries no repository ⇒ it still matches (an older or unstamped session resolves);
  *   • session carries a DIFFERENT repository ⇒ excluded, because it is provably another repo's.
  * Among the survivors, an exact repo ROOT wins over an unstamped session, and a session stamped
- * for another root never wins at all.
+ * for another root never wins at all. The unstamped fallback is taken only when there is exactly
+ * ONE — see below; an ambiguous fallback is declined rather than guessed.
+ *
+ * The two identities are complementary rather than redundant, and neither caller has both: the
+ * New Chat mint knows the `owner/name` (it is on the row) and can never know a host path; the
+ * round dispatch knows the path and cannot derive an `owner/name` synchronously (that is a git
+ * remote read). The consequence is stated rather than hidden: in a workspace holding two repos
+ * that share a branch name, a session minted from a row and the session a later round dispatches
+ * onto can be two rows rather than one. That is an honest split, not a wrong answer — the
+ * alternative, guessing, files one repo's rounds under the other repo's session.
  */
 export function claimingSession(
   sessions: readonly SessionModel[],
@@ -130,10 +139,19 @@ export function claimingSession(
   );
   if (repositoryRoot === undefined) return live[0];
   // An exact repo match wins; an UNSTAMPED session is the fallback (a New Chat mint that could
-  // not know the repo), never a session stamped for a DIFFERENT repo in the same workspace.
+  // not know the root), never a session stamped for a DIFFERENT repo in the same workspace.
+  //
+  // The fallback is taken only when it is UNAMBIGUOUS. Two unstamped sessions on one claim exist
+  // precisely because they named different repositories (identical silence would have reattached,
+  // not minted), and this caller has a PATH and no `owner/name`, so it can exclude neither. Taking
+  // the first would be decided by store order — a coin flip that files this repo's rounds under
+  // the other repo's session and then stamps this root onto it, leaving a session claiming to be
+  // both repos at once. Declining is honest and self-healing: the dispatch mints its own session,
+  // root-stamped, which resolves exactly from the next read on.
+  const unstamped = live.filter((s) => s.repositoryRoot === undefined);
   return (
     live.find((s) => s.repositoryRoot === repositoryRoot) ??
-    live.find((s) => s.repositoryRoot === undefined)
+    (unstamped.length === 1 ? unstamped[0] : undefined)
   );
 }
 

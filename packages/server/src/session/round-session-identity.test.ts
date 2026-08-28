@@ -381,6 +381,62 @@ describe("a workspace's per-repo rounds never collapse into one ledger (#580 car
     );
     expect(readB).toBe(stampedForB.id);
   });
+
+  it("an AMBIGUOUS unstamped fallback is declined, never guessed", async () => {
+    // The path the `owner/name` tiebreak alone does not cover, and it is the same bug one step
+    // later. Two New Chat clicks name two repos, so two rootless sessions exist; the round
+    // dispatch that follows has a PATH and no `owner/name`, so it excludes neither of them.
+    // Taking `live[0]` there is a coin flip that files repo B's rounds under repo A's session
+    // AND stamps repo B's root onto it — a wrong-project ledger, which is worse than an empty
+    // one, plus a session permanently claiming to be both repos at once.
+    const inA = sub.entry.enter(PROJECT_ID, { branch: "main", repository: "acme/repo-a" }).session;
+    const inB = sub.entry.enter(PROJECT_ID, { branch: "main", repository: "acme/repo-b" }).session;
+    expect(inA.repositoryRoot).toBeUndefined();
+    expect(inB.repositoryRoot).toBeUndefined();
+
+    // The read declines rather than guessing. Before the guard this answered whichever of the
+    // two the store happened to list first — the answer was decided by store order, which is
+    // the definition of a coin flip. Now it is honestly the review's own id.
+    const readB = resolveRoundSessionId(
+      reviewFor("review-b", REPO_B, "main"),
+      sub.sessions.list(),
+      PROJECT_ID,
+    );
+    expect(readB).not.toBe(inA.id);
+    expect(readB).not.toBe(inB.id);
+    expect(readB).toBe("review-b");
+
+    // The dispatch mints its OWN session rather than hijacking repo A's, and repo A's session
+    // is left exactly as it was — not silently re-stamped for a repo it does not live in.
+    const dispatched = sub.entry.enter(PROJECT_ID, { branch: "main" }, REPO_B);
+    expect(dispatched.reattached).toBe(false);
+    expect(dispatched.session.id).not.toBe(inA.id);
+    expect(dispatched.session.repositoryRoot).toBe(REPO_B);
+    expect(sub.sessions.load(inA.id)?.repositoryRoot).toBeUndefined();
+
+    // And it is self-healing: now root-stamped, it resolves EXACTLY from here on, and all four
+    // durable reads answer under that one id.
+    const readAgain = resolveRoundSessionId(
+      reviewFor("review-b", REPO_B, "main"),
+      sub.sessions.list(),
+      PROJECT_ID,
+    );
+    expect(readAgain).toBe(dispatched.session.id);
+    await recordARound(dispatched.session);
+    expectAllFourAnswer(readAgain);
+  });
+
+  it("a SINGLE unstamped session is still the fallback — declining is not amnesia", () => {
+    // The over-tightening control. One unstamped candidate is unambiguous, so it must still
+    // resolve; if this ever flips to the review id, that is the four-empty-reads bug returning.
+    const only = sub.entry.enter(PROJECT_ID, { branch: "main", repository: "acme/repo-a" }).session;
+    const readA = resolveRoundSessionId(
+      reviewFor("review-a", REPO_A, "main"),
+      sub.sessions.list(),
+      PROJECT_ID,
+    );
+    expect(readA).toBe(only.id);
+  });
 });
 
 // ── #573: the detached-HEAD phantom ──────────────────────────────────────────
