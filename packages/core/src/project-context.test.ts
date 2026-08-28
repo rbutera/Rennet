@@ -11,7 +11,7 @@ import type {
   TestEntry,
   WorkspaceScope,
 } from "@rennet/protocol";
-import { sha256Hex } from "@rennet/protocol";
+import { canonicalize, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { LoadedSnapshot, ShardLoader } from "./project-context";
 import {
@@ -212,6 +212,52 @@ describe("materializeSnapshot", () => {
     const result = materializeSnapshot(manifest, tampered);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.slots).toContain("scopes");
+  });
+});
+
+describe("loadSymbolShard — a shard that cannot answer `generated` is refused", () => {
+  /** A manifest whose symbol pointer for `B_A` names the given shard bytes. */
+  function withSymbolShardBytes(bytes: string): { snapshot: LoadedSnapshot; digest: string } {
+    const { manifest, load } = build();
+    const digest = sha256Hex(bytes);
+    const swapped: ProjectSnapshotManifest = {
+      ...manifest,
+      symbols: manifest.symbols.map(([blobOid, d]) =>
+        blobOid === B_A ? ([blobOid, digest] as const) : ([blobOid, d] as const),
+      ),
+    };
+    const swappedLoad: ShardLoader = (d) => (d === digest ? bytes : load(d));
+    const result = materializeSnapshot(swapped, swappedLoad);
+    if (!result.ok) throw new Error("materialize failed");
+    return { snapshot: result.snapshot, digest };
+  }
+
+  const body = {
+    blobOid: B_A,
+    extractor: "structural-ts-v1",
+    symbols: [{ name: "foo", kind: "function", line: 1 }],
+  };
+
+  it("refuses a pre-v4 shard rather than reading its absent `generated` as `false`", () => {
+    // The bytes hash to the digest the manifest names, so nothing here is missing or
+    // corrupt — the shard is simply from a schema that never recorded the banner bit.
+    // Coercing it to `false` would answer "this file is not generated" from evidence
+    // that does not exist.
+    const { snapshot, digest } = withSymbolShardBytes(canonicalize(body));
+    const overview = queryFileOverview(snapshot, "packages/core/src/a.ts");
+    expect(overview.ok).toBe(false);
+    if (!overview.ok) expect(overview.reason).toBe("shard-unavailable");
+    expect(querySymbolIndex(snapshot).ok).toBe(false);
+    expect(sha256Hex(canonicalize(body))).toBe(digest);
+  });
+
+  it("the control: the same shard WITH a boolean `generated` decodes", () => {
+    const { snapshot } = withSymbolShardBytes(canonicalize({ ...body, generated: true }));
+    const overview = queryFileOverview(snapshot, "packages/core/src/a.ts");
+    expect(overview.ok).toBe(true);
+    const index = querySymbolIndex(snapshot);
+    expect(index.ok).toBe(true);
+    if (index.ok) expect(index.index.generatedBlobs.has(B_A)).toBe(true);
   });
 });
 

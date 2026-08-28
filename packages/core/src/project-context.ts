@@ -46,7 +46,7 @@ import type {
   TestEntry,
   WorkspaceScope,
 } from "@rennet/protocol";
-import { sha256Hex } from "@rennet/protocol";
+import { PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import type { FanInIndex } from "./delta";
 import { probeReachesImporter, resolveCandidate, resolveRelative } from "./import-specifiers";
 
@@ -127,15 +127,17 @@ function loadBlobShard(
 function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undefined {
   const shard = loadBlobShard(load, digest);
   if (!shard || !Array.isArray(shard.body.symbols)) return undefined;
-  // `generated` is a v4 field; the hash-check above already proves these are our own
-  // bytes, so a non-boolean can only come from a pre-v4 shard the freshness gate
-  // should have rejected. Reading it as `false` is the safe direction (keep the file
-  // in the map) rather than a crash on a shard we otherwise understand.
+  // `generated` is REQUIRED on a current shard, so a shard that lacks it is refused
+  // rather than read as `generated: false`. Coercing it would turn a pre-v4 shard —
+  // one that genuinely cannot answer the question — into a confident "this file is
+  // not generated", which is precisely the silent wrong answer the fail-closed
+  // contract at the top of this module rules out.
+  if (typeof shard.body.generated !== "boolean") return undefined;
   return {
     blobOid: shard.blobOid,
     extractor: shard.extractor,
     symbols: shard.body.symbols as SnapshotSymbol[],
-    generated: shard.body.generated === true,
+    generated: shard.body.generated,
   };
 }
 
@@ -198,7 +200,17 @@ export interface LoadedSnapshot {
 
 export type MaterializeResult =
   | { readonly ok: true; readonly snapshot: LoadedSnapshot }
-  | { readonly ok: false; readonly reason: "shard-unavailable"; readonly slots: readonly string[] };
+  | {
+      readonly ok: false;
+      /**
+       * `shard-unavailable`: a shard family or a structural shard the manifest
+       * references could not be produced intact. `schema-version`: the manifest was
+       * written by a different schema than this build reads.
+       */
+      readonly reason: "shard-unavailable" | "schema-version";
+      /** What the manifest could not supply: the failed shard slots, or `schemaVersion`. */
+      readonly slots: readonly string[];
+    };
 
 const STRUCTURAL_SLOTS: readonly StructuralShardSlot[] = [
   "files",
@@ -221,6 +233,16 @@ export function materializeSnapshot(
   manifest: ProjectSnapshotManifest,
   load: ShardLoader,
 ): MaterializeResult {
+  // A manifest from a DIFFERENT schema is refused outright, before any shard is
+  // touched. Each version bump exists because a shard family or shape changed, so an
+  // older manifest that is internally perfect — right fingerprint, all three families
+  // present, every shard intact — still cannot answer what this build asks of it.
+  // The freshness gate rejects it first on the live path; this is the same refusal at
+  // the read boundary, for a caller that materializes without that gate.
+  if (manifest.schemaVersion !== PROJECT_SNAPSHOT_SCHEMA_VERSION) {
+    return { ok: false, reason: "schema-version", slots: ["schemaVersion"] };
+  }
+
   // A required per-blob shard family that is ABSENT is not "an empty index" — it is
   // a manifest this build cannot read. Refusing here is what stops a v3 manifest
   // without `imports` from materializing into a snapshot that answers "no import

@@ -353,7 +353,19 @@ export function verifySnapshotIntegrity(
   manifest: ProjectSnapshotManifest,
   load: (digest: string) => string | undefined,
 ): IntegrityResult {
-  // FAIL CLOSED on a missing shard FAMILY, before anything else. `symbols` is
+  // FAIL CLOSED on a manifest this build does not speak, before anything else. A
+  // PAST schema is not merely "a snapshot missing a field": every version bump
+  // exists because a shard family or a shard's shape changed, so an older manifest
+  // that happens to be internally consistent (correct fingerprint, all three
+  // families present, every shard intact) would otherwise pass this gate and be
+  // served with an answer the newer readers cannot get right. `isSnapshotFresh`
+  // already rejects it on the live path; this is the same refusal at the second
+  // door, for a caller that verifies without asking about freshness.
+  if (manifest.schemaVersion !== PROJECT_SNAPSHOT_SCHEMA_VERSION) {
+    return { ok: false, missing: [], mismatched: [] };
+  }
+
+  // FAIL CLOSED on a missing shard FAMILY. `symbols` is
   // required in v1, `references` in v2 and `imports` in v3, so a manifest that
   // omits one is not a snapshot with an empty index — it is a manifest this build
   // cannot read, and materializing it would silently claim "no import edges" for a

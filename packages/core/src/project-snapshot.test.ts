@@ -402,6 +402,31 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
     expect(verifySnapshotIntegrity(downgraded, (d) => shards.get(d)).ok).toBe(false);
   });
 
+  it("refuses a COMPLETE, self-consistent PRIOR-schema manifest at both read doors", () => {
+    // Not "a manifest with something missing": every shard family is present, every
+    // referenced shard is intact, and the fingerprint is RECOMPUTED so the manifest
+    // agrees with itself. The only fault is that it was written by an older schema —
+    // which is exactly the case a version bump exists to refuse, because the shards
+    // it carries cannot answer what this build asks of them.
+    const { manifest, shards } = fullBuild("oid2", treeV2);
+    const older = { ...manifest, schemaVersion: manifest.schemaVersion - 1 };
+    const priorSchema = { ...older, fingerprint: computeFingerprint(unfingerprinted(older)) };
+    expect(computeFingerprint(unfingerprinted(priorSchema))).toBe(priorSchema.fingerprint);
+    expect(priorSchema.symbols.length).toBeGreaterThan(0);
+    expect(Array.isArray(priorSchema.references)).toBe(true);
+    expect(Array.isArray(priorSchema.imports)).toBe(true);
+    for (const [, digest] of priorSchema.symbols) expect(shards.get(digest)).toBeDefined();
+
+    expect(verifySnapshotIntegrity(priorSchema, (d) => shards.get(d)).ok).toBe(false);
+    const materialized = materializeSnapshot(priorSchema, (d) => shards.get(d));
+    expect(materialized.ok).toBe(false);
+    if (!materialized.ok) expect(materialized.reason).toBe("schema-version");
+
+    // The control: the same manifest at the CURRENT schema passes both doors.
+    expect(verifySnapshotIntegrity(manifest, (d) => shards.get(d)).ok).toBe(true);
+    expect(materializeSnapshot(manifest, (d) => shards.get(d)).ok).toBe(true);
+  });
+
   it("fails closed when a required shard FAMILY is missing (no empty-graph coercion)", () => {
     // A v3 manifest without `imports` is not "a snapshot with no import edges" — it
     // is a manifest this build cannot read. Both the integrity gate and materialize
