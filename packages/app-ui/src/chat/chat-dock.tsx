@@ -19,12 +19,17 @@ import { ConversationPane } from "./conversation-pane";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function ChatDock({ corner }: { readonly corner?: ReactNode }) {
-  const { rows, liveIds, trail, contextWindow, inFlight, send, draft } = useChatDock();
+  const { rows, liveIds, trail, contextWindow, inFlight, send, draft, unavailable } = useChatDock();
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <ChatHeader trail={trail} corner={corner} />
       <ConversationPane rows={rows} liveIds={liveIds} contextWindow={contextWindow} />
-      <Composer onSend={send} inFlight={inFlight} {...(draft === undefined ? {} : { draft })} />
+      <Composer
+        onSend={send}
+        inFlight={inFlight}
+        {...(draft === undefined ? {} : { draft })}
+        {...(unavailable === undefined ? {} : { unavailable })}
+      />
     </div>
   );
 }

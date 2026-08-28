@@ -95,6 +95,7 @@ export function Composer({
   onSend,
   inFlight = false,
   draft,
+  unavailable,
 }: {
   readonly onSend: (message: string) => void;
   /** True while an orchestrator turn is streaming — the presence affordance follows this. */
@@ -102,6 +103,9 @@ export function Composer({
   /** The opening ask handed over on the mint (`?ask=`). Seeded into the box once per
    *  distinct value, so the reviewer lands looking at what they typed in New Chat. */
   readonly draft?: string;
+  /** Why sending is impossible right now (no review on this session), or absent when it
+   *  works. Present ⇒ the box says so and refuses input instead of swallowing it. */
+  readonly unavailable?: string;
 }) {
   const codeComments = useRennetStore((s) => s.review.codeComments);
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
@@ -213,6 +217,13 @@ export function Composer({
             ))}
           </div>
         )}
+        {/* Static explanatory copy, NOT a live region: it is tied to the disabled
+            control beside it, and the disabled state is what gets announced. A
+            `role="status"` here would be a second status landmark in the shell,
+            competing with the connection banner's. */}
+        {unavailable !== undefined && (
+          <p className="text-xs text-muted-foreground">{unavailable}</p>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
@@ -247,18 +258,19 @@ export function Composer({
             }}
             placeholder="message the orchestrator"
             rows={1}
+            disabled={unavailable !== undefined}
             aria-label="Message the orchestrator"
-            className="flex-1 resize-none overflow-y-auto rounded-md border border-border bg-card/40 px-3 py-2 font-sans text-sm text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+            className="flex-1 resize-none overflow-y-auto rounded-md border border-border bg-card/40 px-3 py-2 font-sans text-sm text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none disabled:opacity-60"
             style={{ height: MIN_TEXTAREA_HEIGHT }}
           />
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!value.trim()}
+            disabled={unavailable !== undefined || !value.trim()}
             aria-label="Send"
             className={cn(
               "flex size-9 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed",
-              value.trim()
+              value.trim() && unavailable === undefined
                 ? "bg-primary text-primary-foreground hover:bg-primary/90"
                 : "bg-muted text-muted-foreground",
             )}

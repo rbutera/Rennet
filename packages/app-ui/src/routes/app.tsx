@@ -141,8 +141,9 @@ function ChatOnlySession({ session }: { readonly session: SidebarSession }) {
     >
       <h1 className="font-display text-xl font-medium text-ink">{session.title}</h1>
       <p className="max-w-[420px] font-serif text-ink-soft">
-        No review captured yet — there is no diff to show. Ask the orchestrator about
-        {session.claim ? ` ${session.claim.branch}` : " this project"} in the chat.
+        This session is open on
+        {session.claim ? ` ${session.claim.branch}` : " this project"}. Nothing has been captured to
+        review yet, so there is no change to show.
       </p>
     </section>
   );

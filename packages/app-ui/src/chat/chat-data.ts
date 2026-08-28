@@ -366,6 +366,13 @@ export interface ChatDockModel {
   /** Send the reviewer's question — fires `review.ask` and folds its stream (no staging: C8). */
   send(message: string): void;
   /**
+   * Why the dock cannot send right now, or absent when it can. `review.ask` is keyed on a
+   * review, so a session with none (a freshly minted chat-only session) has nothing to ask
+   * ABOUT. The composer must say so rather than accept a question and drop it — an enabled
+   * box that silently eats input is the exact failure this dock is being repaired for.
+   */
+  readonly unavailable?: string;
+  /**
    * The opening ask handed over on the mint (`/s/:slug?ask=…`, C21). New Chat's composer
    * cannot send — the session does not exist until the click mints it — so the typed
    * question rides the URL instead of being swallowed. The composer seeds itself from
@@ -578,5 +585,11 @@ export function useChatDock(): ChatDockModel {
     inFlight,
     send,
     ...(draft === null || draft === "" ? {} : { draft }),
+    ...(reviewId === undefined
+      ? {
+          unavailable:
+            "No review is captured for this session yet, so there is no change to ask about.",
+        }
+      : {}),
   };
 }

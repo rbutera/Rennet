@@ -111,7 +111,7 @@ describe("/s/:slug for a review-less session (F1 cluster 4, C21 mint)", () => {
     expect(await findByText("Refactor the parser")).toBeTruthy();
     // It states the actual situation: no review, so no diff — and does NOT promise one
     // is coming (no spinner, no "preparing", no skeleton board).
-    expect(await findByText(/No review captured yet/)).toBeTruthy();
+    expect(await findByText(/Nothing has been captured to review yet/)).toBeTruthy();
     expect(document.querySelector('[data-screen="chat-only-session"]')).toBeTruthy();
     // The three arms it must NOT be.
     expect(document.querySelector('[data-screen="not-found"]')).toBeNull();
@@ -140,6 +140,8 @@ describe("/s/:slug for a review-less session (F1 cluster 4, C21 mint)", () => {
       <RennetRouterApp bridge={mintedSessionBridge()} history={history} />,
     );
     await findByText("Refactor the parser");
+    // The words are preserved and shown back, not silently dropped on the floor —
+    // even though this session has no review to send them against yet.
     await waitFor(() => {
       const box = screen.getByLabelText("Message the orchestrator") as HTMLTextAreaElement;
       expect(box.value).toBe("does b get used?");
@@ -226,9 +228,14 @@ describe("the chat dock resolves its review from the route (F1 cluster 4)", () =
     await screen.findByText("Refactor the parser");
     const box = screen.getByLabelText("Message the orchestrator");
     await user.type(box, "hello?");
-    // The composer really received the text — without this the assertions below would
-    // pass vacuously on an inert dock rather than on a resolution that found no review.
-    expect((box as HTMLTextAreaElement).value).toBe("hello?");
+    // The composer REFUSES the text rather than swallowing it: with no review there is
+    // nothing to ask about, so an enabled box that accepted this and dropped it would be
+    // the very lie this dock is being repaired for.
+    expect((box as HTMLTextAreaElement).disabled).toBe(true);
+    expect((box as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByLabelText("Send") as HTMLButtonElement).disabled).toBe(true);
+    // And it says WHY, rather than looking broken.
+    expect(screen.getByText(/no change to ask about/)).toBeTruthy();
     await user.click(screen.getByLabelText("Send"));
     await act(async () => {
       await Promise.resolve();
