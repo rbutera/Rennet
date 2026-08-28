@@ -35,6 +35,7 @@ import type {
   ConventionEntry,
   DependencyEdge,
   EntryPoint,
+  ImportShard,
   OwnershipRule,
   ProjectSnapshotManifest,
   ReferenceShard,
@@ -47,6 +48,7 @@ import type {
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import type { FanInIndex } from "./delta";
+import { INDEX_EXTS, RESOLVE_EXTS, resolveRelative } from "./import-specifiers";
 
 /** Load a content-addressed shard's bytes by digest, or `undefined` if absent. */
 export type ShardLoader = (digest: string) => string | undefined;
@@ -92,10 +94,16 @@ function loadStructuralEntries(
 }
 
 /**
- * Load, hash-verify, and parse a per-file symbol shard, or `undefined` on any
- * problem. Addressed by `blobOid`; carries no path.
+ * Load, hash-verify and parse a per-blob shard, returning the parsed object only
+ * when its bytes hash back to the referenced digest and it carries the common
+ * `blobOid` + `extractor` identity. `undefined` on ANY problem (absent, hash
+ * mismatch, malformed JSON, wrong shape) — the fail-closed half every per-blob
+ * loader shares; each caller adds only its own family's array check.
  */
-function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undefined {
+function loadBlobShard(
+  load: ShardLoader,
+  digest: string,
+): { blobOid: string; extractor: string; body: Record<string, unknown> } | undefined {
   const bytes = load(digest);
   if (bytes === undefined) return undefined;
   if (sha256Hex(bytes) !== digest) return undefined;
@@ -106,10 +114,24 @@ function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undef
     return undefined;
   }
   if (!parsed || typeof parsed !== "object") return undefined;
-  const shard = parsed as Partial<SymbolShard>;
-  if (typeof shard.blobOid !== "string" || typeof shard.extractor !== "string") return undefined;
-  if (!Array.isArray(shard.symbols)) return undefined;
-  return { blobOid: shard.blobOid, extractor: shard.extractor, symbols: shard.symbols };
+  const body = parsed as Record<string, unknown>;
+  const { blobOid, extractor } = body;
+  if (typeof blobOid !== "string" || typeof extractor !== "string") return undefined;
+  return { blobOid, extractor, body };
+}
+
+/**
+ * Load, hash-verify, and parse a per-file symbol shard, or `undefined` on any
+ * problem. Addressed by `blobOid`; carries no path.
+ */
+function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undefined {
+  const shard = loadBlobShard(load, digest);
+  if (!shard || !Array.isArray(shard.body.symbols)) return undefined;
+  return {
+    blobOid: shard.blobOid,
+    extractor: shard.extractor,
+    symbols: shard.body.symbols as SnapshotSymbol[],
+  };
 }
 
 /**
@@ -118,20 +140,28 @@ function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undef
  * `blobOid`; carries no path — the exact analogue of {@link loadSymbolShard}.
  */
 function loadReferenceShard(load: ShardLoader, digest: string): ReferenceShard | undefined {
-  const bytes = load(digest);
-  if (bytes === undefined) return undefined;
-  if (sha256Hex(bytes) !== digest) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(bytes);
-  } catch {
-    return undefined;
-  }
-  if (!parsed || typeof parsed !== "object") return undefined;
-  const shard = parsed as Partial<ReferenceShard>;
-  if (typeof shard.blobOid !== "string" || typeof shard.extractor !== "string") return undefined;
-  if (!Array.isArray(shard.references)) return undefined;
-  return { blobOid: shard.blobOid, extractor: shard.extractor, references: shard.references };
+  const shard = loadBlobShard(load, digest);
+  if (!shard || !Array.isArray(shard.body.references)) return undefined;
+  return {
+    blobOid: shard.blobOid,
+    extractor: shard.extractor,
+    references: shard.body.references as ReferenceShard["references"],
+  };
+}
+
+/**
+ * Load, hash-verify, and parse a per-file IMPORT shard, or `undefined` on any
+ * problem — the exact analogue of {@link loadSymbolShard}. The shard holds RAW
+ * specifiers; resolution to file→file edges happens in {@link queryImportGraph}.
+ */
+function loadImportShard(load: ShardLoader, digest: string): ImportShard | undefined {
+  const shard = loadBlobShard(load, digest);
+  if (!shard || !Array.isArray(shard.body.imports)) return undefined;
+  return {
+    blobOid: shard.blobOid,
+    extractor: shard.extractor,
+    imports: shard.body.imports as string[],
+  };
 }
 
 // ── Materialization ──────────────────────────────────────────────────────────
@@ -155,7 +185,9 @@ export interface LoadedSnapshot {
   readonly symbolDigestByBlob: ReadonlyMap<string, string>;
   /** `blobOid → reference-shard digest`, from `manifest.references` (#200). */
   readonly referenceDigestByBlob: ReadonlyMap<string, string>;
-  /** The shard loader, retained for lazy per-file symbol/reference resolution. */
+  /** `blobOid → import-shard digest`, from `manifest.imports`. */
+  readonly importDigestByBlob: ReadonlyMap<string, string>;
+  /** The shard loader, retained for lazy per-file symbol/reference/import resolution. */
   readonly load: ShardLoader;
 }
 
@@ -207,6 +239,13 @@ export function materializeSnapshot(
     referenceDigestByBlob.set(blobOid, digest);
   }
 
+  const importDigestByBlob = new Map<string, string>();
+  // `imports` is required in v3, tolerated as absent on the same terms (⇒ an empty
+  // import graph, an honest "no import edges known" — never a claimed empty answer).
+  for (const [blobOid, digest] of manifest.imports ?? []) {
+    importDigestByBlob.set(blobOid, digest);
+  }
+
   return {
     ok: true,
     snapshot: {
@@ -220,6 +259,7 @@ export function materializeSnapshot(
       conventions: decoded.conventions as readonly ConventionEntry[],
       symbolDigestByBlob,
       referenceDigestByBlob,
+      importDigestByBlob,
       load,
     },
   };
@@ -857,17 +897,210 @@ export function queryReferences(snapshot: LoadedSnapshot, query: ReferenceLookup
   return { ok: true, references: { name: query.name, sites } };
 }
 
+// ── context.imports (the repo-wide file→file import graph) ───────────────────
+//
+// The deterministic front half of the context map (context-map rebuild, W1). The
+// snapshot's `structural-imports-v1` extractor records each blob's RAW import
+// specifiers; this resolves them into real file→file edges by joining the shard
+// against the `files` inventory (which recovers the importing file's path — the
+// thing the path-free shard deliberately does not carry) and the `scopes` table.
+//
+// Resolution, deterministic and total:
+//  - a RELATIVE specifier (`./x`, `../y/z`) resolves POSIX-style against the
+//    importing file's directory, then against the inventory through the same
+//    extension/index candidate order the changeset decomposer uses;
+//  - a WORKSPACE specifier (`@scope/pkg`, or anything under it) resolves through
+//    the scopes table to the owning scope, then to a real file under that scope's
+//    root or source root — so `@rennet/core` lands on `packages/core/src/index.ts`,
+//    not on a directory that is not a graph node;
+//  - anything else — an npm package, a node builtin, a broken relative path, an
+//    asset the inventory holds but the graph does not index — resolves to NOTHING
+//    and contributes NO edge. The graph is file→file only; externals live on in the
+//    shard's raw specifiers for a later wave, never as a phantom node here.
+//
+// Honest scope, inherited from the extractor and stated on the read: TEXTUAL. A
+// specifier in a template literal or a line comment is a recorded import; a computed
+// `import(variable)` is invisible; type-only and value imports are indistinguishable.
+
+/** One resolved import edge: `from` imports `to`, both repo-relative POSIX paths. */
+export interface ImportEdge {
+  /** The importing file. */
+  readonly from: string;
+  /** The imported file. */
+  readonly to: string;
+  /** How the specifier resolved: a relative path, or a workspace package name. */
+  readonly kind: "relative" | "workspace";
+  /** The raw specifier as written in the source. */
+  readonly specifier: string;
+}
+
+/** The repo-wide import graph: every resolved edge, plus per-file adjacency. */
+export interface ImportGraph {
+  /** Every resolved edge, ranked deterministically by (from, to, specifier). */
+  readonly edges: readonly ImportEdge[];
+  /** The DISTINCT files `path` imports, sorted. Empty for an unknown path. */
+  importsOf(path: string): readonly string[];
+  /** The DISTINCT files that import `path`, sorted. Empty for an unknown path. */
+  importersOf(path: string): readonly string[];
+}
+
+export type ImportGraphResult =
+  | { readonly ok: true; readonly graph: ImportGraph }
+  | { readonly ok: false; readonly reason: "shard-unavailable"; readonly digest: string };
+
+/** Resolve a base path to a real inventory file, trying plain then `index` extensions. */
+function resolveInInventory(
+  base: string,
+  paths: ReadonlySet<string>,
+  importerPath: string,
+): string | null {
+  for (const ext of RESOLVE_EXTS) {
+    const candidate = base + ext;
+    if (candidate !== importerPath && paths.has(candidate)) return candidate;
+  }
+  for (const ext of INDEX_EXTS) {
+    const candidate = `${base}/index${ext}`;
+    if (candidate !== importerPath && paths.has(candidate)) return candidate;
+  }
+  return null;
+}
+
 /**
- * Build the blast-radius {@link FanInIndex} (#200 → #35 follow-on) over a materialized
- * snapshot: `definedSymbols(path)` reads the file's symbol overview, `referencingFiles(name)`
- * reads the reference index and returns the DISTINCT files an identifier occurs in. Pure
- * over the snapshot (the composition resolves + materializes it, and only supplies the index
- * when the reference index is populated, so an empty index is a NOT-ASSESSED chip upstream,
- * never a silent zero). A shard-decode failure degrades to empty for that lookup — a
- * conservative under-count, never a crash.
+ * Resolve one raw specifier to an edge target, or null when it names nothing the
+ * inventory holds (the external / unresolvable case). Pure and total.
+ */
+function resolveSpecifier(
+  specifier: string,
+  importerPath: string,
+  paths: ReadonlySet<string>,
+  scopes: readonly WorkspaceScope[],
+): { path: string; kind: ImportEdge["kind"] } | null {
+  if (specifier.startsWith(".")) {
+    const target = resolveInInventory(
+      resolveRelative(importerPath, specifier),
+      paths,
+      importerPath,
+    );
+    return target === null ? null : { path: target, kind: "relative" };
+  }
+
+  // The MOST SPECIFIC matching scope name wins, so `@x/core-utils` never resolves
+  // through `@x/core` on a prefix accident (the `/` boundary is required).
+  let owner: WorkspaceScope | undefined;
+  for (const scope of scopes) {
+    if (specifier !== scope.name && !specifier.startsWith(`${scope.name}/`)) continue;
+    if (owner === undefined || scope.name.length > owner.name.length) owner = scope;
+  }
+  if (owner === undefined) return null;
+
+  const subpath = specifier.slice(owner.name.length).replace(/^\//, "");
+  // A package's entry lives under its source root far more often than at its root,
+  // so both are tried, root first. `<root>/src` is the fallback when no tooling
+  // config declared a source root.
+  const roots = [owner.root, owner.sourceRoot ?? `${owner.root}/src`];
+  for (const root of roots) {
+    const base = subpath === "" ? root : `${root}/${subpath}`;
+    const target = resolveInInventory(base, paths, importerPath);
+    if (target !== null) return { path: target, kind: "workspace" };
+  }
+  return null;
+}
+
+/**
+ * Materialize the repo-wide file→file import graph from the manifest's import
+ * shards plus the `files` inventory and `scopes` table. Deterministic and
+ * fail-closed: an import shard the manifest references but the loader cannot
+ * produce intact ⇒ `shard-unavailable` (never a silent partial graph). Each blob's
+ * shard is decoded at most once even when several paths share the blob; a shared
+ * blob contributes edges from EACH of its paths, resolved at that path.
+ */
+export function queryImportGraph(snapshot: LoadedSnapshot): ImportGraphResult {
+  const paths = new Set(snapshot.files.map((file) => file.path));
+  const shardByDigest = new Map<string, ImportShard>();
+  const edges: ImportEdge[] = [];
+
+  for (const file of snapshot.files) {
+    const digest = snapshot.importDigestByBlob.get(file.blobOid);
+    if (digest === undefined) continue;
+
+    let shard = shardByDigest.get(digest);
+    if (shard === undefined) {
+      const loaded = loadImportShard(snapshot.load, digest);
+      if (loaded === undefined) return { ok: false, reason: "shard-unavailable", digest };
+      shard = loaded;
+      shardByDigest.set(digest, shard);
+    }
+
+    for (const specifier of shard.imports) {
+      const resolved = resolveSpecifier(specifier, file.path, paths, snapshot.scopes);
+      if (resolved === null) continue;
+      edges.push({ from: file.path, to: resolved.path, kind: resolved.kind, specifier });
+    }
+  }
+
+  edges.sort(
+    (a, b) => byPath(a.from, b.from) || byPath(a.to, b.to) || byPath(a.specifier, b.specifier) || 0,
+  );
+
+  const outgoing = new Map<string, Set<string>>();
+  const incoming = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    addAdjacent(outgoing, edge.from, edge.to);
+    addAdjacent(incoming, edge.to, edge.from);
+  }
+  const sortedOf = (index: Map<string, Set<string>>, path: string): readonly string[] =>
+    [...(index.get(path) ?? [])].sort(byPath);
+
+  return {
+    ok: true,
+    graph: {
+      edges,
+      importsOf: (path) => sortedOf(outgoing, path),
+      importersOf: (path) => sortedOf(incoming, path),
+    },
+  };
+}
+
+function byPath(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function addAdjacent(index: Map<string, Set<string>>, key: string, value: string): void {
+  const set = index.get(key);
+  if (set === undefined) index.set(key, new Set([value]));
+  else set.add(value);
+}
+
+/**
+ * Build the blast-radius {@link FanInIndex} over a materialized snapshot, preferring
+ * REAL IMPORT EDGES and falling back to the textual identifier index.
+ *
+ * The two methods do not claim the same thing, so {@link FanInIndex} is a
+ * discriminated union and this returns the arm that matches the evidence — a
+ * textual answer can never be presented as edge-backed, because there is no such
+ * shape to build (a compile error, not a convention):
+ *  - `import-edges`: the import graph resolved and is non-empty, so a dependent is
+ *    a file that genuinely imports the changed file.
+ *  - `textual`: no import graph (an older snapshot, or a tree with no resolvable
+ *    imports), so dependents are files where an identifier the changed file exports
+ *    merely OCCURS — name-based, unable to tell two same-named symbols apart.
+ *
+ * Pure over the snapshot. A shard-decode failure degrades to the textual method or
+ * to empty for that lookup — a conservative under-count, never a crash. The
+ * composition supplies the index only when it is genuinely populated, so absence
+ * stays a NOT-ASSESSED chip upstream rather than a silent zero.
  */
 export function fanInIndexFromSnapshot(snapshot: LoadedSnapshot): FanInIndex {
+  const graph = queryImportGraph(snapshot);
+  if (graph.ok && graph.graph.edges.length > 0) {
+    const resolved = graph.graph;
+    return {
+      method: "import-edges",
+      importersOf: (path: string) => resolved.importersOf(path),
+    };
+  }
   return {
+    method: "textual",
     definedSymbols(path: string): readonly string[] {
       const result = queryFileOverview(snapshot, path);
       return result.ok ? result.overview.symbols.map((symbol) => symbol.name) : [];
