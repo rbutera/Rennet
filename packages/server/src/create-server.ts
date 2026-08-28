@@ -34,7 +34,6 @@ import {
   createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
-  createCodexUtilityAdapter,
   createCoverageTurn,
   createDaemonSettingsStore,
   createGitHubOctokit,
@@ -92,6 +91,7 @@ import {
   readOpenSpecChange,
   readSetupLogTail,
   readSetupStatus,
+  readTreeLineCounts,
   refreshGitHubCredential,
   repoHasSubmodules,
   repoKeyOf,
@@ -118,7 +118,6 @@ import {
   buildOfferedManifest,
   buildReviewCanvases,
   type CodexExecutor,
-  type CodexUtilityPort,
   classifyUiSurface,
   createHarnessRunTurn,
   createInvocationBudget,
@@ -496,8 +495,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // a silent single-seat masquerading as a dual-model run.
   interface CodexResolution {
     readonly availability: CodexAvailability;
-    readonly port: CodexUtilityPort | null;
-    readonly executor: CodexExecutor | null;
+    /**
+     * Build the utility executor for one repository (W5). Per-repo, not per-locus:
+     * a utility seat roots at the checkout it is reasoning about, exactly as the
+     * Claude legs of the same council-routed jobs do. Discovery stays memoized per
+     * locus; only this closure is applied per review. Null ⇒ no codex resolved.
+     */
+    readonly makeExecutor: ((repoRoot: string) => CodexExecutor) | null;
     /** The resolved absolute `codex` path (for the ask-AI executor), or null. */
     readonly binPath: string | null;
     /** The resolved codex version, stamped as harness provenance, or null. */
@@ -520,8 +524,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (env.RENNET_DISABLE_HARNESS === "1") {
           return {
             availability: { available: false, version: null },
-            port: null,
-            executor: null,
+            makeExecutor: null,
             binPath: null,
             version: null,
           };
@@ -539,22 +542,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (!chosen) {
           return {
             availability: { available: false, version: null },
-            port: null,
-            executor: null,
+            makeExecutor: null,
             binPath: null,
             version: null,
           };
         }
-        const executor = createCodexExecutor(defaultCodexExecEffects, {
-          bin: chosen.path,
-          harnessVersion: chosen.version,
-          ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
-          ...(locus.kind === "wsl" ? { locus } : {}),
-        });
+        const makeExecutor = (repoRoot: string): CodexExecutor =>
+          createCodexExecutor(defaultCodexExecEffects, {
+            bin: chosen.path,
+            harnessVersion: chosen.version,
+            ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
+            ...(locus.kind === "wsl" ? { locus } : {}),
+            repoRoot,
+          });
         return {
           availability: { available: true, version: chosen.version },
-          port: createCodexUtilityAdapter({ executor }),
-          executor,
+          makeExecutor,
           binPath: chosen.path,
           version: chosen.version,
         };
@@ -571,9 +574,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     return (await getClaudeHarness(locus, distroCwd)).adapter ?? null;
   }
+  /** The utility executor for a repo, ROOTED AT THAT CHECKOUT (W5) — locus-native, so a
+   *  WSL project's seat gets the distro path the distro's codex can actually open. */
   async function codexExecutorForRepo(repoRoot: string): Promise<CodexExecutor | null> {
-    const { locus } = locusContextForRepo(repoRoot);
-    return (await getCodexResolution(locus)).executor;
+    const { locus, distroCwd } = locusContextForRepo(repoRoot);
+    const { makeExecutor } = await getCodexResolution(locus);
+    return makeExecutor === null ? null : makeExecutor(distroCwd ?? repoRoot);
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -1271,11 +1277,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const ciAssignment = resolveAssignment("ci-failure-classification", {
       availability: { installed },
     });
+    // The Codex leg roots at the repository, like the Claude leg right below it (W5).
+    const codexUtilityExecutor = codexResolution.makeExecutor?.(distroCwd ?? review.repositoryRoot);
     const ciRefinementTurn =
       ciAssignment.kind !== "model"
         ? undefined
-        : ciAssignment.harness === "codex" && codexResolution.executor
-          ? createCodexCiRefinementTurn(codexResolution.executor, {
+        : ciAssignment.harness === "codex" && codexUtilityExecutor
+          ? createCodexCiRefinementTurn(codexUtilityExecutor, {
               model: ciAssignment.model,
               effort: ciAssignment.effort,
             })
@@ -2215,6 +2223,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 }
               );
             },
+            // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
+            // lint resolves citations against every text file at the reviewed head and
+            // base, not only the changed ones. Two `git grep -c` passes over the repo's
+            // own git (locus-aware), ~80 ms on a 2.4k-file tree; a side git could not
+            // read comes back empty and degrades to the diff on that side alone.
+            fileInventory: (patchset) =>
+              readTreeLineCounts(
+                patchset.repository.root,
+                patchset.repository.headOid,
+                patchset.repository.baseOid,
+                gitForRepo(patchset.repository.root),
+              ),
             // The REAL prior generation, rebuilt from its two durable halves (the generation
             // record + the board-meta rows' projected boards). Absent ⇒ this session has
             // never regenerated, so the round is honestly a first generation.
@@ -2585,16 +2605,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // pipeline seat (bead workspace-6qp15), and to the review's locus (#334) so a
         // WSL project asks the distro's codex. A null executor means no codex resolved
         // — surface that honestly rather than shelling a bad `codex`.
-        const { locus } = locusContextForRepo(review.repositoryRoot);
-        const codex = await getCodexResolution(locus);
-        if (codex.executor === null) {
+        const executor = await codexExecutorForRepo(review.repositoryRoot);
+        if (executor === null) {
           return {
             model: CODEX_ASK_LABEL,
             answer: "Codex is not installed, so no second opinion is available.",
           };
         }
         // Thread the quit-abort controller (#251 criterion 4) → execa's cancelSignal.
-        return createLiveCodexAsk({ executor: codex.executor })({
+        return createLiveCodexAsk({ executor })({
           review,
           question,
           ...(abortController ? { abortController } : {}),

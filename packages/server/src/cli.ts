@@ -551,6 +551,8 @@ async function enrichMap(input: {
         bin: codexChosen.path,
         harnessVersion: codexChosen.version,
         ...(codexChosen.runtimePath === undefined ? {} : { runtimePath: codexChosen.runtimePath }),
+        // The repository being mapped — the swarm's seats read it (W5).
+        repoRoot: root,
       })
     : null;
   if (!adapter && !codexExecutor) {

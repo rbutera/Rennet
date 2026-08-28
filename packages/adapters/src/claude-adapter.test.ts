@@ -397,6 +397,38 @@ describe("ClaudeAdapter session", () => {
     expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
+  // W5: the MCP surface. Configured on the adapter (as the Codex adapter carries it), so
+  // every session this harness creates would reach it. This proves the plumbing only —
+  // no loopback canvasOps server is stood up, so nothing supplies it in production yet.
+  it("carries the configured mcpServers onto every session's options", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+      mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
+    });
+    const session = await adapter.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "act" });
+    expect(capturedArgs[0]?.options.mcpServers).toEqual({
+      canvasops: { url: "http://127.0.0.1:5000/mcp" },
+    });
+  });
+
+  it("omits mcpServers when the adapter was configured with none", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const session = await adapter.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "act" });
+    expect(capturedArgs[0]?.options.mcpServers).toBeUndefined();
+  });
+
   it("streams text.delta from stream_event frames when the spec asks for partial text", async () => {
     const capturedArgs: ClaudeQueryArgs[] = [];
     const frames = [
