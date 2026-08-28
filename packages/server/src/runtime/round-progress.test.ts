@@ -313,6 +313,18 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     for (const lens of ["sequence", "decisions", "flagged", "noise"]) {
       expect(verdictOf(settled.lanes, lens)).toBe("carrying-forward");
     }
+
+    // …and design never read "carrying forward" at ANY point in the stream, not just at
+    // the end. A lane that settles before its verdict is known has to claim SOMETHING,
+    // and whatever it claims is a guess the reviewer watches for the length of the round.
+    const everyLane = events.flatMap((e) => (e.type === "lens" ? e.lanes : []));
+    expect(everyLane.filter((l) => l.id === "design" && l.status === "done")).not.toHaveLength(0);
+    for (const lane of everyLane) {
+      if (lane.id === "design" && lane.status === "done") expect(lane.verdict).toBe("reworked");
+    }
+    // The window between a board landing and its arrival is `drafted` — the honest name
+    // for "written, verdict not known yet", and the state that replaced the early settle.
+    expect(everyLane.some((lane) => lane.status === "drafted")).toBe(true);
   });
 
   // ── A round whose drafters failed (review finding 4) ───────────────────────
