@@ -264,7 +264,6 @@ export function ProjectDetail({
           {detail.authUnavailable ? (
             <AuthHint
               reason={detail.authUnavailable}
-              bridge={bridge}
               onReconnected={() => setReloadNonce((nonce) => nonce + 1)}
             />
           ) : null}
@@ -404,16 +403,8 @@ const AUTH_HINT_COPY: Record<AuthUnavailable, string> = {
  * "go to Settings"), and a success refetches the PR half in place. A network
  * outage is transient, so it states the fact with no button.
  */
-function AuthHint({
-  reason,
-  bridge,
-  onReconnected,
-}: {
-  reason: AuthUnavailable;
-  bridge: RennetBridge;
-  onReconnected(): void;
-}) {
-  const account = useGitHubAccount(bridge);
+function AuthHint({ reason, onReconnected }: { reason: AuthUnavailable; onReconnected(): void }) {
+  const account = useGitHubAccount();
   // A device flow was in flight → when the account flips to connected, the reconnect
   // succeeded: refetch. The ref keeps a stale `status` from firing it on mount.
   const wasConnecting = useRef(false);
