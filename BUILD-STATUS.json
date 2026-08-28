@@ -164,5 +164,10 @@
     "status": "landed",
     "passes": true,
     "note": "LANDED #559 @0053c25e (closes #552). Token deleted end to end (snapshot 80->79, both clients); verdict folded into publishCompositionId/assertCompositionFresh \u2014 flip-without-recompose refused, red-proven from committed baselines. Desktop verdict override made durable (was local-only; packet falsehood caught by implementer). Review FIX->CONFIRMED. Follow-ups #555 #556. Survivors untouched."
+  },
+  "c20": {
+    "status": "pending",
+    "passes": false,
+    "note": "NEW (Rai 2026-08-28, approved from live spike demo): corner-slot macOS chrome \u2014 leftmost pane owns the lights, wordmark + rail deleted, chat toggle on main view. Lands BEFORE C14; closes #558. Packet: openspec/changes/c20-corner-slot-chrome/"
   }
 }
