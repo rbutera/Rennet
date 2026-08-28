@@ -13,6 +13,7 @@ import {
   useRoundDispatch,
   useRoundRecords,
   useRoundState,
+  useRoundsUnavailable,
 } from "../rounds/rounds-data";
 import { RoundsLedger } from "../rounds/rounds-ledger";
 import { ROUTES, readSessionQuery, sessionRunPath, viewToggle } from "../routes/url";
@@ -73,14 +74,27 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // round falls through to the board (the "no rounds ⇒ fall back" guard — url.ts already
   // falls back on an unknown `?view`, this covers the known-but-empty case).
   const roundRecords = useRoundRecords(slug);
+  // Why the rounds cannot be read, when they cannot (review finding 9). An empty ledger and
+  // an UNANSWERED one are different facts, and a client can outrun the daemon it is talking
+  // to: rendering "no rounds have completed" over a daemon that never answered would be a
+  // claim nobody established. The reason is stated where the ledger would have been.
+  const roundsUnavailable = useRoundsUnavailable(slug);
   const greetingArmed = useRennetStore((s) => s.run.greetingArmed);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
-  const reportBoardId = "reportBoardId" in roundState ? roundState.reportBoardId : "";
+  const reportBoardId = ("reportBoardId" in roundState ? roundState.reportBoardId : "") ?? "";
   const report = useReportBoard(reportBoardId);
+  // A report phase is one that HAS a report to greet with. A round with no successor
+  // account never runs the report seat, so it composes with no report board id at all —
+  // and holding its new boards behind a greeting that can never arrive would be a promise
+  // ("until its report arrives") that nothing is going to keep. Such a round lands on the
+  // boards it just regenerated, which is what it was dispatched for. A round that DOES
+  // name a report which fails to resolve still routes to `ReportUnavailable` — that report
+  // exists and the reveal is genuinely owed.
   const inReportPhase =
-    roundState.phase === "reporting" ||
-    roundState.phase === "composing" ||
-    roundState.phase === "composed";
+    reportBoardId !== "" &&
+    (roundState.phase === "reporting" ||
+      roundState.phase === "composing" ||
+      roundState.phase === "composed");
   const boardGeneration =
     roundState.phase === "composed" ? roundState.newGeneration : LIVE_GENERATION;
 
@@ -108,7 +122,9 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         <DiffViewContainer review={review} roundGeneration={query.round ?? undefined} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {view === "rounds" && roundRecords.length > 0 ? (
+          {view === "rounds" && roundsUnavailable !== undefined ? (
+            <RoundsUnavailable reason={roundsUnavailable} />
+          ) : view === "rounds" && roundRecords.length > 0 ? (
             <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
           ) : greetingArmed && inReportPhase ? (
             // Report phase with the greeting armed: the report GATES the reveal. A valid report
@@ -139,6 +155,42 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
     </div>
+  );
+}
+
+/**
+ * The rounds-unavailable surface (review finding 9): this daemon does not answer the rounds
+ * reads, so Rennet cannot say whether the session has any. It states the fact and the
+ * daemon's own reason, and that is the whole of it — there is no capability handshake
+ * behind it, nothing to acknowledge, and every other view stays reachable. An honest
+ * absence with its cause is a statement, not a gate.
+ */
+function RoundsUnavailable({ reason }: { reason: string }) {
+  return (
+    <>
+      <header className="border-border border-b px-6 py-3">
+        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+          ROUNDS
+        </p>
+      </header>
+      <section
+        data-testid="rounds-unavailable"
+        role="status"
+        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+      >
+        <h1 className="font-display text-foreground text-xl">
+          Rennet cannot read this session&rsquo;s rounds.
+        </h1>
+        <p className="text-muted-foreground text-sm">
+          The daemon this window is connected to did not answer the rounds read, so whether this
+          session has completed rounds is unknown — not none. It is most likely older than this app;
+          updating the daemon should restore the ledger.
+        </p>
+        <p data-testid="rounds-unavailable-reason" className="text-muted-foreground/80 text-xs">
+          {reason}
+        </p>
+      </section>
+    </>
   );
 }
 

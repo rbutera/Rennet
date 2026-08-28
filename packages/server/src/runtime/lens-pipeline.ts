@@ -10,6 +10,7 @@ import {
   type DeltaPacket,
   type HarnessPort,
   type HarnessTurnResult,
+  isCarriedForward,
   type LintContext,
   type LintHunk,
   type LintTarget,
@@ -440,6 +441,14 @@ export interface BoardArrivalEvent {
   readonly boardId: string;
   /** The frozen element count — a cheap "this board is ready" signal for the reveal. */
   readonly elementCount: number;
+  /**
+   * Did this board CARRY FORWARD — the regeneration changed none of its sections?
+   * (C15 3.3.) Read straight off the delta stamps `stampDeltas` just wrote via
+   * {@link isCarriedForward}, so the live progress channel's "carrying forward" lane
+   * label and the board's own section markers are the SAME signal and cannot disagree.
+   * Always `false` on a first generation (nothing to carry from).
+   */
+  readonly carried: boolean;
 }
 
 /**
@@ -539,8 +548,17 @@ export interface LensPipelineDeps {
 
 export interface LensPipelineResult {
   readonly boards: readonly LensBoardOutcome[];
-  /** Cross-lens every-hunk coverage (cluster 4), run ONCE over the frozen set. */
-  readonly coverage: readonly Violation[];
+  /**
+   * Cross-lens every-hunk coverage (cluster 4), run ONCE over the frozen set.
+   *
+   * ABSENT means UNKNOWN, not clean. Coverage is computed from the drafted boards
+   * themselves (which hunks each board teaches), and those boards live only in the run
+   * that produced them: a result REBUILT from durable board metadata after a restart has
+   * the ids and the blemishes but not the boards, so it cannot recompute the coverage
+   * picture and says so rather than reporting an empty violation list — which would claim
+   * a clean round it never verified.
+   */
+  readonly coverage?: readonly Violation[];
   /**
    * The round-report board, present only on a ROUND (a prior generation exists).
    * It drafts FIRST and is the lens drafters' input (D3/R58); it is NOT a lens,
@@ -739,6 +757,9 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         lens: o.lens,
         boardId: o.boardId,
         elementCount: o.board.elements.length,
+        // C15 3.3: the carried signal rides the arrival so the live lane label is the
+        // SAME `stampDeltas` fact the section markers render — not a re-derivation.
+        carried: isCarriedForward(deps.previous?.get(o.lens), o.board),
       });
     }
   }
@@ -811,7 +832,12 @@ async function runRoundReport(
   }
   // The report is the reviewer's greeting (R58) — it announces its arrival inline,
   // ahead of the lens boards, once its write is accepted and its metadata is durable.
-  deps.onBoardArrival?.({ lens: "report", boardId, elementCount: stamped.elements.length });
+  deps.onBoardArrival?.({
+    lens: "report",
+    boardId,
+    elementCount: stamped.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), stamped),
+  });
 
   return {
     lens: "report",

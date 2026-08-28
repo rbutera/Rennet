@@ -136,11 +136,54 @@ Remove the shim when the minimum compatible version makes it unreachable.
 | `serverRequestResolved` | server to client | server request ID |
 | `presence` | client to server | focus, visibility, device class, optional focused review |
 | `attentionEvent` | server to client | raised item or cleared IDs |
+| `boardEvent` | server to client | board ID and newly appended board events |
+| `askProjection` | server to client | session ID and the durable ask projection |
+| `roundProgress` | server to client | review ID and one round-progress event |
 
 `progressEvent.event` accepts the `ProjectProgressEvent` union. General project
 processing uses `onProgress(commandId)`; per-repository pull-request loading for
 project detail uses `onProjectDetailProgress(commandId)`. Both share the wire
 frame and remain distinct bridge subscriptions.
+
+`roundProgress` carries one live round-progress event, keyed by the review whose
+round is running. It is a **snapshot** frame: each event re-states the whole of
+its group's rows rather than a delta, and the client's run machine is a
+forward-only fold, so a duplicated or re-ordered frame just restates rows the
+fold already holds. The same events are readable as an ordered log through
+`session.roundEvents`, which is what a client joining mid-round folds to catch
+up — one reducer over one event vocabulary, so a late joiner and a live
+subscriber can never disagree about the phase.
+
+The run machine treats both `composed` and `failed` as terminal from any
+in-flight phase, so a round that ends can always say so even when an
+intermediate event — most often `report`, which only a round with a successor
+account ever emits — never happened.
+
+Each event carries a **`seq`**: its position in that review's progress log,
+monotonic across rounds. The read and the push are two writers over one log and
+neither is complete on its own, so the client merges them by `seq` rather than
+letting the later arrival install itself wholesale — otherwise an event emitted
+while the catch-up read was in flight is dropped, and a dropped terminal event
+leaves the surface reading "still working" over a finished round. Because a
+`dispatched` starts a round, everything before the newest one belongs to a round
+that is over and is discarded, so a late frame from the previous round cannot
+settle the round now running. `seq` is optional on the wire: a daemon that
+predates it emits none, and those events fold in arrival order exactly as before.
+
+A round's progress rows are two shapes, each a union on `status` so the illegal
+states are unrepresentable rather than guarded at every read. A **step row** (a
+prep line, the worker turn) settles `done` with its own account of itself, or
+`failed` with a reason. A **lens lane** adds `drafted` — its board is written but
+cross-lens coverage has not run — and its `done` state *requires* the
+`carrying forward` / `reworked` verdict. There is no settled lane without a
+verdict and no failed row without a reason.
+
+A client can also outrun the daemon it is connected to. An older daemon does not
+answer `session.rounds` or `session.roundEvents` at all, and the rounds surfaces
+say so in the daemon's own words rather than rendering the empty ledger that
+would read as "no rounds have completed". This is a statement, not a handshake:
+there is no capability negotiation behind it and nothing for the reviewer to
+clear.
 
 `hello.deviceToken` carries a paired device's bearer token. Loopback clients omit
 it. The daemon hashes stored device tokens and uses the presented value to

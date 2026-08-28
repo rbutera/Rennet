@@ -206,9 +206,13 @@ Each exit composes from the durable ask projection, never from a private copy:
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces
   onto the first rather than racing a second). A failed kick is evicted so an
-  identical re-dispatch retries. (Board regeneration on a round's return is the
-  planned continuation of this loop and is not yet wired to a production caller;
-  what ships today is the dispatch → one work-order → serialized run.)
+  identical re-dispatch retries. Board **regeneration** is the tail of the same
+  dispatch: once the worker turn lands, the round assembles its collation from
+  the active patchset and runs the drafting pipeline for real, minting a new
+  generation and freezing the prior one. It degrades honestly rather than
+  breaking a landed round — no active patchset to regenerate over, or a
+  regeneration that throws, closes the round's progress channel with a terminal
+  failure and leaves the worker's committed work and its record intact.
 - **The pull request** — `publish.compose(mode:"pr")` feeds the ask set plus the
   verdict override into the PR body draft, with a **stable derived
   `compositionId`** so an unchanged draft re-raises the *same* publish-ready.
@@ -233,7 +237,11 @@ something the preview did not describe.
 1. Gather asks into *Changes*.
 2. Dispatch — one round at a time, one worker in a detached worktree; asks
    gathered mid-run queue for the next round.
-3. Watch the run live. Dispatch takes over a dedicated run view (`/s/:slug/run`)
+3. Watch the run live. Until the daemon answers, what the view shows is the
+   *intent*: you asked for a round, and nothing has come back. The daemon's
+   receipt is what promotes it, and a refused dispatch reads as the refusal it
+   was, carrying the daemon's reason — a round that never started never reads as
+   one under way. Dispatch takes over a dedicated run view (`/s/:slug/run`)
    that streams the prep, worker, and gate/commit lines as the round advances.
    The view is deep-linkable and cold: opening it mid-round reattaches to the
    live progress and never re-dispatches, and when the round reaches its report
@@ -247,10 +255,30 @@ something the preview did not describe.
    greeting, and the successor account the lens drafters receive — which is
    why it must draft before they start.
 5. The reviewer reads the report while the lens drafters regenerate in the
-   background, their progress live beneath it (carried lenses complete as
-   carry-forwards; touched lenses re-draft). The surface never locks. When
-   the new generation composes, the way to it appears — a control that
-   exists only once it is ready, never a disabled button.
+   background, their progress live beneath it — one lane per lens, streamed
+   from the round's real progress, with the kicker reading *Regenerating the
+   Boards* until the generation composes and *Regenerated the Boards* after.
+   A settled lane reads **carrying forward** or **reworked**; see
+   [Carry-forward is a verdict, not a skip](#carry-forward-is-a-verdict-not-a-skip)
+   for exactly what that claims. A drafter that produced no board settles its
+   lane as **failed** carrying the reason — a lane left running after the round
+   is over would read as "still working". The surface never locks, and it always
+   ends: composing is terminal from wherever the round had got to, exactly as
+   failing is, so a round that finishes can always say so even when an
+   intermediate step never happened. When the new generation composes, the way
+   to it appears — a control that exists only once it is ready, never a disabled
+   button. A round where *every* drafter failed composes nothing, so it ends on
+   a terminal failure carrying the drafters' reasons rather than offering a way
+   to boards nobody wrote.
+
+   **A round without a report is still a round.** The report seat runs only for
+   a round with a successor account, and the commonest reason there is none is
+   that the coding agent ran and changed nothing. That round still regenerates
+   and still composes; it simply has no greeting to hand back, so it lands the
+   reviewer on the boards it just drafted rather than holding them behind a
+   report that is never coming. A round that *does* name a report which fails to
+   read is the other case, and it still holds the reveal — that report exists,
+   and it is owed.
 6. Each round mints a **new generation** of lens boards, drafted delta-aware:
    unchanged sections carry forward, and the composition step stamps what it
    touched (`new` / `reworked`; absence = carried). The marks read as unread
@@ -262,6 +290,11 @@ something the preview did not describe.
    from live to frozen and stays as drill-down while the successor is minted.
    Asks, threads, and highlights re-anchor by quote match; casualties land in
    the Detached list.
+   The round's retrospective line counts the reworks the **report** verified
+   against the round's own diff, not the asks that went out — a round can
+   dispatch five asks and rework nothing, and the number has to be able to say
+   so. A round whose report never drafted states no number rather than a zero it
+   cannot stand behind.
 7. Every completed round stays readable in the **rounds ledger** (`?view=rounds`)
    — a header control beside Map · Diff that exists exactly when a round has
    completed, never a disabled tab. One row per round; each opens that round's
@@ -274,6 +307,51 @@ something the preview did not describe.
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane
    on one's own pull request.
+
+### Carry-forward is a verdict, not a skip
+
+A round re-drafts **every** lens. "Carrying forward" is what the regeneration
+*found*, not work it declined to do: the drafter ran, and its board came back
+with nothing changed. Three separate honesty properties hold, and it is worth
+keeping them apart.
+
+- **The lane label is honest.** A settled lane's `carrying forward` / `reworked`
+  verdict is read from the same delta stamps the composition step writes — the
+  one signal, not a cheaper guess. A lens whose sections moved therefore cannot
+  render "carrying forward"; that would be a lie about the change, and the
+  regression test for it is the kind that has to be able to fail. The verdict is
+  also *structural*: a lane's settled state carries it, so a lane cannot reach
+  the reviewer looking settled with nothing to show for it. A lens whose board
+  is drafted but not yet announced reads **drafted**, which is what it is.
+- **The section grain is honest by construction.** Composition only marks a
+  section carried when its whole subtree signature is unchanged, so the fold
+  state a reviewer reads is a fact about content, never a summary someone
+  computed twice and might have computed differently. Deletion counts: a stamp
+  can only sit on a section that still exists, so removals are read separately
+  and a round that only *deleted* sections is never "carrying forward" — it
+  would be describing content that is no longer there.
+- **The compute skip is deferred.** Not re-drafting an untouched lens at all
+  would save real model spend, and it is a change to the pipeline rather than to
+  the label — an explicit decision, not something to assume from the wording.
+  Until it lands, a round's cost is six drafters every time.
+
+Two absences beside it are stated rather than smoothed over. A round rebuilt
+from durable board metadata after a restart cannot recompute its cross-lens
+coverage — that is derived from the drafted boards, which the metadata does not
+hold — so it reports coverage as *unknown* instead of an empty violation list
+that would claim a clean round nobody checked. And a client talking to a daemon
+older than itself gets no answer to the rounds reads at all; the surfaces say
+that, with the daemon's own reason, rather than showing the empty ledger that
+reads as "no rounds have completed".
+
+The round report is a second, narrower gap of the same kind. Its **arrival** is
+live — the progress channel carries the drafted report board's id the moment the
+report seat lands, which is what gates the regeneration and starts the lanes —
+but there is no command that fetches a board *by id*: the board read serves a
+`(review, generation, lens)` triple, and the report is not a lens. So the
+greeting resolves the report honestly absent rather than inventing one. The
+phase, the lanes, and the reveal are all real; the report body waits on that
+read.
 
 ### What a round measures itself against
 

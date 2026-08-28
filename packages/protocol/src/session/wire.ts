@@ -16,6 +16,7 @@ import { EventSchema as boardOpEventSchema } from "@wboard/core";
 import { z } from "zod";
 import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "../index";
 import { AskProjectionSchema as askProjectionSchema } from "./ask-log";
+import { RoundEventSchema as roundEventSchema } from "./model";
 
 /** The protocol version this build speaks. One integer, bumped append-only. */
 export const PROTOCOL_VERSION = 1;
@@ -291,6 +292,21 @@ export const askProjectionFrameSchema = z.object({
   projection: askProjectionSchema,
 });
 
+/**
+ * Server → client: one live round-progress event (C15 3.1), keyed by the review whose
+ * round is running (a slug IS a review id, so the run route subscribes by the id it
+ * already holds). Emitted from REAL round progress — the worker turn, the gate/commit
+ * points, the round-report's arrival, each lens board's arrival, the minted generation.
+ * A `projected` connection receives the privacy-scrubbed variant: the rows' `label` and
+ * `detail` are free text, so the blanket root/home scrub applies, exactly as it does to
+ * the ask projection.
+ */
+export const roundProgressFrameSchema = z.object({
+  type: z.literal("roundProgress"),
+  reviewId: z.string().min(1),
+  event: roundEventSchema,
+});
+
 /** Server → client: an attention item was raised, or one/more were cleared. */
 export const attentionEventFrameSchema = z
   .object({
@@ -331,6 +347,7 @@ export const sessionFrameSchema = z.discriminatedUnion("type", [
   attentionEventFrameSchema,
   boardEventFrameSchema,
   askProjectionFrameSchema,
+  roundProgressFrameSchema,
 ]);
 
 export type HelloFrame = z.infer<typeof helloFrameSchema>;
@@ -347,6 +364,7 @@ export type PresenceFrame = z.infer<typeof presenceFrameSchema>;
 export type AttentionEventFrame = z.infer<typeof attentionEventFrameSchema>;
 export type BoardEventFrame = z.infer<typeof boardEventFrameSchema>;
 export type AskProjectionFrame = z.infer<typeof askProjectionFrameSchema>;
+export type RoundProgressFrame = z.infer<typeof roundProgressFrameSchema>;
 export type SessionFrame = z.infer<typeof sessionFrameSchema>;
 
 /** Parse an untrusted value into a `SessionFrame`, throwing on an invalid frame. */

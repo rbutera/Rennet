@@ -267,8 +267,14 @@ the round did that you never requested. Every outcome is verified against the
 round's diff rather than taken from the worker's word, and each item names the
 ask it traces to and reveals the code where one applies.
 
-You read the report while the boards regenerate live beneath it. Boards nothing
-touched carry forward; boards the round changed re-draft. The surface never
+You read the report while the boards regenerate live beneath it, one lane per
+lens. Every lens drafts again each round; a lane reads **carrying forward** when
+that lens came back with nothing changed, **reworked** when it moved, and
+**failed** with the reason when that drafter produced no board at all. In
+between it reads **drafted** — the board is written, the comparison not yet run.
+The lane and the board agree by construction — both read the same comparison —
+so a lane never claims a lens carried while its sections changed, or while a
+section it used to have went away. The surface never
 locks, and **View the New Boards** appears when the new generation is composed —
 never as a disabled button waiting to light up.
 

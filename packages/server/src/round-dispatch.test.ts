@@ -392,7 +392,7 @@ describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: r
         workOrder: ORDER_WITH_ASKS,
         runWorkers: async () => failed,
       }),
-    ).rejects.toThrow(/round worker turn failed/);
+    ).rejects.toThrow("The round's work order failed.");
 
     // The failed round is not lost — its partial diff is on the ledger (a crashed worker is
     // not an empty round).

@@ -7,6 +7,7 @@ import {
   AskProjectionSchema,
   attentionFamilySchema,
   QuoteThreadSchema,
+  RoundEventSchema,
   RoundRecordSchema,
   SessionTranscriptSchema,
   StagedAskSchema,
@@ -1367,6 +1368,15 @@ const definitions = {
   "session.rounds": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: z.object({ records: z.array(RoundRecordSchema) }),
+  },
+  // The live round-progress READ (C15 3.1) — the ordered `RoundEvent` log for the
+  // review's round so far. The push channel (`onRoundProgress`) carries each event as it
+  // happens; this read is what a COLD mount (a deep-link into `/s/:slug/run`, or a
+  // reconnect mid-round) folds to catch up, so a client that joins late sees the round it
+  // is actually in rather than an honest-absent lie. Empty until a round dispatches.
+  "session.roundEvents": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({ events: z.array(RoundEventSchema) }),
   },
   // ── The sidebar's sessions (C03 cluster 2, bound in C18) ────────────────────
   // The sidebar showed an honest EMPTY session state because protocol carried no

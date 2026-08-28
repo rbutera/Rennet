@@ -116,6 +116,7 @@ const ABSORBED_IDS = [
   "session.archive",
   "session.list",
   "session.rename",
+  "session.roundEvents",
   "session.rounds",
   "session.setPinned",
   "session.transcript",
@@ -164,7 +165,7 @@ const MENU_INVENTORY = ["github.disconnect"] as const;
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(95);
+    expect(ABSORBED_IDS).toHaveLength(96);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

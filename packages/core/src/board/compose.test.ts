@@ -1,7 +1,13 @@
 import type { DraftBoard } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { assertCoverage, carriedElementIds, stampDeltas } from "./compose";
+import {
+  assertCoverage,
+  carriedElementIds,
+  isCarriedForward,
+  removedSectionIds,
+  stampDeltas,
+} from "./compose";
 import type { LintHunk } from "./lint";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -166,6 +172,60 @@ describe("stampDeltas", () => {
     ]);
     const curr = draft([section("s1", "Findings", [])]);
     expect(deltaOf(stampDeltas(prev, curr), "s1")).toBeUndefined();
+  });
+
+  // C15 3.3 — the lane label's source of truth. `isCarriedForward` reads the stamps
+  // `stampDeltas` just wrote, so the live "carrying forward" lane and the board's own
+  // section markers are one signal and cannot disagree.
+  it("isCarriedForward: true only when a prior exists and NO section was stamped", () => {
+    const prev = draft([section("s1", "Findings", ["c1"]), codeRef("c1", "src/auth.ts", 11, 12)]);
+    const same = draft([section("s1", "Findings", ["c1"]), codeRef("c1", "src/auth.ts", 11, 12)]);
+    const moved = draft([section("s1", "Findings", ["c1"]), codeRef("c1", "src/auth.ts", 11, 20)]);
+    expect(isCarriedForward(prev, stampDeltas(prev, same))).toBe(true);
+    // The lie this guards: a changed section must never read as carried.
+    expect(isCarriedForward(prev, stampDeltas(prev, moved))).toBe(false);
+    // A first generation carries nothing — there is nothing to carry from.
+    expect(isCarriedForward(undefined, stampDeltas(undefined, same))).toBe(false);
+  });
+
+  // ── REMOVALS (review finding 3) ───────────────────────────────────────────
+  //
+  // A delta stamp can only live on a section that still exists, so a round that DELETED a
+  // section stamps nothing at all — and the board then claimed to be "carrying forward"
+  // content that is no longer on it. That is the honest-present ruling inverted: never
+  // describe content that is not there.
+  it("names the sections a regeneration REMOVED — the half the stamps cannot express", () => {
+    const prev = draft([
+      section("s1", "Findings", ["c1"]),
+      section("s2", "Retired", []),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    const deleted = draft([
+      section("s1", "Findings", ["c1"]),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    expect(removedSectionIds(prev, deleted)).toEqual(["s2"]);
+    // …and it tracks the boards rather than being a constant: nothing went away here.
+    expect(removedSectionIds(prev, prev)).toEqual([]);
+  });
+
+  it("a DELETION-ONLY round does not read as carrying forward", () => {
+    const prev = draft([
+      section("s1", "Findings", ["c1"]),
+      section("s2", "Retired", []),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    // Every surviving section is byte-identical, so `stampDeltas` writes NOTHING: the only
+    // change this round made was to take `s2` away.
+    const deleted = draft([
+      section("s1", "Findings", ["c1"]),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    const stamped = stampDeltas(prev, deleted);
+    expect(stamped.elements.filter((el) => "delta" in (el.data as object))).toEqual([]);
+    // THE LIE THIS GUARDS: with no stamps to read, the board used to claim it carried
+    // everything forward — over a section it had just dropped.
+    expect(isCarriedForward(prev, stamped)).toBe(false);
   });
 
   it("emits no sixth composed board — it returns the same board, sections stamped", () => {

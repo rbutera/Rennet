@@ -77,8 +77,13 @@ export interface TurnLoopDeps {
    * pointer from the loaded cursor, so `buildSpec` returns everything BUT resume.
    */
   readonly buildSpec: (session: SessionModel) => Omit<SessionSpec, "resume">;
-  /** Sink for turn-stream rows (e.g. the `context_rebuilt` marker). Optional. */
-  readonly emit?: (row: TurnRow) => void;
+  /**
+   * Sink for turn-stream rows, keyed by the session the row belongs to. A `TurnRow` is
+   * inherently session-scoped — `context_rebuilt` marks a discontinuity in ONE conversation —
+   * so the sink is told which one, and the composition root can file it on that session's
+   * transcript rather than into a sink that cannot say where it happened. Optional.
+   */
+  readonly emit?: (sessionId: string, row: TurnRow) => void;
   /**
    * Capture a completed turn's raw harness events for the DISPLAY transcript (issue-set B).
    * The turn loop is the single serialized writer that already sees every event and persists
@@ -183,7 +188,7 @@ export class SessionTurnLoop {
     // Resume-vanished fallback: the harness lost this conversation's transcript.
     // Rebuild context honestly — one fresh turn, no resume — and tell the reader.
     if (resume !== undefined && isResumeVanished(true, outcome)) {
-      this.deps.emit?.({
+      this.deps.emit?.(sessionId, {
         kind: "context_rebuilt",
         reason: "the harness no longer has this conversation's transcript",
       });
@@ -228,6 +233,8 @@ export class SessionTurnLoop {
       ...this.deps.buildSpec(session),
       ...(resume === undefined ? {} : { resume }),
     };
+    const emit = this.deps.emit;
+    const onRow = emit ? (row: TurnRow) => emit(session.id, row) : undefined;
     const record = this.deps.recordTranscript;
     const capture = record
       ? (events: readonly HarnessEvent[]) =>
@@ -235,6 +242,6 @@ export class SessionTurnLoop {
       : undefined;
     return this.deps.port
       .createSession(spec)
-      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt, this.deps.emit, capture));
+      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt, onRow, capture));
   }
 }

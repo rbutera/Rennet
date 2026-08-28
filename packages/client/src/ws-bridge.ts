@@ -17,6 +17,7 @@ import type {
   ProjectProgressEvent,
   RennetBridge,
   ReviewAskStreamEvent,
+  RoundEvent,
   SessionFrame,
 } from "@rennet/protocol";
 import {
@@ -121,6 +122,8 @@ export class WsRennetBridge implements RennetBridge {
   // member's kinds. The public methods below cast their narrower listener in.
   readonly #progressListeners = new Map<string, Set<(event: ProjectProgressEvent) => void>>();
   readonly #askListeners = new Map<string, Set<(event: ReviewAskStreamEvent) => void>>();
+  /** Live round-progress listeners, keyed by review id (C15 3.1). */
+  readonly #roundListeners = new Map<string, Set<(event: RoundEvent) => void>>();
   /** Daemon-wide attention listeners (#383 batch) — not keyed by review; a raise/clear fans to all. */
   readonly #attentionListeners = new Set<(event: AttentionEventFrame) => void>();
 
@@ -170,6 +173,15 @@ export class WsRennetBridge implements RennetBridge {
 
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void {
     return subscribe(this.#askListeners, reviewId, listener);
+  }
+
+  /**
+   * Subscribe to a review's live ROUND progress (C15 3.1), keyed by review id — a slug IS a
+   * review id, so the run route subscribes with the id it holds. Like the ask stream, the
+   * subscription outlives any single `invoke`: a round runs long past the dispatch call.
+   */
+  onRoundProgress(reviewId: string, listener: (event: RoundEvent) => void): () => void {
+    return subscribe(this.#roundListeners, reviewId, listener);
   }
 
   /**
@@ -440,6 +452,11 @@ export class WsRennetBridge implements RennetBridge {
       }
       case "askStreamEvent": {
         const listeners = this.#askListeners.get(frame.reviewId);
+        if (listeners) for (const listener of listeners) listener(frame.event);
+        return;
+      }
+      case "roundProgress": {
+        const listeners = this.#roundListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
         return;
       }

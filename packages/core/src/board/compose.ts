@@ -176,11 +176,51 @@ function sectionDelta(
 }
 
 /**
+ * The sections `previous` had that `current` does NOT — the regeneration's REMOVALS.
+ *
+ * A delta stamp can only live on a section that still exists, so deletion is invisible to
+ * {@link stampDeltas} by construction: this is the other half of the delta, and the two
+ * together are the whole account of what the round did to a board. Without it a round that
+ * only deleted sections stamps nothing and reads as "carrying forward" — a board claiming
+ * to carry content that is no longer there, which is the honest-present ruling inverted.
+ */
+export function removedSectionIds(previous: DraftBoard, current: DraftBoard): string[] {
+  const present = new Set(current.elements.map((el) => el.id));
+  return previous.elements
+    .filter((el) => el.kind === "section" && !present.has(el.id))
+    .map((el) => el.id);
+}
+
+/**
+ * Did this lens CARRY FORWARD — i.e. did the regeneration change none of its sections?
+ * (C15 3.3, a hard constraint: the live progress channel's lens-level "carrying forward"
+ * lane label must derive from the SAME signal as the section markers, never a cheaper
+ * heuristic. A lane that read "carrying forward" over sections that actually changed
+ * would be a lie in the UI.)
+ *
+ * It reads the stamps {@link stampDeltas} WROTE plus the removals they cannot express, so
+ * it cannot diverge from either: carried iff a prior generation exists, no section on the
+ * stamped board carries a `new` or `reworked` delta, AND no section the prior generation
+ * had went away. A first generation (`previous === undefined`) is never "carried" — there
+ * is nothing to carry from, and every section is stamped `new` anyway.
+ */
+export function isCarriedForward(previous: DraftBoard | undefined, stamped: DraftBoard): boolean {
+  if (previous === undefined) return false;
+  if (removedSectionIds(previous, stamped).length > 0) return false;
+  return !stamped.elements.some(
+    (el) => el.kind === "section" && (el.data as { delta?: unknown }).delta !== undefined,
+  );
+}
+
+/**
  * Stamp `current`'s `section` elements with their R58 round-delta against
  * `previous` (undefined = the first generation, everything is `new`). A carried
  * section's stamp is REMOVED (absence = carried). Pure — returns a new board,
  * never mutates the input. Non-section elements pass through untouched, so
  * verbatim carry on every other kind is automatic.
+ *
+ * Deletion is the half this cannot express — a stamp needs a section to sit on — so
+ * {@link removedSectionIds} carries it, and {@link isCarriedForward} reads both.
  */
 export function stampDeltas(previous: DraftBoard | undefined, current: DraftBoard): DraftBoard {
   const elements: DraftElement[] = current.elements.map((el) => {

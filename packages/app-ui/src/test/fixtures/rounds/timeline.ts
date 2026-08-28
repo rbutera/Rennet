@@ -3,6 +3,8 @@ import {
   advance,
   initialRoundState,
   type LaneRow,
+  type LaneVerdict,
+  type LensLane,
   type RoundEvent,
   type RoundState,
 } from "../../../rounds/round-machine";
@@ -18,16 +20,30 @@ import { FIXTURE_REPORT_BOARDS } from "./report-board";
 // the run live.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const row = (id: string, label: string, status: LaneRow["status"], detail?: string): LaneRow => ({
-  id,
-  label,
-  status,
-  ...(detail === undefined ? {} : { detail }),
-});
+/** A step row in whichever legal shape its status implies — a settled step may carry its
+ *  own account, an unstarted one cannot, and a failed one must carry a reason. */
+const row = (
+  id: string,
+  label: string,
+  status: "queued" | "running" | "done",
+  detail?: string,
+): LaneRow =>
+  status === "done"
+    ? { id, label, status, ...(detail === undefined ? {} : { detail }) }
+    : { id, label, status };
 
 const LENS_NAMES = ["Design", "Sequence", "Decisions", "Flagged", "Noise"] as const;
-const lensLanes = (status: LaneRow["status"]): LaneRow[] =>
-  LENS_NAMES.map((name) => row(name.toLowerCase(), name, status));
+/** The five lens lanes, all at the same point. A SETTLED set carries its verdict — the
+ *  fixture's default is `reworked`, the honest reading of a round that moved the code. */
+const lensLanes = (
+  status: "queued" | "running" | "drafted" | "done",
+  verdict: LaneVerdict = "reworked",
+): LensLane[] =>
+  LENS_NAMES.map((name) =>
+    status === "done"
+      ? { id: name.toLowerCase(), label: name, status, verdict }
+      : { id: name.toLowerCase(), label: name, status },
+  );
 
 /**
  * One work-order round, dispatch → composed, as folded progress events. Mirrors the

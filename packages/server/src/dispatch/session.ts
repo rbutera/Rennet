@@ -96,6 +96,17 @@ export function sessionHandlers(rt: DispatchRuntime) {
       const records = rt.deps.roundRecordsForReview?.(input.reviewId) ?? [];
       return parseCommandOutput(name, { records: [...records] });
     },
+    "session.roundEvents": async (rawInput) => {
+      const name = "session.roundEvents" as const;
+      const input = parseCommandInput(name, rawInput);
+      rt.requireReviewById(input.reviewId); // reachability: unknown review is a genuine error
+      // The catch-up read for the live round channel (C15 3.1): the ordered events this
+      // review's round has emitted so far, which the client folds through the SAME
+      // `advance` reducer the live push feeds. Empty until a round dispatches — a cold
+      // mount with no round in flight is honestly absent, never a fabricated phase.
+      const events = rt.deps.roundEventsForReview?.(input.reviewId) ?? [];
+      return parseCommandOutput(name, { events: [...events] });
+    },
     "session.list": async (rawInput) => {
       const name = "session.list" as const;
       parseCommandInput(name, rawInput);

@@ -2,7 +2,7 @@ import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { Icon } from "../components/icon";
-import { useRoundRecords } from "../rounds/rounds-data";
+import { useRoundRecords, useRoundsUnavailable } from "../rounds/rounds-data";
 import { DEFAULT_VIEW, ROUTES, readSessionQuery, type ViewKind, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 import { cornerSlotOwner, useMacTrafficLights } from "./corner-slot";
@@ -69,7 +69,15 @@ export function TopBar() {
   // completed round it drops from the pill entirely (honest-absent by default, since no
   // rounds runtime is bound yet — Reconciliation 1). Map · Diff are always present.
   const roundRecords = useRoundRecords(slug);
-  const pill = roundRecords.length > 0 ? PILL : PILL.filter((p) => p.view !== "rounds");
+  // …and ALSO present when the rounds cannot be read at all (review finding 9): dropping the
+  // toggle then would hide the disclosure behind an absence that reads as "no rounds", and
+  // the reviewer would have no way to reach the reason. Presence still tracks the truth —
+  // it is just that "unknown" is a different truth from "none".
+  const roundsUnavailable = useRoundsUnavailable(slug);
+  const pill =
+    roundRecords.length > 0 || roundsUnavailable !== undefined
+      ? PILL
+      : PILL.filter((p) => p.view !== "rounds");
   // A pill toggle is selected only for its three explicit views; the board and
   // handoff select none (value = []), never the "" sentinel (S6).
   const pillValue = PILL.some((p) => p.view === query.view) ? [query.view] : [];

@@ -1,6 +1,6 @@
 ---
 title: Command menu exposure
-description: Which of the 95 registered commands the ⌘K menu lists, and the rationale for every row.
+description: Which of the 96 registered commands the ⌘K menu lists, and the rationale for every row.
 ---
 
 The command registry in `packages/protocol/src/commands/index.ts` carries an
@@ -20,7 +20,7 @@ boolean flag has no input channel, and the dialog has no result surface. So a
 command earns `commandMenu: true` only when all four hold:
 
 1. **Its schema accepts `{}`.** Nothing required that the menu cannot supply.
-   18 of the 95 commands pass this; the rest need a review, session, project,
+   18 of the 96 commands pass this; the rest need a review, session, project,
    span, host, or path the menu has no way to name. A protocol test asserts the
    invariant, so an exposed row can never be one that only fails.
 2. **It is an action, not a read the UI already drives.** `settings.get`,
@@ -199,6 +199,7 @@ reason. A menu row never reports a success it did not get.
 |---|---|
 | `session.transcript` | Read the chat surface drives. |
 | `session.rounds` | Read the rounds surface drives. |
+| `session.roundEvents` | Read the run view drives; needs the review it belongs to. |
 | `session.list` | Read the sidebar drives. |
 | `session.rename` | Needs the session and the new title. |
 | `session.setPinned` | Needs the session and the pin state. |
