@@ -142,15 +142,20 @@ export type PatchsetSource = "local" | "local-branch" | "github-local" | "github
  *
  * Structurally typed on purpose: the argument is satisfied by a private `Review` (desktop) and
  * by the mobile app's projected view of one, which carry the same two fields under R19.
+ *
+ * `patchsets` is OPTIONAL here even though `reviewSchema` requires it, because the desktop test
+ * fixtures build partial reviews with the field simply absent — the `?.` in the expression this
+ * replaced was load-bearing, and dropping it crashed 24 app-ui DOM tests on the render path. An
+ * absent list resolves the same way an absent `source` does: `local`, the documented default.
  */
 export function isWorkingTreeReview(review: {
   readonly activePatchsetId: string;
-  readonly patchsets: readonly {
+  readonly patchsets?: readonly {
     readonly id: string;
     readonly source?: PatchsetSource | undefined;
   }[];
 }): boolean {
-  const active = review.patchsets.find((patchset) => patchset.id === review.activePatchsetId);
+  const active = review.patchsets?.find((patchset) => patchset.id === review.activePatchsetId);
   return (active?.source ?? "local") === "local";
 }
 
