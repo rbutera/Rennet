@@ -166,6 +166,9 @@ const TRACKER_KIND_SETTING: SettingDeclaration<TrackerKind> = {
 
 const DETECTABLE: readonly SettingsLayer[] = ["builtin", "detected", "global", "repo"];
 const CONFIG_ONLY: readonly SettingsLayer[] = ["builtin", "global", "repo"];
+/** No producer above the repo rung: nothing detects a glyph, and no global default
+ *  exists for one — so the only offers are the builtin (unset) and the project's own. */
+const REPO_ONLY: readonly SettingsLayer[] = ["builtin", "repo"];
 
 /** Every consumed setting, keyed by id. Adding a setting is one entry here. */
 export const SETTINGS_REGISTRY = {
@@ -183,6 +186,14 @@ export const SETTINGS_REGISTRY = {
   gateCommand: stringSetting("gateCommand", DETECTABLE),
   // Cosmetic: settings/UI only, never agent context (#461 §4).
   logoPath: stringSetting("logoPath", DETECTABLE),
+  // The per-project prefs the Projects surface edits (C18 group A). They ride the
+  // SAME ladder as everything above — the repo rung is the project's own
+  // `config.json`, so a per-project answer beats the host's global one and the
+  // builtin "" reads as unset (the client then shows ITS default, never a value the
+  // ladder did not resolve). `worktreeBaseDir` above is the location half of the
+  // worktree pair; the naming pattern has no detector, so it is config-only.
+  worktreePattern: stringSetting("worktreePattern", CONFIG_ONLY),
+  projectGlyph: stringSetting("projectGlyph", REPO_ONLY),
 } as const;
 
 /**
