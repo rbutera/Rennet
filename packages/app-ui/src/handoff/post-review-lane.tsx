@@ -154,8 +154,6 @@ function WorkingReviewDraft({ review, onPost, onRevise }: Omit<PostReviewLanePro
   );
   const threadsStaying = Object.keys(quoteThreads).length;
 
-  const effectiveVerdict = verdictOverride ?? arithmetic.proposed;
-
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [receipt, setReceipt] = useState<PostReceipt | null>(null);
