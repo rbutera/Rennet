@@ -147,7 +147,7 @@
   "c16": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #542, branch feat/c16-council-mappings. Cluster 1 (role catalogue + all-scenario resolve, honest-null second-seat) done; 2.1 wire schema done; 2.2 setRoleAssignment committed pending gate (was disk-blocked \u2014 disk fixed). In flight now: finish cluster 2 + cluster 3 (routing overrides persistence). Then 4 dispatch, 5 client binding + provenance chip, 6 E2E."
+    "note": "Issue #542, branch feat/c16-council-mappings. Clusters 1-4 DONE @ea7966a1, gate green, controls run red+reverted. Two sound packet deviations recorded in tasks.md (registration+handler atomic \u2014 exhaustiveness guard makes the split unbuildable; 3.1 no-op by design, proving tests instead). PAUSED before cluster 5 dialog work: QUESTION WITH RAI \u2014 routing.task[jobId] overrides are scenario-independent (one edit moves all three columns; made honest, not hidden). Scenario-keyed instead = small packet change, shape unlanded so cheap now. Cluster 6 rides after."
   },
   "c17": {
     "status": "implementing",
