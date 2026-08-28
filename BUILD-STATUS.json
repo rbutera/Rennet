@@ -158,7 +158,7 @@
   "c18": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #551. NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle \u2014 the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision \u2014 serialize). || Docs rider for the c18/C14 docs pass: getting-started gets one line \u2014 first-run detection may surface macOS XProtect popups about the user own STALE CLI binaries (Rennet only reads versions; bundles no harness binary; verified on latios)."
+    "note": "Issue #551. TWO SLICES review-ready on feat/c18-wiring-commands @fbf1d810 (board.read \u2014 LensBoard from the two durable halves, BoardSource DELETED, pending/unreadable/missing distinguished; session.list/rename/setPinned/archive + project.rename R67 fallback; registry 87->93; per-slice GATE_EXIT=0). Lands now to UNPARK C15. GROUP-A honestly REFUSED by the worker (no served write rung exists: no registry keys, no per-repo rung, tracker resolves globally, guidance writer absent) \u2014 continuation session running on feat/c18-group-a building the real settings-engine slice (M): registry keys, per-repoKey rung, resolveTrackerConfig repo layer, conventions writer, then the projectEditsPersist flip. C18-COMPLETE only after both land. No sigil yet \u2014 correctly."
   },
   "c19": {
     "status": "landed",
