@@ -93,8 +93,10 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
     // the daemon short-circuits the ask while its watcher has seen nothing:
     //   • the save is repeated — a reviewer saves as they work, and the daemon's watcher can
     //     miss an edit that lands while it is still settling on a freshly-captured root
-    //     (observed: the first save after capture is sometimes not reported; see the report on
-    //     #574). Re-saving means the loop under test is the real one, not a lucky first event.
+    //     (observed: the first save after capture is sometimes not reported — #601).
+    //     Re-saving means the loop under test is the real one, not a lucky first event.
+    //     ⚠️ KNOWN GAP, the price of that retry: this spec can no longer catch "the watcher
+    //     drops the first event", so #601 will not resurface here. It is tracked, not covered.
     //   • the focus is repeated — the ask fires on window focus, and one focus racing the
     //     watcher's 250ms debounce would answer "fresh" and never be asked again.
     // What is NOT retried is the assertion: the notice must appear, or this fails.
