@@ -7,6 +7,8 @@ import {
   createClaudeHarness,
   createClaudeQueryFn,
   type LoadClaudeQuery,
+  mapCouncilModel,
+  normalizeOutputSchema,
   toSdkOptions,
 } from "./claude-query";
 import type { DiscoveryDeps } from "./harness-discovery";
@@ -97,6 +99,60 @@ describe("toSdkOptions", () => {
       baseOptions({ executableArgs: ["-d", "Ubuntu", "-e", "/home/rai/bin/claude"] }),
     );
     expect(sdk.executableArgs).toEqual(["-d", "Ubuntu", "-e", "/home/rai/bin/claude"]);
+  });
+
+  it("strips the draft-2020-12 $schema meta the CLI ajv cannot resolve, keeping the body", () => {
+    // A Zod-v4-shaped schema: the top-level `$schema` names the draft-2020-12 meta-schema
+    // that the installed `claude` --json-schema (ajv) rejects, exiting 1 before the turn.
+    const zodShaped = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://rennet.dev/board",
+      type: "object",
+      properties: {
+        kind: { enum: ["a", "b"] },
+        ref: { $ref: "#/$defs/thing" },
+      },
+      required: ["kind"],
+      additionalProperties: false,
+      $defs: { thing: { type: "string" } },
+    };
+    const sdk = toSdkOptions(baseOptions({ outputSchema: zodShaped })) as Record<string, unknown>;
+    const out = (sdk.outputFormat as { schema: Record<string, unknown> }).schema;
+    // The meta declarations are gone (ajv validates under its default dialect)…
+    expect("$schema" in out).toBe(false);
+    expect("$id" in out).toBe(false);
+    // …but every constraint in the BODY survives — including the INTERNAL $ref/$defs,
+    // which stay resolvable (the strip is shallow, top-level meta only). No contract weakens.
+    expect(out).toEqual({
+      type: "object",
+      properties: {
+        kind: { enum: ["a", "b"] },
+        ref: { $ref: "#/$defs/thing" },
+      },
+      required: ["kind"],
+      additionalProperties: false,
+      $defs: { thing: { type: "string" } },
+    });
+  });
+
+  it("normalizeOutputSchema leaves a dialect-free schema untouched", () => {
+    const bare = { type: "object", properties: { ok: { type: "boolean" } } };
+    expect(normalizeOutputSchema(bare)).toEqual(bare);
+  });
+
+  it("maps the council's versioned model aliases to the binary's full ids, else passes through", () => {
+    // The council pins a version per role; the installed claude rejects the short versioned
+    // alias but accepts the canonical full id for the SAME version (confirmed live).
+    expect(mapCouncilModel("opus-4.8")).toBe("claude-opus-4-8");
+    expect(mapCouncilModel("sonnet-5")).toBe("claude-sonnet-5");
+    // Bare aliases, already-full ids, and unknowns pass through untouched (no lossy strip).
+    expect(mapCouncilModel("haiku")).toBe("haiku");
+    expect(mapCouncilModel("opus")).toBe("opus");
+    expect(mapCouncilModel("claude-opus-4-8")).toBe("claude-opus-4-8");
+    // And toSdkOptions applies the map on the way to the SDK.
+    expect(
+      (toSdkOptions(baseOptions({ model: "opus-4.8" })) as Record<string, unknown>).model,
+    ).toBe("claude-opus-4-8");
   });
 });
 
