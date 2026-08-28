@@ -48,7 +48,7 @@ function boot(dir: string) {
     discoverWorkspaceRepos: async () => [],
     loadGuidance: () => ({ reason: "absent", dropped: 0 }),
     applyVisibility: async () => ({ changed: false, gitignorePath: "" }),
-    clearRepoValue: () => {},
+    clearRepoValue: () => undefined,
   });
   const handlers = settingsHandlers(createDispatchRuntime({ settings } as unknown as DispatchDeps));
   return {

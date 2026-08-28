@@ -154,4 +154,23 @@ Read `openspec/BUILD-LOOP.md` and `context.md` first, then `proposal.md` (its Re
   > roles" on the Environments card), was already true and is now truer; left
   > unchanged.
 
-- [ ] 6.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new packages**, additive-only protocol — lint, typecheck, test, build). Commit. Output the completion sigil `<promise>C16-COMPLETE</promise>` and flip C16's entry in `BUILD-STATUS.json` (left to MAIN per dispatch — state the intent in the report).
+- [x] 6.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new packages**, additive-only protocol — lint, typecheck, test, build). Commit. Output the completion sigil `<promise>C16-COMPLETE</promise>` and flip C16's entry in `BUILD-STATUS.json` (left to MAIN per dispatch — state the intent in the report).
+
+  > **Gate record (2026-08-28).** `NX_CACHE_DIRECTORY="$PWD/.nx-isolated/cache"
+  > NX_DAEMON=false pnpm check` → **exit 0**, all 7 targets across 14 projects.
+  > Two failures fixed/diagnosed on the way:
+  > - **Real:** `rennet-server:lint` — `@typescript-eslint/no-empty-function` on
+  >   the cluster-6.1 E2E's `clearRepoValue: () => {}` stub. Fixed to
+  >   `() => undefined`. (It slipped in because 6.1's cluster gate was
+  >   `nx affected -t lint,typecheck,test`, which had not yet re-run server lint.)
+  > - **Flake:** `rennet-docs:test` reddened once in a full parallel run, then
+  >   passed standalone AND in the next full run with no source change — the
+  >   `rennet-docs:build` → `dist` read racing other work under load.
+  >
+  > **Zero new packages / additive-only confirmed:** `git diff
+  > origin/main...HEAD -- "**/package.json" pnpm-lock.yaml` is EMPTY. The
+  > protocol change is additive-optional throughout (`reviewRoles?`,
+  > `routing?`), and `rennet:architecture` + `licenses` are green.
+  >
+  > `BUILD-STATUS.json` is deliberately NOT touched here — flipping C16's entry
+  > is MAIN's to do, per dispatch.
