@@ -49,8 +49,10 @@ import { createRoundsRuntime } from "./rounds";
 // What it proves: runRound completes without crash/hang/auth-wall/shape-mismatch,
 // mints a real Generation, and the drafters emit real boards — non-empty elements,
 // honest per-lens failures where a seat could not run, and a coverage picture that
-// CAN fail (the positive control: assertCoverage over an unteaching hunk returns a
-// violation, so an empty/uncovered board is never silently swallowed).
+// CAN fail. The coverage control runs through the ROUND ITSELF: the round's hunk universe
+// carries one hunk no board can teach, so `runRound`'s own verdict must name it, and a
+// pipeline that stopped asserting coverage fails here instead of sailing past a
+// side-bound `assertCoverage` call that only proved the helper works.
 //
 // TWO harness-compat fixes were exercised FIRST by this run (both landed as
 // discrete adapter commits): (1) strip the draft-2020-12 `$schema` meta the
@@ -178,9 +180,21 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       const deltaPacket = buildDeltaPacket(smallPatchset(), KNOWLEDGE, DOSSIER, SUCCESSOR);
       expect(deltaPacket.successorAccount).not.toBeUndefined(); // isRound fires
 
-      // Thin lint context: no coverage obligation for the smoke (hunks: []). The real
-      // LintHunk mapper + lintContextFor builder are tasks 1.2/1.3.
-      const hunks: readonly LintHunk[] = [];
+      // The COVERAGE CONTROL, driven through the real path (review finding 11's shape).
+      // The round's hunk universe carries one hunk in a file that does not exist and that
+      // no drafter can possibly teach, so `runRound`'s OWN cross-lens coverage assert must
+      // come back naming it. Binding `assertCoverage` on the side (as this used to) only
+      // ever proved the helper works — a pipeline that stopped asserting coverage at all
+      // would have sailed past it. The per-lens lint context keeps `hunks: []`, so the
+      // drafters carry no coverage obligation and their boards are judged exactly as before:
+      // this control costs zero extra model turns.
+      const UNTEACHABLE: LintHunk = {
+        id: "smoke-uncovered",
+        path: "src/nowhere.ts",
+        newStart: 999,
+        newLines: 3,
+      };
+      const hunks: readonly LintHunk[] = [UNTEACHABLE];
       const lintContextFor = (lens: LintTarget): LintContext => ({
         lens,
         hunks: [],
@@ -247,7 +261,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
                 }
               : null,
             lenses: lensRows,
-            coverageViolations: outcome.pipeline.coverage.length,
+            coverageViolations: outcome.pipeline.coverage?.length ?? "unknown",
           },
           null,
           2,
@@ -301,17 +315,20 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
         "no lens board came back valid — the drafters produced no regeneration data",
       ).toBeGreaterThan(0);
 
-      // POSITIVE CONTROL: coverage is not a swallow. assertCoverage over a hunk NO
-      // board teaches returns a real violation — an uncovered board surfaces, never
-      // silently passes.
-      const unteachable: LintHunk = {
-        id: "smoke-uncovered",
-        path: "src/nowhere.ts",
-        newStart: 999,
-        newLines: 3,
-      };
-      const control = assertCoverage(realBoards, [unteachable]);
-      expect(control.length, "assertCoverage swallowed an uncovered hunk").toBeGreaterThan(0);
+      // POSITIVE CONTROL: coverage is not a swallow, asserted on the ROUND's own verdict.
+      // The unteachable hunk went into the round's hunk universe above, so this reads what
+      // `runLensPipeline` really concluded about it — a pipeline that stopped asserting
+      // coverage fails here, which is the failure that matters.
+      const coverage = outcome.pipeline.coverage;
+      expect(coverage, "the round reported no coverage picture at all").toBeDefined();
+      expect(
+        (coverage ?? []).map((v) => v.elementRef),
+        "the round swallowed an uncovered hunk",
+      ).toContain(`/hunks/${UNTEACHABLE.id}`);
+      // …and the verdict TRACKS the universe rather than being a constant: the same frozen
+      // boards over an empty hunk set report nothing. (Pure re-assert over the boards this
+      // run already produced — still no extra model turns.)
+      expect(assertCoverage(realBoards, [])).toEqual([]);
     } finally {
       rmSync(boardsRoot, { recursive: true, force: true });
     }

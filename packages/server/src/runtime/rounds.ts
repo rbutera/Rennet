@@ -48,9 +48,9 @@ import {
   type ComposedHandoffBundle,
   type DraftBoard,
   type Generation,
-  type LaneRow,
   LENS_KINDS,
   type LensKind,
+  type LensLane,
   ROUND_NO_REGEN,
   type RoundEvent,
   type RoundRecord,
@@ -79,6 +79,14 @@ const LENS_LANE_LABEL: Record<LensKind, string> = {
   noise: "Noise",
 };
 
+/** One lens lane's STATE — every arm of {@link LensLane} minus the identity the lane keeps
+ *  across transitions. Distributive on purpose, so each arm keeps its own fields. */
+type LaneState = LensLane extends infer Arm
+  ? Arm extends LensLane
+    ? Omit<Arm, "id" | "label">
+    : never
+  : never;
+
 /**
  * The per-lens regeneration lanes (C15 3.1/3.3) — the live block the round greeting
  * renders beneath the report. Lanes are held as a SNAPSHOT and re-emitted whole on every
@@ -89,14 +97,15 @@ const LENS_LANE_LABEL: Record<LensKind, string> = {
  * finished" (its board meta persists) is also "the next lens started" — the sequence is
  * read off the real run, never guessed from a clock.
  */
-function createRegenerationLanes(emit: (lanes: readonly LaneRow[]) => void) {
-  const lanes = new Map<LensKind, LaneRow>(
+function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
+  const lanes = new Map<LensKind, LensLane>(
     LENS_KINDS.map((lens) => [lens, { id: lens, label: LENS_LANE_LABEL[lens], status: "queued" }]),
   );
-  const snapshot = (): readonly LaneRow[] => [...lanes.values()];
-  const set = (lens: LensKind, patch: Partial<LaneRow>): void => {
-    const current = lanes.get(lens);
-    if (current !== undefined) lanes.set(lens, { ...current, ...patch });
+  const snapshot = (): readonly LensLane[] => [...lanes.values()];
+  /** Replace a lane WHOLE — the state is a union, so a lane moves from one legal shape to
+   *  another rather than being patched into an in-between that carries the wrong fields. */
+  const set = (lens: LensKind, next: LaneState): void => {
+    if (lanes.has(lens)) lanes.set(lens, { id: lens, label: LENS_LANE_LABEL[lens], ...next });
   };
   return {
     /** The first drafter is under way (the report gated the regeneration and landed). */
@@ -105,9 +114,12 @@ function createRegenerationLanes(emit: (lanes: readonly LaneRow[]) => void) {
       if (first !== undefined) set(first, { status: "running" });
       emit(snapshot());
     },
-    /** A lens board's draft landed; the next lens in the pipeline's order is now running. */
+    /** A lens board's draft landed; the next lens in the pipeline's order is now running.
+     *  The lane reads `drafted`, NOT `done`: cross-lens coverage has not run and the delta
+     *  verdict is not known yet, and a settled lane without its verdict is exactly the
+     *  in-between state the union refuses to represent. */
     drafted(lens: LensKind): void {
-      set(lens, { status: "done" });
+      set(lens, { status: "drafted" });
       const next = LENS_KINDS[LENS_KINDS.indexOf(lens) + 1];
       if (next !== undefined && lanes.get(next)?.status === "queued")
         set(next, { status: "running" });
@@ -116,11 +128,12 @@ function createRegenerationLanes(emit: (lanes: readonly LaneRow[]) => void) {
     /**
      * A lens board ARRIVED, carrying its delta verdict. **C15 3.3 (hard constraint):**
      * `carried` is the pipeline's `isCarriedForward` read of the stamps `stampDeltas`
-     * wrote — the SAME signal the board's own section markers render. A lens whose
-     * sections changed therefore CANNOT read "carrying forward"; it reads "reworked".
+     * wrote — the SAME signal the board's own section markers render, and it now accounts
+     * for REMOVED sections too. A lens whose sections changed or went away therefore
+     * CANNOT read "carrying forward"; it reads "reworked".
      */
     arrived(lens: LensKind, carried: boolean): void {
-      set(lens, { status: "done", detail: carried ? "carrying forward" : "reworked" });
+      set(lens, { status: "done", verdict: carried ? "carrying-forward" : "reworked" });
       emit(snapshot());
     },
     /**
@@ -129,7 +142,7 @@ function createRegenerationLanes(emit: (lanes: readonly LaneRow[]) => void) {
      * which is a lie the reviewer would wait on.
      */
     failed(lens: LensKind, reason: string): void {
-      set(lens, { status: "failed", detail: reason });
+      set(lens, { status: "failed", reason });
       emit(snapshot());
     },
   };
@@ -170,6 +183,25 @@ export function withLensBoards(
     if (o.lens !== "report" && o.boardId !== undefined) lensBoards[o.lens] = o.boardId;
   }
   return { ...gen, lensBoards };
+}
+
+/**
+ * How many reworks the round actually PRODUCED, counted off the report the round-report
+ * seat wrote: its `round_outcome` items that are not `untouched`. The report verifies each
+ * ask against the round's own diff rather than taking the worker's word, so this is the
+ * round's verified account of the work — never `asksDispatched.length`, which counts how
+ * many asks went OUT and would read "5 reworks" for a round that changed nothing.
+ *
+ * `undefined` when the round drafted no report (or its board never came back): the count
+ * is then honestly UNKNOWN, and the ledger renders no number rather than a zero it
+ * cannot stand behind.
+ */
+function reportedReworkCount(report: LensBoardOutcome | undefined): number | undefined {
+  const board = report?.board;
+  if (board === undefined) return undefined;
+  return board.elements.filter(
+    (el) => el.kind === "round_outcome" && el.data.status !== "untouched",
+  ).length;
 }
 
 /** The drafters' own failure reasons, for the terminal event a board-less round emits. */
@@ -370,9 +402,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
 
   /** Reconstruct the drafting result from durable BoardMeta (B09 F1): a fresh
    *  runtime after a restart never re-mints or re-drafts an already-drafted
-   *  (session, generation) — it rebuilds the board ids + coverage/blemish metadata
+   *  (session, generation) — it rebuilds the board ids + per-board blemish metadata
    *  from the evidence on disk. The report board drafts FIRST, so any non-empty
-   *  evidence includes it. */
+   *  evidence includes it.
+   *
+   *  COVERAGE IS OMITTED, not emptied. Cross-lens coverage is computed from the drafted
+   *  boards (which hunks each one teaches) and the boards are not in the durable meta —
+   *  so a restored round CANNOT know its coverage picture. Reporting `[]` here said "this
+   *  round covered every hunk", which is a claim the reconstruction never verified; the
+   *  honest answer is that it cannot say. */
   function reconstructFromMeta(records: readonly BoardMeta[]): LensPipelineResult {
     const outcomes: LensBoardOutcome[] = records.map((m) => ({
       lens: m.lens,
@@ -384,7 +422,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const report = outcomes.find((o) => o.lens === "report");
     return {
       boards: outcomes.filter((o) => o.lens !== "report"),
-      coverage: [],
       ...(report === undefined ? {} : { report }),
     };
   }
@@ -539,12 +576,17 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // switcher drills back to. Absent on a no-move round and on a first generation —
     // honestly, there is no distinct predecessor to point at.
     const predecessor = landed ? input.previousGeneration : undefined;
+    // The REPORT-DERIVED rework count (C15 finding 10): what the round's own report says
+    // it did, persisted here so the ledger reads a number instead of inferring one from
+    // how many asks went out.
+    const reworkCount = reportedReworkCount(pipeline.report);
     const record: RoundRecord = {
       asksDispatched: [...input.asksDispatched],
       workerCommitRange: { from: worked.commitRange.from, to: worked.commitRange.to },
       ...(landed ? { mintedPatchsetGeneration: boardGeneration.id } : {}),
       boardGeneration: boardGeneration.id,
       reportBoard,
+      ...(reworkCount === undefined ? {} : { reworkCount }),
       ...(predecessor === undefined ? {} : { frozenPredecessor: predecessor.id }),
     };
     // WRITE ORDER, and it is load-bearing: the generations go down FIRST, the record that

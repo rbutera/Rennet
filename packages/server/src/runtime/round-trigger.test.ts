@@ -222,8 +222,10 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
       ...collation,
     });
 
-    expect(outcome.pipeline.coverage.map((v) => v.ruleId)).toContain("every-hunk-covered");
-    expect(outcome.pipeline.coverage.map((v) => v.elementRef)).toContain(`/hunks/${hunkId}`);
+    const coverage = outcome.pipeline.coverage;
+    expect(coverage, "a freshly drafted round must know its coverage picture").toBeDefined();
+    expect((coverage ?? []).map((v) => v.ruleId)).toContain("every-hunk-covered");
+    expect((coverage ?? []).map((v) => v.elementRef)).toContain(`/hunks/${hunkId}`);
 
     // The same round over an EMPTY hunk universe reports nothing — the verdict tracks the
     // real patchset rather than being a constant the assertion above could not tell apart.

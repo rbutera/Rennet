@@ -36,21 +36,33 @@ export function StatusIcon({ status }: { readonly status: RowStatus }) {
     );
   if (status === "failed")
     return <span className="size-3.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />;
+  // `drafted` and `done` are both "this one is finished" — a lens lane's verdict is the
+  // thing that differs, and it renders beside the glyph, not as a second glyph.
   return <Check className="size-3.5 shrink-0 text-green-500" aria-hidden="true" />;
 }
 
 /** A flat prep/tail line (the spike's `StepLine`), driven by the row's status, not a clock. */
 function StepLine({ row }: { readonly row: LaneRow }) {
   const running = row.status === "running";
+  // The row's own account of itself, read off the arm that HAS one: a settled step's
+  // detail, a failed step's reason. The unstarted arms carry neither, by construction.
+  const note = stepNote(row);
   return (
     <div className="flex items-center gap-1.5 text-xs" data-row={row.id}>
       <StatusIcon status={row.status} />
       <span className={cn("truncate", running ? "text-foreground" : "text-muted-foreground")}>
         {row.label}
-        {row.detail ? ` · ${row.detail}` : ""}
+        {note ? ` · ${note}` : ""}
       </span>
     </div>
   );
+}
+
+/** A step row's own words — `detail` when it settled, `reason` when it failed, else none. */
+function stepNote(row: LaneRow): string | undefined {
+  if (row.status === "done") return row.detail;
+  if (row.status === "failed") return row.reason;
+  return undefined;
 }
 
 /** The bordered worker/lens lane list (the spike's card list), each row a machine row. */
@@ -77,7 +89,7 @@ function LaneList({ title, rows }: { readonly title: string; readonly rows: read
                 ? "queued"
                 : row.status === "running"
                   ? "running"
-                  : (row.detail ?? "done")}
+                  : (stepNote(row) ?? "done")}
             </span>
           </div>
         ))}
@@ -89,11 +101,13 @@ function LaneList({ title, rows }: { readonly title: string; readonly rows: read
 /** The gate + commit tail, DERIVED from the phase (the folded `gate`/`committed` events).
  *  The report-drafting tail lives on the greeting surface — `reporting` redirects there. */
 function tailRows(phase: RoundState["phase"]): readonly LaneRow[] {
+  // The gate's command belongs to its LABEL, not to a settled row's account of itself:
+  // "pnpm check" is what the step is, true at every status, and the `done` arm's `detail`
+  // is reserved for what the step actually found.
   return [
     {
       id: "gate",
-      label: "Ran the gate",
-      detail: "pnpm check",
+      label: "Ran the gate · pnpm check",
       status: phase === "gating" ? "running" : phase === "committing" ? "done" : "queued",
     },
     {

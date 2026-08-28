@@ -112,11 +112,11 @@ const SERVER_ROUND: readonly RoundEvent[] = [
     lanes: [
       // Design's sections MOVED this generation, so its lane reads `reworked` — the 3.3
       // hard constraint at the reviewer's eye. The rest carried byte-identically.
-      { id: "design", label: "Design", status: "done", detail: "reworked" },
-      { id: "sequence", label: "Sequence", status: "done", detail: "carrying forward" },
-      { id: "decisions", label: "Decisions", status: "done", detail: "carrying forward" },
-      { id: "flagged", label: "Flagged", status: "done", detail: "reworked" },
-      { id: "noise", label: "Noise", status: "done", detail: "carrying forward" },
+      { id: "design", label: "Design", status: "done", verdict: "reworked" },
+      { id: "sequence", label: "Sequence", status: "done", verdict: "carrying-forward" },
+      { id: "decisions", label: "Decisions", status: "done", verdict: "carrying-forward" },
+      { id: "flagged", label: "Flagged", status: "done", verdict: "reworked" },
+      { id: "noise", label: "Noise", status: "done", verdict: "carrying-forward" },
     ],
   },
   { type: "composed", generation: "gen2" },
@@ -131,6 +131,10 @@ const DURABLE_RECORD: RoundRecord = RoundRecordSchema.parse({
   frozenPredecessor: "gen1",
   boardGeneration: "gen2",
   reportBoard: REPORT_BOARD_ID,
+  // The report's own verified tally (C15 finding 10) — two of this round's outcomes were
+  // not `untouched`. Equal to the ask count here by coincidence of the fixture, and the
+  // ledger's own tests hold the two apart.
+  reworkCount: 2,
 } satisfies RoundRecord);
 
 /** A minimal-but-schema-real `round.dispatch` answer — the command's output shape. The

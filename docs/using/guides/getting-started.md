@@ -270,9 +270,11 @@ ask it traces to and reveals the code where one applies.
 You read the report while the boards regenerate live beneath it, one lane per
 lens. Every lens drafts again each round; a lane reads **carrying forward** when
 that lens came back with nothing changed, **reworked** when it moved, and
-**failed** with the reason when that drafter produced no board at all. The
-lane and the board agree by construction — both read the same comparison — so a
-lane never claims a lens carried while its sections changed. The surface never
+**failed** with the reason when that drafter produced no board at all. In
+between it reads **drafted** — the board is written, the comparison not yet run.
+The lane and the board agree by construction — both read the same comparison —
+so a lane never claims a lens carried while its sections changed, or while a
+section it used to have went away. The surface never
 locks, and **View the New Boards** appears when the new generation is composed —
 never as a disabled button waiting to light up.
 

@@ -4,12 +4,12 @@ import {
   type RoundEvent,
   type RoundRecord,
 } from "@rennet/protocol";
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useContext, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
 import { ROUTES } from "../routes/url";
-import { advance, initialRoundState, type RoundState } from "./round-machine";
+import { advance, initialRoundState, mergeRoundEvents, type RoundState } from "./round-machine";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The rounds-data seam (C09 §1.2) — the SINGLE point every rounds surface resolves its
@@ -37,6 +37,9 @@ import { advance, initialRoundState, type RoundState } from "./round-machine";
  *  not hand back a fresh array per render (the Zustand/re-render trap C09 warns of). */
 const NO_RECORDS: readonly RoundRecord[] = Object.freeze([]);
 
+/** The same stable-reference discipline for an empty progress log. */
+const NO_EVENTS: readonly RoundEvent[] = Object.freeze([]);
+
 /**
  * The three reads (plus dispatch) every rounds surface resolves through. `reportBoard`
  * returns `unknown` on purpose: the seam OWNS validation, so a source hands back
@@ -62,6 +65,17 @@ export interface RoundsSource {
    * honest-absent default) ⇒ never pending.
    */
   readonly roundPending?: (slug: string) => boolean;
+  /**
+   * Why this session's rounds CANNOT be read, in the daemon's own words — or `undefined`
+   * when they can (review finding 9). A client can outrun the daemon it is talking to: an
+   * older daemon does not answer the rounds reads at all, and the answer-shaped absence
+   * ("no rounds have completed") is then a lie about a fact nobody established.
+   *
+   * This is a STATEMENT, not a gate: the surfaces render the reason where the rounds would
+   * have been and carry on. There is no capability negotiation, no version handshake and
+   * nothing to dismiss — the daemon's own rejection is the disclosure.
+   */
+  readonly roundsUnavailable?: (slug: string) => string | undefined;
 }
 
 /** The honest-absent default: no live round, an empty ledger, no report, no dispatch.
@@ -141,6 +155,12 @@ export function useRoundPending(slug: string): boolean {
   return useContext(RoundsSourceContext).roundPending?.(slug) ?? false;
 }
 
+/** Why this session's rounds cannot be read (an older daemon that does not answer the
+ *  rounds reads), or `undefined` when they can — see {@link RoundsSource.roundsUnavailable}. */
+export function useRoundsUnavailable(slug: string): string | undefined {
+  return useContext(RoundsSourceContext).roundsUnavailable?.(slug);
+}
+
 /** The session's completed rounds, oldest→newest — empty (stable ref) by default. */
 export function useRoundRecords(slug: string): readonly RoundRecord[] {
   return useContext(RoundsSourceContext).roundRecords(slug);
@@ -179,6 +199,27 @@ export function useRoundDispatch(): ((slug: string) => void) | undefined {
 // to read, so the report resolves `missing` rather than a fabricated greeting.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The reviewer's dispatch INTENT — what the client asked for, held apart from what the
+ * daemon has confirmed. `sending` is honest optimism ("we asked, nothing has come back");
+ * `rejected` is the receipt refusing it, carrying the daemon's own words. There is no
+ * "dispatched" arm: that is the DAEMON's fact, and it arrives as a `RoundEvent`.
+ */
+type DispatchIntent =
+  | { readonly slug: string; readonly status: "sending" }
+  | { readonly slug: string; readonly status: "rejected"; readonly reason: string };
+
+/** A rejection in readable words — the daemon's message where it gave one. */
+function failureText(reason: unknown): string {
+  if (reason instanceof Error && reason.message.length > 0) return reason.message;
+  return typeof reason === "string" && reason.length > 0 ? reason : "the daemon refused the call";
+}
+
+/** A read's error as a disclosure string, or `undefined` when the read is fine. */
+function readFailure(error: unknown): string | undefined {
+  return error === undefined || error === null ? undefined : failureText(error);
+}
+
 /** The session slug the current route is on, or `undefined` off a session route — the
  *  review id the round reads key on (`routes/slug.ts`: a slug IS a review id). */
 function useCurrentSessionSlug(): string | undefined {
@@ -201,57 +242,89 @@ export function useLiveRoundsSource(): RoundsSource {
   const eventsCommand = { name: "session.roundEvents" as const, input: { reviewId } };
 
   const { cache } = useBridgeContext();
-  const { data: eventsData, pending: eventsPending } = useCommand(
-    eventsCommand.name,
-    eventsCommand.input,
-    { enabled },
-  );
-  // The live push, folded into the read's own cache entry. A `dispatched` event STARTS a
-  // round, so it resets the log exactly as the server's hub does — a second dispatch must
-  // not replay the first round's composed state.
-  // ponytail: an event that lands between the catch-up read being issued and its response
-  // populating the entry is dropped (the response overwrites the entry). The events are
-  // snapshots and the machine is forward-only, so the visible cost is a momentarily stale
-  // row at mount; the fix is a seq-guarded merge like `chat-data`'s, worth it only if a
-  // dropped terminal event is ever actually observed.
+  const {
+    data: eventsData,
+    pending: eventsPending,
+    error: eventsError,
+  } = useCommand(eventsCommand.name, eventsCommand.input, { enabled });
+
+  // The live push. It folds into the read's own cache entry (so one entry re-renders every
+  // reader) AND into `streamed`, which the read's response CANNOT overwrite: the entry is
+  // reinstalled wholesale whenever the catch-up read settles or a mutation invalidates it,
+  // so an event that landed during that flight would otherwise be gone. The two are merged
+  // by `seq` at read time — see {@link mergeRoundEvents}.
+  const streamed = useRef<readonly RoundEvent[]>(NO_EVENTS);
+  const streamKey = useRef(reviewId);
+  if (streamKey.current !== reviewId) {
+    streamKey.current = reviewId;
+    streamed.current = NO_EVENTS;
+  }
   useCommandStream({
     channel: "roundProgress",
     subscriptionKey: slug,
     command: eventsCommand,
-    fold: (prev, event) => ({
-      events: event.type === "dispatched" ? [event] : [...(prev?.events ?? []), event],
-    }),
+    fold: (prev, event) => {
+      streamed.current = mergeRoundEvents(streamed.current, [event]);
+      return { events: [...mergeRoundEvents(prev?.events ?? NO_EVENTS, [event])] };
+    },
   });
 
-  const { data: recordsData } = useCommand("session.rounds", { reviewId }, { enabled });
+  const { data: recordsData, error: recordsError } = useCommand(
+    "session.rounds",
+    { reviewId },
+    { enabled },
+  );
   const { mutate } = useMutation("round.dispatch", {
     invalidates: ["session.rounds", "session.roundEvents"],
   });
 
+  // The reviewer's dispatch INTENT, held here and never written into the event log (review
+  // finding 7). The old code folded a `{type:"dispatched"}` of its own making into the log
+  // and then swallowed the rejection, so a dispatch the daemon REFUSED still read as a
+  // round under way — the client stating a server fact it had not been told. The intent
+  // says only what is true ("we asked, and are waiting"); the daemon's receipt is what
+  // promotes it into a real round, and its rejection is what surfaces honestly instead.
+  const [intent, setIntent] = useState<DispatchIntent | undefined>(undefined);
+
   const events = eventsData?.events;
   const records = recordsData?.records;
+  const unavailable = readFailure(eventsError) ?? readFailure(recordsError);
   return useMemo(() => {
-    // The machine IS the fold: the same reducer the daemon's events were designed for,
-    // over the same events a late-joining client catches up on. No wall clock anywhere.
-    const state = (events ?? []).reduce(advance, initialRoundState);
+    // The machine IS the fold: the same reducer the daemon's events were designed for, over
+    // the merged union of the catch-up read and the live push. No wall clock anywhere.
+    const merged = mergeRoundEvents(events ?? NO_EVENTS, streamed.current);
+    const folded = merged.reduce(advance, initialRoundState);
+    const stateFor = (forSlug: string): RoundState => {
+      if (forSlug !== slug) return initialRoundState;
+      // The daemon's own account always wins: the intent covers exactly the window in
+      // which the daemon has said nothing, and stops speaking the moment it does.
+      if (merged.length > 0 || intent?.slug !== forSlug) return folded;
+      return intent.status === "rejected"
+        ? // The receipt refused the round. It never started, and saying so is the honest
+          // end of the intent — not a silent bounce back to the board.
+          { phase: "failed", reason: intent.reason }
+        : // Asked, and nothing back yet. The client's own intent, stated as such.
+          { phase: "dispatching" };
+    };
     return {
-      roundState: (forSlug: string) => (forSlug === slug ? state : initialRoundState),
+      roundState: stateFor,
       roundRecords: (forSlug: string) => (forSlug === slug ? (records ?? NO_RECORDS) : NO_RECORDS),
       roundPending: (forSlug: string) => forSlug === slug && eventsPending,
+      roundsUnavailable: (forSlug: string) => (forSlug === slug ? unavailable : undefined),
       reportBoard: () => undefined,
       dispatch: (forSlug: string) => {
-        // The reviewer's dispatch IS the round's first event — the very `dispatched` the
-        // server emits a moment later — so write it into the read's own cache entry rather
-        // than waiting to be told. Without it the run route takes over, reads an `absent`
-        // round it has not been informed of yet, and bounces straight back to the board;
-        // and a SECOND dispatch would fold onto the previous round's `composed` state.
-        // Idempotent by the log's own rule: a `dispatched` RESETS the log (the server's hub
-        // does the same), and `advance` ignores the server's duplicate.
+        // A new round starts from nothing: drop the finished round's events rather than
+        // fold this one onto its `composed` state. That is DISCARDING stale data, not
+        // asserting a new fact — the log refills from the daemon's own `dispatched`.
+        streamed.current = NO_EVENTS;
         cache.setData(commandKey("session.roundEvents", { reviewId: forSlug }), () => ({
-          events: [{ type: "dispatched" }] satisfies RoundEvent[],
+          events: [] satisfies RoundEvent[],
         }));
-        void mutate({ reviewId: forSlug }).catch(() => undefined);
+        setIntent({ slug: forSlug, status: "sending" });
+        void mutate({ reviewId: forSlug }).catch((reason: unknown) => {
+          setIntent({ slug: forSlug, status: "rejected", reason: failureText(reason) });
+        });
       },
     };
-  }, [events, records, slug, mutate, cache, eventsPending]);
+  }, [events, records, slug, mutate, cache, eventsPending, unavailable, intent]);
 }

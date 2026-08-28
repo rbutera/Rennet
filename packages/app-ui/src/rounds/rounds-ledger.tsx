@@ -75,6 +75,13 @@ export function RoundsLedger({
   // BACK to the frozen predecessor C15 2.2 persisted (C09 finding F3, un-parked). Slicing at
   // the selected round means a past round opens on ITS generation as the live one, with only
   // the generations that already existed then behind it — never a forward id it never saw.
+  // The rework count is the ROUND REPORT's own verified tally, persisted onto the record
+  // (C15 finding 10) — the `round_outcome` items the report did not classify `untouched`.
+  // `asksDispatched.length` used to stand in for it, which counted how many asks went OUT
+  // and read "5 reworks" over a round that changed nothing. A round whose report never
+  // drafted has no verified count, so the line carries no number rather than inventing a
+  // zero: honestly silent beats confidently wrong.
+  const reworks = record.reworkCount === undefined ? "" : ` · ${record.reworkCount} reworks`;
   const line = generationLine(records);
   const position = line.indexOf(liveGeneration);
   const generations = position >= 0 ? line.slice(0, position + 1) : [liveGeneration];
@@ -140,8 +147,7 @@ export function RoundsLedger({
             className="flex items-center gap-2 text-muted-foreground text-xs"
           >
             <Check className="size-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
-            Regenerated the boards · {record.asksDispatched.length} reworks · generation{" "}
-            {liveGeneration}
+            Regenerated the boards{reworks} · generation {liveGeneration}
           </p>
         )}
 

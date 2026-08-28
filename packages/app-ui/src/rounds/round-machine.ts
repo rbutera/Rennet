@@ -1,4 +1,4 @@
-import type { LaneRow, RoundEvent } from "@rennet/protocol";
+import type { LaneRow, LensLane, RoundEvent } from "@rennet/protocol";
 import { type Navigation, sessionPath } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ import { type Navigation, sessionPath } from "../routes/url";
 // round really runs and this reducer folds them, so one definition serves both ends and the
 // wire cannot drift from the machine. Re-exported here because every rounds surface reads
 // them through the machine.
-export type { LaneRow, RoundEvent, RowStatus } from "@rennet/protocol";
+export type { LaneRow, LaneVerdict, LensLane, RoundEvent, RowStatus } from "@rennet/protocol";
 
 /**
  * The run machine's state — a discriminated union carrying ONLY what each phase
@@ -55,7 +55,7 @@ export type RoundState =
   | {
       readonly phase: "composing";
       readonly reportBoardId: string;
-      readonly lanes: readonly LaneRow[];
+      readonly lanes: readonly LensLane[];
     }
   | {
       readonly phase: "composed";
@@ -66,7 +66,7 @@ export type RoundState =
        *  finishes (C15 4.1/4.2: the kicker flips to "Regenerated the Boards" OVER the
        *  same rows). Optional: a `composed` reached without a preceding `lens` event
        *  (a round that composed nothing per-lens) honestly carries no lanes. */
-      readonly lanes?: readonly LaneRow[];
+      readonly lanes?: readonly LensLane[];
     }
   | { readonly phase: "failed"; readonly reason: string };
 
@@ -131,6 +131,43 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
     case "failed":
       return state; // terminal
   }
+}
+
+/**
+ * Merge a catch-up read's events with the ones the live channel pushed, by the monotonic
+ * `seq` the emitting hub stamps on each (review finding 7).
+ *
+ * Two writers feed one log and neither is authoritative alone: the read answers with the
+ * daemon's log as of the moment it was served, and the push carries whatever happened
+ * since — so installing the read's answer over the folded stream DROPS every event that
+ * landed during the flight, and a dropped terminal event leaves the surface reading
+ * "still working" over a round that finished. Merging by `seq` makes the two orders one:
+ * an event already held is recognised and ignored, and the result is the union in the
+ * order the daemon emitted it, never the order the transports happened to deliver it.
+ *
+ * A `dispatched` STARTS a round (the daemon's hub clears its log on one), so everything
+ * before the NEWEST `dispatched` belongs to a round that is over and is dropped. That is
+ * what stops a late terminal event from the previous round settling the round now running,
+ * and it holds with or without a `seq` — it is a rule about the log, not about the ordering.
+ *
+ * Events with no `seq` come from a daemon that predates it — they cannot be ordered, so
+ * they are kept in arrival order and never deduped. The honest degrade, not a handshake.
+ */
+export function mergeRoundEvents(
+  read: readonly RoundEvent[],
+  streamed: readonly RoundEvent[],
+): readonly RoundEvent[] {
+  if (streamed.length === 0) return [...read];
+  const bySeq = new Map<number, RoundEvent>();
+  const unsequenced: RoundEvent[] = [];
+  for (const event of [...read, ...streamed]) {
+    if (event.seq === undefined) unsequenced.push(event);
+    else if (!bySeq.has(event.seq)) bySeq.set(event.seq, event);
+  }
+  const ordered = [...bySeq.keys()].sort((a, b) => a - b).map((s) => bySeq.get(s) as RoundEvent);
+  const merged = [...unsequenced, ...ordered];
+  const start = merged.findLastIndex((event) => event.type === "dispatched");
+  return start > 0 ? merged.slice(start) : merged;
 }
 
 // ── Derived reads (the route/greeting read these; they never live in an effect) ──

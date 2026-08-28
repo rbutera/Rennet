@@ -548,8 +548,17 @@ export interface LensPipelineDeps {
 
 export interface LensPipelineResult {
   readonly boards: readonly LensBoardOutcome[];
-  /** Cross-lens every-hunk coverage (cluster 4), run ONCE over the frozen set. */
-  readonly coverage: readonly Violation[];
+  /**
+   * Cross-lens every-hunk coverage (cluster 4), run ONCE over the frozen set.
+   *
+   * ABSENT means UNKNOWN, not clean. Coverage is computed from the drafted boards
+   * themselves (which hunks each board teaches), and those boards live only in the run
+   * that produced them: a result REBUILT from durable board metadata after a restart has
+   * the ids and the blemishes but not the boards, so it cannot recompute the coverage
+   * picture and says so rather than reporting an empty violation list — which would claim
+   * a clean round it never verified.
+   */
+  readonly coverage?: readonly Violation[];
   /**
    * The round-report board, present only on a ROUND (a prior generation exists).
    * It drafts FIRST and is the lens drafters' input (D3/R58); it is NOT a lens,

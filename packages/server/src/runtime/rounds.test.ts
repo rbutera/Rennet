@@ -45,8 +45,12 @@ const cleanBody = (lens: string): DraftBoard =>
     ],
   }) as unknown as DraftBoard;
 
-/** A fake Claude port that answers a lens-appropriate clean board every turn. */
-function fakeClaudePort(captures: { prompt?: string }[] = []): HarnessPort {
+/** A fake Claude port that answers a lens-appropriate clean board every turn, or whatever
+ *  `bodyFor` decides when a test needs a specific seat to answer something particular. */
+function fakeClaudePort(
+  captures: { prompt?: string }[] = [],
+  bodyFor: (prompt: string) => DraftBoard = (prompt) => cleanBody(lensFromPrompt(prompt)),
+): HarnessPort {
   return {
     createSession: async () => {
       const capture: { prompt?: string } = {};
@@ -64,7 +68,7 @@ function fakeClaudePort(captures: { prompt?: string }[] = []): HarnessPort {
             native: {},
             outcome: {
               status: "completed",
-              structuredOutput: cleanBody(lensFromPrompt(capture.prompt ?? "")),
+              structuredOutput: bodyFor(capture.prompt ?? ""),
             },
           };
         })(),
@@ -199,6 +203,80 @@ describe("createRoundsRuntime", () => {
     expect(live?.id).toBe("gen:ps-1");
     // A generation that was never minted is honestly absent.
     expect(reader.generation("gen:never")).toBeUndefined();
+  });
+
+  // ── The rework count is the REPORT's, not the ask count (review finding 10) ──
+  //
+  // The ledger's "N reworks" used to be `asksDispatched.length`, which counts how many
+  // asks went OUT. This drives a round that dispatched THREE asks and whose report
+  // classified only one as reworked — the two numbers must not agree.
+  it("counts the reworks the round REPORTED, never the asks it dispatched", async () => {
+    const author = { kind: "lens-agent", id: "report-seat" };
+    const outcome = (id: string, status: string) => ({
+      id,
+      kind: "round_outcome",
+      data: { author, status, ask: { ref: `th-${id}`, text: `ask ${id}` }, note: "verified" },
+    });
+    // Two acted-on outcomes, one untouched: the round produced TWO reworks over THREE asks.
+    const reportBoard = {
+      elements: [outcome("o1", "addressed"), outcome("o2", "partial"), outcome("o3", "untouched")],
+    } as unknown as DraftBoard;
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        // The report seat's own turn AND its post-process pass both answer the report
+        // board — otherwise the editor pass would hand back prose and the typed outcomes
+        // would read as dropped. (The lens drafters receive the report as CONTEXT, so the
+        // post-process branch is keyed on the file it is polishing, not on the context.)
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => {
+            const polishingReport =
+              prompt.includes("prompts/post-process.md") && prompt.includes("round_outcome");
+            return prompt.includes("prompts/report.md") || polishingReport
+              ? reportBoard
+              : cleanBody(lensFromPrompt(prompt));
+          }),
+      }),
+    );
+    const { record } = await runtime.runRound(roundInput({ asksDispatched: ["t1", "t2", "t3"] }));
+    expect(record.asksDispatched).toHaveLength(3);
+    expect(record.reworkCount).toBe(2);
+  });
+
+  it("a round whose report never drafted records NO rework count, not a zero", async () => {
+    // No report seat resolves ⇒ no report board ⇒ the count is honestly unknown.
+    const runtime = createRoundsRuntime(baseDeps());
+    const { record, pipeline } = await runtime.runRound(roundInput());
+    // (The fake report board carries no `round_outcome` items, so the count is a real 0.)
+    expect(record.reworkCount).toBe(0);
+    expect(pipeline.report?.boardId).toBeDefined();
+  });
+
+  // ── A restored round cannot claim a coverage it never checked (review finding b) ──
+  //
+  // Reconstructing from durable board meta rebuilds ids and blemishes but NOT the boards,
+  // and cross-lens coverage is computed from the boards. Reporting `[]` said "every hunk
+  // was covered" over a check that never ran.
+  it("a round rebuilt from durable meta says its coverage is UNKNOWN, not clean", async () => {
+    const store = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-restart-")));
+    const deps = baseDeps({ persistBoardMeta: (_repo, meta: BoardMeta) => store.save(meta) });
+    const first = await createRoundsRuntime(deps).runRound(roundInput());
+    // A freshly drafted round DOES know its coverage picture.
+    expect(first.pipeline.coverage).toBeDefined();
+
+    // A fresh runtime over the same on-disk evidence reconstructs rather than re-drafting.
+    const restarted = createRoundsRuntime(
+      baseDeps({
+        loadDraftedBoards: () => store.list(),
+        resolveClaudePort: async () => {
+          throw new Error("a reconstruction must never re-draft");
+        },
+      }),
+    );
+    const after = await restarted.runRound(roundInput());
+    expect(after.pipeline.boards.map((b) => b.lens).sort()).toEqual(
+      ["decisions", "design", "flagged", "noise", "sequence"].sort(),
+    );
+    expect(after.pipeline.coverage).toBeUndefined();
   });
 
   it("re-reports against the existing generation when no patchset landed", async () => {

@@ -237,7 +237,11 @@ something the preview did not describe.
 1. Gather asks into *Changes*.
 2. Dispatch — one round at a time, one worker in a detached worktree; asks
    gathered mid-run queue for the next round.
-3. Watch the run live. Dispatch takes over a dedicated run view (`/s/:slug/run`)
+3. Watch the run live. Until the daemon answers, what the view shows is the
+   *intent*: you asked for a round, and nothing has come back. The daemon's
+   receipt is what promotes it, and a refused dispatch reads as the refusal it
+   was, carrying the daemon's reason — a round that never started never reads as
+   one under way. Dispatch takes over a dedicated run view (`/s/:slug/run`)
    that streams the prep, worker, and gate/commit lines as the round advances.
    The view is deep-linkable and cold: opening it mid-round reattaches to the
    live progress and never re-dispatches, and when the round reaches its report
@@ -274,6 +278,11 @@ something the preview did not describe.
    from live to frozen and stays as drill-down while the successor is minted.
    Asks, threads, and highlights re-anchor by quote match; casualties land in
    the Detached list.
+   The round's retrospective line counts the reworks the **report** verified
+   against the round's own diff, not the asks that went out — a round can
+   dispatch five asks and rework nothing, and the number has to be able to say
+   so. A round whose report never drafted states no number rather than a zero it
+   cannot stand behind.
 7. Every completed round stays readable in the **rounds ledger** (`?view=rounds`)
    — a header control beside Map · Diff that exists exactly when a round has
    completed, never a disabled tab. One row per round; each opens that round's
@@ -298,15 +307,30 @@ keeping them apart.
   verdict is read from the same delta stamps the composition step writes — the
   one signal, not a cheaper guess. A lens whose sections moved therefore cannot
   render "carrying forward"; that would be a lie about the change, and the
-  regression test for it is the kind that has to be able to fail.
+  regression test for it is the kind that has to be able to fail. The verdict is
+  also *structural*: a lane's settled state carries it, so a lane cannot reach
+  the reviewer looking settled with nothing to show for it. A lens whose board
+  is drafted but not yet announced reads **drafted**, which is what it is.
 - **The section grain is honest by construction.** Composition only marks a
   section carried when its whole subtree signature is unchanged, so the fold
   state a reviewer reads is a fact about content, never a summary someone
-  computed twice and might have computed differently.
+  computed twice and might have computed differently. Deletion counts: a stamp
+  can only sit on a section that still exists, so removals are read separately
+  and a round that only *deleted* sections is never "carrying forward" — it
+  would be describing content that is no longer there.
 - **The compute skip is deferred.** Not re-drafting an untouched lens at all
   would save real model spend, and it is a change to the pipeline rather than to
   the label — an explicit decision, not something to assume from the wording.
   Until it lands, a round's cost is six drafters every time.
+
+Two absences beside it are stated rather than smoothed over. A round rebuilt
+from durable board metadata after a restart cannot recompute its cross-lens
+coverage — that is derived from the drafted boards, which the metadata does not
+hold — so it reports coverage as *unknown* instead of an empty violation list
+that would claim a clean round nobody checked. And a client talking to a daemon
+older than itself gets no answer to the rounds reads at all; the surfaces say
+that, with the daemon's own reason, rather than showing the empty ledger that
+reads as "no rounds have completed".
 
 The round report is a second, narrower gap of the same kind. Its **arrival** is
 live — the progress channel carries the drafted report board's id the moment the

@@ -22,6 +22,11 @@ const MAX_EVENTS_PER_REVIEW = 200;
 
 export class RoundProgressHub {
   readonly #logs = new Map<string, RoundEvent[]>();
+  /** The next `seq` per review — MONOTONIC ACROSS ROUNDS, never reset by a `dispatched`.
+   *  That is the whole point: the client merges the catch-up read with the live push by
+   *  this number, and a round-1 event whose seq predates round 2's `dispatched` is
+   *  recognisable as belonging to a finished round instead of settling the running one. */
+  readonly #nextSeq = new Map<string, number>();
   readonly #broadcast: ((reviewId: string, event: RoundEvent) => void) | undefined;
 
   /** @param broadcast the live push sink (the WS listener's fan-out). Absent ⇒ the hub
@@ -36,11 +41,14 @@ export class RoundProgressHub {
    * second dispatch must not replay the first round's composed state.
    */
   emit(reviewId: string, event: RoundEvent): void {
+    const seq = this.#nextSeq.get(reviewId) ?? 0;
+    this.#nextSeq.set(reviewId, seq + 1);
+    const sequenced: RoundEvent = { ...event, seq };
     const log = event.type === "dispatched" ? [] : (this.#logs.get(reviewId) ?? []);
-    log.push(event);
+    log.push(sequenced);
     if (log.length > MAX_EVENTS_PER_REVIEW) log.splice(0, log.length - MAX_EVENTS_PER_REVIEW);
     this.#logs.set(reviewId, log);
-    this.#broadcast?.(reviewId, event);
+    this.#broadcast?.(reviewId, sequenced);
   }
 
   /** The review's round events so far, oldest→newest. Empty when no round has dispatched

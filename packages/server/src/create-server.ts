@@ -2001,15 +2001,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             ...(from !== to && outcome.status !== "failed" ? { patchsetId: to } : {}),
           };
           const touched = outcome.filesTouched.length;
+          const changed = `${touched} ${touched === 1 ? "file" : "files"} changed`;
           emit({
             type: "worker",
             rows: [
-              {
-                id: "turn",
-                label: "Ran the work order",
-                status: outcome.status === "failed" ? "failed" : "done",
-                detail: `${touched} ${touched === 1 ? "file" : "files"} changed`,
-              },
+              // A settled row carries the state's own field, not one bag of optionals: the
+              // completed turn accounts for itself ("3 files changed"), the failed one
+              // carries a REASON. Reporting the file count as the reason of a failure would
+              // put an account of the work where the explanation belongs.
+              outcome.status === "failed"
+                ? {
+                    id: "turn",
+                    label: "Ran the work order",
+                    status: "failed",
+                    reason: `The work order failed — ${changed}.`,
+                  }
+                : { id: "turn", label: "Ran the work order", status: "done", detail: changed },
             ],
           });
           // A failed turn returns its recorded result; the runtime then rejects, and the

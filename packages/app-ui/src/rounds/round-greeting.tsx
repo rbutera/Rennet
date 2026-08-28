@@ -1,6 +1,12 @@
 import type { LensBoard } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
-import { canRevealNewBoards, type LaneRow, type RoundState, type RowStatus } from "./round-machine";
+import {
+  canRevealNewBoards,
+  type LaneRow,
+  type LensLane,
+  type RoundState,
+  type RowStatus,
+} from "./round-machine";
 import { RoundReportBoard } from "./round-report";
 import { StatusIcon } from "./run-route";
 
@@ -22,22 +28,42 @@ import { StatusIcon } from "./run-route";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A stable empty lane list — non-`composing` phases resolve to the same ref. */
-const NO_LANES: readonly LaneRow[] = Object.freeze([]);
+const NO_LANES: readonly LensLane[] = Object.freeze([]);
+
+/** …and the same for the synthetic tail STEPS, which are step rows, not lens lanes. */
+const NO_STEPS: readonly LaneRow[] = Object.freeze([]);
 
 /** The greeting's per-lane status label — EXHAUSTIVE over `RowStatus` (finding 5). A
- *  regenerating lane reads "re-drafting"; a queued one "queued"; a FAILED one "failed" — never
- *  the old "done" that made a queued or failed drafter lie as a settled success. */
+ *  regenerating lane reads "re-drafting"; a queued one "queued"; a drafted-but-unannounced
+ *  one "drafted"; a FAILED one "failed" — never the old "done" that made a queued or failed
+ *  drafter lie as a settled success. */
 function laneStatusLabel(status: RowStatus): string {
   switch (status) {
     case "queued":
       return "queued";
     case "running":
       return "re-drafting";
+    case "drafted":
+      return "drafted";
     case "failed":
       return "failed";
     case "done":
       return "done";
   }
+}
+
+/**
+ * What a lens lane says about itself, read off the arm that HAS an account (review
+ * finding 8): a settled lane its VERDICT, a failed lane its reason, and the in-flight arms
+ * their status — because those genuinely have nothing else to say yet. The verdict comes
+ * from the daemon's `stampDeltas` read, so "carrying forward" here can never disagree with
+ * the section markers on the board itself.
+ */
+function laneNote(lane: LensLane): string {
+  if (lane.status === "done")
+    return lane.verdict === "carrying-forward" ? "carrying forward" : "reworked";
+  if (lane.status === "failed") return lane.reason;
+  return laneStatusLabel(lane.status);
 }
 
 /**
@@ -54,7 +80,7 @@ function laneStatusLabel(status: RowStatus): string {
  *     counter; the live machine knows the minted generation's IDENTITY and no ordinal, so
  *     the line carries the real id rather than a fabricated number.
  */
-function finishSteps(state: RoundState, lanes: readonly LaneRow[]): readonly LaneRow[] {
+function finishSteps(state: RoundState, lanes: readonly LensLane[]): readonly LaneRow[] {
   const settled =
     lanes.length > 0 && lanes.every((l) => l.status === "done" || l.status === "failed");
   if (state.phase === "composed") {
@@ -67,7 +93,7 @@ function finishSteps(state: RoundState, lanes: readonly LaneRow[]): readonly Lan
     return [
       { id: "post-process", label: "Cleaning up drafts · post-process pass", status: "running" },
     ];
-  return NO_LANES;
+  return NO_STEPS;
 }
 
 /** The lens drafters reworking beneath the report — rows from the machine's `composing`
@@ -83,7 +109,7 @@ function RegenerationProgress({
   lanes,
 }: {
   readonly state: RoundState;
-  readonly lanes: readonly LaneRow[];
+  readonly lanes: readonly LensLane[];
 }) {
   const steps = finishSteps(state, lanes);
   return (
@@ -109,12 +135,11 @@ function RegenerationProgress({
                     : "ml-auto text-2xs text-muted-foreground"
                 }
               >
-                {/* The lane's own verdict when the emitter supplied one, else the status
-                    (C15 3.3). A settled lens carries "carrying forward" or "reworked" —
-                    derived server-side from the SAME `stampDeltas` signal the board's
-                    section markers render, so a lane can never claim a lens carried while
-                    its sections changed. */}
-                {lane.detail ?? laneStatusLabel(lane.status)}
+                {/* The lane's own verdict (C15 3.3). A settled lens carries "carrying
+                    forward" or "reworked" — derived server-side from the SAME `stampDeltas`
+                    signal the board's section markers render, so a lane can never claim a
+                    lens carried while its sections changed or went away. */}
+                {laneNote(lane)}
               </span>
             </div>
           ))}

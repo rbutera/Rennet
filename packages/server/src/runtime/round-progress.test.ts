@@ -6,6 +6,7 @@ import type { CodexExecutor, HarnessPort, LintTarget } from "@rennet/core";
 import type {
   DraftBoard,
   KnowledgeSet,
+  LensLane,
   PatchFile,
   Patchset,
   Review,
@@ -37,6 +38,14 @@ import { createRoundsRuntime, mintGeneration, type RoundOutcome } from "./rounds
 // The model seats are the only fakes; the boards runtime, the generation lifecycle, the
 // delta stamps and the round serializer are all real.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** A settled lens lane's verdict, read off the arm that carries one — `undefined` for a
+ *  lane that has not settled (review finding 8: `queued`/`running` HAVE no verdict, and
+ *  the union no longer lets a test reach for one). */
+function verdictOf(lanes: readonly LensLane[], id: string): string | undefined {
+  const lane = lanes.find((l) => l.id === id);
+  return lane?.status === "done" ? lane.verdict : undefined;
+}
 
 const PATCH = ["@@ -1,2 +1,2 @@", " const a = 1;", "-const b = 2;", "+const b = 3;"].join("\n");
 
@@ -174,9 +183,24 @@ describe("RoundProgressHub — the append-only round log (C15 3.1)", () => {
     const pushed: Array<{ reviewId: string; event: RoundEvent }> = [];
     const hub = new RoundProgressHub((reviewId, event) => pushed.push({ reviewId, event }));
     hub.sinkFor("rev-9")({ type: "report", reportBoardId: "b-1" });
+    hub.sinkFor("rev-9")({ type: "composed", generation: "gen-1" });
+    // The hub STAMPS each event with its position in the review's log (review finding 7),
+    // so the client can merge the catch-up read with the push instead of one overwriting
+    // the other. The seq is the hub's, not the caller's.
     expect(pushed).toEqual([
-      { reviewId: "rev-9", event: { type: "report", reportBoardId: "b-1" } },
+      { reviewId: "rev-9", event: { type: "report", reportBoardId: "b-1", seq: 0 } },
+      { reviewId: "rev-9", event: { type: "composed", generation: "gen-1", seq: 1 } },
     ]);
+  });
+
+  it("the seq keeps climbing across rounds, so a finished round's events stay older", () => {
+    const hub = new RoundProgressHub();
+    hub.emit("rev-10", { type: "dispatched" });
+    hub.emit("rev-10", { type: "composed", generation: "gen-1" });
+    // A second dispatch CLEARS the log but not the counter: were it reset, round one's
+    // terminal event would share a seq with round two's and could clobber it on merge.
+    hub.emit("rev-10", { type: "dispatched" });
+    expect(hub.read("rev-10").map((e) => e.seq)).toEqual([2]);
   });
 });
 
@@ -282,15 +306,12 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
     const settled = [...events].reverse().find((e) => e.type === "lens");
     if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
-    const detailOf = (id: string): string | undefined =>
-      settled.lanes.find((lane) => lane.id === id)?.detail;
-
     // THE LIE THIS GUARDS: design's sections changed, so its lane must read reworked.
-    expect(detailOf("design")).toBe("reworked");
-    expect(detailOf("design")).not.toBe("carrying forward");
+    expect(verdictOf(settled.lanes, "design")).toBe("reworked");
+    expect(verdictOf(settled.lanes, "design")).not.toBe("carrying-forward");
     // The untouched lenses carried — the same signal their section markers render.
     for (const lens of ["sequence", "decisions", "flagged", "noise"]) {
-      expect(detailOf(lens)).toBe("carrying forward");
+      expect(verdictOf(settled.lanes, lens)).toBe("carrying-forward");
     }
   });
 
@@ -353,7 +374,8 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     const design = settled.lanes.find((lane) => lane.id === "design");
     // A lane left queued/running after the round is over reads as "still working".
     expect(design?.status).toBe("failed");
-    expect(design?.detail ?? "").not.toBe("");
+    // …and a failed lane STRUCTURALLY carries its reason (finding 8) — no empty detail.
+    expect(design?.status === "failed" ? design.reason : "").not.toBe("");
     // Boards did land, so the round still composed — the failure is one lane's, not the round's.
     expect(events.at(-1)?.type).toBe("composed");
   });
@@ -456,13 +478,11 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
     const settled = [...events].reverse().find((e) => e.type === "lens");
     if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
-    const detailOf = (id: string): string | undefined =>
-      settled.lanes.find((lane) => lane.id === id)?.detail;
     // THE HONESTY THIS PROVES: carry-forward genuinely OCCURS in the production shape. The
     // untouched lenses compare against round one's real boards and carry; design reworked.
-    expect(detailOf("design")).toBe("reworked");
+    expect(verdictOf(settled.lanes, "design")).toBe("reworked");
     for (const lens of ["sequence", "decisions", "flagged", "noise"]) {
-      expect(detailOf(lens)).toBe("carrying forward");
+      expect(verdictOf(settled.lanes, lens)).toBe("carrying-forward");
     }
   });
 
@@ -481,6 +501,6 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
     const settled = [...events].reverse().find((e) => e.type === "lens");
     if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
-    for (const lane of settled.lanes) expect(lane.detail).toBe("reworked");
+    for (const lane of settled.lanes) expect(verdictOf(settled.lanes, lane.id)).toBe("reworked");
   });
 });

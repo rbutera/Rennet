@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import { RoundGreeting } from "../rounds/round-greeting";
-import type { LaneRow, RoundState } from "../rounds/round-machine";
+import type { LensLane, RoundState } from "../rounds/round-machine";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
@@ -143,8 +143,14 @@ describe("regeneration lanes render every status honestly — no false green che
     lanes: [
       { id: "l-queued", label: "Design", status: "queued" },
       { id: "l-running", label: "Sequence", status: "running" },
-      { id: "l-done", label: "Decisions", status: "done" },
-      { id: "l-failed", label: "Flagged", status: "failed" },
+      { id: "l-drafted", label: "Noise", status: "drafted" },
+      { id: "l-done", label: "Decisions", status: "done", verdict: "reworked" },
+      {
+        id: "l-failed",
+        label: "Flagged",
+        status: "failed",
+        reason: "the drafter emitted no board",
+      },
     ],
   };
 
@@ -162,12 +168,23 @@ describe("regeneration lanes render every status honestly — no false green che
     expect(row?.textContent).not.toContain("done");
   });
 
-  it("a failed lane reads 'failed', never 'done'", () => {
+  it("a failed lane reads its REASON, never 'done'", () => {
     const r = renderGreeting();
     const row = r.container.querySelector('[data-row="l-failed"]');
     expect(row?.getAttribute("data-status")).toBe("failed");
-    expect(row?.textContent).toContain("failed");
+    // The union makes the reason structural (finding 8), so the lane shows WHY, not just
+    // that it failed — a bare "failed" leaves the reviewer nothing to act on.
+    expect(row?.textContent).toContain("the drafter emitted no board");
     expect(row?.textContent).not.toContain("done");
+  });
+
+  it("a drafted-but-unannounced lane reads 'drafted' — no verdict it does not have yet", () => {
+    const r = renderGreeting();
+    const row = r.container.querySelector('[data-row="l-drafted"]');
+    expect(row?.getAttribute("data-status")).toBe("drafted");
+    expect(row?.textContent).toContain("drafted");
+    expect(row?.textContent).not.toContain("carrying forward");
+    expect(row?.textContent).not.toContain("reworked");
   });
 
   // ── C15 3.3 — the carry-forward lane label reaches the reviewer's eye ──
@@ -180,8 +197,8 @@ describe("regeneration lanes render every status honestly — no false green che
       phase: "composing",
       reportBoardId: "report-round-1",
       lanes: [
-        { id: "design", label: "Design", status: "done", detail: "reworked" },
-        { id: "sequence", label: "Sequence", status: "done", detail: "carrying forward" },
+        { id: "design", label: "Design", status: "done", verdict: "reworked" },
+        { id: "sequence", label: "Sequence", status: "done", verdict: "carrying-forward" },
       ],
     };
     const r = mount(
@@ -203,15 +220,15 @@ describe("regeneration lanes render every status honestly — no false green che
 // between the last lens landing and the generation composing, and the composed line is
 // the `composed` event itself. Neither is pre-rendered.
 describe("the regeneration kicker + tail steps (C15 4.1, 4.2)", () => {
-  const settledLanes: readonly LaneRow[] = [
-    { id: "design", label: "Design", status: "done", detail: "carrying forward" },
-    { id: "flagged", label: "Flagged", status: "done", detail: "reworked" },
+  const settledLanes: readonly LensLane[] = [
+    { id: "design", label: "Design", status: "done", verdict: "carrying-forward" },
+    { id: "flagged", label: "Flagged", status: "done", verdict: "reworked" },
   ];
   const running: RoundState = {
     phase: "composing",
     reportBoardId: "report-round-1",
     lanes: [
-      { id: "design", label: "Design", status: "done", detail: "carrying forward" },
+      { id: "design", label: "Design", status: "done", verdict: "carrying-forward" },
       { id: "flagged", label: "Flagged", status: "running" },
     ],
   };

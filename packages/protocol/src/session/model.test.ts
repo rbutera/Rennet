@@ -4,6 +4,9 @@ import {
   ClaimSchema,
   GenerationSchema,
   HarnessCursorSchema,
+  LaneRowSchema,
+  LensLaneSchema,
+  RoundEventSchema,
   RoundRecordSchema,
   SessionModelSchema,
   SessionThreadSchema,
@@ -110,6 +113,61 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(RoundRecordSchema.parse(round).reportBoard).toBe("board-r");
     const unminted = { ...round, mintedPatchsetGeneration: undefined };
     expect(RoundRecordSchema.parse(unminted).mintedPatchsetGeneration).toBeUndefined();
+  });
+
+  // ── The rework count (review finding 10) ──────────────────────────────────
+  it("carries the report-derived rework count, and honestly none when no report drafted", () => {
+    const round = {
+      asksDispatched: ["th-1", "th-2", "th-3"],
+      workerCommitRange: { from: "abc123", to: "def456" },
+      boardGeneration: "gen-1",
+      reportBoard: "board-r",
+      reworkCount: 0,
+    };
+    // A round can dispatch three asks and rework NOTHING — the two numbers are unrelated,
+    // which is exactly why the count is its own field rather than `asksDispatched.length`.
+    expect(RoundRecordSchema.parse(round).reworkCount).toBe(0);
+    expect(
+      RoundRecordSchema.parse({ ...round, reworkCount: undefined }).reworkCount,
+    ).toBeUndefined();
+    expect(RoundRecordSchema.safeParse({ ...round, reworkCount: -1 }).success).toBe(false);
+  });
+
+  // ── The lane unions (review finding 8) ────────────────────────────────────
+  //
+  // The verdict is bound to the state that can HAVE one. These are the states the old
+  // bag-of-optionals row admitted and this union refuses: a settled lens lane with no
+  // verdict, a failed lane with no reason, and an unstarted lane already carrying a verdict.
+  it("makes an unverdicted settled lens lane unrepresentable", () => {
+    const base = { id: "design", label: "Design" };
+    expect(LensLaneSchema.safeParse({ ...base, status: "done" }).success).toBe(false);
+    expect(
+      LensLaneSchema.safeParse({ ...base, status: "done", verdict: "carrying-forward" }).success,
+    ).toBe(true);
+    expect(LensLaneSchema.safeParse({ ...base, status: "failed" }).success).toBe(false);
+    expect(
+      LensLaneSchema.safeParse({ ...base, status: "failed", reason: "no board" }).success,
+    ).toBe(true);
+    // An in-flight lane has nothing to report yet, so it parses with nothing to report.
+    expect(LensLaneSchema.safeParse({ ...base, status: "queued" }).success).toBe(true);
+    // A step row is a DIFFERENT shape: it settles with its own account and never reaches
+    // `drafted`, which belongs only to a lens waiting on its verdict.
+    expect(LaneRowSchema.safeParse({ id: "turn", label: "Ran it", status: "done" }).success).toBe(
+      true,
+    );
+    expect(LaneRowSchema.safeParse({ id: "turn", label: "Ran it", status: "failed" }).success).toBe(
+      false,
+    );
+    expect(
+      LaneRowSchema.safeParse({ id: "turn", label: "Ran it", status: "drafted" }).success,
+    ).toBe(false);
+  });
+
+  // ── The event sequence (review finding 7) ─────────────────────────────────
+  it("carries an optional monotonic seq — present from this daemon, absent from an older one", () => {
+    expect(RoundEventSchema.parse({ type: "dispatched", seq: 4 }).seq).toBe(4);
+    expect(RoundEventSchema.parse({ type: "dispatched" }).seq).toBeUndefined();
+    expect(RoundEventSchema.safeParse({ type: "dispatched", seq: -1 }).success).toBe(false);
   });
 
   it("carries a frozen-predecessor id for a landed round, none for a first-generation round", () => {
