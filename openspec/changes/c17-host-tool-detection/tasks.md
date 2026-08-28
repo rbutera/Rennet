@@ -102,7 +102,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
 
 ## 4. Fold the three detections into the live projection (Objective: host cards / sourceControl / agents go live; reconciliation 3 — the seam is the only fold point)
 
-- [ ] 4.1 In `packages/app-ui/src/settings/data/live-projection.tsx`: bind `sourceControlByHost` to
+- [x] 4.1 In `packages/app-ui/src/settings/data/live-projection.tsx`: bind `sourceControlByHost` to
   `forge.detect` per host (cluster 1) and `hosts` to the per-host daemon-status read (cluster 2), and extend
   the existing `agentsByHost` binding to all hosts (cluster 3). Map each wire result to the existing
   `DetectedTool` / `SettingsHost` / `DaemonInfo` shapes; an in-flight / rejected read ⇒ that field's honest
