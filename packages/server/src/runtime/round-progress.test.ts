@@ -1,15 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CodexExecutor, HarnessPort } from "@rennet/core";
-import type {
-  DraftBoard,
-  LintTarget,
-  PatchFile,
-  Patchset,
-  RoundEvent,
-  SessionModel,
-} from "@rennet/protocol";
+import type { CodexExecutor, HarnessPort, LintTarget } from "@rennet/core";
+import type { DraftBoard, PatchFile, Patchset, RoundEvent, SessionModel } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
