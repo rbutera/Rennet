@@ -44,9 +44,10 @@ import {
 //     Each host's Agents section therefore shows ITS machine's real Claude / Codex, and the
 //     Review section's Dual/Single logic reacts to what is truly there.
 //
-//     A host the daemon cannot interrogate comes back `asked: false`, and is dropped here
-//     rather than keyed with an empty list — the card falls to its honest "not detected"
-//     line instead of claiming that host has no agents. The local set is never copied over.
+//     A host the daemon cannot interrogate comes back `asked: false` and is dropped here, so
+//     its card reads "Connect …" — an unknown, not an answer. A host that WAS asked keeps its
+//     key even when empty, so its card reads "No coding agents detected": a real finding about
+//     a real machine. The local set is never copied onto either.
 //
 //     The enable toggle writes through `harness.setEnabled`, which persists the decision
 //     per host on the daemon-settings rung, so a ruled-out agent stays ruled out across
@@ -169,9 +170,11 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   const projection = useMemo<SettingsProjection>(() => {
     const agentsByHost: Record<string, readonly DetectedTool[]> = {};
     for (const host of data?.hosts ?? []) {
-      // A host that could not be asked claims NOTHING — no key, so the card reads its
-      // honest not-detected line rather than "asked, and found nothing installed".
-      if (!host.asked || host.detected.length === 0) continue;
+      // A host that could not be asked claims NOTHING — no key at all, so its card reads
+      // "Connect …". A host that WAS asked keeps its key even when the list is empty: that
+      // is the real answer "nothing is installed there", and dropping it (review finding 3)
+      // told an already-probed machine to connect itself.
+      if (!host.asked) continue;
       agentsByHost[host.source] = host.detected.map(
         (harness): DetectedTool => ({
           id: harness.id,
@@ -209,17 +212,22 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     // DROPPED, not rendered Not Installed: renaming `gh` out of PATH makes the row disappear
     // rather than report a stale hit.
     const sourceControlByHost: Record<string, readonly DetectedTool[]> = {};
-    for (const host of forges?.hosts ?? []) {
+    // The rows carry the viewer's forge ruling, which is served on `harness.hosts`. Until THAT
+    // read lands there is no ruling to render, and defaulting to enabled would paint a
+    // persisted "ruled out" decision as an enabled switch (review finding 7) — a fabricated
+    // answer, briefly, which is exactly what the served ruling exists to stop. So: no rows
+    // until the ruling read has arrived, and every card holds its honest empty state.
+    for (const host of data ? (forges?.hosts ?? []) : []) {
       if (!host.asked) continue;
-      // The viewer's forge rulings for THIS host, served on its `harness.hosts` entry
-      // (amendment A). No entry ⇒ nothing ruled out ⇒ every row reads enabled.
+      // This host's ruling, off the entry that arrived. No entry ⇒ nothing ruled out.
       const disabled = new Set(
-        data?.hosts.find((entry) => entry.source === host.source)?.disabledForges ?? [],
+        data.hosts.find((entry) => entry.source === host.source)?.disabledForges ?? [],
       );
-      const rows = host.detected
+      // An asked host keeps its key even with no rows — "asked, nothing installed" is an
+      // answer, and the section says so rather than asking to connect a connected host.
+      sourceControlByHost[host.source] = host.detected
         .filter((forge) => forge.status !== "not-installed")
         .map((forge) => forgeRow(forge, disabled));
-      if (rows.length > 0) sourceControlByHost[host.source] = rows;
     }
 
     return {

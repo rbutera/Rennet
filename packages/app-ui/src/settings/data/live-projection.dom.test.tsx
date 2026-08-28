@@ -449,6 +449,75 @@ describe("LiveSettingsProjectionProvider — per-host forge detection", () => {
   });
 });
 
+// ── C17 review findings 3 + 7 — the two emptinesses, and the pending ruling ───
+
+describe("LiveSettingsProjectionProvider — asked-and-empty is not unasked", () => {
+  it("POSITIVE CONTROL: a host probed with nothing installed says so, and is not told to connect", async () => {
+    // Drop asked-with-no-rows on the floor (the old fold) and both cards fall back to
+    // "Connect …" — telling a machine Rennet just probed to connect itself.
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: true, version: "4.3.0" },
+        ],
+        agents: [
+          { source: "local", asked: true, detected: [] },
+          { source: "wsl:Ubuntu", asked: false, detected: [] },
+        ],
+        forges: [
+          { source: "local", asked: true, detected: [] },
+          { source: "wsl:Ubuntu", asked: false, detected: [] },
+        ],
+      }),
+    );
+    // Asked, nothing there — a real answer about a real machine.
+    expect(await findByText("No coding agents detected on This Machine.")).toBeTruthy();
+    expect(await findByText("No source-control CLIs detected on This Machine.")).toBeTruthy();
+    // Not asked — an unknown, and the card says which one it is.
+    const wsl = within(card("wsl:Ubuntu"));
+    expect(wsl.getByText("Connect WSL · Ubuntu to detect its agents.")).toBeTruthy();
+    expect(wsl.getByText("Connect WSL · Ubuntu to detect its tooling.")).toBeTruthy();
+    cleanup();
+  });
+
+  it("POSITIVE CONTROL: a forge row waits for the served ruling instead of defaulting to enabled", async () => {
+    // Review finding 7: with the ruling read still in flight (or rejected), rendering the row
+    // "enabled" paints a PERSISTED ruled-out decision as an enabled switch. Render the rows
+    // before the ruling arrives and the toggle below appears reading on.
+    const bridge = new MemoryBridge(
+      {
+        "settings.get": () => ({
+          scheme: "system" as const,
+          schemeProvenance: {
+            layer: "builtin" as const,
+            contributions: [{ layer: "builtin" as const, value: "system", effective: true }],
+          },
+          appearanceMalformed: false,
+          projects: [],
+          daemonHosts: [{ ...LOCAL_SECTION }],
+        }),
+        "daemon.status": () => ({
+          hosts: [{ source: "local" as const, reachable: true, version: "4.3.0" }],
+        }),
+        // The ruling read never answers — the state the fold has to be honest about.
+        "harness.hosts": () => new Promise<never>(() => undefined),
+        "forge.hosts": () => ({
+          hosts: [{ source: "local" as const, asked: true, detected: [{ ...GH_AVAILABLE }] }],
+        }),
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+    const { findByText, queryByRole } = mountLive(bridge);
+    // The section holds its honest empty state rather than showing a row whose switch would
+    // be guessing at a decision the viewer may already have made.
+    expect(await findByText("Connect This Machine to detect its tooling.")).toBeTruthy();
+    expect(queryByRole("switch", { name: "Use GitHub on This Machine" })).toBeNull();
+    cleanup();
+  });
+});
+
 // ── C17 cluster 6 — Update Daemon (#534) performs a real update ───────────────
 // The button shows only where the status reported a REAL `updateAvailable`, dispatches
 // `daemon.update`, and shows the honest outcome: the refreshed version on success, the
