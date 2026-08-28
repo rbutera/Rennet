@@ -135,25 +135,30 @@ export function sessionHandlers(rt: DispatchRuntime) {
     },
     "session.mint": async (rawInput) => {
       const name = "session.mint" as const;
-      // The New Chat front door (C21). No store wired ⇒ `session: null`: nothing was
-      // minted, said in the same honest language the sibling writes use — never a
-      // fabricated row the client would then navigate into.
+      // The New Chat front door (C21, #587). Starting a session is ONE host-owned act —
+      // capture, mint, claim, attach — because the client cannot make that sequence
+      // atomic and cannot resolve which repo of a workspace the row named. No store
+      // wired ⇒ `session: null`: nothing was started, said in the same honest language
+      // the sibling writes use, never a fabricated row the client would navigate into.
       const input = parseCommandInput(name, rawInput);
-      const minted = rt.deps.sessions?.mint(
-        input.projectId,
-        input.branch === undefined
-          ? undefined
+      const started = await rt.deps.sessions?.start({
+        projectId: input.projectId,
+        commandId: input.commandId,
+        ...(input.branch === undefined
+          ? {}
           : {
-              branch: input.branch,
-              ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
-              // The row's `owner/name` (#580): a workspace's two `main` branches are two
-              // targets, not one. Absent ⇒ the pre-#580 mint, unchanged.
-              ...(input.repository === undefined ? {} : { repository: input.repository }),
-            },
-      );
+              target: {
+                branch: input.branch,
+                ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
+                // The row's `owner/name` (#580): a workspace's two `main` branches are two
+                // targets, not one — and it is what resolves the capture to the right repo.
+                ...(input.repository === undefined ? {} : { repository: input.repository }),
+              },
+            }),
+      });
       return parseCommandOutput(name, {
-        session: minted?.session ?? null,
-        reattached: minted?.reattached ?? false,
+        session: started?.session ?? null,
+        reattached: started?.reattached ?? false,
       });
     },
     "session.rename": async (rawInput) => {

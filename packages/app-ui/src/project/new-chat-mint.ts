@@ -156,22 +156,18 @@ function noop(): void {
 
 export function useNewChatMint(projectId: string): NewChatMint {
   const [, navigate] = useLocation();
-  // The project's reviewable path and primary branch — the capture's two coordinates.
-  // Read here rather than drilled: the surface already holds `projects.list`, so this
-  // shares its cache entry.
-  const { data: projectsData } = useCommand("projects.list", {});
-  const project = projectsData?.projects.find((candidate) => candidate.id === projectId);
-  // The mint changes the sidebar's rows and the claims New Chat hides by, so it stales
-  // `session.list` — the one read both derive from.
+  // ONE command. Starting a session is one host-owned act (#587) — capture, mint, claim,
+  // attach — so the client issues it and navigates to what came back.
+  //
+  // It used to be three calls the renderer sequenced, and every one of this seam's defects
+  // lived in that sequencing: a capture skipped because the async `projects.list` read had
+  // not settled while the navigate ran anyway (a review-less session, the exact bug this
+  // closes), a claim minted before a capture that could reject (stranding the target behind
+  // a hidden row with no retry), and `project.openPath` sent as the repo for a row that
+  // might belong to any of a workspace's repos. None of them are reachable from here now,
+  // because none of those steps happen here.
   const mint = useMutation("session.mint", { invalidates: ["session.list"] });
-  // The capture ATTACHES its review to the session (#587), so it stales `session.list`
-  // too — `/s/:slug` reads the attached review id off exactly that list.
-  const capture = useMutation("review.capture", { invalidates: ["session.list"] });
-  const openPr = useMutation("review.openPr", { invalidates: ["session.list"] });
-
   const { mutate: mintMutate } = mint;
-  const { mutate: captureMutate } = capture;
-  const { mutate: openPrMutate } = openPr;
 
   const start = useCallback(
     (row: SmartRow | undefined, ask: string) => {
@@ -179,51 +175,26 @@ export function useNewChatMint(projectId: string): NewChatMint {
       const target = row === undefined ? undefined : targetOfRow(row);
       void mintMutate({
         projectId,
+        commandId: newCommandId(),
         ...(target?.branch === undefined ? {} : { branch: target.branch }),
         ...(target?.prNumber === undefined ? {} : { prNumber: target.prNumber }),
+        // The row's `owner/name` (#580, #587): it keeps a workspace's two `main` branches
+        // apart AND is what resolves the capture to the repo the reviewer actually clicked.
         ...(target?.repository === undefined ? {} : { repository: target.repository }),
       })
-        .then(async ({ session }) => {
+        .then(({ session }) => {
+          // A host with no session store mints nothing and answers `null`; stay put rather
+          // than navigating to a session that does not exist.
           if (session === null) return;
-          // Reattaching to a session that already holds its review captures nothing — the
-          // patchset is immutable and re-capturing would only mint a second review the
-          // session cannot hold. Land straight on it.
-          if (session.reviewId === undefined && project) {
-            const commandId = newCommandId();
-            if (row === undefined) {
-              // The current checkout: today's working-tree capture, unchanged.
-              await captureMutate({ commandId, repoPath: project.openPath, sessionId: session.id });
-            } else if (row.kind === "pr" && row.pr) {
-              await openPrMutate({
-                commandId,
-                ref: `${row.pr.repository}#${row.pr.number}`,
-                repoPath: project.openPath,
-                sessionId: session.id,
-              });
-            } else {
-              // A branch row: a `merge-base(primary, branch)...branch` range capture. No
-              // checkout switch, nothing rewritten on disk. A branch with no unique
-              // commits captures an empty range and shows as an honestly empty review.
-              await captureMutate({
-                commandId,
-                repoPath: project.openPath,
-                branch: { head: row.branch, base: project.primaryBranch },
-                sessionId: session.id,
-              });
-            }
-          }
           navigate(sessionPath(session.id, typed === "" ? {} : { ask: typed }));
         })
         // `useMutation` already holds the reason in `error`, which the surface renders.
-        // Absorbing it here only stops an unhandled rejection, never the reporting.
+        // Absorbing it here only stops an unhandled rejection, never the reporting. A
+        // rejection means nothing was claimed, so the row is still there to click again.
         .catch(noop);
     },
-    [mintMutate, captureMutate, openPrMutate, navigate, project, projectId],
+    [mintMutate, navigate, projectId],
   );
 
-  return {
-    start,
-    pending: mint.pending || capture.pending || openPr.pending,
-    error: mint.error ?? capture.error ?? openPr.error,
-  };
+  return { start, pending: mint.pending, error: mint.error };
 }

@@ -590,26 +590,33 @@ export interface DispatchDeps {
   readonly sessions?: {
     list(): readonly SidebarSession[];
     /**
-     * The New Chat front door (C21): mint a durable session and claim its target in ONE
-     * act. `target` absent mints a no-target session (claims nothing); present mints or
-     * REATTACHES to the session already claiming that branch/PR, so a second click on one
-     * target never produces a second session. `repository` is the row's `owner/name` (#580) —
-     * it keeps two repos of one workspace that share a branch name apart; absent ⇒ unchanged.
+     * The New Chat front door (C21, #587): start a session on a target — capture what
+     * changed, mint, claim, and attach the review — as ONE host-owned act.
+     *
+     * It is one act because the client cannot make it one. The renderer can issue mint,
+     * then capture, then attach, but it cannot make that sequence atomic: a capture that
+     * rejects after the mint leaves a claim standing over a review-less session, and the
+     * claim hides the row that would retry it. So the ORDER here is capture FIRST, mint
+     * second — a rejected capture has claimed nothing and the row stays clickable.
+     *
+     * The client also cannot resolve WHICH repo a row belongs to. `Project.openPath` is
+     * "the repo, or the FIRST included repo" (`wire.ts`), while the row list spans every
+     * included repo, so a workspace's second repo captured against its first — silently,
+     * under the right label. The row knows its `owner/name` and R19 keeps host paths off
+     * the wire, so the identity travels and the HOST resolves it to a root.
+     *
+     * `target` absent mints a no-target session over the project's own checkout (claims
+     * nothing, so the Current Checkout row never leaves the list); present mints or
+     * REATTACHES to the session already claiming that branch/PR.
      */
-    mint(
-      projectId: string,
-      target?: { branch: string; prNumber?: number; repository?: string },
-    ): { session: SidebarSession; reattached: boolean };
+    start(input: {
+      projectId: string;
+      commandId: string;
+      target?: { branch: string; prNumber?: number; repository?: string };
+    }): Promise<{ session: SidebarSession; reattached: boolean }>;
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
     setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;
-    /**
-     * Attach a captured review to a session (#587) — the 1:0..1 reference the session
-     * model already declares. A session that already holds a review KEEPS it (a session
-     * attaches at most one review, `core/session/state.ts`), so this never rewrites
-     * history; the front door only captures for a session with none.
-     */
-    attachReview(sessionId: string, reviewId: string): SidebarSession | undefined;
   };
   /**
    * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board

@@ -137,26 +137,6 @@ const definitions = {
       commandId: commandIdSchema,
       repoPath: z.string().min(1),
       reviewId: z.string().optional(),
-      /**
-       * Review a BRANCH rather than the working tree (#587): a `base...head` range
-       * capture over the pinned OIDs, `source: "local-branch"` — the same engine the PR
-       * path uses, with no checkout switch and nothing rewritten on disk. It is therefore
-       * a snapshot, and stays off the working-tree freshness watcher exactly as a PR
-       * review does.
-       *
-       * ABSENT keeps today's working-tree capture byte for byte. Head and base travel
-       * together because a head with no base names no range — the pair is one field so
-       * the half-supplied state is unrepresentable. `base` is the project's primary
-       * branch; the host takes `git merge-base base head`, so a branch with no unique
-       * commits captures an EMPTY patchset and shows as an honestly empty review.
-       */
-      branch: z.object({ head: z.string().min(1), base: z.string().min(1) }).optional(),
-      /**
-       * Attach the created review to this durable session (`SessionModel.reviewId`), so
-       * the New Chat row click that minted the session lands on its review. Absent ⇒ the
-       * review is attached to nothing, exactly as before.
-       */
-      sessionId: z.string().min(1).optional(),
     }),
     output: z.object({ review: reviewSchema }),
   },
@@ -189,8 +169,6 @@ const definitions = {
        * assumption — but retrospective is the honest mode for one already landed.
        */
       retrospective: z.boolean().optional(),
-      /** Attach the opened review to this durable session (#587) — see `review.capture`. */
-      sessionId: z.string().min(1).optional(),
     }),
     output: z.object({ review: reviewSchema }),
   },
@@ -1478,6 +1456,12 @@ const definitions = {
   "session.mint": {
     input: z.object({
       projectId: z.string().min(1),
+      /**
+       * The id for the review this mint CAPTURES (#587). Starting a session is one act —
+       * mint, claim, capture, attach — so the command that starts it carries the capture's
+       * id, exactly as `review.capture` does.
+       */
+      commandId: commandIdSchema,
       /** The claimed branch. Absent mints a no-target session (claims nothing). */
       branch: z.string().min(1).optional(),
       /** The claimed branch's PR number, when the row was a pull request. */

@@ -59,7 +59,11 @@ describe("useSlugResolution never claims not-found it cannot support", () => {
           <span data-testid="sidebar">{sessions.data ? "loaded" : "pending"}</span>
           <button
             type="button"
-            onClick={() => void mutate({ projectId: "p1" }).then((r) => setRoute(r.session?.id))}
+            onClick={() =>
+              void mutate({ projectId: "p1", commandId: crypto.randomUUID() }).then((r) =>
+                setRoute(r.session?.id),
+              )
+            }
           >
             mint
           </button>
