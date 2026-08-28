@@ -30,6 +30,7 @@ import type {
 } from "@rennet/protocol";
 import {
   type CoachMarks,
+  type DetectedForge,
   type DetectedHarness,
   type DiscoveryResult,
   type ProcessedRepoSummary,
@@ -335,6 +336,7 @@ function harness(
         entries: [],
       }),
     detectHarnesses: () => Promise.resolve([]),
+    detectForges: () => Promise.resolve([]),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
       connectStart: () =>
@@ -2321,6 +2323,7 @@ function frontDoorHarness(seed: {
   projects?: Project[];
   discovery?: DiscoveryResult;
   detected?: DetectedHarness[];
+  detectedForges?: DetectedForge[];
   processEvents?: ProjectProcessEvent[];
   processedRepos?: ProcessedRepoSummary[];
   processProject?: DispatchDeps["processProject"];
@@ -2419,6 +2422,7 @@ function frontDoorHarness(seed: {
         entries: [],
       }),
     detectHarnesses: () => Promise.resolve(seed.detected ?? []),
+    detectForges: () => Promise.resolve(seed.detectedForges ?? []),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
       connectStart: () =>

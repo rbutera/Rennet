@@ -38,6 +38,7 @@ import type {
 } from "@rennet/protocol";
 import {
   type ConversationAnchorWire,
+  type DetectedForge,
   type DetectedHarness,
   type DiscoveryResult,
   type FsListDirResult,
@@ -252,6 +253,9 @@ export interface DispatchDeps {
   listDir(input: { path?: string }): Promise<FsListDirResult>;
   /** The harnesses found on the machine, for the ambient first-run detection line. */
   detectHarnesses(): Promise<DetectedHarness[]>;
+  /** The forge (source-control) CLIs found on this host, for `forge.detect` → the
+   *  Environments surface's `sourceControlByHost` (C17). Singleton registry — `gh` only. */
+  detectForges(): Promise<DetectedForge[]>;
   /**
    * The GitHub account port (v4.2: OAuth device flow, no gh CLI). Status for the
    * settings rows and the first-run card; the one-time device-flow connect

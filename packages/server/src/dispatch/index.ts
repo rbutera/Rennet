@@ -4,6 +4,7 @@ import { askHandlers } from "./ask";
 import { attentionHandlers } from "./attention";
 import { deviceHandlers } from "./device";
 import { flaggedHandlers } from "./flagged";
+import { forgeHandlers } from "./forge";
 import { fsHandlers } from "./fs";
 import { githubHandlers } from "./github";
 import { harnessHandlers } from "./harness";
@@ -74,6 +75,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...attentionHandlers(rt),
     ...deviceHandlers(rt),
     ...flaggedHandlers(rt),
+    ...forgeHandlers(rt),
     ...fsHandlers(rt),
     ...githubHandlers(rt),
     ...harnessHandlers(rt),

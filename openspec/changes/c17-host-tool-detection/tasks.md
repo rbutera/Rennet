@@ -40,7 +40,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
   daemon it is dispatched to = that host), output `{ detected: DetectedForge[] }` where `DetectedForge`
   carries `{ id, version|null, status, detail }` (the wire shape the client maps to `DetectedTool`). Mirror
   `harness.detect`'s def exactly. Update `commands.test.ts`'s command roster.
-- [ ] 1.3 `packages/server/src/dispatch/forge.ts` (+ register in `dispatch/index.ts`): the `forge.detect`
+- [x] 1.3 `packages/server/src/dispatch/forge.ts` (+ register in `dispatch/index.ts`): the `forge.detect`
   handler calling `deps.detectForges()` (add `detectForges(): Promise<DetectedForge[]>` to `DispatchRuntime`,
   composed over `forge-discovery.ts` with the real `gh` probes), mirroring `dispatch/harness.ts`.
 - [ ] 1.4 Unit + real tests: `forge-discovery.ts` returns `available` for a stubbed authed `gh`,

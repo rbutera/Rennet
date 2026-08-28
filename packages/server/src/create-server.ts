@@ -49,6 +49,7 @@ import {
   defaultCodexTransportEffects,
   defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
+  defaultForgeDetectionDeps,
   defaultFsListDirDeps,
   defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
@@ -97,6 +98,7 @@ import {
   resolveForgeRemote,
   resolveGitHubAuth,
   resolveTrackerConfig,
+  detectForges as runForgeDetection,
   runGitHubDeviceFlow,
   runPrWorktreeSetup,
   runRelatedContextRetrieval,
@@ -147,6 +149,7 @@ import {
 import type {
   ConventionCatalogue,
   CouncilHarnessId,
+  DetectedForge,
   DetectedHarness,
   FlaggedReview,
   GitHubAuthStatus,
@@ -512,6 +515,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return detected;
     })();
     return harnessDetection;
+  }
+
+  // Forge (source-control) CLI detection (C17, #483 gh rides again). Same disclosure
+  // model as detectHarnesses: read-only, memoized (the gh probes spawn the login shell),
+  // singleton registry — GitHub / `gh` only. Feeds `sourceControlByHost`.
+  let forgeDetection: Promise<DetectedForge[]> | null = null;
+  function detectForges(): Promise<DetectedForge[]> {
+    forgeDetection ??= runForgeDetection(defaultForgeDetectionDeps()).catch(() => []);
+    return forgeDetection;
   }
 
   // ── The GitHub egress composition (issue #21, v4.2 device flow) ──────────────
@@ -1788,6 +1800,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // it's the picker that produces paths for the gated commands, not one itself.
     listDir: (input) => listDir(input, defaultFsListDirDeps()),
     detectHarnesses,
+    detectForges,
     github: githubAccount,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
     // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
