@@ -340,7 +340,7 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
       port,
       store: { load: (id) => store.load(id), save: (s) => store.save(s) },
       buildSpec: (s) => ({ cwd: `/repo/${s.id}` }),
-      emit: (r) => rows.push(r),
+      emit: (_sessionId, r) => rows.push(r),
     });
 
     const { session: after, outcome, contextRebuilt } = await loop.runTurn(reloaded.id, "continue");
