@@ -186,42 +186,6 @@ const definitions = {
     }),
     output: z.object({ review: reviewSchema }),
   },
-  // ── Publish consent request, main-issued (issue #21) ───────────────────────
-  // Posting to GitHub is an EXTERNAL act, so it stays explicitly confirmed (running
-  // a model, by contrast, just runs). The renderer REQUESTS approval to POST a
-  // review; MAIN is the sole issuer of the authorization, and the token is bound to
-  // the exact TARGET (PR + head) AND the exact PAYLOAD bytes.
-  // A token minted to post payload P to PR#5@head-A cannot authorise a different
-  // payload, a different PR, or a different head. Single-use, consumed at egress.
-  "publish.requestConsent": {
-    input: z.object({
-      commandId: commandIdSchema,
-      reviewId: z.string().min(1),
-      target: publishTargetSchema,
-      /** The canonical payload bytes the token authorises (bound by digest). */
-      payload: z.string(),
-      /**
-       * The resolved review VERDICT/event the token authorises. Bound alongside the
-       * payload because it is the one outbound field the payload bytes do not capture
-       * (`buildForgeReviewPost` renders the GraphQL post as a pure function of review +
-       * target + payload + verdict) — so an APPROVE/REQUEST_CHANGES cannot be swapped in
-       * after the human approved a COMMENT. The renderer sends the same value here and
-       * at `publish.review`.
-       */
-      verdict: forgeReviewEventSchema,
-      /**
-       * The compose integrity binding (#382 M2 finding 2), when the artifact was daemon-composed
-       * (the phone flow). Optional/additive: the desktop composes locally and omits it. When
-       * present, the daemon recomputes it from the CURRENT review and refuses a stale/cross-review
-       * mint before a token is issued.
-       */
-      compositionId: z.string().min(1).optional(),
-    }),
-    output: z.object({
-      /** The opaque, single-use authorization bound to (review, target, payload, verdict). */
-      authorization: z.string().min(1),
-    }),
-  },
   // ── Publish a review to GitHub (issue #21) — the FIRST real egress ──────────
   // The pipeline NEVER autonomously posts to a real repo: egress exists ONLY behind
   // this command, from the trusted renderer origin, and every real send is gated.
@@ -230,11 +194,12 @@ const definitions = {
   //   • MAIN re-derives the canonical payload from `comments` and refuses on any
   //     disagreement with `payload` (byte-exact), and refuses an ill-formed target —
   //     both on dry-run and real, so the dry-run surfaces integrity faults too.
-  //   • A real send ALWAYS requires the single-use token from `publish.requestConsent`,
-  //     bound to THIS review, target, and payload; absent / forged / replayed ⇒
-  //     refused, nothing leaves. Posting to GitHub is an external act — it stays
-  //     explicitly confirmed — unlike running a model, which just runs. Dry-run needs
-  //     no token (it posts nothing).
+  //   • The user's click on Post IS the authorization — there is no token and no
+  //     confirmation step (Rule Zero, #435). What a real send still must satisfy: the
+  //     review's OWN pull request as the target, and a `compositionId` (when the client
+  //     composed one) that still matches the CURRENT review AND the verdict being
+  //     posted — so the review that leaves is byte-for-byte, event-for-event the one
+  //     that was previewed.
   //   • The review event is always a neutral COMMENT — the outbound request has no
   //     shape for APPROVE (R33/#80).
   "publish.review": {
@@ -259,11 +224,10 @@ const definitions = {
        * verdict picker feeds this; until then it simply stays unset.
        */
       verdict: forgeReviewEventSchema.optional(),
-      /** The single-use consent token from `publish.requestConsent` (real send only). */
-      authorization: z.string().min(1).optional(),
       /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
-       *  Optional/additive; when present the daemon recomputes it and refuses a stale/cross-review
-       *  post (dry-run included) before building the request. */
+       *  Optional/additive; when present the daemon recomputes it — over the current review AND
+       *  the `verdict` above — and refuses a stale/cross-review/verdict-swapped post (dry-run
+       *  included) before building the request. */
       compositionId: z.string().min(1).optional(),
       /** Default TRUE: an omitted flag never posts. Real egress must opt in with false. */
       dryRun: z.boolean().optional().default(true),
