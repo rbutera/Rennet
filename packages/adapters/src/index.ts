@@ -168,6 +168,17 @@ export {
   type VerificationTurnOptions,
 } from "./finding-verification-backend";
 export {
+  type DetectedForge,
+  defaultForgeDetectionDeps,
+  detectForge,
+  detectForges,
+  FORGE_REGISTRY,
+  type ForgeDetectionDeps,
+  type ForgeSpec,
+  type ForgeStatus,
+  githubForge,
+} from "./forge-discovery";
+export {
   defaultFsListDirDeps,
   type FsListDirDeps,
   listDir,

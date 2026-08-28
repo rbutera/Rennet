@@ -1,0 +1,267 @@
+import { constants } from "node:fs";
+import { access, readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { posix as posixPath, win32 as win32Path } from "node:path";
+import { execa } from "execa";
+
+/**
+ * Forge (source-control) CLI detection — the `gh` engine, mirroring `harness-discovery.ts`.
+ *
+ * Restored in C17 (#483, "gh rides again": enterprise orgs forbid OAuth-app installs, so
+ * the `gh auth token` path is wanted again). Reached through a `ForgeDetector` registry
+ * shaped for #484's future (a second forge *could* register), but built with EXACTLY ONE
+ * entry — GitHub / `gh`. Building GitLab / Bitbucket is out of scope (#484 is planning-only).
+ *
+ * Same discipline as harness discovery: never ask a shell to resolve the binary (a launchd
+ * GUI PATH finds nothing, and `gh` may be shadowed by a shell function). We harvest PATH,
+ * union it with curated install dirs, resolve candidates ourselves, and prove each by
+ * EXECUTING `<gh> --version`; a proven binary's auth is then read from `gh auth status`.
+ * Every effect is injected so a test can prove absence maps to `not-installed`, never a
+ * stale hit (the rename-out-of-PATH positive control at unit scale).
+ */
+
+/** The honest state of a detected forge CLI. A subset of the client's `ToolStatus`: a
+ *  forge CLI probe never yields `unreachable` (that is a host-daemon state, not a CLI one). */
+export type ForgeStatus = "available" | "not-authenticated" | "not-installed";
+
+/** One detected forge CLI on the host its daemon runs on. Structurally the wire
+ *  `DetectedForge` (protocol) — validated at the dispatch boundary, mapped to a
+ *  `DetectedTool` row by the client (which adds the label + enable toggle). */
+export interface DetectedForge {
+  readonly id: string;
+  readonly version: string | null;
+  readonly status: ForgeStatus;
+  /** One line of honest state and the exact fix; backticked spans render as code. */
+  readonly detail: string;
+}
+
+/** A forge the detector knows how to probe. The registry is singleton today (#484). */
+export interface ForgeSpec {
+  readonly id: string;
+  readonly binary: string;
+  /** Curated install dirs for `binary`, checked even when not on PATH (the launchd case). */
+  knownDirectories(home: string, platform: NodeJS.Platform | undefined): readonly string[];
+  /** Compose this forge's honest `detail` line from its detection outcome. */
+  detailFor(status: ForgeStatus): string;
+}
+
+/** Injected effects — mirrors `DiscoveryDeps`, plus the forge auth probe. */
+export interface ForgeDetectionDeps {
+  /** The user's login-shell PATH, harvested once. `null` when the harvest fails. */
+  loginShellPath(): Promise<string | null>;
+  /** `process.env.PATH` at app start. */
+  readonly envPath: string;
+  /** The user's home directory. */
+  readonly home: string;
+  /** Directory listing; returns `[]` on any error (missing dir, permission). */
+  listDir(directory: string): Promise<readonly string[]>;
+  /** X_OK (F_OK on Windows) check on a resolved path. */
+  isExecutable(path: string): Promise<boolean>;
+  /** Execute `<path> --version` and return the parsed version, or `null`. */
+  probeVersion(path: string): Promise<string | null>;
+  /** Probe the forge CLI's auth state (`gh auth status`): true iff authenticated. */
+  probeAuth(path: string): Promise<boolean>;
+  /** The platform the binary lives on. Absent ⇒ POSIX. */
+  readonly platform?: NodeJS.Platform;
+  /** PATHEXT for the candidate locus, not necessarily the host process. */
+  readonly pathExt?: string;
+}
+
+function delimiterFor(platform: NodeJS.Platform | undefined): string {
+  return platform === "win32" ? ";" : ":";
+}
+
+function joinFor(platform: NodeJS.Platform | undefined): (...parts: string[]) => string {
+  return platform === "win32" ? win32Path.join : posixPath.join;
+}
+
+function splitPath(value: string, delimiter: string): readonly string[] {
+  return value.split(delimiter).filter((entry) => entry.length > 0);
+}
+
+/** Which filename in a directory listing IS the binary, honouring Windows PATHEXT. */
+function resolveBinaryFilename(
+  entries: readonly string[],
+  base: string,
+  platform: NodeJS.Platform | undefined,
+  pathExt: string | undefined,
+): string | null {
+  if (platform === "win32") {
+    const byLowerCase = new Map(entries.map((entry) => [entry.toLowerCase(), entry]));
+    for (const extension of (pathExt ?? "").split(";").filter(Boolean)) {
+      const actual = byLowerCase.get(`${base}${extension}`.toLowerCase());
+      if (actual !== undefined) return actual;
+    }
+    return byLowerCase.get(base.toLowerCase()) ?? null;
+  }
+  return entries.includes(base) ? base : null;
+}
+
+/** Resolve the first proven (executable + version-answering) binary for `spec`, or null. */
+async function resolveBinary(
+  spec: ForgeSpec,
+  deps: ForgeDetectionDeps,
+): Promise<{ readonly path: string; readonly version: string } | null> {
+  const delimiter = delimiterFor(deps.platform);
+  const join = joinFor(deps.platform);
+  const known = spec.knownDirectories(deps.home, deps.platform);
+  const harvested = await deps.loginShellPath();
+  const seen = new Set<string>();
+  const directories: string[] = [];
+  for (const directory of [
+    ...splitPath(harvested ?? "", delimiter),
+    ...splitPath(deps.envPath, delimiter),
+    ...known,
+  ]) {
+    if (!seen.has(directory)) {
+      seen.add(directory);
+      directories.push(directory);
+    }
+  }
+
+  const resolved = new Set<string>();
+  for (const directory of directories) {
+    const entries = await deps.listDir(directory);
+    const filename = resolveBinaryFilename(entries, spec.binary, deps.platform, deps.pathExt);
+    if (filename === null) continue;
+    const path = join(directory, filename);
+    if (resolved.has(path)) continue;
+    resolved.add(path);
+    if (!(await deps.isExecutable(path))) continue;
+    const version = await deps.probeVersion(path);
+    // A binary that will not answer `--version` is not proven to be the forge CLI; keep
+    // looking (a later candidate may be real) rather than reporting a stale/false hit.
+    if (version !== null) return { path, version };
+  }
+  return null;
+}
+
+/**
+ * Detect one forge CLI. Absent binary ⇒ `not-installed`; present-and-proven ⇒
+ * `available` when `gh auth status` succeeds, `not-authenticated` when it does not.
+ * Never fabricates a version for a binary that is not there.
+ */
+export async function detectForge(
+  spec: ForgeSpec,
+  deps: ForgeDetectionDeps,
+): Promise<DetectedForge> {
+  const resolved = await resolveBinary(spec, deps);
+  if (resolved === null) {
+    return {
+      id: spec.id,
+      version: null,
+      status: "not-installed",
+      detail: spec.detailFor("not-installed"),
+    };
+  }
+  const authed = await deps.probeAuth(resolved.path);
+  const status: ForgeStatus = authed ? "available" : "not-authenticated";
+  return { id: spec.id, version: resolved.version, status, detail: spec.detailFor(status) };
+}
+
+/** GitHub / `gh` — the sole built forge (#484 seam; #483 gh rides again). */
+export const githubForge: ForgeSpec = {
+  id: "github",
+  binary: "gh",
+  knownDirectories(home, platform) {
+    if (platform === "win32") {
+      const env = process.env;
+      const dirs: string[] = [];
+      if (env.ProgramFiles) dirs.push(win32Path.join(env.ProgramFiles, "GitHub CLI"));
+      const userProfile = env.USERPROFILE ?? env.HOME ?? home;
+      if (userProfile) dirs.push(win32Path.join(userProfile, "scoop", "shims"));
+      return dirs;
+    }
+    const join = posixPath.join;
+    return [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      join(home, ".local", "bin"),
+      "/home/linuxbrew/.linuxbrew/bin",
+    ];
+  },
+  detailFor(status) {
+    switch (status) {
+      case "available":
+        return "Authenticated with GitHub through the `gh` CLI.";
+      case "not-authenticated":
+        return "`gh` is installed but not signed in. Run `gh auth login`.";
+      case "not-installed":
+        return "The `gh` CLI was not found on this host. Install it from `cli.github.com`.";
+    }
+  },
+};
+
+/** The forge detector registry — EXACTLY ONE entry (#484 boundary: no GitLab/Bitbucket). */
+export const FORGE_REGISTRY: readonly ForgeSpec[] = [githubForge];
+
+/** Detect every registered forge on the host these deps run on. */
+export function detectForges(
+  deps: ForgeDetectionDeps,
+  registry: readonly ForgeSpec[] = FORGE_REGISTRY,
+): Promise<DetectedForge[]> {
+  return Promise.all(registry.map((spec) => detectForge(spec, deps)));
+}
+
+/** The default effects: real login shell, filesystem, and process execution. Mirrors
+ *  `defaultDiscoveryDeps`, adding the `gh auth status` probe. */
+export function defaultForgeDetectionDeps(): ForgeDetectionDeps {
+  const platform = process.platform;
+  return {
+    platform,
+    pathExt: process.env.PATHEXT ?? "",
+    async loginShellPath(): Promise<string | null> {
+      if (platform === "win32") return null;
+      const shell = process.env.SHELL ?? "/bin/zsh";
+      try {
+        const result = await execa(shell, ["-ilc", 'printf %s "$PATH"'], {
+          reject: false,
+          shell: false,
+        });
+        return result.exitCode === 0 ? result.stdout : null;
+      } catch {
+        return null;
+      }
+    },
+    envPath: process.env.PATH ?? "",
+    home: homedir(),
+    async listDir(directory: string): Promise<readonly string[]> {
+      try {
+        return await readdir(directory);
+      } catch {
+        return [];
+      }
+    },
+    async isExecutable(path: string): Promise<boolean> {
+      try {
+        await access(path, platform === "win32" ? constants.F_OK : constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async probeVersion(path: string): Promise<string | null> {
+      try {
+        const result = await execa(path, ["--version"], { reject: false, shell: false });
+        if (result.exitCode !== 0) return null;
+        const match = result.stdout.match(/\d+\.\d+\.\d+/);
+        return match ? match[0] : null;
+      } catch {
+        return null;
+      }
+    },
+    async probeAuth(path: string): Promise<boolean> {
+      // `gh auth status` exits 0 iff signed in to at least one host; non-zero otherwise.
+      try {
+        const result = await execa(path, ["auth", "status"], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+        });
+        return result.exitCode === 0;
+      } catch {
+        return false;
+      }
+    },
+  };
+}

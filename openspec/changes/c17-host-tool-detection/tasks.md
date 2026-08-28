@@ -28,7 +28,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
 
 ## 1. Forge (source-control) CLI detection — the `gh` detection engine + seam (Objective: `sourceControlByHost` through the forge adapter seam; #484 boundary)
 
-- [ ] 1.1 `packages/adapters/src/forge-discovery.ts`: a **pure** forge-CLI detection engine mirroring
+- [x] 1.1 `packages/adapters/src/forge-discovery.ts`: a **pure** forge-CLI detection engine mirroring
   `harness-discovery.ts` — for a registered forge (id `github`, binary `gh`), harvest PATH + curated dirs,
   probe `<gh> --version` for the version, and probe `gh auth status` for auth state; map to the
   `DetectedTool`-shaped result (version, `ToolStatus` = `available` when authed / `not-authenticated` when
