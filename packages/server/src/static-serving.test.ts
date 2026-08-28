@@ -24,7 +24,8 @@ function rawGet(base: string, path: string): Promise<{ status: number; body: str
 
 // The daemon serves the built browser UI (issue #381, design D2): the static handler slots
 // before the 404 when a `uiDist` is configured — `/` → index.html, nested assets by path,
-// a path-traversal escape refused, and the daemon still runs headless with no uiDist.
+// client routes falling back to the entry document, an in-root symlink that escapes the root
+// refused, and the daemon still runs headless with no uiDist.
 
 const noopDispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
 
@@ -81,15 +82,24 @@ describe("daemon static UI serving (#381)", () => {
     expect(await res.text()).toContain("export const x");
   });
 
-  it("refuses a path-traversal escape with a 404", async () => {
+  it("keeps a dot-segmented request a 404, and does not reach the resolve guard", async () => {
     const base = await start(fixtureUi());
-    // `fetch` resolves `%2e%2e` away in the CLIENT (the URL spec's path normalisation), so a
-    // fetch of this address never reaches the daemon as an escape at all and proves nothing
-    // about the guard. Sent raw over `node:http`, whose `path` option is passed through
-    // verbatim, the daemon actually sees the dot segments — and refuses them.
-    const res = await rawGet(base, "/%2e%2e/%2e%2e/etc/hosts");
-    expect(res.status).toBe(404);
-    expect(res.body).not.toContain("localhost");
+    // ⚠️ WHAT THIS DOES NOT DO, stated because two earlier versions of this comment claimed it
+    // did: it does not exercise `serveStatic`'s `target.startsWith(root + sep)` guard. `new URL()`
+    // resolves `%2e%2e` per the URL spec and `path.normalize` collapses a leading `..` off an
+    // absolute path, so a request path is ALWAYS inside the root by the time it is resolved —
+    // the guard is unreachable over HTTP and is defence-in-depth against a future non-HTTP
+    // caller, not something a request can trip. The realpath escape it exists for is covered by
+    // the symlink test below, which is the only test in this file that reaches an escape at all.
+    //
+    // What this DOES pin, and it became load-bearing when the client-route fallback landed: a
+    // dot-segmented request stays a 404 rather than being handed the app document. Sent raw over
+    // `node:http`, whose `path` is passed through verbatim — `fetch` resolves the dot segments
+    // away in the CLIENT, so a fetch of these addresses never sends them at all.
+    expect((await rawGet(base, "/%2e%2e/%2e%2e/etc/hosts")).status).toBe(404);
+    // Without the `dotSegmented` check this one returns 200: the path is extension-less, so the
+    // fallback would otherwise claim it as a client route.
+    expect((await rawGet(base, "/%2e%2e/%2e%2e/new-chat")).status).toBe(404);
   });
 
   it("refuses an in-root symlink that points outside uiDist", async () => {
@@ -126,9 +136,7 @@ describe("daemon static UI serving (#381)", () => {
     }
     // A missing FILE still 404s — handing an HTML document to a script tag is not a fallback.
     expect((await fetch(`${base}/assets/missing.js`)).status).toBe(404);
-    // And the fallback is not a way back into the traversal guard: a dot-segmented request is
-    // not route-like, so it stays a 404 instead of quietly becoming a 200.
-    expect((await rawGet(base, "/%2e%2e/%2e%2e/new-chat")).status).toBe(404);
+    // (The dot-segmented case lives in the test above, its one home.)
   });
 
   it("runs headless (404 at /) when no uiDist is configured", async () => {

@@ -37,9 +37,10 @@ test("the first-run welcome is what a first run gets, and completing it is what 
       page.getByText("You stopped writing the code. You still have to answer for it."),
     ).toBeVisible({ timeout: 60_000 });
     expect(await page.locator('[data-slot="corner-slot"]').count()).toBe(0);
+    // No shell ⇒ no coach anchors ⇒ nothing for a coachmark to portal over the wizard from,
+    // which is the whole reason C21 unmounts rather than hides. The mark itself is asserted
+    // absent at unit level (`first-run-welcome.dom.test.tsx`); here the cause is what is pinned.
     expect(await page.locator("[data-screen]").count()).toBe(0);
-    // No coachmark painted over the wizard — the reason the shell is unmounted at all.
-    expect(await page.locator('[data-slot="popover-content"]').count()).toBe(0);
 
     // ── Step 1 — Appearance. The choice is applied and PERSISTED as it is made, not on exit ──
     await page.getByRole("button", { name: "Continue to Rennet" }).click();
