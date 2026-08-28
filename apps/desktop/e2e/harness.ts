@@ -9,8 +9,14 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
-import { type ElectronApplication, _electron as electron, type Page } from "@playwright/test";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
+import {
+  type ElectronApplication,
+  _electron as electron,
+  expect,
+  type Page,
+} from "@playwright/test";
+import { WsRennetBridge } from "@rennet/client";
 
 const require = createRequire(import.meta.url);
 const electronExecutable = require("electron") as string;
@@ -125,14 +131,85 @@ export function modelFreeEnv(homeDir: string): NodeJS.ProcessEnv {
 }
 
 /**
- * Open the legacy direct repo/PR entry from the front door. Since the v4.0 nav
- * pass the drawn "Review directly" button is GONE — the door is palette-only
- * (wireframe 16: "The legacy 'Review directly' door lives here too — palette-only,
- * no drawn button"), so the e2e goes the way a user does: ⌘K, then the command row.
+ * Settle the first-run welcome through the app's OWN command, then reload onto the shell.
+ *
+ * C21 put the welcome wizard in front of a first run and, deliberately, UNMOUNTED the shell
+ * beneath it (`routes/app.tsx`: a hidden-but-mounted underlay still registers coach anchors,
+ * and a coachmark portals to `document.body` over the wizard). So on a throwaway data dir with
+ * no projects there is no sidebar, no corner slot and no front door until the welcome is done —
+ * which is why every journey spec below opens with this call.
+ *
+ * It is `settings.completeWelcome`, the same command the wizard's own Ready step runs, invoked
+ * over the app's own WS bridge — not a seeded config file, so the specs never encode the
+ * settings serialization. The wizard ITSELF is driven, not skipped, by `first-run-welcome.spec.ts`;
+ * this is the other specs' way past a surface that is not their subject.
+ *
+ * `wsPort` is for the browser shell, whose tab has no `window.rennet` — the spec already knows
+ * the served daemon's port. Electron omits it and the preload bridge answers.
  */
-export async function openDirectEntry(page: Page): Promise<void> {
-  await page.keyboard.press("ControlOrMeta+k");
-  await page.getByRole("button", { name: "Review directly" }).click();
+export async function completeWelcome(page: Page, wsPort?: number): Promise<void> {
+  const port =
+    wsPort ??
+    (await page.evaluate(
+      () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+    ));
+  const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
+  try {
+    await bridge.invoke("settings.completeWelcome", {});
+  } finally {
+    bridge.close();
+  }
+  await page.reload();
+}
+
+/**
+ * The real add-a-project journey, ending on the indexing screen.
+ *
+ * The dialog has no kind picker and no confirm step any more (C12 §10.1): a source, the in-app
+ * directory browser's path bar, and one `Add`. Typing the fixture path and pressing Enter is how
+ * a user navigates the browser there; the breadcrumb button carrying the repo's own directory
+ * name is the proof the browser actually resolved it.
+ */
+export async function addProject(page: Page, repository: string): Promise<void> {
+  await page.getByRole("button", { name: "Add Project" }).first().click();
+  const pathBar = page.getByRole("textbox", { name: "Directory path" });
+  await pathBar.fill(repository);
+  await pathBar.press("Enter");
+  await expect(page.getByRole("button", { name: basename(repository), exact: true })).toBeVisible();
+  const add = page.getByRole("button", { name: "Add", exact: true });
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(page.locator('[data-screen="project-indexing"]')).toBeVisible({ timeout: 60_000 });
+}
+
+/**
+ * From the indexing screen to a review of the project's WORKING TREE: "Start a Review" opens
+ * New Chat, and the pinned Current Checkout row mints a session and captures the tree into it.
+ *
+ * This replaced the direct repo/PR door the older specs used ("Review directly" → "Choose a
+ * repository"): that pair only ever existed in `command/commands.ts`, which the shipping palette
+ * (`shell/command-menu-entries.ts`) does not read, so the door is unreachable. New Chat is the
+ * front door now.
+ */
+export async function openWorkingTreeReview(page: Page): Promise<void> {
+  const startReview = page.getByRole("button", { name: "Start a Review" });
+  await expect(startReview).toBeVisible({ timeout: 180_000 });
+  await startReview.click();
+  await expect(page.locator('[data-screen="new-chat"]')).toBeVisible();
+  await page
+    .locator('[data-row="target"]', { hasText: /Current Checkout/ })
+    .first()
+    .click();
+  await expect(page.getByText(/^REVIEW ·/)).toBeVisible({ timeout: 180_000 });
+}
+
+/** The review workspace's Diff view — the raw patchset, behind the top bar's session-view pill. */
+export async function openDiffView(page: Page): Promise<void> {
+  await page
+    .locator('[data-slot="toggle-group"]')
+    .getByRole("button", { name: "Diff", exact: true })
+    .click();
+  await expect(page.getByText(/files changed$/)).toBeVisible({ timeout: 30_000 });
 }
 
 export interface LaunchedRennet {

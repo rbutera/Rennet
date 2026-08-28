@@ -1,8 +1,16 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
-import { makeTempDir, modelFreeEnv, seedReviewRepo } from "./harness";
+import {
+  addProject,
+  completeWelcome,
+  makeTempDir,
+  modelFreeEnv,
+  openDiffView,
+  openWorkingTreeReview,
+  seedReviewRepo,
+} from "./harness";
 
 // The browser shell journey (issue #381, design D7): a daemon started from the CLI serves
 // the built browser UI over its HTTP port; a chromium tab loads it, connects back over WS
@@ -65,7 +73,7 @@ async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<bool
 test("adds a project and opens a review from a served browser tab", async ({ page }) => {
   test.skip(!existsSync(RENNET_CLI), `build the server CLI first (${RENNET_CLI} missing)`);
   test.skip(!existsSync(BROWSER_DIST), `build the browser bundle first (${BROWSER_DIST} missing)`);
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
 
   const repository = seedReviewRepo("rennet-e2e-browser-repo-");
   const userData = makeTempDir("rennet-e2e-browser-state-");
@@ -86,40 +94,29 @@ test("adds a project and opens a review from a served browser tab", async ({ pag
 
     await page.goto(`http://127.0.0.1:${port}/`);
 
-    // The front door rendering proves the tab got the app AND connected over WS
-    // (app.bootstrap resolved) — with no Electron in the picture.
-    await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible({ timeout: 15_000 });
+    // The first-run welcome rendering proves the tab got the app AND connected over WS
+    // (app.bootstrap resolved, `settings.get` and `projects.list` both answered) — with no
+    // Electron in the picture. The tab's `window.rennet` carries no port, so the helper is
+    // handed the served daemon's own.
+    await expect(page.getByText("You stopped writing the code.")).toBeVisible({ timeout: 15_000 });
+    await completeWelcome(page, port);
+    await expect(page.locator('[data-screen="add-project-entry"]')).toBeVisible();
 
-    // The add-a-project journey (mirrors the passing Electron add-project spec), model-free.
-    // The in-app directory browser replaced the remote path prompt: type the fixture path into
-    // the browser's path bar (the served daemon lists its own filesystem), then continue.
-    await page.getByRole("button", { name: "Add a project" }).click();
-    await page.getByRole("button", { name: /Project repo/ }).click();
-    const pathBar = page.getByRole("textbox", { name: "Directory path" });
-    await pathBar.fill(repository);
-    await pathBar.press("Enter");
+    // The add-a-project journey, model-free: the daemon serving this tab lists ITS OWN
+    // filesystem into the in-app directory browser, so typing the fixture path is the whole
+    // remote-path story — no native dialog and no path prompt anywhere.
+    await addProject(page, repository);
+
+    // Start a Review → the New Chat list built from the served daemon's real git → the
+    // Current Checkout row captures the working tree into a review workspace, and the Diff
+    // view renders the real patchset. The full journey, driven entirely from a browser tab.
+    await openWorkingTreeReview(page);
+    await openDiffView(page);
     await expect(
-      page.getByRole("button", { name: basename(repository), exact: true }),
+      page
+        .getByRole("navigation", { name: "Changed files" })
+        .getByRole("button", { name: /widget\.ts/ }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Continue" }).click();
-
-    await expect(page.getByText(/^Found in/)).toBeVisible();
-    await page.getByRole("button", { name: "Confirm" }).click();
-
-    await expect(page.locator(".processing")).toBeVisible();
-    const openProject = page.getByRole("button", { name: /^Open / });
-    await expect(openProject).toBeVisible({ timeout: 60_000 });
-    await openProject.click();
-
-    await expect(page.locator(".project-detail")).toBeVisible();
-    const rows = page.locator(".smart-row");
-    await expect(rows.first()).toBeVisible();
-
-    // Opening a row captures the working tree into a review workspace — the full journey,
-    // driven entirely from the browser tab.
-    await rows.first().locator(".smart-row-open").click();
-    await expect(page.getByRole("tab", { name: "Canvases" })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByRole("tab", { name: "Files" })).toBeVisible();
   } finally {
     try {
       await stopDaemon(daemon, claimPath);

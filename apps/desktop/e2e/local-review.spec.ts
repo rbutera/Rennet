@@ -2,21 +2,30 @@ import { rmSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { RENNET_PRELOAD_KEYS } from "../src/preload/contract";
 import {
+  addProject,
+  completeWelcome,
   git,
   initRepo,
   launchRennet,
   makeTempDir,
-  openDirectEntry,
+  openDiffView,
+  openWorkingTreeReview,
   writeRepoFile,
 } from "./harness";
 
-// The local single-repo review-and-invalidate loop, driven through the CURRENT
-// front door: launch lands on the projects list, "Review directly" opens the direct
-// repo/PR entry, and "Choose a repository" captures the working tree. The Files view
-// shows the real diff; editing the file on disk invalidates the pinned review; and
-// "Regenerate affected review" re-captures. (The renderer is also proved hardened:
-// no ambient `process`, only the `invoke` bridge.)
+// The local single-repo review-and-invalidate loop, driven through the CURRENT front door:
+// past the first-run welcome, add the project, "Start a Review", and the New Chat list's
+// Current Checkout row captures the working tree. The Diff view shows the real patchset;
+// editing the file on disk stales the pinned review; and Regenerate re-captures. (The
+// renderer is also proved hardened: no ambient `process`, only the `invoke` bridge.)
+//
+// The invalidation half is the reason this spec is not replaceable by the New Chat journey
+// spec: it is the only DRIVEN record of the freshness loop (#38, restored by #576), and the
+// notice is information rather than a gate — nothing is blocked, and every view stays as
+// reachable as it was.
 test("captures a repository in a hardened renderer and invalidates safely", async () => {
+  test.setTimeout(300_000);
+
   const repository = makeTempDir("rennet-e2e-repo-");
   const userData = makeTempDir("rennet-e2e-state-");
   const home = makeTempDir("rennet-e2e-home-");
@@ -32,8 +41,8 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
   try {
     const page = await application.firstWindow();
 
-    // The front door is the app's entry: the projects list, headed "Rennet".
-    await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible();
+    // The hardened renderer, asserted BEFORE the welcome is settled: the preload boundary
+    // is a property of the window, not of any screen inside it.
     expect(
       await page.evaluate(() => ({
         process: typeof (globalThis as unknown as { process?: unknown }).process,
@@ -55,33 +64,43 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
       "listWslDistros",
       "logWslConnect",
       "onUpdateReady",
+      "openFullDiskAccessSettings",
       "platform",
       "resolveDaemonForPath",
       "version",
       "wsPort",
     ]);
 
-    // "Review directly" is palette-only since the v4.0 nav pass: ⌘K, then the row.
-    await openDirectEntry(page);
-    await page.getByRole("button", { name: "Choose a repository" }).click();
+    await completeWelcome(page);
+    // The front door with no projects yet: the add-a-project entry, not a projects list.
+    await expect(page.locator('[data-screen="add-project-entry"]')).toBeVisible();
 
-    // A captured review opens on Canvases by default; the raw diff is the Files tab.
-    await page.getByRole("tab", { name: "Files" }).click();
-    // Two buttons carry the filename; scope through the a11y tree to the changed-
-    // files panel — the file row is the one this step is about, named as AT sees it.
+    await addProject(page, repository);
+    await openWorkingTreeReview(page);
+    await openDiffView(page);
+
+    // The captured working-tree edit, in the changed-files rail and in the diff itself.
     await expect(
       page
-        .getByRole("complementary", { name: "Changed files" })
+        .getByRole("navigation", { name: "Changed files" })
         .getByRole("button", { name: /review-me\.ts/ }),
     ).toBeVisible();
-    await expect(page.locator("pre.diff")).toContainText("export const value = 2;");
+    const added = page.locator('#diff-review-me\\.ts [data-line-state="add"]');
+    await expect(added).toContainText("export const value = 2;");
 
-    // Editing the file on disk invalidates the pinned review (the freshness watcher).
+    // Editing the file on disk stales the pinned review (the freshness watcher). The check
+    // fires on mount and on every window focus, so the edit is followed by a focus event —
+    // the same thing that happens when the reviewer comes back from their editor.
     writeRepoFile(repository, "review-me.ts", "export const value = 3;\n");
-    await expect(page.getByText("Your code changed.")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("pre.diff")).toContainText("export const value = 2;");
-    await page.getByRole("button", { name: "Regenerate affected review" }).click();
-    await expect(page.locator("pre.diff")).toContainText("export const value = 3;");
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    const stale = page.getByTestId("review-stale");
+    await expect(stale).toBeVisible({ timeout: 30_000 });
+    // The old tree is still what is on screen — the notice says so, and does not swap it.
+    await expect(added).toContainText("export const value = 2;");
+
+    await stale.getByRole("button", { name: /Regenerate/ }).click();
+    await expect(added).toContainText("export const value = 3;", { timeout: 60_000 });
+    await expect(stale).toHaveCount(0);
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });
