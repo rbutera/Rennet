@@ -1,0 +1,115 @@
+import type { CouncilResolveContext } from "@rennet/protocol";
+import { describe, expect, it } from "vitest";
+import { DEFAULT_CODEX_SECOND_SEAT_EFFORT, DEFAULT_CODEX_SECOND_SEAT_MODEL } from "./dual-seat";
+import { JOB_CATALOGUE } from "./model-council";
+import {
+  REVIEW_ROLE_CATALOGUE,
+  type ResolvedReviewRole,
+  resolveReviewRoles,
+  reviewRoleCatalogueIsIntegral,
+} from "./model-council-roles";
+
+// resolveReviewRoles ignores availability (it resolves all three scenarios
+// unconditionally — honest-present), so any availability works as the seed.
+const CTX: CouncilResolveContext = { availability: { installed: ["claude-code", "codex"] } };
+
+function role(roles: ResolvedReviewRole[], id: string): ResolvedReviewRole {
+  const found = roles.find((r) => r.id === id);
+  if (found === undefined) throw new Error(`no role ${id}`);
+  return found;
+}
+
+describe("REVIEW_ROLE_CATALOGUE", () => {
+  it("names all eight review roles", () => {
+    expect(REVIEW_ROLE_CATALOGUE).toHaveLength(8);
+    expect(REVIEW_ROLE_CATALOGUE.map((r) => r.id).sort()).toEqual(
+      [
+        "adjudication",
+        "confirmation",
+        "lens-workers",
+        "map-workers",
+        "orchestrator",
+        "post-process",
+        "second-seat",
+        "utility",
+      ].sort(),
+    );
+  });
+
+  // Positive control (must be able to fail): a role naming a job id absent from
+  // JOB_CATALOGUE is a fabrication — the no-new-job-id guard.
+  it("points only at job ids that exist in JOB_CATALOGUE", () => {
+    for (const entry of REVIEW_ROLE_CATALOGUE) {
+      expect(JOB_CATALOGUE[entry.jobId], `${entry.id} → ${entry.jobId}`).toBeDefined();
+    }
+    expect(reviewRoleCatalogueIsIntegral()).toBe(true);
+  });
+});
+
+describe("resolveReviewRoles", () => {
+  it("resolves every role in every scenario to an assignment or honest-null (never undefined, never a throw)", () => {
+    const roles = resolveReviewRoles(CTX);
+    expect(roles).toHaveLength(8);
+    for (const r of roles) {
+      for (const cell of [r.dual, r.claudeOnly, r.codexOnly]) {
+        // a cell is EITHER a real pick with a source, OR honest-null with null source.
+        if (cell.value === null) {
+          expect(cell.source).toBeNull();
+        } else {
+          expect(cell.value.model).toBeTruthy();
+          expect(cell.value.effort).toBeTruthy();
+          expect(cell.source).not.toBeNull();
+        }
+      }
+    }
+  });
+
+  it("resolves the table-backed roles to the council default with council-table provenance", () => {
+    const roles = resolveReviewRoles(CTX);
+    // lens-workers → lens-draft: TABLE_BOTH opus-4.8/high, claude-only opus-4.8/high, codex-only gpt-5.6-sol/high.
+    const lens = role(roles, "lens-workers");
+    expect(lens.dual.value).toEqual({ model: "opus-4.8", effort: "high" });
+    expect(lens.dual.source).toBe("council-table");
+    expect(lens.codexOnly.value).toEqual({ model: "gpt-5.6-sol", effort: "high" });
+    // map-workers → partition-worker: light, cheap Codex under both.
+    expect(role(roles, "map-workers").dual.value).toEqual({ model: "gpt-5.6-luna", effort: "low" });
+  });
+
+  it("resolves the Flagged second-seat in dual and honest-null in the single-provider columns", () => {
+    const second = role(resolveReviewRoles(CTX), "second-seat");
+    expect(second.dual.value).toEqual({
+      model: DEFAULT_CODEX_SECOND_SEAT_MODEL,
+      effort: DEFAULT_CODEX_SECOND_SEAT_EFFORT,
+    });
+    expect(second.dual.source).toBe("council-table");
+    // Honest-null: the dual construct does not run under one provider.
+    expect(second.claudeOnly.value).toBeNull();
+    expect(second.claudeOnly.source).toBeNull();
+    expect(second.codexOnly.value).toBeNull();
+    expect(second.codexOnly.source).toBeNull();
+  });
+
+  it("a task override changes the resolved cell AND flips its source to task-override", () => {
+    const overridden = resolveReviewRoles({
+      availability: { installed: ["claude-code", "codex"] },
+      overrides: { task: { "lens-draft": { model: "haiku", effort: "low" } } },
+    });
+    const lens = role(overridden, "lens-workers");
+    expect(lens.dual.value).toEqual({ model: "haiku", effort: "low" });
+    expect(lens.dual.source).toBe("task-override");
+    // the default (no override) stays council-table — proves the flip is real.
+    expect(role(resolveReviewRoles(CTX), "lens-workers").dual.source).toBe("council-table");
+  });
+
+  it("a task override on the flagged job reflects in the second-seat dual cell", () => {
+    const overridden = resolveReviewRoles({
+      availability: { installed: ["claude-code", "codex"] },
+      overrides: { task: { "lens-draft-flagged": { model: "gpt-5.6-terra", effort: "medium" } } },
+    });
+    const second = role(overridden, "second-seat");
+    expect(second.dual.value).toEqual({ model: "gpt-5.6-terra", effort: "medium" });
+    expect(second.dual.source).toBe("task-override");
+    // still honest-null single-provider.
+    expect(second.codexOnly.value).toBeNull();
+  });
+});
