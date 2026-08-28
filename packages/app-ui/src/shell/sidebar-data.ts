@@ -229,7 +229,7 @@ export function useSidebarTree(): SidebarTree {
 // ── Active-route resolution (shared) ──────────────────────────────────────────
 
 /** What the current location says is active — the single derivation the sidebar's
- *  rail, tree, and footer all read from, instead of each re-parsing the route. */
+ *  actions, tree, and footer all read from, instead of each re-parsing the route. */
 export interface ActiveRoute {
   /** The slug of the open session route (`/s/:slug`, or its `/run`), else null. */
   readonly activeSlug: string | null;
