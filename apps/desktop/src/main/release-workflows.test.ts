@@ -46,10 +46,17 @@ describe("release workflow boundaries", () => {
     expect(autoReleaseWorkflow).not.toMatch(/^permissions:\n {2}contents: write/m);
   });
 
-  it("publishes both manual and automatic releases", () => {
-    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --title');
-    expect(releaseWorkflow).not.toContain("--draft");
+  it("publishes both manual and automatic releases draft-first, then undrafts", () => {
+    // #599 made both workflows draft-first: create as a draft, upload with retry, undraft
+    // last, so a run that dies mid-upload leaves an invisible draft rather than a published
+    // release missing installers. The old assertion here was `not.toContain("--draft")`,
+    // which turned into a false statement about what ships the moment that landed — and it
+    // reddened main. What matters is not that the flag is absent but that the release is
+    // never VISIBLE until its assets are attached, so assert the sequence instead.
+    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --draft --title');
+    expect(releaseWorkflow).toContain('gh release edit "$TAG" --draft=false');
     expect(autoReleaseWorkflow).toContain('gh release create "$TAG"');
-    expect(autoReleaseWorkflow).not.toContain("--draft");
+    expect(autoReleaseWorkflow).toContain("--draft");
+    expect(autoReleaseWorkflow).toContain('gh release edit "$TAG" --draft=false');
   });
 });
