@@ -59,7 +59,12 @@ export type RoundState =
     }
   | {
       readonly phase: "composed";
-      readonly reportBoardId: string;
+      /** The round's report board, when it drafted one. **Optional, and it matters:** a
+       *  round with no successor account is not a round to the pipeline, so its report
+       *  seat never runs and no report board exists — the commonest cause being that the
+       *  coding agent ran and changed nothing. Such a round still regenerates and still
+       *  composes; it simply has no greeting to hand back. */
+      readonly reportBoardId?: string;
       readonly newGeneration: string;
       /** The lanes that were still on screen when the generation composed — carried
        *  through so the settled regeneration block does not blink out at the moment it
@@ -79,15 +84,36 @@ export const initialRoundState: RoundState = { phase: "absent" };
 /**
  * The pure transition. Forward-only and tolerant: an event that does not apply to the
  * current phase returns the state unchanged (progress channels can duplicate or
- * re-order, and the machine is a trust boundary). A `failed` event from any IN-FLIGHT
- * phase moves to `failed`; from a terminal or absent state it is ignored, so a settled
- * round never un-settles.
+ * re-order, and the machine is a trust boundary). The two TERMINAL events — `failed` and
+ * `composed` — apply from ANY in-flight phase, so a round that ends is always able to say
+ * so; from a terminal or absent state both are ignored, so a settled round never
+ * un-settles.
  */
 export function advance(state: RoundState, event: RoundEvent): RoundState {
   if (event.type === "failed") {
     return state.phase === "absent" || state.phase === "composed" || state.phase === "failed"
       ? state
       : { phase: "failed", reason: event.reason };
+  }
+  // `composed` is terminal from ANY in-flight phase, for the same reason `failed` is: it
+  // is the round's own account of having finished, and a machine that can only accept it
+  // from one predecessor phase turns a missing intermediate event into a permanent stall.
+  // The intermediate that goes missing in practice is `report` — a round with no successor
+  // account never runs the report seat — and the run view then sat at `committing`
+  // forever, ignoring the lens events and the composed generation behind it, showing a
+  // live-looking round that had already ended.
+  if (event.type === "composed") {
+    if (state.phase === "absent" || state.phase === "composed" || state.phase === "failed") {
+      return state;
+    }
+    const reportBoardId = "reportBoardId" in state ? state.reportBoardId : undefined;
+    const lanes = state.phase === "composing" ? state.lanes : undefined;
+    return {
+      phase: "composed",
+      newGeneration: event.generation,
+      ...(reportBoardId === undefined ? {} : { reportBoardId }),
+      ...(lanes === undefined ? {} : { lanes }),
+    };
   }
   switch (state.phase) {
     case "absent":
@@ -117,16 +143,9 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
         ? { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes }
         : state;
     case "composing":
-      if (event.type === "lens")
-        return { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes };
-      if (event.type === "composed")
-        return {
-          phase: "composed",
-          reportBoardId: state.reportBoardId,
-          newGeneration: event.generation,
-          lanes: state.lanes,
-        };
-      return state;
+      return event.type === "lens"
+        ? { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes }
+        : state;
     case "composed":
     case "failed":
       return state; // terminal

@@ -179,6 +179,7 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     });
     const previousGeneration: Generation = mintGeneration("gen:ps-first", "ps-first");
 
+    const events: RoundEvent[] = [];
     const outcome = await runtimeWith(order).runRound({
       session: { ...session, id: "first-gen-session" } as SessionModel,
       repoRoot: root,
@@ -186,6 +187,7 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
       asksDispatched: [],
       // Nothing landed ⇒ re-report against the existing generation, no successor mint.
       runWorkers: async () => ({ commitRange: { from: "c0", to: "c0" } }),
+      onProgress: (event) => events.push(event),
       ...collation,
     });
 
@@ -193,6 +195,13 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     expect(outcome.boardGeneration.id).toBe("gen:ps-first");
     expect(outcome.frozenPrevious).toBeUndefined();
     expect(order).not.toContain("report"); // non-round ⇒ report does not gate
+
+    // …and the LIVE CHANNEL says so honestly. This is the commonest shape of "the coding
+    // agent ran and changed nothing", and asserting only "no crash" is what let the run
+    // view stall on it: the round emits NO `report` event at all, and the terminal event
+    // is the one the run machine has to be able to accept without one.
+    expect(events.map((e) => e.type)).not.toContain("report");
+    expect(events.at(-1)?.type).toBe("composed");
   });
 
   // ── Coverage, through the REAL path (review finding 11) ───────────────────

@@ -309,4 +309,15 @@ describe("rounds the daemon cannot answer are honestly unavailable, with the rea
     // And it is a STATEMENT, not a gate: nothing is blocked, the round simply is not known.
     expect(getByText(/^phase:absent$/)).toBeTruthy();
   });
+
+  it("a failing PROGRESS read never hides a ledger the daemon answered", async () => {
+    const bridge = new MemoryBridge({
+      // The live-progress read is refused; the ledger read is not.
+      "session.rounds": () => ({ records: [] }),
+    });
+    const { container } = mountLive(bridge);
+    // THE HIDING THIS GUARDS: keying the ledger's disclosure on any rounds read at all put
+    // "Rennet cannot read this session's rounds" over records that had come back fine.
+    await waitFor(() => expect(container.textContent).toContain("rounds:readable"));
+  });
 });

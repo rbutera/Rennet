@@ -66,10 +66,12 @@ export interface RoundsSource {
    */
   readonly roundPending?: (slug: string) => boolean;
   /**
-   * Why this session's rounds CANNOT be read, in the daemon's own words — or `undefined`
-   * when they can (review finding 9). A client can outrun the daemon it is talking to: an
-   * older daemon does not answer the rounds reads at all, and the answer-shaped absence
-   * ("no rounds have completed") is then a lie about a fact nobody established.
+   * Why this session's rounds LEDGER cannot be read, in the daemon's own words — or
+   * `undefined` when it can (review finding 9). A client can outrun the daemon it is
+   * talking to: an older daemon does not answer the rounds reads at all, and the
+   * answer-shaped absence ("no rounds have completed") is then a lie about a fact nobody
+   * established. It is the LEDGER read alone: a failure elsewhere must not hide records
+   * that came back perfectly well.
    *
    * This is a STATEMENT, not a gate: the surfaces render the reason where the rounds would
    * have been and carry on. There is no capability negotiation, no version handshake and
@@ -242,11 +244,11 @@ export function useLiveRoundsSource(): RoundsSource {
   const eventsCommand = { name: "session.roundEvents" as const, input: { reviewId } };
 
   const { cache } = useBridgeContext();
-  const {
-    data: eventsData,
-    pending: eventsPending,
-    error: eventsError,
-  } = useCommand(eventsCommand.name, eventsCommand.input, { enabled });
+  const { data: eventsData, pending: eventsPending } = useCommand(
+    eventsCommand.name,
+    eventsCommand.input,
+    { enabled },
+  );
 
   // The live push. It folds into the read's own cache entry (so one entry re-renders every
   // reader) AND into `streamed`, which the read's response CANNOT overwrite: the entry is
@@ -288,7 +290,10 @@ export function useLiveRoundsSource(): RoundsSource {
 
   const events = eventsData?.events;
   const records = recordsData?.records;
-  const unavailable = readFailure(eventsError) ?? readFailure(recordsError);
+  // Keyed on the LEDGER read alone. Folding the live-progress read's failure in here hid
+  // a ledger we actually hold behind "Rennet cannot read this session's rounds" — the same
+  // dishonesty in the other direction, since the records had come back fine.
+  const unavailable = readFailure(recordsError);
   return useMemo(() => {
     // The machine IS the fold: the same reducer the daemon's events were designed for, over
     // the merged union of the catch-up read and the live push. No wall clock anywhere.

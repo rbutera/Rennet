@@ -81,12 +81,20 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const roundsUnavailable = useRoundsUnavailable(slug);
   const greetingArmed = useRennetStore((s) => s.run.greetingArmed);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
-  const reportBoardId = "reportBoardId" in roundState ? roundState.reportBoardId : "";
+  const reportBoardId = ("reportBoardId" in roundState ? roundState.reportBoardId : "") ?? "";
   const report = useReportBoard(reportBoardId);
+  // A report phase is one that HAS a report to greet with. A round with no successor
+  // account never runs the report seat, so it composes with no report board id at all —
+  // and holding its new boards behind a greeting that can never arrive would be a promise
+  // ("until its report arrives") that nothing is going to keep. Such a round lands on the
+  // boards it just regenerated, which is what it was dispatched for. A round that DOES
+  // name a report which fails to resolve still routes to `ReportUnavailable` — that report
+  // exists and the reveal is genuinely owed.
   const inReportPhase =
-    roundState.phase === "reporting" ||
-    roundState.phase === "composing" ||
-    roundState.phase === "composed";
+    reportBoardId !== "" &&
+    (roundState.phase === "reporting" ||
+      roundState.phase === "composing" ||
+      roundState.phase === "composed");
   const boardGeneration =
     roundState.phase === "composed" ? roundState.newGeneration : LIVE_GENERATION;
 

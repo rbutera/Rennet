@@ -178,6 +178,13 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     expect(line).not.toContain("5 reworks");
   });
 
+  it("one rework reads 'rework', not '1 reworks'", () => {
+    const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(["ask-1"], 1)));
+    const line = r.getByTestId("round-retrospective").textContent ?? "";
+    expect(line).toContain("1 rework ·");
+    expect(line).not.toContain("1 reworks");
+  });
+
   it("a round whose report never drafted states NO count rather than a zero it cannot verify", () => {
     const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(["ask-1"])));
     const line = r.getByTestId("round-retrospective").textContent ?? "";

@@ -81,7 +81,10 @@ export function RoundsLedger({
   // and read "5 reworks" over a round that changed nothing. A round whose report never
   // drafted has no verified count, so the line carries no number rather than inventing a
   // zero: honestly silent beats confidently wrong.
-  const reworks = record.reworkCount === undefined ? "" : ` · ${record.reworkCount} reworks`;
+  const reworks =
+    record.reworkCount === undefined
+      ? ""
+      : ` · ${record.reworkCount} ${record.reworkCount === 1 ? "rework" : "reworks"}`;
   const line = generationLine(records);
   const position = line.indexOf(liveGeneration);
   const generations = position >= 0 ? line.slice(0, position + 1) : [liveGeneration];

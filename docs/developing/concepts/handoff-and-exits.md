@@ -262,11 +262,23 @@ something the preview did not describe.
    [Carry-forward is a verdict, not a skip](#carry-forward-is-a-verdict-not-a-skip)
    for exactly what that claims. A drafter that produced no board settles its
    lane as **failed** carrying the reason — a lane left running after the round
-   is over would read as "still working". The surface never locks. When the new
-   generation composes, the way to it appears — a control that exists only
-   once it is ready, never a disabled button. A round where *every* drafter
-   failed composes nothing, so it ends on a terminal failure carrying the
-   drafters' reasons rather than offering a way to boards nobody wrote.
+   is over would read as "still working". The surface never locks, and it always
+   ends: composing is terminal from wherever the round had got to, exactly as
+   failing is, so a round that finishes can always say so even when an
+   intermediate step never happened. When the new generation composes, the way
+   to it appears — a control that exists only once it is ready, never a disabled
+   button. A round where *every* drafter failed composes nothing, so it ends on
+   a terminal failure carrying the drafters' reasons rather than offering a way
+   to boards nobody wrote.
+
+   **A round without a report is still a round.** The report seat runs only for
+   a round with a successor account, and the commonest reason there is none is
+   that the coding agent ran and changed nothing. That round still regenerates
+   and still composes; it simply has no greeting to hand back, so it lands the
+   reviewer on the boards it just drafted rather than holding them behind a
+   report that is never coming. A round that *does* name a report which fails to
+   read is the other case, and it still holds the reveal — that report exists,
+   and it is owed.
 6. Each round mints a **new generation** of lens boards, drafted delta-aware:
    unchanged sections carry forward, and the composition step stamps what it
    touched (`new` / `reworked`; absence = carried). The marks read as unread

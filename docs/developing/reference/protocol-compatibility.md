@@ -154,6 +154,11 @@ fold already holds. The same events are readable as an ordered log through
 up — one reducer over one event vocabulary, so a late joiner and a live
 subscriber can never disagree about the phase.
 
+The run machine treats both `composed` and `failed` as terminal from any
+in-flight phase, so a round that ends can always say so even when an
+intermediate event — most often `report`, which only a round with a successor
+account ever emits — never happened.
+
 Each event carries a **`seq`**: its position in that review's progress log,
 monotonic across rounds. The read and the push are two writers over one log and
 neither is complete on its own, so the client merges them by `seq` rather than

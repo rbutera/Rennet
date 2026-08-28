@@ -192,6 +192,10 @@ export function withLensBoards(
  * round's verified account of the work — never `asksDispatched.length`, which counts how
  * many asks went OUT and would read "5 reworks" for a round that changed nothing.
  *
+ * `beyond` COUNTS. The agent changed code in response to the round — work nobody asked
+ * for is still work the round produced, and it is the opposite of `untouched`. (Settled,
+ * so it does not get re-litigated: only `untouched` means "this round did nothing here".)
+ *
  * `undefined` when the round drafted no report (or its board never came back): the count
  * is then honestly UNKNOWN, and the ledger renders no number rather than a zero it
  * cannot stand behind.

@@ -176,13 +176,6 @@ function sectionDelta(
 }
 
 /**
- * Stamp `current`'s `section` elements with their R58 round-delta against
- * `previous` (undefined = the first generation, everything is `new`). A carried
- * section's stamp is REMOVED (absence = carried). Pure — returns a new board,
- * never mutates the input. Non-section elements pass through untouched, so
- * verbatim carry on every other kind is automatic.
- */
-/**
  * The sections `previous` had that `current` does NOT — the regeneration's REMOVALS.
  *
  * A delta stamp can only live on a section that still exists, so deletion is invisible to
@@ -219,6 +212,16 @@ export function isCarriedForward(previous: DraftBoard | undefined, stamped: Draf
   );
 }
 
+/**
+ * Stamp `current`'s `section` elements with their R58 round-delta against
+ * `previous` (undefined = the first generation, everything is `new`). A carried
+ * section's stamp is REMOVED (absence = carried). Pure — returns a new board,
+ * never mutates the input. Non-section elements pass through untouched, so
+ * verbatim carry on every other kind is automatic.
+ *
+ * Deletion is the half this cannot express — a stamp needs a section to sit on — so
+ * {@link removedSectionIds} carries it, and {@link isCarriedForward} reads both.
+ */
 export function stampDeltas(previous: DraftBoard | undefined, current: DraftBoard): DraftBoard {
   const elements: DraftElement[] = current.elements.map((el) => {
     if (el.kind !== "section") return el;
