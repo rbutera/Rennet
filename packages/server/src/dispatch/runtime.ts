@@ -582,11 +582,12 @@ export interface DispatchDeps {
      * The New Chat front door (C21): mint a durable session and claim its target in ONE
      * act. `target` absent mints a no-target session (claims nothing); present mints or
      * REATTACHES to the session already claiming that branch/PR, so a second click on one
-     * target never produces a second session.
+     * target never produces a second session. `repository` is the row's `owner/name` (#580) —
+     * it keeps two repos of one workspace that share a branch name apart; absent ⇒ unchanged.
      */
     mint(
       projectId: string,
-      target?: { branch: string; prNumber?: number },
+      target?: { branch: string; prNumber?: number; repository?: string },
     ): { session: SidebarSession; reattached: boolean };
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;

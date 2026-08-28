@@ -26,6 +26,21 @@ target keeps its claim. **Archive is the only release**, a soft delete: nothing
 else frees a claimed target, so one target has one session, and it persists
 across restarts from its cursor rather than being re-minted per review.
 
+A session is keyed by **the project it belongs to and the repository its work
+runs in**. The project is the sidebar's grouping key, and both ways a session
+comes into being — a New-chat row click and a round dispatched on a review
+nobody entered — mint through the same mechanism on that same key, so a session
+a round created appears under its project like any other. The repository root
+rides alongside it because a workspace project holds several repositories: the
+project alone cannot say which one a round ran in, and without the repository
+two repositories sharing a branch name would collapse into a single rounds
+ledger. A New-chat row cannot know a repository's path, so it names the
+repository by its `owner/name` identity instead — the same composite the smart
+list already dedupes on — and two `main` branches in one workspace stay two
+targets rather than one. A detached HEAD has no branch to claim, so its session is keyed by the
+review instead — and it is persisted like every other, because a session the
+store does not hold is a session no surface can read back.
+
 Anchored threads keep their content in the session transcript; the boards and
 the diff hold only anchor→thread references, so a code-line comment, a
 prose-quote thread, and Explain all ride one mechanism.
