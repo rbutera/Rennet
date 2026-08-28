@@ -43,7 +43,7 @@ describe("RepoWatcher hardening", () => {
     const watcher = new RepoWatcher();
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      watcher.start(root, () => undefined);
+      watcher.start(root);
       const inner = (watcher as unknown as { watcher: { emit(e: string, x: unknown): void } })
         .watcher;
       // Unhandled, this emit would throw (EventEmitter "error" semantics).
@@ -78,19 +78,92 @@ describe("RepoWatcher hardening", () => {
     const watcher = new RepoWatcher();
     const inner = () => (watcher as unknown as { watcher: unknown }).watcher;
     try {
-      watcher.start(first, () => undefined);
+      watcher.start(first);
       const original = inner();
       expect(original).not.toBeNull();
 
-      watcher.start(first, () => undefined);
+      watcher.start(first);
       expect(inner()).toBe(original); // same root ⇒ the SAME chokidar instance, never re-walked
 
-      watcher.start(second, () => undefined);
-      expect(inner()).not.toBe(original); // a different root is a real re-watch
+      watcher.start(second);
+      const swapped = inner();
+      expect(swapped).not.toBe(original); // a different root is a real re-watch
+
+      // …and the swap must SURVIVE the teardown finishing. `start` does not await
+      // `close`, so a `close` that released its fields after its own await would land a
+      // microtask later and null out the watcher just installed — orphaning a live
+      // chokidar instance and, worse, making the same-root check above miss, so the next
+      // `review.load` re-walks the tree and re-opens the #601 first-save window.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(inner()).toBe(swapped);
+      watcher.start(second);
+      expect(inner()).toBe(swapped); // still the same root ⇒ still a no-op
     } finally {
       await watcher.close();
       rmSync(first, { recursive: true, force: true });
       rmSync(second, { recursive: true, force: true });
+    }
+  });
+
+  // #601 — the first save after a fresh capture. chokidar arms its watches file by file
+  // as it walks the tree, and `ignoreInitial: true` suppresses everything it meets on the
+  // way, so a save landing before the walk reaches that file is not reported late, it is
+  // never reported at all. The reviewer edits their working tree, comes back to Rennet,
+  // and is told nothing has changed while reading a diff that no longer matches.
+  //
+  // This drives the real filesystem and the real chokidar, because the defect is in what
+  // chokidar does and cannot be seen through a fake. The tree is 400 files over eight
+  // directories — smaller than any repository a reviewer would actually open — and at
+  // that size the raw watcher reported this write in 0 of 20 measured runs, while its own
+  // initial walk finished in about 14ms. On a real repository the walk takes seconds,
+  // which is how the daemon came to answer "current" nine seconds after an edit.
+  it("reports a save that lands while the tree is still being walked, then settles honestly", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { setTimeout: sleep } = await import("node:timers/promises");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-first-save-"));
+    for (let i = 0; i < 400; i += 1) {
+      const dir = join(root, `d${Math.floor(i / 50)}`);
+      if (i % 50 === 0) mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `f${i}.ts`), `export const value = ${i};\n`);
+    }
+    const edited = join(root, "d0", "f0.ts");
+    const watcher = new RepoWatcher();
+    try {
+      // The order `review.capture` uses: pin the review to the tree as it stands, then
+      // put the watcher on the root.
+      watcher.setDirty(false);
+      watcher.start(root);
+      // The renderer asks about freshness as soon as the review is on screen — on a real
+      // repository the walk is still running seconds later, so this ask lands inside it.
+      // It finds nothing (nothing has happened yet) and clears the flag. THIS is the step
+      // that loses the next save: a clear taken on the word of a watcher that has not
+      // finished looking.
+      watcher.setDirty(false);
+      // The reviewer's first save, landing inside the walk. chokidar will never mention it.
+      writeFileSync(edited, "export const value = 999;\n");
+      // Far longer than the walk needs. The event is not slow; it does not exist.
+      await sleep(1_500);
+      // So the freshness ask must NOT short-circuit here — it has to run a real diff,
+      // which is what makes the review go stale and tells the reviewer what happened.
+      expect(watcher.isDirty()).toBe(true);
+
+      // And the flag is not merely pinned on. A watcher that cried stale forever would
+      // satisfy the assertion above while being useless, so: once the walk has finished
+      // and the ask has cleared, an untouched tree answers "unchanged".
+      watcher.setDirty(false);
+      await sleep(300);
+      expect(watcher.isDirty()).toBe(false);
+
+      // A later save — the ordinary, always-worked path — is still reported.
+      writeFileSync(edited, "export const value = 1000;\n");
+      await sleep(500);
+      expect(watcher.isDirty()).toBe(true);
+    } finally {
+      await watcher.close();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

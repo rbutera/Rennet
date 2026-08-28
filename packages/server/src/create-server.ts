@@ -1010,7 +1010,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
   };
 
-  let repositoryDirty = false;
   const allowedRoots = new Set<string>();
   // Proactive Repo Map rehydration (#143/#243): keeps each built project's structural
   // snapshot and model-backed knowledge warm as its reference branch advances.
@@ -2066,14 +2065,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (target === undefined) {
           // The working-tree capture is the one that IS watched for freshness — the branch
           // and PR ranges are pinned snapshots and stay off the watcher deliberately.
-          repositoryDirty = false;
-          watcher.start(
-            review.repositoryRoot,
-            () => {
-              repositoryDirty = true;
-            },
-            locusForRepo(review.repositoryRoot),
-          );
+          watcher.setDirty(false);
+          watcher.start(review.repositoryRoot, locusForRepo(review.repositoryRoot));
         }
         // The claim-less checkout session still stamps its repo root, so its rounds stay in
         // that repo's ledger; `reviewId` (attached below) is what resolves them back to it.
@@ -2381,18 +2374,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     chooseRepository,
     openPullRequest,
     captureBranch,
-    startWatching: (root: string) =>
-      watcher.start(
-        root,
-        () => {
-          repositoryDirty = true;
-        },
-        locusForRepo(root),
-      ),
-    isRepositoryDirty: () => repositoryDirty,
-    setRepositoryDirty: (value: boolean) => {
-      repositoryDirty = value;
-    },
+    startWatching: (root: string) => watcher.start(root, locusForRepo(root)),
+    isRepositoryDirty: () => watcher.isDirty(),
+    setRepositoryDirty: (value: boolean) => watcher.setDirty(value),
     // The front door (issue #29): the persisted projects list, read-only discovery
     // over the chosen path, and the ambient harness detection. MAIN derives the
     // stored project shape from the confirmed discovery so the renderer cannot

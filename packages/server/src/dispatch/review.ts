@@ -116,16 +116,23 @@ export function reviewHandlers(rt: DispatchRuntime) {
       const current = requireReviewById(input.reviewId);
       assertReviewRepository(current, input.repoPath);
       if (!deps.isRepositoryDirty()) return parseCommandOutput(name, { review: current });
-      const review = await service.checkFreshness(input.commandId, input.reviewId, input.repoPath);
+      // Clear BEFORE the diff, never after. A save landing while the diff runs may or
+      // may not be in it, and clearing afterwards discards the watcher's report of it —
+      // the same lost-save defect as #601 with a narrower window. Cleared first, that
+      // save re-marks the tree dirty and the next ask picks it up.
       deps.setRepositoryDirty(false);
+      const review = await service.checkFreshness(input.commandId, input.reviewId, input.repoPath);
       return parseCommandOutput(name, { review });
     },
     "review.regenerate": async (rawInput) => {
       const name = "review.regenerate" as const;
       const input = parseCommandInput(name, rawInput);
       assertAllowedRepository(input.repoPath);
-      const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
+      // Cleared before the recapture for the same reason as `checkFreshness` above: an
+      // edit made while the review regenerates is NOT in the new patchset, so it must
+      // survive as dirty rather than being cleared away by the regeneration that missed it.
       deps.setRepositoryDirty(false);
+      const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
       raiseReviewFinished(review);
       return parseCommandOutput(name, { review });
     },
