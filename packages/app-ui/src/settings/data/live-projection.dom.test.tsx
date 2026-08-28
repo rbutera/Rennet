@@ -7,7 +7,12 @@
 // served store rather than a session set; and a host the daemon could not ask claims nothing.
 // The Model Mappings dialog stays honest about the gap that IS unserved (no Model Council
 // catalogue) instead of showing an empty grid.
-import type { HarnessHostDetection } from "@rennet/protocol";
+import type {
+  DaemonHostSection,
+  DaemonHostStatus,
+  DetectedForge,
+  HarnessHostDetection,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../../data";
 import { cleanup, mount, waitFor, within } from "../../test/dom";
@@ -142,6 +147,224 @@ describe("LiveSettingsProjectionProvider — agents wired live from harness.host
     await edit.click();
     // No served role catalogue ⇒ an honest line, never an empty mode-switch grid.
     expect(await findByText(/Model Council is served/)).toBeTruthy();
+    cleanup();
+  });
+});
+
+// ── C17 cluster 4 — the folded projection over real bridge handlers ────────────
+// Every host card is now the projection's, not a bridge synthesis: the enumeration +
+// labels from `settings.get.daemonHosts`, the daemon line from `daemon.status`, the
+// Source Control rows from `forge.detect`, the Agents rows from `harness.hosts`. The
+// controls below are the honest-absence ones — a host that did not answer, and a read
+// that rejected, must leave their sections EMPTY rather than borrow another host's
+// answer or keep a stale row.
+
+const LOCAL_SECTION: DaemonHostSection = {
+  source: "local",
+  label: "This machine",
+  isLocal: true,
+};
+const WSL_SECTION: DaemonHostSection = {
+  source: "wsl:Ubuntu",
+  label: "WSL · Ubuntu",
+  isLocal: false,
+};
+
+const GH_AVAILABLE: DetectedForge = {
+  id: "github",
+  version: "2.76.0",
+  status: "available",
+  detail: "Authenticated with GitHub through the `gh` CLI.",
+};
+
+/** A bridge serving the four reads the live projection folds. `forges: "reject"` makes
+ *  `forge.detect` fail, so the Source Control section's honest fallback is provable. */
+function foldBridge(options: {
+  readonly sections: readonly DaemonHostSection[];
+  readonly status?: readonly DaemonHostStatus[];
+  readonly agents?: readonly HarnessHostDetection[];
+  readonly forges?: readonly DetectedForge[] | "reject";
+}) {
+  return new MemoryBridge(
+    {
+      "settings.get": () => ({
+        scheme: "system",
+        schemeProvenance: {
+          layer: "builtin",
+          contributions: [{ layer: "builtin", value: "system", effective: true }],
+        },
+        appearanceMalformed: false,
+        projects: [],
+        daemonHosts: options.sections.map((section) => ({ ...section })),
+      }),
+      "daemon.status": () => ({ hosts: (options.status ?? []).map((host) => ({ ...host })) }),
+      "harness.hosts": () => ({ hosts: (options.agents ?? []).map((host) => ({ ...host })) }),
+      "forge.detect": () => {
+        if (options.forges === "reject") throw new Error("gh probe failed");
+        return { detected: (options.forges ?? []).map((forge) => ({ ...forge })) };
+      },
+    },
+    { platform: "darwin", version: "1.0.1" },
+  );
+}
+
+function card(host: string): HTMLElement {
+  const node = document.querySelector<HTMLElement>(`[data-host="${host}"]`);
+  if (!node) throw new Error(`host card ${host} not found`);
+  return node;
+}
+
+describe("LiveSettingsProjectionProvider — host cards, source control + agents folded", () => {
+  it("the local card carries the DAEMON's version, its agents and its forge CLI", async () => {
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION],
+        status: [{ source: "local", reachable: true, version: "4.3.0" }],
+        agents: [localHost([{ id: "claude", version: "2.1.0" }])],
+        forges: [GH_AVAILABLE],
+      }),
+    );
+    // The daemon line is the PROBED version (4.3.0), not the bridge's app version (1.0.1).
+    expect(await findByText("Rennet daemon v4.3.0")).toBeTruthy();
+    const local = within(card("local"));
+    expect(local.getByText("GitHub")).toBeTruthy();
+    expect(local.getByText("2.76.0")).toBeTruthy();
+    // Two rows, both proven present by a real probe: the forge CLI and the harness.
+    expect(local.getAllByText("Available")).toHaveLength(2);
+    expect(local.getByText("Claude")).toBeTruthy();
+    expect(local.getByText("2.1.0")).toBeTruthy();
+    cleanup();
+  });
+
+  it("a second host renders ITS own daemon line + agents, and borrows no tooling", async () => {
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: true, version: "4.2.0" },
+        ],
+        agents: [
+          localHost([{ id: "claude", version: "2.1.0" }]),
+          {
+            source: "wsl:Ubuntu",
+            asked: true,
+            detected: [{ id: "codex", version: "0.9.0", enabled: true }],
+          },
+        ],
+        forges: [GH_AVAILABLE],
+      }),
+    );
+    expect(await findByText("Rennet daemon v4.2.0")).toBeTruthy();
+    const local = within(card("local"));
+    const wsl = within(card("wsl:Ubuntu"));
+    // Each card shows its OWN harness version and neither shows the other's.
+    expect(local.getByText("2.1.0")).toBeTruthy();
+    expect(local.queryByText("0.9.0")).toBeNull();
+    expect(wsl.getByText("0.9.0")).toBeTruthy();
+    expect(wsl.queryByText("2.1.0")).toBeNull();
+    // `forge.detect` answered for the CONNECTED daemon only, so the WSL card's Source
+    // Control is honestly empty rather than showing this machine's `gh`.
+    expect(wsl.getByText("Connect WSL · Ubuntu to detect its tooling.")).toBeTruthy();
+    expect(wsl.queryByText("2.76.0")).toBeNull();
+    // And a host Rennet has no dial address for never claims to be the local machine.
+    expect(wsl.queryByText("Local")).toBeNull();
+    expect(wsl.getByText("wsl:Ubuntu")).toBeTruthy();
+    cleanup();
+  });
+
+  it("an unreachable host reads its last-seen version, never the reachable host's", async () => {
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: false, lastSeenVersion: "4.1.0" },
+        ],
+        agents: [localHost([{ id: "claude", version: "2.1.0" }])],
+        forges: [GH_AVAILABLE],
+      }),
+    );
+    expect(await findByText("Not connected — last seen running Rennet daemon v4.1.0")).toBeTruthy();
+    const wsl = within(card("wsl:Ubuntu"));
+    // No running version is invented for it — the local 4.3.0 stays on the local card.
+    expect(wsl.queryByText("Rennet daemon v4.3.0")).toBeNull();
+    expect(wsl.getByRole("button", { name: "Reconnect" })).toBeTruthy();
+    cleanup();
+  });
+
+  it("a host the status read never mentions is unreachable with NO version at all", async () => {
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [{ source: "local", reachable: true, version: "4.3.0" }],
+        agents: [localHost([{ id: "claude", version: "2.1.0" }])],
+      }),
+    );
+    expect(await findByText("Not connected — daemon unreachable, version unknown")).toBeTruthy();
+    cleanup();
+  });
+
+  it("a host that could not be asked shows no agents — never the local machine's", async () => {
+    // HONEST ABSENCE control: bind `asked: false` to the local set and the WSL card would
+    // read "Claude 2.1.0". It must read its own not-detected line instead.
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: true, version: "4.2.0" },
+        ],
+        agents: [
+          localHost([{ id: "claude", version: "2.1.0" }]),
+          { source: "wsl:Ubuntu", asked: false, detected: [] },
+        ],
+      }),
+    );
+    expect(await findByText("Connect WSL · Ubuntu to detect its agents.")).toBeTruthy();
+    const wsl = within(card("wsl:Ubuntu"));
+    expect(wsl.queryByText("Claude")).toBeNull();
+    expect(wsl.queryByText("2.1.0")).toBeNull();
+    cleanup();
+  });
+
+  it("POSITIVE CONTROL: a rejected forge.detect leaves Source Control empty, not stale", async () => {
+    // Fabricate a row from anything other than a real answer — a cached one, a default
+    // "GitHub / Not Installed" placeholder — and this fails.
+    const { findByText, queryByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION],
+        status: [{ source: "local", reachable: true, version: "4.3.0" }],
+        agents: [localHost([{ id: "claude", version: "2.1.0" }])],
+        forges: "reject",
+      }),
+    );
+    expect(await findByText("Connect This Machine to detect its tooling.")).toBeTruthy();
+    expect(queryByText("GitHub")).toBeNull();
+    expect(queryByText("2.76.0")).toBeNull();
+    cleanup();
+  });
+
+  it("a forge whose binary is gone drops its row rather than reporting a stale hit", async () => {
+    // The rename-out-of-PATH invariant at DOM scale: `gh` absent ⇒ `not-installed` ⇒ the
+    // row is not rendered at all, so nothing on screen claims a CLI that is not there.
+    const { findByText, queryByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION],
+        status: [{ source: "local", reachable: true, version: "4.3.0" }],
+        agents: [localHost([{ id: "claude", version: "2.1.0" }])],
+        forges: [
+          {
+            id: "github",
+            version: null,
+            status: "not-installed",
+            detail: "The `gh` CLI was not found on this host.",
+          },
+        ],
+      }),
+    );
+    expect(await findByText("Connect This Machine to detect its tooling.")).toBeTruthy();
+    expect(queryByText("GitHub")).toBeNull();
     cleanup();
   });
 });

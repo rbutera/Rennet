@@ -113,7 +113,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
   hosts, render them (it already prefers `projection.hosts`); the local-only bridge synthesis becomes the
   fallback for the zero-projection case only. Confirm remote cards render their real `DaemonInfo` line and
   their Source Control + Agents sections from the folded detection.
-- [ ] 4.3 DOM tests over a projection whose reads are backed by fake bridge handlers: the local card shows
+- [x] 4.3 DOM tests over a projection whose reads are backed by fake bridge handlers: the local card shows
   the real detected `claude`/`gh` rows with versions; a second (remote) host shows ITS own detected rows and
   daemon line; an unreachable host shows "last seen running v…"; the source-control section is populated (not
   empty). **Positive control:** a rejected `forge.detect` read leaves the Source Control section honestly
