@@ -108,7 +108,7 @@
   "c08": {
     "status": "done",
     "passes": true,
-    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. B11 landed \u2192 REVISE_WIRED flip UNBLOCKED (review.reviseSpan registered+handled server-side; two client files) \u2014 dispatching now. own-PR-as-teammate-pr fixed via viewerDidAuthor (#538). requestConsent: Rai ruled DELETE \u2014 queued as its own change, verdict folds into the compositionId freshness check"
+    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. REVISE wiring LANDED #550 @b8f6d3b9 (flag DELETED, callers migrated; review seat FIX\u2192LAND: stale draftEdits shadow over rework fixed with CONDITIONAL overwrite \u2014 keeps pendingEditCount truthful; red-without-fix recorded). Posterity note: inline edit STARTED mid-rework can leave a stale shadow (narrow same-class race; fix = read fresh via useRennetStore.getState() in landRework if it bites). New ledger item recorded in c14 packet: client\u2192ask.* write sync (C18 era). requestConsent: Rai ruled DELETE \u2014 c19 packet"
   },
   "c09": {
     "status": "done",
@@ -142,17 +142,17 @@
   "c15": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1 (collation bridge + first prod pipeline run, smoke-run proven) + 2 (durable GenerationStore, RoundRecord frozen-predecessor, gen drill-down) BUILT on branch. Cluster 3 (live progress channel, carry-forward label-honest hard constraint) in flight now; then 4 (UI incl kicker verbatim) + 5 (E2E/docs). Schema-dialect fix it surfaced landed standalone as #544. Stop-and-report stands for live-pipeline surprises."
+    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-3 BUILT (@50a34e31: live RoundEvent channel end-to-end; carry-forward lane derives from stampDeltas per Rai's hard constraint, control run red-then-green; adds session.roundEvents to protocol — joins the snapshot serialization set). Cluster 4 (UI: kicker verbatim, synthetic steps, retro ledger line, gen-1 drill-down) in flight now. Cluster 5's E2E board-read arrives via c18 — sequence c18 board slice before c15 c5. Review-seat note: naive post-process fake pattern sits in round-trigger.test.ts (latent, ordering-only)."
   },
   "c16": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #542, branch feat/c16-council-mappings. Clusters 1-4 DONE @ea7966a1, gate green, controls run red+reverted. Two sound packet deviations recorded in tasks.md (registration+handler atomic \u2014 exhaustiveness guard makes the split unbuildable; 3.1 no-op by design, proving tests instead). PAUSED before cluster 5 dialog work: QUESTION WITH RAI \u2014 routing.task[jobId] overrides are scenario-independent (one edit moves all three columns; made honest, not hidden). Scenario-keyed instead = small packet change, shape unlanded so cheap now. Cluster 6 rides after."
+    "note": "Issue #542, branch feat/c16-council-mappings. Clusters 1-4 DONE @ea7966a1 (two sound deviations recorded in tasks.md). RAI RULED (2026-08-28): PER-SCENARIO overrides \u2014 job-keyed shape rejected. Re-scope in flight now: routing.task re-keyed (jobId, scenario) in place (unreleased shape, no migration; ~90% of clusters 1-4 stands) + cluster 5 (provenance chip, Reset-via-null, em-dash honesty). Then cluster 6 E2E."
   },
   "c17": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1 (forge.detect) + 2 (daemon.status sibling command; per-host probes; lastSeenVersion additive; updateAvailable withheld-when-unknown; invents-nothing control run red+reverted) done, gate green @8a23b698. Cluster 3 (per-host agents) next — 3.1 re-ruled server-side per-host detection mirroring daemon.status (client is single-connection by design). Then 4 projection fold, 5 Reconnect #533, 6 Update Daemon #534, 7 E2E. Snapshot: 80→81 on branch — three-way serialize with c16/c18 at landing."
+    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1-3 done @d2c3f663 (forge.detect; daemon.status; harness.hosts + harness.setEnabled server-side per the 3.1 re-ruling, recorded in tasks.md; PLUS latent cluster-2 bug fixed — version-learn no longer replaces the whole host entry, withHostEntries merge + regression test). Cluster 4 (fold all three detections into live projection + environments page, honest-absence controls) in flight now. Then 5 Reconnect #533, 6 Update Daemon #534, 7 E2E. Snapshot serialization set with c15/c16/c18 at landing."
   },
   "c18": {
     "status": "pending",

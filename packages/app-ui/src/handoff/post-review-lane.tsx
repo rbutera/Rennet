@@ -18,6 +18,7 @@ import {
   composeLivingDraft,
   type LineComment,
   type ReviewDraft,
+  type ReviseSpan,
   reviseDraftSpan,
 } from "./handoff-data";
 import {
@@ -38,8 +39,8 @@ import {
 //     routing (R36), placement is the statement, no chrome copy explains the split.
 //   • steering is by SELECTION (R32): the body mounts inside C4's `ProseSelectionLayer` with
 //     Drop (retire + unstage, real) / Explain (provenance over the slice, raises no exit) /
-//     Revise (reaches the `handoff-data.ts` rework seam — the affordance renders, execution is
-//     gated, cluster 8). The reviewer never types into the draft.
+//     Revise (reaches the `handoff-data.ts` rework seam, now bound to B11's live
+//     `review.reviseSpan`). The reviewer never types into the draft.
 //   • RECEIPT-IS-UNDO: every drop/retire/delete/edit/verdict change reads back reversible from
 //     the store; only the final sign-click (`onSubmit`) is irreversible. The draft above IS the
 //     preview — no separate preview stage (R31).
@@ -93,16 +94,21 @@ export interface PostReviewLaneProps {
    * over the store (used while composing and by unit mounts) with the CTA disabled.
    */
   readonly draft?: ReviewDraft;
+  /**
+   * Selection-steer Revise, bound to B11's `review.reviseSpan` (cluster 8). Absent ⇒ the Rework
+   * control is disabled and the panel says so — never a pretend run.
+   */
+  readonly onRevise?: ReviseSpan;
 }
 
-export function PostReviewLane({ review, onPost, draft }: PostReviewLaneProps) {
+export function PostReviewLane({ review, onPost, draft, onRevise }: PostReviewLaneProps) {
   // The composed preview IS what posts (exact-preview): when the daemon's composition is in hand,
   // render THOSE bytes, never the local working draft that recomposed to different bytes on click.
   if (draft) return <ComposedReviewPreview review={review} draft={draft} onPost={onPost} />;
-  return <WorkingReviewDraft review={review} onPost={onPost} />;
+  return <WorkingReviewDraft review={review} onPost={onPost} onRevise={onRevise} />;
 }
 
-function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft">) {
+function WorkingReviewDraft({ review, onPost, onRevise }: Omit<PostReviewLaneProps, "draft">) {
   const patchsetId = review.activePatchsetId;
   const postTarget = review.postTarget;
   const prRef = postTarget
@@ -152,8 +158,25 @@ function WorkingReviewDraft({ review, onPost }: Omit<PostReviewLaneProps, "draft
       return text.includes(quote) || quote.includes(text.slice(0, 40));
     });
 
+  // Land a reworked ask so the lane actually SHOWS it. This lane renders `blockText` — an inline
+  // `draftEdits` shadow WINS over the ask body — so re-staging alone would leave the reviewer's
+  // stale shadow on screen while the panel closed as success. Overwrite the shadow when one
+  // exists (the rework supersedes the edit it was run against); never mint one where there is
+  // none, or the composed preview would count a phantom "inline edit pending".
+  const landRework = (reworked: StagedAsk) => {
+    stageAsk(reworked);
+    if (draftEdits[reworked.id] !== undefined) setDraftEdit(reworked.id, reworked.body);
+  };
+
   const draftHandlers: DraftHandlers = {
-    onRevise: (quote, instruction) => reviseDraftSpan(quote, instruction),
+    // Live span rework: resolve the span back to its ask, then route through the ONE seam.
+    onRevise: onRevise
+      ? async (quote, instruction) => {
+          const ask = findBodyAsk(quote);
+          if (!ask) return "That span no longer matches a staged ask.";
+          return reviseDraftSpan(onRevise, landRework, ask, quote, instruction);
+        }
+      : undefined,
     onDrop: (quote) => {
       const ask = findBodyAsk(quote);
       if (!ask) return;

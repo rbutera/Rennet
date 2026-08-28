@@ -14,7 +14,7 @@ import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, cleanup, mount } from "../test/dom";
+import { act, cleanup, fireEvent, mount } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
@@ -60,6 +60,29 @@ function stage(anchor: string, type: "comment" | "request-change" = "request-cha
       .getState()
       .reviewActions.stageAsk({ id: anchor, anchor, type, body: `ask ${anchor}` }),
   );
+}
+
+/** A staged ask whose body is plain prose (no `path:line`, so `RichText` leaves one text node). */
+const PROSE_BODY = "this needs a guard on the boundary";
+function stageProse() {
+  act(() =>
+    useRennetStore.getState().reviewActions.stageAsk({
+      id: "a1",
+      anchor: "src/a.ts:5",
+      type: "request-change",
+      body: PROSE_BODY,
+    }),
+  );
+}
+
+/** Select the contents of `el`, then release the mouse on it (the anchoring gesture). */
+function selectAndRelease(el: Element) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  act(() => el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
 }
 
 function mountHandoff(r: Review, handlers: MemoryBridgeHandlers, calls: string[] = []) {
@@ -233,6 +256,66 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // The hand-off view renders nothing for a retrospective review (law 10).
     expect(r.queryByRole("button", { name: /Post Review|Open Pull Request/ })).toBeNull();
     expect(calls).toEqual([]);
+  });
+
+  it("selection Revise dispatches the live review.reviseSpan and stages the reworked body", async () => {
+    // The end-to-end revise path (C08 cluster 8, over B11's landed command): the reviewer selects
+    // a span in the own-branch Changes surface, drafts an instruction, and Rework fires the
+    // REGISTERED `review.reviseSpan` once — carrying the review, the ask the span belongs to, the
+    // selected span and the instruction — then stages the body the daemon's CAS+splice returned.
+    const calls: CommandInput<"review.reviseSpan">[] = [];
+    const handlers: MemoryBridgeHandlers = {
+      "review.reviseSpan": (input) => {
+        calls.push(input);
+        return {
+          status: "reworked",
+          carriedAnchor: "guard the boundary on retry",
+          reworkedBody: "guard the boundary on retry",
+          receipt: { kind: "edit", id: input.askId, body: PROSE_BODY },
+        };
+      },
+    };
+    const r = mountHandoff(review(), handlers); // own branch → the rounds lanes
+    stageProse();
+    selectAndRelease(await r.findByText(PROSE_BODY));
+    await r.user.click(r.getByText("Revise"));
+    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "make this concrete" } });
+    await r.user.click(r.getByRole("button", { name: "Rework" }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      reviewId: "r1",
+      askId: "a1",
+      span: PROSE_BODY,
+      instruction: "make this concrete",
+    });
+    expect(typeof calls[0]?.commandId).toBe("string");
+    // The rework landed on the ask — the card renders the reworked body, not the old one.
+    expect(await r.findByText("guard the boundary on retry")).toBeTruthy();
+    expect(useRennetStore.getState().review.stagedAsks.a1?.body).toBe(
+      "guard the boundary on retry",
+    );
+  });
+
+  it("a rework the daemon refuses states the reason and leaves the ask alone", async () => {
+    const handlers: MemoryBridgeHandlers = {
+      "review.reviseSpan": () => ({
+        status: "unavailable",
+        reason: "Span rework is not available in this build.",
+      }),
+    };
+    const r = mountHandoff(review(), handlers);
+    stageProse();
+    selectAndRelease(await r.findByText(PROSE_BODY));
+    await r.user.click(r.getByText("Revise"));
+    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "make this concrete" } });
+    await r.user.click(r.getByRole("button", { name: "Rework" }));
+
+    // The daemon's own reason is shown; the panel stays open and the ask body is untouched.
+    expect(await r.findByText(/Span rework is not available in this build\./)).toBeTruthy();
+    expect(useRennetStore.getState().review.stagedAsks.a1?.body).toBe(PROSE_BODY);
   });
 
   it("Open Pull Request composes(pr) → submits, then receipts the PR number + link", async () => {
