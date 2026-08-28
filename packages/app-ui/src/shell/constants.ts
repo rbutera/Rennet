@@ -9,7 +9,7 @@ export const MIN_CHAT_WIDTH = 320;
 export const MIN_SURFACE_WIDTH = 400;
 export const DEFAULT_CHAT_WIDTH = 420;
 
-/** The two persistent sidebar widths (INVENTORY §1: 256px panel ↔ 48px rail). The
- *  frame reads these to compute the chat's measured maximum. */
+/** The expanded sidebar's width. Collapsed is 0 — C20 deleted the 48px icon rail,
+ *  so there is no second width to name. The frame reads this to compute the chat's
+ *  measured maximum. */
 export const SIDEBAR_PANEL_WIDTH = 256;
-export const SIDEBAR_RAIL_WIDTH = 48;
