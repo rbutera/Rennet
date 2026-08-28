@@ -46,10 +46,34 @@ describe("release workflow boundaries", () => {
     expect(autoReleaseWorkflow).not.toMatch(/^permissions:\n {2}contents: write/m);
   });
 
-  it("publishes both manual and automatic releases", () => {
-    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --title');
-    expect(releaseWorkflow).not.toContain("--draft");
-    expect(autoReleaseWorkflow).toContain('gh release create "$TAG"');
-    expect(autoReleaseWorkflow).not.toContain("--draft");
+  it("publishes both manual and automatic releases draft-first, then undrafts", () => {
+    // #599 made both workflows draft-first: create as a draft, upload with retry, undraft
+    // last, so a run that dies mid-upload leaves an invisible draft rather than a published
+    // release missing installers. The old assertion here was `not.toContain("--draft")`,
+    // which turned into a false statement about what ships the moment that landed — and it
+    // reddened main. What matters is not that the flag is absent but that the release is
+    // never VISIBLE until its assets are attached, so assert the sequence instead.
+    expect(releaseWorkflow).toContain('gh release create "$TAG" --verify-tag --draft --title');
+    // auto-release wraps its flags across continuation lines, so the draft flag is matched
+    // on its own line rather than inside the create command's text.
+    expect(autoReleaseWorkflow).toMatch(/gh release create "\$TAG" \\\n\s+--draft \\/);
+
+    // ORDER is the property, and neither `toContain` above can express it: a workflow that
+    // undrafted FIRST and created a draft afterwards satisfies every membership assertion
+    // while shipping the exact failure draft-first exists to prevent — a release visible
+    // before its assets are attached. Positions can say it; membership cannot.
+    //
+    // (The assertion this replaces was `expect(autoReleaseWorkflow).toContain("--draft")`,
+    // which no workflow satisfying the next line could ever fail: `--draft=false` contains
+    // `--draft`. It read as a second check and was a restatement of the first.)
+    for (const [name, workflow] of [
+      ["release", releaseWorkflow],
+      ["auto-release", autoReleaseWorkflow],
+    ] as const) {
+      const created = workflow.indexOf('gh release create "$TAG"');
+      const undrafted = workflow.indexOf('gh release edit "$TAG" --draft=false');
+      expect(created, `${name}: creates the release`).toBeGreaterThanOrEqual(0);
+      expect(undrafted, `${name}: undrafts AFTER creating`).toBeGreaterThan(created);
+    }
   });
 });

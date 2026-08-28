@@ -399,6 +399,10 @@ export {
   defaultProjectDetailSourceDeps,
   loadProjectDetail,
   type ProjectDetailSourceDeps,
+  // The repo's stable `owner/name` (else its durable common-dir alias). Exported because
+  // the host must answer WHICH repo of a workspace a New Chat row named (#587), and this
+  // is the same identity the row itself was built from — a second derivation would drift.
+  repositoryIdentity,
 } from "./project-detail-source";
 export {
   defaultProjectDiscoveryDeps,

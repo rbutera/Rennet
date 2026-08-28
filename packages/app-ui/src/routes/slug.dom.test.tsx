@@ -12,7 +12,7 @@
 //
 // Both are driven here through the real seam (a real invalidation, a real refetch), not by
 // hand-setting a status.
-import type { SidebarSession } from "@rennet/protocol";
+import type { CommandOutput, SidebarSession } from "@rennet/protocol";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { BridgeProvider, useCommand, useMutation } from "../data";
@@ -59,7 +59,11 @@ describe("useSlugResolution never claims not-found it cannot support", () => {
           <span data-testid="sidebar">{sessions.data ? "loaded" : "pending"}</span>
           <button
             type="button"
-            onClick={() => void mutate({ projectId: "p1" }).then((r) => setRoute(r.session?.id))}
+            onClick={() =>
+              void mutate({ projectId: "p1", commandId: crypto.randomUUID() }).then((r) =>
+                setRoute(r.session?.id),
+              )
+            }
           >
             mint
           </button>
@@ -100,6 +104,27 @@ describe("useSlugResolution never claims not-found it cannot support", () => {
       </BridgeProvider>,
     );
     await waitFor(() => expect(getByTestId("status").textContent).toBe("error"));
+  });
+
+  it("a session that HOLDS a review resolves to that review, not the chat-only surface", async () => {
+    // #587: the capture attaches its review to the session, and the slug is the SESSION id.
+    // Loading `review.load(slug)` would 404 and paint the review workspace as chat-only.
+    const bridge = new MemoryBridge({
+      "session.list": () => ({ sessions: [{ ...MINTED, reviewId: "rev-9" }] }),
+      "review.load": (input) => {
+        if (input.reviewId !== "rev-9") throw new Error("Review not found");
+        return {
+          review: { id: "rev-9" } as unknown as CommandOutput<"review.load">["review"],
+          repositoryPresent: true,
+        };
+      },
+    });
+    const { getByTestId } = mount(
+      <BridgeProvider bridge={bridge}>
+        <Probe slug="sess-2" />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(getByTestId("status").textContent).toBe("review"));
   });
 
   it("POSITIVE CONTROL: a settled list that truly lacks the slug IS not-found", async () => {

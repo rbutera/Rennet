@@ -80,7 +80,7 @@ function firstLine(output: string): string {
  * RepoRecord alias `realpath(git-common-dir)` (R19). NEVER the directory basename —
  * that is the path-name guess `worktree-discovery.ts` explicitly forbids.
  */
-async function repositoryIdentity(git: GitExec, root: string): Promise<string> {
+export async function repositoryIdentity(git: GitExec, root: string): Promise<string> {
   const url = firstLine(await git(root, ["remote", "get-url", "origin"], { reject: false }));
   const identity = url ? parseRemoteIdentity(url) : null;
   if (identity) return `${identity.owner}/${identity.name}`;

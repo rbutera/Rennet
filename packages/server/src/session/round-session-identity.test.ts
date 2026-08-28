@@ -472,3 +472,53 @@ describe("the detached-HEAD round's session is REAL, not a phantom (#573)", () =
     expect(sub.sessions.list()).toHaveLength(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #587: a session that HOLDS a review is that review's session, exactly.
+//
+// The front door now attaches a review to the CURRENT CHECKOUT session too, and that
+// session claims nothing by design — so the claim matcher can never find it. Without an
+// identity arm the first round dispatched from it would mint a SECOND session and the
+// reviewer would watch their rounds appear under a sidebar row they never made.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("#587 the review's holder resolves before any claim heuristic", () => {
+  const held = {
+    id: "sess-holder",
+    projectId: "proj-1",
+    reviewId: "rev-1",
+    threads: [],
+    createdAt: 1,
+  } as unknown as SessionModel;
+
+  /** A claim-less review, as the Current Checkout row produces. */
+  const review = {
+    id: "rev-1",
+    repositoryRoot: "/repos/alpha",
+    activePatchsetId: "ps-1",
+    patchsets: [{ id: "ps-1", repository: { headRef: "main" } }],
+  } as unknown as Review;
+
+  it("resolves a CLAIM-LESS session that holds the review, which no claim match could find", () => {
+    expect(resolveRoundSessionId(review, [held], "proj-1")).toBe("sess-holder");
+  });
+
+  it("POSITIVE CONTROL: without the review attached, the same session is unreachable", () => {
+    // The pre-fix state — the round falls back to the review id and the dispatch mints a
+    // second session, which is the orphaned-rounds defect exactly.
+    const unattached = { ...held, reviewId: undefined } as unknown as SessionModel;
+    expect(resolveRoundSessionId(review, [unattached], "proj-1")).toBe("rev-1");
+  });
+
+  it("the holder wins over a DIFFERENT session whose claim also matches the branch", () => {
+    // Both arms are live at once: the claim matcher would answer `sess-claimer`, and the
+    // exact identity must beat it — otherwise the read and the write disagree.
+    const claimer = {
+      id: "sess-claimer",
+      projectId: "proj-1",
+      claim: { branch: "main" },
+      threads: [],
+      createdAt: 1,
+    } as unknown as SessionModel;
+    expect(resolveRoundSessionId(review, [claimer, held], "proj-1")).toBe("sess-holder");
+  });
+});

@@ -11,7 +11,7 @@
 // `/s/<sessionId>` carrying the typed ask, and the claimed row LEAVES the list until its
 // session is archived. Those legs are driven here over a MemoryBridge holding a real
 // session list, with the row-vanish positive control both ways.
-import type { Project, ProjectDetail, SidebarSession } from "@rennet/protocol";
+import type { CommandInput, Project, ProjectDetail, SidebarSession } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router, useSearch } from "wouter";
 import { BridgeProvider } from "../data";
@@ -117,14 +117,25 @@ const EMPTY_DETAIL: ProjectDetail = {
  * A MemoryBridge session store: `session.mint` really mints and claims (mint-or-reattach
  * on the branch, as the host does), `session.list` really serves what was minted. So the
  * row-vanish this suite proves is driven by a claim the click actually created.
+ *
+ * `session.mint` also CAPTURES and attaches, as the host does (#587) — one act — and records
+ * what it was asked to start, so the suite can assert the target each row kind sent. There is
+ * no `review.capture` handler on purpose: the client no longer issues one, and a MemoryBridge
+ * throws on an unhandled command, so a regression that reintroduces client-side capture
+ * sequencing fails here rather than passing quietly.
  */
 function sessionStore(seeded: SidebarSession[] = []) {
   const sessions = [...seeded];
+  const captures: Array<Record<string, unknown>> = [];
+  let reviews = 0;
   return {
     sessions,
+    captures,
     handlers: {
       "session.list": () => ({ sessions: [...sessions] }),
-      "session.mint": (input: { projectId: string; branch?: string; prNumber?: number }) => {
+      "session.mint": (input: CommandInput<"session.mint">) => {
+        captures.push({ command: "session.mint", ...input });
+        reviews += 1;
         const claimed =
           input.branch === undefined
             ? undefined
@@ -138,6 +149,9 @@ function sessionStore(seeded: SidebarSession[] = []) {
           title: input.branch ?? "New review",
           target: input.prNumber === undefined ? "your-branch" : "your-pr",
           createdAt: 1,
+          // The host captures and attaches inside the mint, so the session it answers with
+          // ALREADY holds its review. That is what `/s/:slug` resolves the workspace from.
+          reviewId: `rev-${reviews}`,
           ...(input.branch === undefined
             ? {}
             : {
@@ -318,6 +332,19 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     // its PR number (the two halves of one claimed thing).
     await waitFor(() => expect(store.sessions).toHaveLength(1));
     expect(store.sessions[0]?.claim).toEqual({ branch: "feat/mine", prNumber: 201 });
+    // …in ONE command (#587). The mint carries the PR number AND the row's `owner/name`,
+    // which is what tells the host which repo of the workspace to open the PR against —
+    // no `repoPath` is sent, because the client has no business naming a host path (R19).
+    await waitFor(() => expect(store.captures).toHaveLength(1));
+    expect(store.captures[0]).toMatchObject({
+      command: "session.mint",
+      branch: "feat/mine",
+      prNumber: 201,
+      repository: "rennet",
+    });
+    expect(store.captures[0]?.repoPath).toBeUndefined();
+    // The session the host answers with ALREADY holds its review — that is the whole act.
+    expect(store.sessions[0]?.reviewId).toBe("rev-1");
     // …and the client landed on THAT session's route, carrying the trimmed ask.
     await waitFor(() =>
       expect(history.history.at(-1)).toBe("/s/sess-1?ask=Why+is+this+diff+so+large%3F"),
@@ -332,6 +359,14 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
 
     await waitFor(() => expect(store.sessions).toHaveLength(1));
     expect(store.sessions[0]?.claim).toBeUndefined();
+    // No branch, no repository: the no-target row is the project as a whole, which is the
+    // one case where the project's own path IS the right repo.
+    await waitFor(() => expect(store.captures).toHaveLength(1));
+    expect(store.captures[0]).toMatchObject({ command: "session.mint", projectId: "p1" });
+    expect(store.captures[0]?.branch).toBeUndefined();
+    expect(store.captures[0]?.repository).toBeUndefined();
+    // It still holds a review — the checkout row starts a REVIEW, not a bare chat.
+    expect(store.sessions[0]?.reviewId).toBe("rev-1");
     // No ask typed ⇒ no `?ask=` on the route; nothing is invented.
     await waitFor(() => expect(history.history.at(-1)).toBe("/s/sess-1"));
   });
@@ -366,6 +401,16 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     await screen.findByText("feat/local-x");
     fireEvent.click(rowButton(/feat\/local-x/));
     await waitFor(() => expect(history.history.at(-1)).toBe("/s/sess-1"));
+    // A LOCAL BRANCH row sends its branch AND its `owner/name`. The identity is the whole
+    // point: `Project.openPath` is "the repo, or the FIRST included repo", so a workspace's
+    // second repo would otherwise be captured against its first — silently, under the right
+    // label. The host resolves the identity to a root; the client never names one.
+    expect(store.captures[0]).toMatchObject({
+      command: "session.mint",
+      branch: "feat/local-x",
+      repository: "rennet",
+    });
+    expect(store.captures[0]?.repoPath).toBeUndefined();
     cleanup();
 
     // Reopen New Chat against the SAME store the click wrote into: the target it claimed

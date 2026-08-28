@@ -110,14 +110,29 @@ finishes loading, and the progress names the repository being read rather than
 guessing a percentage. If GitHub is unreachable, local work stays available.
 
 Clicking a row starts the session — it is not a selection you then confirm.
-Rennet mints the session and claims that target in one act, and takes you into
-it. Anything already typed in the composer travels with you as the opening ask,
-waiting in the chat box rather than being sent for you.
+Rennet mints the session, claims that target, and captures what changed on it in
+one act, then takes you into it. Anything already typed in the composer travels
+with you as the opening ask, waiting in the chat box rather than being sent for
+you.
 
-A new session opens with no review captured yet, so there is no change to show
-and nothing yet to ask the orchestrator about; the session says so, and the chat
-box waits rather than accepting a question it cannot answer. Capturing a review
-is what fills it. A claimed target leaves the list, so two sessions can never fight over one
+What gets captured depends on the row. A pull-request row opens that pull
+request's diff. The pinned **Current Checkout** row captures your working tree,
+uncommitted edits included. A local branch row captures that branch's own
+commits — everything since it left the project's primary branch — **without
+checking it out**. Nothing on disk moves, and you can review a branch you are not
+standing on.
+
+That difference matters once you are reading. A working-tree capture is watched:
+edit the repository and the review says it went stale, and offers to regenerate.
+A branch or pull-request review is a snapshot of fixed commits, so it is not
+watched and never claims to have gone stale — there is nothing for it to drift
+against.
+
+A branch with no commits of its own — already merged, or identical to its base —
+opens as an empty review. That is the honest answer rather than a click that
+appears to do nothing.
+
+A claimed target leaves the list, so two sessions can never fight over one
 branch; clicking the same target again returns you to the session that owns it
 rather than starting a second. The pinned **Current Checkout** row is the
 exception: it starts a session about the project as a whole, claims nothing, and

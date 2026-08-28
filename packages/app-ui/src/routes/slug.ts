@@ -15,10 +15,14 @@ import { readCommandId, useCommand } from "../data";
 //     what the front door actually opens onto. Rendering it as "not found" would
 //     make a click that genuinely worked look broken.
 //
-// `session.list` carries no `reviewId` (C21 declined to add a permanently-absent
-// field, and this module does not need one): the review read itself answers the
-// question. Both reads run unconditionally — hooks may not be conditional, and the
-// pair settles into exactly one of the arms below.
+// WHICH review a session holds is the session's own fact (#587): New Chat's row click
+// captures the clicked branch/PR and attaches the review to the session it minted, so
+// `session.list` carries `reviewId`. The list is therefore read FIRST and the review
+// read waits for it — guessing that the slug is a review id before the list settles
+// would flash the chat-only surface over a session that does have a review.
+//
+// The slug itself remains the fallback review id, so the `/s/<reviewId>` links that
+// predate durable sessions still resolve.
 //
 // An unresolvable slug is still an honest not-found, and a genuine fault is still an
 // honest error — neither is ever painted as an empty session.
@@ -54,12 +58,18 @@ export function useSlugResolution(slug: string): SlugResolution {
   // hooks (they cannot be conditional), so the reads are disabled rather than fired at
   // an id that cannot exist.
   const on = slug !== "";
+  const sessions = useCommand("session.list", {}, { enabled: on });
+  const session = sessions.data?.sessions.find((candidate) => candidate.id === slug);
+  // The review this slug is looking at: the session's attached one (#587), else the slug
+  // itself (a pre-session `/s/<reviewId>` link). Held until the list is CURRENT — a stale
+  // or in-flight list would answer "no review" for a session that has one.
+  const listCurrent = sessions.data !== undefined && !sessions.stale && !sessions.fetching;
+  const reviewId = session?.reviewId ?? slug;
   const review = useCommand(
     "review.load",
-    { commandId: readCommandId(`review.load:${slug}`), reviewId: slug },
-    { enabled: on },
+    { commandId: readCommandId(`review.load:${reviewId}`), reviewId },
+    { enabled: on && (listCurrent || sessions.error !== undefined) },
   );
-  const sessions = useCommand("session.list", {}, { enabled: on });
   if (!on) return { status: "not-found", slug };
 
   if (review.data) {
@@ -71,7 +81,6 @@ export function useSlugResolution(slug: string): SlugResolution {
       return { status: "error", slug, error: review.error };
     }
     // No review by this id. If a SESSION owns it, this is the chat-only session.
-    const session = sessions.data?.sessions.find((candidate) => candidate.id === slug);
     if (session) return { status: "session", sessionId: session.id, session };
     // The list itself FAILED. "I could not read the list" is not "the slug is in no
     // list" — reporting a disconnect or a server fault as not-found blames the reviewer's

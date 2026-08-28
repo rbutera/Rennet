@@ -24,21 +24,35 @@ function sessionsDir(): string {
  *  so "read it back through a new store" is a genuine reload, not a cached answer. */
 function sessionDispatch(dir: string) {
   const store = new SessionStore(dir);
+  let captured = 0;
   const entry = new SessionEntry(store);
   const rt = createDispatchRuntime({
     service: { reviewById: () => undefined },
     sessions: {
       list: () => store.list().map(sidebarSessionOf),
-      // The composition root's own mint, verbatim (create-server.ts) — so the front door
-      // this test drives is the front door the app runs.
-      mint: (projectId: string, target?: { branch: string; prNumber?: number }) => {
-        if (target === undefined) {
-          const session = mintSession(projectId);
-          store.save(session);
-          return { session: sidebarSessionOf(session), reattached: false };
-        }
-        const entered = entry.enter(projectId, target);
-        return { session: sidebarSessionOf(entered.session), reattached: entered.reattached };
+      // The composition root's own start, verbatim in SHAPE (create-server.ts) — so the
+      // front door this test drives is the front door the app runs. The capture the real
+      // root performs is stubbed to a fixed review id: this suite is about the claim and
+      // the durability of the mint, and `capture-then-mint` ordering has its own test.
+      start: async ({
+        projectId,
+        target,
+      }: {
+        projectId: string;
+        commandId: string;
+        target?: { branch: string; prNumber?: number; repository?: string };
+      }) => {
+        // A DISTINCT review per start, as a real capture produces — a shared id would make
+        // every mint look like a reattach to the first one.
+        captured += 1;
+        const reviewId = `rev-${captured}`;
+        const entered =
+          target === undefined
+            ? { session: mintSession(projectId), reattached: false }
+            : entry.enter(projectId, target, undefined, reviewId);
+        if (!entered.reattached) store.save(entered.session);
+        const bound = store.attachReview(entered.session.id, reviewId) ?? entered.session;
+        return { session: sidebarSessionOf(bound), reattached: entered.reattached };
       },
       rename: (id: string, title: string) => {
         const session = store.rename(id, title);
@@ -178,6 +192,7 @@ describe("session.mint — the New Chat front door (C21)", () => {
     const dir = sessionsDir();
     const out = (await sessionDispatch(dir).handlers["session.mint"]({
       projectId: "p1",
+      commandId: "11111111-1111-4111-8111-111111111111",
       branch: "feat/seam",
       prNumber: 42,
     })) as Minted;
@@ -197,6 +212,7 @@ describe("session.mint — the New Chat front door (C21)", () => {
     const dir = sessionsDir();
     const first = (await sessionDispatch(dir).handlers["session.mint"]({
       projectId: "p1",
+      commandId: "11111111-1111-4111-8111-111111111111",
       branch: "feat/seam",
       prNumber: 42,
     })) as Minted;
@@ -204,6 +220,7 @@ describe("session.mint — the New Chat front door (C21)", () => {
     // branch alone still lands on the session the PR click minted.
     const again = (await sessionDispatch(dir).handlers["session.mint"]({
       projectId: "p1",
+      commandId: "11111111-1111-4111-8111-111111111111",
       branch: "feat/seam",
     })) as Minted;
     expect(again.reattached).toBe(true);
@@ -218,11 +235,13 @@ describe("session.mint — the New Chat front door (C21)", () => {
     const dir = sessionsDir();
     const here = (await sessionDispatch(dir).handlers["session.mint"]({
       projectId: "p1",
+      commandId: "11111111-1111-4111-8111-111111111111",
       branch: "feat/seam",
     })) as Minted;
     // The same branch name in ANOTHER project is a different target — never a cross-attach.
     const elsewhere = (await sessionDispatch(dir).handlers["session.mint"]({
       projectId: "p2",
+      commandId: "11111111-1111-4111-8111-111111111111",
       branch: "feat/seam",
     })) as Minted;
     expect(elsewhere.reattached).toBe(false);
@@ -230,6 +249,7 @@ describe("session.mint — the New Chat front door (C21)", () => {
     // The "talk about the project" row: no branch ⇒ no claim, so it hides no row.
     const bare = (await sessionDispatch(dir).handlers["session.mint"]({
       projectId: "p1",
+      commandId: "11111111-1111-4111-8111-111111111111",
     })) as Minted;
     expect(bare.session?.claim).toBeUndefined();
     expect(bare.session?.title).toBe("New review");
@@ -240,7 +260,11 @@ describe("session.mint — the New Chat front door (C21)", () => {
       service: { reviewById: () => undefined },
     } as unknown as DispatchDeps);
     expect(
-      await sessionHandlers(rt)["session.mint"]({ projectId: "p1", branch: "feat/seam" }),
+      await sessionHandlers(rt)["session.mint"]({
+        projectId: "p1",
+        commandId: "11111111-1111-4111-8111-111111111111",
+        branch: "feat/seam",
+      }),
     ).toEqual({ session: null, reattached: false });
   });
 });

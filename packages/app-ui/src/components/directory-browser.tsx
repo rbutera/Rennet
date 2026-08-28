@@ -54,9 +54,19 @@ export function DirectoryBrowser({
   // Each `load()` claims the next generation; a response only applies state if
   // it's still the latest generation issued when it resolves.
   const generationRef = useRef(0);
+  // What the path bar holds RIGHT NOW, readable inside a load's `.then` without
+  // making `load` depend on the render that issued it.
+  const typedRef = useRef("");
+  typedRef.current = typed;
 
   function load(target?: string): void {
     const generation = ++generationRef.current;
+    // The bar's content when this load was issued. The generation guard above only
+    // settles races between LOADS; this settles the race between a load and the
+    // USER. The opening listing is asynchronous, so someone who opens the browser
+    // and types immediately had their text silently replaced by the home directory
+    // when it landed — input accepted and then discarded, with no sign it happened.
+    const typedAtIssue = typedRef.current;
     bridge
       .invoke("fs.listDir", target ? { path: target } : {})
       .then(({ result }) => {
@@ -65,7 +75,9 @@ export function DirectoryBrowser({
         setParent(result.parent);
         setEntries(result.entries);
         setError(undefined);
-        setTyped(result.path);
+        // Normalise the bar to the resolved path — unless the user has edited it since
+        // this load was issued, in which case their keystrokes are the newer truth.
+        if (typedRef.current === typedAtIssue) setTyped(result.path);
         setFocusIndex(0);
         onPathChange(result.path);
       })
