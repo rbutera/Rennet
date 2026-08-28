@@ -2,6 +2,7 @@ import { type CommandName, isCommandName } from "@rennet/protocol";
 import { appHandlers } from "./app";
 import { askHandlers } from "./ask";
 import { attentionHandlers } from "./attention";
+import { daemonHandlers } from "./daemon";
 import { deviceHandlers } from "./device";
 import { flaggedHandlers } from "./flagged";
 import { forgeHandlers } from "./forge";
@@ -73,6 +74,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...appHandlers(rt),
     ...askHandlers(rt),
     ...attentionHandlers(rt),
+    ...daemonHandlers(rt),
     ...deviceHandlers(rt),
     ...flaggedHandlers(rt),
     ...forgeHandlers(rt),

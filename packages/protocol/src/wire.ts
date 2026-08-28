@@ -1681,6 +1681,14 @@ export const daemonSettingsSchema = z.object({
       tokenEnv: z.string().optional(),
     })
     .optional(),
+  /**
+   * Per-host daemon memory (C17 reconciliation 4), keyed by the host's `source`. Today it
+   * holds only `lastSeenVersion` — the version a host's daemon actually answered with, so a
+   * host that later goes dark reads "last seen running v…" instead of blank chrome. Written
+   * ONLY from a real answer: a host that has never answered has no entry, and nothing here
+   * is ever fabricated. Additive-optional like the rest of this document.
+   */
+  hosts: z.record(z.string(), z.object({ lastSeenVersion: z.string().min(1) })).optional(),
 });
 export type DaemonSettings = z.infer<typeof daemonSettingsSchema>;
 
@@ -1780,6 +1788,28 @@ export const daemonHostSectionSchema = z.object({
     .optional(),
 });
 export type DaemonHostSection = z.infer<typeof daemonHostSectionSchema>;
+
+/**
+ * One host's daemon status (C17, #485) — the wire shape `daemon.status` returns, which the
+ * client folds into the host card's `DaemonInfo`. An UNREACHABLE host INVENTS NOTHING: it
+ * carries `reachable: false` and NO `version`, only the `lastSeenVersion` it actually
+ * answered with before (absent for a host that has never answered). `updateAvailable` is
+ * present only when BOTH the running version and the latest known version are real, so a
+ * host with no update mechanism withholds the flag rather than faking one.
+ */
+export const daemonHostStatusSchema = z.object({
+  /** The host this status is for — the same `source` key `daemonHosts` enumerates. */
+  source: sourceSchema,
+  /** The host's daemon answered just now. */
+  reachable: z.boolean(),
+  /** The RUNNING daemon version — present only when the host answered. Never guessed. */
+  version: z.string().optional(),
+  /** The version this host was last seen running; present only when it answered before. */
+  lastSeenVersion: z.string().optional(),
+  /** The running version is older than the latest known one. Absent ⇒ not knowable. */
+  updateAvailable: z.boolean().optional(),
+});
+export type DaemonHostStatus = z.infer<typeof daemonHostStatusSchema>;
 
 /** The whole settings view: the global layer plus every repo's repo layer. */
 export const settingsViewSchema = z.object({

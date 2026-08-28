@@ -18,6 +18,7 @@ import {
   coachMarksSchema,
   composedHandoffBundleSchema,
   conversationAnchorSchema,
+  daemonHostStatusSchema,
   deltaDigestResultSchema,
   detectedForgeSchema,
   detectedHarnessSchema,
@@ -402,6 +403,14 @@ const definitions = {
   "forge.detect": {
     input: z.object({}),
     output: z.object({ detected: z.array(detectedForgeSchema) }),
+  },
+  // Per-host daemon status (C17, #485): the daemon this is dispatched to reports, for EVERY
+  // host the settings surface enumerates, whether that host's daemon answered, its running
+  // version, the version it was last seen running, and whether an update is available. A host
+  // that does not answer carries `reachable: false` with NO version — never a guessed one.
+  "daemon.status": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(daemonHostStatusSchema) }),
   },
   // ── The GitHub account (v4.2: device flow, no gh CLI) ──────────────────────
   // Connect is SKIPPABLE everywhere it appears (working-tree review needs no

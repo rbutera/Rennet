@@ -161,6 +161,7 @@ import type {
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
+  ProjectSource,
   Review,
 } from "@rennet/protocol";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
@@ -208,8 +209,49 @@ import {
 } from "./runtime/rounds";
 import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
 import { createSettingsComposition } from "./settings";
+import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
+import { createWslRunner } from "./wsl-daemon";
+import { probeWslDaemon } from "./wsl-supervisor";
+
+/**
+ * Ask ONE host's daemon whether it is running and on which version — the read behind the
+ * settings surface's host cards (C17, #485). Each host kind is asked the only way it CAN be
+ * asked from here, and a kind with no way to reach it answers `null`, which the caller
+ * reports as unreachable. Nothing here ever returns a version it did not observe:
+ *
+ *  • `local` — this process IS that host's daemon, and it is answering right now, so the
+ *    host is reachable by construction. `findHealthyDaemon` names the RUNNING version off
+ *    the verified claim; a stale or absent claim file falls back to the version of the
+ *    daemon executing this line. Both are observed facts, never a guess.
+ *  • `wsl:<distro>` — probed INSIDE the distro over `wsl.exe` (`probeWslDaemon`): resolve
+ *    `$HOME`, read the published port, health-check it. No spawn, no bundle delivery, no
+ *    restart — a status read must not start a daemon that was not running.
+ *  • `remote:<deviceId>` — a paired device DIALS this daemon; there is no outbound
+ *    connection to dial back, so its daemon cannot be reached from here. `null`.
+ */
+async function probeDaemonForHost(
+  source: ProjectSource,
+  dataDir: string,
+  serverVersion: string,
+): Promise<{ version: string | null } | null> {
+  if (source === "local") {
+    const verdict = await findHealthyDaemon(dataDir);
+    const claimed =
+      verdict.kind === "healthy" || verdict.kind === "incompatible"
+        ? verdict.identity.version
+        : null;
+    return { version: claimed ?? serverVersion };
+  }
+  if (source.startsWith("wsl:")) {
+    const identity = await probeWslDaemon(source.slice("wsl:".length), {
+      run: createWslRunner(),
+    });
+    return identity ? { version: identity.version } : null;
+  }
+  return null;
+}
 
 export interface RennetServerOptions {
   /** The per-user data directory (Electron passes app.getPath("userData")); every store resolves under it. */
@@ -256,6 +298,7 @@ export interface RennetServer {
 export async function createRennetServer(options: RennetServerOptions): Promise<RennetServer> {
   const env = options.env ?? process.env;
   const dataDir = options.dataDir;
+  const serverVersion = options.serverVersion ?? "0.0.0-dev";
 
   let editorExecutables: Promise<string[]> | null = null;
   function getEditorExecutables(): Promise<string[]> {
@@ -2149,6 +2192,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Paired devices are the source for project-less remote hosts on the surface
       // (#476, finding 9) — a device paired before its first project is still listed.
       listPairedDevices: () => pairingStore.listDevices(),
+      // Ask ONE host's daemon whether it is running, for the host cards (C17, #485).
+      probeDaemon: (source) => probeDaemonForHost(source, dataDir, serverVersion),
+      // The version a host's daemon would update TO: the one this daemon ships. That is a
+      // real number, so `updateAvailable` is a real comparison rather than a fake flag.
+      latestDaemonVersion: serverVersion,
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {
@@ -2209,7 +2257,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // giving the desktop shell a real `wsPort` before it loads the window.
   wsListener = await startWsListener({
     dispatch,
-    serverVersion: options.serverVersion ?? "0.0.0-dev",
+    serverVersion,
     // Non-loopback (remote) connections present a device token; verify it against the store.
     verifyDeviceToken: (token) => pairingStore.verifyToken(token),
     // The attention system (issue #383 M1): advertising `attention`, accepting presence, and

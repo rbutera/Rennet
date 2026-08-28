@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { ConventionCatalogueLoad } from "@rennet/adapters";
+import { type ConventionCatalogueLoad, compareVersions } from "@rennet/adapters";
 import {
   detectLocus,
   escapePath,
@@ -12,6 +12,7 @@ import type {
   ClientSettings,
   CoachMarks,
   DaemonHostSection,
+  DaemonHostStatus,
   DaemonSettings,
   PairedDevice,
   Project,
@@ -64,6 +65,22 @@ export interface SettingsCompositionDeps {
    * project still gets a host section, so it is visible before its first project.
    */
   listPairedDevices(): PairedDevice[];
+  /**
+   * Ask ONE host's daemon whether it is running, and on which version (C17, #485). Resolves
+   * `null` when that host's daemon did NOT answer — the caller then reports the host
+   * unreachable and INVENTS NO VERSION for it. A host that answered but cannot name its
+   * version resolves `{ version: null }`: reachable, version honestly absent.
+   *
+   * Absent dep ⇒ no host is probed at all (every host reads unreachable), which is the
+   * truthful answer for a composition with no way to ask.
+   */
+  probeDaemon?(source: ProjectSource): Promise<{ version: string | null } | null>;
+  /**
+   * The newest daemon version this client knows of — the version the app/server ships, which
+   * is what a host's daemon would be updated TO. Absent ⇒ `updateAvailable` is withheld
+   * entirely (no update mechanism to compare against ⇒ no flag, never a fake one).
+   */
+  readonly latestDaemonVersion?: string;
   /** Persist a client-settings edit. MUST itself refuse a malformed file (throw). */
   updateGlobal(update: (current: ClientSettings) => ClientSettings): ClientSettings;
   /**
@@ -107,6 +124,20 @@ interface RepoTarget {
 
 export interface SettingsComposition {
   get(): Promise<SettingsView>;
+  /**
+   * Per-host daemon status (C17, #485) for exactly the hosts `get().daemonHosts` enumerates
+   * — the SAME enumeration, so the surface can never show a card with no status or a status
+   * with no card. Each host's daemon is asked over `probeDaemon`; a host that does not answer
+   * reads `reachable: false` with NO version, carrying only a `lastSeenVersion` it really
+   * answered with before. Answering versions are remembered in daemon-settings as a
+   * side effect, so a host that later goes dark still reads "last seen running v…".
+   *
+   * A SIBLING read rather than a field on `settings.get`: probing every host costs a bounded
+   * network/exec round-trip per host, and `settings.get` is re-read on every appearance edit
+   * and settings render. Keeping it separate leaves those reads instant and lets the surface
+   * refresh status on its own cadence.
+   */
+  daemonStatus(): Promise<DaemonHostStatus[]>;
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   /**
@@ -305,6 +336,55 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         // Every daemon host the surface covers (#476), local first (§4.2).
         daemonHosts: daemonHostSections(allProjects),
       };
+    },
+
+    daemonStatus: async (): Promise<DaemonHostStatus[]> => {
+      // What each host was LAST SEEN running (C17 reconciliation 4). Only versions a host
+      // really answered with are in here — there is no entry to read for a host that has
+      // never answered, so a never-seen host reads blank rather than fabricated.
+      const remembered = deps.readDaemonSettings().hosts ?? {};
+      const latest = deps.latestDaemonVersion;
+      const statuses: DaemonHostStatus[] = [];
+      // Versions learned THIS pass that differ from what is stored — persisted once at the
+      // end so a steady-state poll of unchanged hosts costs no disk write.
+      const learned: Record<string, { lastSeenVersion: string }> = {};
+
+      for (const host of daemonHostSections(deps.listProjects())) {
+        const answer = await deps.probeDaemon?.(host.source).catch(() => null);
+        const lastSeenVersion = remembered[host.source]?.lastSeenVersion;
+        if (!answer) {
+          // UNREACHABLE INVENTS NOTHING: no `version`, no `updateAvailable` (an unknown
+          // running version cannot be compared to anything) — only a real last-seen.
+          statuses.push({
+            source: host.source,
+            reachable: false,
+            ...(lastSeenVersion ? { lastSeenVersion } : {}),
+          });
+          continue;
+        }
+        const version = answer.version ?? undefined;
+        if (version && version !== lastSeenVersion) {
+          learned[host.source] = { lastSeenVersion: version };
+        }
+        statuses.push({
+          source: host.source,
+          reachable: true,
+          ...(version ? { version } : {}),
+          // Both sides must be real: an answering host with no version, or no known latest
+          // version to update TO, withholds the flag rather than guessing one.
+          ...(version && latest ? { updateAvailable: compareVersions(version, latest) < 0 } : {}),
+        });
+      }
+
+      if (Object.keys(learned).length > 0) {
+        try {
+          deps.updateDaemon((current) => ({ ...current, hosts: { ...current.hosts, ...learned } }));
+        } catch {
+          // A malformed daemon-settings REFUSES the write (Rule 75) — remembering a version
+          // is not worth failing the status read over, so the live answer still returns.
+        }
+      }
+      return statuses;
     },
 
     guidance: async (projectId: string, repoPath: string): Promise<SettingsGuidance> => {

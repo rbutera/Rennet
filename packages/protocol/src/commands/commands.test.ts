@@ -10,7 +10,9 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // living-draft span-rework command), plus the two session READS B9/B10 deferred
 // (session.transcript — the chat dock's honest-absent transcript read; session.rounds
 // — the rounds-ledger read), plus forge.detect (C17 cluster 1 — the per-host forge/`gh`
-// CLI detection command that mirrors harness.detect and feeds `sourceControlByHost`). A
+// CLI detection command that mirrors harness.detect and feeds `sourceControlByHost`), plus
+// daemon.status (C17 cluster 2 — per-host daemon reachable/version/lastSeenVersion/
+// updateAvailable, where an unreachable host invents nothing). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row.
 const ABSORBED_IDS = [
@@ -28,6 +30,7 @@ const ABSORBED_IDS = [
   "ask.stage",
   "ask.unstage",
   "attention.acknowledge",
+  "daemon.status",
   "device.registerPush",
   "flagged.adjudication",
   "flagged.review",
@@ -121,7 +124,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(80);
+    expect(ABSORBED_IDS).toHaveLength(81);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

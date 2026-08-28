@@ -6,10 +6,10 @@
 // daemon with the app); in-flight turns from the old daemon fold to `interrupted` via the
 // existing lazy crash recovery.
 
-import { execFile } from "node:child_process";
 import { join, resolve } from "node:path";
 import { detectLocus } from "@rennet/core";
 import {
+  createWslRunner,
   type DaemonInfo,
   type DaemonVerdict,
   type EnsureWslDaemonDeps,
@@ -19,10 +19,14 @@ import {
   removeDaemonFile,
   type SpawnDaemonOptions,
   spawnDaemon,
-  type WslRunner,
   waitForHealthy,
 } from "@rennet/server";
 import { app } from "electron";
+
+// The bounded `wsl.exe` runner now lives beside `WslRunner` in @rennet/server — the daemon
+// probes distro daemons for the settings surface (C17) with the same one. Re-exported so
+// this module stays the shell's single WSL-supervision entry point.
+export { createWslRunner } from "@rennet/server";
 
 /**
  * The bundled daemon entry to spawn. Packaged: the un-asar'd copy (forge `asarUnpack`), so
@@ -224,39 +228,6 @@ export async function ensureDaemon(
   });
   const healthy = await deps.waitForHealthy(dataDir);
   return healthy.identity.wsPort;
-}
-
-/**
- * A bounded `WslRunner` over `child_process.execFile`: one `wsl.exe … -e <program> <argv>`
- * exec → `{stdout, code}`, with its OWN timeout so a wedged distro call can never stall the
- * health-wait loop (which only bounds the interval BETWEEN polls, not a single hanging run).
- * No `execa` dependency — the built-in with a `timeout` is exactly enough. `windowsHide`
- * keeps the console window from flashing; a non-zero/failed exec resolves a non-zero `code`
- * (delivery and health both branch on the code, never on a thrown spawn error).
- */
-export function createWslRunner(timeoutMs = 15_000): WslRunner {
-  return (command) =>
-    new Promise((resolvePromise) => {
-      execFile(
-        command.file,
-        [...command.args],
-        {
-          timeout: timeoutMs,
-          windowsHide: true,
-          maxBuffer: 8 * 1024 * 1024,
-          ...(command.cwd ? { cwd: command.cwd } : {}),
-        },
-        (error, stdout) => {
-          const code =
-            error && typeof (error as { code?: unknown }).code === "number"
-              ? (error as { code: number }).code
-              : error
-                ? 1
-                : 0;
-          resolvePromise({ stdout: stdout ?? "", code });
-        },
-      );
-    });
 }
 
 /** The WSL deps the shell hands `ensureWslDaemon`: this app's version + host bundle + the real runner. */
