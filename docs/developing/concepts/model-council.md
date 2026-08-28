@@ -186,9 +186,11 @@ Overrides are keyed by **(job, scenario)**, not by job alone. Rai ruled this on
 columns read as independent and it would be a lie in the UI for one edit to change
 values the reviewer did not touch. So an override in `codexOnly` leaves `dual` and
 `claudeOnly` resolving from their own council-table defaults, and each scenario can
-hold its own override at the same time. Reset clears exactly one cell — dropping the
-layer rather than writing a copy of the default back, so a later table change still
-reaches that cell. Clearing a job's last cell drops the job entry, and clearing the
+hold its own override at the same time. Each *write* touches exactly one cell; the
+role's **Reset to default** control clears every column that role has actually
+overridden, one write per column, and leaves its un-overridden columns untouched.
+A clear drops the layer rather than writing a copy of the default back, so a later
+table change still reaches that cell. Clearing a job's last cell drops the job entry, and clearing the
 last job drops the `routing` slice entirely: an install that reset everything is
 byte-identical to one that never overrode anything.
 
