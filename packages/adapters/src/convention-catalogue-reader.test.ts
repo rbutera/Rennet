@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CONVENTIONS_FILE, loadConventionCatalogue } from "./convention-catalogue-reader";
+import {
+  CONVENTIONS_FILE,
+  loadConventionCatalogue,
+  saveConventionCatalogue,
+} from "./convention-catalogue-reader";
 
 /** A temp project root; optionally seed `.rennet/conventions.json` with `content`. */
 function tempProject(content?: string): { root: string; cleanup: () => void } {
@@ -132,6 +136,52 @@ describe("loadConventionCatalogue (#180) — honest degradation over an optional
       const load = loadConventionCatalogue(root);
       expect(load.catalogue).toBeUndefined();
       expect(load.reason).toBe("unreadable");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("saveConventionCatalogue (C18) — the writer beside the reader", () => {
+  it("round-trips an edit: an existing rule keeps its rationale, a new one states its own", () => {
+    const { root, cleanup } = tempProject(JSON.stringify({ rules: [VALID_RULE] }));
+    try {
+      const written = saveConventionCatalogue(root, [
+        { convention: VALID_RULE.convention, severity: "low" },
+        { convention: "prefer nx affected on a branch", severity: "medium" },
+      ]);
+      expect(written.catalogue?.rules).toEqual([
+        {
+          id: "arch-boundary",
+          convention: VALID_RULE.convention,
+          // The severity edit landed; the authored rationale + anti-pattern survived it.
+          rationale: "the core package must stay pure",
+          severity: "low",
+          antiPattern: "importing node:fs from core",
+        },
+        {
+          convention: "prefer nx affected on a branch",
+          rationale: "prefer nx affected on a branch",
+          severity: "medium",
+        },
+      ]);
+      // The FILE is what changed — a re-read (a reload) sees the same rules.
+      expect(loadConventionCatalogue(root).catalogue?.rules).toEqual(written.catalogue?.rules);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("writes into a project with no .rennet directory yet, and clearing every rule reads empty", () => {
+    const { root, cleanup } = tempProject();
+    try {
+      expect(
+        saveConventionCatalogue(root, [{ convention: "keep main releasable", severity: "high" }])
+          .catalogue?.rules,
+      ).toHaveLength(1);
+      const cleared = saveConventionCatalogue(root, []);
+      expect(cleared.catalogue).toBeUndefined();
+      expect(cleared.reason).toBe("empty");
     } finally {
       cleanup();
     }

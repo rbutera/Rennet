@@ -278,6 +278,9 @@ function parseSeatBody(body: unknown): SeatBody | undefined {
   return body as SeatBody;
 }
 
+/** The tracker vocabulary, for reading a STORED value back safely (C18 group A). */
+const TRACKER_KINDS: readonly TrackerKind[] = ["none", "github", "jira", "linear"];
+
 const SCOUT_FACT_KEYS = [
   "trackerKind",
   "trackerProjectKey",
@@ -470,11 +473,20 @@ export function scoutSettingsOffers(
 
 /**
  * Resolve the retrieval-facing `TrackerConfig` off the settings ladder: the
- * scout's detected offers under the user's global-rung answers, folded through
- * core's resolver (one precedence law, no side computation). `undefined` when
- * the resolved kind needs no endpoint (`none`/`github`) or the endpoint is
- * incomplete — seen tracker keys then surface as missing-config facts, and
- * retrieval proceeds (never a gate).
+ * scout's detected offers under the user's global-rung answers, under the
+ * PROJECT's own repo-rung answers, folded through core's resolver (one
+ * precedence law, no side computation). `undefined` when the resolved kind
+ * needs no endpoint (`none`/`github`) or the endpoint is incomplete — seen
+ * tracker keys then surface as missing-config facts, and retrieval proceeds
+ * (never a gate).
+ *
+ * The REPO rung (C18 group A) is what makes a per-project tracker real: before
+ * it, the settings surface could only ever write the host's global answer, so
+ * two projects on one machine could not point at different trackers and a
+ * "per-project" tracker control would have been a lie. The offers are read from
+ * the project's own `config.json` — the same repo rung `visibility` uses — and
+ * a project that has set nothing offers nothing, so retrieval resolves exactly
+ * as it did before.
  */
 export function resolveTrackerConfig(
   store: ProjectSnapshotStore,
@@ -483,21 +495,32 @@ export function resolveTrackerConfig(
 ): TrackerConfig | undefined {
   const detected = scoutSettingsOffers(store, repoKey);
   const rung = global.tracker ?? {};
+  // A MALFORMED project config reads as no config (`loadConfig` is fail-safe), so a
+  // corrupt file never leaks an unparseable override into retrieval.
+  const repo = store.loadConfig(repoKey)?.tracker ?? {};
   const offer = (value: string | undefined): string | undefined =>
     value === undefined || value.trim() === "" ? undefined : value.trim();
   const kind = resolve(SETTINGS_REGISTRY.trackerKind, {
     detected: detected.trackerKind,
     global: rung.kind,
+    // The stored repo answer rides the SAME validator the write used; an
+    // out-of-vocabulary value is dropped rather than thrown into resolution.
+    repo: TRACKER_KINDS.includes(repo.kind as TrackerKind) ? (repo.kind as TrackerKind) : undefined,
   }).value;
   if (kind !== "jira" && kind !== "linear") return undefined;
-  const baseUrl = resolve(SETTINGS_REGISTRY.trackerBaseUrl, { global: offer(rung.baseUrl) }).value;
+  const baseUrl = resolve(SETTINGS_REGISTRY.trackerBaseUrl, {
+    global: offer(rung.baseUrl),
+    repo: offer(repo.baseUrl),
+  }).value;
   const tokenEnvVar = resolve(SETTINGS_REGISTRY.trackerTokenEnv, {
     global: offer(rung.tokenEnv),
+    repo: offer(repo.tokenEnv),
   }).value;
   if (baseUrl === "" || tokenEnvVar === "") return undefined;
   const projectKey = resolve(SETTINGS_REGISTRY.trackerProjectKey, {
     detected: detected.trackerProjectKey,
     global: offer(rung.projectKey),
+    repo: offer(repo.projectKey),
   }).value;
   const endpoint = {
     baseUrl,

@@ -243,4 +243,74 @@ describe("resolveTrackerConfig — the ladder-resolved retrieval config (#461, B
       },
     });
   });
+
+  // The retrieval-REACHABILITY controls (C18 group A). Before the repo rung existed,
+  // a "per-project tracker" could only ever be the host's global answer — so these
+  // are the checks that fail if a per-project write stops reaching retrieval.
+  const globalLinear = {
+    version: 1,
+    tracker: {
+      kind: "linear",
+      projectKey: "ENG",
+      baseUrl: "https://api.linear.app",
+      tokenEnv: "LINEAR_TOKEN",
+    },
+  } as const;
+
+  it("a project's own repo rung outranks the global one — and moves ONLY that project", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    store.updateConfig("with-override", (current) => ({
+      ...current,
+      tracker: {
+        kind: "jira",
+        projectKey: "PAY",
+        baseUrl: "https://pay.atlassian.net",
+        tokenEnv: "PAY_JIRA_TOKEN",
+      },
+    }));
+    expect(resolveTrackerConfig(store, "with-override", globalLinear)).toEqual({
+      jira: {
+        baseUrl: "https://pay.atlassian.net",
+        tokenEnvVar: "PAY_JIRA_TOKEN",
+        projectPrefixes: ["PAY"],
+      },
+    });
+    // The sibling project, untouched, still resolves the host's global answer.
+    expect(resolveTrackerConfig(store, "sibling", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG"],
+      },
+    });
+  });
+
+  it("an untouched install reads the global defaults — the repo rung offers nothing", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    expect(store.loadConfig("untouched")).toBeNull();
+    expect(resolveTrackerConfig(store, "untouched", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG"],
+      },
+    });
+  });
+
+  it("a malformed project config never leaks an override into retrieval", () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    const paths = store.paths("broken");
+    mkdirSync(paths.projectDir, { recursive: true });
+    writeFileSync(paths.configPath, '{"version":1,"tracker":{"kind":7}}');
+    expect(store.loadConfigState("broken").status).toBe("malformed");
+    expect(resolveTrackerConfig(store, "broken", globalLinear)).toEqual({
+      linear: {
+        baseUrl: "https://api.linear.app",
+        tokenEnvVar: "LINEAR_TOKEN",
+        projectPrefixes: ["ENG"],
+      },
+    });
+    // …and the malformed file REFUSES the next write rather than being overwritten.
+    expect(() => store.updateConfig("broken", (current) => current)).toThrow(/malformed/);
+  });
 });
