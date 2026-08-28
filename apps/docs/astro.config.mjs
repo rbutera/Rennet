@@ -135,6 +135,10 @@ export default defineConfig({
                     label: "Board rebuild plan",
                     link: "/developing/plans/board-rebuild-plan/",
                   },
+                  {
+                    label: "Context map rebuild plan",
+                    link: "/developing/plans/context-map-rebuild-plan/",
+                  },
                 ],
               },
               {
