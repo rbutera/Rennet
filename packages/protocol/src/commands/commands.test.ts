@@ -9,8 +9,10 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // handlers land in cluster 2), plus review.reviseSpan (B11 cluster 5 — the
 // living-draft span-rework command), plus the two session READS B9/B10 deferred
 // (session.transcript — the chat dock's honest-absent transcript read; session.rounds
-// — the rounds-ledger read). A dropped or renamed command fails this loudly; a NEW
-// command is added here deliberately, with its registry row.
+// — the rounds-ledger read), plus forge.detect (C17 cluster 1 — the per-host forge/`gh`
+// CLI detection command that mirrors harness.detect and feeds `sourceControlByHost`). A
+// dropped or renamed command fails this loudly; a NEW command is added here deliberately,
+// with its registry row.
 const ABSORBED_IDS = [
   "app.bootstrap",
   "ask.clearLineComment",
@@ -29,6 +31,7 @@ const ABSORBED_IDS = [
   "device.registerPush",
   "flagged.adjudication",
   "flagged.review",
+  "forge.detect",
   "fs.listDir",
   "github.connectCancel",
   "github.connectPoll",
@@ -118,7 +121,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(79);
+    expect(ABSORBED_IDS).toHaveLength(80);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

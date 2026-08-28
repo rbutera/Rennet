@@ -405,6 +405,22 @@ export const detectedHarnessSchema = z.object({
 });
 export type DetectedHarness = z.infer<typeof detectedHarnessSchema>;
 
+/** The honest state of a forge (source-control) CLI detected on a host (#484 seam; #483
+ *  "gh rides again"). A subset of the client `ToolStatus` — a forge CLI probe never yields
+ *  `unreachable` (that is a host-daemon state, not a CLI state). */
+export const forgeStatusSchema = z.enum(["available", "not-authenticated", "not-installed"]);
+export type ForgeStatus = z.infer<typeof forgeStatusSchema>;
+
+/** A forge CLI detected on the host its daemon runs on (the wire shape `forge.detect`
+ *  returns). The client maps it to a `DetectedTool` row, adding the label + enable toggle. */
+export const detectedForgeSchema = z.object({
+  id: z.string().min(1),
+  version: z.string().nullable(),
+  status: forgeStatusSchema,
+  detail: z.string(),
+});
+export type DetectedForge = z.infer<typeof detectedForgeSchema>;
+
 // ── The GitHub account (v4.2: OAuth device flow replaces the gh-CLI piggyback) ─
 // The renderer-safe projection of the host-side auth state. The TOKEN itself is
 // never here — only who is connected, with which scopes, or which distinct

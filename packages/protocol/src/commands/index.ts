@@ -19,6 +19,7 @@ import {
   composedHandoffBundleSchema,
   conversationAnchorSchema,
   deltaDigestResultSchema,
+  detectedForgeSchema,
   detectedHarnessSchema,
   discoveryResultSchema,
   dispositionTypeSchema,
@@ -394,6 +395,13 @@ const definitions = {
     // The ambient detection line: which harnesses were found (felt, not ceremonial).
     input: z.object({}),
     output: z.object({ detected: z.array(detectedHarnessSchema) }),
+  },
+  // Forge (source-control) CLI detection, mirroring harness.detect (C17, #484 seam / #483
+  // "gh rides again"). Runs on the daemon it is dispatched to = that host; the client folds
+  // the rows into `sourceControlByHost`. Singleton registry today — GitHub / `gh` only.
+  "forge.detect": {
+    input: z.object({}),
+    output: z.object({ detected: z.array(detectedForgeSchema) }),
   },
   // ── The GitHub account (v4.2: device flow, no gh CLI) ──────────────────────
   // Connect is SKIPPABLE everywhere it appears (working-tree review needs no

@@ -36,7 +36,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
   fix). A `ForgeDetector` **registry** with exactly ONE entry (`github`/`gh`) — shaped so a second forge
   could register (the #484 seam) but **none is built** (reconciliation 1). No shell `which`; no React; deps
   injected exactly like `DiscoveryDeps`.
-- [ ] 1.2 `packages/protocol/src/commands/…`: add the `forge.detect` command def — input `{}` (runs on the
+- [x] 1.2 `packages/protocol/src/commands/…`: add the `forge.detect` command def — input `{}` (runs on the
   daemon it is dispatched to = that host), output `{ detected: DetectedForge[] }` where `DetectedForge`
   carries `{ id, version|null, status, detail }` (the wire shape the client maps to `DetectedTool`). Mirror
   `harness.detect`'s def exactly. Update `commands.test.ts`'s command roster.
