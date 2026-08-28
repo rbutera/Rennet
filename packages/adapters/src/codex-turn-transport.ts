@@ -107,6 +107,7 @@ export function createCodexTurnTransport(
         ...(spec.outputSchema === undefined
           ? {}
           : { outputSchema: sanitizeSchemaForCodex(spec.outputSchema) }),
+        ...(spec.ephemeral === undefined ? {} : { ephemeral: spec.ephemeral }),
         ...(spec.signal === undefined ? {} : { signal: spec.signal }),
       });
     },

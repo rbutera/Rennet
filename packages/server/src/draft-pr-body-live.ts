@@ -146,6 +146,7 @@ export function claudeDraftPrBodyPort(port: HarnessPort, cwd: string): PrBodyDra
       session = await port.createSession({
         cwd,
         outputSchema: PR_BODY_OUTPUT_SCHEMA,
+        ephemeral: true,
       });
     } catch (error) {
       return {
