@@ -8,9 +8,15 @@ function fakeFanIn(
   referencedBy: Record<string, string[]>,
 ): FanInIndex {
   return {
+    method: "textual",
     definedSymbols: (path) => defined[path] ?? [],
     referencingFiles: (name) => referencedBy[name] ?? [],
   };
+}
+
+/** A fake EDGE-BACKED fan-in index: which files import each file. */
+function fakeImportFanIn(importedBy: Record<string, string[]>): FanInIndex {
+  return { method: "import-edges", importersOf: (path) => importedBy[path] ?? [] };
 }
 
 function file(path: string, over: Partial<PatchFile> = {}): PatchFile {
@@ -378,6 +384,36 @@ describe("blast radius — fan-in", () => {
     const fi = marks.find((p) => p.signal === "fan-in");
     expect(fi?.assessed).toBe(false);
     expect(fi?.reason).toMatch(/not assessed/i);
+  });
+
+  it("counts real IMPORTERS when the index is edge-backed, and says so", () => {
+    const fanIn = fakeImportFanIn({ "src/a.ts": ["src/b.ts", "src/c.ts"] });
+    const marks = run([file("src/a.ts", { patch: hunk("export const foo = 1;") })], [], fanIn);
+    const perFile = of(marks, "fan-in").filter((p) => p.target === "rennet:file/src/a.ts");
+    expect(perFile).toHaveLength(1);
+    // The wording is the honesty: "import this file" is a stronger, provable claim
+    // than "reference this file's symbols", and only the edge-backed arm may make it.
+    expect(perFile[0]?.reason).toMatch(/^2 files import this file/);
+    const marker = marks.find(
+      (p) => p.signal === "fan-in" && p.target === "rennet:review/blast-radius",
+    );
+    expect(marker?.reason).toMatch(/import graph/i);
+  });
+
+  it("a textual index never claims the import-graph wording", () => {
+    const fanIn = fakeFanIn({ "src/a.ts": ["foo"] }, { foo: ["src/b.ts"] });
+    const marks = run([file("src/a.ts")], [], fanIn);
+    expect(of(marks, "fan-in").some((p) => /import this file/.test(p.reason ?? ""))).toBe(false);
+    const marker = marks.find(
+      (p) => p.signal === "fan-in" && p.target === "rennet:review/blast-radius",
+    );
+    expect(marker?.reason).toMatch(/identifier-occurrence/i);
+  });
+
+  it("an edge-backed index does NOT count a file as its own importer", () => {
+    const fanIn = fakeImportFanIn({ "src/a.ts": ["src/a.ts"] });
+    const marks = run([file("src/a.ts")], [], fanIn);
+    expect(of(marks, "fan-in").filter((p) => p.target.startsWith("rennet:file/"))).toHaveLength(0);
   });
 });
 

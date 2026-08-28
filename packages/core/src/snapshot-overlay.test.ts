@@ -36,6 +36,7 @@ function manifest(opts: {
   structural: Partial<Record<StructuralShardSlot, string>>;
   symbols: [string, string][];
   references?: [string, string][];
+  imports?: [string, string][];
   repoKey?: string;
 }): ProjectSnapshotManifest {
   const repoKey = opts.repoKey ?? "-tmp-repo";
@@ -46,11 +47,13 @@ function manifest(opts: {
   const resolution = opts.resolution ?? "symbolic-head";
   const symbols = [...opts.symbols].sort((l, r) => (l[0] < r[0] ? -1 : 1));
   const references = [...(opts.references ?? [])].sort((l, r) => (l[0] < r[0] ? -1 : 1));
+  const imports = [...(opts.imports ?? [])].sort((l, r) => (l[0] < r[0] ? -1 : 1));
   const fingerprint = computeFingerprint(
     { repoKey, baseRef: opts.baseRef, baseRefResolution: resolution, baseOid: opts.baseOid },
     shards,
     symbols,
     references,
+    imports,
   );
   return {
     schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
@@ -62,6 +65,7 @@ function manifest(opts: {
     shards,
     symbols,
     references,
+    imports,
   };
 }
 

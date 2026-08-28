@@ -2,6 +2,7 @@ import type {
   ConventionEntry,
   DependencyEdge,
   EntryPoint,
+  ImportShard,
   OwnershipRule,
   SnapshotFileEntry,
   SymbolShard,
@@ -13,16 +14,22 @@ import { describe, expect, it } from "vitest";
 import {
   buildSnapshot,
   computeFingerprint,
+  DEFAULT_IMPORT_EXTRACTOR_ID,
   DEFAULT_SYMBOL_EXTRACTOR_ID,
   eligibleSymbolFiles,
+  extractImportShard,
+  extractReferenceShard,
   extractSymbolShard,
+  indexImportShards,
   indexReferenceShards,
   indexSymbolShards,
   isSnapshotFresh,
+  planIncrementalImports,
   planIncrementalReferences,
   planIncrementalSymbols,
   type SnapshotStructuralInputs,
   serializeManifest,
+  structuralImportExtractor,
   structuralReferenceExtractor,
   structuralTsExtractor,
   verifySnapshotIntegrity,
@@ -364,6 +371,7 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
         a.shards,
         a.symbols,
         a.references,
+        a.imports,
       ),
     ).toBe(a.fingerprint);
   });
@@ -515,6 +523,168 @@ describe("structuralReferenceExtractor — deterministic identifier occurrences"
     expect(structuralReferenceExtractor("f.ts", text)).toEqual(
       structuralReferenceExtractor("f.ts", text),
     );
+  });
+});
+
+describe("structuralImportExtractor — deterministic raw import specifiers", () => {
+  it("records all four import forms", () => {
+    const text = [
+      "import { a } from './rel';",
+      "export { b } from '../up/mod';",
+      "import './side-effect';",
+      "const c = require('pkg-required');",
+      "const d = await import('./dynamic');",
+    ].join("\n");
+    expect(structuralImportExtractor("f.ts", text)).toEqual([
+      "../up/mod",
+      "./dynamic",
+      "./rel",
+      "./side-effect",
+      "pkg-required",
+    ]);
+  });
+
+  it("strips block comments before matching", () => {
+    const text = [
+      "/* import { hidden } from './hidden'; */",
+      "/*",
+      "import { alsoHidden } from './also-hidden';",
+      "*/",
+      "import { shown } from './shown';",
+      "// import { lineComment } from './line-comment';",
+    ].join("\n");
+    // Block comments are stripped; a LINE comment is an accepted false positive
+    // (the same documented textual limit the reference extractor carries).
+    expect(structuralImportExtractor("f.ts", text)).toEqual(["./line-comment", "./shown"]);
+  });
+
+  it("de-duplicates and sorts, so the shard bytes are stable", () => {
+    const text = ["import { a } from './z';", "import { b } from './a';", "import './z';"].join(
+      "\n",
+    );
+    expect(structuralImportExtractor("f.ts", text)).toEqual(["./a", "./z"]);
+  });
+
+  it("returns nothing for non-source files", () => {
+    expect(structuralImportExtractor("README.md", "import x from './y';")).toHaveLength(0);
+  });
+
+  it("is a pure function of bytes (same in ⇒ same out)", () => {
+    const text = "import { a } from './a';\nrequire('b');\n";
+    expect(structuralImportExtractor("f.ts", text)).toEqual(
+      structuralImportExtractor("f.ts", text),
+    );
+  });
+});
+
+describe("planIncrementalImports — reuse by blob, extract the changed closure", () => {
+  it("reuses a shard for an unchanged blob and queues a new/changed blob for extraction", () => {
+    const unchanged: SnapshotFileEntry = {
+      path: "a.ts",
+      blobOid: "blob-a",
+      size: 1,
+      mode: "100644",
+    };
+    const fresh: SnapshotFileEntry = { path: "b.ts", blobOid: "blob-b", size: 1, mode: "100644" };
+    const previous = indexImportShards([
+      { blobOid: "blob-a", extractor: DEFAULT_IMPORT_EXTRACTOR_ID, imports: ["./x"] },
+    ]);
+    const plan = planIncrementalImports([unchanged, fresh], previous, DEFAULT_IMPORT_EXTRACTOR_ID);
+    expect(plan.reuse.map((s) => s.blobOid)).toEqual(["blob-a"]);
+    expect(plan.toExtract.map((f) => f.blobOid)).toEqual(["blob-b"]);
+  });
+
+  it("re-extracts when the previous shard came from a different extractor id", () => {
+    const file: SnapshotFileEntry = { path: "a.ts", blobOid: "blob-a", size: 1, mode: "100644" };
+    const previous = indexImportShards([{ blobOid: "blob-a", extractor: "OLD", imports: [] }]);
+    const plan = planIncrementalImports([file], previous, DEFAULT_IMPORT_EXTRACTOR_ID);
+    expect(plan.reuse).toHaveLength(0);
+    expect(plan.toExtract.map((f) => f.blobOid)).toEqual(["blob-a"]);
+  });
+});
+
+describe("the import shard family: incremental === clean full build, and the gate covers it", () => {
+  /** A full build carrying all three per-blob shard families. */
+  function fullBuildWithImports(baseOid: string, tree: Tree) {
+    const inputs = inputsFor(baseOid, tree);
+    const eligible = eligibleSymbolFiles(inputs.files);
+    return buildSnapshot(
+      inputs,
+      eligible.map((file) => extractSymbolShard(file, tree.get(file.path) ?? "")),
+      eligible.map((file) => extractReferenceShard(file, tree.get(file.path) ?? "")),
+      eligible.map((file) => extractImportShard(file, tree.get(file.path) ?? "")),
+    );
+  }
+
+  function importShardsOf(tree: Tree): ImportShard[] {
+    const inputs = inputsFor("oid1", tree);
+    return eligibleSymbolFiles(inputs.files).map((file) =>
+      extractImportShard(file, tree.get(file.path) ?? ""),
+    );
+  }
+
+  it("produces a byte-identical manifest whether imports were reused or re-extracted", () => {
+    const clean = fullBuildWithImports("oid2", treeV2);
+
+    const inputs = inputsFor("oid2", treeV2);
+    const eligible = eligibleSymbolFiles(inputs.files);
+    const plan = planIncrementalImports(
+      eligible,
+      indexImportShards(importShardsOf(treeV1)),
+      DEFAULT_IMPORT_EXTRACTOR_ID,
+    );
+    // The changed closure only: util.ts changed, added.ts is new; the rest reuse.
+    expect(plan.toExtract.map((f) => f.path).sort()).toEqual([
+      "packages/core/src/added.ts",
+      "packages/core/src/util.ts",
+    ]);
+    expect(plan.reuse.length).toBeGreaterThan(0);
+
+    const incremental = buildSnapshot(
+      inputs,
+      eligible.map((file) => extractSymbolShard(file, treeV2.get(file.path) ?? "")),
+      eligible.map((file) => extractReferenceShard(file, treeV2.get(file.path) ?? "")),
+      [
+        ...plan.reuse,
+        ...plan.toExtract.map((file) => extractImportShard(file, treeV2.get(file.path) ?? "")),
+      ],
+    );
+
+    expect(serializeManifest(incremental.manifest)).toBe(serializeManifest(clean.manifest));
+    expect(incremental.manifest.fingerprint).toBe(clean.manifest.fingerprint);
+  });
+
+  it("puts import shard digests in the manifest and under the fingerprint", () => {
+    const withImports = fullBuildWithImports("oid2", treeV2).manifest;
+    // index.test.ts imports './index', so at least one blob carries a specifier.
+    expect(withImports.imports.length).toBeGreaterThan(0);
+    const withoutImports = buildSnapshot(
+      inputsFor("oid2", treeV2),
+      symbolShardsOf("oid2", treeV2),
+    ).manifest;
+    expect(withoutImports.imports).toEqual([]);
+    expect(withImports.fingerprint).not.toBe(withoutImports.fingerprint);
+  });
+
+  it("fails the integrity gate closed when an import shard is corrupted", () => {
+    const { manifest, shards } = fullBuildWithImports("oid2", treeV2);
+    const target = manifest.imports[0]?.[1];
+    expect(target).toBeDefined();
+    const result = verifySnapshotIntegrity(manifest, (d) =>
+      d === target ? `${shards.get(d)} tampered` : shards.get(d),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.mismatched).toContain(target);
+  });
+
+  it("fails the integrity gate closed when an import shard is missing", () => {
+    const { manifest, shards } = fullBuildWithImports("oid2", treeV2);
+    const target = manifest.imports[0]?.[1];
+    const result = verifySnapshotIntegrity(manifest, (d) =>
+      d === target ? undefined : shards.get(d),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.missing).toContain(target);
   });
 });
 

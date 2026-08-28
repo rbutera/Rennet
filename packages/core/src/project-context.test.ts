@@ -15,10 +15,12 @@ import { sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { LoadedSnapshot, ShardLoader } from "./project-context";
 import {
+  fanInIndexFromSnapshot,
   isSafeRepoRelativePath,
   materializeSnapshot,
   queryFileContext,
   queryFileOverview,
+  queryImportGraph,
   queryProjectMap,
   queryReferences,
   querySymbolDefinition,
@@ -555,5 +557,213 @@ describe("queryReferences", () => {
     if (result.ok) return;
     expect(result.reason).toBe("shard-unavailable");
     expect(result.digest).toBe(aDigest);
+  });
+});
+
+// ── The repo-wide import graph (context-map rebuild, W1) ──────────────────────
+//
+// Its own fixture tree, because resolution is the whole point here: one file per
+// blob, a directory `index` target, a workspace alias with and without a subpath,
+// a `..` traversal across scopes, and externals that must resolve to nothing.
+
+const IMPORT_TREE: Record<string, string[]> = {
+  // The barrel a bare workspace specifier must land on, via `<sourceRoot>`.
+  "packages/core/src/index.ts": ["./a"],
+  // Directory-index resolution (`./util` ⇒ `./util/index.ts`), plus two externals.
+  "packages/core/src/a.ts": ["./util", "node:fs", "react"],
+  "packages/core/src/util/index.ts": [],
+  // Workspace bare + workspace subpath + a same-scope relative import.
+  "packages/app/src/main.ts": ["@x/core", "@x/core/a", "./helper"],
+  // A relative import that traverses out of the scope.
+  "packages/app/src/helper.ts": ["../../core/src/a"],
+  // A dangling relative specifier: the inventory holds no such file ⇒ no edge.
+  "packages/app/src/orphan.ts": ["./nowhere"],
+};
+
+const importScopes: WorkspaceScope[] = [
+  {
+    name: "@x/core",
+    root: "packages/core",
+    sourceRoot: "packages/core/src",
+    type: "library",
+    private: true,
+    tags: [],
+  },
+  // No `sourceRoot`: the `<root>/src` fallback must still find its files.
+  { name: "@x/app", root: "packages/app", private: true, tags: [] },
+];
+
+function importFixture(overrides: { omitImports?: boolean } = {}): {
+  snapshot: LoadedSnapshot;
+  load: ShardLoader;
+} {
+  const paths = Object.keys(IMPORT_TREE).sort();
+  const importInputs: SnapshotStructuralInputs = {
+    repoKey: "/repo/.git",
+    baseRef: "main",
+    baseRefResolution: "symbolic-head" as BaseRefResolution,
+    baseOid: "oid-imports",
+    files: paths.map((path) => ({ path, blobOid: `blob:${path}`, size: 1, mode: "100644" })),
+    scopes: importScopes,
+    edges: [],
+    entryPoints: [],
+    tests: [],
+    ownership: [],
+    conventions: [],
+  };
+  const importShards = paths.map((path) => ({
+    blobOid: `blob:${path}`,
+    extractor: "structural-imports-v1",
+    imports: [...(IMPORT_TREE[path] ?? [])].sort(),
+  }));
+  // A symbol + reference shard for one file, so the TEXTUAL fan-in fallback has
+  // something real to find when the import family is withheld.
+  const built = buildSnapshot(
+    importInputs,
+    [
+      {
+        blobOid: "blob:packages/core/src/a.ts",
+        extractor: "structural-ts-v1",
+        symbols: [{ name: "alpha", kind: "const", line: 1 }],
+      },
+    ],
+    [
+      {
+        blobOid: "blob:packages/app/src/main.ts",
+        extractor: "structural-refs-v1",
+        references: [{ name: "alpha", lines: [3] }],
+      },
+    ],
+    overrides.omitImports ? [] : importShards,
+  );
+  const load: ShardLoader = (digest) => built.shards.get(digest);
+  const materialized = materializeSnapshot(built.manifest, load);
+  if (!materialized.ok) throw new Error(`materialize failed: ${materialized.slots.join(",")}`);
+  return { snapshot: materialized.snapshot, load };
+}
+
+describe("queryImportGraph — raw specifiers resolved into real file→file edges", () => {
+  it("resolves relative, directory-index, and traversing specifiers", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const pairs = result.graph.edges.map((edge) => [edge.from, edge.to, edge.kind]);
+    expect(pairs).toContainEqual([
+      "packages/core/src/index.ts",
+      "packages/core/src/a.ts",
+      "relative",
+    ]);
+    // `./util` ⇒ the directory's index file.
+    expect(pairs).toContainEqual([
+      "packages/core/src/a.ts",
+      "packages/core/src/util/index.ts",
+      "relative",
+    ]);
+    // `../../core/src/a` crosses out of @x/app and back into @x/core.
+    expect(pairs).toContainEqual([
+      "packages/app/src/helper.ts",
+      "packages/core/src/a.ts",
+      "relative",
+    ]);
+  });
+
+  it("resolves workspace specifiers through the scopes table, bare and with a subpath", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    const pairs = result.graph.edges.map((edge) => [edge.from, edge.to, edge.kind]);
+    // `@x/core` ⇒ the package's source-root barrel, not its directory.
+    expect(pairs).toContainEqual([
+      "packages/app/src/main.ts",
+      "packages/core/src/index.ts",
+      "workspace",
+    ]);
+    // `@x/core/a` ⇒ the subpath under the source root.
+    expect(pairs).toContainEqual([
+      "packages/app/src/main.ts",
+      "packages/core/src/a.ts",
+      "workspace",
+    ]);
+    // A same-scope relative specifier still resolves as `relative`, not `workspace`.
+    expect(pairs).toContainEqual([
+      "packages/app/src/main.ts",
+      "packages/app/src/helper.ts",
+      "relative",
+    ]);
+  });
+
+  it("drops externals and dangling specifiers rather than minting phantom nodes", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    const targets = new Set(result.graph.edges.map((edge) => edge.to));
+    expect(targets.has("node:fs")).toBe(false);
+    expect(targets.has("react")).toBe(false);
+    expect(result.graph.edges.some((edge) => edge.specifier === "react")).toBe(false);
+    expect(result.graph.importsOf("packages/app/src/orphan.ts")).toEqual([]);
+  });
+
+  it("answers per-file adjacency in both directions, distinct and sorted", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    expect(result.graph.importersOf("packages/core/src/a.ts")).toEqual([
+      "packages/app/src/helper.ts",
+      "packages/app/src/main.ts",
+      "packages/core/src/index.ts",
+    ]);
+    expect(result.graph.importsOf("packages/app/src/main.ts")).toEqual([
+      "packages/app/src/helper.ts",
+      "packages/core/src/a.ts",
+      "packages/core/src/index.ts",
+    ]);
+    expect(result.graph.importersOf("packages/app/src/main.ts")).toEqual([]);
+  });
+
+  it("is deterministic: the same snapshot yields the same edge order", () => {
+    const first = queryImportGraph(importFixture().snapshot);
+    const second = queryImportGraph(importFixture().snapshot);
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    expect(first.graph.edges).toEqual(second.graph.edges);
+  });
+
+  it("fails closed when a referenced import shard cannot be produced", () => {
+    const { snapshot, load } = importFixture();
+    const digest = snapshot.importDigestByBlob.get("blob:packages/core/src/a.ts");
+    const holed: LoadedSnapshot = {
+      ...snapshot,
+      load: (d) => (d === digest ? undefined : load(d)),
+    };
+    const result = queryImportGraph(holed);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("shard-unavailable");
+    expect(result.digest).toBe(digest);
+  });
+
+  it("is an honest empty graph when the snapshot carries no import shards", () => {
+    const result = queryImportGraph(importFixture({ omitImports: true }).snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.graph.edges).toEqual([]);
+  });
+});
+
+describe("fanInIndexFromSnapshot — prefers edges, falls back to text, never confuses them", () => {
+  it("is edge-backed when the import graph resolved", () => {
+    const index = fanInIndexFromSnapshot(importFixture().snapshot);
+    expect(index.method).toBe("import-edges");
+    if (index.method !== "import-edges") return;
+    expect(index.importersOf("packages/core/src/a.ts")).toEqual([
+      "packages/app/src/helper.ts",
+      "packages/app/src/main.ts",
+      "packages/core/src/index.ts",
+    ]);
+  });
+
+  it("falls back to the textual identifier index when there are no import edges", () => {
+    const index = fanInIndexFromSnapshot(importFixture({ omitImports: true }).snapshot);
+    expect(index.method).toBe("textual");
+    if (index.method !== "textual") return;
+    expect(index.definedSymbols("packages/core/src/a.ts")).toEqual(["alpha"]);
+    expect(index.referencingFiles("alpha")).toEqual(["packages/app/src/main.ts"]);
   });
 });

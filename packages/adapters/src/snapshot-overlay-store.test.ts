@@ -40,6 +40,8 @@ function overlay(
     symbolTombstones: [],
     referenceUpserts: [],
     referenceTombstones: [],
+    importUpserts: [],
+    importTombstones: [],
     ...over,
   };
 }
