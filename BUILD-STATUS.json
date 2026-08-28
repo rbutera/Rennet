@@ -138,7 +138,7 @@
   "c14": {
     "status": "pending",
     "passes": false,
-    "note": "PRE-C14 GATE ADDITIONS (Rai, 2026-08-28): (1) titlebar fix fix/macos-titlebar-wordmark lands pre-release (real-device defect: traffic lights over wordmark; report->auto-update closed loop); (2) RELEASE BEFORE C14 \u2014 after last pre-C14 landing: gh workflow run auto-release.yml (SIGPIPE decide-step fix ca443db0 landed; this dispatch is its real test), verify green through publish + vX.Y.Z with macOS assets, Rai watches latios auto-update, THEN dispatch C14 \u2014 audit drives the released build where practical."
+    "note": "PRE-C14 GATE ADDITIONS (Rai, 2026-08-28): (1) DONE \u2014 titlebar fix LANDED #557 @f2ac71ff (real-device defect: traffic lights over wordmark; report->auto-update closed loop); (2) RELEASE BEFORE C14 \u2014 after last pre-C14 landing: gh workflow run auto-release.yml (SIGPIPE decide-step fix ca443db0 landed; this dispatch is its real test), verify green through publish + vX.Y.Z with macOS assets, Rai watches latios auto-update, THEN dispatch C14 \u2014 audit drives the released build where practical."
   },
   "c15": {
     "status": "implementing",
