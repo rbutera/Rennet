@@ -113,13 +113,17 @@ export function projectIdForRepoRoot(repoRoot: string, projects: readonly Projec
  * for another root never wins at all. The unstamped fallback is taken only when there is exactly
  * ONE — see below; an ambiguous fallback is declined rather than guessed.
  *
- * The two identities are complementary rather than redundant, and neither caller has both: the
- * New Chat mint knows the `owner/name` (it is on the row) and can never know a host path; the
- * round dispatch knows the path and cannot derive an `owner/name` synchronously (that is a git
- * remote read). The consequence is stated rather than hidden: in a workspace holding two repos
- * that share a branch name, a session minted from a row and the session a later round dispatches
- * onto can be two rows rather than one. That is an honest split, not a wrong answer — the
- * alternative, guessing, files one repo's rounds under the other repo's session.
+ * The two identities are complementary rather than redundant. The New Chat mint knows the
+ * `owner/name` (it is on the row) and can never know a host path; the round dispatch knows the
+ * path, and {@link enterRoundSession} pays one `git remote get-url origin` to know the
+ * `owner/name` too — the same {@link repositoryIdentity} that stamped the row — so the write
+ * side carries BOTH and the ambiguous fallback below is no longer reached from a dispatch.
+ *
+ * The READ side, {@link resolveRoundSessionId}, is synchronous and still names no repository.
+ * So between a New Chat click and that target's first round, two same-named branches in one
+ * workspace are two unstamped sessions the read cannot tell apart, and it declines — an honest
+ * empty, self-healed by the first dispatch, which reattaches to the right one and stamps the
+ * root. Guessing there would file one repo's rounds under the other repo's session.
  */
 export function claimingSession(
   sessions: readonly SessionModel[],
