@@ -73,4 +73,12 @@ Replaces `FIXTURE_ROUND_TIMELINE` in the app tree with a real feed. The C09 mach
     (element/section grain, accurate), `using/concepts/common-questions.md` (section grain),
     `using/index.md`, `lens-pipeline.md`, `harness-adapters.md`, `dependency-standard.md`,
     `contracts-and-rulings.md`, `plans/board-rebuild-plan.md`.
-- [ ] 5.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses, lint, typecheck, test, build). Confirm the protocol change is scoped to the `RoundEvent` wire schema + durable RoundRecord fields (not assumed). Commit. Output the completion sigil `<promise>C15-COMPLETE</promise>` and flip C15's entry in `BUILD-STATUS.json`.
+- [x] 5.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses, lint, typecheck, test, build). Confirm the protocol change is scoped to the `RoundEvent` wire schema + durable RoundRecord fields (not assumed). Commit. Output the completion sigil `<promise>C15-COMPLETE</promise>` and flip C15's entry in `BUILD-STATUS.json`.
+
+  `pnpm check` (isolated cache, `NX_DAEMON=false`) — **`GATE_EXIT=0`**, 14 projects, 29 of 50 tasks
+  run cold. **Protocol scope confirmed by diff, not assumption** (`packages/protocol/src`, merge base
+  → C15 tip): the whole roster is `RoundEvent` (with its `LaneRow` + `RowStatus` parts) and the
+  `roundProgress` push frame in `session/model.ts` + `session/wire.ts`; `RoundRecord.frozenPredecessor`
+  on the durable record; the `session.roundEvents` command (registry now 94 — main's 93 plus this one);
+  and `RennetBridge.onRoundProgress`, the optional subscription for it. Nothing else in protocol moved.
+  BUILD-STATUS.json is the orchestrator's to flip (dispatch instruction), not this worktree's.
