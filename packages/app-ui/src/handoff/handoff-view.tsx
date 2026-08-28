@@ -27,6 +27,8 @@ export interface HandoffViewProps {
   readonly onOpenPr?: RoundsLanesProps["onOpenPr"];
   /** Selection-steer Revise — B11's `review.reviseSpan`, threaded to whichever lane renders. */
   readonly onRevise?: RoundsLanesProps["onRevise"];
+  /** The daemon's own words for why this mode has no live exit, stated where the exit would be. */
+  readonly unavailable?: string;
 }
 
 export function HandoffView({
@@ -38,6 +40,7 @@ export function HandoffView({
   onDispatch,
   onOpenPr,
   onRevise,
+  unavailable,
 }: HandoffViewProps) {
   const mode = resolveEntryMode(review);
   if (mode === "retrospective") return null;
@@ -49,6 +52,7 @@ export function HandoffView({
         draft={reviewDraft}
         onSetVerdict={onSetVerdict}
         onRevise={onRevise}
+        unavailable={unavailable}
       />
     );
   return (
@@ -58,6 +62,7 @@ export function HandoffView({
       onDispatch={onDispatch}
       onOpenPr={onOpenPr}
       onRevise={onRevise}
+      unavailable={unavailable}
     />
   );
 }

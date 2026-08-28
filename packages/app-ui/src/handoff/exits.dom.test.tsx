@@ -6,7 +6,9 @@
 // ones `publish.compose` returned (the preview equals what posts, R33); nothing is invoked before
 // the click (nothing leaves without it); a daemon that lands no outcome fails honest (never a faked
 // success); a retrospective review offers no exit; Open Pull Request resolves `publish.compose(
-// mode:"pr")` → `publish.submitPr` and receipts the PR number + link.
+// mode:"pr")` → `publish.submitPr` and receipts the PR number + link; and a compose the daemon
+// REFUSED states the daemon's own reason where the exit would have been, rather than leaving a
+// disabled CTA (or an absent one) with no account of itself.
 import type { CommandInput, CommandOutput, PatchFile, Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
@@ -317,6 +319,40 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // The hand-off view renders nothing for a retrospective review (law 10).
     expect(r.queryByRole("button", { name: /Post Review|Open Pull Request/ })).toBeNull();
     expect(calls).toEqual([]);
+  });
+
+  it("a compose the daemon REFUSED states its reason beside the dead Post CTA", async () => {
+    // The silent half of the exits, and the only thing here that read as a gate: `publish.compose`
+    // answers `unavailable` with words (an unsafe comment path, here), the CTA has nothing to post
+    // through and renders disabled — and the reason used to be dropped, leaving a grey button and
+    // no account of it. `HandoffAction` surfaces only errors a CLICK threw, which disabled forbids.
+    stage("src/a.ts:5", "request-change");
+    const r = mountHandoff(review({ postTarget }), {
+      "publish.compose": () => ({
+        status: "unavailable",
+        reason: "A review comment has an unsafe path (/etc/passwd); it cannot be posted.",
+      }),
+    });
+    expect(
+      await r.findByText("A review comment has an unsafe path (/etc/passwd); it cannot be posted."),
+    ).toBeTruthy();
+    expect(r.getByRole("button", { name: /Post Review/ }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("a PR the daemon REFUSED to compose says why, instead of a lane that silently never becomes one", async () => {
+    // Own-branch, nothing left to ask — the lane would BECOME the pull request if compose landed
+    // one. It refused, so there is no Open Pull Request button at all; without the reason that is
+    // a dead end the reviewer cannot read (they see "Nothing staged yet." and nothing else).
+    const r = mountHandoff(review(), {
+      "publish.compose": () => ({
+        status: "unavailable",
+        reason: "HEAD is detached — there is no branch to open a pull request from.",
+      }),
+    });
+    expect(
+      await r.findByText("HEAD is detached — there is no branch to open a pull request from."),
+    ).toBeTruthy();
+    expect(r.queryByRole("button", { name: /Open Pull Request/ })).toBeNull();
   });
 
   it("selection Revise dispatches the live review.reviseSpan and stages the reworked body", async () => {

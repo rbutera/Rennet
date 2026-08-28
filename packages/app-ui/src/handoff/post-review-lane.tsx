@@ -104,6 +104,8 @@ export interface PostReviewLaneProps {
    * control is disabled and the panel says so — never a pretend run.
    */
   readonly onRevise?: ReviseSpan;
+  /** Why the daemon composed no outbound review, in its own words — stated beside the dead CTA. */
+  readonly unavailable?: string;
 }
 
 export function PostReviewLane({
@@ -112,6 +114,7 @@ export function PostReviewLane({
   draft,
   onSetVerdict,
   onRevise,
+  unavailable,
 }: PostReviewLaneProps) {
   // The composed preview IS what posts (exact-preview): when the daemon's composition is in hand,
   // render THOSE bytes, never the local working draft that recomposed to different bytes on click.
@@ -130,6 +133,7 @@ export function PostReviewLane({
       onPost={onPost}
       onSetVerdict={onSetVerdict}
       onRevise={onRevise}
+      unavailable={unavailable}
     />
   );
 }
@@ -139,6 +143,7 @@ function WorkingReviewDraft({
   onPost,
   onSetVerdict,
   onRevise,
+  unavailable,
 }: Omit<PostReviewLaneProps, "draft">) {
   const patchsetId = review.activePatchsetId;
   const postTarget = review.postTarget;
@@ -383,8 +388,11 @@ function WorkingReviewDraft({
           </div>
         )}
 
-        {/* Post: the draft above is exactly what posts — no separate preview (R31). */}
-        <div className="flex items-center border-t border-border/60 pt-4">
+        {/* Post: the draft above is exactly what posts — no separate preview (R31). The CTA is
+            dead until the daemon has composed; when it REFUSED to, say so in its own words rather
+            than leaving a grey button and no account (`HandoffAction`'s error line only fires on a
+            click, which a disabled button forbids). A statement, not a gate. */}
+        <div className="flex flex-col gap-2 border-t border-border/60 pt-4">
           <HandoffAction
             label="Post Review"
             pendingLabel="Posting review…"
@@ -397,6 +405,9 @@ function WorkingReviewDraft({
                 : undefined
             }
           />
+          {unavailable !== undefined && (
+            <p className="text-xs text-muted-foreground">{unavailable}</p>
+          )}
         </div>
       </div>
     </div>

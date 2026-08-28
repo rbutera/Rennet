@@ -370,6 +370,7 @@ function HandoffMount({
       onDispatch={onDispatch}
       onOpenPr={exits.onOpenPr}
       onRevise={exits.onRevise}
+      unavailable={exits.unavailable}
     />
   );
 }

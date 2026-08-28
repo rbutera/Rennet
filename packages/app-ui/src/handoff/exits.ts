@@ -35,7 +35,9 @@ import type { ProposedVerdict } from "./selectors";
 // post — there is no token, no consent dialog and no freeze (Rule Zero, #435). The verdict is not
 // a separate post argument either: flipping it writes the durable override and RECOMPOSES, so the
 // event that posts is the event on screen. Absent a resolved egress, a CTA renders disabled
-// (honest), never a Post that posts nothing.
+// (honest), never a Post that posts nothing — and when the daemon REFUSED to compose, its reason
+// travels out as `unavailable` and the lane states it. A disabled CTA with the refusal on the
+// floor was the only thing here that read as a gate; it was silence, not ceremony.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The live exits the route threads into `<HandoffView>` — the mode picks which are present. */
@@ -63,6 +65,19 @@ export interface HandoffExits {
    * mounts) says so rather than pretending.
    */
   readonly onRevise: ReviseSpan;
+  /**
+   * Why the daemon could not compose this mode's exit, in its OWN words — or `undefined` when it
+   * composed fine. `publish.compose` answers `unavailable` with a reason for every refusal it
+   * knows (an unsafe comment path, a detached HEAD, a mode that does not fit the review), and
+   * every one of those refusals lands the lane in a state with no live exit: the Post CTA renders
+   * disabled, or the rounds lane never becomes the pull request. Dropping the reason left a dead
+   * grey button and no account of it — and `HandoffAction` can only surface an error a CLICK
+   * threw, which a disabled button forbids.
+   *
+   * This is a STATEMENT, not a gate — the same shape as `RoundsSource.roundsUnavailable`: the
+   * lane renders the reason where the exit would have been and carries on. Nothing to dismiss.
+   */
+  readonly unavailable?: string;
 }
 
 export function useHandoffExits(review: Review): HandoffExits {
@@ -115,6 +130,11 @@ export function useHandoffExits(review: Review): HandoffExits {
     { enabled: mode === "own-branch" && noAsks },
   );
   const prComposed = prCompose.data?.status === "pr" ? prCompose.data : undefined;
+
+  // The refusal for whichever compose this mode actually ran. Only one is ever `enabled`, so
+  // there is no ambiguity about whose words these are.
+  const compose = mode === "own-branch" ? prCompose : reviewCompose;
+  const unavailable = compose.data?.status === "unavailable" ? compose.data.reason : undefined;
 
   const onPost = useCallback(async (): Promise<PostReceipt> => {
     // Post the ALREADY-composed bytes the lane previewed — never a fresh compose (that recompose
@@ -181,5 +201,6 @@ export function useHandoffExits(review: Review): HandoffExits {
       ? { title: prComposed.submission.title, body: prComposed.submission.body, ready: true }
       : undefined,
     onRevise,
+    ...(unavailable === undefined ? {} : { unavailable }),
   };
 }
