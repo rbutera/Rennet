@@ -28,7 +28,13 @@ function packageVersion(path) {
   }
 }
 
-const requestedTag = process.argv[2] ?? git(["describe", "--tags", "--exact-match", "HEAD"]);
+// pnpm forwards a literal `--` when invoked as `pnpm release:check -- vX.Y.Z`,
+// so take the last real argument rather than a fixed position.
+const requestedTag =
+  process.argv
+    .slice(2)
+    .filter((arg) => arg !== "--")
+    .pop() ?? git(["describe", "--tags", "--exact-match", "HEAD"]);
 const match = SEMVER_TAG.exec(requestedTag);
 if (!match) fail(`expected a tag shaped vX.Y.Z, got ${requestedTag}`);
 
