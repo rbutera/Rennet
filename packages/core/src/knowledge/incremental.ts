@@ -23,19 +23,51 @@ export function statementIntersectsChange(
   return statement.evidence.some((anchor) => changed.has(anchor.path));
 }
 
+/** The directory containing `path`; `""` (the repo root) for a top-level path. */
+function parentDirectory(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/**
+ * Whether two partition-id FAMILIES name the same neighbourhood: equal, or one is
+ * a `/`-separated prefix of the other (the hierarchical fallback's split-boundary
+ * drift, `lib` ⇄ `lib/x`).
+ */
+function familiesMatch(left: string, right: string): boolean {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
 /**
  * The partitions that own at least one changed path — the only workers a delta
- * re-runs. A changed path with no CURRENT owner (deleted, ownership moved with
- * the scope graph, or the file is now mapping-ineligible) routes through its
- * PRIOR owner: the current slices in the same id FAMILY re-run so the area around
- * the deletion is re-examined. A path whose prior slice family vanished entirely
- * routes nothing; `planReverify` still re-adjudicates every statement citing it.
+ * re-runs. A changed path with no CURRENT owner (deleted, ownership moved with the
+ * scope graph, or the file is now mapping-ineligible) routes through its PRIOR
+ * owner, by TWO independent rules whose results are unioned:
  *
- * Family, not raw id, because a module batch's id carries a content hash over its
- * members ({@link PartitionSlice.id}) — losing a member changes the hash by
- * design, so raw-id equality would report every re-formed batch as a stranger.
- * {@link partitionIdFamily} strips the hash; for the hierarchical fallback ids it
- * is the identity, so the original equal-or-prefix rule is unchanged there.
+ *  1. **Same id family.** Every current slice whose {@link partitionIdFamily}
+ *     matches the prior owner's re-runs. Family, not raw id, because a module
+ *     batch's id carries a content hash over its members ({@link PartitionSlice.id})
+ *     — losing a member changes the hash by design, so raw-id equality would report
+ *     every re-formed batch as a stranger. This rule only ever fires WITHIN a tier
+ *     (`mod:…` ⇄ `mod:…`, hierarchical ⇄ hierarchical): a `mod:` family can never
+ *     prefix-match a hierarchical one, so on its own it routes NOTHING across tiers.
+ *  2. **Nearest surviving directory.** Walk up from the deleted path's own parent
+ *     directory to the first ancestor directory that still holds a surviving mapped
+ *     file DIRECTLY (not merely somewhere in its subtree), and route every current
+ *     slice holding such a file. The repo root (`""`) is the last stop and is
+ *     treated like any other directory — it matches the slices holding top-level
+ *     files, never "every slice in the repo".
+ *
+ * Rule 2 is what makes cross-tier routing work, and it is the rule that carries the
+ * live caller: the current set is module batches (`mod:<path>#<hash>`) built by
+ * `buildModuleBatches`, while prior ownership is rebuilt with the hierarchical
+ * `buildPartitions` ids, so rule 1 alone matches no module batch at all and a
+ * deleted connected file would route zero workers. With rule 2, a deleted file
+ * re-runs the batches that hold its surviving neighbours on disk.
+ *
+ * A path with no prior owner, or one whose neighbourhood has vanished from both
+ * rules, routes nothing; `planReverify` still re-adjudicates every statement citing
+ * it.
  */
 export function routeDelta(
   partitions: readonly PartitionSlice[],
@@ -50,18 +82,33 @@ export function routeDelta(
     partitions.flatMap((slice) => slice.files.map((file) => file.path)),
   );
   const orphaned = changedPaths.filter((path) => !currentlyOwned.has(path));
+  if (orphaned.length === 0) return partitions.filter((slice) => routed.has(slice));
+
+  // `directory → the current slices holding a file DIRECTLY in it`, built once.
+  const slicesByDirectory = new Map<string, PartitionSlice[]>();
+  for (const slice of partitions) {
+    for (const file of slice.files) {
+      const directory = parentDirectory(file.path);
+      const owners = slicesByDirectory.get(directory);
+      if (owners === undefined) slicesByDirectory.set(directory, [slice]);
+      else if (!owners.includes(slice)) owners.push(slice);
+    }
+  }
+
   for (const path of orphaned) {
     const prior = priorPartitions.find((slice) => slice.files.some((file) => file.path === path));
     if (prior === undefined) continue;
     const priorFamily = partitionIdFamily(prior.id);
     for (const slice of partitions) {
-      const family = partitionIdFamily(slice.id);
-      if (
-        family === priorFamily ||
-        family.startsWith(`${priorFamily}/`) ||
-        priorFamily.startsWith(`${family}/`)
-      )
-        routed.add(slice);
+      if (familiesMatch(partitionIdFamily(slice.id), priorFamily)) routed.add(slice);
+    }
+    for (let directory = parentDirectory(path); ; directory = parentDirectory(directory)) {
+      const owners = slicesByDirectory.get(directory);
+      if (owners !== undefined) {
+        for (const slice of owners) routed.add(slice);
+        break;
+      }
+      if (directory === "") break;
     }
   }
   return partitions.filter((slice) => routed.has(slice));

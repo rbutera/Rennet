@@ -224,4 +224,83 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     // All-or-keep-prior: the store still serves run 2's set, untouched.
     expect(knowledgeStore.loadLocal(repoKey)).toEqual(run2.set);
   });
+
+  // ── Cross-tier delta routing, through the LIVE caller ─────────────────────
+  //
+  // The regression this pins: the swarm rebuilds PRIOR ownership with the
+  // hierarchical `buildPartitions` ids while the CURRENT set is module batches
+  // (`mod:<path>#<hash>`). Routing an orphaned (deleted) path by id family alone
+  // can never match a module batch, so a deleted connected file used to route
+  // ZERO module workers — the neighbourhood around the deletion was never
+  // re-examined. `routeDelta`'s nearest-surviving-directory rule is what fixes it.
+  it("a DELETED connected file re-runs the module batch holding its surviving neighbours", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-swarm-orphan-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-swarm-orphan-store-"));
+    scratch.push(root, storeDir);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+    write(root, "packages/a/package.json", JSON.stringify({ name: "@t/a", private: true }));
+    write(
+      root,
+      "packages/a/src/index.ts",
+      'import { one } from "./one";\nexport const idx = one;\n',
+    );
+    write(root, "packages/a/src/one.ts", 'import { two } from "./two";\nexport const one = two;\n');
+    write(root, "packages/a/src/two.ts", "export const two = 2;\n");
+    write(root, "packages/b/package.json", JSON.stringify({ name: "@t/b", private: true }));
+    write(root, "packages/b/src/index.ts", "export const b = 1;\n");
+    write(root, "README.md", "# t\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    const oid1 = git(root, "rev-parse", "HEAD");
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid1 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+
+    const run1Prompts: string[] = [];
+    const run1 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(run1Prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid1,
+    });
+    expect(run1.status).toBe("ok");
+    // The three connected sources really did batch as a module (not the fallback).
+    expect(run1Prompts.some((prompt) => prompt.includes("packages/a/src/two.ts"))).toBe(true);
+
+    // Delete ONE connected file and leave its importer's now-dangling specifier
+    // alone, so the ONLY changed path is the deleted one — which isolates the
+    // orphan-routing rule from ordinary "the changed file's own slice re-runs".
+    rmSync(join(root, "packages/a/src/two.ts"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "delete two");
+    const oid2 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid2 });
+
+    const run2Prompts: string[] = [];
+    const run2 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(run2Prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(run2.status).toBe("ok");
+    // The neighbourhood the deletion sat in re-runs: the module batch holding the
+    // surviving files of `packages/a/src`.
+    expect(run2Prompts.some((prompt) => prompt.includes("packages/a/src/one.ts"))).toBe(true);
+    // …and the unrelated package does NOT.
+    expect(run2Prompts.some((prompt) => prompt.includes("packages/b/src/index.ts"))).toBe(false);
+  });
 });

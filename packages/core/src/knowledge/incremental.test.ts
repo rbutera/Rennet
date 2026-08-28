@@ -84,6 +84,83 @@ describe("routeDelta", () => {
     ];
     expect(routeDelta(PARTITIONS, ["legacy/gone.ts"], prior)).toEqual([]);
   });
+
+  // ── Cross-tier routing: the id families do not overlap between tiers, so the
+  // nearest-surviving-directory rule is the only thing that can route these.
+
+  it("routes across tiers: a hierarchical PRIOR owner reaches the current mod: batch", () => {
+    const current: readonly PartitionSlice[] = [
+      {
+        id: "mod:packages/a/src/one.ts#deadbeef",
+        files: [
+          { path: "packages/a/src/one.ts", blobOid: "1" },
+          { path: "packages/a/src/two.ts", blobOid: "2" },
+        ],
+        neighbors: [],
+      },
+      { id: "dir:docs", files: [{ path: "docs/guide.md", blobOid: "3" }], neighbors: [] },
+    ];
+    const prior: readonly PartitionSlice[] = [
+      { id: "@x/a", files: [{ path: "packages/a/src/gone.ts", blobOid: "4" }], neighbors: [] },
+    ];
+    // No `mod:` family can ever match the `@x/a` family — only the surviving
+    // sibling directory `packages/a/src` reaches the batch that holds it.
+    const routed = routeDelta(current, ["packages/a/src/gone.ts"], prior);
+    expect(routed.map((slice) => slice.id)).toEqual(["mod:packages/a/src/one.ts#deadbeef"]);
+  });
+
+  it("routes across tiers the other way: a mod: PRIOR owner reaches the current fallback slice", () => {
+    const current: readonly PartitionSlice[] = [
+      { id: "@x/a", files: [{ path: "packages/a/src/one.ts", blobOid: "1" }], neighbors: [] },
+      { id: "dir:docs", files: [{ path: "docs/guide.md", blobOid: "2" }], neighbors: [] },
+    ];
+    const prior: readonly PartitionSlice[] = [
+      {
+        id: "mod:packages/a/src/gone.ts#c0ffee00",
+        files: [{ path: "packages/a/src/gone.ts", blobOid: "3" }],
+        neighbors: [],
+      },
+    ];
+    const routed = routeDelta(current, ["packages/a/src/gone.ts"], prior);
+    expect(routed.map((slice) => slice.id)).toEqual(["@x/a"]);
+  });
+
+  it("walks UP to the nearest surviving directory when the whole directory is gone", () => {
+    const current: readonly PartitionSlice[] = [
+      {
+        id: "mod:packages/a/src/one.ts#deadbeef",
+        files: [{ path: "packages/a/src/one.ts", blobOid: "1" }],
+        neighbors: [],
+      },
+      { id: "dir:docs", files: [{ path: "docs/guide.md", blobOid: "2" }], neighbors: [] },
+    ];
+    const prior: readonly PartitionSlice[] = [
+      {
+        id: "mod:packages/a/src/legacy/x.ts#c0ffee00",
+        files: [{ path: "packages/a/src/legacy/x.ts", blobOid: "3" }],
+        neighbors: [],
+      },
+    ];
+    // `packages/a/src/legacy` holds nothing now; `packages/a/src` does.
+    const routed = routeDelta(current, ["packages/a/src/legacy/x.ts"], prior);
+    expect(routed.map((slice) => slice.id)).toEqual(["mod:packages/a/src/one.ts#deadbeef"]);
+  });
+
+  it("a deleted ROOT-level file routes the root-level slices only, never the whole repo", () => {
+    const current: readonly PartitionSlice[] = [
+      { id: "dir:.", files: [{ path: "README.md", blobOid: "1" }], neighbors: [] },
+      {
+        id: "mod:packages/a/src/one.ts#deadbeef",
+        files: [{ path: "packages/a/src/one.ts", blobOid: "2" }],
+        neighbors: [],
+      },
+    ];
+    const prior: readonly PartitionSlice[] = [
+      { id: "dir:.", files: [{ path: "CHANGELOG.md", blobOid: "3" }], neighbors: [] },
+    ];
+    const routed = routeDelta(current, ["CHANGELOG.md"], prior);
+    expect(routed.map((slice) => slice.id)).toEqual(["dir:."]);
+  });
 });
 
 describe("planReverify", () => {
