@@ -18,6 +18,7 @@ import {
   coachMarksSchema,
   composedHandoffBundleSchema,
   conversationAnchorSchema,
+  councilPickSchema,
   deltaDigestResultSchema,
   detectedHarnessSchema,
   discoveryResultSchema,
@@ -56,6 +57,8 @@ import {
   resolvedProvenanceSchema,
   reviewBodyNoteSchema,
   reviewCommentSchema,
+  reviewRoleMappingSchema,
+  reviewRoleScenarioSchema,
   reviewSchema,
   setRepoVisibilityOutcomeSchema,
   settingsGuidanceSchema,
@@ -916,6 +919,25 @@ const definitions = {
   "settings.setCoachmarks": {
     input: coachMarksSchema,
     output: coachMarksSchema,
+  },
+  // ── Settings: set (or reset) a review role's model assignment (C16 · #485) ──
+  // The Environments → Review mappings dialog's cell edit. A personal, app-side
+  // WRITE — writes only `~/.rennet/client-settings.json`'s `routing.task` slice,
+  // never a repo. Mirrors `setKeybinding`/`setCoachmarks`: a plain write, first
+  // click, no confirmation (Rule Zero), REFUSED (throws) when the config is
+  // malformed so an edit never overwrites unparseable bytes (Rule 75). Model +
+  // effort only — harness always derives from the resolved model's provider (#89),
+  // so there is no harness field. `assignment: null` RESETS the cell to the
+  // council-table default (clears the `routing.task` entry). Output echoes the
+  // re-resolved mappings so the surface adopts them optimistically (the READ
+  // itself rides `settings.get` — no separate read command).
+  "settings.setRoleAssignment": {
+    input: z.object({
+      roleId: z.string().min(1),
+      scenario: reviewRoleScenarioSchema,
+      assignment: councilPickSchema.nullable(),
+    }),
+    output: z.object({ reviewRoles: z.array(reviewRoleMappingSchema) }),
   },
   // ── Settings: set a repo's repo-scope map visibility (wireframe #15) ───────
   // Genuinely consumed: runs the real visibility switch, which writes the repo's

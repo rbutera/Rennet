@@ -1,3 +1,4 @@
+import { reviewRoleMappings } from "@rennet/core";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
@@ -19,6 +20,10 @@ export function settingsHandlers(rt: DispatchRuntime) {
           },
           appearanceMalformed: false,
           projects: [],
+          // The council tables are STATIC, so the review-role mappings are
+          // readable with no settings dep at all — honest-present (C16, #485).
+          // No persistence here, so every cell is a `default`.
+          reviewRoles: reviewRoleMappings(),
         });
       }
       return parseCommandOutput(name, await deps.settings.get());
@@ -101,6 +106,27 @@ export function settingsHandlers(rt: DispatchRuntime) {
         return parseCommandOutput(name, input);
       }
       return parseCommandOutput(name, deps.settings.setCoachmarks(input));
+    },
+    "settings.setRoleAssignment": async (rawInput) => {
+      const name = "settings.setRoleAssignment" as const;
+      // Personal, app-side (C16 #485): writes only the viewer's `routing.task`
+      // slice in client settings, never a repo. The dep REFUSES (throws) on a
+      // malformed config; that error propagates rather than overwriting
+      // unparseable bytes (Rule 75). `assignment: null` RESETS to the council
+      // default. Absent dep ⇒ the re-resolved council DEFAULTS: nothing was
+      // persisted, and the response says so (every cell `default`) rather than
+      // echoing a fake success carrying the edit.
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.settings) {
+        return parseCommandOutput(name, { reviewRoles: reviewRoleMappings() });
+      }
+      return parseCommandOutput(name, {
+        reviewRoles: deps.settings.setRoleAssignment({
+          roleId: input.roleId,
+          scenario: input.scenario,
+          assignment: input.assignment,
+        }),
+      });
     },
     "settings.setRepoVisibility": async (rawInput) => {
       const name = "settings.setRepoVisibility" as const;

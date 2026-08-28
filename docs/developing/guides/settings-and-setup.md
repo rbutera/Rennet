@@ -60,6 +60,7 @@ Global settings live in two machine-local files, split by who owns the value:
 | `~/.rennet/client-settings.json` | Viewer preferences, **outside** the config ladder | Appearance | system, dark, light | Applies the selected color scheme to the app. |
 | `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
 | `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** clears it. |
+| `~/.rennet/client-settings.json` | | Council routing | `routing.task[jobId][scenario]` to model and effort | Overrides one [Model Council](../concepts/model-council.md) job's assignment in one availability scenario. Written by the Environments Review section; absent until you change a mapping. |
 | `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
 
 Appearance and keybindings are personal, app-side choices — never a repo fact,
@@ -129,12 +130,48 @@ Each card carries a **Source Control** and an **Agents** section. Agents on This
 Machine are live: Rennet lists the coding harnesses it discovered (Claude, Codex)
 with their versions, and disabling one rules it out of reviews on that host
 without uninstalling anything. When at least one agent is enabled, a Review
-section exposes Model Mappings. Detection that is not yet wired renders an honest
-empty state rather than a fabricated row: remote-host agent detection, per-host
-source-control tool detection, and the served model-mapping council are not live
-yet, so those surfaces read empty until their backends land. GitHub sign-in is not
-a source-control row here — it lives on the front door and the project detail
-(see [First run](#first-run)).
+section exposes Model Mappings — see [Model Mappings](#model-mappings) below.
+Detection that is not yet wired renders an honest empty state rather than a
+fabricated row: remote-host agent detection and per-host source-control tool
+detection are not live yet, so those surfaces read empty until their backends
+land. GitHub sign-in is not a source-control row here — it lives on the front door
+and the project detail (see [First run](#first-run)).
+
+### Model Mappings
+
+**Edit Mappings** on a host card opens the [Model Council](../concepts/model-council.md)'s
+role-to-model table for that machine. The dialog is **honest-present**: the council's
+assignment tables are static and always available, so it lists every review role with
+a real model and effort on a fresh install — never a blank waiting on a backend. Values
+come from `settings.get`, which resolves the tables live rather than shipping the
+surface its own copy.
+
+The column headers are the review-mode switch. **Dual Harness** needs both Claude and
+Codex enabled (its hover names the missing one); **Single Harness** shows whichever
+provider is enabled. A role that does not run in a scenario renders an em dash, never a
+fabricated model — the Flagged Second Seat, for one, exists only under Dual.
+
+Changing a cell writes an override through `settings.setRoleAssignment`. Three things
+are true of that write:
+
+- It is **model and effort only**. The harness is never a stored field: it derives from
+  the resolved model's provider, so an override cannot pin an incoherent model/harness pair.
+- It is **per (role, scenario)** — Rai's ruling of 2026-08-28. Editing a cell in Dual
+  moves the `dual` scenario and nothing else; `claudeOnly` and `codexOnly` keep their
+  own values, whether those are council defaults or their own overrides. Editing one
+  scenario never moves a sibling.
+- It is a plain config write. An overridden cell carries an **Overridden** chip, and
+  **Reset to default** clears the override so the council table answers again. Nothing is
+  copied back on reset — the layer is dropped, so a later table change reaches the cell.
+
+Overrides live in the viewer's `client-settings.json` under `routing.task`, keyed by the
+council job id and then the scenario. An install that never changed a mapping has no
+`routing` key at all, and clearing the last override removes it again. A malformed
+config refuses the write rather than overwriting unreadable bytes.
+
+Model Mappings changes **which model carries a role**. It does not add council jobs,
+change the versioned default tables, or persist which providers are available — provider
+availability is detected, not configured.
 
 Device pairing lives on the This Machine card, because a pairing bootstraps a
 connection to this machine's daemon. See [Device pairing](#device-pairing).

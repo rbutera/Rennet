@@ -1456,7 +1456,7 @@ export interface CouncilOverridePick {
  * supported by construction so #28 attaches without a core change.
  */
 export interface CouncilOverrides {
-  readonly task?: Readonly<Record<CouncilJobId, CouncilOverridePick>>;
+  readonly task?: Partial<Readonly<Record<CouncilJobId, CouncilOverridePick>>>;
   readonly tier?: Partial<Readonly<Record<CouncilTier, CouncilOverridePick>>>;
 }
 

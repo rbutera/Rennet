@@ -4,6 +4,8 @@ import type { RenderedHunkOccurrence } from "./delta/citations";
 import { anchorSideSchema, anchorSpanSchema } from "./delta/citations";
 import type {
   CiSignal,
+  CouncilEffort,
+  CouncilModel,
   DeltaDigestResult,
   DispositionAnchor,
   FindingAgreement,
@@ -1606,6 +1608,114 @@ export const coachMarksSchema = z.object({
 });
 export type CoachMarks = z.infer<typeof coachMarksSchema>;
 
+// ── Model-council review roles on the wire (C16, #485) ───────────────────────
+//
+// `app-ui` cannot import `@rennet/core`, so the council's role→model assignments
+// reach the Review settings surface only through `settings.get` (read) and
+// `settings.setRoleAssignment` (write). These schemas are that boundary: the
+// wire mirror of core's `resolveReviewRoles` output, each scenario cell carrying
+// `{ value, layer }` provenance — an honest-`null` value where a role does not
+// run in that scenario (never a fabricated pick, Rule Zero).
+
+/**
+ * The council model set (domain `CouncilModel`). `as const satisfies` pins the
+ * enum to the domain union, so a value the resolver can emit but the wire cannot
+ * carry is a compile error — the wire never silently drops a valid pick.
+ */
+const COUNCIL_MODELS = [
+  "haiku",
+  "sonnet-5",
+  "opus-4.8",
+  "gpt-5.5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+] as const satisfies readonly CouncilModel[];
+export const councilModelSchema = z.enum(COUNCIL_MODELS);
+
+/** The effort knob (domain `CouncilEffort`); pinned to the union like the models. */
+const COUNCIL_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly CouncilEffort[];
+export const councilEffortSchema = z.enum(COUNCIL_EFFORTS);
+
+/** One model+effort pick (domain `CouncilPick`). Model + effort only — no harness (#89). */
+export const councilPickSchema = z.object({
+  model: councilModelSchema,
+  effort: councilEffortSchema,
+});
+export type CouncilPickWire = z.infer<typeof councilPickSchema>;
+
+/**
+ * A per-field routing override (domain `CouncilOverridePick`): sets model and/or
+ * effort only, harness always derives from the resolved model's provider (#89).
+ */
+export const councilOverridePickSchema = z.object({
+  model: councilModelSchema.optional(),
+  effort: councilEffortSchema.optional(),
+});
+
+/**
+ * Which layer a resolved cell came from, collapsed to what the surface needs:
+ * `default` — the council table stands; `override` — a `routing.task` entry won.
+ * Maps from core's `ResolutionSource` (`task-override` → `override`, else
+ * `default`); the surface derives "is this a default?" straight off this.
+ */
+export const reviewRoleLayerSchema = z.enum(["default", "override"]);
+export type ReviewRoleLayer = z.infer<typeof reviewRoleLayerSchema>;
+
+/**
+ * One resolved scenario cell: the pick and its provenance, or an honest-`null`
+ * value where the role does not run in this scenario (the Flagged Second Seat in
+ * `claudeOnly`/`codexOnly`). `null` is the em-dash the surface renders — never a
+ * guessed model.
+ */
+export const reviewRoleCellSchema = z.object({
+  value: councilPickSchema.nullable(),
+  layer: reviewRoleLayerSchema,
+});
+export type ReviewRoleCell = z.infer<typeof reviewRoleCellSchema>;
+
+/**
+ * One review role resolved across all three availability scenarios. `id`/`label`/
+ * `hint` are the surface copy (from core's `REVIEW_ROLE_CATALOGUE`); `dual` is the
+ * `both` scenario. An additive-optional `reviewRoles` on `settings.get` carries an
+ * array of these; `settings.setRoleAssignment` returns the re-resolved array.
+ */
+export const reviewRoleMappingSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  hint: z.string(),
+  dual: reviewRoleCellSchema,
+  claudeOnly: reviewRoleCellSchema,
+  codexOnly: reviewRoleCellSchema,
+});
+export type ReviewRoleMapping = z.infer<typeof reviewRoleMappingSchema>;
+
+/**
+ * The scenario a `settings.setRoleAssignment` edit targets — the wire's per-column
+ * name (`dual` is the `both` table). The write maps this back to the core scenario.
+ */
+export const reviewRoleScenarioSchema = z.enum(["dual", "claudeOnly", "codexOnly"]);
+export type ReviewRoleScenario = z.infer<typeof reviewRoleScenarioSchema>;
+
+/**
+ * One council job's routing overrides, keyed BY SCENARIO (Rai, 2026-08-28). Each
+ * column owns its own cell: an edit in `codexOnly` moves the Codex-only column and
+ * nothing else, and clearing it falls back to that scenario's council-table default
+ * while the sibling columns keep whatever they hold. Every cell is optional — a job
+ * with no override at all carries no entry.
+ */
+export const councilScenarioOverridesSchema = z.object({
+  dual: councilOverridePickSchema.optional(),
+  claudeOnly: councilOverridePickSchema.optional(),
+  codexOnly: councilOverridePickSchema.optional(),
+});
+export type CouncilScenarioOverrides = z.infer<typeof councilScenarioOverridesSchema>;
+
 /**
  * Client settings — viewer preferences, stored at `~/.rennet/client-settings.json`
  * (B10 #476). These are personal, app-side choices that live OUTSIDE the config
@@ -1623,6 +1733,17 @@ export const clientSettingsSchema = z.object({
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
   /** Onboarding coach-mark state (C13): seen marks + skip-all. Additive-optional like the rest. */
   coachmarks: coachMarksSchema.optional(),
+  /**
+   * Model-council routing overrides (C16, #485). `task` keys by council job id →
+   * that job's PER-SCENARIO override cells (Rai's 2026-08-28 ruling), each a
+   * model+effort pick the resolver layers over that scenario's table default
+   * (#89: no harness field). Additive-optional: an untouched install omits it,
+   * clearing a job's last cell drops the job entry, and clearing the last job
+   * drops the slice. Written by `settings.setRoleAssignment`, one cell per edit.
+   */
+  routing: z
+    .object({ task: z.record(z.string(), councilScenarioOverridesSchema).optional() })
+    .optional(),
 });
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
 
@@ -1799,6 +1920,15 @@ export const settingsViewSchema = z.object({
    * optional: an old `settings.get` caller ignores it, an untouched engine may omit it.
    */
   daemonHosts: z.array(daemonHostSectionSchema).optional(),
+  /**
+   * The model-council review-role mappings (C16, #485) — the eight roles, each
+   * resolved across `dual`/`claudeOnly`/`codexOnly` with `{ value, layer }`
+   * provenance. The READ rides `settings.get` (additive-optional, like `keybindings`/
+   * `coachmarks`/`daemonHosts` — one fewer command). Honest-present: the council
+   * tables are static, so this carries the eight roles at their defaults even with
+   * no override set; a role that does not run in a scenario carries a `null` cell.
+   */
+  reviewRoles: z.array(reviewRoleMappingSchema).optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 

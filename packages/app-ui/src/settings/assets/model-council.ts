@@ -7,11 +7,7 @@ import type { ReviewRole } from "../data";
 // "Reset to default" restores and "changed from default" compares against).
 //
 // Ported verbatim from the spike's `lib/settings-data.ts` so the table reads
-// exactly as the visual truth does. These are the Model Council's job catalogue
-// (#460/#464, `packages/core/src/model-council.ts`) rendered for the surface —
-// app-ui cannot import `core`, so the presentation copy lives here. When B10 lands
-// the council serves detected models + the live defaults through the settings
-// projection (reconciliation 5); until then this catalogue is the honest reference.
+// exactly as the visual truth does.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The council's model set — bare ids, exactly as the mappings tables use them. */
@@ -19,11 +15,19 @@ export const CLAUDE_MODELS = ["haiku", "sonnet-5", "opus-4.8"] as const;
 export const CODEX_MODELS = ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"] as const;
 
 /**
- * The council's per-role defaults across the three availability scenarios (Dual /
- * Claude-only / Codex-only). `null` means the role does not run in that scenario —
- * the surface renders an em dash, never a fabricated assignment (claim 624). Roles
- * cover the #460/#464 catalogue: Orchestrator, Context-Map Workers, Confirmation
- * Worker, Lens Drafters, Flagged Second Seat, Adjudication, Post-Process, Utility.
+ * TEST FIXTURE ONLY — a plausible shape, NOT the council's values.
+ *
+ * ⚠️ Do NOT render this. It is a hand-copied snapshot of the council tables with
+ * nothing pinning it to `packages/core/src/model-council.ts`, and it HAS already
+ * drifted: six cells (the whole Orchestrator and Confirmation Worker rows, models
+ * and efforts both) disagreed with core when C16 checked. The real values are
+ * served — `settings.get` resolves the live tables and is honest-present at the
+ * source, so no product code needs a local copy and none may have one.
+ *
+ * It survives only to seed `reviewRoles` in DOM tests, where the exact models are
+ * irrelevant and only the shape (three scenario cells, `null` where a role does not
+ * run) matters. A `null` cell renders an em dash, never a fabricated assignment
+ * (claim 624).
  */
 export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
   {
@@ -92,17 +96,8 @@ export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
   },
 ];
 
-/** The default assignment for one role in one scenario, or `null` if it does not run. */
-export function defaultAssignment(roleId: string, scenario: "dual" | "claudeOnly" | "codexOnly") {
-  return REVIEW_ROLE_DEFAULTS.find((role) => role.id === roleId)?.[scenario] ?? null;
-}
-
-/** Whether a role's three scenarios all match the council default (drives "Reset to default"). */
-export function isRoleDefault(role: ReviewRole): boolean {
-  const fallback = REVIEW_ROLE_DEFAULTS.find((r) => r.id === role.id);
-  if (!fallback) return true;
-  return (["dual", "claudeOnly", "codexOnly"] as const).every(
-    (key) =>
-      role[key]?.model === fallback[key]?.model && role[key]?.effort === fallback[key]?.effort,
-  );
-}
+// `defaultAssignment` / `isRoleDefault` are GONE (C16, #485). Both compared a served
+// role against this copied table to answer "is this a default?"; the wire now carries
+// each cell's own `layer` provenance, so the surface reads the answer instead of
+// re-deriving it — and Reset clears the override (`null`) rather than writing a copy
+// of the table back.
