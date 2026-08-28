@@ -28,11 +28,17 @@ export interface KnowledgeSwarmRuntimeDeps {
   readonly resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>;
   /** The locus-aware codex utility executor probe (null when no `codex` resolves). */
   readonly resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>;
-  /** The existing progress push (same channel the processing screen renders). */
-  readonly narrate: (event: ProjectProcessEvent) => void;
+  /**
+   * The existing progress push (same channel the processing screen renders),
+   * scoped to the project whose pass is running — the channel used to be
+   * process-global, so one project's swarm narrated onto every project's screen.
+   */
+  readonly narrate: (projectId: string, event: ProjectProcessEvent) => void;
 }
 
 export interface KnowledgeSwarmRunInput {
+  /** The project this run narrates under. */
+  readonly projectId: string;
   readonly repoKey: string;
   readonly repoRoot: string;
   /** The base OID the snapshot is fresh at (the run's target). */
@@ -67,6 +73,9 @@ export function knowledgeStageLine(
       ...(detail === undefined ? {} : { detail }),
     };
   }
+  // `aborted` is narrated as what it is: the worker never ran, because an
+  // earlier one failed and the pass is all-or-nothing. Calling that "failed"
+  // would report a failure for work that was never attempted.
   const verb =
     event.status === "queued"
       ? "queued"
@@ -74,7 +83,9 @@ export function knowledgeStageLine(
         ? "running"
         : event.status === "done"
           ? "done"
-          : "failed";
+          : event.status === "aborted"
+            ? "not run"
+            : "failed";
   return {
     kind: "stage",
     repo,
@@ -87,30 +98,76 @@ export function knowledgeStageLine(
   };
 }
 
+/**
+ * The honest end-of-pass line for a non-`ok` outcome. Every non-`ok` variant of
+ * `KnowledgeSwarmOutcome` carries a `reason`; dropping it (the pass used to be
+ * collapsed to a boolean at the composition root) is why a whole run could die
+ * on "Prompt is too long" with nothing said anywhere. `ok` needs no line — the
+ * verify progress event already reported its counts.
+ */
+export function knowledgeOutcomeLine(
+  repo: string,
+  outcome: KnowledgeSwarmOutcome,
+): ProjectProcessEvent | undefined {
+  if (outcome.status === "ok") return undefined;
+  const note =
+    outcome.status === "skipped"
+      ? "Knowledge pass skipped"
+      : outcome.status === "snapshot-unavailable"
+        ? "Knowledge pass has no fresh snapshot"
+        : "Knowledge pass failed";
+  return { kind: "stage", repo, stage: "knowledge", note, detail: outcome.reason };
+}
+
 /** Build the scheduler over the composition root's stores and harness probes. */
 export function createKnowledgeSwarmRuntime(
   deps: KnowledgeSwarmRuntimeDeps,
 ): KnowledgeSwarmRuntime {
   return {
     async runForRepo(input: KnowledgeSwarmRunInput): Promise<KnowledgeSwarmOutcome> {
-      const [claudePort, codexExecutor] = await Promise.all([
-        deps.resolveClaudePort(input.repoRoot),
-        deps.resolveCodexExecutor(input.repoRoot),
-      ]);
-      if (!claudePort && !codexExecutor) {
-        return { status: "failed", reason: "no harness is available to run the knowledge swarm" };
-      }
       const repoLabel = basename(input.repoRoot);
-      return runKnowledgeSwarmForRepo({
-        reader: new ProjectContextReader(deps.store),
-        knowledgeStore: new KnowledgeStore(deps.store),
-        claudePort,
-        codexExecutor,
-        repoKey: input.repoKey,
-        repoRoot: input.repoRoot,
-        baseOid: input.toOid,
-        onProgress: (event) => deps.narrate(knowledgeStageLine(repoLabel, event)),
-      });
+      const narrated = (outcome: KnowledgeSwarmOutcome): KnowledgeSwarmOutcome => {
+        const line = knowledgeOutcomeLine(repoLabel, outcome);
+        if (line) deps.narrate(input.projectId, line);
+        return outcome;
+      };
+      // Every THROWN failure becomes the same typed, narrated outcome the
+      // resolved ones get. The runtime is the one place every swarm path routes
+      // through, and the throws are real: a harness probe can reject, and a
+      // Claude seat's `createSession` runs BEFORE the adapter turn's own `try`.
+      // Left uncaught it escaped to the rehydration loop's `onError`, which
+      // production wires to `console.error` — the user saw nothing, while the
+      // typed path narrated. Same failure, two visibilities, is the bug.
+      try {
+        const [claudePort, codexExecutor] = await Promise.all([
+          deps.resolveClaudePort(input.repoRoot),
+          deps.resolveCodexExecutor(input.repoRoot),
+        ]);
+        if (!claudePort && !codexExecutor) {
+          return narrated({
+            status: "failed",
+            reason: "no harness is available to run the knowledge swarm",
+          });
+        }
+        return narrated(
+          await runKnowledgeSwarmForRepo({
+            reader: new ProjectContextReader(deps.store),
+            knowledgeStore: new KnowledgeStore(deps.store),
+            claudePort,
+            codexExecutor,
+            repoKey: input.repoKey,
+            repoRoot: input.repoRoot,
+            baseOid: input.toOid,
+            onProgress: (event) =>
+              deps.narrate(input.projectId, knowledgeStageLine(repoLabel, event)),
+          }),
+        );
+      } catch (error) {
+        return narrated({
+          status: "failed",
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     },
   };
 }

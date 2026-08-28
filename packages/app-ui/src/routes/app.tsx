@@ -7,6 +7,7 @@ import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider, useCommand, useMutation } from "../data";
 import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
+import { BackgroundNarration } from "../project/indexing/background-narration";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
 import { RoundsSourceProvider, useLiveRoundsSource } from "../rounds/rounds-data";
@@ -285,6 +286,10 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
   return (
     <BridgeProvider bridge={bridge}>
       <AppearanceSync />
+      {/* Background narration is collected ABOVE the route switch so a knowledge
+          pass that fails while the reader is elsewhere is still there when the
+          indexing screen opens (#592). Renders nothing. */}
+      <BackgroundNarration />
       <ThemePrefProvider>
         <Router hook={history?.hook} searchHook={history?.searchHook}>
           <StartupGate>

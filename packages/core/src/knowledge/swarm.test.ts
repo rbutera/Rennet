@@ -188,6 +188,250 @@ describe("runMapVerify", () => {
     expect(verify.droppedStatements).toBe(1);
   });
 
+  it("chunks the seat's prompt so a large swarm never builds one unbounded turn", async () => {
+    // The shipped bug: every partition's statements went into ONE prompt. On a
+    // real repository (199 partitions, ~1900 statements) that turn died with
+    // "Prompt is too long" and the entire run's knowledge was discarded.
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: Array.from({ length: 7 }, (_, index) =>
+            rawStatement({ claim: `claim number ${index}` }),
+          ),
+        }),
+    });
+    const ids = worker.statements.map((entry) => entry.statement.id);
+    expect(new Set(ids).size).toBe(7);
+
+    const prompts: string[] = [];
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 3,
+      runTurn: async (prompt) => {
+        prompts.push(prompt);
+        // The seat can only adjudicate what its OWN prompt carried.
+        return emitted({
+          verdicts: ids
+            .filter((id) => prompt.includes(id))
+            .map((id) => ({ id, verdict: "confirmed" })),
+          crossCutting: [],
+        });
+      },
+    });
+
+    expect(prompts).toHaveLength(3); // ceil(7 / 3)
+    for (const prompt of prompts) {
+      expect(ids.filter((id) => prompt.includes(id)).length).toBeLessThanOrEqual(3);
+    }
+    // Every id appears in exactly one prompt, and every verdict merges back.
+    expect(prompts.flatMap((prompt) => ids.filter((id) => prompt.includes(id))).sort()).toEqual(
+      [...ids].sort(),
+    );
+    expect(verify.status).toBe("ok");
+    expect(verify.confirmed).toBe(7);
+    expect(verify.set?.statements.every((s) => s.status === "confirmed")).toBe(true);
+  });
+
+  it("a single failed chunk fails the whole pass (never a partial verify)", async () => {
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: Array.from({ length: 4 }, (_, index) =>
+            rawStatement({ claim: `claim number ${index}` }),
+          ),
+        }),
+    });
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 1,
+      concurrency: 1,
+      maxRetries: 0,
+      runTurn: async () => {
+        turn += 1;
+        return turn === 2
+          ? { status: "failed", message: "Prompt is too long" }
+          : emitted({ verdicts: [], crossCutting: [] });
+      },
+    });
+    expect(verify).toMatchObject({ status: "failed", failureReason: "Prompt is too long" });
+    expect(verify.set).toBeUndefined();
+    // …and the two chunks still queued behind it never ran: the pass is
+    // all-or-nothing, so once one chunk fails every later turn is spend on a
+    // verdict the first turn already decided.
+    expect(turn).toBe(2);
+  });
+
+  it("dedups a statement id BEFORE chunking, so it cannot straddle a boundary", async () => {
+    // Two partitions can mint the same content-addressed id (the delta path also
+    // feeds `prior:reverify` beside a fresh run of the slice that owns it). When
+    // the raw entries were chunked, one id landed in TWO chunks, could come back
+    // with conflicting verdicts, and the later chunk silently overwrote the
+    // earlier one. The duplicate here sits on opposite sides of the boundary.
+    const mint = (statements: Record<string, unknown>[]) =>
+      runPartitionWorker({
+        slice: SLICE,
+        snapshot: SNAPSHOT,
+        provenance: PROVENANCE,
+        runTurn: async () => emitted({ statements }),
+      });
+    const duplicate = rawStatement();
+    const first = await mint([
+      duplicate,
+      rawStatement({ claim: "x one" }),
+      rawStatement({ claim: "x two" }),
+    ]);
+    const second = await mint([
+      rawStatement({ claim: "y one" }),
+      rawStatement({ claim: "y two" }),
+      duplicate,
+    ]);
+    const duplicateId = first.statements[0]?.statement.id;
+    expect(duplicateId).toBe(second.statements[2]?.statement.id);
+
+    const prompts: string[] = [];
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [first, second],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 3,
+      concurrency: 1,
+      runTurn: async (prompt) => {
+        prompts.push(prompt);
+        turn += 1;
+        // The first turn confirms what it sees, the second rejects — so an id in
+        // both chunks would come back with two opposed verdicts.
+        const verdict = turn === 1 ? "confirmed" : "rejected";
+        const ids = [...prompt.matchAll(/^- id=(\S+)$/gm)].map(([, id]) => id);
+        return emitted({ verdicts: ids.map((id) => ({ id, verdict })), crossCutting: [] });
+      },
+    });
+
+    // Unchunked at 3-per-turn, the six raw entries would straddle: chunk 1
+    // [dup, x1, x2], chunk 2 [y1, y2, dup]. Deduped first, there are five.
+    expect(prompts.filter((prompt) => prompt.includes(`id=${duplicateId}`))).toHaveLength(1);
+    expect(verify.status).toBe("ok");
+    expect(verify.set?.statements).toHaveLength(5);
+    expect(verify.set?.statements.find((s) => s.id === duplicateId)?.status).toBe("confirmed");
+    // No id is adjudicated twice: three confirmed in chunk 1, two rejected in chunk 2.
+    expect(verify.confirmed).toBe(3);
+    expect(verify.rejected).toBe(2);
+  });
+
+  it("runs a bounded cross-boundary pass over the chunks' own cross-cutting output", async () => {
+    // Chunking cost the seat any pattern whose halves landed in different turns.
+    // The second pass reads the chunks' OUTPUTS — never their hypotheses — so it
+    // can see across the boundary without rebuilding the prompt that overflowed.
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: Array.from({ length: 4 }, (_, index) =>
+            rawStatement({ claim: `claim number ${index}` }),
+          ),
+        }),
+    });
+    const prompts: string[] = [];
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 2,
+      concurrency: 1,
+      runTurn: async (prompt) => {
+        prompts.push(prompt);
+        turn += 1;
+        return emitted({
+          verdicts: [],
+          crossCutting: [rawStatement({ claim: `chunk-local pattern ${turn}` })],
+        });
+      },
+    });
+
+    // Two hypothesis chunks, then exactly one synthesis turn over their output.
+    expect(prompts).toHaveLength(3);
+    const boundary = prompts[2] ?? "";
+    expect(boundary).toContain("CROSS-BOUNDARY");
+    expect(boundary).toContain("chunk-local pattern 1");
+    expect(boundary).toContain("chunk-local pattern 2");
+    // Bounded: it carries a digest LINE per chunk, not the chunks' hypotheses.
+    expect(boundary).toContain("chunk 1: 2 hypotheses");
+    for (const entry of worker.statements) {
+      expect(boundary).not.toContain(entry.statement.claim);
+    }
+    // Its mint lands in the set beside the chunk-local ones.
+    expect(verify.status).toBe("ok");
+    expect(verify.crossCutting).toBe(3);
+    const claims = verify.set?.statements.map((s) => s.claim) ?? [];
+    expect(claims).toContain("chunk-local pattern 3");
+  });
+
+  it("skips the cross-boundary pass when one chunk already saw everything", async () => {
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () => emitted({ statements: [rawStatement()] }),
+    });
+    let turns = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () => {
+        turns += 1;
+        return emitted({ verdicts: [], crossCutting: [rawStatement({ claim: "one pattern" })] });
+      },
+    });
+    expect(turns).toBe(1); // nothing straddles a boundary that does not exist
+    expect(verify.status).toBe("ok");
+  });
+
+  it("keeps a good run when the cross-boundary pass fails (best-effort, not fatal)", async () => {
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: [rawStatement(), rawStatement({ claim: "second claim" })],
+        }),
+    });
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 1,
+      concurrency: 1,
+      maxRetries: 0,
+      runTurn: async () => {
+        turn += 1;
+        return turn > 2
+          ? { status: "failed", message: "Prompt is too long" }
+          : emitted({ verdicts: [], crossCutting: [rawStatement({ claim: `pattern ${turn}` })] });
+      },
+    });
+    // Both hypothesis chunks succeeded; only the bonus synthesis turn died.
+    expect(verify.status).toBe("ok");
+    expect(verify.crossCutting).toBe(2);
+    expect(verify.set?.statements).toHaveLength(4);
+  });
+
   it("dedups by statement id across workers and cross-cutting re-mints", async () => {
     const results = await workerResults();
     const duplicate = results[0]?.statements[0]?.statement;

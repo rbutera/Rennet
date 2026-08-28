@@ -7,7 +7,7 @@ import { useCoachAnchor, useMergedRefs } from "../../coach/registry";
 import { Icon } from "../../components/icon";
 import { useBridge, useCommand, useMutation } from "../../data";
 import { newChatPath, projectMapPath } from "../../routes/url";
-import { useRennetStore } from "../../store";
+import { selectBackgroundEvents, useRennetStore } from "../../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Project indexing view (C12 §10.4/§10.5). The single surface where everything after
@@ -173,9 +173,9 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
   // different project resets the timeline before re-attaching.
   useEffect(() => {
     const commandId = processCommandId(projectId);
-    const unsubscribe = bridge.onProgress?.(commandId, (event) => {
+    const append = (event: ProjectProcessEvent) =>
       setEvents((prior) => [...prior, { id: prior.length, event }]);
-    });
+    const unsubscribe = bridge.onProgress?.(commandId, append);
     if (startedFor.current !== projectId) {
       startedFor.current = projectId;
       setEvents([]);
@@ -228,7 +228,17 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
     if (done) ctaRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [done]);
 
-  const isLast = (index: number) => index === events.length - 1 && !done;
+  // The build's own narration, then the background pass's. The background half is
+  // read from the STORE, not from a subscription this screen owns: the swarm runs
+  // for minutes after `project.process` resolves, so a screen-owned listener only
+  // caught the lines a reader happened to be present for (#592).
+  const background = useRennetStore(selectBackgroundEvents(projectId));
+  const timeline = useMemo(
+    () => [...events, ...background.map((event, index) => ({ id: events.length + index, event }))],
+    [events, background],
+  );
+
+  const isLast = (index: number) => index === timeline.length - 1 && !done;
 
   return (
     <section
@@ -263,7 +273,7 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
 
           {/* The map build timeline — the one honest `project.process` event stream. */}
           <div className="flex flex-col gap-2">
-            {events.map((item, index) => {
+            {timeline.map((item, index) => {
               const line = narrationLabel(item.event);
               if (!line) return null;
               return (
@@ -275,7 +285,7 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
                 />
               );
             })}
-            {!done && events.length === 0 ? (
+            {!done && timeline.length === 0 ? (
               <StepLine label="Indexing the project" running={true} />
             ) : null}
           </div>

@@ -1,4 +1,5 @@
 import {
+  boundedAll,
   buildPartitions,
   type CodexExecutor,
   dedupById,
@@ -224,7 +225,12 @@ export type KnowledgeSwarmProgress =
       /** 1-based position among the slices this run executes. */
       readonly index: number;
       readonly total: number;
-      readonly status: "queued" | "running" | "done" | "failed";
+      /**
+       * `aborted` means the worker never ran: an earlier worker failed and the
+       * pass is all-or-nothing, so the rest were abandoned rather than spent.
+       * It is deliberately NOT `failed` — a worker that never started did not.
+       */
+      readonly status: "queued" | "running" | "done" | "failed" | "aborted";
       /** Minted statement count, present on `done`. */
       readonly statements?: number;
     }
@@ -235,6 +241,9 @@ export type KnowledgeSwarmProgress =
       readonly rejected?: number;
       readonly crossCutting?: number;
     };
+
+/** One slice's fate: the worker's own result, or abandoned before it ran. */
+type SliceOutcome = PartitionWorkerResult | { readonly kind: "aborted"; readonly sliceId: string };
 
 /** Everything one swarm run needs, injected by the composition root. */
 export interface KnowledgeSwarmDeps {
@@ -357,22 +366,6 @@ function turnFor(
   );
 }
 
-/** Run `tasks` with at most `limit` in flight (order of completion is irrelevant). */
-async function boundedAll<T>(tasks: readonly (() => Promise<T>)[], limit: number): Promise<T[]> {
-  const results = new Array<T>(tasks.length);
-  let next = 0;
-  const lanes = Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, async () => {
-    while (next < tasks.length) {
-      const index = next;
-      next += 1;
-      const task = tasks[index];
-      if (task) results[index] = await task();
-    }
-  });
-  await Promise.all(lanes);
-  return results;
-}
-
 /**
  * Run the council-routed knowledge swarm for a repo and persist the set.
  * Gates the snapshot fresh (typed `snapshot-unavailable`, never a fabricated
@@ -476,26 +469,31 @@ export async function runKnowledgeSwarmForRepo(
       status: "queued",
     });
   }
-  const results = await boundedAll(
-    slicesToRun.map((slice, index) => async () => {
-      deps.onProgress?.({
-        kind: "partition",
-        sliceId: slice.id,
-        index: index + 1,
-        total,
-        status: "running",
-      });
+  // The pass is all-or-keep-prior, so the FIRST failed worker already decides the
+  // run: every worker still queued behind it is a live model turn spent on a
+  // verdict that is in. On a real repository that is up to 198 abandoned workers.
+  // An abandoned worker reports `aborted`, never `failed` — it did not run, and
+  // narrating "worker 7/199 failed" for a worker that never started is a lie.
+  let firstWorkerFailure: string | undefined;
+  const outcomes = await boundedAll<SliceOutcome>(
+    slicesToRun.map((slice, index) => async (): Promise<SliceOutcome> => {
+      const progress = { kind: "partition", sliceId: slice.id, index: index + 1, total } as const;
+      if (firstWorkerFailure !== undefined) {
+        deps.onProgress?.({ ...progress, status: "aborted" });
+        return { kind: "aborted", sliceId: slice.id };
+      }
+      deps.onProgress?.({ ...progress, status: "running" });
       const result = await runPartitionWorker({
         slice,
         snapshot,
         provenance,
         runTurn: worker.runTurn,
       });
+      if (result.status === "failed") {
+        firstWorkerFailure ??= result.failureReason ?? "the partition worker did not complete";
+      }
       deps.onProgress?.({
-        kind: "partition",
-        sliceId: slice.id,
-        index: index + 1,
-        total,
+        ...progress,
         status: result.status === "ok" ? "done" : "failed",
         ...(result.status === "ok" ? { statements: result.statements.length } : {}),
       });
@@ -503,14 +501,26 @@ export async function runKnowledgeSwarmForRepo(
     }),
     deps.concurrency ?? 4,
   );
-  const failedPartitions = results.filter((result) => result.status === "failed").length;
-  if (failedPartitions > 0) {
-    // All-or-keep-prior (review P1): a partial swarm must never REPLACE the
-    // store — a set silently missing failed slices' knowledge reads as complete.
-    // The prior set stays; the scheduler's retry runs the whole delta again.
+
+  // All-or-keep-prior (review P1): a partial swarm must never REPLACE the store —
+  // a set silently missing failed slices' knowledge reads as complete. The prior
+  // set stays; the scheduler's retry runs the whole delta again.
+  const results: PartitionWorkerResult[] = [];
+  let failedPartitions = 0;
+  let abortedPartitions = 0;
+  for (const outcome of outcomes) {
+    if ("kind" in outcome) abortedPartitions += 1;
+    else if (outcome.status === "failed") failedPartitions += 1;
+    else results.push(outcome);
+  }
+  if (failedPartitions > 0 || abortedPartitions > 0) {
+    const abandoned =
+      abortedPartitions > 0
+        ? `; ${abortedPartitions} not run (the pass is all-or-nothing, so they were abandoned)`
+        : "";
     return {
       status: "failed",
-      reason: `${failedPartitions} of ${results.length} partition workers failed`,
+      reason: `${failedPartitions} of ${total} partition workers failed${abandoned}`,
     };
   }
 

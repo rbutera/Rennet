@@ -60,7 +60,9 @@ export type { SignalSlice, SignalState } from "./signal";
 export { createSignalSlice, selectSignalAnimating } from "./signal";
 export type { CommandMenuMode, UiSlice, UiState } from "./ui";
 export {
+  BACKGROUND_EVENT_LIMIT,
   createUiSlice,
+  selectBackgroundEvents,
   selectDialogOpen,
   selectFolded,
   selectProcessingProjectIds,

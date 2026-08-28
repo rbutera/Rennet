@@ -198,8 +198,8 @@ import {
 import { PairingStore } from "./pairing-store";
 import {
   createProactiveRehydration,
-  PROACTIVE_REHYDRATION_COMMAND_ID,
   type ProactiveRehydration,
+  proactiveRehydrationCommandId,
 } from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
 import { buildProjectionContext } from "./projection";
@@ -1551,14 +1551,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The knowledge-swarm scheduler (#460, B06): server/runtime/ is the wiring
   // point (reconciliation 3). It shares the rehydration progress push, so the
   // swarm's `knowledge`-stage lines land on the same screen as the build stages.
+  // Fan ONE project's background narration to every connected client, on that
+  // project's own channel. The optional caller hook stays for non-WS embedders;
+  // the WS listener reaches the sockets that replaced the per-window
+  // `webContents.send` broadcast (#378). The id is per-project because the
+  // channel used to be process-global: every project's background pass landed
+  // on every project's build timeline.
+  const narrateBackground = (projectId: string, event: ProjectProcessEvent): void => {
+    const commandId = proactiveRehydrationCommandId(projectId);
+    options.broadcastProgress?.(commandId, event);
+    wsListener?.broadcastProgress(commandId, event);
+  };
   const knowledgeSwarmRuntime = createKnowledgeSwarmRuntime({
     store: snapshotStore,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
-    narrate: (event) => {
-      options.broadcastProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, event);
-      wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
-    },
+    narrate: narrateBackground,
   });
   // The project-scout scheduler (#461 §4, B7 cluster 4): shares the processing
   // progress push; the deterministic pass runs even with no harness installed.
@@ -1567,30 +1575,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     gitForRepo,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
-    narrate: (event) => {
-      options.broadcastProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, event);
-      wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
-    },
+    narrate: narrateBackground,
   });
   rehydration = createProactiveRehydration({
     store: snapshotStore,
     generator: snapshotGenerator,
-    narrate: (event) => {
-      // Fan background rehydration out to every connected client. The optional
-      // caller hook stays for non-WS embedders; the WS listener reaches the sockets
-      // that replaced the per-window `webContents.send` broadcast (#378).
-      options.broadcastProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, event);
-      wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
-    },
+    narrate: narrateBackground,
+    // A background pass that throws is otherwise swallowed whole: with no
+    // `onError` the rehydration registry, the watcher start and the knowledge
+    // loop all had nowhere to put a failure.
+    onError: (error) => console.error("Proactive rehydration failed", error),
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
     // The knowledge pass is the council-routed partition swarm (#460, B06): the
     // swarm picks skip vs incremental vs full itself from the stored prior set's
     // identity, and its per-partition + verify lines ride the SAME rehydration
-    // progress push as the narrate above.
-    runKnowledgePass: async ({ repoKey, repoRoot, toOid }) => {
-      const outcome = await knowledgeSwarmRuntime.runForRepo({ repoKey, repoRoot, toOid });
-      return outcome.status === "ok" || outcome.status === "skipped";
-    },
+    // progress push as the narrate above. The typed outcome reaches the caller
+    // INTACT — collapsing it to a boolean dropped every failure reason.
+    runKnowledgePass: async ({ projectId, repoKey, repoRoot, toOid }) =>
+      knowledgeSwarmRuntime.runForRepo({ projectId, repoKey, repoRoot, toOid }),
   });
   // At launch, resume warming every project whose Repo Map already exists.
   for (const project of projectStore.list()) void rehydration.ensureForProject(project);
@@ -2272,6 +2274,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // overwrites detected facts). Fire-and-forget like the rehydration kick.
         const scoutRoot = processed.openPath || processed.path;
         void projectScoutRuntime.runForRepo({
+          projectId: processed.id,
           repoKey: repoKeyForRoot(scoutRoot),
           repoRoot: scoutRoot,
         });
