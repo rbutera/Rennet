@@ -111,7 +111,12 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
           >
             {/* C7 fills the dock's internals; the slot's lifetime IS the transcript-identity
               guarantee — the dock mounts once here and never unmounts on navigation. */}
-            <ChatDock />
+            {/* State 2 (C20): with the sidebar collapsed and the dock OPEN, the chat is
+              the leftmost pane and owns the corner slot — inline in its existing header
+              row. Gated on ownership, never on the dock existing: this slot stays
+              MOUNTED at width 0 + `inert` when closed, and an ungated mount here would
+              be an invisible second corner slot that steals the window's drag region. */}
+            <ChatDock corner={owner === "chat" ? <CornerSlot owner="chat" /> : null} />
           </div>
 
           {/* The divider — only on a session route with the chat open. */}
@@ -142,10 +147,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
             main view. It belongs to the LAYOUT, not `TopBar`, because every takeover
             route (settings, new chat, archived, map, indexing) has no top bar at all
             and would otherwise have no corner slot and no drag region. */}
-          {/* Cluster 3 narrows this to `owner === "floating"` once the chat header
-            hosts state 2's mount; until then a collapsed sidebar always floats, so the
-            one toggle is never off the screen. */}
-          {owner !== "sidebar" ? <CornerSlot owner="floating" /> : null}
+          {owner === "floating" ? <CornerSlot owner="floating" /> : null}
 
           {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
             its own visibility to `ui.openDialogs` and portals over the frame. Inside the
