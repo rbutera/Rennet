@@ -43,7 +43,7 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
 - [x] 1.3 `packages/server/src/dispatch/forge.ts` (+ register in `dispatch/index.ts`): the `forge.detect`
   handler calling `deps.detectForges()` (add `detectForges(): Promise<DetectedForge[]>` to `DispatchRuntime`,
   composed over `forge-discovery.ts` with the real `gh` probes), mirroring `dispatch/harness.ts`.
-- [ ] 1.4 Unit + real tests: `forge-discovery.ts` returns `available` for a stubbed authed `gh`,
+- [x] 1.4 Unit + real tests: `forge-discovery.ts` returns `available` for a stubbed authed `gh`,
   `not-authenticated` for present-but-unauthed, and — **positive control (must fail if broken)** — with the
   `gh` binary absent from the injected PATH the forge is **`not-installed` / omitted, never a stale hit**
   (the rename-out-of-PATH invariant at unit scale). `commands.test.ts` sees `forge.detect`. Cluster gate green. Commit.

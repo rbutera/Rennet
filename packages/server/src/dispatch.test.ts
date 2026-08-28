@@ -2571,6 +2571,28 @@ describe("createDispatch — front door (issue #29)", () => {
     expect(out.detected.map((harness) => harness.id)).toEqual(["claude", "codex"]);
   });
 
+  it("forge.detect returns the detected forge CLIs for sourceControlByHost", async () => {
+    const { dispatch } = frontDoorHarness({
+      detectedForges: [
+        {
+          id: "github",
+          version: "2.62.0",
+          status: "available",
+          detail: "Authenticated with GitHub through the `gh` CLI.",
+        },
+      ],
+    });
+    const out = (await dispatch("forge.detect", {})) as { detected: DetectedForge[] };
+    expect(out.detected).toEqual([
+      {
+        id: "github",
+        version: "2.62.0",
+        status: "available",
+        detail: "Authenticated with GitHub through the `gh` CLI.",
+      },
+    ]);
+  });
+
   it("project.process streams the host's narration, then emits a terminal done, and returns the summary", async () => {
     const summary: ProcessedRepoSummary = {
       repo: "atlas",
