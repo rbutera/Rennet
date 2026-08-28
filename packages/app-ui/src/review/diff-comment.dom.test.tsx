@@ -101,3 +101,87 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     expect(buttons).toHaveLength(2);
   });
 });
+
+// ── A HISTORICAL surface writes nothing into the review's keyspace (#571) ─────
+//
+// THE DEFECT THIS GUARDS, which this PR introduced and review caught: `DiffView` had only
+// ever been mounted over the review's own patchset, so `${path}:${line}` was unambiguous.
+// Wiring the round diff mounted the same surface over checkpoint-to-checkpoint line
+// numbers — a different coordinate system under the same key. Two silent losses follow:
+// a comment left on a past round reappears on the live diff over code nobody read, and a
+// request-change ask staged there REPLACES the live-diff ask at the same `path:line`
+// ("re-save replaces it"). Nothing errors. The reviewer's own words go without a trace.
+describe("a historical DiffView never touches the review's path:line keyspace (#571)", () => {
+  function mountHistorical() {
+    const history = memoryHistory("/s/x?view=diff&round=1");
+    return mount(
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <DiffView files={[FILE]} historical />
+      </Router>,
+    );
+  }
+
+  it("offers no comment gutter at all — the live surface does, so the difference is the flag", () => {
+    // The live surface: every new-side line carries the affordance.
+    const live = mountDiff();
+    expect(live.queryByLabelText("Comment on line 1")).toBeTruthy();
+    live.unmount();
+    // The historical surface: none of them do. Absent, not disabled.
+    const past = mountHistorical();
+    expect(past.queryByLabelText("Comment on line 1")).toBeNull();
+    expect(past.queryByLabelText("Comment on line 2")).toBeNull();
+    expect(past.container.querySelector("button[disabled]")).toBeNull();
+  });
+
+  it("does not PAINT the review's marks either — the read direction of the same lie", () => {
+    // A live-diff comment on line 1 and a live-diff ask on line 2, both real.
+    useRennetStore.getState().reviewActions.setCodeComment(PATH, 1, "live note");
+    useRennetStore.getState().reviewActions.stageAsk({
+      id: `${PATH}:2`,
+      anchor: `${PATH}:2`,
+      type: "request-change",
+      body: "live ask",
+    });
+    const { container } = mountHistorical();
+    // On the round's diff those lines are different code, so they wear neither mark.
+    expect(rowState(1, container)).toBe("context");
+    expect(rowState(2, container)).toBe("add");
+    cleanup();
+  });
+
+  // THE HARM, EXECUTED. This drives whatever comment affordance the surface offers at the
+  // coordinates a live-diff ask already occupies, then asserts the ask is untouched.
+  //
+  // ⚠️ In the FIXED state there is no affordance, so the click is a no-op and the survival
+  // assertion passes because nothing could be written — it is vacuous here, and naming that
+  // is the point. The CONTROL is what makes it load-bearing: drop `historical` from
+  // `DiffViewContainer` (or from the mount below) and this fails with `body: "overwritten"`,
+  // which is the silent replacement in full.
+  it("a live-diff ask survives an attempt to comment at the same path:line", async () => {
+    useRennetStore.getState().reviewActions.stageAsk({
+      id: `${PATH}:1`,
+      anchor: `${PATH}:1`,
+      type: "request-change",
+      body: "the reviewer's real words",
+    });
+    const { container, queryByLabelText, queryByPlaceholderText, queryByText, user } =
+      mountHistorical();
+
+    const gutter = queryByLabelText("Comment on line 1");
+    expect(gutter).toBeNull(); // the affordance is absent — stated, not assumed
+    if (gutter) {
+      await user.click(gutter);
+      const box = queryByPlaceholderText("Leave a comment on this line…");
+      if (box) await user.type(box, "overwritten");
+      const request = queryByText("Request Changes");
+      if (request) await user.click(request);
+    }
+
+    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:1`]?.body).toBe(
+      "the reviewer's real words",
+    );
+    expect(useRennetStore.getState().review.codeComments[PATH]?.[1]).toBeUndefined();
+    expect(container).toBeTruthy();
+    cleanup();
+  });
+});

@@ -129,15 +129,57 @@ export function visible(value: string, maximumBytes: number): string {
   return `${bytes.subarray(0, maximumBytes).toString("utf8")}\n\n${DIFF_TRUNCATION_MARKER}`;
 }
 
-/** Strip a leading `a/` or `b/` diff prefix and unwrap a `"..."`-quoted git path. */
+/**
+ * Undo git's C-style path quoting (`quote_c_style`). Git quotes a path in a diff header
+ * whenever it contains a control character, a space-adjacent quote/backslash, or ANY byte
+ * ≥ 0x80 — so every non-ASCII filename arrives quoted, with each UTF-8 BYTE written as a
+ * three-digit octal escape (`café.ts` ⇒ `"caf\303\251.ts"`).
+ *
+ * That is NOT JSON, which is what this used to try: `JSON.parse` rejects `\303` outright, so
+ * the whole quoted form survived, the `a/`/`b/` strip then missed (the leading `"` blocked
+ * it), and the file surfaced under a literal mangled name. Decoding to BYTES first and then
+ * running one UTF-8 decode is what makes a multi-byte character come back whole — decoding
+ * each escape to a character would produce mojibake.
+ */
+function unquoteGitPath(value: string): string {
+  const bytes: number[] = [];
+  for (let i = 1; i < value.length - 1; i++) {
+    if (value[i] !== "\\") {
+      // Source is already a JS string; re-encode this character's own UTF-8 bytes.
+      for (const byte of new TextEncoder().encode(value[i] as string)) bytes.push(byte);
+      continue;
+    }
+    const next = value[++i];
+    const octal = /^[0-7]$/.test(next ?? "") ? value.slice(i, i + 3) : undefined;
+    if (octal !== undefined && /^[0-7]{3}$/.test(octal)) {
+      bytes.push(Number.parseInt(octal, 8));
+      i += 2;
+      continue;
+    }
+    const simple: Record<string, number> = {
+      a: 7,
+      b: 8,
+      f: 12,
+      n: 10,
+      r: 13,
+      t: 9,
+      v: 11,
+      '"': 34,
+      "\\": 92,
+    };
+    const code = simple[next ?? ""];
+    // An escape git never emits: keep the character rather than dropping it.
+    if (code === undefined) for (const b of new TextEncoder().encode(next ?? "")) bytes.push(b);
+    else bytes.push(code);
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+/** Strip a leading `a/` or `b/` diff prefix and unwrap a C-quoted git path. */
 function unprefix(path: string): string {
   let value = path.trim();
-  if (value.startsWith('"') && value.endsWith('"')) {
-    try {
-      value = JSON.parse(value) as string;
-    } catch {
-      // leave as-is on a malformed quote
-    }
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    value = unquoteGitPath(value);
   }
   return value.replace(/^[ab]\//, "");
 }

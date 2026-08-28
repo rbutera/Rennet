@@ -18,9 +18,17 @@ import { DiffView } from "./diff-view";
 //
 // The round is addressed by its LEDGER NUMBER, not its generation id: a dispatch round that
 // regenerated nothing carries `ROUND_NO_REGEN`, so generation ids do not name rounds back.
-// The ledger offers the control ONLY for a round that captured a diff (absent, not disabled),
-// so both branches below are reachable only from a stale or hand-written link — and they say
-// which of the two it is rather than blaming the wrong absence.
+//
+// An empty `records` is THREE different facts — the session has no rounds, the ledger read has
+// not come back, and the ledger read FAILED — and only the first is an absence. A cold
+// deep-link (the bookmark this ordinal address exists to serve) arrives with the read in
+// flight, and a daemon that cannot answer `session.rounds` never answers it at all; saying
+// "that round is not in the ledger" in either case blames the round for the read. So the
+// container takes `pending` and `unavailable` as their own facts and states them.
+//
+// The round surface is `historical`: its line numbers are the round's, not the review's, so
+// `DiffView` carries no gutter and no selection toolbar there — see `DiffViewProps.historical`
+// for what writing under those coordinates would silently do.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One-line honest state, the shape every empty diff branch uses. */
@@ -39,16 +47,34 @@ function DiffNotice({ children, testId }: { children: string; testId?: string })
 export function DiffViewContainer({
   review,
   records = [],
+  recordsPending = false,
+  recordsUnavailable,
   round,
 }: {
   review: Review;
   /** The session's completed rounds, oldest→newest — what `?round=` indexes into. */
   readonly records?: readonly RoundRecord[];
+  /** True while the ledger read is still in flight — `records` is empty because nothing has
+   *  come back yet, which is not the fact "this session has no rounds". */
+  readonly recordsPending?: boolean;
+  /** Why the ledger could not be read, in the daemon's own words, or undefined when it could.
+   *  Present ⇒ `records` is empty because nobody could tell us. */
+  readonly recordsUnavailable?: string;
   /** A past round's 1-based ledger number (the ledger's Round-diff link), or undefined for
    *  the live review diff. */
   round?: string;
 }) {
   if (round !== undefined) {
+    if (recordsUnavailable !== undefined) {
+      return (
+        <DiffNotice testId="round-diff-unavailable">
+          {`Rennet could not read this session's rounds, so it cannot open this one: ${recordsUnavailable}`}
+        </DiffNotice>
+      );
+    }
+    if (recordsPending) {
+      return <DiffNotice testId="round-diff-loading">Reading this session's rounds…</DiffNotice>;
+    }
     const number = Number(round);
     const record = Number.isInteger(number) && number >= 1 ? records[number - 1] : undefined;
     if (record === undefined) {
@@ -60,10 +86,13 @@ export function DiffViewContainer({
     }
     const files = record.diffFiles ?? [];
     if (files.length === 0) {
+      // Three ways reach here — a round that regenerated without running a work order, a work
+      // order that changed nothing, and a diff that parsed to no files — and this branch
+      // cannot tell them apart. It states what it knows and stops: naming a cause it has not
+      // established is the same defect as the notice it replaced.
       return (
         <DiffNotice testId="round-diff-uncaptured">
-          This round captured no diff of its own — it regenerated the boards without running a work
-          order.
+          This round has no diff of its own to show.
         </DiffNotice>
       );
     }
@@ -73,7 +102,7 @@ export function DiffViewContainer({
         data-round={String(number)}
         className="flex h-full min-h-0 flex-col"
       >
-        <DiffView files={files} />
+        <DiffView files={files} historical />
       </div>
     );
   }

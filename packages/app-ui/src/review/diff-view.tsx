@@ -65,9 +65,26 @@ function StatSquares({ additions, deletions }: { additions: number; deletions: n
 
 export interface DiffViewProps {
   readonly files: readonly PatchFile[];
+  /**
+   * This surface is a HISTORICAL read — its line numbers are not the review's (#571).
+   *
+   * A comment and a request-change ask are both keyed on `${path}:${line}` — `codeComments`
+   * by path+line, a staged ask by that string as its whole identity — and that keyspace
+   * belongs to the review's ACTIVE patchset. A past round's diff is measured
+   * checkpoint-to-checkpoint, so `src/foo.ts:42` there is very likely different code from
+   * `src/foo.ts:42` here. Writing under it would surface the comment on the live diff over
+   * code the reviewer never read, and would SILENTLY REPLACE a live-diff ask staged at the
+   * same coordinates ("re-save replaces it", below) — the reviewer's own words gone with no
+   * trace. Nothing errors; the label is right and the content is wrong.
+   *
+   * So a historical surface carries no gutter and no selection toolbar. Absent, not
+   * disabled: a control that cannot mean what it says should not be on the page. Reading is
+   * the whole of what a past round's diff offers.
+   */
+  readonly historical?: boolean;
 }
 
-export function DiffView({ files }: DiffViewProps) {
+export function DiffView({ files, historical = false }: DiffViewProps) {
   const [filter, setFilter] = React.useState("");
   const [viewed, setViewed] = React.useState<Record<string, boolean>>({});
   const search = useSearch();
@@ -101,7 +118,7 @@ export function DiffView({ files }: DiffViewProps) {
       {/* Scroll frame 1: the diff cards. The selection layer sits INSIDE the frame (its
           plain container div would otherwise break the flex height chain). */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <ProseSelectionLayer>
+        <MaybeSelectionLayer enabled={!historical}>
           <div className="mx-auto flex w-full max-w-[980px] flex-col gap-4 px-6 py-4">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">{files.length} files changed</span>
@@ -117,6 +134,7 @@ export function DiffView({ files }: DiffViewProps) {
               <DiffFileCard
                 key={file.path}
                 file={file}
+                historical={historical}
                 viewed={!!viewed[file.path]}
                 onViewedChange={(value) => setViewed((prev) => ({ ...prev, [file.path]: value }))}
               />
@@ -127,7 +145,7 @@ export function DiffView({ files }: DiffViewProps) {
               </span>
             )}
           </div>
-        </ProseSelectionLayer>
+        </MaybeSelectionLayer>
       </div>
 
       {/* Scroll frame 2: the file list, on the right. */}
@@ -208,12 +226,27 @@ function FileTree({
   );
 }
 
+/** The selection toolbar's container, or a plain box when the surface takes no asks
+ *  (`historical`). The wrapper must stay a plain div either way — the flex height chain
+ *  above it depends on it. */
+function MaybeSelectionLayer({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: React.ReactNode;
+}) {
+  return enabled ? <ProseSelectionLayer>{children}</ProseSelectionLayer> : <div>{children}</div>;
+}
+
 function DiffFileCard({
   file,
+  historical,
   viewed,
   onViewedChange,
 }: {
   file: PatchFile;
+  historical: boolean;
   viewed: boolean;
   onViewedChange: (viewed: boolean) => void;
 }) {
@@ -331,7 +364,7 @@ function DiffFileCard({
             <div className="min-w-max font-mono text-xs leading-[1.7]">
               {hunks.map((hunk, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: hunks are a fixed positional list within the file.
-                <DiffHunkView key={i} hunk={hunk} path={file.path} />
+                <DiffHunkView key={i} hunk={hunk} path={file.path} historical={historical} />
               ))}
             </div>
           </div>
@@ -341,7 +374,15 @@ function DiffFileCard({
   );
 }
 
-function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
+function DiffHunkView({
+  hunk,
+  path,
+  historical,
+}: {
+  hunk: Hunk;
+  path: string;
+  historical: boolean;
+}) {
   const comments = useRennetStore(selectCodeComments(path));
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
@@ -377,8 +418,12 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
       </div>
       {lines.map((line, i) => {
         const commentLine = line.newLine;
-        const hasComment = commentLine !== null && comments?.[commentLine] != null;
-        const hasAsk = commentLine !== null && askLines.has(commentLine);
+        // The marks are read out of the SAME `path:line` keyspace the writes go into, so a
+        // historical surface must not read them either: a live-diff comment at `foo.ts:42`
+        // would paint line 42 of a past round's diff green over code it was never left on.
+        // Wrong content under the right label, in the read direction (#571).
+        const hasComment = !historical && commentLine !== null && comments?.[commentLine] != null;
+        const hasAsk = !historical && commentLine !== null && askLines.has(commentLine);
         const isOpen = commentLine !== null && openLine === commentLine;
         // The row state a test reads (same vocabulary code-block exposes): a staged ask
         // wins (danger red), then a plain comment (evidence green), else the diff line kind.
@@ -412,7 +457,7 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
                   line.type === "del" && "bg-destructive/10",
                 )}
               >
-                {commentLine !== null && (
+                {commentLine !== null && !historical && (
                   <button
                     type="button"
                     onClick={() => setOpenLine(isOpen ? null : commentLine)}
@@ -438,7 +483,11 @@ function DiffHunkView({ hunk, path }: { hunk: Hunk; path: string }) {
                 <span
                   className={cn(
                     "tabular-nums",
-                    commentLine !== null && !hasComment && !isOpen && "group-hover:hidden",
+                    commentLine !== null &&
+                      !historical &&
+                      !hasComment &&
+                      !isOpen &&
+                      "group-hover:hidden",
                   )}
                 >
                   {line.newLine ?? ""}

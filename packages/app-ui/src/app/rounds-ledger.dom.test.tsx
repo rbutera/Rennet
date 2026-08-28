@@ -284,11 +284,16 @@ describe("the Round-diff control shows the round's own diff (#571)", () => {
     ],
   } as unknown as Review;
 
-  function mountLedger(records: readonly RoundRecord[], path = "/s/s-1?view=rounds") {
+  function mountLedger(
+    records: readonly RoundRecord[],
+    path = "/s/s-1?view=rounds",
+    extra: Partial<RoundsSource> = {},
+  ) {
     const source: RoundsSource = {
       roundState: () => ({ phase: "absent" }),
       roundRecords: () => records,
       reportBoard: (id) => FIXTURE_REPORT_BOARDS[id],
+      ...extra,
     };
     const history = memoryHistory(path);
     const r = mount(
@@ -315,7 +320,9 @@ describe("the Round-diff control shows the round's own diff (#571)", () => {
     expect(surface?.getAttribute("data-round")).toBe("1");
     expect(r.container.textContent).toContain(ROUND_ONE_FILE);
     expect(r.container.textContent).toContain("const one = 1;");
-    // The exact regression: no pending/placeholder state anywhere on the surface.
+    // ⚠️ REGRESSION PINS, not coverage: this PR DELETES the "isn't wired yet" string, so these
+    // two cannot fail today and are not evidence the surface works — the assertions above are.
+    // They are here to redden if the placeholder is ever reintroduced.
     expect(r.container.textContent).not.toMatch(/isn't wired yet/i);
     expect(r.container.textContent).not.toMatch(/not wired/i);
     // …and it is the ROUND's diff, never the review's current patchset.
@@ -369,6 +376,49 @@ describe("the Round-diff control shows the round's own diff (#571)", () => {
     );
     expect(r.getByTestId("round-diff-unknown")).toBeTruthy();
     expect(r.container.textContent).not.toContain("LATEST_PATCHSET_MARKER.ts");
+  });
+
+  // ── An empty ledger is THREE facts, and two of them are not "no such round" (#571) ──
+  //
+  // `useRoundRecords` returns `[]` for "no rounds", "read in flight", and "read failed". The
+  // cold deep-link — the bookmark this ordinal address exists to serve — arrives in the second
+  // state, and a daemon that cannot answer `session.rounds` stays in the third forever.
+  // Blaming the ROUND for either is the same "wrong absence" this PR set out to remove.
+  it("a cold deep-link waits for the ledger read instead of blaming the round", () => {
+    const { r } = mountLedger([], "/s/s-1?view=diff&round=1", {
+      roundRecordsPending: () => true,
+    });
+    expect(r.getByTestId("round-diff-loading")).toBeTruthy();
+    expect(r.container.querySelector('[data-testid="round-diff-unknown"]')).toBeNull();
+  });
+
+  it("a daemon that cannot read the ledger says SO, in its own words", () => {
+    const { r } = mountLedger([], "/s/s-1?view=diff&round=1", {
+      roundsUnavailable: () => "Unknown command: session.rounds",
+    });
+    const notice = r.getByTestId("round-diff-unavailable");
+    expect(notice.textContent).toContain("Unknown command: session.rounds");
+    expect(r.container.querySelector('[data-testid="round-diff-unknown"]')).toBeNull();
+    // …and it did not silently fall through to the live diff either.
+    expect(r.container.textContent).not.toContain("LATEST_PATCHSET_MARKER.ts");
+  });
+
+  it("a settled, genuinely empty ledger DOES say the round is unknown", () => {
+    // Not pending, not unavailable: the read came back and the session has no rounds. This is
+    // the one case "not in this session's ledger" is true, and it must still be reachable.
+    const { r } = mountLedger([], "/s/s-1?view=diff&round=1");
+    expect(r.getByTestId("round-diff-unknown")).toBeTruthy();
+  });
+
+  // F3: the branch states what it knows. A round reaches it by regenerating without a work
+  // order, by running one that changed nothing, or by a diff that parsed to no files — so it
+  // must not name one of the three as the cause.
+  it("a round in the ledger with no diff says only that, claiming no cause", () => {
+    const { r } = mountLedger([roundWithoutDiff("g1")], "/s/s-1?view=diff&round=1");
+    const notice = r.getByTestId("round-diff-uncaptured");
+    expect(notice.textContent).toContain("no diff of its own to show");
+    expect(notice.textContent).not.toMatch(/work order/i);
+    expect(notice.textContent).not.toMatch(/regenerated/i);
   });
 
   it("the live diff (no ?round=) is unchanged — it still shows the active patchset", () => {

@@ -335,9 +335,17 @@ something the preview did not describe.
    a round that dispatched a work order without regenerating boards carries the
    no-regeneration marker as its generation, so several rounds share one
    generation id and a generation cannot name a round back.
-   A round that captured no diff of its own — a regeneration with no work order
-   behind it — offers **no Round diff control at all**, the same absent-not-
-   disabled rule the ledger tab itself follows.
+   A round that captured no diff of its own offers **no Round diff control at
+   all**, the same absent-not-disabled rule the ledger tab itself follows.
+   A past round's diff is **read-only**, and that is a correctness property, not
+   a restraint. A line comment and a request-change ask are both keyed on
+   `path:line`, and that keyspace belongs to the review's *active* patchset — but
+   a round's diff is measured checkpoint-to-checkpoint, so the same coordinates
+   name different code. Writing under them would surface a comment on the live
+   diff over code nobody read, and would silently replace a live-diff ask staged
+   at the same line. So the round surface carries no comment gutter and no
+   selection toolbar, and does not paint the review's marks either — the read
+   direction of the same mismatch.
 8. Repeat until nothing is left to ask. The surface becomes the pull
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane

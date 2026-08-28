@@ -361,3 +361,58 @@ describe("captureRangePatchset", () => {
     expect(files).toContain("added.ts");
   });
 });
+
+// ── Git's C-style path quoting is not JSON (#571) ─────────────────────────────
+//
+// `checkpoint-store.ts` documents the turn diff as DISPLAY-only, warning that "parsing this
+// display diff loses quoted/spaced paths" — and the round diff now parses exactly it. Git
+// quotes any path with a control character, an embedded quote/backslash, or ANY byte ≥ 0x80,
+// writing each UTF-8 BYTE as a three-digit octal escape. `JSON.parse` rejects `\303` outright,
+// so the whole quoted form used to survive, the `a/`/`b/` strip then missed behind the leading
+// quote, and the file rendered under a literal mangled name. Fixed at the parser, so the
+// degraded REST changeset source (same `unprefix`) stops mangling them too.
+describe("parseUnifiedDiffFiles unquotes git's C-style paths (#571)", () => {
+  it("decodes octal-escaped UTF-8 bytes as one character, not one character per byte", () => {
+    // `café.ts` — git writes é (U+00E9) as its two UTF-8 bytes, \303\251.
+    const diff = [
+      'diff --git "a/packages/core/caf\\303\\251.ts" "b/packages/core/caf\\303\\251.ts"',
+      '--- "a/packages/core/caf\\303\\251.ts"',
+      '+++ "b/packages/core/caf\\303\\251.ts"',
+      "@@ -1 +1 @@",
+      "-const a = 1",
+      "+const a = 2",
+      "",
+    ].join("\n");
+    const [file] = parseUnifiedDiffFiles(diff);
+    expect(file?.path).toBe("packages/core/café.ts");
+    // The two failure shapes this replaces, named so a regression cannot pass as "close":
+    expect(file?.path).not.toContain('"'); // the whole quoted form surviving
+    expect(file?.path).not.toContain("Ã"); // per-byte decoding (mojibake)
+    expect(file?.additions).toBe(1);
+    expect(file?.deletions).toBe(1);
+  });
+
+  it("unquotes a path with a space and an escaped quote", () => {
+    const diff = [
+      'diff --git "a/my dir/od\\"d.ts" "b/my dir/od\\"d.ts"',
+      '--- "a/my dir/od\\"d.ts"',
+      '+++ "b/my dir/od\\"d.ts"',
+      "@@ -0,0 +1 @@",
+      "+export const x = 1",
+      "",
+    ].join("\n");
+    expect(parseUnifiedDiffFiles(diff)[0]?.path).toBe('my dir/od"d.ts');
+  });
+
+  it("leaves an ordinary unquoted path exactly as it was", () => {
+    const diff = [
+      "diff --git a/packages/core/plain.ts b/packages/core/plain.ts",
+      "--- a/packages/core/plain.ts",
+      "+++ b/packages/core/plain.ts",
+      "@@ -1 +1 @@",
+      "+const a = 2",
+      "",
+    ].join("\n");
+    expect(parseUnifiedDiffFiles(diff)[0]?.path).toBe("packages/core/plain.ts");
+  });
+});
