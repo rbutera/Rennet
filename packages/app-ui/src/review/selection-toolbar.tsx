@@ -323,8 +323,11 @@ export function ProseSelectionLayer({
                   Revise is not available on this view.
                 </p>
               )}
+              {/* Informative, not alarming: every non-landing outcome here is the daemon stating
+                  a fact (no change, discarded to protect a newer edit, unavailable) — none is an
+                  error the reviewer made, so none reads in the destructive colour. */}
               {mode === "revise" && reviseNote !== null && (
-                <p className="mt-1.5 text-2xs leading-snug text-destructive">{reviseNote}</p>
+                <p className="mt-1.5 text-2xs leading-snug text-muted-foreground">{reviseNote}</p>
               )}
               <div className="mt-1.5 flex items-center justify-end gap-1">
                 <button

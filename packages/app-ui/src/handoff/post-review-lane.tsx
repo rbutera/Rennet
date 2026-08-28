@@ -158,13 +158,23 @@ function WorkingReviewDraft({ review, onPost, onRevise }: Omit<PostReviewLanePro
       return text.includes(quote) || quote.includes(text.slice(0, 40));
     });
 
+  // Land a reworked ask so the lane actually SHOWS it. This lane renders `blockText` — an inline
+  // `draftEdits` shadow WINS over the ask body — so re-staging alone would leave the reviewer's
+  // stale shadow on screen while the panel closed as success. Overwrite the shadow when one
+  // exists (the rework supersedes the edit it was run against); never mint one where there is
+  // none, or the composed preview would count a phantom "inline edit pending".
+  const landRework = (reworked: StagedAsk) => {
+    stageAsk(reworked);
+    if (draftEdits[reworked.id] !== undefined) setDraftEdit(reworked.id, reworked.body);
+  };
+
   const draftHandlers: DraftHandlers = {
     // Live span rework: resolve the span back to its ask, then route through the ONE seam.
     onRevise: onRevise
       ? async (quote, instruction) => {
           const ask = findBodyAsk(quote);
           if (!ask) return "That span no longer matches a staged ask.";
-          return reviseDraftSpan(onRevise, stageAsk, ask, quote, instruction);
+          return reviseDraftSpan(onRevise, landRework, ask, quote, instruction);
         }
       : undefined,
     onDrop: (quote) => {

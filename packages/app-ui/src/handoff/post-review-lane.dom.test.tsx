@@ -159,6 +159,45 @@ describe("PostReviewLane", () => {
     expect(await r.findByText("It holds on retry.")).toBeTruthy();
   });
 
+  it("a rework over a PENDING INLINE EDIT shows the rework, not the stale shadow", async () => {
+    // This lane renders `draftEdits[id] ?? ask.body`, so a pending inline edit SHADOWS the ask
+    // body. Re-staging the reworked ask alone leaves that shadow on screen while the panel closes
+    // as success — a fabricated success. The rework supersedes the edit it ran against.
+    stage("This holds up on the retry path.", "comment");
+    act(() =>
+      store().reviewActions.setDraftEdit("This holds up on the retry path.", "MY PENDING EDIT"),
+    );
+    const r = mount(
+      <PostReviewLane
+        review={review}
+        onRevise={async () => ({
+          status: "reworked",
+          carriedAnchor: null,
+          reworkedBody: "guard the boundary on every retry",
+          receipt: {
+            kind: "edit",
+            id: "This holds up on the retry path.",
+            body: "MY PENDING EDIT",
+          },
+        })}
+      />,
+    );
+    // The shadow is what renders today — steer off it, exactly as the reviewer would.
+    selectAndRelease(r.getByText("MY PENDING EDIT"));
+    fireEvent.click(r.getByText("Revise"));
+    fireEvent.change(r.container.querySelector("textarea") as HTMLTextAreaElement, {
+      target: { value: "cover every retry" },
+    });
+    await r.user.click(r.getByRole("button", { name: "Rework" }));
+
+    // The card shows the rework; the stale shadow is gone from both the screen and the store.
+    expect(await r.findByText("guard the boundary on every retry")).toBeTruthy();
+    expect(r.queryByText("MY PENDING EDIT")).toBeNull();
+    expect(store().review.draftEdits["This holds up on the retry path."]).toBe(
+      "guard the boundary on every retry",
+    );
+  });
+
   it("a rework that does not land states the reason and never dismisses as success", async () => {
     stage("This holds up on the retry path.", "comment");
     const r = mount(

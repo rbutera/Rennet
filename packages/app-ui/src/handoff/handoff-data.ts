@@ -196,10 +196,15 @@ export type ReviseSpan = (args: {
  * Resolves the honest reason the rework did NOT land (`no-change` / `unavailable` / a thrown
  * bridge failure), or `undefined` when it did — never a silent success. No call site reworks a
  * span itself; every Revise routes through here.
+ *
+ * `land` receives the ask with its reworked body. It is the LANE's job because a lane may render
+ * the ask through a shadow the store's `stagedAsks` does not own (the post-review lane's inline
+ * `draftEdits`): landing only the ask there would leave a stale shadow on screen while the panel
+ * closed as success — a fabricated success. Every lane's `land` must make the rework VISIBLE.
  */
 export async function reviseDraftSpan(
   revise: ReviseSpan,
-  stageAsk: (ask: StagedAsk) => void,
+  land: (ask: StagedAsk) => void,
   ask: StagedAsk,
   span: string,
   instruction: string,
@@ -211,8 +216,8 @@ export async function reviseDraftSpan(
     return reason instanceof Error ? reason.message : "The rework did not run.";
   }
   if (result.status !== "reworked") return result.reason;
-  // Re-stage the ask under its own id — a body swap in place, exactly like a hand edit
-  // (receipt-is-undo lives on the daemon's ask log, which already reversed this write).
-  stageAsk({ ...ask, body: result.reworkedBody });
+  // A body swap in place, under the ask's own id — exactly like a hand edit (receipt-is-undo
+  // lives on the daemon's ask log, which already recorded the inverse of this write).
+  land({ ...ask, body: result.reworkedBody });
   return undefined;
 }
