@@ -91,6 +91,76 @@ describe("projection contract — the app consumes only the projected fixtures (
     expect(needsYou.reachable).toBe(false);
   });
 
+  it("the projected contract carries patchset PROVENANCE — the field the stale gate reads (#600)", () => {
+    // Not decoration: if `source` ever left the projected patchset, every review on the phone
+    // would read as `local` (the documented default) and the gate below would silently reopen
+    // #600 while its unit tests kept passing on a hand-written sample. So assert it against the
+    // checked-in fixture — the actual contract the daemon projects.
+    const schema = fixture("projected-review");
+    const props = schema.properties as Record<string, { items?: { properties?: object } }>;
+    const patchset = props.patchsets?.items?.properties as
+      | Record<string, { enum?: string[] }>
+      | undefined;
+    expect(patchset?.source?.enum).toEqual([
+      "local",
+      "local-branch",
+      "github-local",
+      "github-rest",
+    ]);
+  });
+
+  it("a PR snapshot is NEVER narrated as stale, however it got there (#600)", () => {
+    // The harm, stated as a row: an `invalid` review whose active patchset is a PR snapshot.
+    // The old expression said `stale: true` here — the phone told the reviewer their repository
+    // had changed under a diff pinned to the pull request's OIDs, which cannot change at all.
+    const ctx = { daemonId: "d1", reachable: true, attentionReviewIds: new Set<string>() };
+    const invalidatedPr: ProjectedReviewLike = {
+      ...sample,
+      status: "invalid",
+      patchsets: [
+        { id: "ps-1", createdAt: "2026-08-10T00:00:00.000Z" },
+        { id: "ps-2", createdAt: "2026-08-17T00:00:00.000Z", source: "github-local" },
+      ],
+    };
+    expect(toReviewSummary(invalidatedPr, ctx).stale).toBe(false);
+
+    // Every pinned source, not just the one that prompted the issue: `github-rest` is the
+    // degraded REST fallback and `local-branch` is a `merge-base...head` range. All snapshots.
+    for (const source of ["github-rest", "local-branch"] as const) {
+      const row = {
+        ...invalidatedPr,
+        patchsets: [{ id: "ps-2", createdAt: "2026-08-17T00:00:00.000Z", source }],
+        activePatchsetId: "ps-2",
+      };
+      expect(toReviewSummary(row, ctx).stale).toBe(false);
+    }
+
+    // The gate reads the ACTIVE patchset, not "any patchset": a review that captured the working
+    // tree earlier and is now sitting on a PR snapshot is not watchable.
+    const wasLocalNowPr = {
+      ...invalidatedPr,
+      patchsets: [
+        { id: "ps-1", createdAt: "2026-08-10T00:00:00.000Z", source: "local" as const },
+        { id: "ps-2", createdAt: "2026-08-17T00:00:00.000Z", source: "github-local" as const },
+      ],
+    };
+    expect(toReviewSummary(wasLocalNowPr, ctx).stale).toBe(false);
+
+    // And the gate does not swallow the real thing. A working-tree capture that went invalid IS
+    // stale — that is the notice doing its job, and an absent source still means `local`.
+    for (const patchsets of [
+      [{ id: "ps-2", createdAt: "2026-08-17T00:00:00.000Z", source: "local" as const }],
+      [{ id: "ps-2", createdAt: "2026-08-17T00:00:00.000Z" }],
+    ]) {
+      const local = { ...invalidatedPr, patchsets, activePatchsetId: "ps-2" };
+      expect(toReviewSummary(local, ctx).stale).toBe(true);
+    }
+
+    // Unreachable is the OTHER half and provenance does not excuse it: a replica-painted PR row
+    // is genuinely behind live, so it stays stale-marked.
+    expect(toReviewSummary(invalidatedPr, { ...ctx, reachable: false }).stale).toBe(true);
+  });
+
   it("the daemon's attention summary is authoritative on a cold open (#383)", () => {
     // Attention-capable daemon reports a mid-turn ask that no push has delivered and the
     // flagged queue does not yet know: the projected `attention.needsYou` must pin the row.

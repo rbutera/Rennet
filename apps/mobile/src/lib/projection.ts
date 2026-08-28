@@ -4,6 +4,8 @@
 // the display models the screens render, so a host path structurally cannot reach the UI.
 // Pure and framework-free (unit-tested against the checked-in public-schema fixtures).
 
+import { isReviewStale, type PatchsetSource } from "@rennet/protocol";
+
 import type { ReviewSummary } from "./review-list";
 
 /** A projected repo reference — the ONLY way the app names a file's repository (no host path). */
@@ -17,7 +19,17 @@ export interface ProjectedRepoReference {
 export interface ProjectedReviewLike {
   readonly id: string;
   readonly repositoryRoot: ProjectedRepoReference;
-  readonly patchsets: ReadonlyArray<{ readonly id: string; readonly createdAt: string }>;
+  /**
+   * The projected patchsets. `source` is the patchset's PROVENANCE and it has always been on
+   * the R19 projected contract (`projectedPatchsetSchema` inherits it from `patchsetSchema`;
+   * `public-schema/projected-review.json` carries the enum) — this interface simply omitted it,
+   * which is why the staleness expression below had nothing to gate on (#600). Absent ⇒ `local`.
+   */
+  readonly patchsets: ReadonlyArray<{
+    readonly id: string;
+    readonly createdAt: string;
+    readonly source?: PatchsetSource;
+  }>;
   readonly activePatchsetId: string;
   readonly pendingPatchsetId?: string;
   readonly status: "current" | "invalid";
@@ -71,7 +83,8 @@ export interface SummaryContext {
  * (#383), that is authoritative — a mid-turn ask lands in `needsYou` on a cold open, before any
  * push. Absent (a pre-attention daemon), the app derives `needsYou` from the flagged queue +
  * live-event set, and `running` is honestly false (no live-turn signal is exposed). `stale` is
- * always an unreachable daemon or an invalidated review.
+ * an unreachable daemon (this row paints from the replica) OR a review the repository really did
+ * change under — which `isReviewStale` decides, because only a working-tree capture can change.
  */
 export function toReviewSummary(review: ProjectedReviewLike, ctx: SummaryContext): ReviewSummary {
   // The daemon's attention summary is authoritative when present: it is the single source of
@@ -90,6 +103,11 @@ export function toReviewSummary(review: ProjectedReviewLike, ctx: SummaryContext
     running: attention ? attention.running : false,
     needsYou: attention ? attention.needsYou : ctx.attentionReviewIds.has(review.id),
     reachable: ctx.reachable,
-    stale: !ctx.reachable || review.status === "invalid",
+    // A replica-painted row IS behind live, so unreachable is stale on its own. The other half
+    // is not "status === invalid": a `github-local`/`github-rest`/`local-branch` patchset is a
+    // SNAPSHOT pinned to commits, so nothing can change under it, and telling the reviewer their
+    // repository moved would be a lie about a PR they are reading on the train. `isReviewStale`
+    // (`@rennet/protocol`) is the shared predicate desktop reads too — one rule, two clients.
+    stale: !ctx.reachable || isReviewStale(review),
   };
 }
