@@ -7,6 +7,7 @@ import {
   createClaudeHarness,
   createClaudeQueryFn,
   type LoadClaudeQuery,
+  normalizeOutputSchema,
   toSdkOptions,
 } from "./claude-query";
 import type { DiscoveryDeps } from "./harness-discovery";
@@ -97,6 +98,45 @@ describe("toSdkOptions", () => {
       baseOptions({ executableArgs: ["-d", "Ubuntu", "-e", "/home/rai/bin/claude"] }),
     );
     expect(sdk.executableArgs).toEqual(["-d", "Ubuntu", "-e", "/home/rai/bin/claude"]);
+  });
+
+  it("strips the draft-2020-12 $schema meta the CLI ajv cannot resolve, keeping the body", () => {
+    // A Zod-v4-shaped schema: the top-level `$schema` names the draft-2020-12 meta-schema
+    // that the installed `claude` --json-schema (ajv) rejects, exiting 1 before the turn.
+    const zodShaped = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://rennet.dev/board",
+      type: "object",
+      properties: {
+        kind: { enum: ["a", "b"] },
+        ref: { $ref: "#/$defs/thing" },
+      },
+      required: ["kind"],
+      additionalProperties: false,
+      $defs: { thing: { type: "string" } },
+    };
+    const sdk = toSdkOptions(baseOptions({ outputSchema: zodShaped })) as Record<string, unknown>;
+    const out = (sdk.outputFormat as { schema: Record<string, unknown> }).schema;
+    // The meta declarations are gone (ajv validates under its default dialect)…
+    expect("$schema" in out).toBe(false);
+    expect("$id" in out).toBe(false);
+    // …but every constraint in the BODY survives — including the INTERNAL $ref/$defs,
+    // which stay resolvable (the strip is shallow, top-level meta only). No contract weakens.
+    expect(out).toEqual({
+      type: "object",
+      properties: {
+        kind: { enum: ["a", "b"] },
+        ref: { $ref: "#/$defs/thing" },
+      },
+      required: ["kind"],
+      additionalProperties: false,
+      $defs: { thing: { type: "string" } },
+    });
+  });
+
+  it("normalizeOutputSchema leaves a dialect-free schema untouched", () => {
+    const bare = { type: "object", properties: { ok: { type: "boolean" } } };
+    expect(normalizeOutputSchema(bare)).toEqual(bare);
   });
 });
 
