@@ -145,9 +145,9 @@
     "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal — C14 flags claim-vs-live, doesn't fudge). PARKED for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
   },
   "c16": {
-    "status": "review",
-    "passes": false,
-    "note": "Issue #542. C16-COMPLETE on feat/c16-council-mappings @cf71fa4e (pushed, full gate exit 0, all boxes checked). Per-scenario overrides per Rai's ruling \u2014 sibling-leak structurally impossible, flip-to-red proven. Continuer highlights: docs lie fixed (surface renders TWO columns \u2014 Dual + provider-resolving Single \u2014 over three scenarios, not three columns), real lint bug in inherited E2E stub forward-fixed (predecessor's affected-gate missed it \u2014 second focused-gate insufficiency proof). Review seat running; lands FIRST of the snapshot set. One rennet-docs:test flake logged (dist read race, passed standalone)."
+    "status": "landed",
+    "passes": true,
+    "note": "LANDED #553 @9a850be7 (closes #542). Per-scenario overrides per Rai's ruling \u2014 sibling-leak structurally impossible, flip-to-red proven. Review FIX\u2192CONFIRMED: app-ui's drifted local council-table copy DELETED (6 cells lied; server honest-present at source), REVIEW_ROLE_DEFAULTS now test fixture, Reset doc per-role truth, adopted cleared on refetch-settle. Surface truth: two columns (Dual + provider-resolving Single) over three scenarios. First of the snapshot set down \u2014 c17/c18 rebase over it at landing."
   },
   "c17": {
     "status": "implementing",
