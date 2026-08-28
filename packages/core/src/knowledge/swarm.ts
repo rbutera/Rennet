@@ -300,7 +300,16 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
   } = input;
   const generator = provenance.generator ?? KNOWLEDGE_SWARM_GENERATOR_ID;
   const filesByPath = fileBlobIndex(snapshot.files);
-  const entries = workerResults.flatMap((result) => result.statements);
+  // Dedupe BEFORE chunking, not just into `byId`: the same statement id can be
+  // minted by two partitions (the delta path also feeds `prior:reverify`
+  // alongside a fresh run of the slice that owns it). Chunking the raw entries
+  // put one id in two chunks, which could return conflicting verdicts — and the
+  // later chunk's verdict silently overwrote the earlier one.
+  const entriesById = new Map<string, WorkerStatement>();
+  for (const result of workerResults)
+    for (const entry of result.statements)
+      if (!entriesById.has(entry.statement.id)) entriesById.set(entry.statement.id, entry);
+  const entries = [...entriesById.values()];
   const byId = new Map(entries.map((entry) => [entry.statement.id, entry.statement]));
   const tally: MintTally = { droppedAnchors: 0, droppedStatements: 0 };
 
@@ -313,41 +322,49 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
   }
   if (chunks.length === 0) chunks.push([]);
 
+  // The pass is all-or-nothing, so once one chunk has failed the verdict is
+  // already decided and every chunk still queued is discarded model spend.
+  let firstFailure: string | undefined;
   const chunkResults = await boundedAll(
-    chunks.map(
-      (chunk) => () =>
-        runVerifyChunk({
-          entries: chunk,
-          snapshot,
-          provenance,
-          generator,
-          filesByPath,
-          tally,
-          runTurn,
-          maxRetries,
-        }),
-    ),
+    chunks.map((chunk) => async (): Promise<VerifyChunkResult> => {
+      if (firstFailure !== undefined) return { status: "failed", failureReason: firstFailure };
+      const result = await runVerifyChunk({
+        entries: chunk,
+        snapshot,
+        provenance,
+        generator,
+        filesByPath,
+        tally,
+        runTurn,
+        maxRetries,
+      });
+      if (result.status === "failed") firstFailure ??= result.failureReason;
+      return result;
+    }),
     concurrency,
   );
 
-  const failed = chunkResults.find((result) => result.status === "failed");
-  if (failed) {
+  const okChunks: VerifyChunkOk[] = [];
+  for (const result of chunkResults) {
     // All-or-nothing, as before: a partial verify would silently publish an
     // unadjudicated slice of the repository as if the seat had seen it.
-    return {
-      status: "failed",
-      failureReason: failed.failureReason ?? "the map verify pass did not complete",
-      confirmed: 0,
-      rejected: 0,
-      crossCutting: 0,
-      droppedAnchors: tally.droppedAnchors,
-      droppedStatements: tally.droppedStatements,
-    };
+    if (result.status === "failed") {
+      return {
+        status: "failed",
+        failureReason: result.failureReason,
+        confirmed: 0,
+        rejected: 0,
+        crossCutting: 0,
+        droppedAnchors: tally.droppedAnchors,
+        droppedStatements: tally.droppedStatements,
+      };
+    }
+    okChunks.push(result);
   }
 
   let confirmed = 0;
   let rejected = 0;
-  for (const result of chunkResults) {
+  for (const result of okChunks) {
     for (const { id, verdict } of result.verdicts) {
       const statement = byId.get(id);
       if (statement === undefined) continue; // A verdict on an id the swarm never minted is noise.
@@ -356,7 +373,7 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
       else rejected += 1;
     }
   }
-  const crossCutting = chunkResults.flatMap((result) => result.crossCutting);
+  const crossCutting = okChunks.flatMap((result) => result.crossCutting);
   const set: KnowledgeSet = {
     schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
     repoKey: snapshot.repoKey,
@@ -387,12 +404,20 @@ interface VerifyChunkInput {
   readonly maxRetries: number;
 }
 
-interface VerifyChunkResult {
-  readonly status: "ok" | "failed";
-  readonly failureReason?: string;
-  readonly verdicts: readonly { id: string; verdict: "confirmed" | "rejected" }[];
-  readonly crossCutting: readonly KnowledgeStatement[];
-}
+/**
+ * A chunk either adjudicated or did not. The optional-`failureReason` shape this
+ * replaced could represent a failure with no reason, an `ok` carrying one, and a
+ * failure carrying meaningless empty verdict/cross-cutting arrays.
+ */
+type VerifyChunkResult =
+  | {
+      readonly status: "ok";
+      readonly verdicts: readonly { id: string; verdict: "confirmed" | "rejected" }[];
+      readonly crossCutting: readonly KnowledgeStatement[];
+    }
+  | { readonly status: "failed"; readonly failureReason: string };
+
+type VerifyChunkOk = Extract<VerifyChunkResult, { status: "ok" }>;
 
 /** One verify turn over one chunk of hypotheses, with the seat's own retries. */
 async function runVerifyChunk(input: VerifyChunkInput): Promise<VerifyChunkResult> {
@@ -426,5 +451,5 @@ async function runVerifyChunk(input: VerifyChunkInput): Promise<VerifyChunkResul
       .filter((s): s is KnowledgeStatement => s !== undefined);
     return { status: "ok", verdicts, crossCutting };
   }
-  return { status: "failed", failureReason: lastFailure, verdicts: [], crossCutting: [] };
+  return { status: "failed", failureReason: lastFailure };
 }

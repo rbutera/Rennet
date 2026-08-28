@@ -97,4 +97,37 @@ describe("createKnowledgeSwarmRuntime", () => {
       },
     ]);
   });
+
+  it("narrates a THROWN failure exactly like a typed one (never console-only)", async () => {
+    // A harness probe can reject, and a Claude seat's `createSession` runs before
+    // the adapter turn's own `try`. Uncaught, those escaped to the rehydration
+    // loop's `onError` — wired to `console.error` in production, so the user saw
+    // nothing while the typed path narrated. Same failure, one visibility.
+    const narrated: ProjectProcessEvent[] = [];
+    const runtime = createKnowledgeSwarmRuntime({
+      store: new ProjectSnapshotStore(tempDir()),
+      resolveClaudePort: async () => {
+        throw new Error("spawn claude ENOENT");
+      },
+      resolveCodexExecutor: async () => null,
+      narrate: (event) => narrated.push(event),
+    });
+
+    const outcome = await runtime.runForRepo({
+      repoKey: "repo",
+      repoRoot: join(tempDir(), "rennet"),
+      toOid: "a".repeat(40),
+    });
+
+    expect(outcome).toEqual({ status: "failed", reason: "spawn claude ENOENT" });
+    expect(narrated).toEqual([
+      {
+        kind: "stage",
+        repo: "rennet",
+        stage: "knowledge",
+        note: "Knowledge pass failed",
+        detail: "spawn claude ENOENT",
+      },
+    ]);
+  });
 });

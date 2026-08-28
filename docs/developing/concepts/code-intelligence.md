@@ -89,11 +89,24 @@ forward.
 The verify seat reads the swarm's hypotheses in fixed chunks (150 per turn,
 several turns in flight) rather than one prompt over the whole repository: a
 large repository mints thousands of claims, and a single prompt carrying all of
-them exceeds the seat's context window and loses the entire run. Cross-cutting
-claims are therefore minted within a chunk, which still spans many partitions.
+them exceeds the seat's context window and loses the entire run. The pass is
+all-or-nothing — one failed chunk fails the whole run and leaves the stored set
+untouched, rather than publishing an unadjudicated slice of the repository as if
+the seat had read it — so the chunks still queued behind a failure are abandoned
+instead of spending turns on a verdict already decided.
+
+Chunking bounds what the seat can synthesize. Cross-cutting claims are minted
+within a chunk, which still spans many partitions, but a pattern whose evidence
+falls on both sides of a chunk boundary is not visible to any single turn, so
+the map loses it. Widening that reach needs a second synthesis pass over the
+chunks' outputs; until one exists, cross-cutting coverage on a large repository
+is chunk-local rather than repository-wide.
+
 The pass runs in the background under a stable progress id and reports its
 outcome — including the reason it skipped or failed — on the project's build
-timeline, so a knowledge run is never silently absent.
+timeline. A failure that arrives as a thrown error is converted to the same
+typed outcome and narrated on the same line as a reported one, so a knowledge
+run is never silently absent.
 
 ## Current scope
 

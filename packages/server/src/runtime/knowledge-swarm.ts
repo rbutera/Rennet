@@ -114,34 +114,48 @@ export function createKnowledgeSwarmRuntime(
 ): KnowledgeSwarmRuntime {
   return {
     async runForRepo(input: KnowledgeSwarmRunInput): Promise<KnowledgeSwarmOutcome> {
-      const [claudePort, codexExecutor] = await Promise.all([
-        deps.resolveClaudePort(input.repoRoot),
-        deps.resolveCodexExecutor(input.repoRoot),
-      ]);
       const repoLabel = basename(input.repoRoot);
       const narrated = (outcome: KnowledgeSwarmOutcome): KnowledgeSwarmOutcome => {
         const line = knowledgeOutcomeLine(repoLabel, outcome);
         if (line) deps.narrate(line);
         return outcome;
       };
-      if (!claudePort && !codexExecutor) {
+      // Every THROWN failure becomes the same typed, narrated outcome the
+      // resolved ones get. The runtime is the one place every swarm path routes
+      // through, and the throws are real: a harness probe can reject, and a
+      // Claude seat's `createSession` runs BEFORE the adapter turn's own `try`.
+      // Left uncaught it escaped to the rehydration loop's `onError`, which
+      // production wires to `console.error` — the user saw nothing, while the
+      // typed path narrated. Same failure, two visibilities, is the bug.
+      try {
+        const [claudePort, codexExecutor] = await Promise.all([
+          deps.resolveClaudePort(input.repoRoot),
+          deps.resolveCodexExecutor(input.repoRoot),
+        ]);
+        if (!claudePort && !codexExecutor) {
+          return narrated({
+            status: "failed",
+            reason: "no harness is available to run the knowledge swarm",
+          });
+        }
+        return narrated(
+          await runKnowledgeSwarmForRepo({
+            reader: new ProjectContextReader(deps.store),
+            knowledgeStore: new KnowledgeStore(deps.store),
+            claudePort,
+            codexExecutor,
+            repoKey: input.repoKey,
+            repoRoot: input.repoRoot,
+            baseOid: input.toOid,
+            onProgress: (event) => deps.narrate(knowledgeStageLine(repoLabel, event)),
+          }),
+        );
+      } catch (error) {
         return narrated({
           status: "failed",
-          reason: "no harness is available to run the knowledge swarm",
+          reason: error instanceof Error ? error.message : String(error),
         });
       }
-      return narrated(
-        await runKnowledgeSwarmForRepo({
-          reader: new ProjectContextReader(deps.store),
-          knowledgeStore: new KnowledgeStore(deps.store),
-          claudePort,
-          codexExecutor,
-          repoKey: input.repoKey,
-          repoRoot: input.repoRoot,
-          baseOid: input.toOid,
-          onProgress: (event) => deps.narrate(knowledgeStageLine(repoLabel, event)),
-        }),
-      );
     },
   };
 }

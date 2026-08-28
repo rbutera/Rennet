@@ -266,6 +266,67 @@ describe("runMapVerify", () => {
     });
     expect(verify).toMatchObject({ status: "failed", failureReason: "Prompt is too long" });
     expect(verify.set).toBeUndefined();
+    // …and the two chunks still queued behind it never ran: the pass is
+    // all-or-nothing, so once one chunk fails every later turn is spend on a
+    // verdict the first turn already decided.
+    expect(turn).toBe(2);
+  });
+
+  it("dedups a statement id BEFORE chunking, so it cannot straddle a boundary", async () => {
+    // Two partitions can mint the same content-addressed id (the delta path also
+    // feeds `prior:reverify` beside a fresh run of the slice that owns it). When
+    // the raw entries were chunked, one id landed in TWO chunks, could come back
+    // with conflicting verdicts, and the later chunk silently overwrote the
+    // earlier one. The duplicate here sits on opposite sides of the boundary.
+    const mint = (statements: Record<string, unknown>[]) =>
+      runPartitionWorker({
+        slice: SLICE,
+        snapshot: SNAPSHOT,
+        provenance: PROVENANCE,
+        runTurn: async () => emitted({ statements }),
+      });
+    const duplicate = rawStatement();
+    const first = await mint([
+      duplicate,
+      rawStatement({ claim: "x one" }),
+      rawStatement({ claim: "x two" }),
+    ]);
+    const second = await mint([
+      rawStatement({ claim: "y one" }),
+      rawStatement({ claim: "y two" }),
+      duplicate,
+    ]);
+    const duplicateId = first.statements[0]?.statement.id;
+    expect(duplicateId).toBe(second.statements[2]?.statement.id);
+
+    const prompts: string[] = [];
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [first, second],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 3,
+      concurrency: 1,
+      runTurn: async (prompt) => {
+        prompts.push(prompt);
+        turn += 1;
+        // The first turn confirms what it sees, the second rejects — so an id in
+        // both chunks would come back with two opposed verdicts.
+        const verdict = turn === 1 ? "confirmed" : "rejected";
+        const ids = [...prompt.matchAll(/^- id=(\S+)$/gm)].map(([, id]) => id);
+        return emitted({ verdicts: ids.map((id) => ({ id, verdict })), crossCutting: [] });
+      },
+    });
+
+    // Unchunked at 3-per-turn, the six raw entries would straddle: chunk 1
+    // [dup, x1, x2], chunk 2 [y1, y2, dup]. Deduped first, there are five.
+    expect(prompts.filter((prompt) => prompt.includes(`id=${duplicateId}`))).toHaveLength(1);
+    expect(verify.status).toBe("ok");
+    expect(verify.set?.statements).toHaveLength(5);
+    expect(verify.set?.statements.find((s) => s.id === duplicateId)?.status).toBe("confirmed");
+    // No id is adjudicated twice: three confirmed in chunk 1, two rejected in chunk 2.
+    expect(verify.confirmed).toBe(3);
+    expect(verify.rejected).toBe(2);
   });
 
   it("dedups by statement id across workers and cross-cutting re-mints", async () => {
