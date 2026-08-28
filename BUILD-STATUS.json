@@ -143,7 +143,7 @@
   "c15": {
     "status": "review",
     "passes": false,
-    "note": "Issue #541. C15-COMPLETE @22cac013 (pushed, GATE_EXIT=0, roster 94). Cluster-5 E2E over the LIVE source (real events, no fixture clock) \u2014 full chain dispatch->progress->greeting->reveal->gen2 boards over board.read->retro line->gen-1 drill-down. Four controls red from committed baselines (coverage swallow / lane hardcode / kicker revert / frozenPredecessor drop). E2E FOUND+FIXED two live-source bugs: dispatch bounced off /run (reviewer dispatched event now written into the read cache, idempotent) and cold mid-round deep-link bounced (roundPending distinguishes pending from honest-absent). DOCUMENTED SEAM: report board handed in, not fetched (board.read has no report arm \u2014 LensKind gap). Docs: handoff-and-exits items live, carry-forward-is-a-verdict section. Codex round-1 seat running. Last of the original 37."
+    "note": "Issue #541. Codex round-1: BLOCK, 11 findings \u2014 triaged 9 as-ruled + 2 right-sized (lane union yes; skew fix MINIMAL honest degradation, not negotiation ceremony). Worst: #1 boards drafted from the PRE-worker patchset (describe the old diff \u2014 core-claim lie); #2 fabricated lineage (carry-forward never fires in prod). Two serial fix sessions on the branch: A server-core (#1 #2 #4 #5 #6 #11, re-smoke after #1) IN FLIGHT; then B client/wire (#3 #7 #8 #9 #10). Exactly the bugs the audit would have caught later at higher cost. B10-c6 stays blocked on the create-server churn \u2014 correct. Base @22cac013."
   },
   "c16": {
     "status": "landed",
