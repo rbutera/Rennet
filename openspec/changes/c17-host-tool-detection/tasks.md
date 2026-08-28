@@ -50,21 +50,28 @@ Then `grep -rniE "forge.detect|forgeDetect|daemon.status|daemonStatus|device.rec
 
 ## 2. Per-host daemon status detection — `reachable` / `version` / `lastSeenVersion` / `updateAvailable` (Objective: host cards; unreachable invents nothing)
 
-- [ ] 2.1 A per-host daemon-status detection: for each paired host, ask THAT host's daemon (over its
+- [x] 2.1 A per-host daemon-status detection: for each paired host, ask THAT host's daemon (over its
   connection, via `supervise.ts`'s `probeHealth` / `findHealthyDaemon` which already return the running
   daemon `version`) for `reachable` + `version`. A host that does not answer ⇒ `reachable: false` and no
   `version` (never guessed). Expose it as a read the client can fold into `DaemonInfo` — either extend
   `settings.get.daemonHosts` entries with a `daemon: DaemonInfo` field, or add a sibling `daemon.status`
   command keyed by host; pick the one that reuses the existing enumeration and record which in the task note.
-- [ ] 2.2 `lastSeenVersion` persistence (reconciliation 4): when a host answers, record its version as that
+  **Chosen: a sibling `daemon.status` command**, served by `SettingsComposition.daemonStatus()` over the
+  SAME `daemonHostSections` enumeration `settings.get` uses. Not a field on `settings.get` because probing
+  costs a bounded round-trip per host and `settings.get` is re-read on every appearance edit and render.
+  Probes: `local` → `findHealthyDaemon` (this daemon is answering, so reachable by construction; the claim's
+  verified identity names the running version, falling back to this process's own); `wsl:<distro>` → the new
+  `probeWslDaemon` (resolve `$HOME`, read the published port, health-check it — no spawn); `remote:<deviceId>`
+  → unreachable, because a paired device dials US and there is no outbound connection to dial back.
+- [x] 2.2 `lastSeenVersion` persistence (reconciliation 4): when a host answers, record its version as that
   host's last-seen (persisted alongside the paired-host / daemon-settings record); when it later goes dark,
   the status read carries `lastSeenVersion` from that record so the card reads "last seen running v…". A host
   that has **never** answered carries no `lastSeenVersion` (blank-but-honest, not fabricated).
-- [ ] 2.3 `updateAvailable`: compute it honestly from the host's running `version` vs the latest version this
+- [x] 2.3 `updateAvailable`: compute it honestly from the host's running `version` vs the latest version this
   client knows for that host's platform (the app/server version the local daemon reports, or a real
   update-channel value where one exists). No update mechanism / unknown latest ⇒ `updateAvailable` absent
   (the button simply does not show), never a fake flag.
-- [ ] 2.4 Tests: a reachable host yields `{ reachable: true, version }`; a host that stops answering yields
+- [x] 2.4 Tests: a reachable host yields `{ reachable: true, version }`; a host that stops answering yields
   `{ reachable: false, lastSeenVersion }` with **no** `version`; a never-seen host yields `{ reachable:
   false }` with neither. **Positive control:** flip the probe to fail and the status carries no fabricated
   version (the unreachable-invents-nothing invariant). Cluster gate green. Commit.

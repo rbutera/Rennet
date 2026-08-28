@@ -3384,6 +3384,33 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(settings.setCoachmarks).toHaveBeenCalledTimes(1);
   });
 
+  it("daemon.status routes to the settings composition's per-host detection (C17)", async () => {
+    const daemonStatus = vi.fn(async () => [
+      { source: "local" as const, reachable: true, version: "0.1.5", updateAvailable: false },
+      { source: "wsl:Ubuntu" as const, reachable: false, lastSeenVersion: "0.1.4" },
+    ]);
+    // Only the one route under test is stubbed; every other settings method is unreachable
+    // from `daemon.status`, so a full composition would be scaffolding for its own sake.
+    const settings = { daemonStatus } as unknown as DispatchDeps["settings"];
+    const { dispatch } = harness(undefined, { settings });
+    const out = (await dispatch("daemon.status", {})) as {
+      hosts: { source: string; reachable: boolean; version?: string }[];
+    };
+    expect(daemonStatus).toHaveBeenCalledTimes(1);
+    // The dark host crosses the wire with NO version — the wire shape cannot smuggle one in.
+    expect(out.hosts[1]).toEqual({
+      source: "wsl:Ubuntu",
+      reachable: false,
+      lastSeenVersion: "0.1.4",
+    });
+    expect(out.hosts[0]?.version).toBe("0.1.5");
+  });
+
+  it("daemon.status with NO settings dep reports NO hosts (never a fabricated one)", async () => {
+    const { dispatch } = harness();
+    expect(await dispatch("daemon.status", {})).toEqual({ hosts: [] });
+  });
+
   it("with NO settings dep wired, degrades to the builtin view + unresolved write (never throws)", async () => {
     const { dispatch } = harness();
     const view = (await dispatch("settings.get", {})) as {

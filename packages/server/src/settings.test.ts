@@ -495,6 +495,150 @@ describe("createSettingsComposition — daemon host sections (#476, §4.2)", () 
   });
 });
 
+describe("daemonStatus — per-host daemon detection (C17 cluster 2, #485)", () => {
+  /**
+   * A composition over a MUTABLE daemon-settings store plus a swappable probe, so a test
+   * can watch a host answer, be remembered, then GO DARK across two reads of the same
+   * composition — which is the only way the last-seen memory is actually proved.
+   */
+  function statusDeps(options: {
+    projects?: Project[];
+    probe?: SettingsCompositionDeps["probeDaemon"];
+    latestDaemonVersion?: string;
+    stored?: DaemonSettings;
+  }) {
+    let stored: DaemonSettings = options.stored ?? { version: 1 };
+    const { deps } = makeDeps({
+      listProjects: () => options.projects ?? [project({ source: "local" })],
+      readDaemonSettings: () => stored,
+      updateDaemon: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+      ...(options.probe ? { probeDaemon: options.probe } : {}),
+      ...(options.latestDaemonVersion ? { latestDaemonVersion: options.latestDaemonVersion } : {}),
+    });
+    return { deps, read: () => stored };
+  }
+
+  it("a reachable host yields reachable + its RUNNING version, and remembers it", async () => {
+    const { deps, read } = statusDeps({ probe: async () => ({ version: "0.1.5" }) });
+    const [status] = await createSettingsComposition(deps).daemonStatus();
+    expect(status).toEqual({ source: "local", reachable: true, version: "0.1.5" });
+    // The answer is remembered, keyed by host, so a later dark read can name it.
+    expect(read().hosts).toEqual({ local: { lastSeenVersion: "0.1.5" } });
+  });
+
+  it("a host that STOPS answering reads unreachable with its last-seen version and NO version", async () => {
+    let answering = true;
+    const { deps } = statusDeps({ probe: async () => (answering ? { version: "0.1.4" } : null) });
+    const composition = createSettingsComposition(deps);
+    expect(await composition.daemonStatus()).toEqual([
+      { source: "local", reachable: true, version: "0.1.4" },
+    ]);
+
+    answering = false; // the host goes dark — the card must not keep reading green.
+    const [dark] = await composition.daemonStatus();
+    expect(dark).toEqual({ source: "local", reachable: false, lastSeenVersion: "0.1.4" });
+    // POSITIVE CONTROL (the unreachable-invents-nothing invariant): a host that did not
+    // answer carries no running `version` at all — not the last-seen one moved across,
+    // not the local daemon's, not a guess. Break the fallback and this fails.
+    expect(dark).not.toHaveProperty("version");
+    expect(dark?.updateAvailable).toBeUndefined();
+  });
+
+  it("a host that has NEVER answered reads unreachable with neither version", async () => {
+    const { deps } = statusDeps({
+      projects: [project({ id: "b", source: "wsl:Ubuntu" })],
+      probe: async (source) => (source === "local" ? { version: "0.1.5" } : null),
+    });
+    const statuses = await createSettingsComposition(deps).daemonStatus();
+    expect(statuses.find((entry) => entry.source === "wsl:Ubuntu")).toEqual({
+      source: "wsl:Ubuntu",
+      reachable: false,
+    });
+  });
+
+  it("reports on EVERY host settings.get enumerates — one status per card", async () => {
+    const { deps } = statusDeps({
+      projects: [project({ id: "a", source: "local" }), project({ id: "b", source: "wsl:Ubuntu" })],
+      probe: async () => null,
+    });
+    const composition = createSettingsComposition(deps);
+    const cards = (await composition.get()).daemonHosts ?? [];
+    const statuses = await composition.daemonStatus();
+    expect(statuses.map((entry) => entry.source)).toEqual(cards.map((card) => card.source));
+  });
+
+  it("updateAvailable is a REAL comparison, and absent when either side is unknown", async () => {
+    // Running older than the version this daemon ships ⇒ an update genuinely exists.
+    const behind = statusDeps({
+      probe: async () => ({ version: "0.1.4" }),
+      latestDaemonVersion: "0.1.5",
+    });
+    expect((await createSettingsComposition(behind.deps).daemonStatus())[0]).toMatchObject({
+      updateAvailable: true,
+    });
+
+    // Running the latest ⇒ false, not a nagging flag.
+    const current = statusDeps({
+      probe: async () => ({ version: "0.1.5" }),
+      latestDaemonVersion: "0.1.5",
+    });
+    expect((await createSettingsComposition(current.deps).daemonStatus())[0]).toMatchObject({
+      updateAvailable: false,
+    });
+
+    // No latest known (no update mechanism) ⇒ WITHHELD, so the button cannot show.
+    const unknownLatest = statusDeps({ probe: async () => ({ version: "0.1.4" }) });
+    const [status] = await createSettingsComposition(unknownLatest.deps).daemonStatus();
+    expect(status).not.toHaveProperty("updateAvailable");
+
+    // Answered but could not name its version ⇒ reachable, no version, no flag.
+    const noVersion = statusDeps({
+      probe: async () => ({ version: null }),
+      latestDaemonVersion: "0.1.5",
+    });
+    expect((await createSettingsComposition(noVersion.deps).daemonStatus())[0]).toEqual({
+      source: "local",
+      reachable: true,
+    });
+  });
+
+  it("a probe that THROWS reads unreachable, never a fabricated version", async () => {
+    const { deps } = statusDeps({
+      stored: { version: 1, hosts: { local: { lastSeenVersion: "0.1.3" } } },
+      probe: async () => {
+        throw new Error("wsl.exe is not installed");
+      },
+    });
+    expect((await createSettingsComposition(deps).daemonStatus())[0]).toEqual({
+      source: "local",
+      reachable: false,
+      lastSeenVersion: "0.1.3",
+    });
+  });
+
+  it("a malformed daemon-settings refuses the remember-write without failing the read", async () => {
+    const { deps } = makeDeps({
+      probeDaemon: async () => ({ version: "0.1.5" }),
+      updateDaemon: () => {
+        throw new Error("refusing to overwrite a malformed config");
+      },
+    });
+    expect(await createSettingsComposition(deps).daemonStatus()).toEqual([
+      { source: "local", reachable: true, version: "0.1.5" },
+    ]);
+  });
+
+  it("no probe at all ⇒ every host reads unreachable (nothing to ask, nothing invented)", async () => {
+    const { deps } = makeDeps({});
+    expect(await createSettingsComposition(deps).daemonStatus()).toEqual([
+      { source: "local", reachable: false },
+    ]);
+  });
+});
+
 describe("setTrackerValue — the global-rung tracker write (#461, B7)", () => {
   it("writes, resets, and validates through the registry declarations", () => {
     let stored: DaemonSettings = { version: 1 };
