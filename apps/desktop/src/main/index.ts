@@ -187,9 +187,10 @@ async function createWindow(wsPort: number): Promise<void> {
     // scheme. A user who forces the scheme OPPOSITE to the OS sees one brief
     // canvas-swap on launch; the renderer stamps data-scheme before its first
     // paint, so the swap is between the two theme canvases, never white/black.
-    // macOS hides the native titlebar (traffic lights overlay the in-app bar, which
-    // reserves their inset via [data-platform="darwin"]); win32/linux keep the
-    // native frame (titlebar, snap, drag) above the web content.
+    // macOS hides the native titlebar: the traffic lights overlay the renderer's
+    // top-left, so the sidebar reserves their zone off `bridge.platform === "darwin"`
+    // (the preload's `process.platform`) — see `shell/sidebar/sidebar.tsx`. win32/linux
+    // keep the native frame (titlebar, snap, drag) above the web content.
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0e0d0c" : "#fbfaf7",
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
     // Version in the native titlebar (visible on the win32 native frame; macOS shows
