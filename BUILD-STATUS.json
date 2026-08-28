@@ -68,7 +68,7 @@
   "b10": {
     "status": "done",
     "passes": true,
-    "note": "clusters 1-5 landed (PR #523, 11 review fixes confirmed); cluster 6 live-turn wiring B9-gated"
+    "note": "clusters 1-5 landed (PR #523, 11 review fixes confirmed); cluster 6 closed 2026-08-28 \u2014 SessionTurnLoop instantiated in create-server (round coding turns resume + capture the display transcript); session.* rows stay client-surface reads, open-session navigate is C11"
   },
   "b11": {
     "status": "done",

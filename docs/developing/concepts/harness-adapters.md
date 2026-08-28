@@ -87,6 +87,25 @@ session at a time, a second queues rather than racing the same transcript — an
 nothing (model, tools, cwd, system prompt) is sticky across it. After each turn
 the loop persists the updated cursor to the `SessionStore`.
 
+The loop is instantiated in the composition root (`packages/server/src/
+create-server.ts`), one per repository root — a session's `projectId` is its
+repo, so a session's turns always land on the same loop and the per-session
+serializer holds. Every coding turn a round dispatches runs through it, so a
+second round **resumes** the conversation the first left off at rather than
+starting cold, and two dispatches against one session queue instead of racing.
+The issue-#18 checkpoint bracket is unchanged around it: pre-checkpoint, turn,
+post-checkpoint, diff.
+
+The loop is also where the **display transcript** is captured. It is the single
+serialized reader of every harness event, so its `recordTranscript` sink is the
+one choke point that projects those events onto the transcript rows the chat
+dock renders (`harnessEventsToRows`), scrubs host paths out of them there, and
+appends them to the durable `TranscriptStore` that `session.transcript` reads.
+The rows are a display read-model, additive to the cursor: the CLI still owns
+the conversation. A session whose turns have not run reads back empty because it
+genuinely has no rows, and a transcript log that cannot be written never fails
+the coding turn that produced it.
+
 Resume is a Claude capability, honestly. The Claude adapter implements it end to
 end: `SessionSpec.resume` maps to the SDK's resume option, and a completed turn
 surfaces the harness session id so the durable session persists a real cursor —
