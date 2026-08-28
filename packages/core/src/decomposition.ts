@@ -32,7 +32,7 @@ import {
   type PatchFile,
   type Patchset,
 } from "@rennet/protocol";
-import { INDEX_EXTS, importSpecifiers, RESOLVE_EXTS, resolveRelative } from "./import-specifiers";
+import { importSpecifiers, resolveCandidate, resolveRelative } from "./import-specifiers";
 
 /** The SmartBear/Cisco 400-LOC review ceiling (Architecture Plan D7 step 3). */
 export const DEFAULT_MAX_CHUNK_LOC = 400;
@@ -529,9 +529,11 @@ function layerOf(path: string): number {
 
 // ── Import-derived dependency edges ──────────────────────────────────────────
 //
-// The regexes and the resolution semantics live in `./import-specifiers`, shared
-// with the snapshot-wide import extractor so the changeset view and the repo-wide
-// import graph can never drift apart.
+// The regexes, the extension candidate order and the probing loop all live in
+// `./import-specifiers`, shared with the snapshot-wide import extractor so the
+// changeset view and the repo-wide import graph resolve the same text the same
+// way. What they do NOT share is the text itself: this side sees hunk fragments,
+// the snapshot side sees whole files (see that module's header).
 
 function resolveToChangedFile(
   importerPath: string,
@@ -539,16 +541,9 @@ function resolveToChangedFile(
   changed: ReadonlySet<string>,
 ): string | null {
   if (!spec.startsWith(".")) return null;
-  const base = resolveRelative(importerPath, spec);
-  for (const ext of RESOLVE_EXTS) {
-    const candidate = base + ext;
-    if (candidate !== importerPath && changed.has(candidate)) return candidate;
-  }
-  for (const ext of INDEX_EXTS) {
-    const candidate = `${base}/index${ext}`;
-    if (candidate !== importerPath && changed.has(candidate)) return candidate;
-  }
-  return null;
+  return resolveCandidate(resolveRelative(importerPath, spec), importerPath, (path) =>
+    changed.has(path),
+  );
 }
 
 // ── Working chunk (id assigned after all chunks are built) ───────────────────
