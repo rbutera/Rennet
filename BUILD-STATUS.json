@@ -94,7 +94,7 @@
   "c05": {
     "status": "done",
     "passes": true,
-    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 live-wiring swap B4/B8-gated"
+    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 audited 2026-08-28: NOT a one-file swap — no board/lensBoard read command was ever registered; goes live via the wiring command-bundle change"
   },
   "c06": {
     "status": "done",
@@ -103,12 +103,12 @@
   "c07": {
     "status": "done",
     "passes": true,
-    "note": "PR #529 landed; live session-transcript projection B9-gated (one-file swap in chat-data.ts). Dock identity + live-turn fold + compaction all work now over MemoryBridge"
+    "note": "PR #529 landed; #540 landed the host-side session.transcript/rounds reads but the WRITE side (B10 cluster-6 SessionTurnLoop/buildAppTools) is unwired — server would return [], so the chat-data.ts client swap waits behind B10 c6. Dock identity + live-turn fold + compaction all work now over MemoryBridge"
   },
   "c08": {
     "status": "done",
     "passes": true,
-    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. Cluster 8 daemon-swap stays B11-gated (REVISE_WIRED one-bool flip). Deferred w/ record: own-PR resolves teammate-pr (no ownership fact in frozen schema \u2014 B-track follow-up). Parked for Rai: publish.requestConsent token"
+    "note": "PR #530 landed; dual review upheld 8 findings (2 critical: exact-preview bytes, review-identity isolation), all fixed + confirmed. B11 landed \u2192 REVISE_WIRED flip UNBLOCKED (review.reviseSpan registered+handled server-side; two client files) \u2014 dispatching now. own-PR-as-teammate-pr fixed via viewerDidAuthor (#538). requestConsent: Rai ruled DELETE \u2014 queued as its own change, verdict folds into the compositionId freshness check"
   },
   "c09": {
     "status": "done",
@@ -123,12 +123,12 @@
   "c11": {
     "status": "done",
     "passes": true,
-    "note": "PR #528 landed; live command execution B10-live-rows-gated (registry exposure flags). C10's keyboard page must carry the six-bind KEY_ACTIONS + settings.get invalidation when it replaces settings-screen.tsx"
+    "note": "PR #528 landed; live execution audited 2026-08-28: exposure.commandMenu is false on every registered command (one derived literal, commands/index.ts) — queued as a deliberate per-row menu inventory, not a blanket flip. Keyboard carry (KEY_ACTIONS + settings.get invalidation) verified closed on eea4e398"
   },
   "c12": {
     "status": "done",
     "passes": true,
-    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 rename seam B9-gated"
+    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 audited 2026-08-28: NOT a seam swap — project.rename command was never registered; goes live via the wiring command-bundle change (with session.list/rename/pin/archive + 5 project-pref settings writers)"
   },
   "c13": {
     "status": "done",
@@ -140,17 +140,28 @@
     "passes": false
   },
   "c15": {
-    "status": "pending",
+    "status": "implementing",
     "passes": false,
-    "note": "NEW (Rai 2026-08-28, GO): per-round board REGENERATION \u2014 the honest-present half C14 needs (9 C9 claims). Size L, 4 clusters (1 collation bridge GATES rest + smoke-run first task; 2 gen mint/freeze; 3 live progress channel; 4 UI completions incl kicker 'Regenerating/Regenerated the Boards'). RISK: runLensPipeline+runRound have ZERO prod callers, 6 model drafters NEVER ran in prod \u2014 cluster 1 is first prod exercise, a surprise there = STOP-AND-REPORT. Carry-forward = label-honest now (true-skip is a later cost optimization, no cost cap) PENDING (i)/(ii) UI-lie verification. Sequences after C09 (a) RoundRecord-write. Scope: scratchpad/board-regen-scope.md"
+    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1 (collation bridge + first prod pipeline run, smoke-run proven) + 2 (durable GenerationStore, RoundRecord frozen-predecessor, gen drill-down) BUILT on branch. Cluster 3 (live progress channel, carry-forward label-honest hard constraint) in flight now; then 4 (UI incl kicker verbatim) + 5 (E2E/docs). Schema-dialect fix it surfaced landed standalone as #544. Stop-and-report stands for live-pipeline surprises."
   },
   "c16": {
-    "status": "pending",
+    "status": "implementing",
     "passes": false,
-    "note": "NEW (Rai 2026-08-28): model-council mappings (reviewRoles) \u2014 expose role\u2192model assignments across dual/claudeOnly/codexOnly as readable + editable. Council tables already exist in core/model-council*; #485 specs it. Group B of the re-framed C10 six. IN SCOPE before C14. Size TBD (scoping)."
+    "note": "Issue #542, branch feat/c16-council-mappings. Clusters 1-4 DONE @ea7966a1, gate green, controls run red+reverted. Two sound packet deviations recorded in tasks.md (registration+handler atomic \u2014 exhaustiveness guard makes the split unbuildable; 3.1 no-op by design, proving tests instead). PAUSED before cluster 5 dialog work: QUESTION WITH RAI \u2014 routing.task[jobId] overrides are scenario-independent (one edit moves all three columns; made honest, not hidden). Scenario-keyed instead = small packet change, shape unlanded so cheap now. Cluster 6 rides after."
   },
   "c17": {
+    "status": "implementing",
+    "passes": false,
+    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1 (forge.detect) + 2 (daemon.status sibling command; per-host probes; lastSeenVersion additive; updateAvailable withheld-when-unknown; invents-nothing control run red+reverted) done, gate green @8a23b698. Cluster 3 (per-host agents) next — 3.1 re-ruled server-side per-host detection mirroring daemon.status (client is single-connection by design). Then 4 projection fold, 5 Reconnect #533, 6 Update Daemon #534, 7 E2E. Snapshot: 80→81 on branch — three-way serialize with c16/c18 at landing."
+  },
+  "c18": {
     "status": "pending",
-    "passes": false
+    "passes": false,
+    "note": "NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle — the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision — serialize)."
+  },
+  "c19": {
+    "status": "pending",
+    "passes": false,
+    "note": "NEW (2026-08-28, Rai's #435 ruling executed): publish.requestConsent DELETED end to end (~11 files incl. mobile publish.tsx + create-server composition). The one real property survives without the token: posted verdict must equal previewed verdict, folded as one more input into the EXISTING publishCompositionId/assertCompositionFresh mechanism — no token, no dialog. Surviving correctness gates untouched. Packet: openspec/changes/c19-direct-post/context.md. BLOCKED BY c16 landing + the c08-revise-wired branch (app-ui/handoff files)."
   }
 }

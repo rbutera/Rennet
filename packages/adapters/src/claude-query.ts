@@ -57,6 +57,53 @@ const loadRealQuery: LoadClaudeQuery = async () => {
  * translating here means the SDK's version-specific shape lives in exactly one
  * place and the adapter's hermetic tests never have to know about it.
  */
+/**
+ * Normalize a raw `outputSchema` into the shape the installed `claude` binary's
+ * `--json-schema` (ajv) validator accepts. Zod v4's `z.toJSONSchema` stamps a
+ * top-level `$schema` naming the draft-2020-12 meta-schema; the CLI's ajv has no
+ * 2020-12 meta-schema registered and rejects the WHOLE schema (`claude` exits 1:
+ * "not a valid JSON Schema: no schema with key or ref .../draft/2020-12/schema")
+ * BEFORE the turn runs. Dropping the top-level meta declaration (`$schema`/`$id`)
+ * lets ajv validate under its default dialect — proven live to still ACCEPT the
+ * schema AND emit structured output. Every constraint in the schema BODY (fields,
+ * `required`, `enum`, `const`, nested `$ref`) is untouched, so no caller's contract
+ * weakens. This is the one choke point all five `outputSchema` callers route through
+ * (boards, delta-digest, draft-pr-body, handoff-compose, refine-comment); first
+ * surfaced by C15's `runRound` — the first production run of any of them — against
+ * claude 2.1.246 (above Rennet's tested range; a general version-robustness pass on
+ * adapter args is a noted follow-up). Shallow by design: only the top-level meta keys
+ * are removed, so internal `$ref`/`$defs` references keep resolving.
+ */
+export function normalizeOutputSchema(schema: unknown): Record<string, unknown> {
+  if (schema === null || typeof schema !== "object") return schema as Record<string, unknown>;
+  const rest = { ...(schema as Record<string, unknown>) };
+  delete rest.$schema;
+  delete rest.$id;
+  return rest;
+}
+
+/**
+ * Map the model council's VERSIONED aliases to the exact full model id the installed
+ * `claude` binary accepts. The council deliberately pins a specific model version per
+ * role (`opus-4.8` for lens-draft, `sonnet-5` for the round-report/flagged seats), but
+ * `claude` 2.1.246 (above Rennet's tested range) rejects those short versioned aliases
+ * ("There's an issue with the selected model (opus-4.8). It may not exist or you may not
+ * have access to it.") while accepting the SDK's canonical full ids for the SAME version.
+ * So we translate to the full id — preserving the council's exact version intent, never a
+ * lossy strip to a bare alias (which would silently substitute whatever the binary's
+ * "opus" currently points at). First surfaced by C15's `runRound`, the first production run
+ * of any model-routed board seat; every full id here was confirmed live against the binary.
+ * Bare aliases (`opus`/`sonnet`/`haiku`) and already-full ids pass through untouched.
+ */
+const COUNCIL_MODEL_FULL_IDS: Readonly<Record<string, string>> = {
+  "opus-4.8": "claude-opus-4-8",
+  "sonnet-5": "claude-sonnet-5",
+};
+
+export function mapCouncilModel(model: string): string {
+  return COUNCIL_MODEL_FULL_IDS[model] ?? model;
+}
+
 export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   const sdkOptions: SdkOptions = {
     cwd: options.cwd,
@@ -70,7 +117,7 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
     sdkOptions.executableArgs = [...options.executableArgs];
   }
   if (options.abortController) sdkOptions.abortController = options.abortController;
-  if (options.model !== undefined) sdkOptions.model = options.model;
+  if (options.model !== undefined) sdkOptions.model = mapCouncilModel(options.model);
   if (options.allowedTools !== undefined) sdkOptions.allowedTools = [...options.allowedTools];
   if (options.disallowedTools !== undefined) {
     sdkOptions.disallowedTools = [...options.disallowedTools];
@@ -89,7 +136,7 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   if (options.outputSchema !== undefined) {
     sdkOptions.outputFormat = {
       type: "json_schema",
-      schema: options.outputSchema as Record<string, unknown>,
+      schema: normalizeOutputSchema(options.outputSchema),
     };
   }
   // Cursor-resume (B09): the adapter's `resume` (a harness session id) is the

@@ -33,6 +33,15 @@ Prove inventory parity and close the loop:
      control, so the default is delete. Do not let it survive as accepted behavior.
    - C11/C10: the keyboard page must carry the six-bind `KEY_ACTIONS` +
      `settings.get` invalidation when it replaces `settings-screen.tsx`.
+     **RESOLVED** (verified on `eea4e398`): the C10 takeover shell
+     `settings/settings-screen.tsx` routes `keybindings` → `ShortcutsPage`,
+     which renders the six live `KEY_ACTIONS` (not the legacy
+     `COMMAND_CATALOGUE`); remap writes through `useSetKeybinding`
+     (`settings/data/live.ts`) which `invalidates: ["settings.get"]`, so the one
+     key owner rearms with no reload. The legacy 1,137-line
+     `components/settings-screen.tsx` is deleted (C10 task 11.1). Positive
+     control: `settings/shortcuts.dom.test.tsx` proves both the six-bind render
+     and the live-remap invalidation (full app-ui suite green, 915 tests).
    - C10's honest-empty ledger (model-council, glyph, worktree, tracker,
      guidance-write, remote-host detection) awaits backends that do not exist.
      In scope for C14: that no page or surface *claims* them as working. Out of
