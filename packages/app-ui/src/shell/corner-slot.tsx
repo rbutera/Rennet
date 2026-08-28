@@ -15,7 +15,9 @@ import { useRennetStore } from "../store";
 //
 // On darwin the window is `titleBarStyle: "hiddenInset"`, so the OS paints the
 // real close/minimise/zoom buttons over the renderer's top-left. There is nothing
-// to draw here — the slot RESERVES their zone (76px, #557's measure) and, being
+// to draw here — the slot RESERVES their zone (81px in state 1 so the wordmark
+// clears the lights outright; 76px is the bare OS light zone, kept for the chat
+// header's leading element and 72px for the 4px-inset floating pill) and, being
 // the titlebar in that state, carries the shared `navigation-titlebar` drag rule
 // so the corner strip drags the window and its buttons opt back out. Every other
 // host keeps its native frame and reserves nothing, while keeping the same single
@@ -73,7 +75,7 @@ export function CornerSlot({
         "flex h-10 shrink-0 items-center gap-2",
         mac && "navigation-titlebar",
         // State 1: the sidebar's header row IS this strip.
-        owner === "sidebar" && (mac ? "pl-[76px] pr-3" : "pl-3 pr-3"),
+        owner === "sidebar" && (mac ? "pl-[81px] pr-3" : "pl-3 pr-3"),
         // State 2: inline as the chat header's leading element. `self-start` keeps
         // the light inset at its true y inside a taller (56px) row instead of
         // centring it, and the row's own leading padding gives way to ours.

@@ -382,6 +382,9 @@ importers:
       shiki:
         specifier: 4.4.3
         version: 4.4.3
+      tw-animate-css:
+        specifier: 1.4.0
+        version: 1.4.0
       wouter:
         specifier: 3.10.0
         version: 3.10.0(react@19.2.8)
@@ -493,6 +496,10 @@ importers:
       '@fontsource-variable/newsreader':
         specifier: 5.3.0
         version: 5.3.0
+    devDependencies:
+      happy-dom:
+        specifier: 20.11.1
+        version: 20.11.1
 
   packages/ui:
     dependencies:
@@ -526,9 +533,6 @@ importers:
       tailwind-merge:
         specifier: 3.6.0
         version: 3.6.0
-      tw-animate-css:
-        specifier: 1.4.0
-        version: 1.4.0
     devDependencies:
       '@testing-library/dom':
         specifier: 10.4.1

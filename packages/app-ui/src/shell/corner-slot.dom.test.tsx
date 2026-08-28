@@ -107,9 +107,11 @@ describe("corner slot: darwin reserves, every other host does not (C20 §6.2)", 
       );
       const slot = slots()[0];
       if (!slot) throw new Error("no corner slot");
-      // The reserve differs by owner (the floating pill is inset 4px from the corner,
-      // so it needs 76 − 4), but every owner reserves SOMETHING on darwin.
-      expect(slot.className).toMatch(/pl-\[(76|72)px\]/);
+      // The reserve differs by owner (the sidebar takes 81 so its wordmark clears the
+      // lights, the chat header takes the bare 76px light zone, the floating pill is
+      // inset 4px from the corner so it needs 76 − 4), but every owner reserves
+      // SOMETHING on darwin.
+      expect(slot.className).toMatch(/pl-\[(81|76|72)px\]/);
       expect(slot.className).toContain("navigation-titlebar");
       cleanup();
     });

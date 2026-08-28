@@ -163,7 +163,7 @@ function WelcomeShell({
         <header className="rn-welcome-header">
           <RennetLockup size={24} />
           <span>
-            <ShieldCheck className="size-3.5 text-success" /> Local by default
+            <ShieldCheck className="size-3.5 text-green" /> Local by default
           </span>
         </header>
       ) : null}

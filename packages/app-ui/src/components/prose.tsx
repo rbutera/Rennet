@@ -29,7 +29,9 @@ const COMPONENTS: ComponentProps<typeof ReactMarkdown>["components"] = {
   li: (props) => <li className="my-0.5" {...props} />,
   code: (props) => <code className="font-mono text-2xs" {...props} />,
   pre: (props) => <pre className="my-2 overflow-auto font-mono text-2xs" {...props} />,
-  blockquote: (props) => <blockquote className="my-2 border-l-2 pl-3 opacity-80" {...props} />,
+  blockquote: (props) => (
+    <blockquote className="my-2 border-l-2 border-current pl-3 opacity-80" {...props} />
+  ),
   strong: (props) => <strong className="font-semibold" {...props} />,
   hr: () => <hr className="my-3 opacity-40" />,
 };

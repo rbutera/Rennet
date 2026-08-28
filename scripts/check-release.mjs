@@ -28,7 +28,12 @@ function packageVersion(path) {
   }
 }
 
-const requestedTag = process.argv[2] ?? git(["describe", "--tags", "--exact-match", "HEAD"]);
+// Drop a bare `--` separator: every workflow calls this as `pnpm release:check -- "<tag>"`,
+// and pnpm forwards the separator itself, so argv[2] was `--` and the tag sat at argv[3].
+// Filtering here fixes all three call sites at once and holds whichever way a pnpm version
+// or shell (bash on macOS/Linux, pwsh on Windows) decides to forward the separator.
+const args = process.argv.slice(2).filter((argument) => argument !== "--");
+const requestedTag = args[0] ?? git(["describe", "--tags", "--exact-match", "HEAD"]);
 const match = SEMVER_TAG.exec(requestedTag);
 if (!match) fail(`expected a tag shaped vX.Y.Z, got ${requestedTag}`);
 
