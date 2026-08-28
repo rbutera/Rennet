@@ -94,7 +94,7 @@
   "c05": {
     "status": "done",
     "passes": true,
-    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 audited 2026-08-28: NOT a one-file swap — no board/lensBoard read command was ever registered; goes live via the wiring command-bundle change"
+    "note": "PR #525 landed, 8 review fixes confirmed; cluster 8 audited 2026-08-28: NOT a one-file swap \u2014 no board/lensBoard read command was ever registered; goes live via the wiring command-bundle change"
   },
   "c06": {
     "status": "done",
@@ -103,7 +103,7 @@
   "c07": {
     "status": "done",
     "passes": true,
-    "note": "PR #529 landed; #540 landed the host-side session.transcript/rounds reads but the WRITE side (B10 cluster-6 SessionTurnLoop/buildAppTools) is unwired — server would return [], so the chat-data.ts client swap waits behind B10 c6. Dock identity + live-turn fold + compaction all work now over MemoryBridge"
+    "note": "PR #529 landed; #540 landed the host-side session.transcript/rounds reads but the WRITE side (B10 cluster-6 SessionTurnLoop/buildAppTools) is unwired \u2014 server would return [], so the chat-data.ts client swap waits behind B10 c6. Dock identity + live-turn fold + compaction all work now over MemoryBridge"
   },
   "c08": {
     "status": "done",
@@ -123,12 +123,12 @@
   "c11": {
     "status": "done",
     "passes": true,
-    "note": "PR #528 landed; live execution audited 2026-08-28: exposure.commandMenu is false on every registered command (one derived literal, commands/index.ts) — queued as a deliberate per-row menu inventory, not a blanket flip. Keyboard carry (KEY_ACTIONS + settings.get invalidation) verified closed on eea4e398"
+    "note": "PR #528 landed; live execution audited 2026-08-28: exposure.commandMenu is false on every registered command (one derived literal, commands/index.ts) \u2014 queued as a deliberate per-row menu inventory, not a blanket flip. Keyboard carry (KEY_ACTIONS + settings.get invalidation) verified closed on eea4e398"
   },
   "c12": {
     "status": "done",
     "passes": true,
-    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 audited 2026-08-28: NOT a seam swap — project.rename command was never registered; goes live via the wiring command-bundle change (with session.list/rename/pin/archive + 5 project-pref settings writers)"
+    "note": "PR #524 landed, 15 review fixes confirmed; cluster 7 audited 2026-08-28: NOT a seam swap \u2014 project.rename command was never registered; goes live via the wiring command-bundle change (with session.list/rename/pin/archive + 5 project-pref settings writers)"
   },
   "c13": {
     "status": "done",
@@ -142,7 +142,7 @@
   "c15": {
     "status": "implementing",
     "passes": false,
-    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal — C14 flags claim-vs-live, doesn't fudge). PARKED for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
+    "note": "Issue #541, branch feat/c15-board-regen. Clusters 1-4 BUILT @d1b7475c (kicker verbatim red-proofed; drill-down + retro line off real frozen-prior data; sound deviation: greeting's 'Composed generation <id>' renders the real minted id not an ordinal \u2014 C14 flags claim-vs-live, doesn't fudge). PARKED for cluster 5 (E2E) behind c18's board-read slice. At resume: re-merge main (branch 2 behind; claude-query conflict resolves to main). Review-seat notes: RoundState.composed gained optional lanes (the one protocol-adjacent shape change); naive post-process fake in round-trigger.test.ts (latent)."
   },
   "c16": {
     "status": "landed",
@@ -150,18 +150,18 @@
     "note": "LANDED #553 @9a850be7 (closes #542). Per-scenario overrides per Rai's ruling \u2014 sibling-leak structurally impossible, flip-to-red proven. Review FIX\u2192CONFIRMED: app-ui's drifted local council-table copy DELETED (6 cells lied; server honest-present at source), REVIEW_ROLE_DEFAULTS now test fixture, Reset doc per-role truth, adopted cleared on refetch-settle. Surface truth: two columns (Dual + provider-resolving Single) over three scenarios. First of the snapshot set down \u2014 c17/c18 rebase over it at landing."
   },
   "c17": {
-    "status": "implementing",
+    "status": "review",
     "passes": false,
-    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1-3 done @d2c3f663 (forge.detect; daemon.status; harness.hosts + harness.setEnabled server-side per the 3.1 re-ruling, recorded in tasks.md; PLUS latent cluster-2 bug fixed — version-learn no longer replaces the whole host entry, withHostEntries merge + regression test). Clusters 1-5 + amendment A GATED FOR REAL @348e7207 (continuer audit: predecessor's boxes checked but NEVER gated — two real TS errors fixed: probeDaemon undefined-vs-null coalesced preserving honest-absence, dispatch stub missing new methods; third checked≠gated proof this build). Amendment A live: disabledForges rides the hosts entry, forge.setEnabled mirrors harness.setEnabled, enabled:true literal gone. Finisher in flight: amendment B (forge.hosts per-host gh), cluster 6 Update Daemon #534, cluster 7 E2E + rename-out-of-PATH control + docs + sigil. GATE_EXIT=N echo rule now build-wide (task-wrapper exit masked a 130). Snapshot serialization set with c15/c16/c18 at landing."
+    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1-3 done @d2c3f663 (forge.detect; daemon.status; harness.hosts + harness.setEnabled server-side per the 3.1 re-ruling, recorded in tasks.md; PLUS latent cluster-2 bug fixed \u2014 version-learn no longer replaces the whole host entry, withHostEntries merge + regression test). Clusters 1-5 + amendment A GATED FOR REAL @348e7207 (continuer audit: predecessor's boxes checked but NEVER gated \u2014 two real TS errors fixed: probeDaemon undefined-vs-null coalesced preserving honest-absence, dispatch stub missing new methods; third checked\u2260gated proof this build). Amendment A live: disabledForges rides the hosts entry, forge.setEnabled mirrors harness.setEnabled, enabled:true literal gone. Finisher in flight: amendment B (forge.hosts per-host gh), cluster 6 Update Daemon #534, cluster 7 E2E + rename-out-of-PATH control + docs + sigil. GATE_EXIT=N echo rule now build-wide (task-wrapper exit masked a 130). Snapshot serialization set with c15/c16/c18 at landing."
   },
   "c18": {
     "status": "pending",
     "passes": false,
-    "note": "Issue #551. NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle — the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision — serialize)."
+    "note": "Issue #551. NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle \u2014 the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision \u2014 serialize)."
   },
   "c19": {
     "status": "pending",
     "passes": false,
-    "note": "Issue #552. NEW (2026-08-28, Rai's #435 ruling executed): publish.requestConsent DELETED end to end (~11 files incl. mobile publish.tsx + create-server composition). The one real property survives without the token: posted verdict must equal previewed verdict, folded as one more input into the EXISTING publishCompositionId/assertCompositionFresh mechanism — no token, no dialog. Surviving correctness gates untouched. Packet: openspec/changes/c19-direct-post/context.md. BLOCKED BY c16 landing + the c08-revise-wired branch (app-ui/handoff files)."
+    "note": "Issue #552. NEW (2026-08-28, Rai's #435 ruling executed): publish.requestConsent DELETED end to end (~11 files incl. mobile publish.tsx + create-server composition). The one real property survives without the token: posted verdict must equal previewed verdict, folded as one more input into the EXISTING publishCompositionId/assertCompositionFresh mechanism \u2014 no token, no dialog. Surviving correctness gates untouched. Packet: openspec/changes/c19-direct-post/context.md. BLOCKED BY c16 landing + the c08-revise-wired branch (app-ui/handoff files)."
   }
 }
