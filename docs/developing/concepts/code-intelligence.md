@@ -1,17 +1,18 @@
 ---
 title: Code intelligence
-description: How Rennet resolves structural definitions and textual references at the reviewed head OID.
+description: How Rennet resolves structural definitions, textual references, and import edges at the reviewed head OID.
 ---
 
-Rennet's live code-intelligence path answers two review questions: where an
-exported name is declared, and where the same identifier text occurs. It uses the
-deterministic Repo Map rather than a language server.
+Rennet's live code-intelligence path answers three review questions: where an
+exported name is declared, where the same identifier text occurs, and which files
+import which. It uses the deterministic Repo Map rather than a language server.
 
 ## Indexing and lookup
 
-Project processing extracts structural symbols from supported TypeScript and
-JavaScript files and writes textual identifier-reference shards. Both are tied to
-a pinned Git object identity.
+Project processing extracts three per-file shard families from supported
+TypeScript and JavaScript files: structural symbols, textual identifier
+references, and raw import specifiers. All three are tied to a pinned Git object
+identity.
 
 ```mermaid
 flowchart LR
@@ -19,13 +20,16 @@ flowchart LR
   extract["Repo Map extraction"]
   symbols["Structural symbol shards"]
   refs["Textual reference shards"]
+  imports["Raw import-specifier shards"]
   server["Server symbol backend"]
+  graph["Resolved import graph"]
   definition["context.symbol"]
   references["context.references"]
 
   tree --> extract
   extract --> symbols --> server
   extract --> refs --> server
+  extract --> imports --> graph
   server --> definition
   server --> references
 ```
@@ -44,6 +48,36 @@ The symbol inspector combines:
 
 The index uses content-addressed shards, so unchanged repository content can be
 reused without changing its identity.
+
+## The import graph
+
+Import shards record the raw specifiers a file names — `from '…'`, bare
+`import '…'`, `require(…)`, and dynamic `import(…)` — with block comments stripped,
+de-duplicated and sorted. They store specifiers rather than resolved paths, because
+resolving a relative specifier needs the importing file's path, and a path inside
+the shard would break the rename-and-copy reuse the other two families rely on.
+
+Resolution into file-to-file edges happens on read, against the snapshot's own file
+inventory and workspace scope table:
+
+| Specifier | Resolves to |
+|---|---|
+| Relative (`./util`, `../a/b`) | The inventory file it names, trying plain extensions then a directory `index` file |
+| Workspace (`@scope/pkg`, `@scope/pkg/sub`) | A file under the owning scope's root or source root; the most specific scope name wins |
+| Anything else | Nothing. Node builtins, npm packages, and dangling paths contribute no edge |
+
+The graph is file-to-file, so an unresolvable specifier is absent rather than
+present as a node that is not a file. The raw specifier stays in the shard either
+way. The extraction is textual, the same limit the other two families carry: a
+specifier in a template literal or a line comment is recorded, and a computed
+`import(variable)` is invisible.
+
+Fan-in — how many other files depend on a changed file — reads this graph when the
+snapshot has one, and falls back to the identifier-reference index when it does not.
+The two answers are not interchangeable and the code does not let them be confused:
+an edge-backed count says files *import* the changed file, a textual count says
+files *reference its symbols*, and the fan-in index is a discriminated union so the
+weaker method cannot be handed to a consumer in the stronger one's shape.
 
 ## Confidence
 
