@@ -1,197 +1,195 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   councilSeatTurn,
   createClaudeHarness,
   execaGit,
+  ProjectContextReader,
   ProjectSnapshotGenerator,
   ProjectSnapshotStore,
   resolveBaseRef,
+  snapshotContextFromLoaded,
 } from "@rennet/adapters";
-import { MAP_VERIFY_OUTPUT_SCHEMA, runMapVerify } from "@rennet/core";
-import type { KnowledgeSet, ProjectProcessEvent } from "@rennet/protocol";
+import type {
+  KnowledgeSnapshotContext,
+  PartitionWorkerResult,
+  WorkerStatement,
+} from "@rennet/core";
+import {
+  boundedAll,
+  buildPartitions,
+  MAP_VERIFY_OUTPUT_SCHEMA,
+  PARTITION_WORKER_OUTPUT_SCHEMA,
+  runMapVerify,
+  runPartitionWorker,
+} from "@rennet/core";
+import type { ProjectProcessEvent } from "@rennet/protocol";
 import { PROACTIVE_REHYDRATION_COMMAND_ID } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createKnowledgeSwarmRuntime } from "../src/runtime/knowledge-swarm";
 
 /**
- * The c22 RELEASE-BLOCKER proof: the knowledge swarm run against a REAL, LARGE
- * repository through the REAL runtime and the REAL narration channel. Not part
- * of the hermetic gate (`pnpm check` runs `vitest run packages/server/src`,
- * which never reaches this directory) and dormant without the env flag, because
- * it spends the subscription for the better part of an hour:
+ * The c22 RELEASE-BLOCKER proof. Not part of the hermetic gate (`pnpm check`
+ * runs `vitest run packages/server/src`, which never reaches this directory)
+ * and dormant without the env flag, because it spends the subscription:
  *
- *     RENNET_C22_PROOF=1 RENNET_C22_REPO=/path/to/a/large/repo \
- *       pnpm exec vitest run packages/server/integration
+ *     RENNET_C22_PROOF=1 pnpm nx run rennet-server:real-knowledge
  *
- * A unit test cannot stand in for this. The bug it covers — the verify seat
- * receiving EVERY partition's statements in one prompt and dying on "Prompt is
- * too long", discarding a forty-minute run — survived a green unit suite for
- * exactly that reason: nothing hermetic has a context window.
+ * WHAT IS ACTUALLY UNDER TEST: the verify seat used to receive EVERY
+ * partition's statements in ONE prompt. On a repository the size of Rennet
+ * (~1900 statements) that prompt exceeds the seat's context window, the seat
+ * dies with "Prompt is too long", and the entire run is discarded. So the thing
+ * to prove is that REAL statements at REAL volume chunk and verify.
  *
- * Three checks, in order, sharing one expensive run:
- *   1. the pass completes over the whole repository and persists a set;
- *   2. the SAME statements through ONE unbounded prompt still die — the
- *      positive control that proves check 1 is chunking, not luck;
- *   3. a non-`ok` outcome reaches the narration channel WITH its reason.
+ * The 200-partition walk is deliberately NOT part of this proof. It costs 67
+ * minutes, it exercises the worker fan-out rather than the verify seat, and its
+ * configuration (cap 4, 200 partitions) is already slated for deletion in #584
+ * — proving the correctness of something we have decided to delete is ceremony
+ * with a long runtime. A small real slice supplies genuine minted statements;
+ * those statements are scaled to production volume for the seat.
+ *
+ * A unit test cannot stand in for any of this: nothing hermetic has a context
+ * window, which is exactly why a green unit suite hid the bug.
  */
 
 const LIVE = process.env.RENNET_C22_PROOF === "1";
 const SUBJECT = process.env.RENNET_C22_REPO ?? process.cwd();
+/** How many real partitions to mint from. Enough for genuine variety, minutes not hours. */
+const SLICES = Number(process.env.RENNET_C22_SLICES ?? "6");
+/** The statement volume the seat must survive — Rennet's own measured ~1900. */
+const TARGET = Number(process.env.RENNET_C22_TARGET ?? "1900");
 
 const say = (line: string) => process.stderr.write(`[c22] ${line}\n`);
 
-/** What check 1 produced, for the checks that reuse it instead of re-running. */
-let produced: { set: KnowledgeSet; repoRoot: string } | undefined;
+/** Real minted statements, scaled to `TARGET` by cloning under fresh ids. */
+let scaled: readonly WorkerStatement[] | undefined;
+let context: KnowledgeSnapshotContext | undefined;
 
-describe.skipIf(!LIVE)("c22 — the real knowledge swarm on a real repository", () => {
-  it("completes over the whole repository and narrates on the rehydration channel", async () => {
+describe.skipIf(!LIVE)("c22 — the verify seat at real statement volume", () => {
+  it("chunks and verifies ~1900 real statements without overflowing the seat", async () => {
     const { adapter, discovery } = await createClaudeHarness({ env: process.env });
     expect(adapter, `no claude discovered: ${JSON.stringify(discovery.health)}`).not.toBeNull();
     if (!adapter) return;
 
     const baseDir = mkdtempSync(join(tmpdir(), "c22-proof-"));
-    say(`subject ${SUBJECT}`);
-    say(`scratch store ${baseDir}`);
     const store = new ProjectSnapshotStore(baseDir);
     const base = await resolveBaseRef(SUBJECT, { git: execaGit });
     await new ProjectSnapshotGenerator({ store }).generate(SUBJECT, {
       explicitBaseRef: base.baseOid,
     });
+    const gated = new ProjectContextReader(store).loadFresh(base.repoKey, base.baseOid);
+    expect(gated.ok, "the subject snapshot must be fresh").toBe(true);
+    if (!gated.ok) return;
+    const snapshot = snapshotContextFromLoaded(gated.snapshot);
+    context = snapshot;
 
-    // The composition root's own wiring, verbatim: every runtime narration is
-    // broadcast under PROACTIVE_REHYDRATION_COMMAND_ID — the id the indexing
-    // screen now subscribes to. Nothing here is a stub but the transport.
-    const broadcast: { commandId: string; event: ProjectProcessEvent }[] = [];
-    // Timing instrumentation for the "context map in <= 5 minutes" workstream:
-    // observed in-flight worker count (the ACHIEVED concurrency, not the cap)
-    // and each worker's wall time, read off the narration itself.
-    const startedAt = new Map<string, number>();
-    const durations: number[] = [];
-    let inFlight = 0;
-    let peakInFlight = 0;
-    const started = Date.now();
-    const runtime = createKnowledgeSwarmRuntime({
-      store,
-      resolveClaudePort: async () => adapter,
-      resolveCodexExecutor: async () => null,
-      narrate: (event) => {
-        broadcast.push({ commandId: PROACTIVE_REHYDRATION_COMMAND_ID, event });
-        if (event.kind !== "stage") return;
-        const key = event.detail?.split(":")[0] ?? "";
-        if (/ running$/.test(event.note)) {
-          startedAt.set(key, Date.now());
-          inFlight += 1;
-          peakInFlight = Math.max(peakInFlight, inFlight);
-        } else if (/ (done|failed)$/.test(event.note)) {
-          const at = startedAt.get(key);
-          if (at !== undefined) durations.push(Date.now() - at);
-          inFlight -= 1;
-        }
+    const partitions = buildPartitions(snapshot);
+    say(`subject ${SUBJECT}: ${partitions.length} partitions, minting from ${SLICES}`);
+
+    // Real workers on real Rennet code through the real council seat.
+    const worker = councilSeatTurn(
+      "partition-worker",
+      PARTITION_WORKER_OUTPUT_SCHEMA,
+      { claudePort: adapter, repoRoot: SUBJECT, label: "knowledge.worker" },
+      { availability: { installed: ["claude-code"] } },
+    );
+    expect("failure" in worker ? worker.failure : "").toBe("");
+    if ("failure" in worker) return;
+
+    const mintStart = Date.now();
+    const results = await boundedAll(
+      partitions.slice(0, SLICES).map((slice) => async () => {
+        const result = await runPartitionWorker({
+          slice,
+          snapshot,
+          provenance: { model: worker.model, apiKeySource: null },
+          runTurn: worker.runTurn,
+        });
         say(
-          `+${Math.round((Date.now() - started) / 1000)}s inflight=${inFlight} ` +
-            `${event.note} — ${event.detail ?? ""}`,
+          `worker ${slice.id} ${result.status} ` +
+            `${result.status === "ok" ? `${result.statements.length} statements` : ""}`,
         );
-      },
-    });
-
-    const outcome = await runtime.runForRepo({
-      repoKey: base.repoKey,
-      repoRoot: SUBJECT,
-      toOid: base.baseOid,
-    });
-    const wallSeconds = Math.round((Date.now() - started) / 1000);
-    const sorted = [...durations].sort((a, b) => a - b);
-    const median = sorted.length === 0 ? 0 : (sorted[sorted.length >> 1] ?? 0);
-    const sumWorkers = durations.reduce((a, b) => a + b, 0);
+        return result;
+      }),
+      3,
+    );
+    const minted = results.flatMap((r) => (r.status === "ok" ? r.statements : []));
     say(
-      `TIMING wall=${wallSeconds}s workers=${durations.length} ` +
-        `medianWorker=${Math.round(median / 1000)}s ` +
-        `slowestWorker=${Math.round((sorted[sorted.length - 1] ?? 0) / 1000)}s ` +
-        `sumWorkerTime=${Math.round(sumWorkers / 1000)}s ` +
-        `peakInFlight=${peakInFlight} ` +
-        `achievedConcurrency=${(sumWorkers / Math.max(1, wallSeconds * 1000)).toFixed(2)}`,
+      `minted ${minted.length} real statements in ${Math.round((Date.now() - mintStart) / 1000)}s`,
     );
-    say(`outcome=${outcome.status} in ${wallSeconds}s`);
-    if (outcome.status !== "ok") say(`reason: ${outcome.reason}`);
-    expect(outcome.status).toBe("ok");
-    if (outcome.status !== "ok") return;
+    expect(minted.length).toBeGreaterThan(0);
 
+    // Scale to production volume. Cloning under fresh ids keeps every
+    // statement a REAL shape — real claims, real evidence anchors, real
+    // subjects — so the prompt the seat receives is the size and texture of
+    // the one that killed it. Only the id is synthetic.
+    const grown: WorkerStatement[] = [];
+    for (let i = 0; grown.length < TARGET; i += 1) {
+      for (const entry of minted) {
+        if (grown.length >= TARGET) break;
+        grown.push(
+          i === 0
+            ? entry
+            : { ...entry, statement: { ...entry.statement, id: `${entry.statement.id}-c22x${i}` } },
+        );
+      }
+    }
+    scaled = grown;
+    say(`scaled to ${grown.length} statements for the verify seat`);
+
+    const verifySeat = councilSeatTurn(
+      "map-verify",
+      MAP_VERIFY_OUTPUT_SCHEMA,
+      { claudePort: adapter, repoRoot: SUBJECT, label: "knowledge.verify" },
+      { availability: { installed: ["claude-code"] } },
+    );
+    expect("failure" in verifySeat ? verifySeat.failure : "").toBe("");
+    if ("failure" in verifySeat) return;
+
+    const verifyStart = Date.now();
+    const verify = await runMapVerify({
+      workerResults: [workerResult(grown)],
+      snapshot,
+      provenance: { model: verifySeat.model, apiKeySource: null },
+      runTurn: verifySeat.runTurn,
+    });
     say(
-      `partitions ${outcome.ranPartitions}/${outcome.totalPartitions} ` +
-        `failed=${outcome.failedPartitions} statements=${outcome.set.statements.length} ` +
-        `confirmed=${outcome.verify.confirmed} rejected=${outcome.verify.rejected} ` +
-        `crossCutting=${outcome.verify.crossCutting}`,
+      `CHUNKED verify: ${verify.status} in ${Math.round((Date.now() - verifyStart) / 1000)}s ` +
+        `confirmed=${verify.confirmed} rejected=${verify.rejected} ` +
+        `crossCutting=${verify.crossCutting} reason=${verify.failureReason ?? "-"}`,
     );
-    expect(outcome.totalPartitions).toBeGreaterThan(100);
-    expect(outcome.set.statements.length).toBeGreaterThan(0);
+    expect(verify.failureReason ?? "").not.toMatch(/too long/i);
+    expect(verify.status).toBe("ok");
+    expect(verify.set?.statements.length ?? 0).toBeGreaterThan(0);
+    say(`CHUNKED produced a set of ${verify.set?.statements.length} statements`);
+  }, 3_600_000);
 
-    // The set is on disk, not just in the return value.
-    const file = join(store.paths(base.repoKey).knowledgeDir, "knowledge.json");
-    expect(existsSync(file)).toBe(true);
-    const stored = JSON.parse(readFileSync(file, "utf8")) as { statements: unknown[] };
-    say(`stored ${stored.statements.length} statements at ${file}`);
-    expect(stored.statements.length).toBeGreaterThan(0);
-
-    // The user could actually see it: worker lines AND the verify line landed
-    // on the id a client subscribes to.
-    const onChannel = broadcast.filter(
-      (entry) => entry.commandId === PROACTIVE_REHYDRATION_COMMAND_ID,
-    );
-    const notes = onChannel.map((entry) =>
-      entry.event.kind === "stage" ? `${entry.event.note} ${entry.event.detail ?? ""}` : "",
-    );
-    say(`narrated ${onChannel.length} events on ${PROACTIVE_REHYDRATION_COMMAND_ID}`);
-    expect(onChannel.length).toBeGreaterThan(0);
-    expect(notes.some((note) => note.startsWith("Knowledge verified"))).toBe(true);
-    expect(notes.some((note) => /too long/i.test(note))).toBe(false);
-
-    produced = { set: outcome.set, repoRoot: SUBJECT };
-  }, 7_200_000);
-
-  it("POSITIVE CONTROL: the same statements in ONE unbounded prompt still die", async () => {
-    expect(produced, "check 1 must have produced a set").toBeDefined();
-    if (!produced) return;
+  it("POSITIVE CONTROL: the SAME statements in ONE unbounded prompt still die", async () => {
+    expect(scaled, "the green run must have produced scaled statements").toBeDefined();
+    if (!scaled || !context) return;
     const { adapter } = await createClaudeHarness({ env: process.env });
     if (!adapter) return;
 
     const seat = councilSeatTurn(
       "map-verify",
       MAP_VERIFY_OUTPUT_SCHEMA,
-      { claudePort: adapter, repoRoot: produced.repoRoot, label: "knowledge.verify" },
+      { claudePort: adapter, repoRoot: SUBJECT, label: "knowledge.verify" },
       { availability: { installed: ["claude-code"] } },
     );
-    expect("failure" in seat ? seat.failure : "", "the verify seat must resolve").toBe("");
     if ("failure" in seat) return;
 
-    const workerResults = [
-      {
-        sliceId: "c22:control",
-        status: "ok" as const,
-        statements: produced.set.statements.map((statement) => ({ statement })),
-        droppedAnchors: 0,
-        droppedStatements: 0,
-        attempts: 1,
-      },
-    ];
-    say(`control: ${produced.set.statements.length} statements in ONE prompt`);
+    say(`control: ${scaled.length} statements in ONE prompt (the pre-fix path)`);
     const verify = await runMapVerify({
-      workerResults,
-      snapshot: {
-        repoKey: produced.set.repoKey,
-        baseOid: produced.set.baseOid,
-        snapshotFingerprint: produced.set.snapshotFingerprint,
-        files: [],
-        scopes: [],
-      },
+      workerResults: [workerResult(scaled)],
+      snapshot: context,
       provenance: { model: seat.model, apiKeySource: null },
       runTurn: seat.runTurn,
       maxRetries: 0,
       // The pre-fix behaviour, restored on purpose: one prompt for the lot.
       chunkSize: Number.MAX_SAFE_INTEGER,
     });
-    say(`control outcome=${verify.status} reason=${verify.failureReason ?? "-"}`);
+    say(`UNBOUNDED verify: ${verify.status} reason=${verify.failureReason ?? "-"}`);
     expect(verify.status).toBe("failed");
     expect(verify.failureReason ?? "").toMatch(/too long|context|exceed|token/i);
   }, 1_800_000);
@@ -226,3 +224,14 @@ describe.skipIf(!LIVE)("c22 — the real knowledge swarm on a real repository", 
     expect(carried, "the reason must reach the channel the client subscribes to").toBeDefined();
   });
 });
+
+function workerResult(statements: readonly WorkerStatement[]): PartitionWorkerResult {
+  return {
+    sliceId: "c22:scaled",
+    status: "ok",
+    statements,
+    droppedAnchors: 0,
+    droppedStatements: 0,
+    attempts: 1,
+  };
+}
