@@ -3179,6 +3179,9 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
           : { [input.id]: input.keybinding },
       ),
       setCoachmarks: vi.fn((input: CoachMarks) => input),
+      setThemePack: vi.fn((themePack) => themePack),
+      completeWelcome: vi.fn(() => "2026-08-28T12:00:00.000Z"),
+      setLastProject: vi.fn((input) => input),
       setTrackerValue: vi.fn(() => ({})),
       setProjectValue: vi.fn(async (input: { key: string }) => ({
         status: "applied" as const,

@@ -1,8 +1,10 @@
-import type { RennetBridge, SidebarSession } from "@rennet/protocol";
-import { useEffect, useState } from "react";
+import type { RennetBridge, SettingsView, SidebarSession } from "@rennet/protocol";
+import { Button } from "@rennet/ui";
+import { FolderPlus } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
-import { BridgeProvider, useCommand } from "../data";
+import { BridgeProvider, useCommand, useMutation } from "../data";
 import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { IndexingView } from "../project/indexing/indexing-view";
@@ -15,18 +17,21 @@ import {
   SettingsScreen,
   ThemePrefProvider,
 } from "../settings";
+import { useConnectionCapabilities } from "../shell/connection-capabilities";
+import { useRennetStore } from "../store";
+import { FirstRunWelcome } from "../welcome/first-run-welcome";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { useSlugResolution } from "./slug";
-import { newChatPath, ROUTES, settingsPath } from "./url";
+import { newChatPath, ROUTES } from "./url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RennetRouterApp (C01 §4) — the router foundation the later Track-C surfaces mount
 // into. It wires the injected history + bridge and the #480 route table onto the
 // persistent layout (sidebar + chat-dock slot outside the outlet). The screens here are
 // INTERIM: they read real commands through the data seam and render minimal-but-honest
-// content, and C3–C13 replace each with its full surface. The two incumbent screens with
-// no #480 row (front-door list, project detail) mount at interim routes (reconciliation 2).
+// content, and C3–C13 replace each with its full surface. Project detail remains mounted
+// at its interim route (reconciliation 2).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** An honest interim placeholder for a screen a later C-change rebuilds. */
@@ -73,51 +78,58 @@ function LoadError({ slug, error }: { readonly slug: string; readonly error: unk
   );
 }
 
-/** The `/new-chat` route. With a `?project=` it is the C12 New Chat view (target
- *  picker + composer for that project); without one, the interim front-door list. */
 function NewChatScreen() {
   const search = useSearch();
-  const project = new URLSearchParams(search).get("project");
-  if (project) return <NewChatView projectId={project} />;
-  return <NewChatFrontDoor />;
+  const requestedId = new URLSearchParams(search).get("project");
+  const { data: listed, pending } = useCommand("projects.list", {});
+  const { data: settings } = useCommand("settings.get", {});
+  const { activeSource } = useConnectionCapabilities();
+  const [, navigate] = useLocation();
+  const { mutate: remember } = useMutation("settings.setLastProject", {
+    invalidates: ["settings.get"],
+  });
+  const projects = listed?.projects ?? [];
+  const requested = requestedId
+    ? projects.find((project) => project.id === requestedId)
+    : undefined;
+  const rememberedId = settings?.navigation?.lastProjectBySource?.[activeSource];
+  const resolved =
+    requested ?? projects.find((project) => project.id === rememberedId) ?? projects[0];
+  const recorded = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!resolved || recorded.current === resolved.id) return;
+    recorded.current = resolved.id;
+    void remember({ source: resolved.source, projectId: resolved.id }).catch(() => {
+      recorded.current = undefined;
+    });
+    if (requestedId !== resolved.id) navigate(newChatPath(resolved.id), { replace: true });
+  }, [navigate, remember, requestedId, resolved]);
+
+  if (pending || !settings) return <div className="min-h-screen bg-canvas" />;
+  if (resolved) return <NewChatView projectId={resolved.id} />;
+  return <EmptyProjectEntry />;
 }
 
-/** The front-door entry (interim, reconciliation 2) — reads the real projects list. */
-function NewChatFrontDoor() {
-  const { data, pending } = useCommand("projects.list", {});
-  const [, navigate] = useLocation();
+function EmptyProjectEntry() {
+  const openDialog = useRennetStore((state) => state.uiActions.openDialog);
   return (
     <section
-      data-screen="new-chat"
-      className="mx-auto grid min-h-screen max-w-[720px] content-start gap-4 p-10"
+      data-screen="add-project-entry"
+      className="grid min-h-screen place-content-center justify-items-center gap-4 p-10 text-center"
     >
-      <h1 className="font-display text-display font-medium text-ink">Start a review.</h1>
-      {pending ? (
-        <p className="text-ink-soft">Loading projects…</p>
-      ) : data && data.projects.length > 0 ? (
-        <ul className="grid gap-1">
-          {data.projects.map((p) => (
-            <li key={p.id}>
-              <button
-                type="button"
-                className="text-ink underline-offset-2 hover:underline"
-                onClick={() => navigate(newChatPath(p.id))}
-              >
-                {p.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-ink-soft">No projects yet — add one to begin.</p>
-      )}
-      <button
-        type="button"
-        className="justify-self-start text-ink-soft underline-offset-2 hover:underline"
-        onClick={() => navigate(settingsPath("appearance"))}
-      >
-        Settings
-      </button>
+      <span className="grid size-16 place-items-center rounded-window bg-accent-soft text-accent">
+        <FolderPlus className="size-8" />
+      </span>
+      <h1 className="font-display text-display font-medium text-ink">Add a project to begin.</h1>
+      <p className="max-w-lg text-ink-soft">
+        Choose a repository or workspace, then Rennet will open its branches and pull requests in
+        New Chat.
+      </p>
+      <Button size="lg" onClick={() => openDialog("add-project")}>
+        <FolderPlus />
+        Add Project
+      </Button>
     </section>
   );
 }
@@ -149,10 +161,89 @@ function ChatOnlySession({ session }: { readonly session: SidebarSession }) {
   );
 }
 
+function useRememberProject(projectId?: string): void {
+  const { data: listed } = useCommand("projects.list", {});
+  const { mutate: remember } = useMutation("settings.setLastProject", {
+    invalidates: ["settings.get"],
+  });
+  const recorded = useRef<string | null>(null);
+  const project = listed?.projects.find((candidate) => candidate.id === projectId);
+
+  useEffect(() => {
+    if (!project || recorded.current === project.id) return;
+    recorded.current = project.id;
+    void remember({ source: project.source, projectId: project.id }).catch(() => {
+      recorded.current = null;
+    });
+  }, [project, remember]);
+}
+
+function ProjectRoute({
+  projectId,
+  children,
+}: {
+  readonly projectId: string;
+  readonly children: ReactNode;
+}) {
+  useRememberProject(projectId);
+  return children;
+}
+
+function StartupGate({ children }: { readonly children: ReactNode }) {
+  const {
+    data: settings,
+    pending: settingsPending,
+    error: settingsError,
+  } = useCommand("settings.get", {});
+  if (settingsError) return <div className="rn-startup-content">{children}</div>;
+  if (settingsPending || !settings)
+    return <div className="rn-startup-content rn-startup-pending">{children}</div>;
+  if (settings.welcome) return <div className="rn-startup-content">{children}</div>;
+  return <FirstRunEligibility settings={settings}>{children}</FirstRunEligibility>;
+}
+
+function FirstRunEligibility({
+  settings,
+  children,
+}: {
+  readonly settings: SettingsView;
+  readonly children: ReactNode;
+}) {
+  const {
+    data: listed,
+    pending: projectsPending,
+    error: projectsError,
+  } = useCommand("projects.list", {});
+  const [welcomeClaimed, setWelcomeClaimed] = useState<boolean>();
+
+  useEffect(() => {
+    if (welcomeClaimed !== undefined || !listed) return;
+    setWelcomeClaimed(listed.projects.length === 0);
+  }, [listed, welcomeClaimed]);
+
+  if (projectsError) return <div className="rn-startup-content">{children}</div>;
+  if (projectsPending || welcomeClaimed === undefined) {
+    return <div className="rn-startup-content rn-startup-pending">{children}</div>;
+  }
+  if (welcomeClaimed) {
+    return (
+      <>
+        <div className="rn-startup-underlay" inert aria-hidden="true">
+          {children}
+        </div>
+        <FirstRunWelcome settings={settings} />
+      </>
+    );
+  }
+  return <div className="rn-startup-content">{children}</div>;
+}
+
 /** A session route (#480 `/s/:slug`). The slug is the durable session id (C21); it
  *  resolves to the review workspace, an honest chat-only session when no review is
  *  attached yet, or an honest not-found / load-error. */
 function SessionScreen({ slug }: { readonly slug: string }) {
+  const { data: sessions } = useCommand("session.list", {});
+  useRememberProject(sessions?.sessions.find((session) => session.id === slug)?.projectId);
   const resolution = useSlugResolution(slug);
   if (resolution.status === "pending") {
     return <p className="p-10 font-serif text-ink-soft">Opening…</p>;
@@ -161,6 +252,12 @@ function SessionScreen({ slug }: { readonly slug: string }) {
   if (resolution.status === "error") return <LoadError slug={slug} error={resolution.error} />;
   if (resolution.status === "session") return <ChatOnlySession session={resolution.session} />;
   return <ReviewWorkspace review={resolution.review} />;
+}
+
+function SessionRunScreen({ slug }: { readonly slug: string }) {
+  const { data: sessions } = useCommand("session.list", {});
+  useRememberProject(sessions?.sessions.find((session) => session.id === slug)?.projectId);
+  return <RunRoute slug={slug} />;
 }
 
 /**
@@ -219,58 +316,68 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
       <AppearanceSync />
       <ThemePrefProvider>
         <Router hook={history?.hook} searchHook={history?.searchHook}>
-          <PriorSurfaceTracker>
-            {/* The live settings projection is mounted ABOVE the route switch, so a
+          <StartupGate>
+            <PriorSurfaceTracker>
+              {/* The live settings projection is mounted ABOVE the route switch, so a
                 reader's per-session agent enablement (the `disabled` set) survives
                 leaving and reopening Settings — it resets only on a full app remount
                 (a reload), which is the spec (C10 §10.2). Settings is a route-local
                 takeover; wrapping it there would drop the state on every exit. */}
-            <LiveSettingsProjectionProvider>
-              {/* One rounds source for the whole session subtree (C09 cluster 7). The
+              <LiveSettingsProjectionProvider>
+                {/* One rounds source for the whole session subtree (C09 cluster 7). The
                   top-bar's History pill and the run/workspace routes must read the SAME
                   source, so the provider wraps the layout that owns both. C15 3.2 swapped
                   the honest-absent constant for the LIVE source: the run state folds real
                   `roundProgress` events, the ledger reads `session.rounds`, and Dispatch
                   runs `round.dispatch`. The provider did not move — only its value. */}
-              <LiveRoundsScope>
-                <AppLayout>
-                  <Switch>
-                    <Route path={ROUTES.home}>
-                      <Redirect to={ROUTES.newChat} />
-                    </Route>
-                    <Route path={ROUTES.newChat} component={NewChatScreen} />
-                    <Route path={ROUTES.sessionRun}>
-                      {(p) => <RunRoute slug={p.slug ?? ""} />}
-                    </Route>
-                    <Route path={ROUTES.session}>
-                      {(p) => <SessionScreen slug={p.slug ?? ""} />}
-                    </Route>
-                    <Route path={ROUTES.archived}>
-                      <ArchivedView />
-                    </Route>
-                    <Route path={ROUTES.projectIndexing}>
-                      {(p) => <IndexingView projectId={p.id ?? ""} />}
-                    </Route>
-                    <Route path={ROUTES.projectMap}>
-                      {(p) => <ProjectContextMapView projectId={p.id ?? ""} />}
-                    </Route>
-                    <Route path={ROUTES.settings}>
-                      {(p) => <SettingsScreen page={p.page ?? ""} />}
-                    </Route>
-                    <Route path={ROUTES.projectDetail}>
-                      {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
-                    </Route>
-                    <Route path={ROUTES.projects}>
-                      <Interim screen="projects" title="Projects" />
-                    </Route>
-                    <Route>
-                      <NotFound label="this address" />
-                    </Route>
-                  </Switch>
-                </AppLayout>
-              </LiveRoundsScope>
-            </LiveSettingsProjectionProvider>
-          </PriorSurfaceTracker>
+                <LiveRoundsScope>
+                  <AppLayout>
+                    <Switch>
+                      <Route path={ROUTES.home}>
+                        <Redirect to={ROUTES.newChat} />
+                      </Route>
+                      <Route path={ROUTES.newChat} component={NewChatScreen} />
+                      <Route path={ROUTES.sessionRun}>
+                        {(p) => <SessionRunScreen slug={p.slug ?? ""} />}
+                      </Route>
+                      <Route path={ROUTES.session}>
+                        {(p) => <SessionScreen slug={p.slug ?? ""} />}
+                      </Route>
+                      <Route path={ROUTES.archived}>
+                        <ArchivedView />
+                      </Route>
+                      <Route path={ROUTES.projectIndexing}>
+                        {(p) => (
+                          <ProjectRoute projectId={p.id ?? ""}>
+                            <IndexingView projectId={p.id ?? ""} />
+                          </ProjectRoute>
+                        )}
+                      </Route>
+                      <Route path={ROUTES.projectMap}>
+                        {(p) => (
+                          <ProjectRoute projectId={p.id ?? ""}>
+                            <ProjectContextMapView projectId={p.id ?? ""} />
+                          </ProjectRoute>
+                        )}
+                      </Route>
+                      <Route path={ROUTES.settings}>
+                        {(p) => <SettingsScreen page={p.page ?? ""} />}
+                      </Route>
+                      <Route path={ROUTES.projectDetail}>
+                        {(p) => <Interim screen="project-detail" title={`Project — ${p.id}`} />}
+                      </Route>
+                      <Route path={ROUTES.projects}>
+                        <Interim screen="projects" title="Projects" />
+                      </Route>
+                      <Route>
+                        <NotFound label="this address" />
+                      </Route>
+                    </Switch>
+                  </AppLayout>
+                </LiveRoundsScope>
+              </LiveSettingsProjectionProvider>
+            </PriorSurfaceTracker>
+          </StartupGate>
         </Router>
       </ThemePrefProvider>
     </BridgeProvider>

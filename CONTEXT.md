@@ -121,16 +121,16 @@ This file defines the terms shared by the product, documentation, and code. It c
 
 - **Coding harness**: an installed coding-agent runtime Rennet invokes on a source, such as Claude Code, Codex, or omp.
 - **Settings ladder**: the precedence order a setting resolves through — builtin, detected, global, repo. The highest layer offering a value is effective, and every contribution stays visible as provenance.
-- **Client settings**: preferences of the machine a person views Rennet on — appearance and keybindings. They follow the viewer, apply to whatever it views, and sit outside the settings ladder.
+- **Client settings**: preferences and client-local continuity of the machine a person views Rennet on — appearance, keybindings, welcome completion, coach marks, and last-used project. They follow the viewer, apply to whatever it views, and sit outside the settings ladder.
 - **Daemon settings**: a source's machine-local settings, read by that source's Rennet host. They form the global rung of the settings ladder for projects on that source.
 - **Orchestrator harness**: the coding harness a source uses for the interactive orchestrator conversation. A source with both Claude and Codex detected has an explicit preferred orchestrator harness.
 - **Dual Harness**: a per-source review mode available when Claude and Codex are both detected. It runs one seat per provider for review roles that define a second seat; it does not run every model job twice.
 
 ## Desktop presence
 
-- **First-run welcome**: the one-time setup experience for a new Rennet client. It introduces Rennet, establishes required system access and harness choices, then hands the user to Add Project. It precedes the contextual onboarding tour and is not a recurring empty-project state.
+- **First-run welcome**: the one-time setup experience for a new Rennet client. It introduces Rennet, applies appearance and harness choices, offers optional system access, then hands the user to Add Project and New Chat. It precedes the contextual onboarding tour and is not a recurring empty-project state.
 - **Coach mark**: one contextual teaching card anchored to a control when the user first reaches it. Coach marks appear one at a time and together form the replayable onboarding tour.
-- **System access**: operating-system access Rennet needs to browse and read project files. It is established against a real project location and remains distinct from GitHub scopes and coding-harness authority.
+- **System access**: operating-system access used to browse and read project files. On macOS, optional Full Disk Access can be opened from Add Project for protected locations. It remains distinct from GitHub scopes and coding-harness authority.
 - **Logo menu**: the menu opened from the top-left Rennet mark. It contains application destinations, version information, and the restart action when an update is ready.
 - **Owned daemon**: the local daemon whose lifecycle belongs to this desktop application.
 - **Attached daemon**: a daemon that the application uses but does not own.

@@ -1,4 +1,4 @@
-import type { ProjectSource } from "@rennet/protocol";
+import type { Project, ProjectSource } from "@rennet/protocol";
 import {
   Button,
   Dialog,
@@ -56,13 +56,23 @@ export function AddProjectDialog() {
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg md:max-w-xl">
         {/* Gated on `open` so the body REMOUNTS each time — a clean state every reopen. */}
-        {open ? <AddProjectBody onClose={() => closeDialog("add-project")} /> : null}
+        {open ? <AddProjectFlow onClose={() => closeDialog("add-project")} /> : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function AddProjectBody({ onClose }: { onClose(): void }) {
+export function AddProjectFlow({
+  onClose,
+  onAdded,
+  showAddEnvironment = true,
+  embedded = false,
+}: {
+  onClose?(): void;
+  onAdded?(project: Project): void;
+  showAddEnvironment?: boolean;
+  embedded?: boolean;
+}) {
   const bridge = useBridge();
   const [, navigate] = useLocation();
   const openDialog = useRennetStore((s) => s.uiActions.openDialog);
@@ -181,8 +191,9 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
       if (!alive.current) return;
       // Persisted with no orchestrator turn; the sidebar (projects.list, invalidated above)
       // carries it. Straight to the indexing view — scout + map generation live there.
-      onClose();
-      navigate(projectIndexingPath(project.id));
+      onClose?.();
+      if (onAdded) onAdded(project);
+      else navigate(projectIndexingPath(project.id));
     } catch (reason) {
       if (!alive.current) return;
       setError(messageFrom(reason));
@@ -192,10 +203,17 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
 
   return (
     <>
-      <DialogHeader>
-        <DialogTitle>Add project</DialogTitle>
-        <DialogDescription>Pick a source and a folder of repositories.</DialogDescription>
-      </DialogHeader>
+      {embedded ? (
+        <div className="grid gap-1.5 text-left">
+          <h2 className="font-display text-lg font-semibold text-ink">Add project</h2>
+          <p className="text-sm text-ink-soft">Pick a source and a folder of repositories.</p>
+        </div>
+      ) : (
+        <DialogHeader>
+          <DialogTitle>Add project</DialogTitle>
+          <DialogDescription>Pick a source and a folder of repositories.</DialogDescription>
+        </DialogHeader>
+      )}
 
       <Popover open={sourceOpen} onOpenChange={setSourceOpen}>
         <PopoverTrigger
@@ -229,18 +247,22 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
               ) : null}
             </button>
           ))}
-          <Separator className="my-1" />
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-control px-2 py-2 text-left text-base text-ink hover:bg-raised sm:py-1.5"
-            onClick={() => {
-              setSourceOpen(false);
-              openDialog("add-environment");
-            }}
-          >
-            <Icon icon={Plus} className="size-4 flex-none text-ink-faint" />
-            Add Environment
-          </button>
+          {showAddEnvironment ? (
+            <>
+              <Separator className="my-1" />
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-control px-2 py-2 text-left text-base text-ink hover:bg-raised sm:py-1.5"
+                onClick={() => {
+                  setSourceOpen(false);
+                  openDialog("add-environment");
+                }}
+              >
+                <Icon icon={Plus} className="size-4 flex-none text-ink-faint" />
+                Add Environment
+              </button>
+            </>
+          ) : null}
         </PopoverContent>
       </Popover>
 
@@ -261,9 +283,11 @@ function AddProjectBody({ onClose }: { onClose(): void }) {
       ) : null}
 
       <DialogFooter>
-        <Button variant="outline" onClick={onClose} disabled={busy}>
-          Cancel
-        </Button>
+        {onClose ? (
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+        ) : null}
         <Button onClick={() => void add()} disabled={!selectedPath || busy}>
           {busy ? "Adding…" : "Add"}
         </Button>

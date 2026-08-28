@@ -474,6 +474,47 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
       createSettingsComposition(deps).setCoachmarks({ seen: ["fab"], skipAll: false }),
     ).toThrow(/malformed/i);
   });
+
+  it("persists welcome, theme pack, and last project without touching coach marks", async () => {
+    let stored: ClientSettings = { version: 1, coachmarks: { seen: ["new-chat"], skipAll: false } };
+    const { deps } = makeDeps({
+      now: () => new Date("2026-08-28T12:00:00.000Z"),
+      readGlobalState: () => ({ status: "ok", config: stored }),
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+
+    expect(composition.setThemePack("dracula")).toBe("dracula");
+    expect(composition.setLastProject({ source: "local", projectId: "p1" })).toEqual({
+      source: "local",
+      projectId: "p1",
+    });
+    expect(composition.completeWelcome()).toBe("2026-08-28T12:00:00.000Z");
+
+    const view = await composition.get();
+    expect(view.themePack).toBe("dracula");
+    expect(view.navigation?.lastProjectBySource).toEqual({ local: "p1" });
+    expect(view.welcome).toEqual({ completedAt: "2026-08-28T12:00:00.000Z" });
+    expect(view.coachmarks).toEqual({ seen: ["new-chat"], skipAll: false });
+  });
+
+  it("refuses every welcome preference write when client settings are malformed", () => {
+    const { deps } = makeDeps({
+      updateGlobal: () => {
+        throw new Error("refused: malformed client settings");
+      },
+    });
+    const composition = createSettingsComposition(deps);
+
+    expect(() => composition.setThemePack("github")).toThrow(/malformed/i);
+    expect(() => composition.setLastProject({ source: "local", projectId: "p1" })).toThrow(
+      /malformed/i,
+    );
+    expect(() => composition.completeWelcome()).toThrow(/malformed/i);
+  });
 });
 
 describe("createSettingsComposition — council review-role mappings (C16, #485)", () => {

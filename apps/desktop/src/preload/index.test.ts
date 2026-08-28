@@ -38,6 +38,7 @@ import type { RennetPreload } from "./index";
 
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
+const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
 
 function preload(): RennetPreload {
   return harness.exposed as RennetPreload;
@@ -110,5 +111,10 @@ describe("preload update surface", () => {
   it("applyUpdate sends the one-way apply channel", () => {
     preload().applyUpdate();
     expect(harness.sent).toEqual([{ channel: UPDATE_APPLY_CHANNEL, payload: undefined }]);
+  });
+
+  it("forwards the Full Disk Access settings action through its narrow channel", async () => {
+    harness.invokeResults.set(OPEN_FULL_DISK_ACCESS_CHANNEL, true);
+    await expect(preload().openFullDiskAccessSettings()).resolves.toBe(true);
   });
 });

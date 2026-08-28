@@ -11,13 +11,14 @@ const builtinScheme = {
   contributions: [{ layer: "builtin" as const, value: "system", effective: true }],
 };
 
-/** The minimal honest `settings.get` view a fresh install returns. */
+/** The minimal honest `settings.get` view a returning install returns. */
 export function emptySettings(): SettingsView {
   return {
     scheme: "system",
     schemeProvenance: builtinScheme,
     appearanceMalformed: false,
     projects: [],
+    welcome: { completedAt: "2026-08-28T00:00:00.000Z" },
   };
 }
 
@@ -31,6 +32,8 @@ export function frontDoorHandlers(projects: readonly Project[] = []): MemoryBrid
     "app.bootstrap": () => ({ review: null, repositoryPresent: false }),
     "settings.get": () => emptySettings(),
     "projects.list": () => ({ projects: [...projects] }),
+    "project.detail": () => ({ viewer: { login: "rai" }, truncated: false, locals: [], prs: [] }),
+    "session.list": () => ({ sessions: [] }),
     "harness.detect": () => ({ detected: [] }),
   };
 }

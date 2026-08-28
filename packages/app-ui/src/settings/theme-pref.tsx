@@ -1,13 +1,21 @@
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useMutation } from "../data/mutate";
+import { useCommand } from "../data/query";
 import { type CodeThemeId, DEFAULT_CODE_THEME } from "./assets/code-theme";
 import { DEFAULT_THEME_PACK, type ThemePackId } from "./assets/theme-packs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App-global theme preference (C10 §6.2–6.3, claims 631–635). The UI theme pack
-// and the code theme are CLIENT prefs with NO protocol command (B10-absent) and NO
-// place in the honest-empty `SettingsProjection` (which is empty in the live client,
-// so routing a live-applying preference through it would make the picker inert). They
-// live HERE: genuine app-global React state that stamps `data-rn-theme` /
+// persists through client settings while code theme remains a session preference. Both
+// live-apply HERE through app-global React state that stamps `data-rn-theme` /
 // `data-rn-code-theme` on the document root, and the CSS packs wired into
 // `@rennet/theme/theme.css` re-bind every --rn-* token the moment the attribute
 // changes — live, no reload, no JS re-highlight (the diff/code `.rtok-*` spans read
@@ -15,23 +23,21 @@ import { DEFAULT_THEME_PACK, type ThemePackId } from "./assets/theme-packs";
 //
 // The default pack (Affineur's Bench) is the base palette.css, reached by CLEARING
 // `data-rn-theme`; the default code theme ("rennet" = follow theme) clears
-// `data-rn-code-theme`. Cross-session persistence to `client-settings.json` is the
-// B10 fold (cluster 10) — this provider is the only file that binds at that point;
-// until then the choice is live for the session, exactly as the rest of C10 is
-// MemoryBridge-first with no real file write in a page body.
+// `data-rn-code-theme`. Theme-pack writes optimistically apply and roll back if the
+// persisted client-settings write fails.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ThemePref {
   readonly themePack: ThemePackId;
   readonly codeTheme: CodeThemeId;
-  setThemePack(id: ThemePackId): void;
+  setThemePack(id: ThemePackId): Promise<void>;
   setCodeTheme(id: CodeThemeId): void;
 }
 
 const ThemePrefContext = createContext<ThemePref>({
   themePack: DEFAULT_THEME_PACK,
   codeTheme: DEFAULT_CODE_THEME,
-  setThemePack: () => undefined,
+  setThemePack: async () => undefined,
   setCodeTheme: () => undefined,
 });
 
@@ -54,8 +60,30 @@ export function ThemePrefProvider({
   readonly initialThemePack?: ThemePackId;
   readonly initialCodeTheme?: CodeThemeId;
 }) {
-  const [themePack, setThemePack] = useState<ThemePackId>(initialThemePack);
+  const { data: settings } = useCommand("settings.get", {});
+  const { mutate: persistThemePack } = useMutation("settings.setThemePack", {
+    invalidates: ["settings.get"],
+  });
+  const [themePack, setThemePackState] = useState<ThemePackId>(initialThemePack);
   const [codeTheme, setCodeTheme] = useState<CodeThemeId>(initialCodeTheme);
+
+  useEffect(() => {
+    if (settings?.themePack) setThemePackState(settings.themePack);
+  }, [settings?.themePack]);
+
+  const setThemePack = useCallback(
+    async (id: ThemePackId): Promise<void> => {
+      const previous = themePack;
+      setThemePackState(id);
+      try {
+        await persistThemePack({ themePack: id });
+      } catch (reason) {
+        setThemePackState(previous);
+        throw reason;
+      }
+    },
+    [persistThemePack, themePack],
+  );
 
   // The pack stamps `data-rn-theme`; the DEFAULT pack clears it (base palette.css).
   useEffect(() => {
@@ -74,7 +102,7 @@ export function ThemePrefProvider({
 
   const value = useMemo<ThemePref>(
     () => ({ themePack, codeTheme, setThemePack, setCodeTheme }),
-    [themePack, codeTheme],
+    [themePack, codeTheme, setThemePack],
   );
 
   return <ThemePrefContext.Provider value={value}>{children}</ThemePrefContext.Provider>;

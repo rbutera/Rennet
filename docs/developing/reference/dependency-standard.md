@@ -105,6 +105,7 @@ These versions come from the current workspace manifests:
 | Browser UI | `react`, `react-dom` | `19.2.8` |
 | UI failures and transient state | `react-error-boundary`, `zustand` | `6.1.2`, `5.0.14` |
 | Renderer routing | `wouter` | `3.10.0` |
+| Renderer animation | `motion` | `13.1.1` |
 | Mobile | `expo`, `expo-router`, `react-native` | `~55.0.26`, `~55.0.16`, `0.83.6` |
 
 Update this table with the manifest change that moves a version.
@@ -196,6 +197,13 @@ is browser-safe and invisible outside `src/data/` (`useCommand`/`useCommandStrea
 `useMutation` are the whole contract), so adopting react-query later stays internal.
 Zustand owns transient interaction state; the command cache owns the server-projection
 read cache — distinct owners, no conflict.
+
+Motion owns authored React and SVG animation timelines. The first-run welcome
+uses its scoped `useAnimate` sequences, stagger, cleanup, and reduced-motion
+hook for the code-flight and logo assembly. It is MIT licensed and removes the
+timeline and lifecycle subsystem Rennet would otherwise maintain. GSAP is not
+used: its custom licence does not fit the workspace's ordinary SPDX licence
+gate, and its extra timeline surface is unnecessary for this interaction.
 
 The mobile app uses Expo SDK 55, expo-router, and React Native 0.83.6. It imports
 `@rennet/client` and `@rennet/protocol`, not the DOM-bound UI

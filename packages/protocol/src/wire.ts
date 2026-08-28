@@ -288,7 +288,7 @@ export const prSubmissionSchema = z.object({
   draft: z.boolean(),
 });
 
-// ── The front door: projects + discovery (issue #29 / #37) ───────────────────
+// ── Projects + discovery (issue #29 / #37) ───────────────────────────────────
 // The projects list is the app's entry; a project is a WORKSPACE (a folder of
 // repos) or a single PROJECT REPO. These are the only two nouns the user meets;
 // everything else is inferred by read-only discovery. The shapes are
@@ -370,7 +370,7 @@ export const discoveryResultSchema = z.object({
 });
 export type DiscoveryResult = z.infer<typeof discoveryResultSchema>;
 
-/** A persisted, listed project — the front door's populated state. */
+/** A persisted project listed by a source. */
 export const projectSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -1513,6 +1513,15 @@ export const openSpecCoverageSchema = z.object({
 export const appearanceSchemeSchema = z.enum(["dark", "light", "system"]);
 export type AppearanceScheme = z.infer<typeof appearanceSchemeSchema>;
 
+export const themePackSchema = z.enum([
+  "affineur",
+  "github",
+  "one-dark-pro",
+  "dracula",
+  "catppuccin-mocha",
+]);
+export type ThemePack = z.infer<typeof themePackSchema>;
+
 /** How visible a project's derived map is to git (mirrors the adapter's union). */
 export const projectVisibilitySchema = z.enum(["local", "git-visible"]);
 export type ProjectVisibility = z.infer<typeof projectVisibilitySchema>;
@@ -1744,7 +1753,12 @@ export const clientSettingsSchema = z.object({
   // Supported version literal — a future/below doc reads as malformed, never
   // silently re-stamped (see globalConfigSchema). Must equal CLIENT_SETTINGS_VERSION.
   version: z.literal(1),
-  appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
+  appearance: z
+    .object({
+      scheme: appearanceSchemeSchema.optional(),
+      themePack: themePackSchema.optional(),
+    })
+    .optional(),
   /** Command-registry keybinding overrides (#44): command id → chord token or `null` to unbind. */
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
   /** Onboarding coach-mark state (C13): seen marks + skip-all. Additive-optional like the rest. */
@@ -1759,6 +1773,10 @@ export const clientSettingsSchema = z.object({
    */
   routing: z
     .object({ task: z.record(z.string(), councilScenarioOverridesSchema).optional() })
+    .optional(),
+  welcome: z.object({ completedAt: z.iso.datetime() }).optional(),
+  navigation: z
+    .object({ lastProjectBySource: z.record(z.string(), z.string().min(1)).optional() })
     .optional(),
 });
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
@@ -2141,6 +2159,11 @@ export const settingsViewSchema = z.object({
    * never overwrite unparseable bytes (Rule 75).
    */
   appearanceMalformed: z.boolean(),
+  themePack: themePackSchema.optional(),
+  welcome: z.object({ completedAt: z.iso.datetime() }).optional(),
+  navigation: z
+    .object({ lastProjectBySource: z.record(z.string(), z.string().min(1)).optional() })
+    .optional(),
   projects: z.array(settingsProjectSchema),
   /**
    * The stored keybinding-override map (#44), verbatim from the global config —
@@ -2758,6 +2781,8 @@ export interface RennetBridge {
    * (browser shell, tests) omits it and the version line is simply not shown.
    */
   version?: string;
+  /** Opens the host operating system's Full Disk Access settings, when supported. */
+  openFullDiskAccessSettings?(): Promise<boolean>;
   /**
    * Subscribe to live progress events pushed by a long-running command, keyed by
    * the `commandId` the caller passes to `invoke`. Returns an unsubscribe. Today

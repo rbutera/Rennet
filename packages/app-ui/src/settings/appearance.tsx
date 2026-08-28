@@ -145,13 +145,13 @@ export function AppearancePage() {
 function ThemePackSection() {
   const { themePack, setThemePack } = useThemePref();
   return (
-    <Section title="Theme Pack" sessionOnly>
+    <Section title="Theme Pack">
       <Row label="Theme" hint="the interface palette" stacked>
         <PillChoice
           ariaLabel="Theme pack"
           options={THEME_PACKS}
           value={themePack}
-          onChange={setThemePack}
+          onChange={(id) => void setThemePack(id)}
         />
       </Row>
     </Section>

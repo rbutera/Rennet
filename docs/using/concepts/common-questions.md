@@ -64,6 +64,18 @@ existing `~/.codex` login. A separately installed Codex CLI takes precedence.
 On Windows, install the Codex CLI because the Store-packaged ChatGPT binary
 cannot be executed by another application.
 
+## Why does macOS ask for file access?
+
+Rennet's Add Project browser reads directories through the local daemon. macOS
+can restrict protected folders, removable volumes, and network locations. The
+first-run welcome offers **Grant Full Disk Access**, which opens the matching
+System Settings page; granting it is optional unless the project location you
+want to browse requires it.
+
+Full Disk Access is used by the project file browser and review pipeline. Rennet
+does not scan the disk for unrelated code: it reads the project paths you add.
+You can change the macOS setting later without repeating the welcome.
+
 ## What happens on my own branch?
 
 The asks you stage become a work order instead of a review. Dispatch a round and

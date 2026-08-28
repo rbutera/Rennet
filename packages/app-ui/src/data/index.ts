@@ -6,5 +6,10 @@ export type { QueryState } from "./cache";
 export { commandKey, readCommandId } from "./cache";
 export { useInvoke } from "./dispatch";
 export { type MutationResult, type UseMutationOptions, useMutation } from "./mutate";
-export { type CommandResult, type UseCommandOptions, useCommand } from "./query";
+export {
+  type CommandResult,
+  type UseCommandOptions,
+  useCommand,
+  useRefreshCommand,
+} from "./query";
 export { type UseCommandStreamParams, useCommandStream } from "./stream";

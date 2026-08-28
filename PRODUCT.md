@@ -37,7 +37,7 @@ Its main interaction is roll-up, zoom, and lenses. Rennet groups related edits, 
 
 The local daemon works alongside Git repositories, worktrees, GitHub, Claude Code, and Codex. The Electron application owns the usual local daemon lifecycle and also hosts the browser client. A paired mobile client can connect to a daemon on another machine.
 
-The first desktop run opens an empty Projects list. After adding a repository, the reviewer can open local changes or a GitHub pull request. Reviews read through the Design, Sequence, Decisions, Flagged, and Noise lens boards. Blast radius appears as an overlay.
+The first desktop run opens a full-window welcome that introduces Rennet, applies the reviewer's appearance choice, reports the tools available in the active environment, configures Claude Code and Codex review seats, and reuses Add Project. After adding a repository, the reviewer enters New Chat for that project and can open local changes or a GitHub pull request. Later visits to New Chat default to the last valid project used on that source. Reviews read through the Design, Sequence, Decisions, Flagged, and Noise lens boards. Blast radius appears as an overlay.
 
 For another person's pull request, the review preview posts as a batched GitHub review. For the reviewer's own branch, the same asks become a work order for a coding agent. Rennet then captures and reviews the resulting delta before it can push the branch and open the pull request.
 

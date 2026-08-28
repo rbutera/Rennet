@@ -8,6 +8,23 @@ actually read. What you raise while reading becomes one GitHub review, a work
 order for a coding agent, or the pull request itself. This page walks that loop
 once, end to end.
 
+## First run
+
+On a new client with no projects, Rennet opens a full-window welcome. It
+introduces the review model, applies appearance choices immediately, shows the
+tools detected in this environment, and lets you choose the orchestrator and
+Dual Harness mode. Dual Harness starts on when both Claude Code and Codex are
+available.
+
+If neither harness is detected, install [Claude Code or Codex](./install-a-coding-harness.md)
+and check again. The welcome does not replace the contextual
+[onboarding tour](./onboarding-tour.md); coach marks begin after setup as you
+reach the controls they explain.
+
+The welcome ends by opening the same **Add Project** browser described below.
+After the project is added, **Start a new chat** opens the real New Chat screen
+for it.
+
 ## The review loop
 
 ```mermaid
@@ -36,6 +53,12 @@ Click a row to descend, use **Up** or Backspace to ascend, or type an absolute
 path and press Enter to jump there. Arrow keys move between rows. A folder
 holding a repository wears a **repo** badge; a folder Rennet cannot read is
 dimmed and cannot be entered. **Add** stays inert until you select a folder.
+
+On macOS, the welcome also offers **Grant Full Disk Access** beside Add Project.
+It opens **System Settings → Privacy & Security → Full Disk Access**. This is
+optional and is useful when the in-app browser needs to reach protected or
+external locations. Rennet reads only projects you add; the setting does not
+make Rennet scan unrelated files.
 
 Pair a new environment with **Add Environment**: it takes an address and a
 one-time code. Run `rennet pair` on the other machine and it prints a link that
