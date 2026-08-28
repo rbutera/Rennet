@@ -157,11 +157,11 @@
   "c18": {
     "status": "pending",
     "passes": false,
-    "note": "NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle — the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision — serialize)."
+    "note": "Issue #551. NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle — the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision — serialize)."
   },
   "c19": {
     "status": "pending",
     "passes": false,
-    "note": "NEW (2026-08-28, Rai's #435 ruling executed): publish.requestConsent DELETED end to end (~11 files incl. mobile publish.tsx + create-server composition). The one real property survives without the token: posted verdict must equal previewed verdict, folded as one more input into the EXISTING publishCompositionId/assertCompositionFresh mechanism — no token, no dialog. Surviving correctness gates untouched. Packet: openspec/changes/c19-direct-post/context.md. BLOCKED BY c16 landing + the c08-revise-wired branch (app-ui/handoff files)."
+    "note": "Issue #552. NEW (2026-08-28, Rai's #435 ruling executed): publish.requestConsent DELETED end to end (~11 files incl. mobile publish.tsx + create-server composition). The one real property survives without the token: posted verdict must equal previewed verdict, folded as one more input into the EXISTING publishCompositionId/assertCompositionFresh mechanism — no token, no dialog. Surviving correctness gates untouched. Packet: openspec/changes/c19-direct-post/context.md. BLOCKED BY c16 landing + the c08-revise-wired branch (app-ui/handoff files)."
   }
 }
