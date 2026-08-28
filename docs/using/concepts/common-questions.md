@@ -78,6 +78,20 @@ and the previous generation stays readable. Repeat until nothing is left to ask,
 at which point the same surface pushes the branch and opens the pull request
 from the description it has been drafting all along.
 
+## What if the code changes while I am reading the review?
+
+Rennet notices. A review is captured against one immutable patchset, so editing
+the tree underneath it leaves what you are reading behind the repository. When
+you come back to the window, Rennet re-checks the review against the current
+state and says plainly that the repository has moved, with a Regenerate button
+next to it. Nothing is blocked and no view is taken away — you are told, and you
+decide. Regenerating captures the current tree as a successor patchset and
+redraws the boards over it.
+
+Rounds already do this for you: a round regenerates over the successor patchset
+when the coding agent's work lands. The notice is for the changes you made
+yourself.
+
 ## What licence is Rennet under?
 
 Rennet is licensed under

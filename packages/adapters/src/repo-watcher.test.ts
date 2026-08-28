@@ -63,6 +63,37 @@ describe("RepoWatcher hardening", () => {
     }
   });
 
+  // Re-`start` on the same root must NOT rebuild the watcher (#576 review, finding B).
+  // `review.load` calls `startWatching` on every open, and the freshness ask re-reads it on
+  // every window focus — a rebuild per alt-tab would re-walk the tree, and with
+  // `ignoreInitial: true` every edit landing in that window is silently dropped: a review
+  // that went stale and never says so.
+  it("keeps the live watcher when re-started on the same root, and rebuilds for a new one", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const first = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-a-"));
+    const second = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-b-"));
+    const watcher = new RepoWatcher();
+    const inner = () => (watcher as unknown as { watcher: unknown }).watcher;
+    try {
+      watcher.start(first, () => undefined);
+      const original = inner();
+      expect(original).not.toBeNull();
+
+      watcher.start(first, () => undefined);
+      expect(inner()).toBe(original); // same root ⇒ the SAME chokidar instance, never re-walked
+
+      watcher.start(second, () => undefined);
+      expect(inner()).not.toBe(original); // a different root is a real re-watch
+    } finally {
+      await watcher.close();
+      rmSync(first, { recursive: true, force: true });
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
+
   it("classifies WSL UNC roots so they poll regardless of locus", async () => {
     const { isWslUncPath } = await import("./repo-watcher");
     expect(isWslUncPath("\\\\wsl.localhost\\Ubuntu\\home\\rai\\dev\\x")).toBe(true);
