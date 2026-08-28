@@ -101,7 +101,7 @@ export function modelFreeEnv(homeDir: string): NodeJS.ProcessEnv {
     "/usr/sbin",
     "/sbin",
   ].join(delimiter);
-  return {
+  const environment: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: homeDir,
     SHELL: "/usr/bin/true",
@@ -114,6 +114,14 @@ export function modelFreeEnv(homeDir: string): NodeJS.ProcessEnv {
     // floor everywhere; the env surgery stays as defence in depth.
     RENNET_DISABLE_HARNESS: "1",
   };
+  // Inherited ELECTRON_RUN_AS_NODE=1 turns EVERY Electron launch into a bare Node
+  // run, so Playwright's `--remote-debugging-port=0` hits Node's option parser and
+  // the launch dies with `Electron: bad option: --remote-debugging-port=0` before a
+  // line of app code runs (#569). Any shell whose parent is itself an Electron app
+  // — a coding agent's terminal, VS Code's — exports it. Rennet's own daemon spawn
+  // sets it explicitly (`supervise.ts`), so dropping it here costs nothing.
+  delete environment.ELECTRON_RUN_AS_NODE;
+  return environment;
 }
 
 /**

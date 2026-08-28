@@ -94,8 +94,8 @@ These versions come from the current workspace manifests:
 | Formatter | `@biomejs/biome` | `2.5.6` |
 | Architecture lint | `eslint`, `typescript-eslint` | `10.8.0`, `8.65.0` |
 | Renderer build | `vite`, `@vitejs/plugin-react` | `8.1.5`, `6.0.4` |
-| Tests | `vitest`, `@playwright/test` | `4.1.10`, `1.62.0` |
-| Desktop | `electron`, Electron Forge, `@electron/fuses` | `43.2.0`, `7.11.2`, `2.1.3` |
+| Tests | `vitest`, `@playwright/test` | `4.1.10`, `1.62.1` |
+| Desktop | `electron`, Electron Forge, `@electron/fuses` | `43.4.1`, `7.11.2`, `2.1.3` |
 | Docs | `astro`, `@astrojs/starlight` | `7.1.6`, `0.41.7` |
 | Claude | `@anthropic-ai/claude-agent-sdk` | `0.3.223` |
 | GitHub | `@octokit/core` | `7.0.7` |
