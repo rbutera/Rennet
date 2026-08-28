@@ -42,6 +42,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
 - Guides: [repository bootstrap](./developing/guides/repository-bootstrap.md)
   and [settings and setup](./developing/guides/settings-and-setup.md)
 - Plans: [board rebuild plan](./developing/plans/board-rebuild-plan.md)
+  and [context map rebuild plan](./developing/plans/context-map-rebuild-plan.md)
 - [Decisions](./developing/decisions/contracts-and-rulings.md): the cross-cutting
   decision register
 - [ADRs](./adr/0001-tray-quit-owns-the-daemon.md): narrow architectural
