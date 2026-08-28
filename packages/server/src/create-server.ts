@@ -1958,6 +1958,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       await roundsRuntime.dispatchRound({
         session,
         workOrder,
+        // ONE terminal report for the whole dispatch (C15 3.1): whatever kills the turn —
+        // a failed work order, an unreadable HEAD, a throw nobody predicted — the channel
+        // closes on `failed` instead of leaving the run reading "still working" forever.
+        onProgress: emit,
         runWorkers: async (order): Promise<DispatchRoundResult> => {
           emit({
             type: "worker",
@@ -2008,12 +2012,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               },
             ],
           });
-          if (outcome.status === "failed") {
-            // A crashed worker emits a TERMINAL event, never silence — a run left mid-phase
-            // reads as "still working", which is a lie the reviewer would wait on.
-            emit({ type: "failed", reason: "The round's work order failed." });
-            return result;
-          }
+          // A failed turn returns its recorded result; the runtime then rejects, and the
+          // ONE terminal report above closes the channel. (Emitting here as well would put
+          // two contradictory terminal rows in a log a late-joining client replays.)
+          if (outcome.status === "failed") return result;
           // The gate is the post-turn classification: the checkpoint-measured diff decided
           // this turn completed rather than failed. The commit point is the round's commit
           // range being pinned (`from`→`to`) — both are facts already established here, so

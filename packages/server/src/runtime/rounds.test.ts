@@ -9,7 +9,7 @@ import type {
   LintContext,
   LintTarget,
 } from "@rennet/core";
-import type { DraftBoard, Generation } from "@rennet/protocol";
+import type { ComposedHandoffBundle, DraftBoard, Generation, RoundEvent } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { BoardsRuntime } from "../boards/boards-runtime";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
@@ -242,6 +242,62 @@ describe("createRoundsRuntime", () => {
     expect(lenses).toEqual(
       ["decisions", "design", "flagged", "noise", "report", "sequence"].sort(),
     );
+  });
+
+  // ── A dispatch that THROWS (review finding 5) ──────────────────────────────
+  //
+  // The regeneration half already reported its throws; the DISPATCH half — the real
+  // production worker path — reported none, so a work order that died left the run route
+  // reading "still working" forever. One catch around the whole dispatch body, not a guard
+  // per known failure site: the throws that matter are the ones nobody predicted.
+  it("a thrown worker emits a TERMINAL failed and leaves the session dispatchable", async () => {
+    const events: RoundEvent[] = [];
+    const runtime = createRoundsRuntime(baseDeps());
+    const workOrder = { tasks: [] } as unknown as ComposedHandoffBundle;
+
+    await expect(
+      runtime.dispatchRound({
+        session: { id: "wedge", projectId: "p1", threads: [], createdAt: 0 },
+        workOrder,
+        onProgress: (event) => events.push(event),
+        runWorkers: async () => {
+          throw new Error("the work order blew up");
+        },
+      }),
+    ).rejects.toThrow("the work order blew up");
+    expect(events).toEqual([{ type: "failed", reason: "the work order blew up" }]);
+
+    // The session is NOT wedged: the next dispatch for the same session still runs.
+    let ranAgain = false;
+    await runtime.dispatchRound({
+      session: { id: "wedge", projectId: "p1", threads: [], createdAt: 0 },
+      workOrder,
+      runWorkers: async () => {
+        ranAgain = true;
+      },
+    });
+    expect(ranAgain).toBe(true);
+  });
+
+  it("a FAILED work order reports the same terminal failure (recorded, then rejected)", async () => {
+    const events: RoundEvent[] = [];
+    const runtime = createRoundsRuntime(baseDeps());
+    await expect(
+      runtime.dispatchRound({
+        session: { id: "failed-order", projectId: "p1", threads: [], createdAt: 0 },
+        workOrder: { tasks: [] } as unknown as ComposedHandoffBundle,
+        onProgress: (event) => events.push(event),
+        runWorkers: async () => ({
+          outcome: "failed" as const,
+          diff: "",
+          changedPaths: [],
+          workerCommitRange: { from: "c0", to: "c0" },
+        }),
+      }),
+    ).rejects.toThrow("The round's work order failed.");
+    // Recorded (the partial diff is on disk) AND reported — exactly one terminal row.
+    expect(runtime.ledger("failed-order")).toHaveLength(1);
+    expect(events).toEqual([{ type: "failed", reason: "The round's work order failed." }]);
   });
 
   it("serializes dispatches per session — a second round waits for the first", async () => {

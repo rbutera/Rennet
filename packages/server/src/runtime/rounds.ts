@@ -324,6 +324,9 @@ export interface RoundDispatchInput {
   // accepts a worker callback that legitimately returns nothing (the record-nothing path);
   // `undefined` would reject a `Promise<void>`-returning callback.
   readonly runWorkers: (workOrder: ComposedHandoffBundle) => Promise<DispatchRoundResult | void>;
+  /** The live round-progress sink — the SAME channel `runRound` reports on. Present ⇒ a
+   *  dispatch that dies emits a terminal `failed`; absent ⇒ no live channel, same round. */
+  readonly onProgress?: (event: RoundEvent) => void;
 }
 
 export interface RoundsRuntime {
@@ -583,15 +586,22 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     };
   }
 
-  /** `runOnce`, with the round's live channel closed HONESTLY on a throw: a regeneration
-   *  that dies emits a terminal `failed` rather than leaving the run machine mid-phase
-   *  forever (a silent stall reads as "still working", which is a lie). The error still
-   *  propagates — the caller decides what a failed regeneration means. */
-  async function runOnceReported(input: RoundInput): Promise<RoundOutcome> {
+  /**
+   * Run a round's body with its live channel closed HONESTLY on a throw: a round that dies
+   * — anywhere, on either entry point — emits a terminal `failed` rather than leaving the
+   * run machine mid-phase forever, because a silent stall reads as "still working" and the
+   * reviewer waits on it. ONE catch around the whole body, not a guard per failure site:
+   * the throws that matter are the ones nobody predicted. The error still propagates — the
+   * caller decides what a failed round means.
+   */
+  async function reported<T>(
+    onProgress: ((event: RoundEvent) => void) | undefined,
+    body: () => Promise<T>,
+  ): Promise<T> {
     try {
-      return await runOnce(input);
+      return await body();
     } catch (error) {
-      input.onProgress?.({
+      onProgress?.({
         type: "failed",
         reason: error instanceof Error ? error.message : String(error),
       });
@@ -601,44 +611,46 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
 
   return {
     runRound(input: RoundInput): Promise<RoundOutcome> {
-      return enqueue(input.session.id, () => runOnceReported(input));
+      return enqueue(input.session.id, () => reported(input.onProgress, () => runOnce(input)));
     },
     dispatchRound(input: RoundDispatchInput): Promise<void> {
-      return enqueue(input.session.id, async () => {
-        const result = await input.runWorkers(input.workOrder);
-        // A void return is the serializer-only path (no round result to pin) — the
-        // per-session lock ran, nothing is recorded.
-        if (!result) return;
-        // Record the round. Part (a) is record-ONLY: no board is regenerated, so no
-        // generation is minted and no report board drafted — both generation fields carry
-        // the honest ROUND_NO_REGEN marker rather than a fabricated id (the mint is a
-        // separate workstream). The asks are the work-order's own ask ids; the diff +
-        // changed paths + commit range are the checkpoint-measured truth from the turn.
-        const record: RoundRecord = {
-          asksDispatched: input.workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
-          workerCommitRange: {
-            from: result.workerCommitRange.from,
-            to: result.workerCommitRange.to,
-          },
-          boardGeneration: ROUND_NO_REGEN,
-          reportBoard: ROUND_NO_REGEN,
-          outcome: result.outcome,
-          diff: result.diff,
-          changedPaths: [...result.changedPaths],
-        };
-        const records = ledger.get(input.session.id) ?? [];
-        records.push(record);
-        ledger.set(input.session.id, records);
-        // The durable placeholder (C15 2.2): a later `runRound` for the same round supersedes
-        // this in the durable ledger with the real generation; a dispatch-only round keeps it.
-        deps.recordRound?.(input.session.id, record);
-        // A FAILED round is RECORDED (its partial diff is on disk) but still REJECTS, so
-        // the dispatch command's per-key memo evicts and an identical re-dispatch retries
-        // (B11 finding 4). The session tail swallows the rejection — the queue is not wedged.
-        if (result.outcome === "failed") {
-          throw new Error("round worker turn failed");
-        }
-      });
+      return enqueue(input.session.id, () =>
+        reported(input.onProgress, async () => {
+          const result = await input.runWorkers(input.workOrder);
+          // A void return is the serializer-only path (no round result to pin) — the
+          // per-session lock ran, nothing is recorded.
+          if (!result) return;
+          // Record the round. Part (a) is record-ONLY: no board is regenerated, so no
+          // generation is minted and no report board drafted — both generation fields carry
+          // the honest ROUND_NO_REGEN marker rather than a fabricated id (the mint is a
+          // separate workstream). The asks are the work-order's own ask ids; the diff +
+          // changed paths + commit range are the checkpoint-measured truth from the turn.
+          const record: RoundRecord = {
+            asksDispatched: input.workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
+            workerCommitRange: {
+              from: result.workerCommitRange.from,
+              to: result.workerCommitRange.to,
+            },
+            boardGeneration: ROUND_NO_REGEN,
+            reportBoard: ROUND_NO_REGEN,
+            outcome: result.outcome,
+            diff: result.diff,
+            changedPaths: [...result.changedPaths],
+          };
+          const records = ledger.get(input.session.id) ?? [];
+          records.push(record);
+          ledger.set(input.session.id, records);
+          // The durable placeholder (C15 2.2): a later `runRound` for the same round supersedes
+          // this in the durable ledger with the real generation; a dispatch-only round keeps it.
+          deps.recordRound?.(input.session.id, record);
+          // A FAILED round is RECORDED (its partial diff is on disk) but still REJECTS, so
+          // the dispatch command's per-key memo evicts and an identical re-dispatch retries
+          // (B11 finding 4). The session tail swallows the rejection — the queue is not wedged.
+          if (result.outcome === "failed") {
+            throw new Error("The round's work order failed.");
+          }
+        }),
+      );
     },
     ledger(sessionId: string): readonly RoundRecord[] {
       // The durable ledger (reconciled to one record per round) is the truth when a store is
