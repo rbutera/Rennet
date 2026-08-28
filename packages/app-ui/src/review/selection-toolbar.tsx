@@ -18,13 +18,6 @@ import { useRennetStore } from "../store";
 /** The opener for an Explain thread — a question to the orchestrator, never a review verb. */
 const EXPLAIN_OPENER = "Explain this passage.";
 
-// Revise's EXECUTION is gated to cluster 8 (B11/B9's span-rework command, the `reviseDraftSpan`
-// seam). The affordance renders — the reviewer can open it and draft an instruction (packet task
-// 4.3) — but it must NOT pretend to run: it previously called the no-op `onRevise` and dismissed as
-// though the rework began. Until the seam is bound the control is disabled and says so. Cluster 8
-// flips this to `true` when `reviseDraftSpan` executes for real.
-const REVISE_WIRED = false;
-
 /**
  * The board-anchor identity of a selection (finding 2): the element id it landed in
  * (`data-element-id`) and the board generation (`data-generation`), read from the DOM
@@ -42,7 +35,13 @@ function scopeOfRange(range: Range): { target?: string; generation?: string } {
 }
 
 export interface DraftHandlers {
-  onRevise: (quote: string, instruction: string) => void;
+  /**
+   * Rework the selected span through B11's live `review.reviseSpan` (bound in `exits.ts`, reached
+   * via the `handoff-data.ts` seam). Resolves the honest reason the rework did NOT land, or
+   * `undefined` when it did — the panel states a reason instead of dismissing as though it ran.
+   * Absent ⇒ no rework is wired to this mount and the control says so rather than pretending.
+   */
+  onRevise?: (quote: string, instruction: string) => Promise<string | undefined>;
   onDrop: (quote: string) => void;
   /** Returns the provenance answer for a span (shown inline in the panel). */
   explain: (quote: string) => string;
@@ -72,6 +71,9 @@ export function ProseSelectionLayer({
   const [mode, setMode] = useState<Mode>("toolbar");
   const [draft, setDraft] = useState("");
   const [explanation, setExplanation] = useState("");
+  /** The honest reason the last rework did not land (the panel states it, and stays open). */
+  const [reviseNote, setReviseNote] = useState<string | null>(null);
+  const [reworking, setReworking] = useState(false);
   const { addQuoteComment, setFocusedThread, stageAsk } = useRennetStore((s) => s.reviewActions);
   const flight = useFlightBatcher();
 
@@ -79,6 +81,8 @@ export function ProseSelectionLayer({
     setAnchor(null);
     setMode("toolbar");
     setDraft("");
+    setReviseNote(null);
+    setReworking(false);
   }, []);
 
   useEffect(() => {
@@ -171,15 +175,21 @@ export function ProseSelectionLayer({
     dismiss();
   }
 
-  function handleEditorSave() {
+  async function handleEditorSave() {
     if (mode === "revise") {
-      // Gated to cluster 8: do NOT fake success. While unwired, the Rework control is disabled and
-      // the panel says so, so this stays a no-op that keeps the editor open rather than dismissing
-      // as though the rework was queued. When cluster 8 binds the seam it flips `REVISE_WIRED`.
-      if (!REVISE_WIRED) return;
+      const revise = draftHandlers?.onRevise;
       const instruction = draft.trim();
-      if (anchor && draftHandlers && instruction.length > 0)
-        draftHandlers.onRevise(anchor.quote, instruction);
+      if (!anchor || !revise || instruction.length === 0 || reworking) return;
+      setReviseNote(null);
+      setReworking(true);
+      const reason = await revise(anchor.quote, instruction);
+      setReworking(false);
+      // A rework that did not land keeps the editor open and STATES why — never a dismissal that
+      // reads as success (the whole point of un-gating this was to run for real, not to look like it).
+      if (reason !== undefined) {
+        setReviseNote(reason);
+        return;
+      }
       window.getSelection()?.removeAllRanges();
       dismiss();
       return;
@@ -293,7 +303,7 @@ export function ProseSelectionLayer({
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
-                    handleEditorSave();
+                    void handleEditorSave();
                   }
                 }}
                 placeholder={
@@ -306,11 +316,18 @@ export function ProseSelectionLayer({
                 rows={2}
                 className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
               />
-              {/* Revise is gated (cluster 8): the panel states the truth rather than faking a run. */}
-              {mode === "revise" && !REVISE_WIRED && (
+              {/* Revise states the truth rather than faking a run: unwired at this mount, or the
+                  reason the last rework did not land. */}
+              {mode === "revise" && !draftHandlers?.onRevise && (
                 <p className="mt-1.5 text-2xs leading-snug text-muted-foreground">
-                  Revise runs with the next round — not available yet.
+                  Revise is not available on this view.
                 </p>
+              )}
+              {/* Informative, not alarming: every non-landing outcome here is the daemon stating
+                  a fact (no change, discarded to protect a newer edit, unavailable) — none is an
+                  error the reviewer made, so none reads in the destructive colour. */}
+              {mode === "revise" && reviseNote !== null && (
+                <p className="mt-1.5 text-2xs leading-snug text-muted-foreground">{reviseNote}</p>
               )}
               <div className="mt-1.5 flex items-center justify-end gap-1">
                 <button
@@ -322,16 +339,22 @@ export function ProseSelectionLayer({
                 </button>
                 <button
                   type="button"
-                  onClick={handleEditorSave}
-                  disabled={mode === "revise" && !REVISE_WIRED}
+                  onClick={() => void handleEditorSave()}
+                  disabled={mode === "revise" && (!draftHandlers?.onRevise || reworking)}
                   title={
-                    mode === "revise" && !REVISE_WIRED
-                      ? "Revise runs with the next round — not available yet."
+                    mode === "revise" && !draftHandlers?.onRevise
+                      ? "Revise is not available on this view."
                       : undefined
                   }
                   className="rounded-md bg-primary px-2.5 py-1 text-2xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
                 >
-                  {mode === "revise" ? "Rework" : mode === "comment-rc" ? "Stage" : "Save"}
+                  {mode === "revise"
+                    ? reworking
+                      ? "Reworking…"
+                      : "Rework"
+                    : mode === "comment-rc"
+                      ? "Stage"
+                      : "Save"}
                 </button>
               </div>
             </div>

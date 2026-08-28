@@ -2,7 +2,12 @@ import type { Review } from "@rennet/protocol";
 import { useCallback, useMemo } from "react";
 import { useCommand, useMutation } from "../data";
 import { useRennetStore } from "../store";
-import { composeReviewDraft, type ReviewDraft, resolveEntryMode } from "./handoff-data";
+import {
+  composeReviewDraft,
+  type ReviewDraft,
+  type ReviseSpan,
+  resolveEntryMode,
+} from "./handoff-data";
 import type { PostReceipt } from "./post-review-lane";
 import type { DraftedPr, PrReceipt } from "./rounds-lanes";
 import type { ProposedVerdict } from "./selectors";
@@ -13,7 +18,8 @@ import type { ProposedVerdict } from "./selectors";
 // (every drop/edit/retire/restore/verdict change is already real); this is the last mile: the
 // registered, bound `publish.*` commands the sign-click reaches. Unlike C5's gated board read,
 // `publish.compose`/`publish.review`/`publish.submitPr` ARE registered and bound — the egress
-// wires LIVE now (only B11's durable living draft + real span-rework stay gated to cluster 8).
+// wires LIVE now, and so does `review.reviseSpan` (B11 landed; only the durable living-draft
+// SOURCE still composes off the store).
 //
 //   • Post Review (teammate PR) — `publish.compose(mode:"review")` composes the daemon's
 //     byte-exact outbound review; the sign-click mints a consent token bound to (review, target,
@@ -44,6 +50,12 @@ export interface HandoffExits {
   readonly onOpenPr?: () => Promise<PrReceipt>;
   /** The composed own-branch PR the rounds lane renders. Absent ⇒ the page stays Changes. */
   readonly pr?: DraftedPr;
+  /**
+   * Selection-steer Revise, bound to B11's `review.reviseSpan` (cluster 8). Always present here —
+   * the command is registered and host-bound for every mode; a lane mounted WITHOUT it (unit
+   * mounts) says so rather than pretending.
+   */
+  readonly onRevise: ReviseSpan;
 }
 
 export function useHandoffExits(review: Review): HandoffExits {
@@ -56,6 +68,11 @@ export function useHandoffExits(review: Review): HandoffExits {
   const { mutate: requestConsent } = useMutation("publish.requestConsent");
   const { mutate: postReview } = useMutation("publish.review");
   const { mutate: submitPr } = useMutation("publish.submitPr");
+  // Span rework (B11 cluster 5): a WRITE against the durable ask log, so it stales any composed
+  // preview — invalidate `publish.compose` and the lane recomposes off the reworked ask.
+  const { mutate: reviseSpan } = useMutation("review.reviseSpan", {
+    invalidates: ["publish.compose"],
+  });
 
   // Teammate-PR review preview: compose ONCE, on open (the exact-preview contract — R33,
   // architecture-contracts.md "Posting to GitHub"). The lane PREVIEWS these composed bytes and
@@ -135,6 +152,15 @@ export function useHandoffExits(review: Review): HandoffExits {
     return { number, url };
   }, [submitPr, reviewId, prComposed]);
 
+  // The rework the selection toolbar reaches through the `handoff-data.ts` seam. It stages a
+  // revised ask and posts NOTHING (push ≠ publish) — so it needs no consent token and no mode
+  // condition; a failed/no-change rework comes back as an honest status the panel states.
+  const onRevise = useCallback<ReviseSpan>(
+    ({ askId, span, instruction }) =>
+      reviseSpan({ commandId: crypto.randomUUID(), reviewId, askId, span, instruction }),
+    [reviseSpan, reviewId],
+  );
+
   return {
     // Post is armed only once the review is composed — so the previewed bytes and the posted bytes
     // are one composition (the CTA renders disabled until then, honest).
@@ -144,5 +170,6 @@ export function useHandoffExits(review: Review): HandoffExits {
     pr: prComposed
       ? { title: prComposed.submission.title, body: prComposed.submission.body, ready: true }
       : undefined,
+    onRevise,
   };
 }
