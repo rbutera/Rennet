@@ -281,7 +281,15 @@ describe("FirstRunWelcome", () => {
   // Named for what the reviewer can DO, not for a restriction that holds. The title this
   // replaced — "blocks review setup with a friendly install path" — read as a courtesy and
   // pinned a first-run trap for a whole release; the name did the reviewer's thinking.
-  it("lets a reviewer with no harness continue, and picks up one they install", async () => {
+  //
+  // Every clause below maps to an assertion in the body, deliberately: "discloses" to the
+  // copy and the install link, "Continue still live" to the enabled check, "picks up one
+  // they install" to the recheck. An earlier draft of this title said the reviewer could
+  // "continue" — which this body never does, it only proves the button is there and
+  // enabled. That is the same overclaim as the title being replaced, one release later.
+  // The proof that Continue actually WORKS is the sibling ZERO-harnesses test, which
+  // clicks through to the app; a button existing is not a button working.
+  it("discloses the missing harness with Continue still live, then picks up one they install", async () => {
     // What the DAEMON would answer right now, not "answer differently on the Nth call".
     // The count of reads before the click is not the point and is not this test's business:
     // the tree the welcome mounts into re-parents on first run, and a re-mounted reader
@@ -311,6 +319,10 @@ describe("FirstRunWelcome", () => {
     );
     await advanceToReviewSetup();
     expect(screen.getByText("Rennet couldn’t detect Claude Code or Codex.")).toBeTruthy();
+    // The consequence sentence is what REPLACED the gate, so it is load-bearing and pinned
+    // here. Letting someone through while silently dropping this is worse than the gate was:
+    // they land in the app with no idea why review turns never run.
+    expect(screen.getByText(/can’t run review turns until one is installed/)).toBeTruthy();
     expect(screen.getByRole("link", { name: /Installation guide/ }).getAttribute("href")).toContain(
       "install-a-coding-harness",
     );
