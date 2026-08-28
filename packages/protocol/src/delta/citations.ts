@@ -124,6 +124,43 @@ export const DIFF_TRUNCATION_MARKER = "[diff truncated by Rennet]";
  */
 export type PatchsetSource = "local" | "local-branch" | "github-local" | "github-rest";
 
+/**
+ * The freshness predicates, declared HERE beside `PatchsetSource` because two clients ask
+ * them and both used to answer separately.
+ *
+ * `isWorkingTreeReview` is the one question that decides whether a review's content can change
+ * under the reviewer: only a `local` capture reads the working tree. Every other source is a
+ * snapshot pinned to commits — a PR's OIDs, or a `merge-base...head` range — so it must stay off
+ * the freshness watcher and, if it somehow carries `invalid`, must never be narrated as "the
+ * repository changed". An absent source is `local`, the default `wire.ts` declares.
+ *
+ * `isReviewStale` is that gate ANDed with the invalidated status: the whole staleness rule, in
+ * one place. Desktop derived it correctly and said so in a comment; mobile's copy
+ * (`apps/mobile/src/lib/projection.ts`) dropped the provenance half and told the reviewer a
+ * pinned PR snapshot had gone stale (#600). The rule crossing to a second client by hand is
+ * exactly how they drifted, and a fifth `PatchsetSource` would have drifted them again.
+ *
+ * Structurally typed on purpose: the argument is satisfied by a private `Review` (desktop) and
+ * by the mobile app's projected view of one, which carry the same two fields under R19.
+ */
+export function isWorkingTreeReview(review: {
+  readonly activePatchsetId: string;
+  readonly patchsets: readonly {
+    readonly id: string;
+    readonly source?: PatchsetSource | undefined;
+  }[];
+}): boolean {
+  const active = review.patchsets.find((patchset) => patchset.id === review.activePatchsetId);
+  return (active?.source ?? "local") === "local";
+}
+
+/** Did the repository actually change under this review? Working-tree provenance AND invalidated. */
+export function isReviewStale(
+  review: Parameters<typeof isWorkingTreeReview>[0] & { readonly status: string },
+): boolean {
+  return isWorkingTreeReview(review) && review.status === "invalid";
+}
+
 /** Which surface a patchset's captured intent came from. */
 export type PatchsetIntentSurface = "github-pr" | "github-rest" | "working-tree";
 

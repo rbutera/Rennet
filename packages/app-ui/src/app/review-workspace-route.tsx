@@ -1,4 +1,4 @@
-import type { Review } from "@rennet/protocol";
+import { isReviewStale, isWorkingTreeReview, type Review } from "@rennet/protocol";
 import { useEffect, useRef } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
@@ -61,15 +61,6 @@ const STALED_BY_FRESHNESS = ["review.load", "board.read"] as const;
 
 /** Fire-and-forget: `useMutation` already holds the fault; this only settles the rejection. */
 const held = () => undefined;
-
-/**
- * The provenance of the patchset on screen — `local` (a working-tree capture, watchable for
- * freshness) vs a `github-*` PR snapshot pinned to the pull request's OIDs. Absent ⇒ `local`,
- * the default `wire.ts` declares, which also keeps a partial test fixture on the honest path.
- */
-function patchsetSource(review: Review): string {
-  return review.patchsets?.find((p) => p.id === review.activePatchsetId)?.source ?? "local";
-}
 
 export function ReviewWorkspace({ review }: { review: Review }) {
   const [, navigate] = useLocation();
@@ -141,7 +132,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // persisted write, and the destruction of the artifact under review. It is reachable, not
   // theoretical: `repositoryDirty` is ONE global flag, so an edit in any watched repo arms it and
   // the next PR review to mount collects the answer.
-  const fromWorkingTree = patchsetSource(review) === "local";
+  const fromWorkingTree = isWorkingTreeReview(review);
   // Ask whether this review went stale — on mount, and again on every window focus, which is
   // exactly when the reviewer comes back from editing their own tree. The daemon short-circuits
   // when its watcher saw nothing, so a focus is cheap. Both writes stale `review.load`, so the
@@ -165,12 +156,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     window.addEventListener("focus", ask);
     return () => window.removeEventListener("focus", ask);
   }, [checkFreshness, reviewId, repoPath, fromWorkingTree]);
-  // The staleness expression mobile already computes — a COPY of
-  // `apps/mobile/src/lib/projection.ts`, not a shared helper, so the pointer home is the only
-  // thing keeping the two honest. Mobile's reachability half is dropped (a desktop window IS its
-  // daemon connection) and the working-tree gate is added, because a PR snapshot that somehow
-  // carries `invalid` must not be narrated as "the repository changed".
-  const stale = fromWorkingTree && review.status === "invalid";
+  // The staleness rule, now a SHARED predicate (`@rennet/protocol`) rather than a copy with a
+  // pointer home — the pointer did not hold: mobile's copy was missing the working-tree gate
+  // entirely and narrated pinned PR snapshots as stale (#600). A PR snapshot that somehow carries
+  // `invalid` must not be narrated as "the repository changed", on either client. Mobile ORs its
+  // reachability half on top; a desktop window IS its daemon connection, so this is the whole rule.
+  const stale = isReviewStale(review);
 
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
