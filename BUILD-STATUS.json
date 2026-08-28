@@ -161,8 +161,8 @@
     "note": "Issue #551. NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle \u2014 the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision \u2014 serialize). || Docs rider for the c18/C14 docs pass: getting-started gets one line \u2014 first-run detection may surface macOS XProtect popups about the user own STALE CLI binaries (Rennet only reads versions; bundles no harness binary; verified on latios)."
   },
   "c19": {
-    "status": "review",
-    "passes": false,
-    "note": "Issue #552. C19-COMPLETE on feat/c19-direct-post @226296ab (pushed, GATE_EXIT=0, snapshot 80->79). Token deleted end to end incl. BOTH clients (exits.ts + mobile publish.tsx); verdict folded into publishCompositionId/assertCompositionFresh, red-once control recorded. PACKET FALSEHOOD FIXED: app-ui setVerdictOverride was local-only (second verdict channel) \u2014 now durable ask.setVerdictOverride + recompose, onPost posts composed verdict. Sanctioned grep survivor: the build-ledger row in board-rebuild-plan.md. Review seat running. Wider ask-staging sync gap re-confirmed (already on c14 ledger)."
+    "status": "landed",
+    "passes": true,
+    "note": "LANDED #559 @0053c25e (closes #552). Token deleted end to end (snapshot 80->79, both clients); verdict folded into publishCompositionId/assertCompositionFresh \u2014 flip-without-recompose refused, red-proven from committed baselines. Desktop verdict override made durable (was local-only; packet falsehood caught by implementer). Review FIX->CONFIRMED. Follow-ups #555 #556. Survivors untouched."
   }
 }
