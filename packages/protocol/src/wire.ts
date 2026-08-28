@@ -568,6 +568,15 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
 export type ProjectProcessEvent = z.infer<typeof projectProcessEventSchema>;
 
 /**
+ * The stable `onProgress` id background rehydration — the snapshot warm-up and
+ * the knowledge swarm that rides it — streams its `ProjectProcessEvent`s under.
+ * It lives here rather than in the server because it is a WIRE fact: a screen
+ * that does not subscribe to this id cannot see a background pass at all, which
+ * is how a forty-minute knowledge run failed invisibly.
+ */
+export const PROACTIVE_REHYDRATION_COMMAND_ID = "proactive:rehydration";
+
+/**
  * Live narration for a `project.detail` fetch — the PR half only (the local half
  * is instant git). `prs-start` announces the determinate total (forge repos to
  * fetch); one `repo-prs` fires as each repo's PRs land, carrying its 1-based

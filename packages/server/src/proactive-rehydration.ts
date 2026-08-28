@@ -6,6 +6,7 @@ import {
   baselineAdvanceDepsFor,
   execaGit,
   type GitExec,
+  type KnowledgeSwarmOutcome,
   type ProjectSnapshotGenerator,
   type ProjectSnapshotStore,
   resolveBaseRef,
@@ -59,7 +60,7 @@ import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet
  */
 
 /** The stable push id background rehydration narration is streamed under. */
-export const PROACTIVE_REHYDRATION_COMMAND_ID = "proactive:rehydration";
+export { PROACTIVE_REHYDRATION_COMMAND_ID } from "@rennet/protocol";
 
 /** A started per-repo watcher. `close()` stops the fs watch (idempotent). */
 export interface RepoRehydrationHandle {
@@ -121,7 +122,7 @@ export interface StartRepoRehydrationDeps {
     readonly repoKey: string;
     readonly repoRoot: string;
     readonly toOid: string;
-  }) => Promise<boolean | undefined>;
+  }) => Promise<KnowledgeSwarmOutcome>;
   /** Deterministic in-flight novelty reclassification after the structural advance. */
   readonly runNoveltyPass?: (repoKey: string) => Promise<void>;
   readonly git?: GitExec;
@@ -158,6 +159,10 @@ export async function startRepoRehydration(
   const repoLabel = basename(resolved.root) || resolved.root;
   let pendingKnowledge: KnowledgeAdvance | undefined;
   let knowledgeRunning = false;
+  // A pass that did not produce knowledge only re-runs when a NEWER target
+  // arrived while it ran. Re-running the SAME target is not a retry, it is the
+  // identical prompt against the identical inputs — which is exactly how a
+  // context-window failure burned forty minutes of subscription three times.
   const restoreFailedKnowledge = (failed: KnowledgeAdvance): boolean => {
     const queued: KnowledgeAdvance | undefined = pendingKnowledge;
     // The swarm derives its own delta base from the stored prior set, so a
@@ -174,8 +179,10 @@ export async function startRepoRehydration(
         const next: KnowledgeAdvance = pendingKnowledge;
         pendingKnowledge = undefined;
         try {
-          const succeeded = await deps.runKnowledgePass?.(next);
-          if (succeeded === false) {
+          const outcome = await deps.runKnowledgePass?.(next);
+          // `ok` and `skipped` both mean the store is current for this target.
+          // Everything else carries a reason the runtime has already narrated.
+          if (outcome && outcome.status !== "ok" && outcome.status !== "skipped") {
             if (!restoreFailedKnowledge(next)) break;
           }
         } catch (error) {

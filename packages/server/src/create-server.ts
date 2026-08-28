@@ -1582,15 +1582,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       options.broadcastProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, event);
       wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
     },
+    // A background pass that throws is otherwise swallowed whole: with no
+    // `onError` the rehydration registry, the watcher start and the knowledge
+    // loop all had nowhere to put a failure.
+    onError: (error) => console.error("Proactive rehydration failed", error),
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
     // The knowledge pass is the council-routed partition swarm (#460, B06): the
     // swarm picks skip vs incremental vs full itself from the stored prior set's
     // identity, and its per-partition + verify lines ride the SAME rehydration
-    // progress push as the narrate above.
-    runKnowledgePass: async ({ repoKey, repoRoot, toOid }) => {
-      const outcome = await knowledgeSwarmRuntime.runForRepo({ repoKey, repoRoot, toOid });
-      return outcome.status === "ok" || outcome.status === "skipped";
-    },
+    // progress push as the narrate above. The typed outcome reaches the caller
+    // INTACT — collapsing it to a boolean dropped every failure reason.
+    runKnowledgePass: async ({ repoKey, repoRoot, toOid }) =>
+      knowledgeSwarmRuntime.runForRepo({ repoKey, repoRoot, toOid }),
   });
   // At launch, resume warming every project whose Repo Map already exists.
   for (const project of projectStore.list()) void rehydration.ensureForProject(project);

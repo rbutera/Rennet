@@ -86,6 +86,15 @@ always cites spans that resolve against the snapshot. On a baseline advance,
 only partitions containing changed paths re-run and untouched claims carry
 forward.
 
+The verify seat reads the swarm's hypotheses in fixed chunks (150 per turn,
+several turns in flight) rather than one prompt over the whole repository: a
+large repository mints thousands of claims, and a single prompt carrying all of
+them exceeds the seat's context window and loses the entire run. Cross-cutting
+claims are therefore minted within a chunk, which still spans many partitions.
+The pass runs in the background under a stable progress id and reports its
+outcome — including the reason it skipped or failed — on the project's build
+timeline, so a knowledge run is never silently absent.
+
 ## Current scope
 
 The live index does not provide type-directed references, rename analysis,

@@ -188,6 +188,86 @@ describe("runMapVerify", () => {
     expect(verify.droppedStatements).toBe(1);
   });
 
+  it("chunks the seat's prompt so a large swarm never builds one unbounded turn", async () => {
+    // The shipped bug: every partition's statements went into ONE prompt. On a
+    // real repository (199 partitions, ~1900 statements) that turn died with
+    // "Prompt is too long" and the entire run's knowledge was discarded.
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: Array.from({ length: 7 }, (_, index) =>
+            rawStatement({ claim: `claim number ${index}` }),
+          ),
+        }),
+    });
+    const ids = worker.statements.map((entry) => entry.statement.id);
+    expect(new Set(ids).size).toBe(7);
+
+    const prompts: string[] = [];
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 3,
+      runTurn: async (prompt) => {
+        prompts.push(prompt);
+        // The seat can only adjudicate what its OWN prompt carried.
+        return emitted({
+          verdicts: ids
+            .filter((id) => prompt.includes(id))
+            .map((id) => ({ id, verdict: "confirmed" })),
+          crossCutting: [],
+        });
+      },
+    });
+
+    expect(prompts).toHaveLength(3); // ceil(7 / 3)
+    for (const prompt of prompts) {
+      expect(ids.filter((id) => prompt.includes(id)).length).toBeLessThanOrEqual(3);
+    }
+    // Every id appears in exactly one prompt, and every verdict merges back.
+    expect(prompts.flatMap((prompt) => ids.filter((id) => prompt.includes(id))).sort()).toEqual(
+      [...ids].sort(),
+    );
+    expect(verify.status).toBe("ok");
+    expect(verify.confirmed).toBe(7);
+    expect(verify.set?.statements.every((s) => s.status === "confirmed")).toBe(true);
+  });
+
+  it("a single failed chunk fails the whole pass (never a partial verify)", async () => {
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: Array.from({ length: 4 }, (_, index) =>
+            rawStatement({ claim: `claim number ${index}` }),
+          ),
+        }),
+    });
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 1,
+      concurrency: 1,
+      maxRetries: 0,
+      runTurn: async () => {
+        turn += 1;
+        return turn === 2
+          ? { status: "failed", message: "Prompt is too long" }
+          : emitted({ verdicts: [], crossCutting: [] });
+      },
+    });
+    expect(verify).toMatchObject({ status: "failed", failureReason: "Prompt is too long" });
+    expect(verify.set).toBeUndefined();
+  });
+
   it("dedups by statement id across workers and cross-cutting re-mints", async () => {
     const results = await workerResults();
     const duplicate = results[0]?.statements[0]?.statement;

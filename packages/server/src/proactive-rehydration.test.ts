@@ -212,6 +212,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
       runKnowledgePass: async (input) => {
         calls.push(input);
         if (calls.length === 2) knowledgeDone.resolve();
+        return { status: "skipped", reason: "already current" };
       },
       watch: watcher.watch,
       timers: clock.timers,
@@ -256,10 +257,11 @@ describe("proactive rehydration — end to end over a real git repo", () => {
         calls.push(input);
         if (calls.length === 1) {
           await releaseFirst.promise;
-          return false;
+          // The typed union, not a boolean: the reason survives to the caller.
+          return { status: "failed", reason: "Prompt is too long" };
         }
         secondStarted.resolve();
-        return true;
+        return { status: "skipped", reason: "already current" };
       },
       watch: watcher.watch,
       timers: clock.timers,

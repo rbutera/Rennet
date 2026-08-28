@@ -87,6 +87,27 @@ export function knowledgeStageLine(
   };
 }
 
+/**
+ * The honest end-of-pass line for a non-`ok` outcome. Every non-`ok` variant of
+ * `KnowledgeSwarmOutcome` carries a `reason`; dropping it (the pass used to be
+ * collapsed to a boolean at the composition root) is why a whole run could die
+ * on "Prompt is too long" with nothing said anywhere. `ok` needs no line — the
+ * verify progress event already reported its counts.
+ */
+export function knowledgeOutcomeLine(
+  repo: string,
+  outcome: KnowledgeSwarmOutcome,
+): ProjectProcessEvent | undefined {
+  if (outcome.status === "ok") return undefined;
+  const note =
+    outcome.status === "skipped"
+      ? "Knowledge pass skipped"
+      : outcome.status === "snapshot-unavailable"
+        ? "Knowledge pass has no fresh snapshot"
+        : "Knowledge pass failed";
+  return { kind: "stage", repo, stage: "knowledge", note, detail: outcome.reason };
+}
+
 /** Build the scheduler over the composition root's stores and harness probes. */
 export function createKnowledgeSwarmRuntime(
   deps: KnowledgeSwarmRuntimeDeps,
@@ -97,20 +118,30 @@ export function createKnowledgeSwarmRuntime(
         deps.resolveClaudePort(input.repoRoot),
         deps.resolveCodexExecutor(input.repoRoot),
       ]);
-      if (!claudePort && !codexExecutor) {
-        return { status: "failed", reason: "no harness is available to run the knowledge swarm" };
-      }
       const repoLabel = basename(input.repoRoot);
-      return runKnowledgeSwarmForRepo({
-        reader: new ProjectContextReader(deps.store),
-        knowledgeStore: new KnowledgeStore(deps.store),
-        claudePort,
-        codexExecutor,
-        repoKey: input.repoKey,
-        repoRoot: input.repoRoot,
-        baseOid: input.toOid,
-        onProgress: (event) => deps.narrate(knowledgeStageLine(repoLabel, event)),
-      });
+      const narrated = (outcome: KnowledgeSwarmOutcome): KnowledgeSwarmOutcome => {
+        const line = knowledgeOutcomeLine(repoLabel, outcome);
+        if (line) deps.narrate(line);
+        return outcome;
+      };
+      if (!claudePort && !codexExecutor) {
+        return narrated({
+          status: "failed",
+          reason: "no harness is available to run the knowledge swarm",
+        });
+      }
+      return narrated(
+        await runKnowledgeSwarmForRepo({
+          reader: new ProjectContextReader(deps.store),
+          knowledgeStore: new KnowledgeStore(deps.store),
+          claudePort,
+          codexExecutor,
+          repoKey: input.repoKey,
+          repoRoot: input.repoRoot,
+          baseOid: input.toOid,
+          onProgress: (event) => deps.narrate(knowledgeStageLine(repoLabel, event)),
+        }),
+      );
     },
   };
 }

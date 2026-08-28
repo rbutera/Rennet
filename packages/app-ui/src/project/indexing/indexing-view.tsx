@@ -1,4 +1,5 @@
 import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet/protocol";
+import { PROACTIVE_REHYDRATION_COMMAND_ID } from "@rennet/protocol";
 import { Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, Loader2, MapIcon, MessageSquarePlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -173,9 +174,14 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
   // different project resets the timeline before re-attaching.
   useEffect(() => {
     const commandId = processCommandId(projectId);
-    const unsubscribe = bridge.onProgress?.(commandId, (event) => {
+    const append = (event: ProjectProcessEvent) =>
       setEvents((prior) => [...prior, { id: prior.length, event }]);
-    });
+    const unsubscribe = bridge.onProgress?.(commandId, append);
+    // The background rehydration channel carries the knowledge swarm's lines,
+    // which run AFTER `project.process` resolves and under a different, stable
+    // command id. Nothing subscribed to it, so the whole knowledge pass — its
+    // per-partition progress and its failure reason alike — was invisible.
+    const unsubscribeBackground = bridge.onProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, append);
     if (startedFor.current !== projectId) {
       startedFor.current = projectId;
       setEvents([]);
@@ -201,7 +207,10 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
       };
       void process({ commandId, projectId }).then(finishRun, () => finishRun());
     }
-    return () => unsubscribe?.();
+    return () => {
+      unsubscribe?.();
+      unsubscribeBackground?.();
+    };
   }, [bridge, projectId, process]);
 
   // Escape leaves the view (a field's own Escape blurs it and stops here — see the

@@ -1,4 +1,5 @@
 import {
+  boundedAll,
   buildPartitions,
   type CodexExecutor,
   dedupById,
@@ -353,22 +354,6 @@ function turnFor(
     },
     council,
   );
-}
-
-/** Run `tasks` with at most `limit` in flight (order of completion is irrelevant). */
-async function boundedAll<T>(tasks: readonly (() => Promise<T>)[], limit: number): Promise<T[]> {
-  const results = new Array<T>(tasks.length);
-  let next = 0;
-  const lanes = Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, async () => {
-    while (next < tasks.length) {
-      const index = next;
-      next += 1;
-      const task = tasks[index];
-      if (task) results[index] = await task();
-    }
-  });
-  await Promise.all(lanes);
-  return results;
 }
 
 /**

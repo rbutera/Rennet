@@ -195,6 +195,42 @@ export interface MapVerifyInput {
   readonly provenance: KnowledgeProvenanceSeed;
   readonly runTurn: RunTurn;
   readonly maxRetries?: number;
+  /** Hypotheses per verify turn. Default `MAP_VERIFY_CHUNK_SIZE`. */
+  readonly chunkSize?: number;
+  /** Concurrent verify turns. Default 4 (the swarm's worker default). */
+  readonly concurrency?: number;
+}
+
+/**
+ * Hypotheses per verify turn. The seat used to receive EVERY partition's
+ * statements in one prompt, which on a real repository (Rennet itself: 199
+ * partitions, ~1900 statements) exceeded the harness context window — the seat
+ * died with "Prompt is too long" and the whole run's statements were discarded.
+ * 150 renders to roughly 12k tokens of hypothesis list, well inside any seat.
+ *
+ * ponytail: cross-cutting synthesis is now chunk-local (a chunk still spans many
+ * slices, so cross-slice reach survives); a hierarchical second-pass synthesis
+ * over the chunks' outputs is the upgrade path if that reach proves too narrow.
+ */
+export const MAP_VERIFY_CHUNK_SIZE = 150;
+
+/** Run `tasks` with at most `limit` in flight (order of completion is irrelevant). */
+export async function boundedAll<T>(
+  tasks: readonly (() => Promise<T>)[],
+  limit: number,
+): Promise<T[]> {
+  const results = new Array<T>(tasks.length);
+  let next = 0;
+  const lanes = Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, async () => {
+    while (next < tasks.length) {
+      const index = next;
+      next += 1;
+      const task = tasks[index];
+      if (task) results[index] = await task();
+    }
+  });
+  await Promise.all(lanes);
+  return results;
 }
 
 export interface MapVerifyResult {
@@ -253,13 +289,116 @@ from the file inventory you have seen in the cited spans.`,
  * remains an optional override elsewhere — never a gate here.
  */
 export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResult> {
-  const { workerResults, snapshot, provenance, runTurn, maxRetries = 1 } = input;
+  const {
+    workerResults,
+    snapshot,
+    provenance,
+    runTurn,
+    maxRetries = 1,
+    chunkSize = MAP_VERIFY_CHUNK_SIZE,
+    concurrency = 4,
+  } = input;
   const generator = provenance.generator ?? KNOWLEDGE_SWARM_GENERATOR_ID;
   const filesByPath = fileBlobIndex(snapshot.files);
   const entries = workerResults.flatMap((result) => result.statements);
   const byId = new Map(entries.map((entry) => [entry.statement.id, entry.statement]));
-  const prompt = buildVerifyPrompt(entries, snapshot);
   const tally: MintTally = { droppedAnchors: 0, droppedStatements: 0 };
+
+  // One prompt per chunk: the seat's context is finite and the whole swarm's
+  // statements do not fit in it. An empty swarm still runs one turn — the seat
+  // can mint cross-cutting statements with no hypotheses to adjudicate.
+  const chunks: (readonly WorkerStatement[])[] = [];
+  for (let start = 0; start < entries.length; start += Math.max(1, chunkSize)) {
+    chunks.push(entries.slice(start, start + Math.max(1, chunkSize)));
+  }
+  if (chunks.length === 0) chunks.push([]);
+
+  const chunkResults = await boundedAll(
+    chunks.map(
+      (chunk) => () =>
+        runVerifyChunk({
+          entries: chunk,
+          snapshot,
+          provenance,
+          generator,
+          filesByPath,
+          tally,
+          runTurn,
+          maxRetries,
+        }),
+    ),
+    concurrency,
+  );
+
+  const failed = chunkResults.find((result) => result.status === "failed");
+  if (failed) {
+    // All-or-nothing, as before: a partial verify would silently publish an
+    // unadjudicated slice of the repository as if the seat had seen it.
+    return {
+      status: "failed",
+      failureReason: failed.failureReason ?? "the map verify pass did not complete",
+      confirmed: 0,
+      rejected: 0,
+      crossCutting: 0,
+      droppedAnchors: tally.droppedAnchors,
+      droppedStatements: tally.droppedStatements,
+    };
+  }
+
+  let confirmed = 0;
+  let rejected = 0;
+  for (const result of chunkResults) {
+    for (const { id, verdict } of result.verdicts) {
+      const statement = byId.get(id);
+      if (statement === undefined) continue; // A verdict on an id the swarm never minted is noise.
+      byId.set(id, { ...statement, status: verdict });
+      if (verdict === "confirmed") confirmed += 1;
+      else rejected += 1;
+    }
+  }
+  const crossCutting = chunkResults.flatMap((result) => result.crossCutting);
+  const set: KnowledgeSet = {
+    schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+    repoKey: snapshot.repoKey,
+    baseOid: snapshot.baseOid,
+    snapshotFingerprint: snapshot.snapshotFingerprint,
+    generator,
+    statements: dedupById([...byId.values(), ...crossCutting]),
+  };
+  return {
+    status: "ok",
+    set,
+    confirmed,
+    rejected,
+    crossCutting: crossCutting.length,
+    droppedAnchors: tally.droppedAnchors,
+    droppedStatements: tally.droppedStatements,
+  };
+}
+
+interface VerifyChunkInput {
+  readonly entries: readonly WorkerStatement[];
+  readonly snapshot: KnowledgeSnapshotContext;
+  readonly provenance: KnowledgeProvenanceSeed;
+  readonly generator: string;
+  readonly filesByPath: ReturnType<typeof fileBlobIndex>;
+  readonly tally: MintTally;
+  readonly runTurn: RunTurn;
+  readonly maxRetries: number;
+}
+
+interface VerifyChunkResult {
+  readonly status: "ok" | "failed";
+  readonly failureReason?: string;
+  readonly verdicts: readonly { id: string; verdict: "confirmed" | "rejected" }[];
+  readonly crossCutting: readonly KnowledgeStatement[];
+}
+
+/** One verify turn over one chunk of hypotheses, with the seat's own retries. */
+async function runVerifyChunk(input: VerifyChunkInput): Promise<VerifyChunkResult> {
+  const { entries, snapshot, provenance, generator, filesByPath, tally, runTurn, maxRetries } =
+    input;
+  const prompt = buildVerifyPrompt(entries, snapshot);
   let lastFailure = "the map verify pass did not complete";
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -269,18 +408,12 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
       continue;
     }
     const body = (turn.body ?? {}) as Record<string, unknown>;
-    let confirmed = 0;
-    let rejected = 0;
-    const verdicts = Array.isArray(body.verdicts) ? body.verdicts : [];
-    for (const raw of verdicts) {
+    const verdicts: { id: string; verdict: "confirmed" | "rejected" }[] = [];
+    for (const raw of Array.isArray(body.verdicts) ? body.verdicts : []) {
       if (!raw || typeof raw !== "object") continue;
       const { id, verdict } = raw as Record<string, unknown>;
       if (typeof id !== "string" || (verdict !== "confirmed" && verdict !== "rejected")) continue;
-      const statement = byId.get(id);
-      if (statement === undefined) continue; // A verdict on an id the swarm never minted is noise.
-      byId.set(id, { ...statement, status: verdict });
-      if (verdict === "confirmed") confirmed += 1;
-      else rejected += 1;
+      verdicts.push({ id, verdict });
     }
     // Cross-cutting statements carry the VERIFIER's observed provenance (review P2).
     const observed: KnowledgeProvenanceSeed = {
@@ -291,31 +424,7 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
     const crossCutting = (Array.isArray(body.crossCutting) ? body.crossCutting : [])
       .map((raw) => mintStatement(raw, filesByPath, snapshot, observed, generator, tally))
       .filter((s): s is KnowledgeStatement => s !== undefined);
-    const set: KnowledgeSet = {
-      schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
-      repoKey: snapshot.repoKey,
-      baseOid: snapshot.baseOid,
-      snapshotFingerprint: snapshot.snapshotFingerprint,
-      generator,
-      statements: dedupById([...byId.values(), ...crossCutting]),
-    };
-    return {
-      status: "ok",
-      set,
-      confirmed,
-      rejected,
-      crossCutting: crossCutting.length,
-      droppedAnchors: tally.droppedAnchors,
-      droppedStatements: tally.droppedStatements,
-    };
+    return { status: "ok", verdicts, crossCutting };
   }
-  return {
-    status: "failed",
-    failureReason: lastFailure,
-    confirmed: 0,
-    rejected: 0,
-    crossCutting: 0,
-    droppedAnchors: tally.droppedAnchors,
-    droppedStatements: tally.droppedStatements,
-  };
+  return { status: "failed", failureReason: lastFailure, verdicts: [], crossCutting: [] };
 }
