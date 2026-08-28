@@ -137,7 +137,8 @@
   },
   "c14": {
     "status": "pending",
-    "passes": false
+    "passes": false,
+    "note": "PRE-C14 GATE ADDITIONS (Rai, 2026-08-28): (1) titlebar fix fix/macos-titlebar-wordmark lands pre-release (real-device defect: traffic lights over wordmark; report->auto-update closed loop); (2) RELEASE BEFORE C14 \u2014 after last pre-C14 landing: gh workflow run auto-release.yml (SIGPIPE decide-step fix ca443db0 landed; this dispatch is its real test), verify green through publish + vX.Y.Z with macOS assets, Rai watches latios auto-update, THEN dispatch C14 \u2014 audit drives the released build where practical."
   },
   "c15": {
     "status": "implementing",
@@ -152,16 +153,16 @@
   "c17": {
     "status": "review",
     "passes": false,
-    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1-3 done @d2c3f663 (forge.detect; daemon.status; harness.hosts + harness.setEnabled server-side per the 3.1 re-ruling, recorded in tasks.md; PLUS latent cluster-2 bug fixed \u2014 version-learn no longer replaces the whole host entry, withHostEntries merge + regression test). Clusters 1-5 + amendment A GATED FOR REAL @348e7207 (continuer audit: predecessor's boxes checked but NEVER gated \u2014 two real TS errors fixed: probeDaemon undefined-vs-null coalesced preserving honest-absence, dispatch stub missing new methods; third checked\u2260gated proof this build). Amendment A live: disabledForges rides the hosts entry, forge.setEnabled mirrors harness.setEnabled, enabled:true literal gone. Finisher in flight: amendment B (forge.hosts per-host gh), cluster 6 Update Daemon #534, cluster 7 E2E + rename-out-of-PATH control + docs + sigil. GATE_EXIT=N echo rule now build-wide (task-wrapper exit masked a 130). Snapshot serialization set with c15/c16/c18 at landing."
+    "note": "Issue #543, branch feat/c17-host-tool-detection. Clusters 1-3 done @d2c3f663 (forge.detect; daemon.status; harness.hosts + harness.setEnabled server-side per the 3.1 re-ruling, recorded in tasks.md; PLUS latent cluster-2 bug fixed \u2014 version-learn no longer replaces the whole host entry, withHostEntries merge + regression test). Clusters 1-5 + amendment A GATED FOR REAL @348e7207 (continuer audit: predecessor's boxes checked but NEVER gated \u2014 two real TS errors fixed: probeDaemon undefined-vs-null coalesced preserving honest-absence, dispatch stub missing new methods; third checked\u2260gated proof this build). Amendment A live: disabledForges rides the hosts entry, forge.setEnabled mirrors harness.setEnabled, enabled:true literal gone. Finisher in flight: amendment B (forge.hosts per-host gh), cluster 6 Update Daemon #534, cluster 7 E2E + rename-out-of-PATH control + docs + sigil. GATE_EXIT=N echo rule now build-wide (task-wrapper exit masked a 130). Snapshot serialization set with c15/c16/c18 at landing. || CODEX ROUND-1 SEAT: FIX \u2014 8 findings upheld (real-HOME test escape; lifetime-cached detection defeats remove/restore; asked-empty folded to unasked; /root fallback fabrication; updateAvailable without bundle; naive compareVersions; forge default-enabled while pending; contradictory wire states) \u2014 fix loop with the warm finisher. dataDir design question filed #554."
   },
   "c18": {
     "status": "pending",
     "passes": false,
-    "note": "Issue #551. NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle \u2014 the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision \u2014 serialize)."
+    "note": "Issue #551. NEW (2026-08-28, from the wiring-ledger audit): the wiring command bundle \u2014 the four 'one-file swap' claims that were actually missing commands. Registers + handles + persists settings.* project-pref writes (5 no-op setters + projectEditsPersist), project.rename (C12 seam + sidebar), the lens-board read (C05 cluster 8; boards are real server-side already), session.list/rename/setPinned/archive (sidebar seam), and flips the client seams in the same change. Packet: openspec/changes/c18-wiring-commands/context.md. BLOCKED BY c16+c17 landing (three-way protocol snapshot collision \u2014 serialize). || Docs rider for the c18/C14 docs pass: getting-started gets one line \u2014 first-run detection may surface macOS XProtect popups about the user own STALE CLI binaries (Rennet only reads versions; bundles no harness binary; verified on latios)."
   },
   "c19": {
-    "status": "pending",
+    "status": "review",
     "passes": false,
-    "note": "Issue #552. NEW (2026-08-28, Rai's #435 ruling executed): publish.requestConsent DELETED end to end (~11 files incl. mobile publish.tsx + create-server composition). The one real property survives without the token: posted verdict must equal previewed verdict, folded as one more input into the EXISTING publishCompositionId/assertCompositionFresh mechanism \u2014 no token, no dialog. Surviving correctness gates untouched. Packet: openspec/changes/c19-direct-post/context.md. BLOCKED BY c16 landing + the c08-revise-wired branch (app-ui/handoff files)."
+    "note": "Issue #552. C19-COMPLETE on feat/c19-direct-post @226296ab (pushed, GATE_EXIT=0, snapshot 80->79). Token deleted end to end incl. BOTH clients (exits.ts + mobile publish.tsx); verdict folded into publishCompositionId/assertCompositionFresh, red-once control recorded. PACKET FALSEHOOD FIXED: app-ui setVerdictOverride was local-only (second verdict channel) \u2014 now durable ask.setVerdictOverride + recompose, onPost posts composed verdict. Sanctioned grep survivor: the build-ledger row in board-rebuild-plan.md. Review seat running. Wider ask-staging sync gap re-confirmed (already on c14 ledger)."
   }
 }
