@@ -564,10 +564,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return resolution;
   }
 
-  function getCodexAvailability(): Promise<CodexAvailability> {
-    return getCodexResolution(HOST_LOCUS).then((resolution) => resolution.availability);
-  }
-
   // The locus-aware seat probes the live producers (refine, draft-PR-body, delta digest,
   // compose) are bound to (#334). Each resolves the review's locus, so a WSL project's
   // light-tier turn runs the distro's claude/codex — not the host's.
