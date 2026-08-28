@@ -124,12 +124,18 @@ function hostOS(source: string, isLocal: boolean, platform: string | undefined):
  *  or a host the daemon returned nothing for) is unreachable with nothing else — the
  *  honest fallback the card already renders, never a stubbed version. */
 function daemonInfo(status: DaemonHostStatus | undefined): DaemonInfo {
-  if (!status) return { reachable: false };
+  // The wire shape is a union on `reachable`, so each branch can only read the fields that
+  // branch actually carries — an unreachable host has no `version` to accidentally show.
+  if (!status || !status.reachable) {
+    return {
+      reachable: false,
+      ...(status?.lastSeenVersion ? { lastSeenVersion: status.lastSeenVersion } : {}),
+    };
+  }
   return {
-    reachable: status.reachable,
-    version: status.version,
-    lastSeenVersion: status.lastSeenVersion,
-    updateAvailable: status.updateAvailable,
+    reachable: true,
+    ...(status.version ? { version: status.version } : {}),
+    ...(status.updateAvailable === undefined ? {} : { updateAvailable: status.updateAvailable }),
   };
 }
 
@@ -217,17 +223,20 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     // persisted "ruled out" decision as an enabled switch (review finding 7) — a fabricated
     // answer, briefly, which is exactly what the served ruling exists to stop. So: no rows
     // until the ruling read has arrived, and every card holds its honest empty state.
-    for (const host of data ? (forges?.hosts ?? []) : []) {
-      if (!host.asked) continue;
-      // This host's ruling, off the entry that arrived. No entry ⇒ nothing ruled out.
-      const disabled = new Set(
-        data.hosts.find((entry) => entry.source === host.source)?.disabledForges ?? [],
-      );
-      // An asked host keeps its key even with no rows — "asked, nothing installed" is an
-      // answer, and the section says so rather than asking to connect a connected host.
-      sourceControlByHost[host.source] = host.detected
-        .filter((forge) => forge.status !== "not-installed")
-        .map((forge) => forgeRow(forge, disabled));
+    const rulings = data?.hosts;
+    if (rulings) {
+      for (const host of forges?.hosts ?? []) {
+        if (!host.asked) continue;
+        // This host's ruling, off the entry that arrived. No entry ⇒ nothing ruled out.
+        const disabled = new Set(
+          rulings.find((entry) => entry.source === host.source)?.disabledForges ?? [],
+        );
+        // An asked host keeps its key even with no rows — "asked, nothing installed" is an
+        // answer, and the section says so rather than asking to connect a connected host.
+        sourceControlByHost[host.source] = host.detected
+          .filter((forge) => forge.status !== "not-installed")
+          .map((forge) => forgeRow(forge, disabled));
+      }
     }
 
     return {

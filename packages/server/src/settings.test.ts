@@ -554,7 +554,8 @@ describe("daemonStatus — per-host daemon detection (C17 cluster 2, #485)", () 
     // answer carries no running `version` at all — not the last-seen one moved across,
     // not the local daemon's, not a guess. Break the fallback and this fails.
     expect(dark).not.toHaveProperty("version");
-    expect(dark?.updateAvailable).toBeUndefined();
+    // The union makes it structural too: an unreachable status has no `updateAvailable` field.
+    expect(dark).not.toHaveProperty("updateAvailable");
   });
 
   it("a host that has NEVER answered reads unreachable with neither version", async () => {
@@ -752,7 +753,7 @@ describe("reconnect — the on-demand re-handshake (C17 cluster 5, #533)", () =>
     expect(outcome.error).toBe('No Rennet daemon answered in WSL distro "Ubuntu".');
     // And no fabricated running version: only the last-seen it really answered with before.
     expect(outcome.status).not.toHaveProperty("version");
-    expect(outcome.status.lastSeenVersion).toBe("0.1.3");
+    expect(outcome.status).toMatchObject({ reachable: false, lastSeenVersion: "0.1.3" });
   });
 
   it("a host that answers NOTHING (no throw) is unreachable with no error line invented", async () => {
@@ -1170,7 +1171,7 @@ describe("update — the real daemon update behind Update Daemon (C17 cluster 6,
     expect(outcome.status.reachable).toBe(false);
     expect(outcome.error).toBe('No Node runtime in WSL distro "Ubuntu".');
     expect(outcome.status).not.toHaveProperty("version");
-    expect(outcome.status.lastSeenVersion).toBe("0.1.3");
+    expect(outcome.status).toMatchObject({ reachable: false, lastSeenVersion: "0.1.3" });
     // Nothing was learned, so nothing was remembered — the store still holds the old sighting.
     expect(read().hosts?.["wsl:Ubuntu"]?.lastSeenVersion).toBe("0.1.3");
   });

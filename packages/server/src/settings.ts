@@ -516,10 +516,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       lastSeenVersion,
       deps.latestDaemonVersionFor?.(source),
     );
-    if (status.version && status.version !== lastSeenVersion) {
+    const sighted = status.reachable ? status.version : undefined;
+    if (sighted && sighted !== lastSeenVersion) {
       try {
         deps.updateDaemon((current) =>
-          withHostEntries(current, { [source]: { lastSeenVersion: status.version as string } }),
+          withHostEntries(current, { [source]: { lastSeenVersion: sighted } }),
         );
       } catch {
         // A malformed daemon-settings refuses the write; the live outcome still returns.
@@ -581,8 +582,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
           lastSeenVersion,
           deps.latestDaemonVersionFor?.(host.source),
         );
-        if (status.version && status.version !== lastSeenVersion) {
-          learned[host.source] = { lastSeenVersion: status.version };
+        const sighted = status.reachable ? status.version : undefined;
+        if (sighted && sighted !== lastSeenVersion) {
+          learned[host.source] = { lastSeenVersion: sighted };
         }
         statuses.push(status);
       }

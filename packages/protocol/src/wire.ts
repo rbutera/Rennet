@@ -1815,18 +1815,25 @@ export type DaemonHostSection = z.infer<typeof daemonHostSectionSchema>;
  * present only when BOTH the running version and the latest known version are real, so a
  * host with no update mechanism withholds the flag rather than faking one.
  */
-export const daemonHostStatusSchema = z.object({
-  /** The host this status is for — the same `source` key `daemonHosts` enumerates. */
-  source: sourceSchema,
-  /** The host's daemon answered just now. */
-  reachable: z.boolean(),
-  /** The RUNNING daemon version — present only when the host answered. Never guessed. */
-  version: z.string().optional(),
-  /** The version this host was last seen running; present only when it answered before. */
-  lastSeenVersion: z.string().optional(),
-  /** The running version is older than the latest known one. Absent ⇒ not knowable. */
-  updateAvailable: z.boolean().optional(),
-});
+export const daemonHostStatusSchema = z.discriminatedUnion("reachable", [
+  z.object({
+    /** The host this status is for — the same `source` key `daemonHosts` enumerates. */
+    source: sourceSchema,
+    /** The host's daemon answered just now. */
+    reachable: z.literal(true),
+    /** The RUNNING daemon version — omitted when the host answered but could not name it. */
+    version: z.string().optional(),
+    /** The running version is older than the version this host could be updated TO. Absent ⇒
+     *  not knowable, or this host has no update mechanism at all. */
+    updateAvailable: z.boolean().optional(),
+  }),
+  z.object({
+    source: sourceSchema,
+    reachable: z.literal(false),
+    /** The version this host was last seen running; present only when it answered before. */
+    lastSeenVersion: z.string().optional(),
+  }),
+]);
 export type DaemonHostStatus = z.infer<typeof daemonHostStatusSchema>;
 
 /**
@@ -1835,11 +1842,11 @@ export type DaemonHostStatus = z.infer<typeof daemonHostStatusSchema>;
  * the daemon this is dispatched to asks each host the only way it CAN be asked, so the
  * client never fans out over connections it does not have.
  *
- * `asked` is the honesty flag and the whole point of the shape: a host this daemon has no
- * way to interrogate (a paired device that dials US; a distro `wsl.exe` cannot enter) reads
- * `asked: false` with NO rows — an HONEST ABSENCE, distinct from `asked: true` with no rows,
- * which is the real claim "that host has no coding agents installed". The local set is never
- * copied onto a host it was not observed on.
+ * `asked` is the honesty flag and the whole point of the shape, so it DISCRIMINATES the union:
+ * a host this daemon has no way to interrogate (a paired device that dials US; a distro
+ * `wsl.exe` cannot enter) reads `asked: false` and structurally cannot carry rows — an HONEST
+ * ABSENCE, distinct from `asked: true` with no rows, which is the real claim "that host has no
+ * coding agents installed". The local set is never copied onto a host it was not observed on.
  */
 export const hostHarnessSchema = detectedHarnessSchema.extend({
   /**
@@ -1852,23 +1859,36 @@ export const hostHarnessSchema = detectedHarnessSchema.extend({
 });
 export type HostHarness = z.infer<typeof hostHarnessSchema>;
 
-export const harnessHostDetectionSchema = z.object({
-  /** The host these harnesses were detected on — the `source` key `daemonHosts` enumerates. */
-  source: sourceSchema,
-  /** This daemon could interrogate that host. `false` ⇒ the empty row list claims NOTHING. */
-  asked: z.boolean(),
-  /** Exactly the harnesses observed ON that host. Empty when unasked, or genuinely none. */
-  detected: z.array(hostHarnessSchema),
-  /**
-   * The forge CLI ids the viewer has RULED OUT on this host (amendment A) — the served READ
-   * that makes the Source Control row's toggle real. It rides this per-host entry because the
-   * ruling lives on the same daemon-settings record as `disabledHarnesses` and the surface
-   * already makes this one round trip; forge DETECTION is separate (`forge.detect`), so this
-   * is a decision list, never a claim that any of those CLIs are installed. Additive-optional:
-   * an engine that omits it has ruled nothing out, so every forge row reads enabled.
-   */
-  disabledForges: z.array(z.string().min(1)).optional(),
-});
+/**
+ * The forge CLI ids the viewer has RULED OUT on this host (amendment A) — the served READ that
+ * makes the Source Control row's toggle real. It rides this per-host entry because the ruling
+ * lives on the same daemon-settings record as `disabledHarnesses` and the surface already makes
+ * this one round trip; forge DETECTION is separate (`forge.hosts`), so this is a decision list,
+ * never a claim that any of those CLIs are installed. It is valid on an UNASKED host too — a
+ * decision survives a machine Rennet cannot currently reach. Additive-optional: an engine that
+ * omits it has ruled nothing out.
+ */
+const disabledForgesField = z.array(z.string().min(1)).optional();
+
+export const harnessHostDetectionSchema = z.discriminatedUnion("asked", [
+  z.object({
+    /** The host these harnesses were detected on — the `source` key `daemonHosts` enumerates. */
+    source: sourceSchema,
+    /** This daemon interrogated that host; `detected` is its real answer, empty or not. */
+    asked: z.literal(true),
+    /** Exactly the harnesses observed ON that host. Empty means "asked, none installed". */
+    detected: z.array(hostHarnessSchema),
+    disabledForges: disabledForgesField,
+  }),
+  z.object({
+    source: sourceSchema,
+    /** This daemon could NOT interrogate that host — so it reports no rows, and the empty
+     *  tuple below is the only list it is allowed to carry. Nothing is claimed. */
+    asked: z.literal(false),
+    detected: z.tuple([]),
+    disabledForges: disabledForgesField,
+  }),
+]);
 export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
 
 /**
@@ -1878,18 +1898,26 @@ export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
  * machine's `gh` onto a host it was never observed on; this read asks each host the only way
  * it CAN be asked, so a WSL distro with its own `gh` shows its own.
  *
- * `asked` carries the same honesty as the harness read: a host this daemon cannot interrogate
- * reads `asked: false` with NO rows — an honest absence, distinct from `asked: true` with no
- * rows ("that host has no forge CLI installed").
+ * `asked` discriminates this union exactly as it does the harness read: a host this daemon
+ * cannot interrogate reads `asked: false` and cannot carry rows at all — an honest absence,
+ * distinct from `asked: true` with no rows ("that host has no forge CLI installed").
  */
-export const forgeHostDetectionSchema = z.object({
-  /** The host these forge CLIs were detected on — the `source` key `daemonHosts` enumerates. */
-  source: sourceSchema,
-  /** This daemon could interrogate that host. `false` ⇒ the empty row list claims NOTHING. */
-  asked: z.boolean(),
-  /** Exactly the forge CLIs observed ON that host. Empty when unasked, or genuinely none. */
-  detected: z.array(detectedForgeSchema),
-});
+export const forgeHostDetectionSchema = z.discriminatedUnion("asked", [
+  z.object({
+    /** The host these forge CLIs were detected on — the `source` key `daemonHosts` enumerates. */
+    source: sourceSchema,
+    /** This daemon interrogated that host; `detected` is its real answer, empty or not. */
+    asked: z.literal(true),
+    /** Exactly the forge CLIs observed ON that host. Empty means "asked, none installed". */
+    detected: z.array(detectedForgeSchema),
+  }),
+  z.object({
+    source: sourceSchema,
+    /** Could NOT be interrogated — no rows are expressible, so none can be implied. */
+    asked: z.literal(false),
+    detected: z.tuple([]),
+  }),
+]);
 export type ForgeHostDetection = z.infer<typeof forgeHostDetectionSchema>;
 
 /** The whole settings view: the global layer plus every repo's repo layer. */
